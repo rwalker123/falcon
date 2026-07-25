@@ -1311,9 +1311,14 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   `decay_domestication`) is **DELETED**: `domestication_progress` is now permanent stock capital,
 >   monotone-up (earned via `Tame`), never bled by a neglected turn. Instead an under-contained managed
 >   herd (`is_corralled() || owner.is_some()`) **sheds whole animals over its labor capacity** into a
->   nearby wild herd of the same species — `overage_animals = (1 − herded_fraction) × current_animals`
->   sheds at the per-rung `husbandry.{pastoral,pen}_escape_fraction × (1 + seeded jitter)`, whole animals
->   with a min-1 floor (`shed_uncontained_animals` → `place_shed_animals`, `advance_husbandry`). It is
+>   nearby wild herd of the same species. The overage is reconstructed from the **real staffing** —
+>   `capacity_animals = herded_fraction × herders_needed × animals_per_herder` (the product recovers
+>   `assigned` exactly), `overage = max(0, current − capacity)` — **not** the `(1 − herded_fraction) ×
+>   current` shorthand, which over-estimates hard at a `ceil` boundary (101 @ aph 50 staffed at 2: true
+>   overage 1, shorthand 33.7 — a PR #329 review fix); `herders_needed` reads through
+>   `herd_herders_needed` so a not-yet-stabilized `0` can't collapse capacity. It sheds at the per-rung
+>   `husbandry.{pastoral,pen}_escape_fraction × (1 + seeded jitter)`, whole animals with a min-1 floor
+>   (`shed_uncontained_animals` → `place_shed_animals`, `advance_husbandry`). It is
 >   **self-limiting** (a fraction of the *overage*, so the herd converges to its labor capacity and stops)
 >   and **visible** (biomass, not an invisible stat). The binary corral escape is gone — total
 >   abandonment is just the `herded_fraction == 0` limit of the same shed. **Total abandonment BLEEDS

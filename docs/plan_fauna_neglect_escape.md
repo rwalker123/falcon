@@ -216,24 +216,38 @@ depend on it). "Randomize the shed" **must** draw from the world seed stream, ex
 `core_sim/CLAUDE.md` → "Movement is deterministic under rollback"). A wall-clock `rand()` would break
 determinism. Same playability benefit, zero correctness cost. Pin with a two-run bit-identical test.
 
-### 3.2 The shortfall is `herded_fraction` — no need to reconstruct the assigned count
+### 3.2 Reconstruct the capacity — do NOT use `(1 − herded_fraction) × current`
 
-The capacity framing in §2.2 is the *conceptual* model; the implementation is simpler. `herded_fraction`
-(`= min(1, assigned/needed)`, the same field `decay_under_herded` read as `herded_last_turn`) **is the
-staffing shortfall already normalized**: `overage/current_animals ≈ (1 − herded_fraction)`, because
-`current_animals ≈ needed × animals_per_herder` and `capacity ≈ assigned × animals_per_herder`. So the
-shed reduces to:
+The overage is `current_animals − capacity`, and **capacity must be reconstructed from the actual
+staffing**, not approximated from the fraction. `herded_fraction = min(1, assigned/needed)`, so the
+assigned herder count is `herded_fraction × herders_needed` and:
 
 ```
-overage_animals  = max(0, 1 − herded_last_turn) × current_animals
+capacity_animals = herded_last_turn × herders_needed × animals_per_herder
+overage_animals  = max(0, current_animals − capacity_animals)
 leaving_animals  = quantise(escape_fraction × overage_animals)   // ≥1 floor when overage ≥ 1
 ```
 
-No `herders_needed`, no assigned-count reconstruction, no new persisted state. A fully-staffed herd
-reads `herded_last_turn ≥ 1` ⇒ overage 0 ⇒ no shed. **Total abandonment falls out for free**: a pen
-nobody works has `herded_fraction` reset to `NOT_HERDED` (0.0) ⇒ shortfall 1 ⇒ the whole flock sheds
-(§2.4), so the shed needs no separate "untended" branch — it is the `herded_fraction == 0` limit of
-the same formula.
+`herders_needed` is the stabilized field, set this turn by `stabilize_herders_needed` (which runs
+before the shed), so it is `> 0` for a managed herd by the time the shed reads it.
+
+> **Do NOT shortcut this to `(1 − herded_fraction) × current_animals`.** (An earlier cut of this
+> section did, and it was wrong — caught in PR #329 review.) That shortcut assumes
+> `current_animals ≈ needed × animals_per_herder`, which is **false near a `ceil` boundary**: for 101
+> animals at `animals_per_herder` 50, `needed = ceil(101/50) = 3`, `assigned = 2`,
+> `herded_fraction = 0.667`, and the shortcut yields `0.333 × 101 = 33.7` overage against a **true**
+> overage of `101 − 2×50 = 1`. At `escape_fraction 0.25` that sheds ~8 animals in one turn (far worse
+> at high `animals_per_herder` — a rabbit warren at aph 200 loses a third of itself), spawns them
+> feral, and overshoots the herd below its real capacity. The reconstructed form above is **exact in
+> the steady state**; the only residual is when `herders_needed` just changed between turns — a small,
+> self-correcting, safe-direction *under*-shed, consistent with the one-turn lag the whole mechanism
+> already tolerates.
+
+A fully-staffed herd reads `herded_fraction = 1` ⇒ `capacity = needed × animals_per_herder ≥ current`
+(since `needed = ceil(current/aph)`) ⇒ overage 0 ⇒ no shed. **Total abandonment falls out for free**: a
+herd nobody works has `herded_fraction` reset to `NOT_HERDED` (0.0) ⇒ capacity 0 ⇒ the whole flock is
+overage (§2.4), so the shed needs no separate "untended" branch — it is the `herded_fraction == 0`
+limit of the same formula.
 
 ### 3.3 Whole-animal quantization floor
 

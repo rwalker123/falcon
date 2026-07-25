@@ -2784,13 +2784,24 @@ struct ShedEvent {
 /// costs the **visible** axis (herd size), never the invisible one (`domestication_progress`, which is
 /// monotone-up and never touched here).
 ///
-/// The formula reads the shortfall straight off `herded_last_turn` — `herded_fraction` IS the
-/// normalized shortfall, so `overage_animals = (1 − herded_fraction) × current_animals` (§3.2): no
-/// need to reconstruct an assigned-herder count. A **fraction of the OVERAGE** leaves, not of the
-/// total, so as the herd shrinks toward its capacity fewer leave and it **stops exactly** at
-/// `overage < 1` — no overshoot to zero unless capacity is `0` (total abandonment, the
-/// `herded_fraction == 0` limit). The count is in **whole animals**, with a **min-1 floor** when the
-/// overage is `≥ 1` so a small overage clears instead of asymptoting one or two over forever.
+/// The overage is the herd's **actual** count over what its keepers can hold, reconstructed from the
+/// real staffing: `capacity_animals = herded_fraction × herders_needed × animals_per_herder` (the
+/// `herded_fraction × needed` product recovers `assigned` exactly, since `herded_fraction =
+/// min(1, assigned/needed)`), and `overage_animals = max(0, current − capacity)`. **NOT** the
+/// `(1 − herded_fraction) × current` shorthand (a review-caught spec bug): that over-estimates near a
+/// `ceil` boundary because it assumes `current ≈ needed × animals_per_herder`, which is false when
+/// `herders_needed = ceil(animals/aph)` rounds up hard — 101 animals @ aph 50 staffed at 2 has a true
+/// overage of **1** (`101 − 2×50`), but the shorthand reads `0.333 × 101 = 33.7` and sheds ~8/turn.
+/// A **fraction of the OVERAGE** leaves, not of the total, so as the herd shrinks toward its capacity
+/// fewer leave and it **stops exactly** at `overage < 1` — no overshoot below the real labor capacity,
+/// and none to zero unless capacity is `0` (total abandonment, the `herders_needed`-and-`herded == 0`
+/// limit). The count is in **whole animals**, with a **min-1 floor** when the overage is `≥ 1` so a
+/// small overage clears instead of asymptoting one or two over forever.
+///
+/// `herders_needed` is read through [`herd_herders_needed`] (the stabilized field, falling back to the
+/// raw `ceil` for a not-yet-stabilized managed herd) so a `0` can never collapse capacity to zero and
+/// shed a fully-staffed fresh herd. `stabilize_herders_needed` runs earlier in `advance_husbandry`, so
+/// for a managed herd the stabilized value is already `> 0` by the time the shed reads it.
 ///
 /// The rate is **per-rung**: `pen_escape_fraction` for a corralled herd (slower — the fence),
 /// `pastoral_escape_fraction` otherwise, each `× (1 + jitter)` from the caller's seeded RNG. Reduces
@@ -2807,10 +2818,14 @@ fn shed_uncontained_animals(
         return None;
     }
     let current_animals = herd.biomass / body_mass;
-    // `herded_fraction` IS the normalized shortfall (§3.2): a fully-staffed herd reads `>= 1` ⇒ zero
-    // shortfall ⇒ nothing leaves; a herd nobody worked reads `0` ⇒ the whole flock is overage.
-    let shortfall = (FULLY_HERDED - herded_last_turn).max(0.0);
-    let overage_animals = shortfall * current_animals;
+    // **Reconstruct the real labor capacity from actual staffing** (review fix — see the doc comment):
+    // `capacity = assigned × animals_per_herder`, with `assigned = herded_fraction × herders_needed`.
+    // A fully-staffed herd reads `herded == 1` ⇒ `capacity = needed × aph ≥ current` ⇒ no shed; a herd
+    // nobody worked reads `herded == 0` ⇒ `capacity = 0` ⇒ the whole flock is overage.
+    let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
+    let needed = herd_herders_needed(herd, fauna) as f32;
+    let capacity_animals = herded_last_turn.max(0.0) * needed * animals_per_herder;
+    let overage_animals = (current_animals - capacity_animals).max(0.0);
     if overage_animals < MIN_ESCAPE_ANIMALS {
         // Fits its labor capacity (or within one animal of it) — the self-limiting attractor.
         return None;

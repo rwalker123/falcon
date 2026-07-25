@@ -1829,13 +1829,19 @@ fn species_shed_params(app: &App, id: &str) -> (f32, f32) {
 }
 
 /// Seat the herd's `herded_fraction` exactly as the labor arm would for a keeper of `herders` hands —
-/// `min(1, herders / ceil(animals / animals_per_herder))` — so the shed's `overage = current − capacity`
-/// tracks the herd as it shrinks (the §2.2 convergence, without running the labor system).
+/// `min(1, herders / needed)` — so the shed's `capacity = herded_fraction × needed × aph = herders × aph`
+/// tracks the herd as it shrinks (the §2.2 convergence, without running the labor system). **Reads the
+/// SAME `needed` the shed reads** (the stabilized `Herd::herders_needed`, falling back to the raw `ceil`
+/// before the herd has been stabilized): if the seated staffing and the shed disagreed on `needed`, the
+/// reconstructed capacity would drift from `herders × aph` during the downward-hysteresis lag.
 fn seat_staffing(app: &mut App, id: &str, herders: f32, aph: f32) {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
     let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
-    let animals = (herd.biomass / herd.body_mass).max(0.0);
-    let needed = (animals / aph).ceil().max(1.0);
+    let needed = if herd.herders_needed > 0 {
+        herd.herders_needed as f32
+    } else {
+        (herd.biomass / herd.body_mass / aph).ceil().max(1.0)
+    };
     herd.herded_fraction = (herders / needed).min(1.0);
 }
 
@@ -1889,6 +1895,45 @@ fn an_over_stocked_managed_herd_converges_to_its_labor_capacity() {
         herd.domestication_progress, RUNG_COMPLETE,
         "and its tameness is untouched by the shedding: {}",
         herd.domestication_progress
+    );
+}
+
+/// **The shed is bounded by the TRUE overage near a `ceil` boundary** (PR #329 review fix). A managed
+/// herd sitting just over a `herders_needed = ceil(animals/aph)` boundary must shed only the animals it
+/// is genuinely over its labor capacity (~1), NOT the `(1 − herded_fraction) × current_animals`
+/// over-estimate the original spec used — which reads dozens over at a hard `ceil` round-up (101 @ aph
+/// 50 staffed at 2: true overage **1**, shorthand **33.7**) and overshoots the herd below its real
+/// capacity.
+#[test]
+fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    let (aph, body_mass) = species_shed_params(&app, &id);
+
+    // `current = 2·aph + 2` ⇒ needed = ceil = 3; staffed at 2 herders ⇒ herded_fraction = 2/3, real
+    // capacity = 2·aph, true overage = **2 animals**. The old shorthand would read
+    // `(1 − 2/3) × (2·aph + 2)` ≈ `0.667·aph` animals over — dozens for the fixture's aph.
+    let assigned = 2.0_f32;
+    let current_animals = 2.0 * aph + 2.0;
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.carrying_capacity = current_animals * body_mass * 4.0;
+        herd.biomass = current_animals * body_mass;
+        // Seat the staffing the labor arm would write for `assigned` herders (needed = ceil = 3).
+        let needed = (current_animals / aph).ceil().max(1.0);
+        herd.herded_fraction = (assigned / needed).min(1.0);
+    }
+    let start_biomass = herd_of(&app, &id).biomass;
+
+    app.world.run_system_once(advance_husbandry);
+
+    let shed_animals = (start_biomass - herd_of(&app, &id).biomass) / body_mass;
+    assert!(
+        (1.0..=3.0).contains(&shed_animals),
+        "the shed is the true overage (~1–2 animals), not the ceil-boundary over-estimate (~dozens): \
+         shed {shed_animals} animals"
     );
 }
 
