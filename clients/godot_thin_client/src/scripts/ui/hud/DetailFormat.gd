@@ -221,9 +221,17 @@ const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost �
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 
-## Separator between the named plants on the tile card's "What grows here" row. (Its partner
-## `FLORA_SHARE_FORMAT` lives in `HudFloraVocab` — the crop picker prints it too.)
-const FLORA_SHARE_SEPARATOR := " · "
+# ---- Tile card "What grows here" species rows (flora roster F1/F5). Each realized plant reads on its
+# OWN indented row — a section under the `Forage:` line, not one comma-joined value — so the per-tile
+# basket scans like the compose sheet's crop picker does. Each row is the shared 🌿 sprig
+# (`FoodIcons.DEFAULT`: there are no per-species flora icons yet, so the whole basket wears one generic
+# plant glyph — see the report's roster follow-up), the plant's display name, and its share as a
+# percentage (`HudFloraVocab.FLORA_SHARE_FORMAT`). Rows reuse the food/morale breakdown's 4-space
+# `MORALE_BREAKDOWN_INDENT`, but are tinted NEUTRAL ink, not the ▲green/▼amber two-tone — a share is
+# descriptive, not a good/bad signal — so `detail_bbcode` keys a dedicated branch off the sprig glyph
+# (which is why that branch must be tested BEFORE the morale-indent one: they share the indent).
+const FLORA_COMPOSITION_GLYPH := FoodIcons.DEFAULT
+const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 
 ## The longest `Key` `_split_kv` will align into a table row; anything wider reads as a sentence.
 const DETAIL_KEY_MAX_LENGTH := 16
@@ -268,6 +276,17 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 out += "[/table]"
                 table_open = false
             out += "\n"
+            continue
+        # The tile card's "What grows here" species rows (flora roster F1/F5): the SAME 4-space indent
+        # the morale/food breakdown uses, but tinted NEUTRAL ink — a plant's share is descriptive, not
+        # a positive/negative signal, so it must never borrow the ▲green/▼amber two-tone below. Keyed
+        # off the shared 🌿 sprig, and tested FIRST precisely because the morale branch matches the
+        # same indent (it would otherwise claim these rows and mis-tint them amber).
+        if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT) and line.contains(DetailFormat.FLORA_COMPOSITION_GLYPH):
+            if table_open:
+                out += "[/table]\n"
+                table_open = false
+            out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_HEX, line]
             continue
         # Itemized morale / food breakdown sub-lines render full-width, tinted by their sign
         # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
@@ -567,23 +586,29 @@ static func field_value_hex(value: String) -> String:
         return HudStyle.SIGNAL_HEX
     return HudStyle.INK_HEX
 
-## The tile's plant composition as one compact line — `Hazel 45% · Oak Mast 30% · Berry Scrub 25%`.
+## The tile card's "What grows here" SECTION — a quiet header row naming the section, then one
+## indented 🌿 row per realized plant (`Wild Grain 45%` / `Ground Nut 30%` / …), so the per-tile basket
+## reads down the card the way the compose sheet's crop picker reads, not as one comma-joined value.
 ##
 ## The wire list is ALREADY sorted (share descending, then species key ascending) and its shares sum
-## to 1, so this only formats: the order is the sim's and is never re-derived here.
+## to 1, so this only formats: the order is the sim's and is rendered VERBATIM, never re-derived here.
 ##
-## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. Rounding each share independently can total 99 or 101
-## — a decomposition that visibly fails to decompose — so the remainder is folded into the LARGEST
-## share, i.e. the first entry, where a ±1 is proportionally smallest. Returns "" for a tile with no
-## composition (a biome that carries no forage), so no empty row renders.
-static func flora_composition_text(composition: Variant) -> String:
+## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. `SourceForecast.flora_basket_entries` folds the
+## rounding remainder into the LARGEST share (the first entry), so a basket that naively rounds to
+## 99/101 still decomposes to 100. Returns [] for a tile with no composition (a biome that carries no
+## forage), so neither the header nor any row renders.
+static func flora_composition_lines(composition: Variant) -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
+    var lines: Array[String] = []
     if entries.is_empty():
-        return ""
-    var parts: Array[String] = []
+        return lines
+    lines.append(HudFloraVocab.FLORA_COMPOSITION_ROW)
     for entry in entries:
-        parts.append(HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])])
-    return FLORA_SHARE_SEPARATOR.join(parts)
+        lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [
+            MORALE_BREAKDOWN_INDENT, FLORA_COMPOSITION_GLYPH,
+            HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])],
+        ])
+    return lines
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
 ## `cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads

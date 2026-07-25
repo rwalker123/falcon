@@ -268,9 +268,9 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
         lines.append("%s: %s" % [HudFloraVocab.FLORA_CROP_ROW, crop_name])
     else:
-        var composition_text := DetailFormat.flora_composition_text(tile_info.get("patch_composition", []))
-        if composition_text != "":
-            lines.append("%s: %s" % [HudFloraVocab.FLORA_COMPOSITION_ROW, composition_text])
+        # A header row + one indented 🌿 row per realized plant (its display name + share%). Renders
+        # nothing on a tile with no basket, so the "Forage: None" case stays a bare row.
+        lines.append_array(DetailFormat.flora_composition_lines(tile_info.get("patch_composition", [])))
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
     # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot

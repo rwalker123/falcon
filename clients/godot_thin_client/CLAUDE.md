@@ -2700,20 +2700,29 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   `docs/plan_flora_roster.md` §2; snapshot `ForagePatchState.composition:[FloraShareInfo]` →
   decoded in `native/src/lib.rs forage_patches_to_array` as a `composition` array of
   `{species, display_name, share}`, cross-refed by `MapView._tile_info_at` as
-  `patch_composition`). One compact row directly under `Forage:` — `What grows here: Wild Grain
-  45% · Ground Nut 30% · Berry Scrub 25%` (`Hud._flora_composition_text`) — naming the plants the
-  tile's forage capacity is MADE OF. **Naming decomposes, it does not add**: the shares sum to 1,
-  so this says what the Forage number already on the card consists of; nothing about the economy
-  changed. Three rules: the wire list is **already sorted** (share DESC, then species key ASC) and
-  is rendered **verbatim, never re-sorted**; the **displayed percentages always sum to 100** —
-  independent rounding can total 99/101, so the remainder is folded into the LARGEST share (the
-  first entry), which is what stops a decomposition visibly failing to decompose; and an empty /
-  absent list renders **no row** (a biome that carries no forage). **Deliberately NOT in
-  `FOW_DISCOVERED_HIDDEN_KEYS`** — it is a pure function of the BIOME, like the terrain label or
-  the river edges, so a remembered tile still knows what grows there (never-seen tiles are already
-  covered by the `unexplored` redaction, and nothing on the patch can change it). ui_preview:
-  `food_tile` / `tile_panel_land` (the fixture's shares naively round to 101%, so those frames ARE
-  the rounding test) and `tile_panel_no_forage` (no list → no row).
+  `patch_composition`). A **SECTION** directly under `Forage:` — a quiet `What grows here` header, then
+  **one indented 🌿 row per realized plant** (`🌿 Wild Grain 45%` / `🌿 Ground Nut 30%` / `🌿 Berry Scrub
+  25%`) so the per-tile basket scans down the card the way the compose sheet's crop picker reads
+  (`DetailFormat.flora_composition_lines` → `SubjectDrawerController._tile_terrain_lines`; the render is F5,
+  upgraded from the earlier one-line `What grows here: A · B · C` value). The rows reuse the food/morale
+  breakdown's 4-space `MORALE_BREAKDOWN_INDENT` but are tinted **neutral ink**, not the ▲/▼ two-tone — a
+  share is descriptive, not a good/bad signal — so `DetailFormat.detail_bbcode` keys a dedicated branch off
+  the shared 🌿 sprig (`FoodIcons.DEFAULT`, tested BEFORE the morale-indent branch since they share the
+  indent). **No per-species flora icons yet** — the whole basket wears the one generic plant glyph; a
+  per-species flora icon set is the roster-side F5 follow-up. It names the plants the tile's forage capacity
+  is MADE OF — **naming decomposes, it does not add**: the shares sum to 1, so this says what the Forage
+  number already on the card consists of; nothing about the economy changed. Three rules: the wire list is
+  **already sorted** (share DESC, then species key ASC) and is rendered **verbatim, never re-sorted**; the
+  **displayed percentages always sum to 100** — independent rounding can total 99/101, so
+  `SourceForecast.flora_basket_entries` folds the remainder into the LARGEST share (the first entry), which
+  is what stops a decomposition visibly failing to decompose; and an empty / absent list renders **no header
+  and no rows** (a biome that carries no forage). **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`** — it
+  is a pure function of the BIOME, like the terrain label or the river edges, so a remembered tile still
+  knows what grows there (never-seen tiles are already covered by the `unexplored` redaction, and nothing on
+  the patch can change it). ui_preview: `food_tile` / `tile_panel_land` (the fixture's shares naively round
+  to 101%, so those frames ARE the rounding test), `tile_growing_here` + `tile_growing_here_variant` (TWO
+  Alluvial Plain tiles with DIFFERENT baskets — Wild Emmer 70%/Flax 30% vs Cotton 55%/Flax 45% — the visible
+  per-tile-realization proof on the card), and `tile_panel_no_forage` (no list → no section).
   **ONE ROW, TWO STATES — the COMMITTED crop** (Flora Roster S1, `docs/plan_flora_roster.md` §4.3;
   `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
   `forage_patches_to_array` as `committed_species` / `committed_display_name`, cross-refed by

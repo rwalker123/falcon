@@ -498,8 +498,19 @@ block carries its weight, then mass-fill.**
   AlluvialPlain/Floodplain/RiverDelta (cotton/tobacco/flax) and the uplands (tea), and the commit bar
   reframed around the tile's local realized share. Client shows the varying basket for free (needs a
   two-tile ui_preview fixture).
-- **F5 — Mass-fill + client.** The full roster across all non-zero biomes, icons, labels, tile-card
-  composition readout.
+- **F5 (mass-fill half) — LANDED.** 15 new species added to `flora_config.json` (kelp, sea_kale,
+  wild_rice, cattail, chestnut, wild_orchard, sunflower, wild_pulses, mesquite, wild_fig, cloudberry,
+  rock_tripe, alpine_herbs, cave_fungi, grapevine — grapevine a 5th cash crop), taking the roster
+  18 → **33** so every non-zero biome now carries a **3–5 species basket** and per-tile realization
+  (§10) has the breadth to vary tile-to-tile. Yields tuned to hold the per-realization commit bar:
+  the wild-ceiling gathers sit at/below the 0.045 baseline (rock_tripe the 0.040 famine floor), and
+  the crowded tended crops (cattail, wild_orchard, alpine_herbs 0.069; wild_fig 0.064) were lifted
+  above their table starting rates because their best realized share caps ~0.5 against the dominant
+  incumbents (reed/berry/shellfish/date_palm/pine_nut). grapevine's AlluvialPlain weight is 0.10 (not
+  the spec's 0.15) so it is a *unique* minimum-weight there — a tie with wild_rice broke the
+  realization aggregate-ordering guard. **Client follow-up remains:** per-species flora **icons**
+  (there is no per-species flora icon lookup yet — display names ship as plain text), labels, and the
+  tile-card composition readout are the client-dev half of F5.
 
 Each slice is independently shippable and independently measurable. F1 and F5 are content; F2–F4 are
 the ones that need a playtest.
