@@ -21,7 +21,7 @@ The repository is a Cargo workspace: a Bevy-based headless ECS simulation (`core
 ## 2. Comments & Documentation
 
 - **Do not add comments that restate what the code does** or reference the PR/task ("// fix for review", "// added minimap"). Prefer self-documenting names. Comments are for non-obvious invariants, units, coordinate-system conventions, or safety justifications.
-- Follow the **document hierarchy** (see root `CLAUDE.md`): gameplay-facing concepts go in the manual (`shadow_scale_strategy_game_concept_technical_plan_v_0.md`) first; implementation details go in the owning subsystem's `CLAUDE.md` (`core_sim/CLAUDE.md`, `clients/godot_thin_client/CLAUDE.md`); cross-system concerns go in `docs/architecture.md`; concrete work goes in `TASKS.md`. Flag PRs that add a new subsystem/system/config without the corresponding doc update, and avoid duplicating implementation details across files (define once in the owning doc, cross-link with "See Also").
+- Follow the **document hierarchy** (see root `CLAUDE.md`): gameplay-facing concepts go in the manual (`shadow_scale_strategy_game_concept_technical_plan_v_0.md`) first; implementation details go in the owning subsystem's `CLAUDE.md` (`core_sim/CLAUDE.md`, `clients/godot_thin_client/CLAUDE.md`); cross-system concerns go in `docs/architecture.md`; concrete work goes in **GitHub Issues** (the Falcon Backlog project), never a file. Flag PRs that add a new subsystem/system/config without the corresponding doc update, and avoid duplicating implementation details across files (define once in the owning doc, cross-link with "See Also").
 
 ## 3. FlatBuffers Schema & Generated Bindings
 

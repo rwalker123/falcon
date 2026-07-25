@@ -1,6 +1,6 @@
 # Flora Roster & Ecology — Named Plants, and the Yield Vector They Carry
 
-**Status:** design. Opens the flora content arc (`TASKS.md` → *Flora Roster & Ecology*), the plant
+**Status:** design. Opens the flora content arc (issue #202, *Flora Roster & Ecology*), the plant
 twin of the shipped fauna roster.
 
 **Rests on:** `docs/plan_grazing_foundation.md` (the two food webs, and the two per-biome capacity
@@ -645,4 +645,4 @@ ui_preview that two tiles of the same biome show different baskets.
 - `docs/plan_grazing_2d.md` — the pen economy (`K_pen`, footprint, larder) fodder extends.
 - `shadow_scale_strategy_game_concept_technical_plan_v_0.md` §2a — the player-facing ladder
   vocabulary this roster speaks.
-- `TASKS.md` → *Fauna Roster* — the roster pattern this parallels.
+- The **Fauna Roster** arc (shipped) — the roster pattern this parallels.

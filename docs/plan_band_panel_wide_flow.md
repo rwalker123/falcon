@@ -2,7 +2,7 @@
 
 Status: implemented + preview-verified (branch `worktree-feat+band-panel-wide-flow`),
 pending live check + push/PR. Follow-up to the Band/City dock PR (#103), which shipped a
-bounded two-column wide layout as a stopgap. Tracked in `TASKS.md` → Client/UI.
+bounded two-column wide layout as a stopgap. Tracked in the [Falcon Backlog](https://github.com/users/rwalker123/projects/2) under `sys:client`.
 
 ## Problem
 
@@ -110,4 +110,4 @@ aliasing + foreign-selection bugs here); do not alter the labor logic.
 - `clients/godot_thin_client/CLAUDE.md` → "Band/City dockable panel" → "Responsive
   body": update to the section-block model (tall VBox stack vs wide manual
   balanced-column packing with fit-to-content height; `set_band_sections` contract).
-- `TASKS.md`: check off the multi-column-fill item.
+- Close the multi-column-fill issue in the backlog.

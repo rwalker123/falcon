@@ -316,7 +316,7 @@ All config, per the no-magic-numbers convention. The ones that decide whether th
   / 0.0125 / **2.40**. **This flat rate is a stopgap.** The intended model is the corral as a *managed
   population* — its yield a function of the animal count, which is in turn a function of the food you
   feed it each turn (upkeep), turning the pen from a one-off 25-turn build that prints food forever
-  into a sustained commitment with a running cost. Tracked in `TASKS.md` → **"Corral as a managed
+  into a sustained commitment with a running cost. Tracked as issue #187 → **"Corral as a managed
   population (food upkeep → herd size → yield)"**; the flat-rate model above is what that arc replaces.
   See also `core_sim/CLAUDE.md` → Fauna & Wild Game → Corral (Intensification Rung 1c).
 - Forage regrowth rate & carrying capacity (vs the herd equivalents); how literally Market/Eradicate

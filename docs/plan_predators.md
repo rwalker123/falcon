@@ -8,8 +8,8 @@ prey-seeking movement primitive that scouting expeditions later adopt.
 
 It supersedes and unifies two stub tasks that both pointed here:
 - **M1-threats — minimal predators** (`docs/plan_early_game_labor.md` → *Minimal predator
-  threat*; `TASKS.md` → Early-Game Labor). "Abstract pressure so Warrior is live."
-- **(Optional) Predators / threat fauna** (`TASKS.md` → Fauna Roster). "Wolves/big cats need the
+  threat*; issue #179 → Early-Game Labor). "Abstract pressure so Warrior is live."
+- **(Optional) Predators / threat fauna** (the Fauna Roster arc, shipped). "Wolves/big cats need the
   predator-pressure model, not a `SpeciesDef` alone."
 
 We do **not** build the throwaway abstract-pressure version. The herd/ecology/movement/snapshot
