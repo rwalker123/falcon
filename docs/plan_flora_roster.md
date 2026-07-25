@@ -508,9 +508,11 @@ block carries its weight, then mass-fill.**
   above their table starting rates because their best realized share caps ~0.5 against the dominant
   incumbents (reed/berry/shellfish/date_palm/pine_nut). grapevine's AlluvialPlain weight is 0.10 (not
   the spec's 0.15) so it is a *unique* minimum-weight there — a tie with wild_rice broke the
-  realization aggregate-ordering guard. **Client follow-up remains:** per-species flora **icons**
-  (there is no per-species flora icon lookup yet — display names ship as plain text), labels, and the
-  tile-card composition readout are the client-dev half of F5.
+  realization aggregate-ordering guard. **The tile-card "what grows here" composition readout ships
+  in this PR too** (one row per realized species + its share), so realization is visible on plain tile
+  inspection. **The one client follow-up that remains is per-species flora icons** (there is no
+  per-species flora icon lookup yet — display names ship as plain text and every basket row wears one
+  generic plant glyph), tracked separately (#339); labels and the readout are done.
 
 Each slice is independently shippable and independently measurable. F1 and F5 are content; F2–F4 are
 the ones that need a playtest.
