@@ -117,11 +117,7 @@ pub struct StartProfileOverrides {
     #[serde(default)]
     pub inventory: Vec<InventoryEntry>,
     #[serde(default)]
-    pub survey_radius: Option<u32>,
-    #[serde(default)]
     pub stockpile_access_radius: Option<u32>,
-    #[serde(default)]
-    pub fog_mode: Option<FogMode>,
     #[serde(default)]
     pub ai_profile_overrides: HashMap<String, Value>,
     #[serde(default)]
@@ -269,25 +265,6 @@ fn default_unit_count() -> u32 {
 pub struct InventoryEntry {
     pub item: String,
     pub quantity: i64,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum FogMode {
-    #[default]
-    Standard,
-    Revealed,
-    Shroud,
-}
-
-impl FogMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            FogMode::Standard => "standard",
-            FogMode::Revealed => "revealed",
-            FogMode::Shroud => "shroud",
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -619,11 +596,6 @@ impl CampaignProfileSnapshot {
             starting_units,
             inventory,
             knowledge_tags: self.overrides.starting_knowledge_tags.clone(),
-            survey_radius: self.overrides.survey_radius,
-            fog_mode: self
-                .overrides
-                .fog_mode
-                .map(|mode| mode.as_str().to_string()),
             primary_food_module: self
                 .overrides
                 .food_modules

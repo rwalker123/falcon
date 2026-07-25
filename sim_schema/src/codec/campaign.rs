@@ -193,10 +193,6 @@ fn create_campaign_profiles<'a>(
                 .collect();
             Some(builder.create_vector(&offsets))
         };
-        let fog_mode = profile
-            .fog_mode
-            .as_ref()
-            .map(|value| builder.create_string(value.as_str()));
         let primary_food_module = profile
             .primary_food_module
             .as_ref()
@@ -205,7 +201,6 @@ fn create_campaign_profiles<'a>(
             .secondary_food_module
             .as_ref()
             .map(|value| builder.create_string(value.as_str()));
-        let survey_radius = profile.survey_radius.unwrap_or(0);
         let entry = fb::CampaignProfile::create(
             builder,
             &fb::CampaignProfileArgs {
@@ -217,8 +212,6 @@ fn create_campaign_profiles<'a>(
                 startingUnits: starting_units,
                 inventory,
                 knowledgeTags: knowledge_tags,
-                surveyRadius: survey_radius,
-                fogMode: fog_mode,
                 primaryFoodModule: primary_food_module,
                 secondaryFoodModule: secondary_food_module,
             },

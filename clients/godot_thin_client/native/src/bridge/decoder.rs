@@ -106,11 +106,11 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if let Some(raster) = delta.governance().and_then(|s| s.corruptionRaster()) {
         agg.apply_corruption_raster(raster);
     }
-    if let Some(raster) = delta.vision().and_then(|s| s.fogRaster()) {
-        agg.apply_fog_raster(raster);
-    }
     if let Some(raster) = delta.vision().and_then(|s| s.visibilityRaster()) {
         agg.apply_visibility_raster(raster);
+    }
+    if let Some(vision) = delta.vision() {
+        agg.apply_fog_enabled(vision.fogEnabled());
     }
     if let Some(raster) = delta.culture().and_then(|s| s.cultureRaster()) {
         agg.apply_culture_raster(raster);

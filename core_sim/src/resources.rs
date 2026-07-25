@@ -15,7 +15,7 @@ use crate::{
     culture::CultureTensionRecord,
     orders::FactionId,
     scalar::{scalar_from_f32, Scalar},
-    start_profile::{FogMode, StartProfileOverrides},
+    start_profile::StartProfileOverrides,
     FoodModule, FoodSiteKind,
 };
 use bitflags::bitflags;
@@ -143,6 +143,11 @@ pub struct SimulationConfig {
     pub log_bind: SocketAddr,
     pub snapshot_history_limit: usize,
     pub crisis_auto_seed: bool,
+    /// Fog of war master switch — the SINGLE authority for it, and deliberately server-owned. It
+    /// gates both the herd display list (`herd_snapshot_entries`) and the visibility raster, so the
+    /// two cannot disagree; a client-local render flag could not do the first, because unseen herds
+    /// are already dropped from the payload. Not part of `WorldSnapshot`, so it survives a rollback.
+    pub fog_enabled: bool,
 }
 
 #[derive(Resource, Debug, Clone, Default)]
@@ -293,6 +298,10 @@ struct SimulationConfigData {
     snapshot_history_limit: usize,
     #[serde(default)]
     crisis_auto_seed: bool,
+    /// Defaulted through a function rather than `#[serde(default)]`, which would yield `false` for a
+    /// bool — fog of war is ON unless a config or the `set_fog` command says otherwise.
+    #[serde(default = "default_fog_enabled")]
+    fog_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -496,8 +505,13 @@ impl SimulationConfigData {
             log_bind: parse_socket(self.log_bind, "log_bind")?,
             snapshot_history_limit: self.snapshot_history_limit,
             crisis_auto_seed: self.crisis_auto_seed,
+            fog_enabled: self.fog_enabled,
         })
     }
+}
+
+fn default_fog_enabled() -> bool {
+    true
 }
 
 fn default_map_preset_id() -> String {
@@ -694,99 +708,22 @@ impl Default for CapabilityFlags {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct StartLocation {
     position: Option<UVec2>,
-    survey_radius: Option<u32>,
-    fog_mode: FogMode,
-}
-
-impl Default for StartLocation {
-    fn default() -> Self {
-        Self {
-            position: None,
-            survey_radius: None,
-            fog_mode: FogMode::Standard,
-        }
-    }
 }
 
 impl StartLocation {
     pub fn new(position: Option<UVec2>) -> Self {
-        Self {
-            position,
-            survey_radius: None,
-            fog_mode: FogMode::Standard,
-        }
-    }
-
-    pub fn from_profile(position: Option<UVec2>, overrides: &StartProfileOverrides) -> Self {
-        Self {
-            position,
-            survey_radius: overrides.survey_radius,
-            fog_mode: overrides.fog_mode.unwrap_or(FogMode::Standard),
-        }
+        Self { position }
     }
 
     pub fn position(&self) -> Option<UVec2> {
         self.position
     }
 
-    pub fn survey_radius(&self) -> Option<u32> {
-        self.survey_radius
-    }
-
-    pub fn fog_mode(&self) -> FogMode {
-        self.fog_mode
-    }
-
     pub fn relocate(&mut self, position: UVec2) {
         self.position = Some(position);
-    }
-
-    pub fn set_survey_radius(&mut self, radius: Option<u32>) {
-        self.survey_radius = radius;
-    }
-
-    pub fn set_fog_mode(&mut self, mode: FogMode) {
-        self.fog_mode = mode;
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FogReveal {
-    pub center: UVec2,
-    pub radius: u32,
-    pub expires_at: u64,
-}
-
-#[derive(Resource, Debug, Clone, Default)]
-pub struct FogRevealLedger {
-    reveals: Vec<FogReveal>,
-}
-
-impl FogRevealLedger {
-    pub fn queue(&mut self, center: UVec2, radius: u32, expires_at: u64) {
-        let radius = radius.max(1);
-        self.reveals.push(FogReveal {
-            center,
-            radius,
-            expires_at,
-        });
-    }
-
-    pub fn iter_active(&self, tick: u64) -> impl Iterator<Item = &FogReveal> {
-        self.reveals
-            .iter()
-            .filter(move |reveal| reveal.expires_at >= tick)
-    }
-
-    pub fn prune_expired(&mut self, tick: u64) {
-        self.reveals.retain(|reveal| reveal.expires_at >= tick);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.reveals.is_empty()
     }
 }
 

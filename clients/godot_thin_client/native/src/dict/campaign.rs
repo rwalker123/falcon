@@ -62,15 +62,6 @@ pub(crate) fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> VarD
             let _ = dict.insert("knowledge_tags", &tag_array);
         }
     }
-    let radius = profile.surveyRadius();
-    if radius > 0 {
-        let _ = dict.insert("survey_radius", radius as i64);
-    }
-    if let Some(mode) = profile.fogMode() {
-        if !mode.is_empty() {
-            let _ = dict.insert("fog_mode", mode);
-        }
-    }
     if let Some(primary) = profile.primaryFoodModule() {
         if !primary.is_empty() {
             let _ = dict.insert("primary_food_module", primary);

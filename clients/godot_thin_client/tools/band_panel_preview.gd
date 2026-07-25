@@ -1606,7 +1606,12 @@ func _cap_demo_band_fixture() -> Dictionary:
 
 ## The MapView snapshot behind `band_panel_people_map_path` — the SAME `_band_fixture()` cohort the
 ## snapshot-path state uses, on a flat grid just big enough to hold its hex, so the marker MapView
-## builds carries exactly the age structure the panel is judged on. FoW is off in a fresh MapView.
+## builds carries exactly the age structure the panel is judged on. **Fog cannot redact it, and not
+## because fog is off** — a fresh MapView now defaults to fog ON. `_rebuild_unit_markers` builds the
+## marker list unfiltered (the fog gate is `_unit_hidden_by_fog` at DRAW time, and it exempts your
+## OWN bands), and this fixture's band is faction 0. So this state reads the marker, never a
+## fog-gated `tile_info` — unlike `ui_preview`'s `tile_panel_land_sticky`, which must disable FoW
+## explicitly. Verified by A/B: flipping the default moves no frame here.
 func _map_path_snapshot() -> Dictionary:
 	var terrain: Array = []
 	terrain.resize(MAP_PATH_GRID_W * MAP_PATH_GRID_H)

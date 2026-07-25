@@ -22,12 +22,12 @@ use core_sim::{
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
     spawn_initial_world, BandTravel, CommandEventLog, CultureManager, DiscoveryProgressLedger,
     Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, FogRevealLedger, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, FollowPolicy, ForageRegistry,
+    GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
     VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
 };
@@ -108,7 +108,6 @@ fn spawn_world() -> App {
         .insert_resource(VisibilityConfigHandle::new(VisibilityConfig::builtin()));
     app.world.insert_resource(VisibilityLedger::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
     app

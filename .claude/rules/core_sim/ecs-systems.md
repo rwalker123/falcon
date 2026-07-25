@@ -3,6 +3,7 @@ paths:
   - "core_sim/src/{power,crisis,crisis_config,culture,culture_corruption_config}.rs"
   - "core_sim/src/{knowledge_ledger,espionage,great_discovery,influencers}.rs"
   - "core_sim/src/{visibility,visibility_systems,visibility_config}.rs"
+  - "core_sim/src/snapshot/{vision,subsistence}.rs"
   - "core_sim/src/systems/power.rs"
   - "core_sim/tests/capability_gating.rs"
 ---
@@ -52,6 +53,33 @@ Constellation-level leaps from overlapping discoveries.
 **Registry**: `GreatDiscoveryRegistry` loads from `great_discovery_definitions.json`. Fields: `id`, `field`, `requirements`, observation gate, cooldown, effect flags.
 
 ### Visibility Systems (Fog of War)
+
+> **Fog of war is the ONLY fog concept in this repo.** There used to be a second, unrelated one —
+> `FogMode` / `fogRaster`, the selectable "Fog of Knowledge" *data* overlay — and it is gone
+> (`fogMode` and `fogRaster` survive only as `(deprecated)` FlatBuffers slots, since a vtable slot is
+> positional). Its orphans went with it: `FogRevealLedger` / `FogReveal`, `decay_fog_reveals`,
+> `FogOverlayConfig`, `StartProfileOverrides::fog_mode`, and `survey_radius` (the start-marker reveal
+> radius, which only ever fed that overlay's reveal circle — a band's sight is decided entirely by
+> `calculate_visibility`). A grep for "fog" now means fog of war in every case *except* those two
+> deprecated schema lines.
+
+**The master switch is server-owned: `SimulationConfig::fog_enabled` (default `true`).** It is the
+single authority, and it gates BOTH halves so they cannot disagree:
+- `visibility_raster_from_ledger` (`snapshot/vision.rs`) returns an all-`Active` raster when it is
+  off, *before* consulting the ledger — so a viewer with no faction map still sees everything.
+- `HerdSnapshotInputs::herd_is_visible` (`snapshot/subsistence.rs`) stops filtering when it is off.
+
+It has to live on the server because unseen herds are dropped from the payload **before it is
+encoded** — a client-local render flag can dim tiles but can never put back an entity the sim never
+sent. The client is told the state via `VisionSection.fogEnabled` (published on every snapshot and
+every delta, never diffed, because the schema default is `true` and an omitted value would silently
+re-enable fog one delta after it was turned off) and renders what it is told.
+
+Toggled by the `set_fog <on|off>` command (alias `fog`), which mutates the resource; the server's
+post-command `recapture_and_broadcast` makes it visible on the same round trip. `SimulationConfig` is
+deliberately **not** rollback state — `restore_world_from_snapshot` does not re-insert it — so the
+setting survives a rewind, which is correct for a display preference.
+
 Per-faction visibility tracking with three states: `Unexplored` (never seen), `Discovered` (previously seen), `Active` (currently visible).
 
 **Files**: `visibility.rs` (state + ledger), `visibility_systems.rs` (ECS systems), `visibility_config.rs` (config loading)

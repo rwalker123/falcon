@@ -312,6 +312,14 @@ verbs — a free-form `species` string means new species need no schema change).
 > - **Per-faction snapshots are still a future arc.** The capture has ONE `ViewerFaction`, so this
 >   closes the leak for the single-viewer stream the game ships today; true competitive MP needs a
 >   per-faction capture.
+> - **Turning fog OFF is the only way to reveal hidden fauna, and only the server can do it.**
+>   `herd_is_visible` returns `true` unconditionally when `SimulationConfig::fog_enabled` is `false`
+>   (set by the `set_fog <on|off>` command). This has to be server-side precisely *because* the filter
+>   runs before encoding: a client render flag cannot restore an entity that never crossed the socket.
+>   The visibility raster reads the same flag in the same capture, so the herd list and the shading
+>   still agree by construction. Fog of war is now the ONLY fog concept — the "Fog of Knowledge"
+>   overlay and the `FogRevealLedger` tracking pulse that follow-herd used to grant are both deleted.
+>   See `.claude/rules/core_sim/ecs-systems.md` → Visibility Systems for the switch's full contract.
 >
 > Guarded by `core_sim/src/snapshot/mod.rs` unit tests (unseen / owned-in-the-dark / empty-ledger /
 > heading suppression) and `integration_tests/tests/fauna_fog.rs`, which asserts on the **encoded
@@ -334,10 +342,13 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 (`FollowPolicy` ∈ Sustain | Surplus | Market | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component. The policy is a
-free string parsed via `FollowPolicy::from_str`, so a new policy needs no schema/proto change. Each
-turn it also grants a small non-food benefit — a `FogRevealLedger` tracking pulse
-(`follow.reveal_radius`/`reveal_duration_turns`) + `follow.morale_gain`. The old one-shot teleport
-follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
+free string parsed via `FollowPolicy::from_str`, so a new policy needs no schema/proto change. The
+old one-shot teleport follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is
+retired, as is the tracking pulse it used to grant: that fed the `FogRevealLedger`, which was
+deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (fog of war is
+`visibilityRaster` and is unaffected — see `docs/plan_exploration_and_sites.md`). The
+`follow.reveal_radius` / `reveal_duration_turns` / `morale_gain` keys in `fauna_config.json` are
+**dead levers with no reader** — they predate that deletion and are pending removal.
 
 > #### The hunt policy axis: FOUR ASCENDING MULTIPLES OF MSY + a kill-credit bank (slice 8b)
 >

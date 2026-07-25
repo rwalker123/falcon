@@ -118,6 +118,8 @@ const SPEED_READOUT_FORMAT := "%.2f×"
 ## Meta key on each speed slider carrying its default, so "Restore defaults" resets it.
 const SPEED_DEFAULT_META := "speed_default"
 const SPEED_READOUT_META := "speed_readout"
+## Same default-in-meta pattern for the Options-pane boolean rows.
+const TOGGLE_DEFAULT_META := "toggle_default"
 
 # The masthead title tone — warm parchment, the one place the dark console admits a light accent
 # (mirrors the prototype's --parchment / #f2e6bf). Not in HudStyle because nothing else uses it.
@@ -148,6 +150,8 @@ var _nav_rows := {}   # id -> {row, item, hover}
 ## The Options-pane speed sliders (rebuilt each time the pane is opened), so
 ## "Restore defaults" can reset them to their per-slider `SPEED_DEFAULT_META` value.
 var _speed_sliders: Array = []
+## The Options-pane boolean rows, same lifetime and same reset contract as `_speed_sliders`.
+var _option_toggles: Array = []
 
 
 func set_mode(value: String) -> void:
@@ -522,6 +526,16 @@ func _build_saves_pane(title: String, eyebrow: String, is_save: bool) -> void:
 func _build_options_pane() -> void:
 	_add_pane_header("Options", "Client settings")
 	_speed_sliders.clear()
+	_option_toggles.clear()
+	# Fog of war is a SERVER setting, but this row writes only `ClientSettings` — MenuShell has no
+	# handle to Main/Inspector/CommandClient and must not grow one. `Main` listens on
+	# `ClientSettings.changed` and is the single place that sends `set_fog`, which is also why the
+	# row can sit in the LANDING menu with no server up: the preference just persists.
+	_pane_body.add_child(_make_toggle_row(
+		"Fog of war",
+		ClientSettings.fog_of_war_enabled,
+		ClientSettings.FOG_OF_WAR_DEFAULT,
+		ClientSettings.set_fog_of_war_enabled))
 	_pane_body.add_child(_make_speed_slider_row(
 		"Map pan speed",
 		ClientSettings.pan_speed_multiplier,
@@ -587,8 +601,36 @@ func _make_speed_slider_row(title: String, value: float, default_value: float, m
 	return col
 
 
+## One "title / checkbox" row for a boolean setting — the `_make_speed_slider_row` twin. Applies
+## live + persists via `on_changed` (a `ClientSettings.set_*` Callable); the button is kept in
+## `_option_toggles` (with its default in meta) so "Restore defaults" can reset it.
+func _make_toggle_row(title: String, value: bool, default_value: bool, on_changed: Callable) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SPEED_ROW_SEPARATION)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var title_label := Label.new()
+	title_label.text = title
+	title_label.add_theme_font_size_override("font_size", SPEED_ROW_TITLE_SIZE)
+	title_label.add_theme_color_override("font_color", HudStyle.INK)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title_label)
+
+	var toggle := CheckButton.new()
+	toggle.button_pressed = value
+	toggle.set_meta(TOGGLE_DEFAULT_META, default_value)
+	toggle.toggled.connect(func(pressed: bool) -> void:
+		on_changed.call(pressed))
+	row.add_child(toggle)
+
+	_option_toggles.append(toggle)
+	return row
+
+
 func _on_restore_defaults_pressed() -> void:
 	ClientSettings.restore_defaults()
+	for toggle in _option_toggles:
+		toggle.set_pressed_no_signal(bool(toggle.get_meta(TOGGLE_DEFAULT_META)))
 	for slider in _speed_sliders:
 		var default_value: float = slider.get_meta(SPEED_DEFAULT_META)
 		slider.set_value_no_signal(default_value)

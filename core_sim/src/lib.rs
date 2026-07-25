@@ -224,14 +224,14 @@ pub use sites_config::{
 };
 pub use snapshot_overlays_config::{
     load_snapshot_overlays_config_from_env, CorruptionOverlayConfig, CultureOverlayConfig,
-    FogOverlayConfig, MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    MilitaryOverlayConfig, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     SnapshotOverlaysConfigMetadata, BUILTIN_SNAPSHOT_OVERLAYS_CONFIG,
 };
 pub use start_profile::{
-    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, FogMode,
-    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
-    StartProfileKnowledgeTagsMetadata, StartProfileLookup, StartProfileOverrides,
-    StartProfilesHandle, StartProfilesMetadata, StartingUnitSpec,
+    resolve_active_profile, snapshot_profiles, ActiveStartProfile, CampaignLabel, StartProfile,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileKnowledgeTagsMetadata,
+    StartProfileLookup, StartProfileOverrides, StartProfilesHandle, StartProfilesMetadata,
+    StartingUnitSpec,
 };
 pub use supply::{balance_supply_networks, SupplyNetworkMembership};
 pub use supply_network_config::{
@@ -275,10 +275,10 @@ pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
     apply_port_base, apply_port_base_override, port_base_override, CapabilityFlags,
     CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
-    FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
-    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
-    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
+    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
+    HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns,
+    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
+    TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -570,7 +570,6 @@ pub fn build_headless_app() -> App {
         .insert_resource(HerdDensityMap::default())
         .insert_resource(ForageRegistry::default())
         .insert_resource(GrazeRegistry::default())
-        .insert_resource(FogRevealLedger::default())
         .insert_resource(CommandEventLog::default())
         .insert_resource(FoodSiteRegistry::default())
         .insert_resource(snapshot_history)
@@ -765,11 +764,7 @@ pub fn build_headless_app() -> App {
         .add_systems(Update, telling::telling_tick.in_set(TurnStage::Telling))
         .add_systems(
             Update,
-            (
-                systems::simulate_power,
-                systems::process_corruption,
-                systems::decay_fog_reveals,
-            )
+            (systems::simulate_power, systems::process_corruption)
                 .chain()
                 .in_set(TurnStage::Finalize)
                 .run_if(capability_enabled(

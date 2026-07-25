@@ -96,10 +96,9 @@ func _ready() -> void:
     #      never shown even under the loading overlay, and re-hides on a Main reload (restart).
     if inspector != null and inspector.has_method("set_panel_visible"):
         inspector.call("set_panel_visible", false)
-    #   2. Fog of War ON by default — set the flag (its initial value) and push it to MapView here so
-    #      it is active before the first snapshot; `F` still flips both in sync from this on state.
-    if map_view != null and map_view.has_method("set_fow_enabled"):
-        map_view.call("set_fow_enabled", _fow_active)
+    # (Fog of war is NOT seated here — it is server state now. `MapView._fow_enabled` starts on and
+    # is corrected by the first snapshot's `fog_enabled`; see _sync_fog_of_war.)
+    ClientSettings.changed.connect(_on_client_settings_changed)
 
     var ext: Resource = load("res://native/shadow_scale_godot.gdextension")
     if ext == null:
@@ -359,6 +358,7 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
         return
     var is_delta := _snapshot_is_delta(snapshot)
+    _sync_fog_of_war(snapshot, is_delta)
     _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics: Dictionary = {}
     if map_view != null and map_view.has_method("display_snapshot"):
@@ -812,16 +812,64 @@ func _toggle_command_feed_visibility() -> void:
     if hud.has_method("toggle_command_feed"):
         _hud_invoke("toggle_command_feed")
 
-# Fog of War is ON by default at startup (seated in _ready before the first world renders); the `F`
-# key flips this and MapView's state together, so the toggle still works from the on state.
-var _fow_active: bool = true
+# FOG OF WAR IS SERVER-AUTHORITATIVE. The sim owns `fog_enabled` on its config — it gates BOTH the
+# visibility raster and the herd display list, which is the point: with fog off the fauna the filter
+# used to drop are now genuinely sent, so the Fauna tab shows them without any client-side special
+# case. The client is therefore NOT an authority. One direction only:
+#
+#     preference (ClientSettings) → `set_fog` command → server → snapshot `fog_enabled` → render
+#
+# `F` and the Options checkbox are the SAME state because both write only the preference. The client
+# never flips its render flag on its own; it waits for the snapshot to say so. Nothing may write
+# `ClientSettings` FROM a snapshot — that would close the loop into an echo.
 
+# The last `fog_enabled` the server reported, or UNKNOWN before the first snapshot carries it. This
+# is the resend guard: a `set_fog` goes out only when the preference DISAGREES with it, so the
+# `ClientSettings.changed` handler and the per-snapshot reconcile can't ping-pong.
+const FOG_SERVER_STATE_UNKNOWN := -1
+const FOG_SERVER_STATE_OFF := 0
+const FOG_SERVER_STATE_ON := 1
+var _fog_server_state: int = FOG_SERVER_STATE_UNKNOWN
+
+## `F` — flip the PREFERENCE, nothing else. `_on_client_settings_changed` turns it into a command.
 func _toggle_fow_overlay() -> void:
-    if map_view == null:
+    ClientSettings.set_fog_of_war_enabled(not ClientSettings.fog_of_war_enabled)
+
+func _on_client_settings_changed() -> void:
+    _push_fog_preference()
+
+## Send `set_fog` iff the preference disagrees with the server's last reported state. Silent before
+## the first snapshot (nothing to disagree with) and silent with no connection — on the landing menu
+## the preference just persists, and the reconcile in `_sync_fog_of_war` sends it once a world loads.
+func _push_fog_preference() -> void:
+    var desired: bool = ClientSettings.fog_of_war_enabled
+    if _fog_server_state == FOG_SERVER_STATE_UNKNOWN:
         return
-    _fow_active = not _fow_active
-    if map_view.has_method("set_fow_enabled"):
-        map_view.call("set_fow_enabled", _fow_active)
+    if desired == (_fog_server_state == FOG_SERVER_STATE_ON):
+        return
+    _send_runtime_command(
+        "set_fog %s" % ("on" if desired else "off"),
+        "Fog of war %s." % ("enabled" if desired else "disabled")
+    )
+
+## Snapshot → render. The ONLY caller of `set_fow_enabled` in the live client (the offline
+## `tools/map_preview` and `tools/blend_probe` harnesses still drive it directly, which is why it
+## stays a public setter). A missing key means an older server: assume fog on.
+## Then RECONCILE: if the server disagrees with the persisted preference, send `set_fog` once. That
+## is what carries "I play with fog off" across `new_game` into a freshly generated world, and it is
+## idempotent — the next snapshot agrees and the guard above goes quiet.
+## The DELTA guard is defensive, not currently exercised: the native decoder resolves `fog_enabled`
+## from its own cached `Option` and so always emits the key. It is here because the failure mode if
+## that ever stops holding is nasty and silent — on a delta an absent key means "unchanged", not
+## "fog on", and taking the default there would strobe the fog back on every turn.
+func _sync_fog_of_war(snapshot: Dictionary, is_delta: bool) -> void:
+    if is_delta and not snapshot.has("fog_enabled"):
+        return
+    var enabled: bool = bool(snapshot.get("fog_enabled", true))
+    _fog_server_state = FOG_SERVER_STATE_ON if enabled else FOG_SERVER_STATE_OFF
+    if map_view != null and map_view.has_method("set_fow_enabled"):
+        map_view.call("set_fow_enabled", enabled)
+    _push_fog_preference()
 
 func _update_campaign_label(raw_value: Variant) -> void:
     var label_dict: Dictionary = {}

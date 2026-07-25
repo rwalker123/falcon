@@ -23,7 +23,6 @@ pub struct SnapshotOverlaysConfig {
     corruption: CorruptionOverlayConfig,
     culture: CultureOverlayConfig,
     military: MilitaryOverlayConfig,
-    fog: FogOverlayConfig,
     food: FoodOverlayConfig,
 }
 
@@ -59,10 +58,6 @@ impl SnapshotOverlaysConfig {
 
     pub fn military(&self) -> &MilitaryOverlayConfig {
         &self.military
-    }
-
-    pub fn fog(&self) -> &FogOverlayConfig {
-        &self.fog
     }
 
     pub fn food(&self) -> &FoodOverlayConfig {
@@ -246,26 +241,6 @@ impl Default for MilitaryOverlayConfig {
             presence_weight: 0.6,
             support_weight: 0.4,
             combined_clamp_max: 5.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct FogOverlayConfig {
-    global_local_blend: f32,
-}
-
-impl FogOverlayConfig {
-    pub fn global_local_blend(&self) -> Scalar {
-        scalar_from_f32(self.global_local_blend)
-    }
-}
-
-impl Default for FogOverlayConfig {
-    fn default() -> Self {
-        Self {
-            global_local_blend: 0.5,
         }
     }
 }

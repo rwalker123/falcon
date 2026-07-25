@@ -26,9 +26,6 @@
     "support_weight": 0.4,
     "combined_clamp_max": 5.0
   },
-  "fog": {
-    "global_local_blend": 0.5
-  },
   "food": {
     "max_total_sites": 90,
     "default_radius": 4,

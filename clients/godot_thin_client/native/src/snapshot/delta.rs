@@ -7,7 +7,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::HashMap;
 
 use crate::dict::fixed64_to_f32;
-use crate::snapshot::raster::{GridSize, OverlaySlices, TerrainSlices};
+use crate::snapshot::raster::{GridSize, OverlaySlices, TerrainSlices, FOG_ENABLED_WHEN_ABSENT};
 use crate::snapshot::snapshot_dict;
 
 #[derive(Clone, Default)]
@@ -25,6 +25,10 @@ pub(crate) struct DeltaAggregator {
     pub(crate) wrap_horizontal: bool,
     pub(crate) server_build: String,
     pub(crate) world_epoch: u32,
+    /// `VisionSection.fogEnabled` from the most recent delta that carried a vision section.
+    /// `Option` (like `climate_bands`) so "never seen one" stays distinct from "seen, and it is
+    /// false" — an absent section falls back to `FOG_ENABLED_WHEN_ABSENT`, not to `bool::default()`.
+    fog_enabled: Option<bool>,
     tile_updates: HashMap<(u32, u32), f32>,
     terrain_width: u32,
     terrain_height: u32,
@@ -39,9 +43,6 @@ pub(crate) struct DeltaAggregator {
     corruption_width: u32,
     corruption_height: u32,
     corruption_samples: Vec<f32>,
-    fog_width: u32,
-    fog_height: u32,
-    fog_samples: Vec<f32>,
     visibility_width: u32,
     visibility_height: u32,
     visibility_samples: Vec<f32>,
@@ -145,23 +146,6 @@ impl DeltaAggregator {
                     break;
                 }
                 self.corruption_samples[idx] = fixed64_to_f32(value);
-            }
-        }
-    }
-
-    pub(crate) fn apply_fog_raster(&mut self, raster: fb::ScalarRaster<'_>) {
-        self.fog_width = raster.width();
-        self.fog_height = raster.height();
-        let count = (self.fog_width as usize)
-            .saturating_mul(self.fog_height as usize)
-            .max(1);
-        self.fog_samples.resize(count, 0.0);
-        if let Some(samples) = raster.samples() {
-            for (idx, value) in samples.iter().enumerate() {
-                if idx >= count {
-                    break;
-                }
-                self.fog_samples[idx] = fixed64_to_f32(value);
             }
         }
     }
@@ -274,6 +258,10 @@ impl DeltaAggregator {
         }
     }
 
+    pub(crate) fn apply_fog_enabled(&mut self, enabled: bool) {
+        self.fog_enabled = Some(enabled);
+    }
+
     pub(crate) fn apply_climate_bands(&mut self, bands: fb::ClimateBands<'_>) {
         self.climate_bands = Some([
             bands.polarMaxTemp(),
@@ -321,12 +309,10 @@ impl DeltaAggregator {
             corruption_width,
             corruption_height,
             corruption_samples,
-            fog_width,
-            fog_height,
-            fog_samples,
             visibility_width,
             visibility_height,
             visibility_samples,
+            fog_enabled,
             culture_width,
             culture_height,
             culture_samples,
@@ -352,7 +338,6 @@ impl DeltaAggregator {
             .max(logistics_width)
             .max(sentiment_width)
             .max(corruption_width)
-            .max(fog_width)
             .max(visibility_width)
             .max(culture_width)
             .max(military_width)
@@ -364,7 +349,6 @@ impl DeltaAggregator {
             .max(logistics_height)
             .max(sentiment_height)
             .max(corruption_height)
-            .max(fog_height)
             .max(visibility_height)
             .max(culture_height)
             .max(military_height)
@@ -434,23 +418,6 @@ impl DeltaAggregator {
                     }
                     let dst_idx = (y as usize) * (final_width as usize) + x as usize;
                     corruption[dst_idx] = corruption_samples[src_idx];
-                }
-            }
-        }
-
-        let mut fog = vec![0.0f32; total];
-        if fog_width > 0 && fog_height > 0 && !fog_samples.is_empty() {
-            for y in 0..fog_height {
-                for x in 0..fog_width {
-                    let src_idx = (y as usize) * (fog_width as usize) + x as usize;
-                    if src_idx >= fog_samples.len() {
-                        break;
-                    }
-                    if x >= final_width || y >= final_height {
-                        continue;
-                    }
-                    let dst_idx = (y as usize) * (final_width as usize) + x as usize;
-                    fog[dst_idx] = fog_samples[src_idx];
                 }
             }
         }
@@ -579,13 +546,13 @@ impl DeltaAggregator {
                 logistics: &logistics,
                 sentiment: &sentiment,
                 corruption: &corruption,
-                fog: &fog,
                 culture: &culture,
                 military: &military,
                 crisis: &crisis,
                 elevation: &elevation,
                 elevation_sea_level,
                 climate_bands,
+                fog_enabled: fog_enabled.unwrap_or(FOG_ENABLED_WHEN_ABSENT),
                 moisture: &moisture,
                 visibility: &visibility,
                 // A delta carries only the tiles that CHANGED, so it can never assemble a whole

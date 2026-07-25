@@ -87,7 +87,6 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.knowledge_ledger, snapshot_b.knowledge_ledger);
     assert_eq!(snapshot_a.sentiment_raster, snapshot_b.sentiment_raster);
     assert_eq!(snapshot_a.corruption_raster, snapshot_b.corruption_raster);
-    assert_eq!(snapshot_a.fog_raster, snapshot_b.fog_raster);
     assert_eq!(snapshot_a.culture_raster, snapshot_b.culture_raster);
     assert_eq!(snapshot_a.military_raster, snapshot_b.military_raster);
     assert_eq!(snapshot_a.culture_layers, snapshot_b.culture_layers);

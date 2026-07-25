@@ -196,7 +196,7 @@ Mobile-tribe start emphasizing exploration, seasonal routes, and organic settlem
 - Energy: hearths/campfires; no engines; kilns once discovered.
 - Goal: grow knowledge, stabilize surplus, and let sedentarization emerge from conditions (or pursue a viable nomadic ascendancy).
 
-Implementation note: the prototype now reads this data from `core_sim/src/data/start_profiles.json`. The JSON entry for `late_forager_tribe` describes `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`, `ai_profile_overrides`, and `victory_modes_enabled`; the loader surfaces those values through `SimulationConfig.start_profile_overrides` so worldgen, fog, and scripted tutorials can branch on the scenario without touching code. Designers can clone/edit the JSON file to spin new profiles while keeping the user-facing copy aligned with this section.
+Implementation note: the prototype now reads this data from `core_sim/src/data/start_profiles.json`. The JSON entry for `late_forager_tribe` describes `starting_units`, `starting_knowledge_tags`, `inventory`, `ai_profile_overrides`, and `victory_modes_enabled`; the loader surfaces those values through `SimulationConfig.start_profile_overrides` so worldgen and scripted tutorials can branch on the scenario without touching code. Designers can clone/edit the JSON file to spin new profiles while keeping the user-facing copy aligned with this section.
 
 ### Alternative Start Profiles (Scenario-Selectable)
 - Early Agrarian City-States: stronger metallurgy baseline; denser settlement; accelerated logistics and conflict.
