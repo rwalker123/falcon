@@ -120,11 +120,10 @@ Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archety
 | `SIM_PORT_BASE` | Shift all four TCP listen ports to a fresh block so multiple checkouts/worktrees don't collide (`snapshot=base+0`, `command=base+1`, `snapshot_flat=base+2`, `log=base+3`; `base=41000` is the historical block). `scripts/run_stack.sh` derives a per-checkout base automatically and forwards the matching `STREAM_PORT`/`COMMAND_PORT`/`LOG_PORT` to the Godot client; `cargo xtask command …` still defaults to `127.0.0.1:41001`, so pass `--port <base+1>` when targeting a shifted server. **Setting this var also makes the base *explicit*, which disables the auto-bump.** |
 | `SIM_PORTS_FILE` | Full path (not a directory) of the ports handshake file, overriding the per-user default. Used by tests and by any launcher that wants the handshake somewhere specific. |
 
-Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted per-row.
-
-**Boot config loading is strict**: only an *absent default* path falls back to the builtin; a
-present-but-broken file, or a `*_CONFIG_PATH` naming a missing or broken one, is a boot panic. Why,
-and how to add a loader — see `.claude/rules/core_sim/config-loading.md`.
+Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted
+per-row. **A var naming a missing or broken file is a boot panic, never a silent fallback to the
+builtin** — if you are overriding a config, a typo in the path stops the server rather than quietly
+running different numbers.
 
 **Port allocation, the handshake file, and how the client discovers a bumped block** are one
 two-sided contract — see `.claude/rules/core_sim/ports.md`, which loads on `port_alloc.rs`,
