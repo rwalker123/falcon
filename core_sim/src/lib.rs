@@ -292,7 +292,10 @@ pub use systems::{
     output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
     TradeDiffusionEvent,
 };
-pub use systems::{apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf};
+pub use systems::{
+    apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf,
+    reconcile_food_modules,
+};
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
     BeatCatalogHandle, BeatCatalogMetadata, BeatChoice, BeatConfig, BeatConfigHandle,
@@ -631,6 +634,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
+                systems::reconcile_food_modules,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 spawn_initial_forage,

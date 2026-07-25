@@ -5,6 +5,7 @@ paths:
   - "core_sim/src/data/map_presets.json"
   - "core_sim/tests/{elevation_authority,climate_authority,hydrology_earthlike}.rs"
   - "core_sim/tests/{navigable_mouth_delta,alpine_headwaters,relief_sweep,lake_abundance}.rs"
+  - "core_sim/tests/food_module_reconcile.rs"
 ---
 
 <!-- Extracted verbatim from lines 112-1063 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -57,6 +58,37 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 11. **Resources** - Surface deposits biased by `TerrainDefinition.resource_bias`
 12. **Wildlife** - Seed herd spawners, migratory paths, `game_density` raster
 13. **Starting areas** - Place candidates respecting World Viability Contract
+
+> ### Anything DERIVED from terrain must be reconciled after the last stage that paints terrain
+>
+> The Startup chain paints terrain in five places (`spawn_initial_world` → `generate_hydrology` →
+> `apply_tag_budget_solver` → `apply_biome_palette_clamp` → `reconcile_coastal_shelf`), so a value
+> computed from `tile.terrain` **during** that chain is a snapshot of an intermediate map. There are
+> now two reconciliation passes at the end of the chain for exactly this reason, and a third derived
+> quantity would need a third.
+>
+> - `reconcile_coastal_shelf` — the shelf (see "Continental shelf width" below).
+> - **`reconcile_food_modules`** — the `FoodModuleTag`. `spawn_initial_world` stamped it once from
+>   `classify_food_module` on the pre-hydrology biome, and nothing re-read it, so a tile could publish
+>   a module describing terrain it no longer had. The player-visible failure (issue #330) was the
+>   *missing* case rather than the stale one: `spawn_initial_forage` seeds a `ForagePatch` only on
+>   tagged tiles, so a hydrology-stamped `RiverDelta` whose pre-hydrology biome classified to `None`
+>   got **no patch at all** and read "No forage" on the richest human ground on the map. Measured over
+>   the 6 census seeds: **1,582 tiles mismatched at 80×52** (1,551 stale + 31 untagged) and **2,395 at
+>   128×96** (2,357 + 38), concentrated in exactly the biomes hydrology and the solver stamp —
+>   AlluvialPlain, PeatHeath, RiverDelta, NavigableRiver, FreshwaterMarsh. The pass runs immediately
+>   after `reconcile_coastal_shelf` and immediately before the tag's consumers
+>   (`place_wondrous_sites`, `spawn_initial_forage`, `spawn_initial_graze`), re-runs the *same*
+>   `classify_food_module` over the final terrain, and inserts/retags/removes to match (an in-place
+>   retag keeps the tile's `seasonal_weight` — terrain authors only `module`/`kind`). It also
+>   relabels `FoodSiteRegistry` entries, which ride the wire as `foodModules`, and drops entries whose
+>   tile now classifies to `None` — but it deliberately **adds no new entries**: *which* tiles are
+>   curated is a spatial bucket/quota decision made once in `spawn_initial_world`, and re-running that
+>   curation here would move the map's start-site geography. Deterministic (row-major, no `HashMap`
+>   iteration, no RNG) and logged as `mapgen.food_modules.reconciled`. Guarded by
+>   `core_sim/tests/food_module_reconcile.rs`, which drives the real Startup chain via
+>   `build_headless_app` — both directions of the tag invariant, plus the symptom test *every
+>   `RiverDelta` has a `ForagePatch`*.
 
 ## Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `game_density: u8` (the square-8 hex `flow_dir` / `flow_accum` rasters are **deleted** — hydrology routes on the corner graph, see "Rivers")
