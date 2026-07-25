@@ -246,8 +246,8 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
         "F3 ships exactly one fodder crop (hay_grass)"
     );
     assert_eq!(
-        cash_crops, 4,
-        "F4 ships exactly four cash crops (cotton, flax, tobacco, tea)"
+        cash_crops, 5,
+        "F4's four cash crops (cotton, flax, tobacco, tea) + the F5 grapevine"
     );
     assert!(
         flora
@@ -403,8 +403,8 @@ fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
         .collect();
     assert_eq!(
         cash.len(),
-        4,
-        "F4 ships exactly four cash crops (cotton, flax, tobacco, tea)"
+        5,
+        "F4's four cash crops (cotton, flax, tobacco, tea) + the F5 grapevine"
     );
 
     for (key, def) in cash {
