@@ -22,7 +22,7 @@
 > who could break the invariant loads the rule anyway. Root `CLAUDE.md` → "The hub files are not
 > where rationale goes" has the long form.
 
-Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in order: materials → logistics → population → power → tick increment → snapshot capture.
+Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in `TurnStage` order (`src/lib.rs`): Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot.
 
 ## Quick Reference
 
