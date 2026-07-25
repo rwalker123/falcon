@@ -16,7 +16,16 @@
   },
   "births": {
     "birth_rate": 0.03,
-    "surplus_bonus": 0.5
+    "reserve": {
+      "bonus": 0.5,
+      "saturation_turns": 10.0
+    },
+    "trend": {
+      "surplus_gain": 0.25,
+      "surplus_saturation": 0.5,
+      "deficit_penalty": 0.75,
+      "deficit_saturation": 1.0
+    }
   },
   "maturation_rate": 0.05,
   "aging_rate": 0.025,
