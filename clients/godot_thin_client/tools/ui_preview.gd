@@ -15,6 +15,9 @@ const HUD_SCENE := preload("res://src/ui/HudLayer.tscn")
 ## Scratch prefs file for this harness — NEVER the player's `user://narrative.cfg`. See the
 ## prefs-isolation block in `_ready()` for the incident that made this non-negotiable.
 const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
+## Scratch DOCK prefs for the `BandCityPanel` this harness injects — NEVER the player's
+## `user://band_city_dock.cfg`. A second file because the panel keeps its own (edge / collapsed / tab).
+const PREVIEW_DOCK_PREFS_PATH := "user://ui_preview_dock_prefs.cfg"
 # Force-compile MapView here so the harness also acts as a full-context compile
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
@@ -27,6 +30,29 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## pointer line rather than the no-panel legacy fallback.
 const BAND_CITY_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
+# The canvas EVERY frame renders at. Pinned rather than set once, because `project.godot` opens the
+# window MAXIMIZED and the WM applies — and RE-applies — that asynchronously; see `_ensure_canvas`.
+const PREVIEW_CANVAS_SIZE := Vector2i(1500, 900)
+# How many frames `_ensure_canvas` / `_capture` keep re-asserting the pinned canvas while waiting for
+# the WM to honour it. Bounded so a WM that refuses to shrink the window fails loudly, never hangs.
+const CANVAS_PIN_MAX_FRAMES := 60
+# How many CONSECUTIVE frames the window must hold the pinned canvas in `_stabilize_canvas` before the
+# first state renders, and the bound on how long it waits for that. The maximize is applied — and
+# RE-applied — asynchronously, so "it is the right size once" is not the same as "it stays".
+const CANVAS_STABLE_FRAMES := 30
+const CANVAS_STABLE_MAX_FRAMES := 600
+# One manual step longer than any tween in the client, so `_settle`'s flush always reaches the end
+# state (and fires the finished-callback) in a single `custom_step`.
+const TWEEN_FLUSH_SECONDS := 3600.0
+# Phase to seed the turn orb's calm breath at, as a fraction of `TurnOrb.PULSE_PERIOD`. The breath is
+# `0.5 - 0.5 * cos(t)`, which is ZERO — its faintest, smallest instant — at phase 0, so freezing the
+# clock there would render the pulse at the bottom of its range in all ~180 frames. A quarter period
+# puts `cos` at 0, i.e. the breath's MIDPOINT, which is what an unfrozen frame averaged.
+const TURN_ORB_PULSE_MIDPOINT_FRACTION := 0.25
+# How far into the oral page-turn the live-arrival state drives its REAL tween before capturing, as a
+# fraction of the panel's own duration — a chosen mid-motion phase in place of "however many frames
+# the clock happened to give us". Must stay strictly inside (0, 1) to keep the tween RUNNING.
+const TELLING_LIVE_TURN_FRACTION := 0.4
 # The SECOND player band on the crowded hex (`_crowded_bands_fixture()[1]`, "Band Ash"). The Move
 # assertion selects it deliberately: the faction default is the FIRST band, so a Move wired to
 # anything but the list selection answers 301 instead.
@@ -148,7 +174,21 @@ const RIVER_MASK_TWO_CLASS := (
 var _hud: HudLayer
 
 func _ready() -> void:
-	get_window().size = Vector2i(1500, 900)
+	# FREEZE ANIMATION TIME — the same treatment `map_preview` and `blend_probe` carry, and taken for
+	# the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a HUD refactor
+	# changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise in
+	# 184 of 184 frames (the turn orb's calm breath animates in every frame there is).
+	#
+	# What survives phase 0 was CHECKED against the draw code, not assumed:
+	#   • the awaiting-expedition / targeting pulses (`0.5 + 0.5 * sin(t)` and `base + amp * sin(t)`)
+	#     are MapView's, and this harness's MapView is `visible = false` — data only;
+	#   • the turn orb's breath is `0.5 - 0.5 * cos(t)`, which DEGENERATES to its minimum at phase 0,
+	#     so its phase is seeded to the midpoint below rather than left at 0;
+	#   • the ONE tween in the whole client (TellingPanel's page turn) never advances at time_scale 0,
+	#     so `_settle` drives live tweens to their END state — see `_flush_tweens`.
+	# `_settle` waits on `process_frame`, which still fires at time_scale 0.
+	Engine.time_scale = 0.0
+	_pin_canvas(get_window())
 	DirAccess.make_dir_absolute(OUT_DIR)
 
 	# A mid-tone terrain-ish backdrop so the translucent card reads correctly.
@@ -169,6 +209,14 @@ func _ready() -> void:
 	# file and DELETE it, which is both the isolation and a genuine fresh profile.
 	NarrativeForkPanel.config_path_override = PREVIEW_PREFS_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_PREFS_PATH))
+	# THE SECOND prefs file, for the same two reasons `band_panel_preview` isolates it. `tile_panel_band`
+	# injects a real `BandCityPanel`, which READS its dock/collapse/TAB prefs on construction and WRITES
+	# them back when the harness docks it — so without this the harness was editing the developer's
+	# `user://band_city_dock.cfg` (found holding this harness's `edge=2` / `tab="band"`), AND the frame it
+	# renders depended on whatever tab the previous run left behind: the panel's zone was measured
+	# rendering `work` in one run and `band` in the next, off nothing but that leftover file.
+	BandCityPanel.config_path_override = PREVIEW_DOCK_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_DOCK_PREFS_PATH))
 	# The Telling panel restores its collapsed state in its constructor, so pin it expanded BEFORE
 	# the HUD instantiates (into the scratch file, now that the override is set).
 	TellingPanel.save_collapsed(false)
@@ -177,7 +225,16 @@ func _ready() -> void:
 	add_child(_hud)
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# Hold the canvas until the WM stops fighting it — before the first state, so no LATER settle has
+	# to spend a frame on it. See `_stabilize_canvas`.
+	await _stabilize_canvas()
 	Input.warp_mouse(MOUSE_PARK_POSITION)
+
+	# Seed the turn orb's calm breath at its MIDPOINT. `_pulse_time` only ever advances by `delta`,
+	# which is 0 with the clock frozen, so whatever is set here is the phase every frame renders at —
+	# and phase 0 is the breath's trough (alpha 0.30 / radius 44 of a 0.30..0.85 / 44..47 range), i.e.
+	# a deterministic frame whose subject has faded to its faintest. Set once; nothing resets it.
+	_hud.turn_orb._pulse_time = TurnOrb.PULSE_PERIOD * TURN_ORB_PULSE_MIDPOINT_FRACTION
 
 	# The Tile-card Climate band is driven by the sim's PUBLISHED cut points, which the live
 	# client adopts from the snapshot's overlays (MapSection.climateBands) via MapView. This
@@ -2093,6 +2150,11 @@ func _ready() -> void:
 	tile_panel_band_panel.reservation_changed.connect(func(edge: int, size: float):
 		_hud.set_reserved_inset(&"band_panel", edge, size))
 	tile_panel_band_panel.set_dock(SIDE_RIGHT)
+	# The panel's narrow shell shows ONE zone, and its prefs are a fresh profile (see the isolation
+	# block in `_ready`), so it opens on `DEFAULT_TAB` = work. This frame is about where the band
+	# DETAIL went, so ask for the band zone — the same rule `band_panel_preview` carries. It used to
+	# come up on `band` only because a previous run had written that tab into the PLAYER's prefs file.
+	tile_panel_band_panel.set_active_tab(BandCityPanel.ZONE_BAND)
 	_hud.set_band_city_panel(tile_panel_band_panel)
 	# THREE player bands on this hex, and the faction default is the FIRST one — so "the band the
 	# list has selected" and "the faction's default band" are DIFFERENT answers, which is the only
@@ -2559,12 +2621,16 @@ func _ready() -> void:
 	_hud._refit_right_dock()   # a refit in the same cycle must not kill the in-flight turn tween
 	_assert_hud("live oral beat-arrival creates a running page-turn tween",
 		_hud._telling.debug_turn_active())
-	# Let the REAL tween advance a few frames (0.42s oral dissolve, so a handful of frames stays mid-motion).
-	for _i in range(4):
-		await get_tree().process_frame
+	# Advance the REAL tween to a CHOSEN mid-motion phase. Animation time is frozen (see `_ready`), so
+	# awaiting frames here would advance it by exactly nothing and the state would capture the page
+	# BEFORE the turn — the one frame in the run whose subject the freeze could have erased. One
+	# `custom_step` of 40% of the oral dissolve keeps it genuinely in flight AND makes the phase a
+	# decision instead of whatever the clock handed us (which is what made this frame drift).
+	_step_tweens(TellingPanel.PAGE_TURN_DURATION_ORAL * TELLING_LIVE_TURN_FRACTION)
 	_assert_hud("live oral tween survives an in-cycle refit and is still running mid-motion",
 		_hud._telling.debug_turn_active())
-	await _settle()
+	# The one `_settle` that must NOT flush tweens: this frame IS the mid-turn render.
+	await _settle(false)
 	await _save("telling_live_oral_arrival")
 	_hud._telling.debug_end_turn()   # settle deterministically before the next state
 
@@ -2743,6 +2809,12 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_icons")
 
+	# The herd field-pair guard's verdict, ONE line for the whole run (each violation has already been
+	# push_error'd against the frame it rendered in). The scanned count is part of the claim: a guard
+	# that walked nothing would pass vacuously, and "0 herd dicts scanned" says so out loud.
+	_assert_hud("every herd fixture keeps the herders_needed pair consistent (%d herd dicts carrying it)"
+		% _herd_pair_scans, _herd_pair_violations == 0)
+
 	get_tree().quit()
 
 ## Victory progress shaped as `Hud._refresh_victory_status` consumes it: no winner declared yet and
@@ -2838,7 +2910,12 @@ func _telling_command_receipts() -> Array:
 		{"tick": 23, "kind": "site_discovered", "label": "Salt Pillar Reach", "detail": "Wondrous site at (31, 22)"},
 	]
 
-func _settle() -> void:
+## Settle the HUD for a capture. `finish_tweens = false` is for the ONE state that must capture a page
+## turn IN MOTION; it steps the tween itself so the phase is chosen rather than raced.
+func _settle(finish_tweens: bool = true) -> void:
+	await _ensure_canvas()
+	if finish_tweens:
+		_flush_tweens()
 	await get_tree().process_frame
 	# Force a synchronous frame rather than awaiting `RenderingServer.frame_post_draw`.
 	# Under the dummy rendering backend (which `--headless` selects on Godot 4.5) no
@@ -2847,13 +2924,110 @@ func _settle() -> void:
 	RenderingServer.force_draw()
 	await get_tree().process_frame
 
+## Drive every live tween to its END state. THIS IS WHAT MAKES THE TIME FREEZE SAFE: a shader's `TIME`
+## still evaluates at phase 0, but a Tween at `time_scale = 0` never advances AT ALL, so a page turn
+## would be pinned at `progress = 0` — the OUTGOING page fully opaque and the incoming one at alpha 0,
+## i.e. a frame that renders the page BEFORE the turn it exists to show. Stepping past the duration
+## also fires the finished-callback, so the panel's own `_end_turn` settle runs exactly as it does live.
+func _flush_tweens() -> void:
+	for tween in get_tree().get_processed_tweens():
+		if tween.is_valid() and tween.is_running():
+			tween.custom_step(TWEEN_FLUSH_SECONDS)
+
+## Advance every live tween by a FIXED slice — a deliberately chosen mid-motion phase, for the state
+## that captures a page turn in flight. Deterministic because the clock contributes nothing.
+func _step_tweens(seconds: float) -> void:
+	for tween in get_tree().get_processed_tweens():
+		if tween.is_valid() and tween.is_running():
+			tween.custom_step(seconds)
+
+## Hold the window at the pinned canvas. Deliberately does NOT touch `content_scale_size` /
+## `content_scale_factor` (the same call `map_preview` makes): `project.godot` stretches `canvas_items`
+## with an `expand` aspect, so pinning those would re-project every frame — a mass pixel change, not a
+## race fix. The race is a window mode/size problem.
+func _pin_canvas(win: Window) -> void:
+	win.mode = Window.MODE_WINDOWED
+	win.size = PREVIEW_CANVAS_SIZE
+
+## Hold the window at the pinned canvas and WAIT for the WM to honour it, before anything is captured.
+## `project.godot` opens MAXIMIZED and macOS applies — and RE-applies — that asynchronously, many
+## frames in, so the bare `get_window().size = …` this harness used to do in `_ready` was a RACE that
+## did not stay won. Measured on two clean runs of identical code: one came back with 177 of its 184
+## frames at the monitor's 5120x1410 instead of the intended 1500x900 while the other rendered all 184
+## at 1500x900 — so the two runs disagreed on the HUD's LAYOUT, not merely its pixels, and most frames
+## were being judged at a width the HUD never ships at.
+func _ensure_canvas() -> void:
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		if get_window().size == PREVIEW_CANVAS_SIZE and get_window().mode == Window.MODE_WINDOWED:
+			return
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+
+## Settle the window ONCE, in `_ready`, before any state renders — and take the maximize DELIBERATELY
+## on the way, which is what closes the last of the drift.
+##
+## `project.godot` opens the window MAXIMIZED and macOS applies that asynchronously, so whether a run
+## ever passed through the monitor-sized window was a COIN FLIP — and it is a coin flip the pixels
+## remember. Measured over four runs with the clock already frozen and the canvas pinned: runs that
+## never maximized and runs that did formed two byte-DISTINCT clusters, differing by ±1 on the
+## antialiased edges of ~85 frames (`window/stretch` is `canvas_items` with an `expand` aspect, so the
+## stretch scale swings 0.78 → 2.67 → 0.78 across a maximize and the rasterized-glyph/coverage state
+## does not come back bit-identical). Dodging the maximize is not available — a late one still landed
+## mid-run after 30 stable frames — so ASK for it, then undo it: every run now takes the same path.
+## Four consecutive runs came back 184/184 byte-identical, with zero mid-run re-pins.
+func _stabilize_canvas() -> void:
+	get_window().mode = Window.MODE_MAXIMIZED
+	for _i in range(CANVAS_STABLE_MAX_FRAMES):
+		if get_window().size != PREVIEW_CANVAS_SIZE:
+			break
+		await get_tree().process_frame
+	# Restore and HOLD: the maximize is re-applied asynchronously, so "the right size once" is not the
+	# same as "it stays" — wait for CANVAS_STABLE_FRAMES consecutive good frames. After this every
+	# `_ensure_canvas` returns without awaiting, so each state gets the same number of layout passes.
+	var stable := 0
+	for _i in range(CANVAS_STABLE_MAX_FRAMES):
+		if get_window().size == PREVIEW_CANVAS_SIZE and get_window().mode == Window.MODE_WINDOWED:
+			stable += 1
+			if stable >= CANVAS_STABLE_FRAMES:
+				return
+		else:
+			stable = 0
+			_pin_canvas(get_window())
+		await get_tree().process_frame
+	push_error("ui_preview: the window never held the pinned %s canvas — frames will drift" % PREVIEW_CANVAS_SIZE)
+
+## The viewport image, GUARANTEED to be the pinned canvas (or an integer HiDPI multiple of it). The
+## WM's deferred maximize can resize the render target between a settle and a capture, so re-pin and
+## re-draw until the geometry is the canvas's, then give up loudly rather than save a bad frame. With
+## `content_scale_*` deliberately unpinned the captured image matches the WINDOW, not the viewport's
+## logical `expand` rect — so the guard measures against the window-sized canvas.
+func _capture(name: String) -> Image:
+	for _i in range(CANVAS_PIN_MAX_FRAMES):
+		var image := get_viewport().get_texture().get_image()
+		if image == null:
+			# No image to read back — the dummy renderer (i.e. someone ran this with
+			# `--headless`, which selects it on Godot 4.5). Capture is impossible, but
+			# the compile/scene gate still passed. Run WITHOUT `--headless` for PNGs.
+			push_warning("ui_preview: null image (dummy renderer?) — skipping %s.png; run without --headless to capture" % name)
+			return null
+		var w := image.get_width()
+		var h := image.get_height()
+		if w % PREVIEW_CANVAS_SIZE.x == 0 and h % PREVIEW_CANVAS_SIZE.y == 0 \
+				and w / PREVIEW_CANVAS_SIZE.x == h / PREVIEW_CANVAS_SIZE.y:
+			return image
+		_pin_canvas(get_window())
+		await get_tree().process_frame
+		RenderingServer.force_draw()
+		await get_tree().process_frame
+	push_error("ui_preview: viewport never came back to the pinned %s canvas for %s" % [PREVIEW_CANVAS_SIZE, name])
+	return null
+
 func _save(name: String) -> void:
-	var image := get_viewport().get_texture().get_image()
+	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
+	# it silently mis-renders rather than against nothing at all.
+	_guard_frame_herd_fields(name)
+	var image: Image = await _capture(name)
 	if image == null:
-		# No image to read back — the dummy renderer (i.e. someone ran this with
-		# `--headless`, which selects it on Godot 4.5). Capture is impossible, but
-		# the compile/scene gate still passed. Run WITHOUT `--headless` for PNGs.
-		push_warning("ui_preview: null image (dummy renderer?) — skipping %s.png; run without --headless to capture" % name)
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
@@ -2937,6 +3111,10 @@ func _compose_forage(tile_info: Dictionary) -> void:
 ## values survive into the render (still subject to the stepper's own cap clamp, as in the game).
 ## Omit both to render whatever the re-seed produces — which is what the raid states deliberately want.
 func _compose_herd(herd: Dictionary, count: int = COMPOSE_COUNT_UNSET, policy: String = "") -> void:
+	# The compose sheet is where the pair actually BITES (`_forecast_worker_cap`'s floor), and a herd
+	# can be composed without ever being the selected subject — so check the argument here too, not
+	# only through the per-frame scan in `_save`.
+	_guard_herd_fields(herd, "compose_herd")
 	_hud._drawercompose.open_herd_compose(herd)
 	if count == COMPOSE_COUNT_UNSET and policy == "":
 		return
@@ -3037,6 +3215,74 @@ func _assert_hud(label: String, ok: bool) -> void:
 		print("ui_preview: PASS hud — ", label)
 	else:
 		push_error("ui_preview: FAIL hud — %s" % label)
+
+# ---- the herd herders_needed FIELD-PAIR guard ---------------------------------------------------
+# The sim exports TWO herder counts per herd and the client reads DIFFERENT ones by rung, so a fixture
+# that sets only one is a silent lie rather than an error:
+#   • `herders_needed` — OWNERSHIP-GATED (`fauna::herd_herders_needed`): 0 unless the herd is
+#     corralled or owned. The extractive rungs' field, and what the drawer's "Herders A / N" row reads.
+#   • `herders_needed_if_managed` — ownership-INDEPENDENT (`fauna::would_be_herders_needed`): the crew
+#     the herd WOULD owe, 0 only for a species that can never be tamed. `DrawerComposeController`'s
+#     `_forecast_worker_cap` floor reads THIS one for the INVESTMENT rungs (Tame / Corral).
+# `_under_herded_corral_fixture` set only the first; the investment floor therefore read 0, the crew
+# cap collapsed to 1, and the frame rendered the exact opposite of the cap it documents — with nothing
+# logged anywhere, because both keys are optional and `get(…, 0)` is a legal answer.
+#
+# THE INVARIANT, from the sim, not from guesswork: `would_be_herders_needed` is identical to
+# `herd_herders_needed` except its gate, so the two agree on every herd EXCEPT a not-yet-owned tameable
+# one (where the gated field is 0 and the would-be crew is real — that is `_tame_worker_cap_herd_fixture`,
+# 0 and 10, deliberately). A herd whose gated count is `> 0` is by definition managed (corralled or
+# owned) and therefore tameable, so the ungated field takes the same branch:
+#     herders_needed > 0  ⇒  herders_needed_if_managed == herders_needed
+# and, in general, `herders_needed_if_managed >= herders_needed`. Pinned sim-side by
+# `core_sim/src/snapshot/mod.rs`'s would-be-crew export test (its three cases are exactly these).
+const HERDERS_NEEDED_KEY := "herders_needed"
+const HERDERS_NEEDED_IF_MANAGED_KEY := "herders_needed_if_managed"
+## Deep-scan bound. Fixtures are trees, but a bound turns a future self-referencing one into a stop
+## rather than an infinite walk.
+const HERD_SCAN_MAX_DEPTH := 8
+
+var _herd_pair_scans := 0
+var _herd_pair_violations := 0
+
+## Walk everything reachable from `subject` and check the pair on every dict that carries either half.
+## Deliberately a SCAN and not a per-fixture assertion: a guard you have to remember to call for each
+## new fixture is the same failure mode as remembering to set the second field.
+func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void:
+	if depth > HERD_SCAN_MAX_DEPTH:
+		return
+	if subject is Array:
+		for item in (subject as Array):
+			_guard_herd_fields(item, where, depth + 1)
+		return
+	if not (subject is Dictionary):
+		return
+	var dict: Dictionary = subject
+	if dict.has(HERDERS_NEEDED_KEY) or dict.has(HERDERS_NEEDED_IF_MANAGED_KEY):
+		_herd_pair_scans += 1
+		var needed := int(dict.get(HERDERS_NEEDED_KEY, 0))
+		var if_managed := int(dict.get(HERDERS_NEEDED_IF_MANAGED_KEY, 0))
+		if if_managed < needed:
+			_herd_pair_violations += 1
+			push_error(("ui_preview: FAIL herd fields — %s herd \"%s\" declares %s %d but %s %d. "
+				+ "The would-be crew can never be SMALLER than the ownership-gated one, and on a herd "
+				+ "with herders (i.e. a managed one) the sim exports them EQUAL — the investment rungs' "
+				+ "worker cap floors on the second field, so half-setting the pair silently caps the "
+				+ "crew at the take-side count.") % [where, String(dict.get("id", "?")),
+				HERDERS_NEEDED_KEY, needed, HERDERS_NEEDED_IF_MANAGED_KEY, if_managed])
+	for value in dict.values():
+		_guard_herd_fields(value, where, depth + 1)
+
+## Every herd dictionary the HUD is holding as this frame renders — the world list, the selected
+## subject and roster, the tile's occupants, and the bands (whose `tile_info` carries herds too).
+func _guard_frame_herd_fields(state: String) -> void:
+	_guard_herd_fields(_hud._band_labor._world_herds, state)
+	_guard_herd_fields(_hud._band_labor._player_band, state)
+	_guard_herd_fields(_hud._band_labor._player_bands, state)
+	_guard_herd_fields(_hud._band_labor._panel_band, state)
+	_guard_herd_fields(_hud._selection._selected_herd, state)
+	_guard_herd_fields(_hud._selection._roster_herds, state)
+	_guard_herd_fields(_hud._selection._selected_tile_info, state)
 
 ## A 4-digit turn — the widest the face has to hold, and the case a fixed font size would clip.
 const TURN_ORB_FOUR_DIGIT_TURN := 1200
@@ -4420,7 +4666,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["domestication"] = 0.9
-	fixture["herders_needed"] = 4
+	_set_managed_herders(fixture, 4)
 	fixture["herded_fraction"] = 0.4
 	return fixture
 
@@ -4434,9 +4680,18 @@ func _fully_herded_herd_fixture() -> Dictionary:
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	fixture["domestication"] = 0.98
-	fixture["herders_needed"] = 6
+	_set_managed_herders(fixture, 6)
 	fixture["herded_fraction"] = 1.0
 	return fixture
+
+## Set BOTH herder counts on a MANAGED herd fixture. The sim exports them EQUAL there (see the
+## field-pair guard above `_guard_herd_fields`), and setting them one at a time is precisely the
+## mistake the guard exists to catch — so managed fixtures set them together, through this.
+## A still-WILD but tameable herd is the one case where they differ and writes them by hand
+## (`_tame_worker_cap_herd_fixture`: gated 0, would-be 10).
+func _set_managed_herders(fixture: Dictionary, needed: int) -> void:
+	fixture[HERDERS_NEEDED_KEY] = needed
+	fixture[HERDERS_NEEDED_IF_MANAGED_KEY] = needed
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
 ## state swaps in its own list and must restore this one.
@@ -4889,13 +5144,13 @@ func _corral_ready_herd_fixture() -> Dictionary:
 ## `herders_needed 0`, so this floor is a no-op there.
 func _under_herded_corral_fixture() -> Dictionary:
 	var fixture := _corral_ready_herd_fixture()
-	fixture["herders_needed"] = UNDER_HERDED_CORRAL_HERDERS_NEEDED
 	# Corral is an INVESTMENT rung, and `_forecast_worker_cap`'s floor reads the ownership-INDEPENDENT
 	# `herders_needed_if_managed` for those (`herders_needed` is the extractive rungs' field). The sim
 	# exports the two EQUAL on an owned herd, which this one is — so a fixture setting only the first
 	# floors the cap at 0 and the frame silently renders "max 1 worker useful", the very cap it exists
-	# to disprove. It went unnoticed because the state used to compose Sustain by accident (#357).
-	fixture["herders_needed_if_managed"] = UNDER_HERDED_CORRAL_HERDERS_NEEDED
+	# to disprove. It went unnoticed because the state used to compose Sustain by accident (#357), and
+	# it is now caught by the field-pair guard rather than by a reader noticing the wrong number.
+	_set_managed_herders(fixture, UNDER_HERDED_CORRAL_HERDERS_NEEDED)
 	fixture["herded_fraction"] = 0.5
 	return fixture
 
