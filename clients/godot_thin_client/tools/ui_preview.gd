@@ -49,10 +49,21 @@ const MOUSE_PARK_POSITION := Vector2(750, 640)
 # The armed hunt party for the pre-launch forecast states (4 workers, matching the spec's worked
 # example: a 4-worker party fills in ~6 turns on a mammoth but ~54 on red deer).
 const HUNT_FORECAST_PARTY := 4
-# The dialed-in hunter count for the LOCAL hunt preview states. 6 hunters × 0.8 provisions = 4.8, well
-# above every policy ceiling here, so the HERD (not the hunters) is the binding constraint — which is
-# exactly the case where the per-turn yield preview earns its keep.
+# The dialed-in hunter count for the LOCAL hunt preview states — deliberately dialed PAST every
+# ceiling in them, so the stepper clamps it back to the sheet's own whole-animal carry cap exactly as
+# it would for the player (`LOCAL_HUNT_CAPPED_CREW`; these frames render 3 hunters, not 6). The point
+# survives the clamp: even the clamped crew out-carries every policy ceiling here, so the HERD (not
+# the hunters) is still the binding constraint — which is exactly the case where the per-turn yield
+# preview earns its keep.
 const LOCAL_HUNT_HUNTERS := 6
+## What the stepper actually renders once `LOCAL_HUNT_HUNTERS` is dialed in: the sheet's own
+## whole-animal carry cap ("max 3 workers useful here"), Red Deer food_per_animal 2.0 ÷ the band's
+## 0.8 per-worker carry = 3 carriers to haul one body. The dial is clamped to it exactly as it is
+## for the player, so this — not 6 — is what a guard on those frames can assert.
+const LOCAL_HUNT_CAPPED_CREW := 3
+## "no count dialed in" for `_compose_herd` — a real dial can be 0 (an unstaffed compose), so the
+## sentinel has to sit outside the valid range rather than reuse 0.
+const COMPOSE_COUNT_UNSET := -1
 # The crowded hex's staffed-wildlife-row state: the SAME herd worked both ways at once. Two distinct
 # counts so the row's meta can only read right if it SUMS them (4 + 6 = `10 🏹`) — a single shared
 # number would pass even if one source were dropped.
@@ -107,6 +118,12 @@ const BAND_DISCLOSURE_GROWTH_COLLAPSED := "growth:905"
 # state. `pen_fed_fraction` < 1 ⇒ the herd is shrinking.
 const PEN_UPKEEP_RED_DEER := 1.74
 const PEN_FED_STARVING := 0.40
+# The herder-deficit state's staffing PAIR (`herd_corral_under_herded`). The growing corral needs 2
+# herders every turn to hold its tameness while only 1 is staffed, and the two numbers must DISAGREE
+# for the deficit to render at all — so the fixture's `herders_needed`, the band's dialed-down hunt
+# assignment and the auto-max assertion all read them from here rather than repeating bare 1s and 2s.
+const UNDER_HERDED_CORRAL_HERDERS_NEEDED := 2
+const UNDER_HERDED_CORRAL_HERDERS_STAFFED := 1
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -1277,8 +1294,7 @@ func _ready() -> void:
 	# running cost rather than saying "before feed".
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_corral_ready_herd_fixture())
-	_hud._compose.set_hunt_policy("corral")
-	_compose_herd(_corral_ready_herd_fixture())
+	_compose_herd(_corral_ready_herd_fixture(), COMPOSE_COUNT_UNSET, "corral")
 	await _settle()
 	await _save("herd_corral")
 
@@ -1286,16 +1302,37 @@ func _ready() -> void:
 	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
 	# stepper's cap must be max(1, herders_needed 2) = 2, so the `+` reaches 2 and the maintenance crew is
 	# staffable (an under-herded corral is otherwise an unwinnable trap). The drawer's Herders row reads
-	# "1 / 2 — under-herded" and the tameness-slipping line names 2 — the SAME herders_needed the cap uses.
+	# "1 / 2 — under-herded" and the shed consequence line ("animals are drifting off. Staff all 2 herders
+	# to hold the herd." — NEVER the retired "tameness slipping" copy) names 2 — the SAME herders_needed
+	# the cap uses.
 	# Auto-max (a policy click arms the compose hunt autofill) fills the crew to the corrected cap of 2.
+	#
+	# THE STAFFING IS DIALED DOWN FOR THIS STATE ONLY. The drawer's "Herders A / N" row reads the band's
+	# ACTUAL hunt assignment on this herd (`assigned_herders_for`), and the reference band staffs 4 — which
+	# renders a FULLY-herded corral and hides the very shortfall the cap floor exists to fix. The row and
+	# the cap floor have to DISAGREE for the deficit to be visible, so this band staffs 1 against the herd's
+	# requirement of 2; `_band_fixture()` is restored immediately after the save, since `herd_corral_depleted`
+	# and every state downstream document the reference band's 4.
+	var under_herded_band := _band_fixture().duplicate(true)
+	for entry in under_herded_band["labor_assignments"]:
+		if entry is Dictionary and String((entry as Dictionary).get("kind", "")) == "hunt":
+			(entry as Dictionary)["workers"] = UNDER_HERDED_CORRAL_HERDERS_STAFFED
+	_hud._band_labor._player_band = under_herded_band
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_under_herded_corral_fixture())
-	_hud._compose.set_hunt_policy("corral")
-	_hud._compose.set_hunt_count(1)
+	# The three-line auto-max idiom (`herd_hunt_automax`): open once so the rung is composed, arm the
+	# one-shot, then re-open so it is consumed against the COMPOSED Corral. Arming before the first open
+	# spends the one-shot on the re-seeded rung instead, and dialing an explicit count would overwrite
+	# whatever auto-max produced — the frame must show auto-max REACHING the cap, not advertising it.
+	_compose_herd(_under_herded_corral_fixture(), COMPOSE_COUNT_UNSET, "corral")
 	_hud._compose.arm_hunt_autofill()
 	_compose_herd(_under_herded_corral_fixture())
 	await _settle()
 	await _save("herd_corral_under_herded")
+	_assert_hud("auto-max fills the corral crew to the herder-deficit cap of 2, proving it is reachable",
+		_hud._compose.hunt_count() == UNDER_HERDED_CORRAL_HERDERS_NEEDED)
+	# Restore the reference band (4 herders on game_deer_07) for everything downstream.
+	_hud._band_labor._player_band = _band_fixture()
 
 	# State 3d-corral-depleted — the SAME rung on a herd BELOW the pen's escapement point (K/2). The
 	# managed harvest takes only the biomass standing above that point, so the payoff is honestly
@@ -1303,8 +1340,7 @@ func _ready() -> void:
 	# amber with "⚠ Too depleted to pen", never suppress the zero as if it were missing data.
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_depleted_corral_herd_fixture())
-	_hud._compose.set_hunt_policy("corral")
-	_compose_herd(_depleted_corral_herd_fixture())
+	_compose_herd(_depleted_corral_herd_fixture(), COMPOSE_COUNT_UNSET, "corral")
 	await _settle()
 	await _save("herd_corral_depleted")
 
@@ -1324,8 +1360,7 @@ func _ready() -> void:
 	}])
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_taming_herd_fixture())
-	_hud._compose.set_hunt_policy("tame")
-	_compose_herd(_taming_herd_fixture())
+	_compose_herd(_taming_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
 	await _settle()
 	await _save("two_meter_split")
 	# THE HERD-SIDE BLAST-RADIUS GUARD. `HudWidgets.build_policy_picker` is SHARED with the hunt/expedition pickers,
@@ -1352,8 +1387,7 @@ func _ready() -> void:
 	# remedy (ease off — the opposite of "work harder").
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_taming_stalled_herd_fixture())
-	_hud._compose.set_hunt_policy("tame")
-	_compose_herd(_taming_stalled_herd_fixture())
+	_compose_herd(_taming_stalled_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
 	await _settle()
 	await _save("herd_tame_stalled")
 
@@ -1374,12 +1408,8 @@ func _ready() -> void:
 	_hud._band_labor._player_bands = [tame_cap_band]
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
-	# Open the sheet FIRST so the source is begun (a source-change re-seeds the policy from the herd's
-	# standing assignment, which would clobber our pick); THEN set Tame and rebuild against the same
-	# source, where source_changed is false and the policy sticks.
-	_compose_herd(_tame_worker_cap_herd_fixture())
-	_hud._compose.set_hunt_policy("tame")
-	_compose_herd(_tame_worker_cap_herd_fixture())
+	# Tame is DIALED IN through `_compose_herd`, which survives the source-change re-seed — see its doc.
+	_compose_herd(_tame_worker_cap_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
 	await _settle()
 	await _save("herd_tame_worker_cap")
 	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
@@ -1393,9 +1423,7 @@ func _ready() -> void:
 	# take-useful only (Sustain 1.50 ÷ 0.30 = 5), and the would-be crew (3) must NOT leak into it.
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
-	_compose_herd(_tame_worker_cap_herd_fixture())
-	_hud._compose.set_hunt_policy("sustain")
-	_compose_herd(_tame_worker_cap_herd_fixture())
+	_compose_herd(_tame_worker_cap_herd_fixture(), COMPOSE_COUNT_UNSET, "sustain")
 	await _settle()
 	await _save("herd_tame_worker_cap_sustain")
 	_assert_hud("Sustain caps on its own take-useful (max 7), floored at 0",
@@ -1408,14 +1436,15 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 
 	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
-	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle);
-	# the Hunters count is dialed up to 8 (< cap 12, so + stays enabled).
+	# (positional "Band 1" / "Band 2"). Default selection is the resolved band (Band 1, 12 idle).
+	# The Hunters count is dialed to 8 and CLAMPS to 7 with `+` disabled, because the binding cap here
+	# is USEFULNESS ("max 7 workers useful here"), not the band's 12 idle — the frame shows the stepper
+	# answering to the sheet's own ceiling while the picker's default selection resolves.
 	_hud._band_labor._player_bands = _two_player_bands()
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._compose.reset_hunt_source()   # force a fresh seed so the default selection = resolved band
 	_hud.show_herd_selection(_herd_fixture())
-	_hud._compose.set_hunt_count(8)
-	_compose_herd(_herd_fixture())
+	_compose_herd(_herd_fixture(), 8)
 	await _settle()
 	await _save("herd_band_picker")
 
@@ -1487,10 +1516,13 @@ func _ready() -> void:
 	#                    VIABLE. (The old bug re-derived the trip from the band's flow ceiling and scared
 	#                    the player off a perfectly good trip; only the sim's own row knows.)
 	#   3n never fills — a collapsing Wild Fowl flock: every cell is `turns_to_fill = 0` → red line +
-	#                    armed "Send Anyway — party returns empty" (the HERD has nothing left to give).
+	#                    the DISABLED "Herd too lean to raid" button, exactly as 3r below (the HERD has
+	#                    nothing left to give, and no party size can fix a herd with no surplus).
 	#   3o eradicate   — a healthy Red Deer on Eradicate: the sim marks the cell `delivers_food = false`
 	#                    → amber DENIAL line + "Send (delivers no food)". Intent, not failure.
-	# Never disabled, never a confirm dialog: the player can always send; this is a price tag, not a gate.
+	# WARNED, not BLOCKED — and never a confirm dialog: a slow raid, a long one and a denial mission are
+	# all real tradeoffs, so they read as a price tag and stay ENABLED. The ONE blocked case is 3n's, a
+	# herd with no surplus left: it would return empty at every party size, so there is no price to pay.
 	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	for state: Dictionary in _hunt_assign_forecast_states():
@@ -1498,9 +1530,8 @@ func _ready() -> void:
 		_hud._compose.reset_hunt_source()    # force a fresh seed (band = resolved, policy = the herd's current)
 		_hud._compose.set_hunt_band(-1)
 		_hud.show_herd_selection(far_herd)
-		_hud._compose.set_hunt_count(HUNT_FORECAST_PARTY)
-		_hud._compose.set_hunt_policy(String(state["policy"]))   # the policy-picker click, without the click
-		_compose_herd(far_herd)
+		# The policy-picker click, without the click.
+		_compose_herd(far_herd, HUNT_FORECAST_PARTY, String(state["policy"]))
 		await _settle()
 		await _save(String(state["name"]))
 
@@ -1557,8 +1588,7 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(boar)
-	_hud._compose.set_hunt_count(2)
-	_compose_herd(boar)
+	_compose_herd(boar, 2)
 	await _settle()
 	await _save("herd_hunt_raid_travel")
 	# Restore the far band (no move rate) for the remaining raid states.
@@ -1569,18 +1599,14 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(lean)
-	_hud._compose.set_hunt_count(HUNT_FORECAST_PARTY)
-	_compose_herd(lean)
+	_compose_herd(lean, HUNT_FORECAST_PARTY)
 	await _settle()
 	await _save("herd_hunt_no_surplus")
 
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(boar)
-	_hud._compose.set_hunt_count(2)
-	_compose_herd(boar)   # seeds sustain; key now = boar id
-	_hud._compose.set_hunt_policy("eradicate")
-	_compose_herd(boar)   # key unchanged → the eradicate policy sticks
+	_compose_herd(boar, 2, "eradicate")
 	await _settle()
 	await _save("herd_hunt_eradicate")
 	_hud._compose.set_hunt_policy("sustain")
@@ -1598,11 +1624,11 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(bison)
-	_hud._compose.set_hunt_count(3)
-	_hud._compose.set_hunt_policy("sustain")
-	_compose_herd(bison)
+	_compose_herd(bison, 3, "sustain")
 	await _settle()
 	await _save("herd_hunt_labor_bound")
+	_assert_hud("the labor-bound frame renders the 3-hunter crew idle labor caps it at",
+		_hud._compose.hunt_count() == 3)
 	#   3u Market — SAME herd + band, policy flipped: the plateau rises to 7 → "3 of 7 useful", proving the
 	#              ceiling tracks the selected policy. Key unchanged so the policy override sticks.
 	_hud._compose.set_hunt_policy("market")
@@ -1620,11 +1646,11 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(bison)
-	_hud._compose.set_hunt_count(2)
-	_hud._compose.set_hunt_policy("sustain")
-	_compose_herd(bison)
+	_compose_herd(bison, 2, "sustain")
 	await _settle()
 	await _save("herd_hunt_party_size_bound")
+	_assert_hud("the party-size-bound frame renders the 2-hunter crew the max party size caps it at",
+		_hud._compose.hunt_count() == 2)
 	# Restore the far band + sustain for the states that follow.
 	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
@@ -1633,7 +1659,10 @@ func _ready() -> void:
 	# States 3n–3o — the same panel's LOCAL branch (herd within hunt_reach). The preview line reads the
 	# crew's HONEST carry-aware delivered take in ANIMALS (delivered ÷ food_per_animal), not the
 	# unquantized food rate. Red Deer fpa 2.0, band per-worker 0.8, output 0.9; Sustain ceiling 0.30,
-	# Market 0.60. At 6 hunters the crew carries 2 whole deer/turn, so the flow ceiling binds:
+	# Market 0.60. `LOCAL_HUNT_HUNTERS` is dialed in, but the stepper clamps the crew to 3 carriers
+	# (`LOCAL_HUNT_CAPPED_CREW`) — and the clamp is immaterial to what these two frames show: a 3-hunter
+	# crew collects 2.16 food/turn and a 6-hunter one 4.32, both far above the ceilings below, so the
+	# HERD's flow ceiling is what binds and the quantized take is the same either way:
 	#   3n Sustain — delivered = min(0.30×0.9, …) = 0.27 → ≈0.14 Red Deer/turn · renewable (green).
 	#   3o Market  — delivered 0.54 > Sustain 0.27 → WARN-amber "⚠ ≈0.27 Red Deer/turn — overdraws the
 	#                herd" (the same ⚠ the allocation rows use). No waste (a whole deer is carryable).
@@ -1647,10 +1676,11 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(local_herd)
-	_hud._compose.set_hunt_count(LOCAL_HUNT_HUNTERS)
-	_compose_herd(local_herd)
+	_compose_herd(local_herd, LOCAL_HUNT_HUNTERS)
 	await _settle()
 	await _save("herd_hunt_local_sustain")
+	_assert_hud("the local-hunt frames render the dialed-in crew (capped), not the re-seeded 1",
+		_hud._compose.hunt_count() == LOCAL_HUNT_CAPPED_CREW)
 
 	# Flip the policy picker to Market — the same click path the player takes; the preview line
 	# re-computes live off the new ceiling.
@@ -1667,11 +1697,9 @@ func _ready() -> void:
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
-	_hud._compose.set_hunt_policy("sustain")
 	var aurochs := _aurochs_big_game_fixture()
 	_hud.show_herd_selection(aurochs)
-	_hud._compose.set_hunt_count(1)
-	_compose_herd(aurochs)
+	_compose_herd(aurochs, 1, "sustain")
 	await _settle()
 	await _save("herd_hunt_whole_animal_cap")
 
@@ -1694,10 +1722,8 @@ func _ready() -> void:
 	var oracle_clean := _delivered_oracle_herd()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
-	_hud._compose.set_hunt_policy("sustain")
 	_hud.show_herd_selection(oracle_clean)
-	_hud._compose.set_hunt_count(2)
-	_compose_herd(oracle_clean)
+	_compose_herd(oracle_clean, 2, "sustain")
 	await _settle()
 	await _save("herd_hunt_delivered_clean")
 
@@ -1706,10 +1732,8 @@ func _ready() -> void:
 	var oracle_waste := _delivered_oracle_herd()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
-	_hud._compose.set_hunt_policy("sustain")
 	_hud.show_herd_selection(oracle_waste)
-	_hud._compose.set_hunt_count(1)
-	_compose_herd(oracle_waste)
+	_compose_herd(oracle_waste, 1, "sustain")
 	await _settle()
 	await _save("herd_hunt_delivered_waste")
 
@@ -1719,10 +1743,8 @@ func _ready() -> void:
 	var oracle_automax := _delivered_oracle_herd()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
-	_hud._compose.set_hunt_policy("sustain")
 	_hud.show_herd_selection(oracle_automax)
-	_hud._compose.set_hunt_count(1)
-	_compose_herd(oracle_automax)
+	_compose_herd(oracle_automax, 1, "sustain")
 	_hud._compose.arm_hunt_autofill()
 	_compose_herd(oracle_automax)
 	await _settle()
@@ -1734,10 +1756,8 @@ func _ready() -> void:
 	var window_herd := _big_game_window_herd()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
-	_hud._compose.set_hunt_policy("sustain")
 	_hud.show_herd_selection(window_herd)
-	_hud._compose.set_hunt_count(1)
-	_compose_herd(window_herd)
+	_compose_herd(window_herd, 1, "sustain")
 	_hud._compose.arm_hunt_autofill()
 	_compose_herd(window_herd)
 	await _settle()
@@ -2625,10 +2645,8 @@ func _ready() -> void:
 	picker_herd["tile_info"] = _compact_herd_tile_fixture()
 	_hud._band_labor._player_band = _band_fixture()
 	_hud._compose.reset_hunt_source()
-	_hud._compose.set_hunt_policy("sustain")
-	_hud._compose.set_hunt_count(3)
 	_hud.show_herd_selection(picker_herd)
-	_compose_herd(picker_herd)
+	_compose_herd(picker_herd, 3, "sustain")
 	await _settle()
 	await _save("hunt_picker_ascending")
 
@@ -2908,7 +2926,24 @@ func _stance_axes_fixture() -> Array:
 func _compose_forage(tile_info: Dictionary) -> void:
 	_hud._drawercompose.open_forage_compose(tile_info)
 
-func _compose_herd(herd: Dictionary) -> void:
+## Open the herd compose sheet, optionally DIALING IN a count and/or policy.
+##
+## `count` / `policy` are applied AFTER the first open, and that ordering is the whole point:
+## opening the compose on a DIFFERENT herd re-seeds both off the band's standing staffing
+## (`DrawerComposeController._build_herd_assign_controls`'s `source_changed` branch → `seed_hunt`),
+## so a `set_hunt_count`/`set_hunt_policy` made BEFORE the first open is silently thrown away —
+## the bug that rendered the documented 6-hunter local-hunt frames with 1 hunter (#357). The
+## second open re-renders with `hunt_key` unchanged, so `source_changed` is false and the dialed
+## values survive into the render (still subject to the stepper's own cap clamp, as in the game).
+## Omit both to render whatever the re-seed produces — which is what the raid states deliberately want.
+func _compose_herd(herd: Dictionary, count: int = COMPOSE_COUNT_UNSET, policy: String = "") -> void:
+	_hud._drawercompose.open_herd_compose(herd)
+	if count == COMPOSE_COUNT_UNSET and policy == "":
+		return
+	if count != COMPOSE_COUNT_UNSET:
+		_hud._compose.set_hunt_count(count)
+	if policy != "":
+		_hud._compose.set_hunt_policy(policy)
 	_hud._drawercompose.open_herd_compose(herd)
 
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
@@ -4842,14 +4877,25 @@ func _corral_ready_herd_fixture() -> Dictionary:
 
 ## A composing-Corral herd that needs MORE than one keeper (Grazing 2d-δ herder deficit): the take/prepare
 ## max-useful for the Corral rung is 1 ("one worker suffices to prepare"), but this growing herd needs 2
-## herders EVERY turn to hold its tameness — and it is currently UNDER-herded (`herded_fraction` 0.5 → the
-## Herders row reads "1 / 2 — under-herded" and the tameness-slipping consequence line names 2). The compose
+## herders EVERY turn to hold its tameness — and it is currently UNDER-herded, because the STATE dials the
+## band's own hunt assignment on this herd down to 1 (the base fixture staffs 4, which would hide the very
+## deficit this frame exists to show). The Herders row reads "1 / 2 — under-herded" off that ACTUAL
+## assignment via `HudBandLaborState.assigned_herders_for`, and the shed consequence line names 2.
+## `herded_fraction` is deliberately left STALE at 0.5 and is read NOWHERE in the render path — the same
+## convention `_fully_herded_fixture` / `_under_herded_fixture` carry, and the reason the old
+## reconstruct-from-the-fraction reading was retired. The compose
 ## stepper's cap must be max(take-useful 1, herders_needed 2) = 2, so the `+` reaches 2 and the player can
 ## staff the maintenance crew — otherwise the corral is lost, an unwinnable trap. A wild herd carries
 ## `herders_needed 0`, so this floor is a no-op there.
 func _under_herded_corral_fixture() -> Dictionary:
 	var fixture := _corral_ready_herd_fixture()
-	fixture["herders_needed"] = 2
+	fixture["herders_needed"] = UNDER_HERDED_CORRAL_HERDERS_NEEDED
+	# Corral is an INVESTMENT rung, and `_forecast_worker_cap`'s floor reads the ownership-INDEPENDENT
+	# `herders_needed_if_managed` for those (`herders_needed` is the extractive rungs' field). The sim
+	# exports the two EQUAL on an owned herd, which this one is — so a fixture setting only the first
+	# floors the cap at 0 and the frame silently renders "max 1 worker useful", the very cap it exists
+	# to disprove. It went unnoticed because the state used to compose Sustain by accident (#357).
+	fixture["herders_needed_if_managed"] = UNDER_HERDED_CORRAL_HERDERS_NEEDED
 	fixture["herded_fraction"] = 0.5
 	return fixture
 
