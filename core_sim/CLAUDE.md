@@ -150,7 +150,7 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 7. **Climate** - Temperature (latitude base − elevation lapse + jitter) is computed **first** and the biome band is derived from it via `climate::climate_band_for_temperature` — see "Temperature is the climate authority" below. Latitude is an input to temperature, never a parallel biome gate.
 8. **Hydrology** - Rivers on hex **edges** + navigable rivers as water **hexes**. See "Rivers" below. `RiverDelta` is stamped **only here**, at the last **gentle-coast** land hex of each river that ends in a standing water body — the ocean *or* an inland sea/lake (lacustrine deltas). The mouth hex must border that water; the biome picker and tag solver never create deltas (those would scatter them with no river attached). Delta tiles are protected from the tag solver's **reduction *and* addition** passes so genuine river mouths survive — every branch that would restamp a tile carries a `terrain != RiverDelta` guard. This includes the **Fertile-add** branch (both its primary candidate filter and its fallback loop): a delta cut through a **polar/non-fertile** biome lacks the `Fertile` tag, so it is not caught by the Fertile/Water skips and was the one path that clobbered a real mouth back to `AlluvialPlain` (orphaning its `river_channel` bit on dry land). Guarded by `core_sim/tests/navigable_mouth_delta.rs` — the invariant *no hex carries a `river_channel` bit while rendering non-`NavigableRiver`/non-`RiverDelta` terrain*, run through the **real** Startup chain (hydrology → tag solver → palette clamp → reconcile) via `build_headless_app`, so a later-pass clobber cannot hide the way it does in the hydrology-last `hydrology_earthlike.rs` harness.
 9. **Biomes** - Stamp `TerrainType` via `terrain_for_position` with micro-variant jitters
-10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass
+10. **Moisture transport** - Humidity blending with wind-driven rain-shadow pass. **Known defect: the mountain belt shadows ITSELF** — see "The belt rain-shadows itself" below.
 11. **Resources** - Surface deposits biased by `TerrainDefinition.resource_bias`
 12. **Wildlife** - Seed herd spawners, migratory paths, `game_density` raster
 13. **Starting areas** - Place candidates respecting World Viability Contract
@@ -648,6 +648,49 @@ navigable counts belong to the pre-arc landmass and are ~0 at this size today; s
 > is **bit-identical** with the blur zeroed (the land mask is decided from the base field *before*
 > `restamp_elevation` ever runs), and zeroing it actually made rivers **worse** (max navigable run
 > 25 → 15). Leave it alone.
+
+### The belt rain-shadows itself — measured, unfixed (issue #291)
+
+**The mountain belt is the DRIEST ground on the map, when orography says it should be the wettest.**
+Measured by `core_sim/tests/alpine_headwaters.rs` (6 seeds × 2 grids), which exists because a
+playtest reported "not enough rivers issue out of Alpine ranges".
+
+`compute_moisture_field` (`mapgen.rs`) walks each row downwind and, at every mountain-mask cell,
+adds `rain_shadow_strength × relief` to a `shadow` it subtracts from every cell **after** it. A fold
+belt is ~9 tiles wide (`belt_width_tiles = 4` dilated both ways), so **the belt's own windward tiles
+shadow its interior**. At the shipped earthlike numbers the shadow overwhelms the lift ~5:1:
+
+| lever | earthlike | at alpine relief ≥ 1.85 |
+|---|---|---|
+| `rain_shadow_strength` | **0.65** | ~**1.20 of shadow per mountain tile** (clamp 2.0 — saturates in <2 tiles) |
+| `rain_shadow_decay` | **0.04** | it barely decays, so the shadow runs far downwind |
+| `windward_moisture_bonus` | **0.12** | ~0.22 of orographic lift |
+
+Consequence: **82.8% of alpine tiles receive literally zero precipitation**, while the belt's
+windward strip reaches **0.818 — the map maximum**. The distribution is *bimodal*, not merely dry
+(mean 0.083, **median 0.000**), and mean precipitation **rises** monotonically with distance from the
+belt core (0.083 → 0.190 by 9 hexes) instead of falling.
+
+**Isolated by A/B, not inferred** (`what_dries_the_alpine_belt`): with `rain_shadow_strength = 0` the
+profile **inverts** (alpine 0.360 vs 0.213 for all land; bone-dry 82.8% → **0.0%**) and the
+river-free collar largely closes (source enrichment at 2/3/4 hexes from the core
+0.28×/0.45×/1.63× → **2.11×/2.65×/3.50×**). With `interior_aridity_strength = 0` instead, the whole
+map wets but the belt stays relatively dry and the collar persists — **so the shadow is the cause and
+interior aridity is not.**
+
+> **Do NOT read the "0 river edges on alpine tiles" figure as this defect.** That is separate and is
+> arithmetic: `restamp_elevation` floors mountains above `elevation_base`, so every alpine corner is
+> a local maximum on the filled surface, and the shipped `alpine_relief_threshold = 1.85` makes the
+> ribbon **3 tiles wide** — a corner gathers ~1–2 hex-equivalents against
+> `river_channel_min_discharge = 3.0` and *cannot* clear it. It is unmoved by the A/B (0.00% →
+> 0.05%). Two mechanisms; only the rain shadow is a defect.
+
+**Unfixed deliberately.** Retuning the shadow changes the humidity field map-wide, and humidity feeds
+`dryness_thresholds` → the biome ladder → forage/graze capacity, so it is a balance arc rather than a
+verification fix. **The fix is tracked as issue #332**; #291 was scoped to verification. The lever to
+shape is the *generating input* (the shadow the belt casts on itself — e.g. not shadowing cells
+inside the belt that raised it, or raising the lift against it), **never** a repaint of the river
+output — see "Do not 'fix' a dry map by lowering `river_class_navigable_min_discharge`" above.
 
 ### Tile Temperature — latitude + elevation climate model
 `Tile.temperature` is a real climate, **not** the old `(x+y)%4` element checkerboard. The single
