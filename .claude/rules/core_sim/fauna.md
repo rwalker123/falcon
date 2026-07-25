@@ -120,8 +120,11 @@ step ≤1 hex) — split by `size_class`:
 primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::herd_rung`: penned →
 `animal:pen`, tamed → `animal:pastoral`, else `animal:wild`) and dispatches on its
 `behavior.movement`, so §3's proximity spine **far → near → fixed** is *config*, not a branch on
-`is_domesticated()`:
-- **`roam`** (wild) — the graze-wander / loiter-migrate machine below, over its own full range.
+`is_domesticated()`. The one exception is **diet-resolved, not rung-assigned**: `fauna::movement_primitive`
+overlays `pursue` on a **wild carnivore** (the husbandry rungs are diet-orthogonal — `animal:wild` is
+one rung shared by a deer and a wolf — so a carnivore's food-seeking movement can't be a rung-record
+field today; a future tamed wolf→dog would keep its rung's `drift_to_owner`).
+- **`roam`** (wild herbivore) — the graze-wander / loiter-migrate machine below, over its own full range.
 - **`drift_to_owner`** (pastoral) — each turn the herd first tries **one step toward the nearest band
   of its owning faction** (`ResidentBand` only — a camp, not a passing expedition party). It
   **composes with, never replaces, the 2b-i graze-aware roam**: the candidates are exactly the roam's
@@ -138,6 +141,28 @@ primitive the engine reads). `advance_herds` resolves the herd's rung (`fauna::h
     adequate-but-poorer pasture near camp, which lowers its range-derived `K` and shrinks it — real
     pastoral overgrazing. It cannot **strip** the range: 2b-ii's `overgraze_escapement_fraction` floor
     still binds, so the pasture recovers and the herd stabilizes smaller.
+- **`pursue`** (wild carnivore — Predators Phase 2, `docs/plan_predators.md`) — the **trophic transpose
+  of `drift_to_owner`**: each turn the pack first tries **one step toward the nearest prey it can eat**,
+  over the *same* shared attractor path (the `Pursue` dispatch is just `advance_herd_roam` handed prey
+  tiles as its `attractor`, and `relocate_toward_resource` — the generalized drift — does the greedy
+  one-hex step). **Prey targets are the clearable prey in `pursuit_radius`, sourced from `prey_index` +
+  `attack_clears_defense`, NOT `HerdDensityMap`.** `HerdDensityMap` counts *every* herd (uneatable
+  mammoths, other predators), so reading it would introduce a **second, divergent prey definition** —
+  exactly the duplication Phase 1a eliminated by making `attack_clears_defense` the ONE prey rule shared
+  by carnivore-`K`, predation and the spawn count; `pursue` reuses it, so a wolf chases only prey it can
+  actually eat. `prey_index` is the **start-of-turn** snapshot (built before the mutable loop), so
+  pursue targets **start-of-turn prey positions** — the same one-turn lag carnivore-`K` reads (a
+  herbivore processed later this turn hasn't moved yet from the index's view; consistent and
+  deterministic). It **composes with, never replaces, the roam**: same `acceptable_steps`, same
+  `resource_step_order` total tie-break `(target distance ASC, graze capacity DESC, y ASC, x ASC)` the
+  drift uses, and only a step that closes the distance counts — else the turn falls through to the
+  graze-roam (a prey-starved pack keeps moving and re-acquires; a carnivore-free-of-prey map is
+  byte-identical to today's roam). The species' own `dwell_turns` cadence still applies (**a wolf is not
+  faster than prey** — pursue makes it *near*, not fast). **`pursuit_radius` (default 8) is deliberately
+  WIDER than the feeding `prey_sense_radius` (shipped 4, code default 3)** — a pack tracks prey over a larger territory than the
+  disk it feeds from, and the wider acquisition range is the real fix for the transient-zero-prey
+  stranding that widening `prey_sense_radius` 3→4 only band-aided. See Also "Predation (Phase 1a)" /
+  "Predator raids (Phase 1b)" in `combat.md`.
 - **`fixed`** (pen) — pinned at `corralled_at`, no roam, no heading arrow.
 
 Movement is **deterministic under rollback** — a per-herd/​per-turn `SmallRng` seeded from `map_seed ^

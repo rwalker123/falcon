@@ -446,12 +446,23 @@ basic.
     people, staffing Warriors cuts the losses, a herbivore / out-of-range carnivore never raids,
     aggression scales lethality, and the raid is deterministic.
 
-- **Phase 2 — Shared prey-seeking movement.**
-  Extract `relocate_toward_resource` (+ a `pursue` `RungMovement` primitive) scoring candidate
-  tiles by prey density (`HerdDensityMap`). Predators now actively follow the game and relocate
-  when local prey thins (ideas 6, 8). Deterministic tie-breaks preserved.
-  **Testable:** move a deer herd across the map; the wolf pack tracks it rather than idling on
-  empty ground.
+- **Phase 2 — Shared prey-seeking movement.** *(Implemented — the `pursue` primitive.)*
+  `drift_step_toward_owner` was generalized into the target-agnostic **`relocate_toward_resource`**
+  (with `drift_order`→`resource_step_order`, `camp_distance`→`nearest_target_distance`), and
+  `advance_herd_roam`'s attractor block now serves both drift and pursue. A new `RungMovement::Pursue`
+  is **diet-resolved** in `fauna::movement_primitive` (a wild carnivore selects it; the husbandry rungs
+  are diet-orthogonal, so it can't be a rung record today) and dispatched in `advance_herds` toward the
+  nearest clearable prey in `predators.pursuit_radius` (default **8**, wider than the feeding disk 4).
+  **Refinement of this bullet's wording:** prey candidates come from the existing `prey_index` +
+  `attack_clears_defense`, **not** `HerdDensityMap` — the density map counts *every* herd (uneatable
+  mammoths, other predators), which would be a second, divergent prey definition; `pursue` reuses the
+  one prey rule so a pack chases only prey it can eat, at start-of-turn positions (the same one-turn lag
+  carnivore-`K` reads). Predators now actively follow the game and re-acquire when local prey thins
+  (ideas 6, 8); deterministic tie-breaks preserved (`resource_step_order`).
+  **Tested (`core_sim/tests/fauna_pursuit.rs`):** a wolf pursues prey beyond its feeding disk and closes
+  on it (ignoring its roam anchor), tracks a moving deer within pursuit range, moves identically to a
+  plain roam when prey-starved, ignores an uneatable mammoth, and is deterministic; plus the
+  `pursuit_radius < 1` config rejection.
 
 - **Phase 3 — Client legibility.**
   Threat/casualty events in the command feed; a predator presence overlay (predators are huntable

@@ -164,6 +164,13 @@ pub enum RungMovement {
     /// preference — see `fauna::advance_herd_roam`. A source with no owner, or an owner with no
     /// bands, simply roams.
     DriftToOwner,
+    /// **Steps toward the nearest prey it can eat** — the carnivore transpose of `drift_to_owner`,
+    /// over the same shared attractor path (`fauna::relocate_toward_resource`), with clearable prey
+    /// positions as the attractor tiles instead of owner camps. Resolved **diet-aware** in
+    /// `fauna::advance_herds` (a wild carnivore selects it) rather than assigned from a rung record:
+    /// the husbandry rungs are diet-orthogonal (`animal:wild` is one rung shared by a deer and a
+    /// wolf), so a carnivore's food-seeking movement can't be a husbandry-rung record today.
+    Pursue,
 }
 
 /// How a source at this rung feeds itself. A bounded coded primitive (§5) — **not read yet**
