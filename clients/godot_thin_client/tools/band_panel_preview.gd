@@ -48,6 +48,11 @@ const ZONE_BOUNDS_TOLERANCE := 1.0
 ## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
 ## fixture's delivered food is animals × this, so the sheet's forecast quotes a real food total.
 const QUARRY_FOOD_PER_ANIMAL := 4.0
+## One animal's worth of TRADE GOODS (issue #337) — a hunt pays a vector, so a raid cell carries this
+## payload beside its food one. Small against the food quantum: an edible quarry is meat first.
+const QUARRY_TRADE_PER_ANIMAL := 0.5
+## The INEDIBLE quarry on the work board (issue #337): its hunt row pays trade goods and no food.
+const TRADE_ONLY_HERD_ID := "game_wolf_03"
 ## The quarry fixtures straddle the band's hunt reach: the Wild Boar is a party's job, the Roe Deer
 ## one tile out is a local hunt the picker must refuse.
 const QUARRY_BAND_HUNT_REACH := 2
@@ -428,6 +433,29 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_panel_clear_confirm")
 	_dismiss_dialogs()
+
+	# THE TWO PRODUCTS ON THE WORK BOARD (issue #337). The concerning-food band works three sources —
+	# a forage patch (food only), a deer hunt (food AND trade, food leading) and a WOLF hunt whose food
+	# fields are honestly 0. Its row must headline `⇄ +0.22` ALONE: before this arc the client read only
+	# food, so the wolf row said `+0.00 /turn` and the pack looked worthless. The inspector strip is
+	# opened on that row so its one-sentence readout is judged too — it states the same components the
+	# row does. The Food line above is the control: it still counts FOOD only, so a trade-only hunt must
+	# not move it (trade goods credit the faction stockpile, never the larder).
+	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_band_alerts([_concerning_food_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_trade_rows")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_open_work_inspector_for_herd(TRADE_ONLY_HERD_ID)
+	await _settle()
+	await _save("band_panel_work_trade_inspector")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
 	# until now (`_work_policy_open` was never set true in either harness). Two rows, two behaviours:
@@ -1244,6 +1272,18 @@ func _assert_under_herded_work_row(herd_id: String) -> void:
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
 ## repage so the picker actually renders. `_work_policy_open` is otherwise never true in either
 ## harness, which is why this control had zero frame coverage.
+## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
+## source (the wolf), not "the first row", which is the forage patch.
+func _open_work_inspector_for_herd(herd_id: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	for model_variant in _hud._bandpanel._work_source_models(band, 0):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) != herd_id:
+			continue
+		_hud._bandpanel._toggle_work_inspector(String(model.get("key", "")))
+		return
+	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
+
 func _open_work_policy_picker(policy: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	for model_variant in _hud._bandpanel._work_source_models(band, 0):
@@ -1497,6 +1537,11 @@ func _quarry_herd_fixtures() -> Array:
 		"hunt_policy_ceilings": {
 			"sustain": 0.30, "surplus": 1.20, "deplete": 0.60, "eradicate": 0.0,
 		},
+		# The TRADE half of the vector (issue #337) — a boar's hide sells beside its meat.
+		"per_worker_trade": 0.12, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {
+			"sustain": 0.05, "surplus": 0.18, "deplete": 0.09, "eradicate": 0.0,
+		},
 	}
 	# The server's measured boar raid: 1 hunter → 5 animals / 7 turns, 2 → 8 / 8, 3+ → 8 / 4. Delivered
 	# food plateaus at party 2, so the sheet's stepper must cap there with its "max 2 useful" note.
@@ -1510,18 +1555,18 @@ func _quarry_herd_fixtures() -> Array:
 		# A CLEAN raid — the party hauls its whole kill home, so delivered = animals × fpa, waste 0.
 		# The deeper policies raid to a lower floor and so take MORE (Surplus < Deplete), which is the
 		# ASCENDING per-policy metric the picker buttons must read.
-		table["sustain:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
-			"animals_taken": base, "delivered_food": float(base) * QUARRY_FOOD_PER_ANIMAL,
-			"wasted_food": 0.0}
-		table["surplus:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
-			"animals_taken": base + 2, "delivered_food": float(base + 2) * QUARRY_FOOD_PER_ANIMAL,
-			"wasted_food": 0.0}
-		table["deplete:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
-			"animals_taken": base + 3, "delivered_food": float(base + 3) * QUARRY_FOOD_PER_ANIMAL,
-			"wasted_food": 0.0}
-		# Eradicate is a DENIAL rung: the SIM says so via `delivers_food`, never the policy string.
-		table["eradicate:%d" % w] = {"turns_to_fill": turns, "delivers_food": false,
-			"animals_taken": base + 5, "delivered_food": 0.0, "wasted_food": 0.0}
+		# EVERY rung DELIVERS, Eradicate included. `delivers_food` was REDEFINED by issue #337 — it now
+		# says the QUARRY IS EDIBLE, not "this rung is a denial mission" — and an Eradicate raid banks
+		# the whole-stock windfall. (This fixture used to assert the opposite, which was correct before
+		# that arc.) Each cell carries the trade payload too: a hunt pays a vector, not a food scalar.
+		for entry in [["sustain", 0], ["surplus", 2], ["deplete", 3], ["eradicate", 5]]:
+			var animals: int = base + int(entry[1])
+			table["%s:%d" % [String(entry[0]), w]] = {
+				"turns_to_fill": turns, "delivers_food": true, "delivers_trade": true,
+				"animals_taken": animals,
+				"delivered_food": float(animals) * QUARRY_FOOD_PER_ANIMAL,
+				"delivered_trade": float(animals) * QUARRY_TRADE_PER_ANIMAL,
+				"wasted_food": 0.0}
 	herd["hunt_trip_estimates"] = table
 	# A second huntable herd INSIDE the band's hunt reach. It is not a party's job (the band can work
 	# it from home), so the picker must refuse it — the near half of the eligibility assertion.
@@ -1530,6 +1575,8 @@ func _quarry_herd_fixtures() -> Array:
 		"population": 90, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8,
 		"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.80, "deplete": 0.40, "eradicate": 0.0},
+		"per_worker_trade": 0.12, "trade_per_animal": QUARRY_TRADE_PER_ANIMAL,
+		"hunt_policy_trade_ceilings": {"sustain": 0.03, "surplus": 0.12, "deplete": 0.06, "eradicate": 0.0},
 		"hunt_trip_estimates": table.duplicate(true),
 	}
 	return [herd, near]
@@ -1680,7 +1727,11 @@ func _band_fixture() -> Dictionary:
 		# `policy` so its row shows the ♻ policy glyph — both must survive beside the ● status glyph.
 		"labor_assignments": [
 			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20},
+			# BOTH PRODUCTS on the worked row (issue #337): a deer pays meat AND hide, so the row
+			# headline must read `+0.20 /turn · ⇄ +0.04` — food leading, trade only because it is
+			# non-zero. `trade_yield` is NOT food income: the Food line's Gathered/Hunted breakdown
+			# still sums `actual_yield` alone, which is what keeps the larder identity closed.
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "trade_yield": 0.04, "realized_trade_yield": 0.04},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -1699,6 +1750,11 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
 		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
+		# THE TRADE-ONLY ROW (issue #337): a wolf pack pays pelts and NO meat, so every food field on
+		# this assignment is honestly 0. The row must headline `⇄ +0.22` ALONE — no "+0.00 /turn",
+		# which is the false reading that said the hunt was worth nothing — and it must NOT appear in
+		# the Food line's Hunted total, because trade goods never enter the larder.
+		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "policy": "deplete", "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
 		{"kind": "scout", "workers": 2},
 	]
 	return band

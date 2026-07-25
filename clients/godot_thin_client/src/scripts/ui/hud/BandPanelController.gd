@@ -628,7 +628,13 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(label)
     var rate := Label.new()
-    rate.text = SourceForecast.format_signed(float(model.get("rate", 0.0))) if bool(model.get("has_yield", false)) else ""
+    # ONE COMPONENT in this fixed-width column (issue #337): a board row has a single narrow rate slot
+    # beside the marks and the stepper, so it shows the product the source actually PAYS — food when
+    # there is food (every forage patch and every edible quarry, so this is unchanged for them), else
+    # the trade rate marked with `FoodIcons.TRADE_GOODS_GLYPH`. A wolf row therefore reads `⇄+0.22`
+    # rather than the `+0.00` that said the hunt was worth nothing. The inspector strip below states
+    # BOTH components in full, which is where a deer's trade shows.
+    rate.text = _work_row_rate_text(model)
     rate.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RATE_WIDTH, 0.0)
     rate.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     rate.add_theme_color_override("font_color", HudStyle.INK_DIM)
@@ -792,11 +798,26 @@ func _work_inspector_height(model: Dictionary) -> float:
         return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT + HudWorkVocab.WORK_INSPECTOR_STANDING_LINE_HEIGHT
     return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT
 
+## The board row's single-slot rate string — food when the source pays food, else its trade rate with
+## the trade glyph, and "" when the row carries no confirmed yield at all. One definition, since the
+## row and its severity reading must agree on which number is being shown.
+func _work_row_rate_text(model: Dictionary) -> String:
+    if not bool(model.get("has_yield", false)):
+        return ""
+    var food := float(model.get("rate", 0.0))
+    var trade := float(model.get("trade_rate", 0.0))
+    if not SourceForecast.has_component(food) and SourceForecast.has_component(trade):
+        return FoodIcons.TRADE_GOODS_GLYPH + SourceForecast.format_signed(trade)
+    return SourceForecast.format_signed(food)
+
 ## The inspector's one-sentence readout: rate · policy in WORDS · status · assigned workers.
 func _work_inspector_sentence(model: Dictionary) -> String:
     var parts: Array[String] = []
     if bool(model.get("has_yield", false)):
-        parts.append(SourceForecast.format_yield(float(model.get("rate", 0.0))))
+        # Both products, each only when non-zero (issue #337): an inedible quarry's sentence leads with
+        # its trade rate instead of asserting "+0.00 /turn".
+        parts.append(SourceForecast.yield_components(
+            float(model.get("rate", 0.0)), float(model.get("trade_rate", 0.0))))
     var policy := String(model.get("policy", ""))
     if policy != "":
         parts.append(policy.capitalize())
@@ -872,7 +893,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 note = HudWorkVocab.WORK_ROW_UNDER_HERDED_NOTE
         models.append({
             "key": String(key), "kind": kind, "icon": icon, "label": label,
-            "rate": float(yld.get("rate", 0.0)), "has_yield": bool(m.get("has_yield", false)),
+            "rate": float(yld.get("rate", 0.0)),
+            # The row's TRADE component (issue #337), 0 when the source pays none. Carried so the
+            # inspector sentence states the same two products the row headline does.
+            "trade_rate": float(yld.get("trade_rate", 0.0)), "has_yield": bool(m.get("has_yield", false)),
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
             "under_herded": under_herded,
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,

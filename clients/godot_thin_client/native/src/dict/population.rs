@@ -224,6 +224,19 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // The per-source STEADY average: the honest long-run average of this source's lumpy
             // `actual_yield`. Headlines the Band panel row + map label so they don't swing turn-to-turn.
             let _ = entry.insert("realized_yield", assignment.realizedYield() as f64);
+            // The TRADE twins (issue #337): `trade_yield` is this turn's actual trade from the source,
+            // `realized_trade_yield` its steady forward-projected rate — the same actual/steady split
+            // as the food pair above, in the currency a wolf hunt pays exclusively. They are NOT food
+            // income (the cohort's `food_income` stays Σ actual_yield, which is what keeps the larder
+            // identity closed for an inedible quarry); the client renders a trade component ONLY when
+            // it is > 0. `realized_trade_yield` is 0 on every FORAGE source — the plant web's trade
+            // PROJECTION is a documented sim-side gap, while the trade a gather actually earned does
+            // ship in `trade_yield`.
+            let _ = entry.insert("trade_yield", assignment.tradeYield() as f64);
+            let _ = entry.insert(
+                "realized_trade_yield",
+                assignment.realizedTradeYield() as f64,
+            );
             // WHEN that steady average actually lands: index i = the food delivered i+1 turns from
             // now, length = arrivals_horizon_turns (20), 0.0 on a turn nothing arrives. A big-game
             // hunt reads lumpy (gaps between hauls); a forage patch is positive in every slot. EMPTY

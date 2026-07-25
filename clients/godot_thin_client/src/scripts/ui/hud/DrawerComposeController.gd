@@ -114,16 +114,27 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         policy: String, species: String = "") -> void:
     _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species)
 
-## The per-turn provisions `workers` from `band` take off `herd` under `policy` — the sim's LOCAL/band
-## hunt take before the output multiplier: `min(workers × hunt_per_worker_provisions, band_ceiling)`.
+## The per-turn take `workers` from `band` get off `herd` under `policy` — the sim's LOCAL/band hunt
+## take before the output multiplier, `min(workers × per-worker, band_ceiling)`, ON THE COMPONENT THE
+## SPECIES PAYS. Returns `{available, rate, axis}` (`available` false when the levers/ceiling are absent).
+##
+## **The per-worker rate is the HERD's `per_worker_yield` / `per_worker_trade`, never the cohort's
+## `hunt_per_worker_provisions`** (issue #337). That cohort field is a species-BLIND echo of the global
+## `hunt.provisions_per_biomass` — it has no herd in scope, so it cannot know an inedible quarry pays no
+## meat, and clamping a per-herd preview with it quotes a positive food rate against a wolf's all-zero
+## food ceilings. The sim's own doc comments now say exactly this.
 ## Resident-band only: an EXPEDITION's trip is never a rate division (see `SourceForecast.hunt_trip_forecast`).
-## Returns `HUNT_RATE_UNAVAILABLE` when the levers/ceiling are absent.
-func _hunt_take_rate(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> float:
-    var per_worker_rate := float(band.get("hunt_per_worker_provisions", 0.0))
-    var ceiling := SourceForecast.hunt_policy_ceiling(herd, policy)
+func _hunt_take_rate(herd: Dictionary, policy: String, workers: int) -> Dictionary:
+    var rates := SourceForecast.herd_axis_rates(herd, policy)
+    var per_worker_rate := float(rates["per_worker"])
+    var ceiling := float(rates["ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
-        return SourceForecast.HUNT_RATE_UNAVAILABLE
-    return maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0)
+        return {"available": false}
+    return {
+        "available": true,
+        "rate": maxf(minf(float(workers) * per_worker_rate, ceiling), 0.0),
+        "axis": String(rates["axis"]),
+    }
 
 
 ## The averaging WINDOW (turns) for the whole-animal disclaimer — a STABLE, worker-independent property
@@ -134,8 +145,12 @@ func _hunt_take_rate(band: Dictionary, herd: Dictionary, policy: String, workers
 ## the "extra" fractional animal every ~`1/frac` turns. Returns 0 when `food_per_animal` / the ceiling is
 ## unknown (caller then skips the line). NEVER scaled by `output_multiplier` — it's a pure herd property.
 func _hunt_avg_window_turns(herd: Dictionary, policy: String) -> int:
-    var fpa := float(herd.get("food_per_animal", 0.0))
-    var ceiling := SourceForecast.hunt_policy_ceiling(herd, policy)
+    # On the component the species pays: an inedible quarry's `food_per_animal` is honestly 0, so a
+    # food-only derivation returns 0 and the disclaimer silently disappears from a wolf's picker even
+    # though its delivery is every bit as lumpy. The animal COUNT is identical on either component.
+    var rates := SourceForecast.herd_axis_rates(herd, policy)
+    var fpa := float(rates["per_animal"])
+    var ceiling := float(rates["ceiling"])
     if fpa <= 0.0 or ceiling <= 0.0:
         return 0
     var g: float = ceiling / fpa
@@ -156,10 +171,16 @@ func _hunt_avg_window_turns(herd: Dictionary, policy: String) -> int:
 ## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
 ## are sim exports.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> Dictionary:
-    var fpa := float(herd.get("food_per_animal", 0.0))
-    var per_worker := float(band.get("hunt_per_worker_provisions", 0.0))
+    # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
+    # axis or the arithmetic is nonsense: a wolf's per-animal FOOD quantum is 0 (divide by zero) while
+    # its per-animal TRADE quantum is real. `herd_axis_rates` is the single place that choice is made,
+    # and it reads the HERD's species-aware per-worker rates — never the cohort's species-blind
+    # `hunt_per_worker_provisions`, which is what would re-introduce phantom food here.
+    var rates := SourceForecast.herd_axis_rates(herd, policy)
+    var fpa := float(rates["per_animal"])
+    var per_worker := float(rates["per_worker"])
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var ceiling := SourceForecast.hunt_policy_ceiling(herd, policy)
+    var ceiling := float(rates["ceiling"])
     if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
         return {"available": false}
     ceiling *= output
@@ -179,7 +200,8 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, policy: Strin
         waste = (fpa - collection) * kills_per_turn
     var killed_food := delivered + waste
     var waste_pct := (waste / killed_food) if killed_food > 0.0 else 0.0
-    return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct}
+    return {"available": true, "delivered": delivered, "waste": waste, "waste_pct": waste_pct,
+        "axis": String(rates["axis"]), "per_animal": fpa}
 
 ## An animals-per-turn rate string: up to 2 decimals with trailing zeros AND a trailing dot stripped
 ## (1.90→"1.9", 1.00→"1", 0.65→"0.65", 0.15→"0.15"). `String.num` keeps a lone ".0", so format fixed and
@@ -220,7 +242,11 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
-        takes[String(policy)] = SourceForecast.extractive_take(rate)
+        # BOTH products (issue #337): each rung's cap is a pair, and each half is rendered only when
+        # non-zero. A wolf's four rungs therefore read as four ascending TRADE caps rather than four
+        # `+0.00`s — the false reading that said an inedible species was worth nothing on every rung.
+        var trade_rate := SourceForecast.hunt_policy_trade_ceiling(herd, String(policy))
+        takes[String(policy)] = SourceForecast.extractive_take_pair(rate, maxf(trade_rate, 0.0))
     for policy in [HudConst.LABOR_POLICY_TAME, SourceForecast.LABOR_POLICY_CORRAL]:
         var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
@@ -243,28 +269,36 @@ func _payoff_take(payoff: float) -> Dictionary:
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
 func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: String, workers: int) -> String:
-    var sustain_ceiling := SourceForecast.hunt_policy_ceiling(herd, SourceForecast.DEFAULT_HUNT_POLICY)
+    # The Sustain ceiling on the SAME axis the take is measured on — comparing a trade take against a
+    # food ceiling would flag every wolf hunt as an overdraw (or none of them).
+    var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.DEFAULT_HUNT_POLICY)
+    var sustain_ceiling := float(sustain_rates["ceiling"])
     if sustain_ceiling < 0.0:
         return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var sustainable := sustain_ceiling * output
     var dw := _hunt_delivered_and_waste(band, herd, policy, workers)
     if not bool(dw.get("available", false)):
-        # Graceful degrade — `food_per_animal` (or a lever) is unknown, so fall back to the old smoothed
-        # food/turn line unchanged rather than regress the readout.
-        var rate := _hunt_take_rate(band, herd, policy, workers)
-        if rate < 0.0:
+        # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
+        # back to the smoothed per-turn line rather than regress the readout. It is stated in whichever
+        # currency the take is actually in: a trade take never reads as food.
+        var take := _hunt_take_rate(herd, policy, workers)
+        if not bool(take.get("available", false)):
             return ""
-        var actual := rate * output
-        var text: String = HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % SourceForecast.format_yield(actual)
+        var actual := float(take["rate"]) * output
+        var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
+        var text: String = HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
+            SourceForecast.format_trade(actual) if trade_axis else SourceForecast.format_yield(actual))
         if _is_overdraw(actual, sustainable):
             return "[color=#%s]%s %s%s[/color]" % [
                 HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, text, HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX]
         return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
     # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
     # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
-    # throughput the crew can't haul home.
-    var fpa := float(herd.get("food_per_animal", 0.0))
+    # throughput the crew can't haul home. The animal rate is UNIT-FREE — a ratio of a take to one
+    # animal's worth of the same product — so this line reads identically for a deer and a wolf without
+    # naming either currency.
+    var fpa := float(dw["per_animal"])
     var delivered := float(dw["delivered"])
     var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
     var primary := HudComposeVocab.HUNT_DELIVERED_FORMAT % [_format_animal_rate(animal_rate), SourceForecast.herd_display_name(herd)]

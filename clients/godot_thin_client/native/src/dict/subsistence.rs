@@ -67,19 +67,27 @@ pub(crate) fn herds_to_array(
             let _ = dict.insert("husbandry_ceiling", husbandry_ceiling);
         }
         let _ = dict.insert("domestication", herd.domestication());
-        // Per-policy BAND / local-hunt take ceilings (provisions/turn) for this herd's CURRENT state.
-        // Surfaced as a `{policy -> provisions_per_turn}` Dictionary. With the cohort's
-        // `hunt_per_worker_provisions` + `output_multiplier` this is everything the RESIDENT-BAND hunt
-        // preview needs as pure arithmetic (`Hud._local_hunt_preview_bbcode`) — the client must never
-        // re-derive the ecology model itself.
+        // Per-policy BAND / local-hunt take ceilings for this herd's CURRENT state, in BOTH of the
+        // hunt's products (issue #337 — a hunt pays a `YieldPair`, not a food scalar). Surfaced as TWO
+        // Dictionaries keyed by the SAME policy strings, filled in ONE pass so they cannot drift:
+        //   `hunt_policy_ceilings`       -> provisionsPerTurn (food/turn)
+        //   `hunt_policy_trade_ceilings` -> tradeGoodsPerTurn (trade goods/turn)
+        // An INEDIBLE species (a wolf) reads every provisions row `0` with the trade rows positive, so
+        // the food dict alone cannot express its yield at all. With the herd's `per_worker_yield` /
+        // `per_worker_trade` and `output_multiplier` this is everything the RESIDENT-BAND hunt preview
+        // needs as pure arithmetic — the client never re-derives the ecology model.
         if let Some(ceilings) = herd.huntPolicyCeilings() {
             let mut ceiling_dict = VarDictionary::new();
+            let mut trade_ceiling_dict = VarDictionary::new();
             for ceiling in ceilings {
                 if let Some(policy) = ceiling.policy() {
                     let _ = ceiling_dict.insert(policy, f64::from(ceiling.provisionsPerTurn()));
+                    let _ =
+                        trade_ceiling_dict.insert(policy, f64::from(ceiling.tradeGoodsPerTurn()));
                 }
             }
             let _ = dict.insert("hunt_policy_ceilings", &ceiling_dict);
+            let _ = dict.insert("hunt_policy_trade_ceilings", &trade_ceiling_dict);
         }
         // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
         // per (policy × party size). An expedition's trip length is NOT a rate division: for
@@ -90,12 +98,19 @@ pub(crate) fn herds_to_array(
         // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
         // table lookup keyed
         // `"<policy>:<party_workers>"` →
-        // `{turns_to_fill, delivers_food, animals_taken, delivered_food, wasted_food}`:
+        // `{turns_to_fill, delivers_food, delivers_trade, animals_taken, delivered_food,
+        //   delivered_trade, wasted_food}`:
         //   turns_to_fill == 0   → the raid ran the whole horizon still delivering (a long raid)
-        //   delivers_food false  → eradicate, a denial mission ("no food delivered", never an ETA)
-        //   delivered_food == 0  → herd at/below the policy floor, no surplus to raid (too lean); NOT
-        //                          animals_taken == 0, which is ≥ 1 whenever there's surplus (a small
-        //                          party kills one animal and wastes the meat it can't carry)
+        //   delivers_food false  → REDEFINED (issue #337): the QUARRY IS INEDIBLE, not "this is a
+        //                          denial policy". Eradicate now banks a whole-stock windfall like
+        //                          every other rung, and a wolf reads `delivers_food false,
+        //                          delivers_trade true` ("pelts, no meat"). Only a species that
+        //                          delivers NEITHER is a denial mission.
+        //   delivered_food == 0  → herd at/below the policy floor, no surplus to raid (too lean) —
+        //                          read TOGETHER with `delivered_trade`, since an inedible quarry's
+        //                          whole payload is trade; NOT animals_taken == 0, which is ≥ 1
+        //                          whenever there's surplus (a small party kills one animal and
+        //                          wastes the meat it can't carry)
         // Empty for a non-huntable herd (the HUD then shows no forecast).
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
@@ -104,6 +119,10 @@ pub(crate) fn herds_to_array(
                     let mut entry = VarDictionary::new();
                     let _ = entry.insert("turns_to_fill", i64::from(estimate.turnsToFill()));
                     let _ = entry.insert("delivers_food", estimate.deliversFood());
+                    // The sibling flag + payload in the OTHER currency. Both are appended fields, and
+                    // this decoder has a history of silently dropping those — decode them beside the
+                    // food pair they are meaningless without.
+                    let _ = entry.insert("delivers_trade", estimate.deliversTrade());
                     // The whole animals the raid delivers — the payload the client headlines
                     // ("delivers ≈N animals over M turns") and the plateau it caps the party stepper
                     // at. Dropped from this dict on four prior appended fields; this is the newest.
@@ -115,6 +134,8 @@ pub(crate) fn herds_to_array(
                     // it; `delivered_food == 0` (not `animals_taken == 0`) is now "too lean to raid".
                     let _ = entry.insert("delivered_food", f64::from(estimate.deliveredFood()));
                     let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
+                    // The trade goods the raid LANDS — the ONLY payload of an inedible quarry's raid.
+                    let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
                     let key = format!("{}:{}", policy, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }
@@ -136,6 +157,11 @@ pub(crate) fn herds_to_array(
         // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are deprecated schema slots and are no
         // longer decoded. (ForagePatchState keeps its scalars: a patch has no such list.)
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
+        // The SAME per-worker rate in the other currency (issue #337) — read the two as ONE vector.
+        // THIS pair, not the cohort's `hunt_per_worker_provisions`, is what a per-herd band preview
+        // clamps with: that cohort field is a species-BLIND global echo (the sim's own doc says so),
+        // and quoting it against a wolf's all-zero food ceilings manufactures phantom food.
+        let _ = dict.insert("per_worker_trade", herd.perWorkerTrade());
         // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned. Its
         // DURING-BUILDING dip rides the `hunt_policy_ceilings` list (the "corral" row), so together
         // they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
@@ -219,6 +245,11 @@ pub(crate) fn herds_to_array(
         // kill-rhythm divides the per-turn food rate by (`Hud._hunt_kill_rhythm`: food ÷ food →
         // animals/turn), so a mammoth reads "≈1 / 7 turns" not the biomass-÷-food 333. 0 if unknown.
         let _ = dict.insert("food_per_animal", herd.foodPerAnimal());
+        // One animal's worth of TRADE GOODS — the twin of `food_per_animal`, and the ONLY per-animal
+        // quantum an inedible species has (a wolf's `food_per_animal` is honestly 0, so a cadence
+        // derived from food alone divides by zero). The animal COUNT is the same on either component:
+        // a ratio is unit-free.
+        let _ = dict.insert("trade_per_animal", herd.tradePerAnimal());
         // Staffing of a MANAGED herd (intensification ladder). A domesticated herd needs
         // `herders_needed` herders every turn to HOLD its tameness; `herded_fraction` = min(1,
         // assigned / needed) is how well that demand is met. Understaffed (< 1) means the herd's

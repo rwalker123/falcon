@@ -720,3 +720,105 @@ paths:
   map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
   assigns the player band's idle workers to hunt that herd at Sustain — a no-op with a command-feed
   note when there are no idle workers (never silently nothing).
+
+---
+
+## A hunt pays TWO products — the render-only-when-non-zero rule (issue #337, `docs/plan_hunt_yield_model.md`)
+
+The sim's hunt yield is a **vector**: the species' own `HuntYield` (provisions **and** trade goods)
+times the policy's intensity. The client read only the food half, so an **inedible** species — a wolf,
+which pays pelts and no meat — rendered `+0.00` on every rung and looked like a source worth nothing.
+
+**THE ONE RULE, and it is applied at every surface: render a component only when it is non-zero.**
+
+| species | reads |
+|---|---|
+| deer (`provisions > 0`, `trade > 0`) | food **and** trade, **food leading** |
+| wolf (`provisions == 0`, `trade > 0`) | trade only — **never** a "0 food" line |
+| a forage patch (no trade projection yet) | food only — **never** a "0 trade" line |
+
+A `0` printed as a number for a component the species does not produce is the false precision this
+whole arc exists to remove; it is not "more complete", it is wrong. The one place a zero survives is a
+component the source genuinely HAS and did not pay this turn (a worked row's `+0.00 /turn`).
+
+**Trade is stated GENERICALLY** — `FoodIcons.TRADE_GOODS_GLYPH` (`⇄`) plus the words "trade goods". The
+sim models a **scalar**, so the client says so: there is deliberately **no per-species noun** (pelt /
+ivory / hide). A named good per species is a flavor layer on top of the scalar, explicitly deferred by
+the design doc, and inventing one here would put words on the wire's behalf the sim cannot back.
+
+### The shared layer (`SourceForecast`)
+
+- `has_component(rate)` — the single "is this component present?" gate (`>= FOOD_FLOW_MIN`), so food
+  and trade are judged identically everywhere.
+- `format_trade(v)` → `⇄ +0.35`; **`yield_components(food, trade)`** → `+0.31 /turn · ⇄ +0.12` — the ONE
+  joiner every per-turn readout goes through, so no two surfaces can word the pair differently.
+- **`extractive_take_pair(food, trade)`** — the rung metric `{compact, full}` (the food-only
+  `extractive_take` survives for the forage picker, whose plant-side trade is not projected).
+- `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
+  `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
+  the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
+  existing food-only reader is untouched.
+
+### THE AXIS — what a divide-by-a-quantum consumer must use
+
+`herd_yield_axis` / `herd_axis_rates` are the client mirror of the sim's `ratio_axis()`: the first
+component with a POSITIVE rate, **provisions preferred** so every edible species divides exactly as it
+did before this arc, trade for an inedible one. `forecast_inputs` returns the resolved triple
+(`axis_per_worker` / `axis_ceiling` / `axis_per_animal`) beside the raw per-component fields, and
+**everything that divides by a per-animal quantum reads the triple** — the kill rhythm, the
+carry-aware delivered take (`_hunt_delivered_and_waste`), the averaging window
+(`_hunt_avg_window_turns`), and the whole-animal worker cap in `max_useful_workers`. A wolf's
+`food_per_animal` is honestly `0`, so a food-only derivation divides by zero and silently produces
+nothing at all. The animals-per-turn line needs no currency word either way: **an animal count is a
+ratio, and a ratio is unit-free.**
+
+### NEVER clamp a per-herd preview with `huntPerWorkerProvisions`
+
+`PopulationCohortState.hunt_per_worker_provisions` is a **species-BLIND** per-cohort echo of the global
+`hunt.provisions_per_biomass` — the cohort has no herd in scope, so it cannot know the quarry is
+inedible, and quoting its positive food rate against a wolf's all-zero food ceilings is exactly what
+manufactures phantom food. The species-aware per-herd rates are `HerdTelemetryState.perWorkerYield` /
+**`perWorkerTrade`**, and the local-hunt preview clamps with THOSE, per component. (The cohort field
+survives as the expedition **outfit** lever, before a target is chosen.)
+
+### `deliversFood` WAS REDEFINED — re-read every branch that keys off it
+
+It no longer means "this is not a denial mission". It now means **the quarry is edible**. Consequences,
+all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedition_policy_takes`:
+
+- **Eradicate DELIVERS.** It banks a whole-stock windfall like every other rung, and its raid line
+  quotes that payload instead of "denial mission, delivers no food".
+- A **denial** raid is now one that lands NOTHING IN EITHER CURRENCY (`delivers_food == false` **and**
+  `delivers_trade == false`) — a property of the QUARRY, never inferred from the policy string.
+- **"Too lean to raid"** tests `delivered_food <= 0 **and** delivered_trade <= 0`; reading food alone
+  would call every wolf raid empty.
+- `expedition_policy_takes` gates each component on its OWN `delivers_*` flag, and
+  `expedition_useful_cap` scans the plateau on the component the quarry pays (an inedible species
+  delivers 0 food at every party size, so a food-only scan finds no plateau and the party stepper
+  loses its cap).
+
+### The one-slot surfaces show the product the species PAYS
+
+Two readouts have a single narrow slot and cannot carry a pair — the **work-board row's** fixed-width
+rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
+(`BandOverlayRenderer._draw_yield_label`). Both show food when there is food (so every forage patch
+and edible quarry is unchanged) and otherwise the trade rate marked with the glyph: `⇄+0.22`. The
+work **inspector strip** beside the row states both components in full, which is where a deer's trade
+shows.
+
+**`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
+`food_income` still sum `actual_yield` alone — trade goods credit the faction stockpile and never the
+larder — so a trade-only hunt must not move the Food line, and the work zone's header/chip totals stay
+food-denominated. That is what keeps the larder identity closed for an inedible quarry.
+
+**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
+rungs read `⇄ +0.90 / +1.35 / +1.95 / +2.70`, no food line, no zeros, and the animals-first preview +
+averaging-window disclaimer still render off the TRADE quantum) · **`herd_hunt_both_products`** (the
+same picker on a deer: `+2.33 ⇄ +0.34`, food leading) · **`herd_hunt_pelts_raid`** (the wolf as an
+expedition target: `delivers ≈3 Grey Wolf over ≈9 turns · ⇄ ~4 trade goods`, primary Send — NOT a
+denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food · ⇄ ~5 trade goods`) ·
+`hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the
+forage control — food only, no "0 trade"). `band_panel_preview`:
+**`band_panel_work_trade_rows`** / **`band_panel_work_trade_inspector`** (a food row, a food+trade row
+and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 · Deplete · Working`).
+`map_preview`: `map_band_work` (the hunted wolf labels `⇄+0.22 ⇊` beside the deer's `+0.20`).

@@ -457,3 +457,17 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   as `WIDE_SHELL_MIN_WIDTH + the live rail width`**: the reflow fires at those canvases too, so bracketing
   the raw window width against the bare threshold would bracket a test the panel no longer applies.
 
+
+
+---
+
+## Work rows and the two hunt products (issue #337)
+
+A board row's rate column is a single fixed width, so it shows the product the source actually PAYS:
+food when there is food (unchanged for every forage patch and edible quarry), else the trade rate with
+`FoodIcons.TRADE_GOODS_GLYPH` — `⇄+0.22` on a hunted wolf pack, never the `+0.00` that said the hunt
+was worth nothing. `_work_row_rate_text` is the one definition. The **inspector strip** has room for
+the pair and states both (`SourceForecast.yield_components`), which is where an edible quarry's trade
+shows. The zone's header total and the filter chips stay **food-denominated**: they mirror the sim's
+`food_income`, and trade goods never enter the larder. Frames `band_panel_work_trade_rows` /
+`band_panel_work_trade_inspector`; the rule and the axis contract live in `labor-ui.md`.

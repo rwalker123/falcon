@@ -107,6 +107,21 @@ const POLICY_ICONS := {
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
+# THE TRADE-GOODS GLYPH (issue #337) — the mark on every non-food component of a hunt/gather yield,
+# so a rate is never mistaken for food. ONE glyph for the whole product: the sim models trade goods
+# as a SCALAR, and the client says so. There is deliberately NO per-species noun (pelt / ivory /
+# hide) — a named good per species is a flavor layer on top of the scalar
+# (docs/plan_hunt_yield_model.md, Deferred), and inventing one here would put words on the wire's
+# behalf that the sim cannot back.
+#
+# It is ⇄, the exchange arrow the `Market` → `Deplete` rename FREED (see the POLICY_ICONS note above):
+# that rename removed it from the policy ladder precisely BECAUSE it named the rung's PRODUCT rather
+# than its pressure — and the product is exactly what this labels. It obeys the same legibility rule
+# as the rest of this file: a text-presentation symbol in bold line art, so it inherits the label's
+# colour (tinting WARN-amber with an overdrawn row, greying out with a disabled button) instead of
+# carrying emoji colours of its own. 🪙 / 💰 / ⚖ were already measured and rejected at these sizes.
+const TRADE_GOODS_GLYPH := "⇄"
+
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row
 # tooltip). TWO ORTHOGONAL LAYERS ride the same vocabulary and must stay separate:
