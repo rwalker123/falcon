@@ -1178,6 +1178,11 @@ pub enum CommandEventKind {
     /// event fires on `killed + wounded > 0`, so a wound-only hunt narrates too). The hunting party
     /// answers the danger with its own hunters — **Warriors do NOT mitigate a hunt**.
     HuntDanger,
+    /// A **carnivore raided a band's camp** (Predators Phase 1b, `docs/plan_predators.md`). A
+    /// carnivore with `aggression > 0` within `predators.raid_radius` of a band turns on it, and the
+    /// band is defended by its **Warriors** — the Warrior role's **first live consumer**. Fires each
+    /// casualty-causing raid turn (edge-gating a repeated raid to one line is deferred to Phase 3).
+    PredatorRaid,
     CancelOrder,
     SedentarizationPrompt,
     SiteDiscovered,
@@ -1210,6 +1215,7 @@ impl CommandEventKind {
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::HuntDanger => "hunt_danger",
+            CommandEventKind::PredatorRaid => "predator_raid",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",

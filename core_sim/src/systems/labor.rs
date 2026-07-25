@@ -1226,11 +1226,12 @@ pub fn advance_labor_allocation(
                     // and reveal from each, re-marked Active every turn — no work is done here.
                 }
                 LaborTarget::Warrior => {
-                    // Inert in Phase 0. Warriors are a band-wide standing guard (border/camp patrol),
-                    // not a hunting escort — they do **not** mitigate hunt danger (the hunting party
-                    // answers that itself, via its own equipment). Their first live consumer is the
-                    // **Phase 1 predator-raid path**: a carnivore with `aggression > 0` raiding a band,
-                    // band as Defender. Do not delete this branch.
+                    // Still a no-op **in the labor pass** — warriors do no per-worker yield here, and
+                    // they are a band-wide standing guard (border/camp patrol), not a hunting escort, so
+                    // they do **not** mitigate hunt danger (the hunting party answers that itself, via
+                    // its own equipment). But warriors are **no longer inert overall** (Phase 1b): the
+                    // warrior head-count is now **consumed by [`advance_predator_raids`]** as the band's
+                    // defending contingent when a carnivore raids its camp. Keep this branch.
                 }
             }
         }
@@ -1541,6 +1542,186 @@ pub fn advance_population_migration(
             let gain = grievance_gain * cohort.discontent_fraction * mult;
             cohort.grievance += gain;
         }
+    }
+}
+
+/// The config handles [`advance_predator_raids`] reads, bundled into one `SystemParam` (the
+/// [`LaborConfigs`] idiom) so the system stays within Bevy's argument budget without silencing clippy.
+/// Each is resolved to its `Arc` once at the top of the system.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RaidConfigs<'w> {
+    pub fauna: Res<'w, FaunaConfigHandle>,
+    pub combat: Res<'w, CombatConfigHandle>,
+    pub creatures: Res<'w, CreaturesConfigHandle>,
+}
+
+/// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
+/// (`docs/plan_predators.md`). A carnivore with `aggression > 0` within `predators.raid_radius` of a
+/// resident band turns on its camp; the band is defended by its **Warriors** (the head-count assigned
+/// to [`LaborTarget::Warrior`]). Like the hunt-danger adapter, this builds a [`FightPayload`], resolves
+/// it through the neutral combat subsystem, and applies **only the band/defender side's** casualties —
+/// working-age only this phase (`wounded` is surfaced in the feed but mechanically inert, as in
+/// Phase 0). Runs in the Population stage right after [`advance_labor_allocation`], so warrior counts
+/// and band positions are current.
+///
+/// **Why the band side is TWO contingents, and why that is load-bearing** (do not "simplify" it into a
+/// warriors-only side): the placeholder resolver clamps a side's losses to *its own* headcount, so a
+/// side with `count 0` takes ZERO losses. A warriors-only band side would therefore give a
+/// **0-warrior band zero casualties** — the exact inverse of "an under-guarded band costs it people".
+/// So the band's *exposed populace* is present as its own contingent (the thing that can die, at
+/// **zero attack** — it dilutes the blow and adds no offense), and the Warriors are the *additional
+/// armed defenders* that add power (cutting the enemy-relative loss ratio) and shift the kill/wound
+/// split toward wounded. The aggressor's engaged count is a **single** representative of the pack, a
+/// deliberate Phase-1b simplification that keeps `power_enemy` modest (≈ `attack × aggression`) so a
+/// handful of warriors at attack 1 can meaningfully reduce `(power_enemy / power_self)` — with the
+/// whole pack engaged, warriors could never keep up and every raid would be a massacre. Scaling the
+/// engaged count with pack size is a Phase-2+ refinement.
+pub fn advance_predator_raids(
+    herds: Res<HerdRegistry>,
+    configs: RaidConfigs,
+    sim_config: Res<SimulationConfig>,
+    tick: Res<SimulationTick>,
+    mut event_log: ResMut<CommandEventLog>,
+    tiles: Query<&Tile>,
+    mut bands: Query<(Entity, &mut PopulationCohort, &LaborAllocation), With<ResidentBand>>,
+) {
+    // Resolved once — none of these change within a turn (the hunt-danger adapter's discipline).
+    let fauna = configs.fauna.get();
+    let tuning = configs.combat.get().tuning();
+    let person = configs.creatures.get().person();
+    let raid_radius = fauna.predators.raid_radius;
+    let raid_exposure = fauna.predators.raid_exposure;
+    let width = sim_config.grid_size.x;
+    let wrap = sim_config.map_topology.wrap_horizontal;
+    let map_seed = sim_config.map_seed;
+    let tick = tick.0;
+
+    for (entity, mut cohort, alloc) in bands.iter_mut() {
+        let Ok(band_pos) = tiles.get(cohort.current_tile).map(|t| t.position) else {
+            continue;
+        };
+        // Working-age adults are both the defenders and the only bracket Phase-1b casualties come from,
+        // so a band with none of them neither defends nor dies.
+        let working_age = cohort.working.to_f32();
+        if working_age <= 0.0 {
+            continue;
+        }
+        let faction = cohort.faction;
+        // Warriors can't exceed the working-age adults present; the rest of the exposed bracket is the
+        // populace that stands in the pack's path (bounded by the `raid_exposure` dial).
+        let warriors = alloc.workers_on(&LaborTarget::Warrior) as f32;
+        let warrior_count = warriors.min(working_age);
+        let exposed = raid_exposure.min((working_age - warrior_count).max(0.0));
+
+        // Casualties from every raiding predator this turn are additive and order-independent, so they
+        // accumulate into one cohort mutation at the end.
+        let mut total_killed = 0.0f32;
+        for herd in &herds.herds {
+            // Only a **carnivore** raids — the diet gate.
+            let Some(def) = fauna.species_by_display(&herd.species) else {
+                continue;
+            };
+            if def.diet != Diet::Carnivore {
+                continue;
+            }
+            // **The raid trigger** (`docs/plan_predators.md`): a carnivore raids to the extent it is
+            // aggressive, so its effective attack is `attack × aggression`. A carnivore with
+            // `aggression 0` does not raid at all — the gate.
+            let effective_attack = def.combat.attack * def.aggression;
+            if effective_attack <= 0.0 {
+                continue;
+            }
+            // The pack must have reached the camp — a tighter reach than the prey-sensing disk.
+            if crate::grid_utils::hex_distance_wrapped(herd.current_pos, band_pos, width, wrap)
+                > raid_radius
+            {
+                continue;
+            }
+
+            // Rollback-stable seed distinct per (predator, band) pair — hash BOTH the herd id and the
+            // band entity, so two predators on one band and one predator on two bands all differ. The
+            // placeholder resolver ignores `seed`, but it is supplied as a real value (the hunt-danger
+            // adapter's discipline).
+            let mut hasher = crate::hashing::FnvHasher::new();
+            std::hash::Hash::hash(&herd.id, &mut hasher);
+            std::hash::Hash::hash(&entity, &mut hasher);
+            let seed = map_seed ^ tick ^ std::hash::Hasher::finish(&hasher);
+
+            let payload = FightPayload {
+                sides: vec![
+                    // Aggressor: a single fighting representative of the pack, at its
+                    // aggression-scaled attack (defense/range unchanged).
+                    Force {
+                        id: ForceId(0),
+                        posture: Posture::Aggressor,
+                        contingents: vec![Contingent {
+                            kind: ContingentId(herd.species.clone()),
+                            count: 1.0,
+                            profile: CombatStats {
+                                attack: effective_attack,
+                                ..def.combat
+                            },
+                        }],
+                    },
+                    // Defender: the band. TWO contingents (see the fn doc-comment) — the armed Warriors
+                    // that add power, and the unarmed exposed folk that can die but add no offense.
+                    Force {
+                        id: ForceId(1),
+                        posture: Posture::Defender,
+                        contingents: vec![
+                            Contingent {
+                                kind: ContingentId::from("warrior"),
+                                count: warrior_count,
+                                profile: person,
+                            },
+                            Contingent {
+                                kind: ContingentId::from("person"),
+                                count: exposed,
+                                profile: CombatStats {
+                                    attack: 0.0,
+                                    defense: person.defense,
+                                    range: person.range,
+                                },
+                            },
+                        ],
+                    },
+                ],
+                terrain: vec![TerrainContext {
+                    hex: (band_pos.x, band_pos.y),
+                }],
+                seed,
+            };
+            let outcome = resolve_fight(&payload, &tuning);
+            // Apply ONLY the defender side (`ForceId(1)`); the predator side is discarded (no biomass
+            // take here to reconcile, but band casualties are all this phase cares about).
+            let (killed_f, wounded_f) =
+                outcome.results.iter().fold((0.0f32, 0.0f32), |(k, w), r| {
+                    if r.force == ForceId(1) {
+                        (k + r.killed, w + r.wounded)
+                    } else {
+                        (k, w)
+                    }
+                });
+            if killed_f + wounded_f > 0.0 {
+                total_killed += killed_f;
+                // One feed line per raiding predator, pushed now. Human text names the SPECIES, never
+                // the internal herd id; the detail carries the fractional truth (`wounded` is inert this
+                // phase — recovery is a later slice, as in Phase 0).
+                let killed_r = killed_f.round() as u32;
+                event_log.push(CommandEventEntry::new(
+                    tick,
+                    CommandEventKind::PredatorRaid,
+                    faction,
+                    format!("A {} raid cost {} lives", def.display_name, killed_r),
+                    Some(format!(
+                        "killed={:.3} wounded={:.3} warriors={} species={}",
+                        killed_f, wounded_f, warrior_count as u32, def.display_name
+                    )),
+                ));
+            }
+        }
+        // One mutation per band — working-age only this phase.
+        cohort.apply_combat_casualties(scalar_from_f32(total_killed));
     }
 }
 

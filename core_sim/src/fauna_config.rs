@@ -579,6 +579,19 @@ pub struct PredatorConfig {
     /// zero prey most turns and snap `K→0`. A single clearly-named dial for the whole predator model
     /// (chosen as a global lever over a per-species `SpeciesDef` field). Validated `>= 1`.
     pub prey_sense_radius: u32,
+    /// **The raid trigger reach** (Predators Phase 1b, `docs/plan_predators.md`) — how close (odd-r hex
+    /// distance) a carnivore must be to a band to raid its camp (`systems::advance_predator_raids`). Its
+    /// **own** lever: a raid is the pack reaching the camp, distinct from — and deliberately **tighter
+    /// than** — the `prey_sense_radius` disk the pack senses game across. Validated `>= 1`. A playtest
+    /// dial.
+    #[serde(default = "default_raid_radius")]
+    pub raid_radius: u32,
+    /// **How many of a band's working-age people are exposed to a raid** (Predators Phase 1b) — the
+    /// defender-side populace that can be killed. Bounds a raid so it is a *skirmish*, not a massacre:
+    /// only this many folk (beyond the warriors) stand in the pack's path each raid turn. Validated
+    /// finite `> 0`. A playtest dial.
+    #[serde(default = "default_raid_exposure")]
+    pub raid_exposure: f32,
 }
 
 impl Default for PredatorConfig {
@@ -588,6 +601,8 @@ impl Default for PredatorConfig {
             min_spacing: DEFAULT_PREDATOR_MIN_SPACING,
             predation_escapement_fraction: DEFAULT_PREDATION_ESCAPEMENT_FRACTION,
             prey_sense_radius: DEFAULT_PREY_SENSE_RADIUS,
+            raid_radius: default_raid_radius(),
+            raid_exposure: default_raid_exposure(),
         }
     }
 }
@@ -611,6 +626,16 @@ const DEFAULT_PREDATION_ESCAPEMENT_FRACTION: f32 = 0.15;
 /// Default prey-sensing disk radius (wider than a graze footprint). See
 /// [`PredatorConfig::prey_sense_radius`].
 const DEFAULT_PREY_SENSE_RADIUS: u32 = 3;
+/// Default raid trigger reach (tighter than the prey-sensing disk). See
+/// [`PredatorConfig::raid_radius`].
+fn default_raid_radius() -> u32 {
+    2
+}
+/// Default number of a band's working-age folk exposed to a raid. See
+/// [`PredatorConfig::raid_exposure`].
+fn default_raid_exposure() -> f32 {
+    4.0
+}
 
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
 /// geometry (band closes to `pursuit_radius` tiles).
@@ -1665,6 +1690,25 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.prey_sense_radius.to_string(),
         });
     }
+    if predators.raid_radius < 1 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.raid_radius",
+            constraint: "be at least 1 (a 0-radius raid can never reach any band, so the trigger \
+                         never fires)"
+                .to_string(),
+            value: predators.raid_radius.to_string(),
+        });
+    }
+    if !predators.raid_exposure.is_finite() || predators.raid_exposure <= 0.0 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.raid_exposure",
+            constraint:
+                "be finite and > 0 (a 0 exposure leaves no defender-side populace, so a raid \
+                         can kill no one and the trigger is inert)"
+                    .to_string(),
+            value: predators.raid_exposure.to_string(),
+        });
+    }
     // Every per-biome probability finite in `[0, 1]`, iterated in stable key order for a deterministic
     // error message (the `species` loop convention).
     let mut per_biome: Vec<(&String, &f32)> = predators.per_biome.iter().collect();
@@ -2344,6 +2388,20 @@ mod tests {
 
     /// The graze table must be **total** over every `TerrainType`. A missing row would silently read as
     /// zero graze — an invisible dead zone in the pasture layer that nothing would ever explain.
+    /// A `raid_radius` of 0 means a raid can never reach any band — the whole trigger is inert.
+    #[test]
+    fn validate_rejects_a_zero_raid_radius() {
+        let err = reject(|json| json["predators"]["raid_radius"] = (0).into());
+        assert_rejects_field(err, "predators.raid_radius");
+    }
+
+    /// A non-positive `raid_exposure` leaves no defender-side populace, so a raid can kill nobody.
+    #[test]
+    fn validate_rejects_a_non_positive_raid_exposure() {
+        let err = reject(|json| json["predators"]["raid_exposure"] = (0.0).into());
+        assert_rejects_field(err, "predators.raid_exposure");
+    }
+
     #[test]
     fn validate_rejects_a_partial_graze_biome_table() {
         let err = reject(|json| {
