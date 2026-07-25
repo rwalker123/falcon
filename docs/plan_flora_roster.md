@@ -436,10 +436,13 @@ re-cutting the schema.
 > and unchanged** — `field_trade_goods` deliberately does **not** apply the Market
 > `trade_goods_multiplier`, which is a Market-policy markup for wild commercial gathering, not a
 > managed harvest. Four cash crops ship — cotton (0.20) / flax (0.15) / tobacco (0.18) / tea (0.16),
-> playtest dials — hosting sowable **Floodplain** (so cash contests grain on real sowable ground) +
-> uplands, kept off AlluvialPlain/RiverDelta so their staples stay dominant on best country. The
-> picker quote is `commit_trade_payoff` → `FloraShareInfo.sowTradePayoff`. Client half (decode +
-> render the cash row/badge) remains.
+> playtest dials — hosted **honestly on the river valleys** (cotton/tobacco/flax on
+> AlluvialPlain/Floodplain/RiverDelta, tea on the uplands): **per-tile realization (§10) is what keeps
+> the staples dominant on their own realized tiles** (the local-share commit bar), so cash and grain
+> share that ground without a global % table eroding wheat. The picker quote is `commit_trade_payoff`
+> → `FloraShareInfo.sowTradePayoff`. **Client done**: the native reader decodes `sowTradePayoff` and
+> the crop picker renders a cash-crop trade row (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was
+> deliberately omitted for parity with fodder — no role-badge mechanism exists for either.
 
 ---
 
@@ -487,7 +490,8 @@ block carries its weight, then mass-fill.**
   replacing the flat one — the exact twin of F3's fodder work. `field_trade_goods` routes the vector's
   trade component to the faction `trade_goods` stockpile (`commit_trade_payoff` →
   `FloraShareInfo.sowTradePayoff`); the wild Market path stays flat. Four crops (cotton/flax/tobacco/
-  tea). Client half (decode + render) remains.
+  tea). Client done: native `sowTradePayoff` decode + crop-picker trade row
+  (`FLORA_CROP_TRADE_ROW_FORMAT`); the cash badge was intentionally omitted for fodder parity.
 - **§10 — Per-tile realization. LANDED.** Split affinity (*what can grow*) from realization (*what is
   growing*): `tile_flora_composition` now realizes a seeded 2–4-species subset per tile, so two tiles
   of one biome differ. Dissolved the F4 dilution bind — cash crops re-hosted honestly on

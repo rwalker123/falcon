@@ -516,9 +516,9 @@ pub fn tile_forage_capacity(forage: &ForageLaborConfig, tile: &Tile) -> f32 {
 /// capacity it decomposes can never disagree about a tile's shape.
 ///
 /// A `NavigableRiver` hex has a **two-term** capacity (the valley it cut **plus** the fishery the
-/// channel is), so it gets the blended basket ([`FloraConfig::navigable_composition`]); every other
-/// tile reads its own biome's basket directly. Borrowed for the common case, owned only for the
-/// navigable blend — the blend is the only shape that has to be built.
+/// channel is), so it gets the blended basket ([`FloraConfig::realized_navigable_composition`]); every
+/// other tile reads its own biome's basket. **The result is `Cow::Owned` on both arms** — since the
+/// §10 realization addition each tile's basket is a freshly-built subset, so neither arm borrows.
 ///
 /// Every caller (today: the snapshot capture) must go through this, never
 /// [`FloraConfig::composition`] on a raw terrain: reading the underlying biome alone on a navigable

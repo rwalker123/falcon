@@ -75,7 +75,8 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
     let forage = &labor.forage;
 
     // Sowable river-valley farmland (capacity 205 >= the 195 field floor) that cotton/hay/grain
-    // all compete for — cotton is hosted here, not on AlluvialPlain (staples stay dominant there).
+    // all compete for. Cotton IS hosted on AlluvialPlain too (§10 per-tile realization keeps the
+    // staples dominant on their own realized tiles); Floodplain just happens to carry all three here.
     let terrain = TerrainType::Floodplain;
     let tile = UVec2::new(terrain as u32, 0);
     let capacity = forage.capacity_for(terrain);
