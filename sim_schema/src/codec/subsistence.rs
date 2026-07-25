@@ -236,7 +236,7 @@ fn create_forage_patches<'a>(
                 perWorkerYield: patch.per_worker_yield,
                 ceilingSustain: patch.ceiling_sustain,
                 ceilingSurplus: patch.ceiling_surplus,
-                ceilingMarket: patch.ceiling_market,
+                ceilingDeplete: patch.ceiling_deplete,
                 ceilingEradicate: patch.ceiling_eradicate,
                 ceilingCultivate: patch.ceiling_cultivate,
                 tendedYield: patch.tended_yield,

@@ -1175,7 +1175,7 @@ func _investment_policy_herd_fixtures() -> Array:
 			"domestication": 1.0, "corral_progress": 0.4, "herders_needed": 3,
 			"per_worker_yield": 0.25,
 			"hunt_policy_ceilings": {
-				"sustain": 0.40, "surplus": 1.10, "market": 1.60, "eradicate": 2.40,
+				"sustain": 0.40, "surplus": 1.10, "deplete": 1.60, "eradicate": 2.40,
 				"tame": 0.20, INVESTMENT_ROW_POLICY: 0.75,
 			},
 		},
@@ -1184,7 +1184,7 @@ func _investment_policy_herd_fixtures() -> Array:
 			"population": 90, "ecology_phase": "thriving", "huntable": true,
 			"per_worker_yield": 0.10,
 			"hunt_policy_ceilings": {
-				"sustain": 0.20, "surplus": 0.60, "market": 0.90, "eradicate": 1.40,
+				"sustain": 0.20, "surplus": 0.60, "deplete": 0.90, "eradicate": 1.40,
 			},
 		},
 	]
@@ -1214,7 +1214,7 @@ func _under_herded_work_herd_fixtures() -> Array:
 			"domestication": 1.0, "corralled": true, "herders_needed": 4, "herded_fraction": 1.0,
 			"per_worker_yield": 5.40,
 			"hunt_policy_ceilings": {
-				"sustain": 5.40, "surplus": 6.0, "market": 7.0, "eradicate": 8.0,
+				"sustain": 5.40, "surplus": 6.0, "deplete": 7.0, "eradicate": 8.0,
 				"tame": 5.40, "corral": 5.40,
 			},
 		},
@@ -1495,7 +1495,7 @@ func _quarry_herd_fixtures() -> Array:
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8, "food_per_animal": QUARRY_FOOD_PER_ANIMAL,
 		"hunt_policy_ceilings": {
-			"sustain": 0.30, "surplus": 1.20, "market": 0.60, "eradicate": 0.0,
+			"sustain": 0.30, "surplus": 1.20, "deplete": 0.60, "eradicate": 0.0,
 		},
 	}
 	# The server's measured boar raid: 1 hunter → 5 animals / 7 turns, 2 → 8 / 8, 3+ → 8 / 4. Delivered
@@ -1508,7 +1508,7 @@ func _quarry_herd_fixtures() -> Array:
 		var turns := int(turns_row[i])
 		var base := int(animals_row[i])
 		# A CLEAN raid — the party hauls its whole kill home, so delivered = animals × fpa, waste 0.
-		# The deeper policies raid to a lower floor and so take MORE (Surplus < Market), which is the
+		# The deeper policies raid to a lower floor and so take MORE (Surplus < Deplete), which is the
 		# ASCENDING per-policy metric the picker buttons must read.
 		table["sustain:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
 			"animals_taken": base, "delivered_food": float(base) * QUARRY_FOOD_PER_ANIMAL,
@@ -1516,7 +1516,7 @@ func _quarry_herd_fixtures() -> Array:
 		table["surplus:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
 			"animals_taken": base + 2, "delivered_food": float(base + 2) * QUARRY_FOOD_PER_ANIMAL,
 			"wasted_food": 0.0}
-		table["market:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
+		table["deplete:%d" % w] = {"turns_to_fill": turns, "delivers_food": true,
 			"animals_taken": base + 3, "delivered_food": float(base + 3) * QUARRY_FOOD_PER_ANIMAL,
 			"wasted_food": 0.0}
 		# Eradicate is a DENIAL rung: the SIM says so via `delivers_food`, never the policy string.
@@ -1529,7 +1529,7 @@ func _quarry_herd_fixtures() -> Array:
 		"id": QUARRY_NEAR_HERD_ID, "species": "Roe Deer", "x": QUARRY_NEAR_X, "y": QUARRY_NEAR_Y,
 		"population": 90, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8,
-		"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.80, "market": 0.40, "eradicate": 0.0},
+		"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.80, "deplete": 0.40, "eradicate": 0.0},
 		"hunt_trip_estimates": table.duplicate(true),
 	}
 	return [herd, near]

@@ -217,9 +217,9 @@ const RECOVERY_GUIDANCE_GLYPH := "↑"
 const RECOVERY_GUIDANCE_TEXT := RECOVERY_GUIDANCE_GLYPH + " Recover: move to Hospitable ground · Scout · Hunt"
 
 # ---- Expedition delivery vocabulary (the `expedition_*` producers below are the only readers).
-# Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Market
-# policy). Distinct from the Market policy glyph already shown (`FoodIcons.for_policy("market")` = ⇄),
-# so the two never read as duplicated: ↻ = "this trip repeats", ⇄ = "the take is sold as trade goods".
+# Marks a hunt party's "Next delivery" line when the party relaunches for repeated trips (Deplete
+# policy). Distinct from the Deplete policy glyph already shown (`FoodIcons.for_policy("deplete")` = ⇊),
+# so the two never read as duplicated: ↻ = "this trip repeats", ⇊ = "the take presses the herd down hard".
 const EXPEDITION_RECURRING_GLYPH := "↻"
 # "Next delivery" lines for the two ways a projected-0 forecast can arise, disambiguated on the
 # party's own `expedition_target_herd` (which MIGRATES and is often NOT the herd the player is

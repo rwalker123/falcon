@@ -158,7 +158,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     if let Some(activity) = cohort.activity() {
         let _ = dict.insert("activity", activity);
     }
-    // Fauna-pursuit sub-mode: "single" (one-shot) or "sustain"/"surplus"/"market"/
+    // Fauna-pursuit sub-mode: "single" (one-shot) or "sustain"/"surplus"/"deplete"/
     // "eradicate" (follow policies); empty when the band isn't hunting. Mirrors `activity`.
     if let Some(hunt_mode) = cohort.huntMode() {
         let _ = dict.insert("hunt_mode", hunt_mode);
@@ -311,7 +311,7 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_target_herd",
         cohort.expeditionTargetHerd().unwrap_or(""),
     );
-    // Hunt-party take policy (sustain|surplus|market|eradicate; "" for scouts/bands) + the carry
+    // Hunt-party take policy (sustain|surplus|deplete|eradicate; "" for scouts/bands) + the carry
     // ceiling (party × per_worker_carry; 0 for scouts/bands). The hunt panel shows "Carried X / cap"
     // + a FULL state, and the launched party's policy.
     let _ = dict.insert(

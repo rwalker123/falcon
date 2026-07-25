@@ -200,7 +200,7 @@ fn sustain_hunt_keeps_biomass_stable() {
 /// ```
 ///
 /// So a **fast breeder out-breeds a 10% skim and stabilises at a lower stock** — the same real
-/// property Market already has at 20% (`fauna_market`, whose two tests are pinned to a slow `r` for
+/// property Deplete already has at 20% (`fauna_deplete`, whose two tests are pinned to a slow `r` for
 /// exactly this reason), and the reason the flow had to go: a flow ceiling never accumulates, so
 /// `floor(ceiling / body_mass)` was `0` forever for every animal heavier than its herd's MSY.
 ///

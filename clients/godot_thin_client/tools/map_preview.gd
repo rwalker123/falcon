@@ -1729,12 +1729,12 @@ func _snapshot_work() -> Dictionary:
 	# sim-answered `overdraws` bool (policy-driven, false for Sustain), NOT `actual > sustainable`.
 	# The DECOUPLING this proves: the SUSTAIN hunt has `actual 0.46 > sustainable 0.20` (a banked
 	# whole animal cashed on this kill turn) yet `overdraws=false` → NO ⚠ (label reads +0.20, clean),
-	# while the MARKET forage genuinely overdraws → `overdraws=true` → ⚠.
+	# while the DEPLETE forage genuinely overdraws → `overdraws=true` → ⚠.
 	var assignments := [
-		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
+		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / ⇊ deplete /
 		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
 		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "deplete", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]

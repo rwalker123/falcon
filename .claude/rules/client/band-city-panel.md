@@ -295,7 +295,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (DANGER) inline links. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
   strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
   the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
-  (`↻` appended for a recurring/Market party), `~N food (raid underway)` when the ETA is unknown, and —
+  (`↻` appended for a recurring/Deplete party), `~N food (raid underway)` when the ETA is unknown, and —
   when the projection is `0` — a line that **disambiguates on the party's own TARGET, not the tile's
   herd**. A hunt party is bound to ONE specific herd (`expedition_target_herd`) chosen at launch, and a
   projected `0` over a **healthy** herd is structurally impossible (the sim proves it — the in-flight

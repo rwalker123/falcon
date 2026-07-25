@@ -83,7 +83,7 @@ pub(crate) fn herds_to_array(
         }
         // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
         // per (policy × party size). An expedition's trip length is NOT a rate division: for
-        // Surplus/Market the per-policy ceiling is a *stock*, so the party strips the headroom in a
+        // Surplus/Deplete the per-policy ceiling is a *stock*, so the party strips the headroom in a
         // turn or two and then crawls at the herd's regrowth trickle (on a full Rabbit Warren under
         // Surplus only a LONE hunter fills at all — 23 turns; a party of 4 never fills within the
         // horizon, and under Sustain no party size fills at any size). The sim therefore
@@ -133,7 +133,7 @@ pub(crate) fn herds_to_array(
         // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
         // hunter stepper at what the herd can actually absorb. EVERY herd-side ceiling now comes
         // from the `hunt_policy_ceilings` Dictionary above — the old per-policy scalars
-        // (ceilingSustain/Surplus/Market/Eradicate/Corral) are deprecated schema slots and are no
+        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are deprecated schema slots and are no
         // longer decoded. (ForagePatchState keeps its scalars: a patch has no such list.)
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
         // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned. Its
@@ -269,7 +269,7 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
         let _ = dict.insert("ceiling_sustain", patch.ceilingSustain());
         let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
-        let _ = dict.insert("ceiling_market", patch.ceilingMarket());
+        let _ = dict.insert("ceiling_deplete", patch.ceilingDeplete());
         let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
         // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
         // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once

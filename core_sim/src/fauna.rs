@@ -287,7 +287,7 @@ pub struct Herd {
     /// the fractional rate *accumulates* here instead of rounding to zero every turn.
     ///
     /// **Carries across policy changes** — it is earned regrowth toward the next animal, so switching
-    /// Sustain↔Market must not reset it (that would let a player dodge the wait). It drains only by
+    /// Sustain↔Deplete must not reset it (that would let a player dodge the wait). It drains only by
     /// kills, and is capped at the standing `biomass` so it can never bank credit for animals that do
     /// not exist (which would release a burst when the herd recovered).
     ///
@@ -3652,8 +3652,8 @@ pub struct SourceYieldForecast {
     pub ceiling_sustain: f32,
     /// Food/turn cap under **Surplus**.
     pub ceiling_surplus: f32,
-    /// Food/turn cap under **Market**.
-    pub ceiling_market: f32,
+    /// Food/turn cap under **Deplete**.
+    pub ceiling_deplete: f32,
     /// Food/turn cap under **Eradicate**.
     pub ceiling_eradicate: f32,
     /// Food/turn cap under the source's **top investment** policy — `Cultivate` for a forage patch,
@@ -3743,7 +3743,7 @@ impl SourceYieldForecast {
             body_mass_yield,
             ceiling_sustain: production,
             ceiling_surplus: production,
-            ceiling_market: production,
+            ceiling_deplete: production,
             ceiling_eradicate: production,
             // The improvement is already built — "preparing" and "once complete" are both just the
             // managed yield it pays now. (A source at this rung is past taming too.) Honest *here*,
@@ -3775,7 +3775,7 @@ impl SourceYieldForecast {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
             FollowPolicy::Surplus => self.ceiling_surplus,
-            FollowPolicy::Market => self.ceiling_market,
+            FollowPolicy::Deplete => self.ceiling_deplete,
             FollowPolicy::Eradicate => self.ceiling_eradicate,
             FollowPolicy::Tame => self.ceiling_tame,
             FollowPolicy::Sow => self.ceiling_sow,
@@ -3829,7 +3829,7 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// **Simulated RATE-BASED, without the kill-credit bank** (`docs`): the bank only quantises *when*
 /// whole animals arrive, never the N-turn total, so simulating the smooth [`hunt_policy_rate`] gives
 /// the smooth average directly — which is the whole point, since the lumpy bank-quantised take is what
-/// `actual` already reports. A Sustain herd converges to ~MSY and reads flat; a Surplus/Market herd
+/// `actual` already reports. A Sustain herd converges to ~MSY and reads flat; a Surplus/Deplete herd
 /// declines within the horizon and the average honestly reflects it; a corralled herd projects its
 /// managed pen yield (already smooth). Reuses the shared model helpers ([`regrow_biomass`],
 /// [`hunt_policy_rate`], [`pen_yield_biomass`], [`hunt_provisions`], [`herd_ecology`]/[`herd_capacity`])
@@ -3860,7 +3860,7 @@ pub fn project_realized_hunt(
     let collection = workers as f32 * per_worker_biomass_capacity;
     let mut total = 0.0_f32;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
-    // ~1 turn, Market drives it extinct) breaks early, and the average divides by THIS — not the full
+    // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
     // `horizon` — so the reported rate is what the player gets *while the source lasts*, never diluted
     // by dead turns after the herd is gone. Sustain never terminates, so it runs the full horizon.
     let mut turns = 0u32;
@@ -4189,17 +4189,17 @@ pub fn hunt_source_yield_preview(
 /// |---|---|---|
 /// | **Sustain** | [`sustainable_yield`] — `regen(min(B, K/2))` | stable, settles at `K/2` |
 /// | **Surplus** | `surplus_multiplier × MSY` (**1.5**) | slowly declines (reversible) |
-/// | **Market** | `market_multiplier × MSY` (**2.5**) | declines to **extinction** |
+/// | **Deplete** | `deplete_multiplier × MSY` (**2.5**) | declines to **extinction** |
 /// | **Eradicate** | the whole stock (`B`) — bypasses the credit bank | gone |
 /// | **Tame / Corral** | Sustain's rate × the rung's `yield_fraction_while_building` | a dip on a sustainable draw |
 ///
-/// **Ordering is guaranteed because Surplus/Market are multiples of the SAME base:** `Sustain ≤ MSY <
+/// **Ordering is guaranteed because Surplus/Deplete are multiples of the SAME base:** `Sustain ≤ MSY <
 /// 1.5·MSY < 2.5·MSY ≤ B`, at **every** biomass and for **every** species (`FaunaConfig::validate` pins
-/// `1 ≤ surplus_multiplier < market_multiplier`). *"Each option takes more than the previous, or it
+/// `1 ≤ surplus_multiplier < deplete_multiplier`). *"Each option takes more than the previous, or it
 /// looks strange to the player."* A fraction-of-`B` skim could dip below MSY for a fast breeder
 /// (measured in play: Wild Fowl Sustain 0.22 vs a 0.10·B Surplus 0.15 — inverted); a **multiple of MSY
 /// never can**. Extinction is real: constant catch above MSY has no equilibrium, so Surplus declines a
-/// herd and Market drives it extinct.
+/// herd and Deplete drives it extinct.
 ///
 /// # Sustain's TWO-BRANCH rate — never crashes a herd, never sticks at `K`
 ///
@@ -4221,7 +4221,7 @@ pub fn hunt_source_yield_preview(
 ///
 /// `biomass` is the herd's **pre-regrowth** biomass ([`Herd::biomass_before_regrowth`]) — the take runs
 /// after Logistics regrowth, so Sustain must size its sustainable rate against what the herd *was* this
-/// turn, not the grown stock, or it slowly leaks a below-`K/2` herd down. Surplus/Market read only
+/// turn, not the grown stock, or it slowly leaks a below-`K/2` herd down. Surplus/Deplete read only
 /// `carrying_capacity` + `ecology` (their MSY multiple is biomass-independent); Eradicate's return is
 /// unused (its take bypasses the rate — see [`hunt_credit_ceiling`]).
 ///
@@ -4240,7 +4240,7 @@ pub fn hunt_policy_rate(
     let rate = match policy {
         FollowPolicy::Sustain => sustain,
         FollowPolicy::Surplus => fauna.hunt.surplus_multiplier * msy,
-        FollowPolicy::Market => fauna.hunt.market_multiplier * msy,
+        FollowPolicy::Deplete => fauna.hunt.deplete_multiplier * msy,
         // Eradicate takes the whole standing stock (it bypasses the credit bank at the call sites); the
         // rate is `B` so the fill-bound and the forecast read it as "everything".
         FollowPolicy::Eradicate => biomass,
@@ -4537,7 +4537,7 @@ pub(crate) fn hunt_forecast(
         body_mass_yield: hunt_provisions(herd.body_mass, fauna, output_multiplier),
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
-        ceiling_market: ceiling(FollowPolicy::Market),
+        ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
         // The investment rung: what the herd pays *while the pen is built* (Corral — the dip, on the
         // herd's CURRENT ecology), and what it will pay *once penned*.
@@ -5522,7 +5522,7 @@ mod tests {
     /// inverting the ladder (`Sustain 2.24 > Tame 1.44`). Dropping the `hunt_credit` term restores the
     /// steady rate, so the displayed ladder is ordered whatever the bank holds:
     ///
-    /// `Sustain < Surplus < Market` (extractive, steady multiples of MSY), the Tame/Corral **dips**
+    /// `Sustain < Surplus < Deplete` (extractive, steady multiples of MSY), the Tame/Corral **dips**
     /// below their **payoffs** (`ceiling_tame < pastoral_yield`, `ceiling_prepare < managed_yield` — the
     /// "Preparing +X → then +Y" the client renders, dip now under payoff), and the whole intensification
     /// ladder `Sustain < pastoral_yield < managed_yield`. Asserting this **with a full bank** is the
@@ -5547,12 +5547,12 @@ mod tests {
         // Extractive ladder — steady multiples of MSY, unperturbed by the banked animal.
         assert!(
             forecast.ceiling_sustain < forecast.ceiling_surplus
-                && forecast.ceiling_surplus < forecast.ceiling_market,
+                && forecast.ceiling_surplus < forecast.ceiling_deplete,
             "extractive ceilings must be the steady MSY multiples in order, not the banked burst: \
-             sustain {} surplus {} market {}",
+             sustain {} surplus {} deplete {}",
             forecast.ceiling_sustain,
             forecast.ceiling_surplus,
-            forecast.ceiling_market,
+            forecast.ceiling_deplete,
         );
         // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff".
         assert!(

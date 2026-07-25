@@ -229,7 +229,7 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
 	"patch_per_worker_yield", "patch_ceiling_sustain", "patch_ceiling_surplus",
-	"patch_ceiling_market", "patch_ceiling_eradicate",
+	"patch_ceiling_deplete", "patch_ceiling_eradicate",
 	"patch_ceiling_cultivate", "patch_tended_yield",
 	# Plant rung 3 (the Field + Sow) — redacted exactly as their rung-2 twins above are: the two
 	# build meters are live patch state, and the Sow forecast pair is quoted at the patch's CURRENT
@@ -1793,7 +1793,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"settlement_stage_label": String(entry.get("settlement_stage_label", "")),
 			"settlement_stage_icon": String(entry.get("settlement_stage_icon", "")),
 			"activity": String(entry.get("activity", "")),
-			# Fauna-pursuit sub-mode (single/sustain/surplus/market/eradicate); flows to the
+			# Fauna-pursuit sub-mode (single/sustain/surplus/deplete/eradicate); flows to the
 			# drawer + roster so "Cancel <Mode> Hunt" can label a live hunting band.
 			"hunt_mode": String(entry.get("hunt_mode", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
@@ -1832,7 +1832,7 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"home_band_entity": int(entry.get("home_band_entity", 0)),
 			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
 			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
-			# Hunt party take policy (sustain|surplus|market|eradicate; "" for scouts) + carry cap.
+			# Hunt party take policy (sustain|surplus|deplete|eradicate; "" for scouts) + carry cap.
 			"expedition_hunt_policy": String(entry.get("expedition_hunt_policy", "")),
 			"expedition_carry_cap": float(entry.get("expedition_carry_cap", 0.0)),
 			# Next-delivery forecast (the in-flight raid twin): the detail panel's "Next delivery" line
@@ -2196,7 +2196,7 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_per_worker_yield"] = float(patch.get("per_worker_yield", 0.0))
 		info["patch_ceiling_sustain"] = float(patch.get("ceiling_sustain", 0.0))
 		info["patch_ceiling_surplus"] = float(patch.get("ceiling_surplus", 0.0))
-		info["patch_ceiling_market"] = float(patch.get("ceiling_market", 0.0))
+		info["patch_ceiling_deplete"] = float(patch.get("ceiling_deplete", 0.0))
 		info["patch_ceiling_eradicate"] = float(patch.get("ceiling_eradicate", 0.0))
 		# The Cultivate investment rung: the dip yield while the patch is being prepared, and the
 		# tended yield it pays afterwards. Hud._build_forage_assign_controls turns the pair into the

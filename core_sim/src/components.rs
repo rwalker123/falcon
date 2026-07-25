@@ -582,7 +582,7 @@ pub enum ExpeditionMission {
     /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`. The
     /// `policy` ([`FollowPolicy`], chosen at launch) governs the take floor + trip behaviour: Sustain
     /// = one conservative harvest to the sustain floor + done; Surplus = one full-cap haul + done;
-    /// Market = repeated full-cap trips (grind down); Eradicate = hunt to extinction, delivers no food.
+    /// Deplete = repeated full-cap trips (grind down); Eradicate = hunt to extinction, delivers no food.
     Hunt {
         fauna_id: String,
         policy: FollowPolicy,
@@ -719,7 +719,7 @@ pub enum LaborTarget {
     /// Gather food from a food-module tile within `band_work_range` under a take policy. Stored as
     /// coordinates (not an entity) so a moving band re-resolves the tile each turn — an out-of-range
     /// tile simply yields 0 that turn without dropping the assignment. The `policy`
-    /// (Sustain/Surplus/Market/Eradicate) sizes the per-turn draw on the tile's depletable forage
+    /// (Sustain/Surplus/Deplete/Eradicate) sizes the per-turn draw on the tile's depletable forage
     /// patch, the plant mirror of the Hunt policy (§0-iii, parity with hunting).
     Forage {
         tile: UVec2,
@@ -822,7 +822,7 @@ pub struct LaborAssignment {
 /// herd sustains ~0.78/turn on average"), `actual` swings — that swing is *true*, and it is the
 /// mechanic — and this flag says whether the policy overdraws at all. It is false for Sustain and the
 /// investment rungs (which sit on Sustain's escapement floor) and for every managed rung-3 source;
-/// true for Surplus/Market/Eradicate, which genuinely draw down toward the collapse threshold.
+/// true for Surplus/Deplete/Eradicate, which genuinely draw down toward the collapse threshold.
 ///
 /// `realized` = **the steady headline yield**, a **FORWARD PROJECTION**: the average food/turn this
 /// source will deliver over the next `labor_config.yield_average_horizon_turns` turns, computed by
@@ -835,7 +835,7 @@ pub struct LaborAssignment {
 /// lumpy bank-quantised take is what `actual` already reports, and averaging the instantaneous
 /// `sustainable_yield(current biomass)` instead would *sawtooth* with the biomass (drops one body per
 /// kill, regrows between). So on a mammoth's six wait turns `actual` is `0` and on the seventh it
-/// spikes, while `realized` reads flat ≈ `MSY`. A self-terminating policy (Eradicate/Market) breaks the
+/// spikes, while `realized` reads flat ≈ `MSY`. A self-terminating policy (Eradicate/Deplete) breaks the
 /// projection early and divides by the turns actually simulated, so it reads the rate it delivers
 /// *while the source lasts* rather than a horizon-diluted average. On a **continuous** source (forage
 /// patch / Field) the projection reuses `forage_take` directly. `actual` and the ledger identity are
@@ -1096,7 +1096,7 @@ pub struct BandTravel {
 /// Take policy for a worked food source — shared by the Forage and Hunt labor arms.
 ///
 /// **The four extractive rungs** size how much biomass the band draws each turn: Sustain ≈ regrowth
-/// (source stable), Surplus > regrowth (slow decline), Market = large commercial share (fast decline
+/// (source stable), Surplus > regrowth (slow decline), Deplete = a hard draw-down (fast decline
 /// → collapse, boosted trade goods), Eradicate = max (drives the source toward local extinction).
 ///
 /// **The three investment rungs** (the intensification ladder's rung-transition verbs) are *not*
@@ -1118,7 +1118,10 @@ pub enum FollowPolicy {
     #[default]
     Sustain,
     Surplus,
-    Market,
+    /// The third extractive rung — named for the **pressure** it applies, not for a product. Every
+    /// harvesting policy sells the source's trade goods, so the old `Market` name described nothing
+    /// that distinguished it (`docs/plan_hunt_yield_model.md` §2).
+    Deplete,
     Eradicate,
     /// **Forage-only.** Prepare the patch into a tended crop (see the enum docs).
     Cultivate,
@@ -1156,7 +1159,7 @@ impl FollowPolicy {
     pub const EXTRACTIVE: [FollowPolicy; 4] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
     ];
 
@@ -1169,7 +1172,7 @@ impl FollowPolicy {
     pub const HUNT_POLICIES: [FollowPolicy; 6] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
         FollowPolicy::Tame,
         FollowPolicy::Corral,
@@ -1213,7 +1216,7 @@ impl FollowPolicy {
     ///   exceeds the long-run MSY rate on every kill turn while being perfectly sustainable).
     /// - **`Tame` / `Corral`** — the investment rungs sit on Sustain's floor and take a *fraction* of
     ///   it. Strictly gentler than Sustain; they cannot overdraw either.
-    /// - **`Surplus` / `Market`** — floor at the collapse (Allee) threshold: a real draw-down.
+    /// - **`Surplus` / `Deplete`** — floor at the collapse (Allee) threshold: a real draw-down.
     /// - **`Eradicate`** — no floor at all.
     /// - **`Cultivate` / `Sow`** — the plant investment rungs, dips on the patch's MSY. Plants stay
     ///   flow-based (they don't quantise), but the answer is the same: a fraction of a sustainable
@@ -1231,7 +1234,7 @@ impl FollowPolicy {
             | FollowPolicy::Cultivate
             | FollowPolicy::Sow => false,
             // Drawn down toward the collapse threshold, or past it.
-            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => true,
+            FollowPolicy::Surplus | FollowPolicy::Deplete | FollowPolicy::Eradicate => true,
         }
     }
 
@@ -1246,7 +1249,7 @@ impl FollowPolicy {
     ///   MSY, i.e. exactly what the source regrew — so it is the one *extractive* policy that is also
     ///   stewardship. This is what keeps rung 1 teaching (Sustain-hunt a wild herd → Herding), the
     ///   shipped behaviour §0 built.
-    /// - **`Surplus` / `Market` / `Eradicate`** teach nothing. They all **overdraw** — the rest of
+    /// - **`Surplus` / `Deplete` / `Eradicate`** teach nothing. They all **overdraw** — the rest of
     ///   `EXTRACTIVE` — and running a source down is not practice.
     /// - **`Cultivate` / `Sow` / `Tame` / `Corral`** teach. The investment rungs are stewardship by
     ///   construction (they *are* the managing), and they are exactly the policies **not** in
@@ -1263,7 +1266,7 @@ impl FollowPolicy {
             // The restrained extractive rung: takes the regrowth, leaves the stock.
             FollowPolicy::Sustain => true,
             // The overdrawing extractive rungs.
-            FollowPolicy::Surplus | FollowPolicy::Market | FollowPolicy::Eradicate => false,
+            FollowPolicy::Surplus | FollowPolicy::Deplete | FollowPolicy::Eradicate => false,
             // The investment rungs — managing IS the practice.
             FollowPolicy::Cultivate
             | FollowPolicy::Sow
@@ -1276,7 +1279,7 @@ impl FollowPolicy {
         match self {
             FollowPolicy::Sustain => "sustain",
             FollowPolicy::Surplus => "surplus",
-            FollowPolicy::Market => "market",
+            FollowPolicy::Deplete => "deplete",
             FollowPolicy::Eradicate => "eradicate",
             FollowPolicy::Cultivate => "cultivate",
             FollowPolicy::Sow => "sow",
@@ -1301,11 +1304,11 @@ impl FollowPolicy {
     }
 
     /// Does an expedition under this policy **relaunch** for repeated trips after each delivery,
-    /// rather than folding home after one? Only `Market` relaunches — see the `relaunch` arm of
+    /// rather than folding home after one? Only `Deplete` relaunches — see the `relaunch` arm of
     /// `advance_expeditions` (Population). Stated here as the single source so the snapshot's
     /// in-flight delivery forecast can't drift from the phase machine.
     pub fn expedition_recurring(&self) -> bool {
-        matches!(self, FollowPolicy::Market)
+        matches!(self, FollowPolicy::Deplete)
     }
 
     /// Policies a **Forage** assignment accepts: the four extractive rungs plus the plant branch's
@@ -1332,7 +1335,7 @@ impl FromStr for FollowPolicy {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
             "surplus" => Ok(FollowPolicy::Surplus),
-            "market" => Ok(FollowPolicy::Market),
+            "deplete" => Ok(FollowPolicy::Deplete),
             "eradicate" => Ok(FollowPolicy::Eradicate),
             "cultivate" => Ok(FollowPolicy::Cultivate),
             "sow" => Ok(FollowPolicy::Sow),
@@ -1554,9 +1557,9 @@ mod tests {
             policy: FollowPolicy::Sustain,
             species: None,
         };
-        let market = LaborTarget::Forage {
+        let deplete = LaborTarget::Forage {
             tile,
-            policy: FollowPolicy::Market,
+            policy: FollowPolicy::Deplete,
             species: None,
         };
         let other_tile = LaborTarget::Forage {
@@ -1565,7 +1568,7 @@ mod tests {
             species: None,
         };
         // Same tile, different policy → same source (policy is a mutable property).
-        assert!(sustain.same_source(&market));
+        assert!(sustain.same_source(&deplete));
         // Different tile → different source even at the same policy.
         assert!(!sustain.same_source(&other_tile));
 
@@ -1573,9 +1576,9 @@ mod tests {
         // the stored policy.
         let mut allocation = LaborAllocation::default();
         allocation.set_assignment(sustain, 4, 10);
-        allocation.set_assignment(market.clone(), 3, 10);
+        allocation.set_assignment(deplete.clone(), 3, 10);
         assert_eq!(allocation.assignments.len(), 1, "policy change replaces");
         assert_eq!(allocation.assignments[0].workers, 3);
-        assert_eq!(allocation.assignments[0].target, market);
+        assert_eq!(allocation.assignments[0].target, deplete);
     }
 }

@@ -78,7 +78,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   a genuinely over-cap request with a feed message as a backstop.
 - **Hunting expedition** (PR 2, `docs/plan_exploration_and_sites.md` §2b; snapshot
   `PopulationCohortState.expeditionTargetHerd` (string fauna_id) / `expeditionHuntPolicy` (string
-  `sustain|surplus|market|eradicate`) / `expeditionCarryCap` (float), decoded as
+  `sustain|surplus|deplete|eradicate`) / `expeditionCarryCap` (float), decoded as
   `expedition_target_herd` / `expedition_hunt_policy` / `expedition_carry_cap` and flowed onto the
   marker; `expedition_mission` also takes `"hunt"`, `expedition_phase` also takes
   `"hunting"`/`"delivering"`). A hunt party follows a migratory herd, accumulates food up to a carry
@@ -106,7 +106,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   so hunt parties get it too).
   (3) **Outfit UI** (`Hud._build_send_expedition_controls`): under the shared "Send expedition"
   section (party stepper + "Send scouting expedition"), a **hunt policy radio**
-  (`HudWidgets.build_policy_picker(…, _send_hunt_policy)`, Sustain/Surplus/Market/Eradicate, default Sustain)
+  (`HudWidgets.build_policy_picker(…, _send_hunt_policy)`, Sustain/Surplus/Deplete/Eradicate, default Sustain)
   with a one-line behaviour hint (`SEND_HUNT_POLICY_HINTS`), then "Send hunting expedition". It enters
   a HERD-targeting pending mode (`_pending_pick_quarry`, `command: "quarry"`, `need: "herd"`) carrying
   the band; the pick resolves to a huntable herd on the clicked hex (`_huntable_herd_on_tile` reads

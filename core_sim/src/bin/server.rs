@@ -1870,7 +1870,7 @@ fn seed_source_yield(
 ///    (see `validate_tame`); and `Corral` needs **Penning** — *not* Herding, which gates `tame` alone —
 ///    plus an owned, **domesticated**, not-yet-penned herd of a `pen`-ceiling species.
 ///
-/// The extractive policies (Sustain/Surplus/Market/Eradicate) are always valid on either kind.
+/// The extractive policies (Sustain/Surplus/Deplete/Eradicate) are always valid on either kind.
 fn validate_labor_policy(
     app: &bevy::prelude::App,
     faction: FactionId,
@@ -2606,7 +2606,7 @@ fn handle_send_hunt_expedition(
 ) {
     // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
     // An explicit but unparseable token is rejected rather than silently defaulting: Sustain and
-    // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
+    // Deplete are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
         // **Every** investment policy is place-bound work a *resident* band does — a detached party
@@ -2628,7 +2628,7 @@ fn handle_send_hunt_expedition(
                     faction,
                     format!(
                         "send_hunt_expedition: unusable take policy '{}' — valid options are \
-                         sustain, surplus, market, eradicate.",
+                         sustain, surplus, deplete, eradicate.",
                         token
                     ),
                 );
@@ -2700,7 +2700,7 @@ fn handle_send_hunt_expedition(
 
     // Launch-time viability forecast — a bounded forward SIMULATION of the trip (`hunt_trip_forecast`),
     // not a division. A Sustain party skims the herd's Maximum Sustainable Yield (a *flow*), and a
-    // Surplus/Market party eats *stock* headroom and then falls back to the regrowth trickle once it
+    // Surplus/Deplete party eats *stock* headroom and then falls back to the regrowth trickle once it
     // is gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
     // ecologically true, not a bug; the player must be told at launch rather than silently trapped,
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).

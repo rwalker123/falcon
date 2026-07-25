@@ -532,14 +532,14 @@ pub fn advance_expeditions(
                         // `done` = deliver then fold back + despawn (one trip); `relaunch` = deliver
                         // then resume Hunting. A raid ends when the pack fills, a worthwhile near-band
                         // delivery is possible, OR the standing surplus is spent (Sustain leaves K/2,
-                        // Surplus 0.30·K). Market makes repeated FULL-cap trips while the herd still has
+                        // Surplus 0.30·K). Deplete makes repeated FULL-cap trips while the herd still has
                         // surplus (relaunch), but once it is stripped to its floor it comes home for
                         // good (`surplus_spent ⇒ done`) rather than trickle-churning at the floor.
                         let (done, relaunch) = match policy {
                             FollowPolicy::Sustain | FollowPolicy::Surplus => {
                                 (full || near_band_gate || surplus_spent, false)
                             }
-                            FollowPolicy::Market => (surplus_spent, full || near_band_gate),
+                            FollowPolicy::Deplete => (surplus_spent, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
                             // The investment policies are **not an expedition concept**: every
@@ -621,7 +621,7 @@ pub fn advance_expeditions(
                 }
             }
             ExpeditionPhase::Delivering => {
-                // Market only: run carried food to the band's live tile; on arrival deposit it and
+                // Deplete only: run carried food to the band's live tile; on arrival deposit it and
                 // auto-relaunch to Hunting (repeated trips). Sustain/Surplus deliver via Returning.
                 if let Some(home) = home_pos {
                     commands.entity(entity).insert(BandTravel { target: home });
@@ -699,7 +699,7 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 /// |---|---|---|
 /// | **Sustain** | `MSY_BIOMASS_FRACTION · K` | `K/2` — the sustainable operating point |
 /// | **Surplus** | `hunt.surplus_escapement_fraction · K` | `0.30·K` |
-/// | **Market** | `ecology.collapse_fraction · K` | `0.15·K` (the Allee brink) |
+/// | **Deplete** | `ecology.collapse_fraction · K` | `0.15·K` (the Allee brink) |
 /// | **Eradicate** | `0` | nothing — the whole stock is surplus |
 ///
 /// The two **investment** policies are **not an expedition concept at all**: `Cultivate`/`Corral` are
@@ -719,7 +719,7 @@ fn hunt_expedition_floor(
     match policy {
         FollowPolicy::Sustain => k * fauna::MSY_BIOMASS_FRACTION,
         FollowPolicy::Surplus => k * fauna.hunt.surplus_escapement_fraction,
-        FollowPolicy::Market => k * ecology.collapse_fraction,
+        FollowPolicy::Deplete => k * ecology.collapse_fraction,
         FollowPolicy::Eradicate => 0.0,
         // Investment / plant-only policies are launch-rejected (send_hunt_expedition + valid_for_hunt).
         // An INFINITE floor means "no surplus to take" — the party takes nothing and the regressed
@@ -745,7 +745,7 @@ fn hunt_expedition_floor(
 /// point of the fix (a resident band's throttled `hunt_policy_rate` ceiling was worker-independent, so
 /// a second hunter only added pack to fill and made the trip *longer*). When the surplus is spent the
 /// herd sits at the floor and the raid comes home (the `hunt_trip_forecast` / `Hunting`-arm completion
-/// checks own that); Sustain leaves `K/2`, Surplus `0.30·K`, Market `0.15·K`.
+/// checks own that); Sustain leaves `K/2`, Surplus `0.30·K`, Deplete `0.15·K`.
 ///
 /// **A raid brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.** The
 /// `credit` accumulator meters *when* the next whole animal is **ready** (a body heavier than one

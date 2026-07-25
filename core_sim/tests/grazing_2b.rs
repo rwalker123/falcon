@@ -310,7 +310,7 @@ fn grazing_makes_carrying_capacity_ecological() {
 /// **THE 2b-ii MEASUREMENT** (`docs/plan_grazing_2b.md` §9). Run the real earthlike map forward until
 /// K settles, then report — per species — the ecological-K distribution (min/mean/max across the map's
 /// herds) vs. the retired constant, and the re-balanced hunting economy (Sustain MSY = `r·K/4·p` at the
-/// *new* per-species `r`; Market = `take_fraction·K·p`). Prints only — it asserts nothing, so retuning
+/// *new* per-species `r`; Deplete = `take_fraction·K·p`). Prints only — it asserts nothing, so retuning
 /// the levers moves the numbers, not the verdict. Run with `--nocapture`.
 #[test]
 fn the_2b_ii_measurement_report() {
@@ -322,7 +322,7 @@ fn the_2b_ii_measurement_report() {
     }
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let provisions = fauna.hunt.provisions_per_biomass;
-    // Market is **escapement to the collapse floor** since slice 8 (the retired `market.take_fraction`
+    // Deplete is **escapement to the collapse floor** since slice 8 (the retired `market.take_fraction`
     // was a share-of-stock rate). At a herd sitting at capacity that is `(1 − collapse_fraction)·K`.
     let collapse_fraction = fauna.ecology.collapse_fraction;
     let wild_default = fauna.ecology.regrowth_rate;
@@ -349,7 +349,7 @@ fn the_2b_ii_measurement_report() {
         "r",
         "old r",
         "Sustain",
-        "Market",
+        "Deplete",
         "body",
         "turns/a"
     );
@@ -365,9 +365,9 @@ fn the_2b_ii_measurement_report() {
         let def = fauna.species_by_display(species);
         let old_const = def.map(|d| d.carrying_capacity()).unwrap_or(0.0);
         let r = def.and_then(|d| d.regrowth_rate).unwrap_or(wild_default);
-        // Sustain MSY and Market take at the MEAN ecological K, in provisions/turn.
+        // Sustain MSY and Deplete take at the MEAN ecological K, in provisions/turn.
         let sustain = r * mean / 4.0 * provisions;
-        let market = (1.0 - collapse_fraction) * mean * provisions;
+        let deplete = (1.0 - collapse_fraction) * mean * provisions;
         // **The rhythm** (slice 8): turns of regrowth before the herd can spare one whole animal at
         // its operating point. `< 1` = a trickle every turn (small game); `~7` = a mammoth, then you
         // eat for a week.
@@ -379,13 +379,13 @@ fn the_2b_ii_measurement_report() {
         };
         println!(
             "  {species:<18} {n:>4} {lo:>8.0} {mean:>8.0} {hi:>8.0} {old_const:>10.0} {r:>6.2} \
-             {wild_default:>8.2} {sustain:>9.3} {market:>9.3} {body_mass:>7.0} \
+             {wild_default:>8.2} {sustain:>9.3} {deplete:>9.3} {body_mass:>7.0} \
              {turns_per_animal:>7.1}"
         );
     }
     println!(
         "  (Sustain = r·K/4·{provisions} — the LONG-RUN average, paid in whole-animal lumps; \
-         Market = (1−{collapse_fraction})·K·{provisions} at capacity; old r was the single global \
+         Deplete = (1−{collapse_fraction})·K·{provisions} at capacity; old r was the single global \
          {wild_default}; turns/animal = body_mass/MSY, the slice-8 rhythm)\n"
     );
 }

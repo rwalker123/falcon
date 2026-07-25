@@ -227,7 +227,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band> <party_workers> <fauna_id> [sustain|surplus|market|eradicate]",
+        usage: "send_hunt_expedition <faction_id> <band> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -1069,7 +1069,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let fauna_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-            // Optional trailing take policy (sustain|surplus|market|eradicate); default sustain.
+            // Optional trailing take policy (sustain|surplus|deplete|eradicate); default sustain.
             let policy = parts.next().map(|s| s.to_string());
             Ok(CommandPayload::SendHuntExpedition {
                 faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
@@ -1455,7 +1455,7 @@ mod tests {
     #[test]
     fn parse_assign_labor_forage_with_policy() {
         // The optional policy token (§0-iii, parity with hunt): `forage <x> <y> <policy> <workers>`.
-        for policy in ["sustain", "surplus", "market", "eradicate"] {
+        for policy in ["sustain", "surplus", "deplete", "eradicate"] {
             assert_eq!(
                 parse_command_line(&format!("assign_labor 0 904 forage 3 5 {policy} 6")).unwrap(),
                 CommandPayload::AssignLabor {
@@ -1476,7 +1476,7 @@ mod tests {
 
     #[test]
     fn parse_assign_labor_hunt_each_policy() {
-        for policy in ["sustain", "surplus", "market", "eradicate"] {
+        for policy in ["sustain", "surplus", "deplete", "eradicate"] {
             assert_eq!(
                 parse_command_line(&format!("assign_labor 0 904 hunt game_deer_07 {policy} 4"))
                     .unwrap(),

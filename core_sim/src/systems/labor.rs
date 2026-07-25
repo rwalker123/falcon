@@ -310,7 +310,7 @@ pub fn advance_labor_allocation(
                     //
                     // Knowledge is all that is earned here — working a patch never *tames* it:
                     // cultivation is an explicit `Cultivate` policy with an investment cost (below).
-                    // The seam owns the §4.2 stewardship rule (Surplus/Market/Eradicate teach
+                    // The seam owns the §4.2 stewardship rule (Surplus/Deplete/Eradicate teach
                     // nothing); `eligible` carries the health gate — **you learn from a healthy
                     // source** — which is the shipped `Thriving` requirement, unchanged.
                     if let Some(knowledge) = patch_rung(patch, &ladder)
@@ -394,7 +394,7 @@ pub fn advance_labor_allocation(
                         // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
                         // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
                         // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
-                        // FactionInventory, exactly as the Market-forage arm's wild sale does.
+                        // FactionInventory, exactly as the Deplete-forage arm's wild sale does.
                         let trade_production =
                             field_trade_goods(patch, &labor.forage, &flora, mult_f);
                         let trade_collection = workers as f32
@@ -530,10 +530,11 @@ pub fn advance_labor_allocation(
                             *tile,
                         );
                     }
-                    // Market forage = gathered goods sold: convert the raw take to trade goods
-                    // (mirror of the Hunt-Market arm). Only Market sells — Sustain/Surplus/Eradicate
-                    // produce no trade goods (Eradicate is denial, not commerce).
-                    if matches!(policy, FollowPolicy::Market) {
+                    // Deplete forage = gathered goods sold: convert the raw take to trade goods
+                    // (mirror of the Hunt-Deplete arm). Only Deplete sells — Sustain/Surplus/Eradicate
+                    // produce no trade goods (Eradicate is denial, not commerce). The `forage.market.*`
+                    // config block keeps its old name pending the plant-side pass.
+                    if matches!(policy, FollowPolicy::Deplete) {
                         let forage_market = &labor.forage.market;
                         let trade_goods = (take
                             * forage_market.trade_goods_per_biomass
@@ -604,7 +605,7 @@ pub fn advance_labor_allocation(
                         ),
                         workers_needed,
                         // Plants stay flow-based (slice 8), so the wild/tended gather ⚠ is unchanged:
-                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Market/Eradicate
+                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Deplete/Eradicate
                         // draw the patch down.
                         overdraws: policy.overdraws(),
                     };
@@ -1042,7 +1043,7 @@ pub fn advance_labor_allocation(
                             }
                         }
                     }
-                    let trade_multiplier = if matches!(policy, FollowPolicy::Market) {
+                    let trade_multiplier = if matches!(policy, FollowPolicy::Deplete) {
                         market.trade_goods_multiplier
                     } else {
                         1.0
@@ -2308,25 +2309,25 @@ mod labor_yield_tests {
         );
     }
 
-    /// A higher-take policy needs more workers on the **same** resource: Market/Eradicate draw a large
+    /// A higher-take policy needs more workers on the **same** resource: Deplete/Eradicate draw a large
     /// biomass fraction, so their inverted worker count exceeds Sustain's MSY skim on identical full
     /// patches.
     #[test]
-    fn market_and_eradicate_need_more_workers_than_sustain() {
+    fn deplete_and_eradicate_need_more_workers_than_sustain() {
         let sustain = forage_workers_needed(FollowPolicy::Sustain);
-        let market = forage_workers_needed(FollowPolicy::Market);
+        let deplete = forage_workers_needed(FollowPolicy::Deplete);
         let eradicate = forage_workers_needed(FollowPolicy::Eradicate);
         assert!(
-            market > sustain,
-            "market's larger take needs more workers: {market} vs {sustain}"
+            deplete > sustain,
+            "deplete's larger take needs more workers: {deplete} vs {sustain}"
         );
         assert!(
             eradicate > sustain,
             "eradicate's larger take needs more workers: {eradicate} vs {sustain}"
         );
         assert!(
-            eradicate >= market,
-            "eradicate's ceiling is ≥ market's: {eradicate} vs {market}"
+            eradicate >= deplete,
+            "eradicate's ceiling is ≥ deplete's: {eradicate} vs {deplete}"
         );
     }
 
@@ -2623,20 +2624,20 @@ mod labor_yield_tests {
     /// `actual` cannot be compared to it turn by turn (a kill cashes a whole banked animal and spikes
     /// above MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized`
     /// IS comparable: a **Sustain** hunt projects `≈ sustainable` (stable at K/2), an overhunting
-    /// **Surplus/Market** hunt projects *above* it — and, because the projection simulates the herd
-    /// declining under the overdraw, **Market projects BELOW its naive `2.5×MSY` steady rate** (the
+    /// **Surplus/Deplete** hunt projects *above* it — and, because the projection simulates the herd
+    /// declining under the overdraw, **Deplete projects BELOW its naive `2.5×MSY` steady rate** (the
     /// stock runs out inside the horizon), the honest reading the instantaneous rate could not give.
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
         let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
         let surplus = slow_breeder_hunt_policy(FollowPolicy::Surplus);
-        let market = slow_breeder_hunt_policy(FollowPolicy::Market);
+        let deplete = slow_breeder_hunt_policy(FollowPolicy::Deplete);
 
         // `sustainable` is MSY, the same under every policy (it is the reference, not the take).
         assert!(
             (sustain.sustainable - surplus.sustainable).abs() < 1e-6
-                && (sustain.sustainable - market.sustainable).abs() < 1e-6,
-            "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {market:?}"
+                && (sustain.sustainable - deplete.sustainable).abs() < 1e-6,
+            "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {deplete:?}"
         );
         // Sustain projects ~its sustainable MSY (a Sustain hunt holds the herd at K/2 and does not
         // overdraw, so the whole horizon pays MSY).
@@ -2650,19 +2651,19 @@ mod labor_yield_tests {
             "Surplus projects above the sustainable MSY (the honest overhunt rate): {surplus:?}"
         );
         assert!(
-            market.realized > surplus.realized,
-            "Market projects deeper than Surplus: {market:?} {surplus:?}"
+            deplete.realized > surplus.realized,
+            "Deplete projects deeper than Surplus: {deplete:?} {surplus:?}"
         );
-        // The projection SEES THE DECLINE: Market drives the herd out within the horizon, so its
-        // average is strictly below the naive instantaneous `market_multiplier × MSY` steady rate — the
+        // The projection SEES THE DECLINE: Deplete drives the herd out within the horizon, so its
+        // average is strictly below the naive instantaneous `deplete_multiplier × MSY` steady rate — the
         // honest reading the old instantaneous rate could not produce. MSY = `sustainable` (both are
-        // `hunt_provisions(peak_regrowth)` above K/2), so the naive Market rate is `2.5 × sustainable`.
-        let naive_market_rate =
-            FaunaConfigHandle::default().get().hunt.market_multiplier * market.sustainable;
+        // `hunt_provisions(peak_regrowth)` above K/2), so the naive Deplete rate is `2.5 × sustainable`.
+        let naive_deplete_rate =
+            FaunaConfigHandle::default().get().hunt.deplete_multiplier * deplete.sustainable;
         assert!(
-            market.realized > 0.0 && market.realized < naive_market_rate,
-            "Market projects below its naive {naive_market_rate} steady rate (sees the decline): \
-             {market:?}"
+            deplete.realized > 0.0 && deplete.realized < naive_deplete_rate,
+            "Deplete projects below its naive {naive_deplete_rate} steady rate (sees the decline): \
+             {deplete:?}"
         );
     }
 
@@ -2859,7 +2860,7 @@ mod labor_yield_tests {
     const FORAGE_POLICIES: [FollowPolicy; 5] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
         FollowPolicy::Cultivate,
     ];
@@ -2868,7 +2869,7 @@ mod labor_yield_tests {
     const HUNT_POLICIES: [FollowPolicy; 5] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
         FollowPolicy::Corral,
     ];
@@ -3289,18 +3290,18 @@ mod labor_yield_tests {
     /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately.
     /// **Since Flora Roster S2 the gain is neutral (`1.0`)**, so a tended patch reads the same curve as
     /// a wild one and the policies fall in their natural order: Sustain (MSY) < Surplus (`1.6 × MSY`) <
-    /// Market (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
-    /// past the flat Market skim; that swap is gone with the boost.)
+    /// Deplete (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
+    /// past the flat Deplete skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
         let extractive = [
             FollowPolicy::Sustain,
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
         ];
         // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
-        // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Market (see docstring).
+        // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Deplete (see docstring).
         const OPERATING_FRACTION: f32 = 0.8;
         let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
         for policy in extractive {
@@ -3356,7 +3357,7 @@ mod labor_yield_tests {
         }
         // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
         // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
-        // the leanest, then the boosted Surplus, then the flat Market skim, Eradicate the deepest.
+        // the leanest, then the boosted Surplus, then the flat Deplete skim, Eradicate the deepest.
         let take_of = |wanted: FollowPolicy| {
             takes
                 .iter()
@@ -3365,8 +3366,8 @@ mod labor_yield_tests {
                 .1
         };
         assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
-        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Deplete));
+        assert!(take_of(FollowPolicy::Deplete) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -3955,7 +3956,7 @@ mod labor_yield_tests {
     fn the_overdrawing_policies_teach_nothing_at_any_rung() {
         for policy in [
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
         ] {
             // Animal rung 1 (wild) and rung 2 (pastoral).

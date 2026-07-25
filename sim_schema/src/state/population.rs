@@ -78,7 +78,7 @@ pub struct LaborAssignmentState {
     /// client-derived `actual_yield > sustainable_yield` test, which mis-fires on a hunt's lumpy
     /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
     /// sustainable rate even under Sustain). False for Sustain and the investment rungs
-    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/Eradicate.
+    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/Eradicate.
     /// A row with no yield (Scout/Warrior, or a rehydrated [`SourceYield::ZERO`]) is `false`. Derived
     /// per-turn at capture. Appended (append-only).
     #[serde(default)]
@@ -145,7 +145,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub activity: String,
     /// The band's hunt/follow mode when pursuing fauna: `single` (one-shot hunt) or the follow
-    /// policy (`sustain | surplus | market | eradicate`). Empty string when the band isn't
+    /// policy (`sustain | surplus | deplete | eradicate`). Empty string when the band isn't
     /// pursuing fauna. Lets the client label a cancel button with the specific mode.
     #[serde(default)]
     pub hunt_mode: String,
@@ -189,7 +189,7 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id }`; also shown in the client hunt panel.
     #[serde(default)]
     pub expedition_target_herd: String,
-    /// Hunt mission only: take policy string (`sustain|surplus|market|eradicate`; mirrors
+    /// Hunt mission only: take policy string (`sustain|surplus|deplete|eradicate`; mirrors
     /// `hunt_mode`). Empty for scout/normal bands. Persisted so a rollback reconstructs
     /// `Hunt { fauna_id, policy }`; drives the client's per-policy label + policy-picker default.
     #[serde(default)]
@@ -361,7 +361,7 @@ pub struct PopulationCohortState {
     /// scout, a normal band, or a party whose delivery can't be projected. Appended.
     #[serde(default)]
     pub expedition_projected_delivery: f32,
-    /// Whether the party relaunches for repeated trips after delivering (only `Market`). Appended.
+    /// Whether the party relaunches for repeated trips after delivering (only `Deplete`). Appended.
     #[serde(default)]
     pub expedition_recurring: bool,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on

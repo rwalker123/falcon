@@ -242,10 +242,10 @@ the N-turn total, so projecting the smooth `hunt_policy_rate` gives the smooth a
 not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
 `sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
 (drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
-N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Market
-re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Market herd
+N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Deplete
+re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Deplete herd
 declines within the window and the average honestly reflects it). A **self-terminating** policy
-(Eradicate strips the herd in ~1 turn, Market drives it extinct) **breaks the loop early and divides by
+(Eradicate strips the herd in ~1 turn, Deplete drives it extinct) **breaks the loop early and divides by
 the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
 the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
 negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,

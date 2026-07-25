@@ -50,14 +50,14 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   ceiling, caps it by gather throughput (`workers × per_worker_biomass_capacity × seasonal_weight`),
   clamps to the patch's biomass, **subtracts the take**, and converts to provisions
   (`take × provisions_per_biomass × output_multiplier`). Foraging honors the **full policy axis**
-  (Sustain/Surplus/Market/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
+  (Sustain/Surplus/Deplete/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
   rungs: **Sustain** = the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at the
   most-productive biomass K/2, so a patch *at carrying capacity* still yields a positive skim and a
   collapsed patch yields nothing; Sustain draws the patch toward K/2); **Surplus** = that ×
   `surplus_multiplier` (slow
-  decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
+  decline); **Deplete** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
   the `Forage` arm sells the take as trade goods (`take × market.trade_goods_per_biomass ×
-  market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Market
+  market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Deplete
   only**); **Eradicate** = `eradicate.take_fraction × biomass` (strip the patch, no floor, no trade
   goods — denial). The `Forage` arm of `advance_labor_allocation` (Population) passes the
   assignment's policy into `forage_take` and writes the real `sustainable =
@@ -343,14 +343,14 @@ land-use tension.
   credits each yield component to its own account, commodity-generically: `field_provisions` → the
   band's `FOOD` store, `field_fodder` → its `FODDER` store, and the new **`field_trade_goods`** → the
   **faction** `trade_goods` stockpile (`FactionInventory`, *not* a band-local store — the one place F4
-  differs from F3, exactly as the Market-forage arm's wild sale credits the faction). Each is capped
+  differs from F3, exactly as the Deplete-forage arm's wild sale credits the faction). Each is capped
   by its own per-worker collection (`managed_per_worker_yield` / `_fodder` / `_trade`). A cash crop's
   `field_provisions` is `0` (worthless as food), a grain's `field_trade_goods` is the negligible flat
   token (`biomass × field_provisions_per_biomass × 0.005/0.05`), a hay crop's is `0` — the vector does
   the routing.
-- **No Market markup.** `field_trade_goods` deliberately does **not** apply the Market policy's
-  `trade_goods_multiplier`: that markup is a Market-*policy* concept for wild commercial gathering; a
-  managed Field harvest does not carry it. The existing `Market`-policy wild-take arm is unchanged.
+- **No `Deplete` markup.** `field_trade_goods` deliberately does **not** apply the `Deplete` policy's
+  `trade_goods_multiplier`: that markup is a `Deplete`-*policy* concept for wild commercial gathering; a
+  managed Field harvest does not carry it. The existing `Deplete`-policy wild-take arm is unchanged.
 - **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild** `provisions_per_biomass`,
   never the species rate, so a 0-provisions cash crop yields exactly 0 food with no divide-by-zero, and
   `YieldVector::pays_something()` passes because trade `> 0`. This is the sharp "pays no calories" edge.

@@ -270,7 +270,7 @@ oscillates or crashes if built carelessly.
   cap doesn't reach the old biomass-max, a **retune flag** (lower migratory `fodder` to raise `K` if
   the megafauna hunting economy wants it). Sustain MSY (`r·K/4·p`) roughly **doubled** for deer/boar
   (both `r` and `K` up) and rose **~5.7×** for rabbit (**0.05 → 0.285** food/turn) — the **small-game
-  viability reversal**: a rabbit warren is now a fast provisioner (and the small/Market hunting
+  viability reversal**: a rabbit warren is now a fast provisioner (and the small/Deplete hunting
   expedition, which never filled under the old uniform `r`, now completes).
 - **The fast-breeder ladder inversion — FIXED in 2d.** A wild rabbit's `r`=0.35 exceeded the retired
   flat pastoral 0.25, so taming a rabbit *used* to be a growth downgrade. Grazing 2d makes the managed

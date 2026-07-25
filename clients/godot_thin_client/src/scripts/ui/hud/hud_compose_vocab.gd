@@ -5,7 +5,7 @@ class_name HudComposeVocab
 
 # Verb prefixes for the optimistic in-flight label on the disabled cancel button,
 # composed with the task action phrase as "<verb> <phrase>…" (e.g. "Cancelling
-# Market Hunt…", "Starting Foraging…"). Shown from dispatch until the snapshot
+# Deplete Hunt…", "Starting Foraging…"). Shown from dispatch until the snapshot
 # confirms the band's `activity` CHANGED from its value at dispatch.
 const CANCEL_ORDER_PENDING_VERB := "Cancelling"
 
@@ -16,7 +16,10 @@ const START_ORDER_PENDING_VERB := "Starting"
 const FORAGE_POLICY_HINTS := {
     "sustain": "Sustain — gather at the patch's regrowth; it stays healthy.",
     "surplus": "Surplus — gather more now; the patch declines.",
-    "market": "Market — gather for trade goods; faster decline.",
+    # Deplete is named for its PRESSURE, not its product (docs/plan_hunt_yield_model.md §2): every
+    # harvesting rung sells the species' trade goods, so "Market" no longer distinguished anything.
+    # What it costs — a fast decline, short of stripping the patch — is what tells it from Eradicate.
+    "deplete": "Deplete — draw the patch down hard; much more now, and a fast decline.",
     "eradicate": "Eradicate — strip the patch bare.",
     "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
     # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
@@ -97,7 +100,11 @@ const LOCAL_HUNT_POLICY_HINTS := {
     # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
     "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
-    "market": "Market — sells the take as trade goods rather than eating it; the herd declines fast. Trade has little effect yet.",
+    # Deplete is the ladder's third rung, named for the PRESSURE it applies rather than what it
+    # produces (docs/plan_hunt_yield_model.md §2) — every rung sells the species' trade goods, so
+    # "Market" named a property all four share. Its line must stay clearly short of Eradicate's:
+    # this is a herd drawn down hard and left standing, not a herd hunted out.
+    "deplete": "Deplete — draw the herd down hard: much more food now, and a fast decline. The herd survives it, but it will not recover while you keep this up.",
     "eradicate": "Eradicate — hunts the herd toward extinction. No food, no craft learned, no trade — denial only.",
     # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
     # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
@@ -345,12 +352,12 @@ const CANCEL_SCOPE_WORK := "work"
 
 const CANCEL_SCOPE_ROLES := "roles"
 
-# The launch policy (Sustain/Surplus/Market/Eradicate) chosen for a hunting EXPEDITION, with a
+# The launch policy (Sustain/Surplus/Deplete/Eradicate) chosen for a hunting EXPEDITION, with a
 # one-line behaviour hint so the choice is legible. Reuses `SourceForecast.LABOR_HUNT_POLICIES` for the option set.
 #
 # An expedition's Hunting arm credits **FOOD ONLY** — no husbandry accrual, no trade goods (a known v1
 # gap, tracked server-side). So these hints promise NEITHER, even though the resident-band versions of
-# Sustain and Market do exactly those things (see `LOCAL_HUNT_POLICY_HINTS`). The asymmetry is real;
+# Sustain and Deplete do exactly those things (see `LOCAL_HUNT_POLICY_HINTS`). The asymmetry is real;
 # blurring it would have the UI promise the player a payoff the sim never pays.
 const SEND_HUNT_POLICY_HINTS := {
 	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
@@ -360,7 +367,10 @@ const SEND_HUNT_POLICY_HINTS := {
 	# NOT tame the herd — only a resident band's Sustain hunt builds husbandry.
 	"sustain": "Sustain — takes only the herd's sustainable yield; it stays healthy forever, but the party fills slowly on a small herd.",
 	"surplus": "Surplus — takes the herd's spare stock, so the party fills fast; the herd declines.",
-	"market": "Market — grinds the herd down with repeated trips; the party still hauls home food, not trade goods.",
+	# Deplete is named for its PRESSURE, not its product — see `LOCAL_HUNT_POLICY_HINTS`. On THIS side
+	# the pressure is applied by RELAUNCHING (`FollowPolicy::expedition_recurring`), which is what the
+	# party's ↻ recurring marker means, so the hint says so rather than quoting a per-turn rate.
+	"deplete": "Deplete — draws the herd down hard, relaunching for trip after trip; the party keeps hauling home food while the herd declines fast.",
 	"eradicate": "Eradicate — denial mission: hunts the herd toward extinction and delivers no food.",
 }
 
@@ -370,7 +380,7 @@ const SEND_HUNT_POLICY_HINTS := {
 #       cohort's levers this makes the LOCAL hunt preview pure arithmetic (see `_hunt_take_rate`).
 #   `hunt_trip_estimates`   {"<policy>:<workers>" → {turns_to_fill, delivers_food}} — the sim's
 #       PRE-LAUNCH TRIP ESTIMATE, forward-simulated server-side. An expedition's trip length is NOT a
-#       rate division: on Surplus/Market the ceiling is a *stock*, so the party strips the headroom in
+#       rate division: on Surplus/Deplete the ceiling is a *stock*, so the party strips the headroom in
 #       a turn or two and then crawls at the herd's regrowth trickle. A re-derived `carryCap / rate`
 #       closed form is wrong, and wrong by a lot — on a FULL Rabbit Warren under Surplus only a LONE
 #       hunter fills at all (23 turns); a party of 4 never fills within the sim's horizon. So the

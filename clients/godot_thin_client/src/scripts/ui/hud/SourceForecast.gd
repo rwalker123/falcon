@@ -40,7 +40,7 @@ const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 # EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
 # by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
-const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
+const LABOR_HUNT_POLICIES := ["sustain", "surplus", "deplete", "eradicate"]
 # The Sustain rung by name: the default compose policy, and the ceiling every unknown rung falls back
 # to in `forecast_inputs`.
 const LABOR_POLICY_SUSTAIN := "sustain"
@@ -113,7 +113,7 @@ const FORECAST_PER_WORKER_KEY := "per_worker_yield"
 const FORECAST_CEILING_KEYS := {
     "sustain": "ceiling_sustain",
     "surplus": "ceiling_surplus",
-    "market": "ceiling_market",
+    "deplete": "ceiling_deplete",
     "eradicate": "ceiling_eradicate",
     # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
     # same expected(workers, policy) math shows the cost of the investment while composing.
@@ -363,7 +363,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
     # forage patch share the empty prefix), and neither can the dict's shape:
     #   HERD  → the `hunt_policy_ceilings` LIST is the herd's ONLY wire representation (the old
     #           per-policy `ceilingSustain`/… scalars are deprecated schema slots), so every herd rung
-    #           — Sustain/Surplus/Market/Eradicate, Tame, Corral — resolves through it.
+    #           — Sustain/Surplus/Deplete/Eradicate, Tame, Corral — resolves through it.
     #   FORAGE→ a patch has no such list; its per-policy scalars are its only representation.
     # `hunt_policy_ceiling` returns HUNT_RATE_UNAVAILABLE (< 0) for a herd with no row, which falls
     # back to Sustain's row exactly as the old scalar lookup did, then clamps to 0. That 0 never
@@ -481,7 +481,7 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # sim-answered `overdraws` flag (policy-driven: `!managed && policy.overdraws()`), NOT the
         # client-derived `actual > sustainable` — which false-positives on a hunt's kill turn (cashing a
         # banked whole animal spikes `actual` above the steady `sustainable` even under Sustain). Forage
-        # on Sustain reads clean; a Surplus/Market/Eradicate patch or an over-hunted herd trips ⚠.
+        # on Sustain reads clean; a Surplus/Deplete/Eradicate patch or an over-hunted herd trips ⚠.
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % format_yield(actual)
@@ -790,7 +790,7 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: St
 
 ## Each extractive policy's MAX obtainable food/turn — the raid twin of the local hunt's per-policy cap,
 ## so all three pickers (forage / local hunt / expedition) wear the same "up to X/turn" button metric and
-## the four read ASCENDING (Sustain < Surplus < Market < Eradicate; deeper floors free more surplus). The
+## the four read ASCENDING (Sustain < Surplus < Deplete < Eradicate; deeper floors free more surplus). The
 ## metric is WORKER-INDEPENDENT: the max over every party size of `delivered_food / trip_turns`, where
 ## `trip_turns = turns_to_fill + round-trip travel` (a far herd's best rate is correctly lower). A bigger
 ## party delivers more food in fewer turns, so the rate rises then plateaus — the max is the honest cap.

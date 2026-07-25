@@ -482,7 +482,7 @@ pub(crate) fn snapshot_forage_patches(
                 per_worker_yield: forecast.per_worker_yield,
                 ceiling_sustain: forecast.ceiling_sustain,
                 ceiling_surplus: forecast.ceiling_surplus,
-                ceiling_market: forecast.ceiling_market,
+                ceiling_deplete: forecast.ceiling_deplete,
                 ceiling_eradicate: forecast.ceiling_eradicate,
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
                 ceiling_cultivate: forecast.ceiling_prepare,

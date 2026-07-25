@@ -368,7 +368,7 @@ fn faction_trade_goods(app: &App) -> i64 {
 
 /// **A cash Field credits the faction `trade_goods` stockpile and (near) zero food** — and no fodder
 /// at all. The trade goods are a FACTION-level commodity, so unlike FOOD/FODDER they land in
-/// `FactionInventory`, exactly as the Market-forage arm's wild sale does.
+/// `FactionInventory`, exactly as the Deplete-forage arm's wild sale does.
 #[test]
 fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
     let mut app = spawn_world();

@@ -26,8 +26,8 @@ const LABOR_KIND_HUNT := "hunt"
 # INVESTMENT rungs (hunt: tame/corral, forage: cultivate/sow). Canonical here (the labor readers below
 # re-seed a compose picker against them); `HudLayer` re-exports both via `const X = HudBandLaborState.X`.
 # `DEFAULT_HUNT_POLICY` aliases SourceForecast's — one source of truth, shared by both files.
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "tame", "corral"]
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]
 const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
 
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split

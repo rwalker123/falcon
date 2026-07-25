@@ -15,12 +15,12 @@ pub struct SedentarizationState {
 /// **current** state, before any party-throughput cap, and clamped to the herd's remaining biomass —
 /// so it is a **true maximum take**. `0` = no take is possible under this policy (a collapsing
 /// sub-Allee herd yields nothing under Sustain/Surplus). `policy` is a free-form string
-/// (`sustain|surplus|market|eradicate|corral`, like `species`), so a new policy needs no schema
+/// (`sustain|surplus|deplete|eradicate|corral`, like `species`), so a new policy needs no schema
 /// change.
 ///
 /// **The rows are NOT all the same kind of quantity**, which is precisely why no one may divide by
 /// them: Sustain is a per-turn **flow** (MSY), Surplus that flow × a multiplier, Corral a *fraction*
-/// of it (the pen-building dip), while Market/Eradicate are shares of standing **stock** that shrink
+/// of it (the pen-building dip), while Deplete/Eradicate are shares of standing **stock** that shrink
 /// as the herd is drawn down.
 ///
 /// Consumer: the resident-band local-hunt yield preview —
@@ -50,7 +50,7 @@ pub struct HuntPolicyCeilingState {
 ///
 /// Produced by `core_sim::hunt_trip_forecast`, a **bounded forward simulation** of the trip (herd
 /// regrowth + the party's real take, turn by turn, on the sim's fixed-point grid) rather than a
-/// closed-form `carry_cap / rate`. That division was wrong for Surplus/Market on a small herd, whose
+/// closed-form `carry_cap / rate`. That division was wrong for Surplus/Deplete on a small herd, whose
 /// per-policy ceiling is a *stock*, not a flow: the party strips the headroom in a turn or two and
 /// then crawls at the regrowth trickle. It read a **4-worker party on a full Rabbit Warren (K = 200)
 /// under Surplus as a ~5-turn trip**; the simulation says that party **never fills** within the
@@ -60,7 +60,7 @@ pub struct HuntPolicyCeilingState {
 /// counted — and assumes the herd stays put.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HuntTripEstimateState {
-    /// Free-form take policy (`sustain|surplus|market|eradicate`), like `species` — a new policy
+    /// Free-form take policy (`sustain|surplus|deplete|eradicate`), like `species` — a new policy
     /// needs no schema change.
     pub policy: String,
     /// Party size, `1 ..= expedition_config.max_party_size`.
@@ -390,9 +390,9 @@ pub struct ForagePatchState {
     /// Food/turn ceiling under Surplus, biomass-clamped.
     #[serde(default)]
     pub ceiling_surplus: f32,
-    /// Food/turn ceiling under Market, biomass-clamped.
+    /// Food/turn ceiling under **Deplete**, biomass-clamped.
     #[serde(default)]
-    pub ceiling_market: f32,
+    pub ceiling_deplete: f32,
     /// Food/turn ceiling under Eradicate, biomass-clamped.
     #[serde(default)]
     pub ceiling_eradicate: f32,

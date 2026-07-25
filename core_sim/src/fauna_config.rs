@@ -641,11 +641,11 @@ fn default_raid_exposure() -> f32 {
 /// geometry (band closes to `pursuit_radius` tiles).
 ///
 /// **The hunt policies are four ASCENDING MULTIPLES OF MSY** (slice 8b, `crate::fauna::hunt_policy_ceiling`):
-/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Market `market_multiplier ×`
+/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Deplete `deplete_multiplier ×`
 /// it, Eradicate everything. Ordering — and therefore *"each option takes more than the last"* — is
 /// guaranteed because all three are multiples of the same MSY base, validated
-/// `1 ≤ surplus_multiplier < market_multiplier`. Constant catch above MSY has no equilibrium, so
-/// Surplus declines a herd and Market drives it extinct — the depletion mechanic, on-map.
+/// `1 ≤ surplus_multiplier < deplete_multiplier`. Constant catch above MSY has no equilibrium, so
+/// Surplus declines a herd and Deplete drives it extinct — the depletion mechanic, on-map.
 ///
 /// **`take_fraction` / `min_take` / `take_from` stay RETIRED** — Eradicate takes the whole standing
 /// stock (clamped by carry + quantise), which is what "eradicate" means and needs no dial.
@@ -655,19 +655,19 @@ pub struct HuntConfig {
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
     /// **Surplus's take, as a multiple of MSY** — *"take extra to sell; the herd slowly declines."*
-    /// `> 1` (else it is not an overdraw) and `< market_multiplier` (else Surplus is not the gentler
+    /// `> 1` (else it is not an overdraw) and `< deplete_multiplier` (else Surplus is not the gentler
     /// policy); `FaunaConfig::validate` enforces both, because that ordering IS the panel-monotonicity
     /// the whole slice-8b revert exists to give. **Playtest dial** (ships 1.5).
     pub surplus_multiplier: f32,
-    /// **Market's take, as a multiple of MSY** — the commercial cull, `> surplus_multiplier`, which
+    /// **Deplete's take, as a multiple of MSY** — the hard draw-down, `> surplus_multiplier`, which
     /// drives a herd to extinction (constant catch this far above MSY never lets it refill). Ships 2.5.
-    pub market_multiplier: f32,
+    pub deplete_multiplier: f32,
     /// **The Surplus *expedition* raid's escapement floor, as a fraction of `K`.** A greedy hunting
     /// party (`systems::expeditions::hunt_expedition_floor`) grabs the herd's standing surplus down to
     /// a per-policy floor and comes home; the floors descend so a deeper policy leaves a leaner herd —
     /// Sustain `MSY_BIOMASS_FRACTION·K` (0.50), then Surplus `surplus_escapement_fraction·K` (0.30),
-    /// then Market `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
-    /// free dial, and `FaunaConfig::validate` pins it strictly between Market's and Sustain's.
+    /// then Deplete `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
+    /// free dial, and `FaunaConfig::validate` pins it strictly between Deplete's and Sustain's.
     /// **Expedition path ONLY** — a *resident band's* Surplus take is still the `surplus_multiplier ×
     /// MSY` rate above, untouched. Ships 0.30. **Playtest dial.**
     pub surplus_escapement_fraction: f32,
@@ -682,7 +682,7 @@ impl Default for HuntConfig {
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
             surplus_multiplier: DEFAULT_SURPLUS_MULTIPLIER,
-            market_multiplier: DEFAULT_MARKET_MULTIPLIER,
+            deplete_multiplier: DEFAULT_DEPLETE_MULTIPLIER,
             surplus_escapement_fraction: DEFAULT_SURPLUS_ESCAPEMENT_FRACTION,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
@@ -693,9 +693,9 @@ impl Default for HuntConfig {
 
 /// Surplus takes 1.5× MSY — a gentle overdraw the herd cannot quite refill.
 const DEFAULT_SURPLUS_MULTIPLIER: f32 = 1.5;
-/// Market takes 2.5× MSY — the commercial cull that drives a herd extinct.
-const DEFAULT_MARKET_MULTIPLIER: f32 = 2.5;
-/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Market's
+/// Deplete takes 2.5× MSY — the hard draw-down that grinds a herd to extinction.
+const DEFAULT_DEPLETE_MULTIPLIER: f32 = 2.5;
+/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Deplete's
 /// Allee floor (`ecology.collapse_fraction`). Expedition-only; see `HuntConfig::surplus_escapement_fraction`.
 const DEFAULT_SURPLUS_ESCAPEMENT_FRACTION: f32 = 0.30;
 
@@ -713,8 +713,8 @@ pub struct EcologyConfig {
     pub regrowth_rate: f32,
     /// Allee threshold as a fraction of carrying capacity. Below `collapse_fraction *
     /// cap` the group collapses (depensation) instead of regrowing — the overhunting point of no
-    /// return that turns Surplus/Market's steady overdraw into an irreversible crash. (It **used** to
-    /// double as Market's escapement floor; slice 8b made the hunt policies multiples of MSY, so this
+    /// return that turns Surplus/Deplete's steady overdraw into an irreversible crash. (It **used** to
+    /// double as Deplete's escapement floor; slice 8b made the hunt policies multiples of MSY, so this
     /// is once again only the depensation threshold.)
     pub collapse_fraction: f32,
     /// Per-turn fractional decline of a collapsing (sub-threshold) group.
@@ -1032,17 +1032,18 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// a remnant.
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 
-/// Market-hunting tuning: the commercial Follow policy sells its take, yielding
-/// `trade_goods_multiplier`× the normal trade-goods rate. The heavy take drives the group past the
-/// Allee threshold into the depensation collapse (no separate depletion state — pure ecology reuse).
+/// Market-hunting tuning: the `Deplete` Follow policy sells its take at `trade_goods_multiplier`×
+/// the normal trade-goods rate. The heavy take drives the group past the Allee threshold into the
+/// depensation collapse (no separate depletion state — pure ecology reuse).
 ///
-/// Market-hunting tuning: the commercial Follow policy sells its take at `trade_goods_multiplier`×
-/// the normal trade-goods rate.
+/// **The block keeps its `market` name for now.** The policy it belonged to was renamed
+/// `Market` → `Deplete` (`docs/plan_hunt_yield_model.md` §2); this trade-rate block is *retired*
+/// later in the same arc, so renaming it here would churn a key that is about to be deleted.
 ///
-/// **`take_fraction` stays RETIRED.** Market's *take* is `hunt.market_multiplier × MSY` (2.5× — the
-/// commercial cull that drives a herd extinct; see [`HuntConfig`] / [`crate::fauna::hunt_policy_ceiling`]).
-/// What distinguishes Market from Surplus is *how hard it takes*; what this block still owns is what
-/// Market does with the meat — `trade_goods_multiplier`.
+/// **`take_fraction` stays RETIRED.** `Deplete`'s *take* is `hunt.deplete_multiplier × MSY` (2.5× —
+/// the hard draw-down that grinds a herd to extinction; see [`HuntConfig`] /
+/// [`crate::fauna::hunt_policy_ceiling`]). What distinguishes `Deplete` from `Surplus` is *how hard
+/// it takes*; what this block still owns is what it does with the meat — `trade_goods_multiplier`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MarketConfig {
@@ -1249,12 +1250,12 @@ impl FaunaConfig {
 
         // --- **THE HUNT POLICY ORDERING INVARIANT** (slice 8b, `crate::fauna::hunt_policy_ceiling`).
         //
-        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Market <
+        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Deplete <
         // Eradicate (everything). Ordering — *"each option takes more than the last"* — is guaranteed
-        // because Surplus/Market are multiples of the SAME base, so the only two dials that can break
-        // it are `surplus_multiplier` and `market_multiplier`. Each has a rejection test.
+        // because Surplus/Deplete are multiples of the SAME base, so the only two dials that can break
+        // it are `surplus_multiplier` and `deplete_multiplier`. Each has a rejection test.
         //   - `surplus_multiplier ≥ 1`: Surplus must out-take Sustain (whose ceiling is capped at MSY).
-        //   - `surplus_multiplier < market_multiplier`: Surplus must be the *gentler* extraction.
+        //   - `surplus_multiplier < deplete_multiplier`: Surplus must be the *gentler* extraction.
         require_greater_than(
             "hunt.surplus_multiplier",
             self.hunt.surplus_multiplier,
@@ -1262,23 +1263,23 @@ impl FaunaConfig {
             MAX_FRACTION,
         )?;
         require_greater_than(
-            "hunt.market_multiplier",
-            self.hunt.market_multiplier,
-            "hunt.surplus_multiplier (Market must out-take Surplus)",
+            "hunt.deplete_multiplier",
+            self.hunt.deplete_multiplier,
+            "hunt.surplus_multiplier (Deplete must out-take Surplus)",
             self.hunt.surplus_multiplier,
         )?;
 
         // --- **THE EXPEDITION RAID FLOOR ORDERING** (the greedy hunting raid,
         // `systems::expeditions::hunt_expedition_floor`). A hunting party grabs the herd's standing
         // surplus down to a per-policy floor: Sustain `MSY_BIOMASS_FRACTION·K` > Surplus
-        // `surplus_escapement_fraction·K` > Market `collapse_fraction·K` > Eradicate `0`. Only Surplus's
-        // floor is tunable, and it must sit STRICTLY between Market's and Sustain's — otherwise a deeper
-        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Market
+        // `surplus_escapement_fraction·K` > Deplete `collapse_fraction·K` > Eradicate `0`. Only Surplus's
+        // floor is tunable, and it must sit STRICTLY between Deplete's and Sustain's — otherwise a deeper
+        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Deplete
         // raid deeper"). Each bound has a rejection test.
         require_greater_than(
             "hunt.surplus_escapement_fraction",
             self.hunt.surplus_escapement_fraction,
-            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Market)",
+            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Deplete)",
             self.ecology.collapse_fraction,
         )?;
         if !self.hunt.surplus_escapement_fraction.is_finite()
@@ -1498,7 +1499,7 @@ impl FaunaConfig {
         // single statement, instead of each web restating its own copy.)
 
         // --- Follow / market / immigration (ported from the builtin-only unit assertions).
-        // --- Market's trade rate (its take is an escapement floor now — see the ecology block).
+        // --- The `market` block's trade rate (its take is an escapement floor now — see the ecology block).
 
         require_greater_than(
             "market.trade_goods_multiplier",
@@ -1872,7 +1873,7 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
 
 // NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
 // dials it was the only caller of. The hunt axis is four **ordered multiples of MSY** now
-// (`hunt.surplus_multiplier` / `market_multiplier`, both `> 1`, so *out* of the unit range), and an
+// (`hunt.surplus_multiplier` / `deplete_multiplier`, both `> 1`, so *out* of the unit range), and an
 // ordering is a stronger statement than a range: `require_greater_than` chains them so a multiplier
 // cannot be individually "in range" yet out of order. See `fauna::hunt_policy_ceiling`.
 
@@ -2233,7 +2234,7 @@ mod tests {
     /// **THE HUNT AXIS'S ORDERING INVARIANT, on the shipped multipliers** — *"each option takes more
     /// than the last."* Asserted as the multiplier ordering, where the guarantee lives: ascending
     /// multiples of the same MSY base ⇒ ascending takes at every biomass, for every species. (The
-    /// full take sweep across biomass × species is `fauna_market::hunt_policy_takes_are_strictly_
+    /// full take sweep across biomass × species is `fauna_deplete::hunt_policy_takes_are_strictly_
     /// ordered_at_every_biomass`.)
     #[test]
     fn the_shipped_hunt_multipliers_are_ordered() {
@@ -2244,10 +2245,10 @@ mod tests {
             hunt.surplus_multiplier
         );
         assert!(
-            hunt.surplus_multiplier < hunt.market_multiplier,
-            "Market must out-take Surplus: {} vs {}",
+            hunt.surplus_multiplier < hunt.deplete_multiplier,
+            "Deplete must out-take Surplus: {} vs {}",
             hunt.surplus_multiplier,
-            hunt.market_multiplier
+            hunt.deplete_multiplier
         );
     }
 
@@ -2262,19 +2263,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_market_multiplier_at_or_below_surplus() {
-        // Market must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
-        let err = reject(|json| json["hunt"]["market_multiplier"] = (1.5).into());
-        assert_rejects_field(err, "hunt.market_multiplier");
+    fn validate_rejects_a_deplete_multiplier_at_or_below_surplus() {
+        // Deplete must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
+        let err = reject(|json| json["hunt"]["deplete_multiplier"] = (1.5).into());
+        assert_rejects_field(err, "hunt.deplete_multiplier");
     }
 
     /// **The expedition raid floor ordering is REJECTED at both bounds** — the greedy raid
     /// (`systems::expeditions`) leaves a leaner herd for a deeper policy only if
     /// `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`.
     #[test]
-    fn validate_rejects_a_surplus_escapement_at_or_below_the_market_floor() {
-        // At/below Market's collapse floor, a Surplus raid would leave the *same or leaner* herd as
-        // Market — the ordering inverts.
+    fn validate_rejects_a_surplus_escapement_at_or_below_the_deplete_floor() {
+        // At/below Deplete's collapse floor, a Surplus raid would leave the *same or leaner* herd as
+        // Deplete — the ordering inverts.
         let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.15).into());
         assert_rejects_field(err, "hunt.surplus_escapement_fraction");
     }

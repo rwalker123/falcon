@@ -502,7 +502,7 @@ static func build_policy_picker(
         # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
         # metric, NO name — so the rungs stay compact enough to wrap 3-per-row (see the grid above)
         # without overflow. The name + full metric live in the
-        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Market < Eradicate). A rung
+        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Deplete < Eradicate). A rung
         # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
         # is never a lone glyph.
         var take: Variant = takes.get(policy_key, null)

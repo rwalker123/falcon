@@ -215,7 +215,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			_view._outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
 			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
 			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
-			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
+			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _view._hex_center(tcol, trow, radius, origin)

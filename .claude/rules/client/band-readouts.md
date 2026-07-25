@@ -210,7 +210,7 @@ paths:
     morale is concerning** (a healthy band that manually expands its breakdown is not told to
     "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
-    persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
+    persistent Hunt/Follow policy tooltips (Sustain/Surplus/Deplete/Eradicate get `MORALE_HINT_PERSISTENT`
     appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.
 - **Tile-card Habitability** (snapshot `TileState.habitability`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `habitability` (raw Scalar/1e6; band-independent per-turn morale drain of the tile's

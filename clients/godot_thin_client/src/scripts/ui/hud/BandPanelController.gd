@@ -110,7 +110,7 @@ var _party_compose_mission: String = ""
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
-# Compose state for the hunt-expedition launch policy (Sustain/Surplus/Market/Eradicate).
+# Compose state for the hunt-expedition launch policy (Sustain/Surplus/Deplete/Eradicate).
 var _send_hunt_policy: String = SourceForecast.DEFAULT_HUNT_POLICY
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
