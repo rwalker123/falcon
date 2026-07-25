@@ -555,7 +555,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # lost). Fold the herding crew into the LOCAL-hunt cap's usefulness ceiling so the maintenance crew is
     # always staffable. `herders_needed == 0` on a wild herd, so max(take-useful, 0) is a no-op there. The
     # expedition party has no herding crew, so `SourceForecast.expedition_useful_cap` is left alone.
-    var herd_floor := int(herd.get("herders_needed", 0))
+    #   BUT composing an INVESTMENT rung (Tame/Corral) on a still-WILD herd is the case `herders_needed`
+    #   floors to 0 exactly when the crew matters: the rung is what MAKES the herd managed, so the floor
+    #   is the ownership-INDEPENDENT would-be crew (`herders_needed_if_managed`) — otherwise the player
+    #   can only staff the 1-worker Tame-prep count, the herd becomes owned next turn needing (e.g.) 3,
+    #   and reads under-herded. For extractive policies the herd is NOT being managed, so no herders are
+    #   needed and the plain `herders_needed` (0 on a wild herd) is right. The two fields are equal on an
+    #   already-managed herd, so this is safe either way.
+    var herd_floor := int(herd.get("herders_needed_if_managed", 0)) if _compose.hunt_policy() in HudComposeVocab.INVESTMENT_POLICIES \
+        else int(herd.get("herders_needed", 0))
     var capped := SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_policy(), assignable) if is_expedition \
         else _forecast_worker_cap(forecast, assignable, herd_floor)
     var cap := int(capped["cap"])

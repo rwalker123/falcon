@@ -286,6 +286,14 @@ pub struct HerdTelemetryState {
     /// BEHAVIOUR — P(initiates a raid unprovoked); scales camp-threat. See [`Self::attack`].
     #[serde(default)]
     pub aggression: f32,
+    /// **The crew this herd WOULD owe if it were managed** (fauna neglect-escape, taming-startup-lag
+    /// fix) — `fauna::herders_needed(biomass, body_mass, animals_per_herder)` for a tameable species,
+    /// else `0` (a `wild`-ceiling mammoth/deer never tames). Ownership-**independent**, unlike
+    /// [`Self::herders_needed`] (0 for a wild herd), so the client can floor the Tame-compose worker cap
+    /// at it the turn taming starts — before ownership is set in the Population stage — killing the
+    /// one-turn lag. Equals `herders_needed` for a herd already managed. Appended last (append-only).
+    #[serde(default)]
+    pub herders_needed_if_managed: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -331,6 +339,7 @@ impl Default for HerdTelemetryState {
             defense: 0.0,
             ferocity: 0.0,
             aggression: 0.0,
+            herders_needed_if_managed: 0,
         }
     }
 }

@@ -669,6 +669,7 @@
       "graze_range_radius": 200,
       "herded_fraction": 57.66,
       "herders_needed": 45,
+      "herders_needed_if_managed": 61,
       "hunt_policy_ceilings": {
         "herds[0].hunt_policy_ceilings[0].policy": 13.71,
         "herds[0].hunt_policy_ceilings[1].policy": 37.509998
@@ -729,6 +730,7 @@
       "graze_range_radius": 93,
       "herded_fraction": 76.389999,
       "herders_needed": 64,
+      "herders_needed_if_managed": 186,
       "hunt_policy_ceilings": {
         "herds[1].hunt_policy_ceilings[0].policy": 108.389999,
         "herds[1].hunt_policy_ceilings[1].policy": 96.169998

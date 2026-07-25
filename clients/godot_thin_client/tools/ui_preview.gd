@@ -1294,6 +1294,52 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_tame_stalled")
 
+	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
+	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's
+	# `herders_needed` is ownership-gated to 0, so the take/prepare max-useful (1) used to pin the cap at 1;
+	# the player could staff only 1, the herd became owned next turn needing 3, and read under-herded. The
+	# fix floors the LOCAL-hunt cap on `herders_needed_if_managed` (3) for investment rungs only.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+	# A band with idle workers comfortably above both caps (Tame 10, Sustain 7), so the stepper is bound by
+	# USEFULNESS (the "max N useful here" note), not by the idle-labor ceiling (a different note entirely).
+	var tame_cap_band := _band_fixture()
+	tame_cap_band["idle_workers"] = 20
+	tame_cap_band["working_age"] = 40
+	_hud._band_labor._player_band = tame_cap_band
+	_hud._band_labor._player_bands = [tame_cap_band]
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
+	# Open the sheet FIRST so the source is begun (a source-change re-seeds the policy from the herd's
+	# standing assignment, which would clobber our pick); THEN set Tame and rebuild against the same
+	# source, where source_changed is false and the policy sticks.
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	_hud._compose.set_hunt_policy("tame")
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	await _settle()
+	await _save("herd_tame_worker_cap")
+	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
+	# note reads "max 10 workers useful here". Pre-fix it read "max 1 worker useful here" (floored on the
+	# ownership-gated herders_needed 0).
+	_assert_hud("Tame offers the full would-be herder crew (max 10), not the 1-worker prep count",
+		_has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
+	_assert_hud("…and not the pre-fix 1-worker cap",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 1 worker useful"))
+	# COMPANION — the EXTRACTIVE Sustain rung manages nothing, so it needs no herders: its cap is
+	# take-useful only (Sustain 1.50 ÷ 0.30 = 5), and the would-be crew (3) must NOT leak into it.
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	_hud._compose.set_hunt_policy("sustain")
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	await _settle()
+	await _save("herd_tame_worker_cap_sustain")
+	_assert_hud("Sustain caps on its own take-useful (max 7), floored at 0",
+		_has_label_containing(_hud._drawercompose._compose_sheet, "max 7 workers useful"))
+	_assert_hud("…the would-be herder crew (10) does not leak into an extractive rung",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
+
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	_hud._compose.set_hunt_policy("sustain")
 	_hud._compose.reset_hunt_source()
@@ -4149,6 +4195,18 @@ func _taming_herd_fixture() -> Dictionary:
 func _taming_stalled_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["ecology_phase"] = "stressed"
+	return fixture
+
+## A still-WILD but tameable herd (pen ceiling) for the taming-startup-lag guard. It is NOT yet managed,
+## so its OWNERSHIP-GATED `herders_needed` is 0 — but its ownership-INDEPENDENT would-be herder crew
+## (`herders_needed_if_managed`, from biomass) is 10, set DELIBERATELY ABOVE this herd's Sustain
+## take-useful (7, driven by the carry model) so the "no leak" companion is meaningful: composing Tame
+## floors the cap UP to the 10-crew, while composing the extractive Sustain must stay at its own 7 — a
+## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
+func _tame_worker_cap_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["herders_needed"] = 0
+	fixture["herders_needed_if_managed"] = 10
 	return fixture
 
 ## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the

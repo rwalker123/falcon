@@ -197,6 +197,8 @@ fn create_herds<'a>(
                 defense: herd.defense,
                 ferocity: herd.ferocity,
                 aggression: herd.aggression,
+                // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
+                herdersNeededIfManaged: herd.herders_needed_if_managed,
             },
         );
         entries.push(entry);

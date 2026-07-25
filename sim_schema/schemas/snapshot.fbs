@@ -1448,6 +1448,16 @@ table HerdTelemetryState {
   defense:float = 0;
   ferocity:float = 0;
   aggression:float = 0;
+  // --- Would-be herder count (fauna neglect-escape, taming-startup-lag fix, appended last) --- the
+  // crew a herd WOULD owe if it were managed, computed ownership-INDEPENDENTLY from biomass:
+  // `fauna::herders_needed(biomass, bodyMass, animals_per_herder)` for a tameable species, else 0.
+  // Distinct from `herdersNeeded` (above), which is ownership-gated to 0 for a wild herd — that stays
+  // gated so a wild Sustain-hunted herd never falsely reads as under-herded (`herdedFraction < 1`).
+  // The client floors the Tame-compose worker cap at THIS up front, so the turn taming starts it can
+  // already offer the real crew size (e.g. 3 for a rabbit warren) instead of 1, killing the one-turn
+  // lag before ownership is set in the Population stage. 0 for a wild-ceiling species (mammoth/deer,
+  // never tameable). For a herd already managed this equals `herdersNeeded`.
+  herdersNeededIfManaged:uint = 0;
 }
 
 table CommandEventState {
