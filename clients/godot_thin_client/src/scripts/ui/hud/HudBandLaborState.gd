@@ -341,6 +341,22 @@ func effective_hunt_workers(band: Dictionary, herd_id: String) -> int:
 		return int((pend[key] as Dictionary).get("workers", 0))
 	return workers_for_hunt(band, herd_id)
 
+## Total herders actually assigned to a herd, summed across every player band and overlaying pending
+## (staged) edits so a just-staffed herder counts IMMEDIATELY — before the turn resolves. A managed
+## herd's local crew ride `Hunt` assignments (the policy is Corral/Sustain), so this sums the hunt
+## workers targeting `herd_id`. This is the ACTUAL staffing the herd drawer + the work panel read
+## against `herders_needed`; it deliberately does NOT reconstruct from last turn's resolved
+## `herded_fraction`, which lags a turn and produced the self-contradictory "5 needed · only 2 of 5
+## working" the instant after the player assigned a herder (fauna neglect-escape arc).
+func assigned_herders_for(herd_id: String) -> int:
+	if herd_id == "":
+		return 0
+	var total := 0
+	for band in current_player_bands():
+		if band is Dictionary:
+			total += effective_hunt_workers(band, herd_id)
+	return total
+
 ## Effective worker count on a band-wide ROLE (scout/warrior), overlaying any pending value — the
 ## role twin of `effective_forage_workers` / `effective_hunt_workers`. Roles key by kind alone (one
 ## band-wide slot each), so there is no tile/herd to pass. Returns `{workers, pending}` because the

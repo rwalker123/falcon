@@ -1113,21 +1113,37 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_corral_starving")
 
-	# Staffing readout — the fix for the silent "🐄 Domesticated but Penning stalled" playtest bug.
-	# FULLY STAFFED: a near-tamed herd with every needed herder present (`herded_fraction` 1.0) reads a
-	# calm "Herders: 4 / 4" (neutral ink) and no consequence line — it holds its tameness and earns
-	# Penning normally.
+	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count. The
+	# reference band (`_band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
+	# that ACTUAL assignment, never from last turn's resolved `herded_fraction`.
+	# FULLY STAFFED: the herd needs 4 and 4 are on it → a calm "Herders: 4 / 4" (neutral ink), no
+	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
+	# self-contradictory "2 / 4 — under-herded" — proving the fix.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
 	_hud.show_herd_selection(_fully_herded_herd_fixture())
 	await _settle()
 	await _save("herd_fully_herded")
+	# ASSERT the corrected count: the actual staffed 4 shows, not the stale reconstruction 2.
+	var fully_lines := DetailFormat.herd_summary_lines(
+		_fully_herded_herd_fixture(), _hud._band_labor.world_herds(),
+		_hud._band_labor.assigned_herders_for(_fully_herded_herd_fixture()["id"]))
+	assert(_lines_contain(fully_lines, "Herders: 4 / 4"))
+	assert(not _lines_any_contain(fully_lines, "under-herded"))
 
-	# UNDER-HERDED: the SAME herd with only half the needed herders (`herded_fraction` 0.5). Its
-	# tameness is slipping, so the drawer says so loudly even though domestication 0.98 rounds to
-	# "Domesticating 100%": an amber "Herders: 2 / 4 — under-herded" row plus the muted "Tameness
-	# slipping — teaching Herding, not Penning. Staff all 4 herders to hold it." consequence line.
+	# UNDER-HERDED: the herd now needs 6 herders but only 4 are staffed → an amber "Herders: 4 / 6 —
+	# under-herded" (the ACTUAL count) plus the shed line "Under-herded — animals are drifting off.
+	# Staff all 6 herders to hold the herd." — NOT the retired "tameness slipping" copy. `herded_fraction`
+	# is a stale 1.0, so the OLD reconstruction would have read a calm "6 / 6" with no warning.
 	_hud.show_herd_selection(_under_herded_herd_fixture())
 	await _settle()
 	await _save("herd_under_herded")
+	var under_lines := DetailFormat.herd_summary_lines(
+		_under_herded_herd_fixture(), _hud._band_labor.world_herds(),
+		_hud._band_labor.assigned_herders_for(_under_herded_herd_fixture()["id"]))
+	assert(_lines_contain(under_lines, "Herders: 4 / 6 — under-herded"))
+	assert(_lines_any_contain(under_lines, "animals are drifting off"))
+	assert(not _lines_any_contain(under_lines, "slipping"))
 
 	# State 2d-γ self-feeding pen — a radius-2 pen (19 fenced tiles) on lush land: the fenced footprint
 	# grazes the WHOLE feed, so the feed-split reads "Fed by pasture 100% · larder 0.0 food/turn" and the
@@ -1307,6 +1323,52 @@ func _ready() -> void:
 	_compose_herd(_taming_stalled_herd_fixture())
 	await _settle()
 	await _save("herd_tame_stalled")
+
+	# TAMING-STARTUP-LAG GUARD — composing an INVESTMENT rung (Tame) on a still-WILD herd must offer the
+	# ownership-INDEPENDENT would-be herder crew, not the 1-worker Tame-prep count. A wild herd's
+	# `herders_needed` is ownership-gated to 0, so the take/prepare max-useful (1) used to pin the cap at 1;
+	# the player could staff only 1, the herd became owned next turn needing 3, and read under-herded. The
+	# fix floors the LOCAL-hunt cap on `herders_needed_if_managed` (3) for investment rungs only.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+	# A band with idle workers comfortably above both caps (Tame 10, Sustain 7), so the stepper is bound by
+	# USEFULNESS (the "max N useful here" note), not by the idle-labor ceiling (a different note entirely).
+	var tame_cap_band := _band_fixture()
+	tame_cap_band["idle_workers"] = 20
+	tame_cap_band["working_age"] = 40
+	_hud._band_labor._player_band = tame_cap_band
+	_hud._band_labor._player_bands = [tame_cap_band]
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
+	# Open the sheet FIRST so the source is begun (a source-change re-seeds the policy from the herd's
+	# standing assignment, which would clobber our pick); THEN set Tame and rebuild against the same
+	# source, where source_changed is false and the policy sticks.
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	_hud._compose.set_hunt_policy("tame")
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	await _settle()
+	await _save("herd_tame_worker_cap")
+	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
+	# note reads "max 10 workers useful here". Pre-fix it read "max 1 worker useful here" (floored on the
+	# ownership-gated herders_needed 0).
+	_assert_hud("Tame offers the full would-be herder crew (max 10), not the 1-worker prep count",
+		_has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
+	_assert_hud("…and not the pre-fix 1-worker cap",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 1 worker useful"))
+	# COMPANION — the EXTRACTIVE Sustain rung manages nothing, so it needs no herders: its cap is
+	# take-useful only (Sustain 1.50 ÷ 0.30 = 5), and the would-be crew (3) must NOT leak into it.
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	_hud._compose.set_hunt_policy("sustain")
+	_compose_herd(_tame_worker_cap_herd_fixture())
+	await _settle()
+	await _save("herd_tame_worker_cap_sustain")
+	_assert_hud("Sustain caps on its own take-useful (max 7), floored at 0",
+		_has_label_containing(_hud._drawercompose._compose_sheet, "max 7 workers useful"))
+	_assert_hud("…the would-be herder crew (10) does not leak into an extractive rung",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
 
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	_hud._compose.set_hunt_policy("sustain")
@@ -2554,6 +2616,67 @@ func _ready() -> void:
 	await _save("knowledge_penning_climbing")
 	# Restore the default strip for any later frame.
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
+	# STALE-CLOSURE GUARD (herd) — the drawer diff-cache patches a same-SHAPE restate in place and
+	# DELIBERATELY keeps the compose-open button's `pressed` closure intact. Before the fix
+	# `_herd_actions_shape` omitted the herd id, so switching to a DIFFERENT herd of identical structure
+	# took the PATCH path and left "Assign hunters ▸" opening the PREVIOUS herd's compose (playtest: the
+	# rabbit's button opened the boar's Tame sheet). Two wild huntable herds share the "assign-button, no
+	# summary" shape, so the buggy patch path fires; pressing the button must open herd B's compose, not A's.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud._compose.reset_hunt_source()
+	var stale_herd_a := _wild_herd_fixture()
+	var stale_herd_b := _wild_herd_fixture()
+	stale_herd_b["id"] = "game_deer_stale_99"
+	stale_herd_b["species"] = "Roe Deer"
+	stale_herd_b["label"] = "Roe Deer (game_deer_stale_99)"
+	# Drive the REAL drawer-actions path (`refresh_drawer_actions` calls these), settling a frame between
+	# each so the diff-cache's deferred `queue_free` completes: without the settles, stale buttons linger
+	# in-tree, the child-count patch test misreads, and `_find_button_by_text` grabs the wrong node.
+	_hud._drawercompose._clear_herd_drawer()   # drop any prior-state button so A gets a FRESH closure
+	await _settle()
+	_hud._drawercompose.build_herd_drawer_actions(stale_herd_a)   # full rebuild → button opens A
+	await _settle()
+	_hud._drawercompose.build_herd_drawer_actions(stale_herd_b)   # same shape → the patch path under test
+	await _settle()
+	var stale_herd_btn := _find_button_by_text(
+		_hud.herd_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower())
+	assert(stale_herd_btn != null)
+	stale_herd_btn.pressed.emit()
+	await _settle()
+	await _save("herd_assign_button_targets_selected_herd")
+	# The opened compose must be herd B (the herd now shown), never the herd A it was first wired against.
+	assert(_hud._compose.kind() == ComposeState.KIND_HERD)
+	assert(_hud._compose.subject() == String(stale_herd_b["id"]))
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_hunt_source()
+
+	# STALE-CLOSURE GUARD (forage) — the identical diff-cache pattern on the forage drawer. Before the fix
+	# the forage-actions shape omitted the tile subject key, so switching between two food tiles of the same
+	# shape kept "Assign foragers ▸" opening the PREVIOUS tile's forage compose. Same drive, other drawer.
+	_hud._compose.reset_forage_source()
+	var stale_tile_a := _food_tile_fixture()
+	var stale_tile_b := _food_tile_fixture()
+	stale_tile_b["x"] = 70
+	stale_tile_b["y"] = 20
+	_hud._drawercompose._clear_forage_drawer()   # drop any prior-state button so tile A gets a FRESH closure
+	await _settle()
+	_hud._drawercompose.build_forage_drawer_actions(stale_tile_a)   # full rebuild → button opens tile A
+	await _settle()
+	_hud._drawercompose.build_forage_drawer_actions(stale_tile_b)   # same shape → the patch path under test
+	await _settle()
+	var stale_forage_btn := _find_button_by_text(
+		_hud.forage_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
+	assert(stale_forage_btn != null)
+	stale_forage_btn.pressed.emit()
+	await _settle()
+	await _save("forage_assign_button_targets_selected_tile")
+	# The opened compose must be tile B (subject key "70,20"), never tile A ("66,10") it was first wired to.
+	assert(_hud._compose.kind() == ComposeState.KIND_FORAGE)
+	assert(_hud._compose.subject() == "70,20")
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_forage_source()
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -4166,25 +4289,43 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 	fixture["ecology_phase"] = "stressed"
 	return fixture
 
-## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout. Domestication is
-## near-complete and `herded_fraction` is 1.0 (every needed herder present), so the herd holds its
-## tameness and earns Penning normally: the drawer shows a neutral "Herders: 4 / 4" with NO warning.
+## A still-WILD but tameable herd (pen ceiling) for the taming-startup-lag guard. It is NOT yet managed,
+## so its OWNERSHIP-GATED `herders_needed` is 0 — but its ownership-INDEPENDENT would-be herder crew
+## (`herders_needed_if_managed`, from biomass) is 10, set DELIBERATELY ABOVE this herd's Sustain
+## take-useful (7, driven by the carry model) so the "no leak" companion is meaningful: composing Tame
+## floors the cap UP to the 10-crew, while composing the extractive Sustain must stay at its own 7 — a
+## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
+func _tame_worker_cap_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["herders_needed"] = 0
+	fixture["herders_needed_if_managed"] = 10
+	return fixture
+
+## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
+## stale-count bug (fauna neglect-escape arc). `_band_fixture` has 4 herders (a Hunt assignment) on
+## game_deer_07, and this herd needs 4, so the drawer reads a neutral "Herders: 4 / 4" — from the
+## ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is deliberately left STALE at 0.4
+## (last turn's resolved value): the OLD code reconstructed `round(0.4 · 4) = 2` and wrongly read a
+## self-contradictory "2 / 4 — under-herded", which this frame proves is gone.
 func _fully_herded_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["domestication"] = 0.9
 	fixture["herders_needed"] = 4
-	fixture["herded_fraction"] = 1.0
+	fixture["herded_fraction"] = 0.4
 	return fixture
 
-## The SAME herd, UNDER-HERDED — the playtest bug made visible. Only half the needed herders are on it
-## (`herded_fraction` 0.5), so its tameness is slipping: domestication decays, the herd will drop back
-## to WILD and stop earning Penning. `domestication` sits at 0.98 (rounds to "Domesticating 100%", the
-## exact reading that used to look fine), so the drawer must NOT read as OK — the amber "Herders: 2 / 4
-## — under-herded" row and the muted "Tameness slipping — teaching Herding, not Penning…" line carry it.
+## The SAME herd, UNDER-HERDED — animals are drifting off (fauna neglect-escape arc; neglect no longer
+## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `_band_fixture`
+## only staffs 4, so the drawer reads the amber "Herders: 4 / 6 — under-herded" (the ACTUAL staffed
+## count) plus the muted "Under-herded — animals are drifting off. Staff all 6 herders to hold the herd."
+## line — NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD
+## code reconstructed `round(1.0 · 6) = 6` and read a calm "6 / 6" with NO warning at all — the exact
+## stale-reading this fix removes.
 func _under_herded_herd_fixture() -> Dictionary:
 	var fixture := _fully_herded_herd_fixture()
 	fixture["domestication"] = 0.98
-	fixture["herded_fraction"] = 0.5
+	fixture["herders_needed"] = 6
+	fixture["herded_fraction"] = 1.0
 	return fixture
 
 ## The world's herd list (Main pushes snapshot["herds"]). Named because the turn-orb starving-pen
@@ -4317,6 +4458,20 @@ func _danger_component_rows_present(lines: Array) -> bool:
 		if _danger_row_value(lines, key) == "":
 			return false
 	return true
+
+## True when SOME produced line is EXACTLY `text` (used to pin a specific "Herders: N / M" readout).
+func _lines_contain(lines: Array, text: String) -> bool:
+	for line in lines:
+		if String(line) == text:
+			return true
+	return false
+
+## True when SOME produced line CONTAINS `text` (used to pin the shed copy / prove the old copy is gone).
+func _lines_any_contain(lines: Array, text: String) -> bool:
+	for line in lines:
+		if String(line).contains(text):
+			return true
+	return false
 
 func _danger_verdict_word_present(lines: Array) -> bool:
 	for line in lines:

@@ -716,7 +716,22 @@ pub fn advance_labor_allocation(
                     //
                     // A **wild** herd writes nothing here: it isn't yours to maintain
                     // (`fauna::herders_needed` — hunt = reach + carry, harvest = maintain + take).
-                    let herders_needed = fauna::herd_herders_needed(herd, &fauna);
+                    //
+                    // **An INVESTMENT policy (Tame/Corral) uses the ownership-INDEPENDENT would-be crew**
+                    // (taming-startup-lag fix): a Tame/Corral assignment *means* the herd is being
+                    // managed, but ownership is only recorded later this turn (Population, the Tame arm's
+                    // `accrue_domestication`), so the ownership-gated `herd_herders_needed` reads `0` on
+                    // the turn taming starts and the crew collapses to the take-side hauler count — "1 of
+                    // 3 working" on a full crew. `would_be_herders_needed` is the biomass-derived crew
+                    // regardless of recorded ownership (0 only for a `wild`-ceiling species, which cannot
+                    // be tamed). **Extractive policies stay ownership-gated** — a wild Sustain-hunted herd
+                    // must read `0` here, or its `herded_fraction` would drop below 1 and it would falsely
+                    // read under-herded and shed.
+                    let herders_needed = if policy.is_investment() {
+                        fauna::would_be_herders_needed(herd, &fauna)
+                    } else {
+                        fauna::herd_herders_needed(herd, &fauna)
+                    };
                     if herders_needed > 0 {
                         herd.herded_fraction = fauna::herded_fraction(workers, herders_needed);
                     }
@@ -1226,11 +1241,12 @@ pub fn advance_labor_allocation(
                     // and reveal from each, re-marked Active every turn — no work is done here.
                 }
                 LaborTarget::Warrior => {
-                    // Inert in Phase 0. Warriors are a band-wide standing guard (border/camp patrol),
-                    // not a hunting escort — they do **not** mitigate hunt danger (the hunting party
-                    // answers that itself, via its own equipment). Their first live consumer is the
-                    // **Phase 1 predator-raid path**: a carnivore with `aggression > 0` raiding a band,
-                    // band as Defender. Do not delete this branch.
+                    // Still a no-op **in the labor pass** — warriors do no per-worker yield here, and
+                    // they are a band-wide standing guard (border/camp patrol), not a hunting escort, so
+                    // they do **not** mitigate hunt danger (the hunting party answers that itself, via
+                    // its own equipment). But warriors are **no longer inert overall** (Phase 1b): the
+                    // warrior head-count is now **consumed by [`advance_predator_raids`]** as the band's
+                    // defending contingent when a carnivore raids its camp. Keep this branch.
                 }
             }
         }
@@ -1541,6 +1557,186 @@ pub fn advance_population_migration(
             let gain = grievance_gain * cohort.discontent_fraction * mult;
             cohort.grievance += gain;
         }
+    }
+}
+
+/// The config handles [`advance_predator_raids`] reads, bundled into one `SystemParam` (the
+/// [`LaborConfigs`] idiom) so the system stays within Bevy's argument budget without silencing clippy.
+/// Each is resolved to its `Arc` once at the top of the system.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RaidConfigs<'w> {
+    pub fauna: Res<'w, FaunaConfigHandle>,
+    pub combat: Res<'w, CombatConfigHandle>,
+    pub creatures: Res<'w, CreaturesConfigHandle>,
+}
+
+/// **Predators Phase 1b — the raid trigger, and the Warrior role's first live consumer**
+/// (`docs/plan_predators.md`). A carnivore with `aggression > 0` within `predators.raid_radius` of a
+/// resident band turns on its camp; the band is defended by its **Warriors** (the head-count assigned
+/// to [`LaborTarget::Warrior`]). Like the hunt-danger adapter, this builds a [`FightPayload`], resolves
+/// it through the neutral combat subsystem, and applies **only the band/defender side's** casualties —
+/// working-age only this phase (`wounded` is surfaced in the feed but mechanically inert, as in
+/// Phase 0). Runs in the Population stage right after [`advance_labor_allocation`], so warrior counts
+/// and band positions are current.
+///
+/// **Why the band side is TWO contingents, and why that is load-bearing** (do not "simplify" it into a
+/// warriors-only side): the placeholder resolver clamps a side's losses to *its own* headcount, so a
+/// side with `count 0` takes ZERO losses. A warriors-only band side would therefore give a
+/// **0-warrior band zero casualties** — the exact inverse of "an under-guarded band costs it people".
+/// So the band's *exposed populace* is present as its own contingent (the thing that can die, at
+/// **zero attack** — it dilutes the blow and adds no offense), and the Warriors are the *additional
+/// armed defenders* that add power (cutting the enemy-relative loss ratio) and shift the kill/wound
+/// split toward wounded. The aggressor's engaged count is a **single** representative of the pack, a
+/// deliberate Phase-1b simplification that keeps `power_enemy` modest (≈ `attack × aggression`) so a
+/// handful of warriors at attack 1 can meaningfully reduce `(power_enemy / power_self)` — with the
+/// whole pack engaged, warriors could never keep up and every raid would be a massacre. Scaling the
+/// engaged count with pack size is a Phase-2+ refinement.
+pub fn advance_predator_raids(
+    herds: Res<HerdRegistry>,
+    configs: RaidConfigs,
+    sim_config: Res<SimulationConfig>,
+    tick: Res<SimulationTick>,
+    mut event_log: ResMut<CommandEventLog>,
+    tiles: Query<&Tile>,
+    mut bands: Query<(Entity, &mut PopulationCohort, &LaborAllocation), With<ResidentBand>>,
+) {
+    // Resolved once — none of these change within a turn (the hunt-danger adapter's discipline).
+    let fauna = configs.fauna.get();
+    let tuning = configs.combat.get().tuning();
+    let person = configs.creatures.get().person();
+    let raid_radius = fauna.predators.raid_radius;
+    let raid_exposure = fauna.predators.raid_exposure;
+    let width = sim_config.grid_size.x;
+    let wrap = sim_config.map_topology.wrap_horizontal;
+    let map_seed = sim_config.map_seed;
+    let tick = tick.0;
+
+    for (entity, mut cohort, alloc) in bands.iter_mut() {
+        let Ok(band_pos) = tiles.get(cohort.current_tile).map(|t| t.position) else {
+            continue;
+        };
+        // Working-age adults are both the defenders and the only bracket Phase-1b casualties come from,
+        // so a band with none of them neither defends nor dies.
+        let working_age = cohort.working.to_f32();
+        if working_age <= 0.0 {
+            continue;
+        }
+        let faction = cohort.faction;
+        // Warriors can't exceed the working-age adults present; the rest of the exposed bracket is the
+        // populace that stands in the pack's path (bounded by the `raid_exposure` dial).
+        let warriors = alloc.workers_on(&LaborTarget::Warrior) as f32;
+        let warrior_count = warriors.min(working_age);
+        let exposed = raid_exposure.min((working_age - warrior_count).max(0.0));
+
+        // Casualties from every raiding predator this turn are additive and order-independent, so they
+        // accumulate into one cohort mutation at the end.
+        let mut total_killed = 0.0f32;
+        for herd in &herds.herds {
+            // Only a **carnivore** raids — the diet gate.
+            let Some(def) = fauna.species_by_display(&herd.species) else {
+                continue;
+            };
+            if def.diet != Diet::Carnivore {
+                continue;
+            }
+            // **The raid trigger** (`docs/plan_predators.md`): a carnivore raids to the extent it is
+            // aggressive, so its effective attack is `attack × aggression`. A carnivore with
+            // `aggression 0` does not raid at all — the gate.
+            let effective_attack = def.combat.attack * def.aggression;
+            if effective_attack <= 0.0 {
+                continue;
+            }
+            // The pack must have reached the camp — a tighter reach than the prey-sensing disk.
+            if crate::grid_utils::hex_distance_wrapped(herd.current_pos, band_pos, width, wrap)
+                > raid_radius
+            {
+                continue;
+            }
+
+            // Rollback-stable seed distinct per (predator, band) pair — hash BOTH the herd id and the
+            // band entity, so two predators on one band and one predator on two bands all differ. The
+            // placeholder resolver ignores `seed`, but it is supplied as a real value (the hunt-danger
+            // adapter's discipline).
+            let mut hasher = crate::hashing::FnvHasher::new();
+            std::hash::Hash::hash(&herd.id, &mut hasher);
+            std::hash::Hash::hash(&entity, &mut hasher);
+            let seed = map_seed ^ tick ^ std::hash::Hasher::finish(&hasher);
+
+            let payload = FightPayload {
+                sides: vec![
+                    // Aggressor: a single fighting representative of the pack, at its
+                    // aggression-scaled attack (defense/range unchanged).
+                    Force {
+                        id: ForceId(0),
+                        posture: Posture::Aggressor,
+                        contingents: vec![Contingent {
+                            kind: ContingentId(herd.species.clone()),
+                            count: 1.0,
+                            profile: CombatStats {
+                                attack: effective_attack,
+                                ..def.combat
+                            },
+                        }],
+                    },
+                    // Defender: the band. TWO contingents (see the fn doc-comment) — the armed Warriors
+                    // that add power, and the unarmed exposed folk that can die but add no offense.
+                    Force {
+                        id: ForceId(1),
+                        posture: Posture::Defender,
+                        contingents: vec![
+                            Contingent {
+                                kind: ContingentId::from("warrior"),
+                                count: warrior_count,
+                                profile: person,
+                            },
+                            Contingent {
+                                kind: ContingentId::from("person"),
+                                count: exposed,
+                                profile: CombatStats {
+                                    attack: 0.0,
+                                    defense: person.defense,
+                                    range: person.range,
+                                },
+                            },
+                        ],
+                    },
+                ],
+                terrain: vec![TerrainContext {
+                    hex: (band_pos.x, band_pos.y),
+                }],
+                seed,
+            };
+            let outcome = resolve_fight(&payload, &tuning);
+            // Apply ONLY the defender side (`ForceId(1)`); the predator side is discarded (no biomass
+            // take here to reconcile, but band casualties are all this phase cares about).
+            let (killed_f, wounded_f) =
+                outcome.results.iter().fold((0.0f32, 0.0f32), |(k, w), r| {
+                    if r.force == ForceId(1) {
+                        (k + r.killed, w + r.wounded)
+                    } else {
+                        (k, w)
+                    }
+                });
+            if killed_f + wounded_f > 0.0 {
+                total_killed += killed_f;
+                // One feed line per raiding predator, pushed now. Human text names the SPECIES, never
+                // the internal herd id; the detail carries the fractional truth (`wounded` is inert this
+                // phase — recovery is a later slice, as in Phase 0).
+                let killed_r = killed_f.round() as u32;
+                event_log.push(CommandEventEntry::new(
+                    tick,
+                    CommandEventKind::PredatorRaid,
+                    faction,
+                    format!("A {} raid cost {} lives", def.display_name, killed_r),
+                    Some(format!(
+                        "killed={:.3} wounded={:.3} warriors={} species={}",
+                        killed_f, wounded_f, warrior_count as u32, def.display_name
+                    )),
+                ));
+            }
+        }
+        // One mutation per band — working-age only this phase.
+        cohort.apply_combat_casualties(scalar_from_f32(total_killed));
     }
 }
 
@@ -2235,6 +2431,125 @@ mod labor_yield_tests {
             herders.max(haulers),
             "the pen reports ONE crew sized by whichever job binds — minding {herders} head vs hauling \
              the take ({haulers}): {corral:?}"
+        );
+    }
+
+    /// **A wild herd being TAMED reports its full would-be crew from turn one — no ownership lag**
+    /// (taming-startup-lag fix). On the turn a `Tame` assignment starts, ownership is set only later in
+    /// Population (`accrue_domestication`), so the ownership-gated `herd_herders_needed` reads `0` and the
+    /// crew used to collapse to the tiny Tame-dip haul count — "1 of N working" on a full crew. An
+    /// investment policy now sizes the herder term ownership-INDEPENDENTLY (`would_be_herders_needed`), so
+    /// **both** the assign-time seed AND the resolved row report the real crew even while the herd is
+    /// unowned; and an **extractive** policy still drops the herder term (a wild Sustain herd stays at the
+    /// haul count, so it is never falsely flagged under-herded).
+    #[test]
+    fn a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag() {
+        let (mut world, tile) = world_with_source(CAP);
+        // Reseat the wild fixture so its would-be herder crew clearly EXCEEDS the Tame-dip haul crew
+        // (the rabbit-warren shape where the lag showed).
+        let crew = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            let herd = &mut registry.herds[0];
+            herd.body_mass = 1.0;
+            herd.carrying_capacity = 200.0;
+            herd.biomass = 200.0; // 200 animals ⇒ crew = ceil(200 / DEFAULT_ANIMALS_PER_HERDER 25) = 8
+            herd.refresh_ecology_phase(&fauna);
+            assert!(
+                herd.owner.is_none() && !herd.is_corralled(),
+                "the herd starts WILD (unowned, unpenned)"
+            );
+            crate::fauna::would_be_herders_needed(herd, &fauna)
+        };
+        assert!(
+            crew >= 2,
+            "the fixture crew must be non-trivial to observe the fix: {crew}"
+        );
+
+        // Snapshots to compute the expected haul crew (the value the OLD code collapsed to) + confirm the
+        // ownership gate.
+        let (haul, gated) = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            let herd = &registry.herds[0];
+            let forecast = crate::fauna::hunt_forecast(
+                herd,
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                1.0,
+            );
+            let haul = crate::fauna::hunt_haul_workers(
+                forecast.ceiling_for(FollowPolicy::Tame),
+                forecast.body_mass_yield,
+                forecast.per_worker_yield,
+            );
+            (haul, crate::fauna::herd_herders_needed(herd, &fauna))
+        };
+        assert_eq!(
+            gated, 0,
+            "an unowned herd's ownership-gated herder count is 0 — the collapse this fix routes around"
+        );
+        assert!(
+            crew > haul,
+            "the crew must exceed the haul count, or the fix is invisible: crew {crew} vs haul {haul}"
+        );
+
+        // Build the two seeds (Tame vs Sustain) on the still-WILD herd.
+        let seed = |policy: FollowPolicy, world: &World| {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            crate::fauna::hunt_source_yield_preview(
+                &registry.herds[0],
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                1.0,
+                crew,
+                policy,
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
+            )
+        };
+        let tame_seed = seed(FollowPolicy::Tame, &world);
+        assert_eq!(
+            tame_seed.workers_needed, crew,
+            "the assign-time seed reports the full would-be crew for a Tame source, not the haul: \
+             {tame_seed:?}"
+        );
+        // The extractive contrast: Sustain on the same WILD herd drops the herder term → haul only.
+        let sustain_seed = seed(FollowPolicy::Sustain, &world);
+        assert_eq!(
+            sustain_seed.workers_needed, haul,
+            "an extractive policy on a wild herd stays at the haul count (herder term 0): {sustain_seed:?}"
+        );
+
+        // The RESOLVED row: a real Tame keeper of `crew` hunters, one turn.
+        let keeper = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Tame,
+                },
+                workers: crew,
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let resolved = world.get::<LaborAllocation>(keeper).unwrap().last_yields[0].clone();
+        assert_eq!(
+            resolved.workers_needed, crew,
+            "the resolved row reports the same full crew — the herd was unowned when it was sized: \
+             {resolved:?}"
+        );
+        assert_eq!(
+            tame_seed.workers_needed, resolved.workers_needed,
+            "seed == resolved (no jump between the pending assign and the turn it resolves)"
         );
     }
 

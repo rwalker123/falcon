@@ -53,9 +53,9 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
-        herd_herders_needed, hunt_forecast, pen_upkeep, EcologyPhase, Herd, HerdDensityMap,
-        HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
+        Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED,
+        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle},
@@ -286,6 +286,8 @@ mod tests {
             // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
             // rollback restores it rather than re-flickering for a turn.
             herders_needed: 3,
+            // Slice 2: the under-herded edge-gate round-trips (persisted, unlike `pen_starving`).
+            under_herded: true,
             ecology: EcologyState {
                 biomass: 4321.0,
                 carrying_capacity: 8000.0,
@@ -1562,6 +1564,70 @@ mod tests {
         assert!(pen.corralled, "a penned herd reports corralled");
         let wild = states.iter().find(|h| h.id == "herd_wild").unwrap();
         assert!(!wild.corralled, "a mobile herd reports not corralled");
+    }
+
+    /// **The ownership-INDEPENDENT would-be herder count** (taming-startup-lag fix). A WILD (unowned)
+    /// tameable herd exports `herders_needed_if_managed > 0` even though the ownership-gated
+    /// `herders_needed` wire field reads 0 — so the client can floor the Tame-compose worker cap up
+    /// front, before ownership is set in the Population stage. A `wild`-ceiling species exports 0 (it can
+    /// never be tamed); a herd already managed exports the same value in both.
+    #[test]
+    fn herd_snapshot_reports_the_would_be_herder_count_ownership_independently() {
+        use crate::fauna_config::{HusbandryCeiling, SizeClass};
+        let herd = |id: &str| {
+            Herd::new(
+                id.to_string(),
+                "Rabbit Warren".to_string(),
+                SizeClass::Small,
+                vec![UVec2::new(2, 2)],
+                50.0, // biomass
+                100.0,
+                0.0,
+                0.05,
+                SNAPSHOT_BODY_MASS,
+            )
+        };
+        let mut registry = HerdRegistry::default();
+        // (1) A wild, UNOWNED, tameable herd (default `pen` ceiling, no owner).
+        registry.herds.push(herd("herd_wild_tameable"));
+        // (2) A wild-CEILING species (never tames).
+        let mut untameable = herd("herd_untameable");
+        untameable.husbandry_ceiling = HusbandryCeiling::Wild;
+        registry.herds.push(untameable);
+        // (3) A herd already managed (owned).
+        let mut managed = herd("herd_managed");
+        managed.owner = Some(FactionId(0));
+        registry.herds.push(managed);
+
+        let states = export_with(&registry, &all_seeing_ledger(64));
+        let at = |id: &str| states.iter().find(|h| h.id == id).unwrap();
+
+        // (1) wild + tameable: the would-be crew is real, the ownership-gated field is still 0.
+        let wild = at("herd_wild_tameable");
+        assert!(
+            wild.herders_needed_if_managed > 0,
+            "a tameable herd advertises the crew it WOULD need: {}",
+            wild.herders_needed_if_managed
+        );
+        assert_eq!(
+            wild.herders_needed, 0,
+            "…while the ownership-gated field is still 0 for an unowned herd"
+        );
+
+        // (2) wild-ceiling: never tameable → 0.
+        assert_eq!(
+            at("herd_untameable").herders_needed_if_managed,
+            0,
+            "a wild-ceiling species can never be tamed, so it advertises no crew"
+        );
+
+        // (3) already managed: both agree.
+        let managed = at("herd_managed");
+        assert!(managed.herders_needed_if_managed > 0);
+        assert_eq!(
+            managed.herders_needed_if_managed, managed.herders_needed,
+            "a managed herd's would-be count equals its live ownership-gated count"
+        );
     }
 
     /// A ledger in which [`VIEWER`] sees exactly `visible` and nothing else — the fog fixtures below.

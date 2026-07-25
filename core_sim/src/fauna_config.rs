@@ -579,6 +579,19 @@ pub struct PredatorConfig {
     /// zero prey most turns and snap `K→0`. A single clearly-named dial for the whole predator model
     /// (chosen as a global lever over a per-species `SpeciesDef` field). Validated `>= 1`.
     pub prey_sense_radius: u32,
+    /// **The raid trigger reach** (Predators Phase 1b, `docs/plan_predators.md`) — how close (odd-r hex
+    /// distance) a carnivore must be to a band to raid its camp (`systems::advance_predator_raids`). Its
+    /// **own** lever: a raid is the pack reaching the camp, distinct from — and deliberately **tighter
+    /// than** — the `prey_sense_radius` disk the pack senses game across. Validated `>= 1`. A playtest
+    /// dial.
+    #[serde(default = "default_raid_radius")]
+    pub raid_radius: u32,
+    /// **How many of a band's working-age people are exposed to a raid** (Predators Phase 1b) — the
+    /// defender-side populace that can be killed. Bounds a raid so it is a *skirmish*, not a massacre:
+    /// only this many folk (beyond the warriors) stand in the pack's path each raid turn. Validated
+    /// finite `> 0`. A playtest dial.
+    #[serde(default = "default_raid_exposure")]
+    pub raid_exposure: f32,
 }
 
 impl Default for PredatorConfig {
@@ -588,6 +601,8 @@ impl Default for PredatorConfig {
             min_spacing: DEFAULT_PREDATOR_MIN_SPACING,
             predation_escapement_fraction: DEFAULT_PREDATION_ESCAPEMENT_FRACTION,
             prey_sense_radius: DEFAULT_PREY_SENSE_RADIUS,
+            raid_radius: default_raid_radius(),
+            raid_exposure: default_raid_exposure(),
         }
     }
 }
@@ -611,6 +626,16 @@ const DEFAULT_PREDATION_ESCAPEMENT_FRACTION: f32 = 0.15;
 /// Default prey-sensing disk radius (wider than a graze footprint). See
 /// [`PredatorConfig::prey_sense_radius`].
 const DEFAULT_PREY_SENSE_RADIUS: u32 = 3;
+/// Default raid trigger reach (tighter than the prey-sensing disk). See
+/// [`PredatorConfig::raid_radius`].
+fn default_raid_radius() -> u32 {
+    2
+}
+/// Default number of a band's working-age folk exposed to a raid. See
+/// [`PredatorConfig::raid_exposure`].
+fn default_raid_exposure() -> f32 {
+    4.0
+}
 
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
 /// geometry (band closes to `pursuit_radius` tiles).
@@ -850,6 +875,30 @@ pub struct HusbandryConfig {
     /// oscillation. `0.25` ≈ a quarter of a herder's flock. Validated finite & `>= 0` (`0` disables the
     /// deadband, restoring the raw stateless flicker). A **playtest dial**.
     pub herders_hysteresis_fraction: f32,
+    /// **The shed rate for an under-contained PASTORAL (unfenced) herd** — the fraction of the herd's
+    /// labor-capacity *overage* that walks off into the wild web each turn (`docs/plan_fauna_neglect_escape.md`
+    /// §2.2/§3.4). This is the "animals leave" mechanic that **replaced** the tameness-bleed: neglect
+    /// costs the visible axis (herd size), never the invisible one (`domestication_progress`). It is a
+    /// fraction of the **overage** (`(1 − herded_fraction) × current_animals`), not of the total, so the
+    /// herd self-limits toward its labor capacity and stops shedding once it fits. `0.25` ≈ a quarter
+    /// of the surplus leaves per turn (faster than a pen — no fence buys time). Validated finite &
+    /// `>= 0`, and **strictly greater than `pen_escape_fraction`** (the fence must be slower). A
+    /// **playtest dial**.
+    pub pastoral_escape_fraction: f32,
+    /// **The shed rate for an under-contained PENNED herd** — the pen twin of `pastoral_escape_fraction`,
+    /// **slower because the fence buys time** (`docs/plan_fauna_neglect_escape.md` §2.2). Same code path,
+    /// only the rate differs. Total abandonment (no keeper ⇒ `herded_fraction == 0`) falls out as the
+    /// `overage == current_animals` limit: the whole flock sheds toward zero over several turns at this
+    /// rate, and the pen is lost when the last animal goes (§2.4). `0.10` ≈ a tenth of the surplus per
+    /// turn. Validated finite, `>= 0`, and **`< pastoral_escape_fraction`** — stating the invariant makes
+    /// "pen faster than open range" unrepresentable. A **playtest dial**.
+    pub pen_escape_fraction: f32,
+    /// **The ± band the seeded RNG varies each shed rate by, for playability** (`docs/plan_fauna_neglect_escape.md`
+    /// §3.1/§3.4). The effective per-turn rate is `rate × (1 + jitter)` with `jitter` drawn from
+    /// `[-escape_fraction_jitter, +escape_fraction_jitter]` off the **world seed stream** (deterministic
+    /// under rollback — never wall-clock `rand`). `0.25` = the rate varies ±25% turn to turn. Validated
+    /// finite & `>= 0` (`0` disables the jitter, i.e. an exactly-constant rate). A **playtest dial**.
+    pub escape_fraction_jitter: f32,
 }
 
 impl Default for HusbandryConfig {
@@ -862,6 +911,9 @@ impl Default for HusbandryConfig {
             husbandry_regrowth_cap: DEFAULT_HUSBANDRY_REGROWTH_CAP,
             pen_radius_max: DEFAULT_PEN_RADIUS_MAX,
             herders_hysteresis_fraction: DEFAULT_HERDERS_HYSTERESIS_FRACTION,
+            pastoral_escape_fraction: DEFAULT_PASTORAL_ESCAPE_FRACTION,
+            pen_escape_fraction: DEFAULT_PEN_ESCAPE_FRACTION,
+            escape_fraction_jitter: DEFAULT_ESCAPE_FRACTION_JITTER,
         }
     }
 }
@@ -941,6 +993,21 @@ const DEFAULT_PEN_RADIUS_MAX: u32 = 2;
 /// [`HusbandryConfig::herders_hysteresis_fraction`]). `0.25` absorbs the ±1-animal Sustain oscillation
 /// so a staffed herd holds its keeper count instead of flickering ±1. A **playtest dial**.
 const DEFAULT_HERDERS_HYSTERESIS_FRACTION: f32 = 0.25;
+
+/// **The pastoral shed rate** (`docs/plan_fauna_neglect_escape.md` §3.4): a quarter of an
+/// under-contained *unfenced* herd's labor-capacity overage walks off into the wild web each turn.
+/// Faster than a pen because nothing pens it. A **playtest dial**.
+const DEFAULT_PASTORAL_ESCAPE_FRACTION: f32 = 0.25;
+
+/// **The pen shed rate** — the pastoral rate's fenced twin, slower because the fence buys time
+/// (`docs/plan_fauna_neglect_escape.md` §3.4). Validated **strictly below** the pastoral rate, so a
+/// config that made a pen leak faster than open range is unrepresentable. A **playtest dial**.
+const DEFAULT_PEN_ESCAPE_FRACTION: f32 = 0.10;
+
+/// **The ± jitter band on each shed rate** (`docs/plan_fauna_neglect_escape.md` §3.1): the seeded
+/// per-herd RNG varies the effective rate `±25%` turn to turn for playability, drawn from the world
+/// seed stream so it stays deterministic under rollback. A **playtest dial**.
+const DEFAULT_ESCAPE_FRACTION_JITTER: f32 = 0.25;
 
 /// **The pen's feed cost per unit of biomass — the running cost the arc exists to add.**
 ///
@@ -1364,6 +1431,30 @@ impl FaunaConfig {
             self.husbandry.herders_hysteresis_fraction,
         )?;
 
+        // --- The neglect-escape shed rates (`docs/plan_fauna_neglect_escape.md` §3.4). Each is a
+        // fraction of the overage that walks off per turn, so both must be finite & non-negative; the
+        // jitter band likewise (`0` = an exactly-constant rate). The load-bearing invariant is
+        // `pen < pastoral` — the fence must slow the shed, and stating it here makes "a pen that leaks
+        // faster than open range" unrepresentable rather than a silent misconfiguration.
+        require_non_negative_finite(
+            "husbandry.pastoral_escape_fraction",
+            self.husbandry.pastoral_escape_fraction,
+        )?;
+        require_non_negative_finite(
+            "husbandry.pen_escape_fraction",
+            self.husbandry.pen_escape_fraction,
+        )?;
+        require_non_negative_finite(
+            "husbandry.escape_fraction_jitter",
+            self.husbandry.escape_fraction_jitter,
+        )?;
+        require_greater_than(
+            "husbandry.pastoral_escape_fraction",
+            self.husbandry.pastoral_escape_fraction,
+            "husbandry.pen_escape_fraction (the fence must slow the shed)",
+            self.husbandry.pen_escape_fraction,
+        )?;
+
         // --- The pen's feed. A shrink rate above 1 would drive an underfed herd's biomass *negative* in
         // one turn; below 0 it would *grow* a starving herd.
         require_in_unit_range(
@@ -1663,6 +1754,25 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             constraint: "be at least 1 (a 0-radius disk senses no prey, so K_pred is always 0)"
                 .to_string(),
             value: predators.prey_sense_radius.to_string(),
+        });
+    }
+    if predators.raid_radius < 1 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.raid_radius",
+            constraint: "be at least 1 (a 0-radius raid can never reach any band, so the trigger \
+                         never fires)"
+                .to_string(),
+            value: predators.raid_radius.to_string(),
+        });
+    }
+    if !predators.raid_exposure.is_finite() || predators.raid_exposure <= 0.0 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.raid_exposure",
+            constraint:
+                "be finite and > 0 (a 0 exposure leaves no defender-side populace, so a raid \
+                         can kill no one and the trigger is inert)"
+                    .to_string(),
+            value: predators.raid_exposure.to_string(),
         });
     }
     // Every per-biome probability finite in `[0, 1]`, iterated in stable key order for a deterministic
@@ -2255,6 +2365,46 @@ mod tests {
         assert!(FaunaConfig::builtin().validate().is_ok());
     }
 
+    /// A negative shed rate would *add* animals to an under-contained herd (`docs/plan_fauna_neglect_escape.md`
+    /// §3.4). Each of the three neglect-escape dials must be finite & non-negative.
+    #[test]
+    fn validate_rejects_a_negative_pastoral_escape_fraction() {
+        for bad in [-0.01, -1.0] {
+            let err = reject(|json| json["husbandry"]["pastoral_escape_fraction"] = (bad).into());
+            assert_rejects_field(err, "husbandry.pastoral_escape_fraction");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_a_negative_pen_escape_fraction() {
+        for bad in [-0.01, -1.0] {
+            let err = reject(|json| json["husbandry"]["pen_escape_fraction"] = (bad).into());
+            assert_rejects_field(err, "husbandry.pen_escape_fraction");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_a_negative_escape_fraction_jitter() {
+        for bad in [-0.01, -1.0] {
+            let err = reject(|json| json["husbandry"]["escape_fraction_jitter"] = (bad).into());
+            assert_rejects_field(err, "husbandry.escape_fraction_jitter");
+        }
+    }
+
+    /// **The fence must slow the shed** (`docs/plan_fauna_neglect_escape.md` §3.4): a pen that leaks at
+    /// or above the open-range rate is unrepresentable. The check fires on the pastoral field (it is the
+    /// one required to be the greater).
+    #[test]
+    fn validate_rejects_a_pen_escape_at_or_above_the_pastoral_rate() {
+        // Equal to the pastoral rate (0.25) — not strictly slower.
+        let err = reject(|json| json["husbandry"]["pen_escape_fraction"] = (0.25).into());
+        assert_rejects_field(err, "husbandry.pastoral_escape_fraction");
+        // Strictly faster than open range — the inversion the invariant forbids.
+        let err = reject(|json| json["husbandry"]["pen_escape_fraction"] = (0.30).into());
+        assert_rejects_field(err, "husbandry.pastoral_escape_fraction");
+        assert!(FaunaConfig::builtin().validate().is_ok());
+    }
+
     /// The ladder must be monotone in `r`: a pen that grows no faster than the pastoral rung would
     /// pay *less* than it (it also carries feed), inverting the whole intensification incentive.
     #[test]
@@ -2344,6 +2494,20 @@ mod tests {
 
     /// The graze table must be **total** over every `TerrainType`. A missing row would silently read as
     /// zero graze — an invisible dead zone in the pasture layer that nothing would ever explain.
+    /// A `raid_radius` of 0 means a raid can never reach any band — the whole trigger is inert.
+    #[test]
+    fn validate_rejects_a_zero_raid_radius() {
+        let err = reject(|json| json["predators"]["raid_radius"] = (0).into());
+        assert_rejects_field(err, "predators.raid_radius");
+    }
+
+    /// A non-positive `raid_exposure` leaves no defender-side populace, so a raid can kill nobody.
+    #[test]
+    fn validate_rejects_a_non_positive_raid_exposure() {
+        let err = reject(|json| json["predators"]["raid_exposure"] = (0.0).into());
+        assert_rejects_field(err, "predators.raid_exposure");
+    }
+
     #[test]
     fn validate_rejects_a_partial_graze_biome_table() {
         let err = reject(|json| {

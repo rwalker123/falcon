@@ -434,13 +434,17 @@ basic.
       herd telemetry. A pack never spawns on a tile whose prey-derived `K` is below its minimum spawn
       biomass (`every_spawned_predator_lands_where_the_prey_can_feed_it`).
 
-  - **Phase 1b — The raid trigger + Warrior goes live.** *(Held until 1a merges.)*
-    A carnivore with `aggression > 0` in range of a band raids it — band as **Defender**, band-side
-    contingent = its **Warriors** — the second `resolve_fight` trigger and the Warrior role's first
-    real consumer. Reuses the Phase-0 combat seam wholesale; only the encounter *detection* + outcome
-    application are new.
-    **Testable:** a wolf pack near an under-guarded band costs it people, and staffing Warriors cuts
-    the losses.
+  - **Phase 1b — The raid trigger + Warrior goes live.** *(Implemented — `advance_predator_raids`.)*
+    A carnivore with `aggression > 0` within `predators.raid_radius` of a band raids it — band as
+    **Defender**, band-side contingents = its **Warriors** (armed, add power) **plus** the exposed
+    populace (`predators.raid_exposure` unarmed folk that can die) — the second `resolve_fight` trigger
+    and the Warrior role's first real consumer. Reuses the Phase-0 combat seam wholesale; only the
+    encounter *detection* + outcome application are new. The two-contingent band side is load-bearing:
+    the resolver clamps losses to a side's own headcount, so a warriors-only side would give a
+    0-warrior band zero casualties — the inverse of the intent.
+    **Testable (`core_sim/tests/predator_raid.rs`):** a wolf pack near an under-guarded band costs it
+    people, staffing Warriors cuts the losses, a herbivore / out-of-range carnivore never raids,
+    aggression scales lethality, and the raid is deterministic.
 
 - **Phase 2 — Shared prey-seeking movement.**
   Extract `relocate_toward_resource` (+ a `pursue` `RungMovement` primitive) scoring candidate

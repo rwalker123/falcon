@@ -290,6 +290,12 @@ const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 
 const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
 
+## The under-contained managed-herd note (fauna neglect-escape arc): fewer herders staffed than the
+## herd needs, so it sheds whole animals into a nearby wild herd. Drives the row's amber stripe + the
+## inspector's WARN line, and rides the same `note` slot as the overstaff note (they never co-occur —
+## one is too-few herders, the other too-many workers).
+const WORK_ROW_UNDER_HERDED_NOTE := "Too few herders — animals are drifting off."
+
 const WORK_EMPTY_HINT := ALLOC_NO_SOURCES_HINT
 
 ## The inspector strip (the row's second/third lines, relocated to one place).

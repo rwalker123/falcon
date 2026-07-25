@@ -226,6 +226,14 @@ pub(crate) fn herds_to_array(
         // drawer surfaces the deficit. `herders_needed` is 0 for a wild/unmanaged herd (never show a
         // herder readout then); `herded_fraction` defaults to 1.0 for any unmanaged/vanished herd.
         let _ = dict.insert("herders_needed", i64::from(herd.herdersNeeded()));
+        // The ownership-INDEPENDENT would-be herder crew size (from biomass): equal to
+        // `herders_needed` on an already-managed herd, `0` for a species that can never be tamed
+        // (wild ceiling). The compose Tame/Corral worker-cap floors on this so a still-WILD herd (whose
+        // `herders_needed` is ownership-gated to 0) offers the real crew up front instead of 1.
+        let _ = dict.insert(
+            "herders_needed_if_managed",
+            i64::from(herd.herdersNeededIfManaged()),
+        );
         let _ = dict.insert("herded_fraction", herd.herdedFraction());
         // The Tame rung's PAYOFF — the pastoral twin of `corral_yield`: food/turn a Sustain hunt pays
         // ONCE this herd is tamed (the pastoral MSY). While Tame's DURING-BUILDING dip rides the

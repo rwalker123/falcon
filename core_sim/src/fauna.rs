@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
@@ -18,7 +18,10 @@ use crate::{
     },
     food::{classify_food_module, FoodModule},
     graze::GrazeRegistry,
-    grid_utils::{hex_distance_wrapped, hex_neighbor, hex_range_tiles, HEX_DIRECTION_COUNT},
+    grid_utils::{
+        hex_distance_wrapped, hex_neighbor, hex_neighbors_wrapped, hex_range_tiles,
+        HEX_DIRECTION_COUNT,
+    },
     hashing::FnvHasher,
     intensification::{LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement},
     mapgen::WorldGenSeed,
@@ -38,6 +41,25 @@ const IMMIGRATION_SEED_SALT: u64 = 0xFA1A_B0B0;
 /// stream. Combined with `map_seed ^ tick ^ hash(herd.id)` so each herd's wander is deterministic
 /// under rollback (mirrors `repopulate_fauna`'s seeding).
 const HERD_MOVEMENT_SEED_SALT: u64 = 0x4D0E_9A17_C0FF_EE21;
+
+/// RNG salt for the per-turn neglect-escape shed jitter (`docs/plan_fauna_neglect_escape.md` §3.1),
+/// kept distinct from the movement/immigration streams so the shed's ±band doesn't correlate with a
+/// herd's wander. Combined with `map_seed ^ tick ^ hash(herd.id)`, exactly like the movement RNG, so
+/// the shed is deterministic under rollback (never a wall-clock `rand`).
+const ESCAPE_SEED_SALT: u64 = 0x5CA9_E5CA_9EFE_A100;
+
+/// **The whole-animal convergence floor** (`docs/plan_fauna_neglect_escape.md` §3.3): when an
+/// under-contained herd's overage is `>= 1` animal, **at least one** animal leaves — otherwise a
+/// shrinking overage rounds down to zero and the herd stalls one or two head over its labor capacity
+/// forever. Named per the no-magic-numbers rule.
+const MIN_ESCAPE_ANIMALS: f32 = 1.0;
+
+/// Id prefix marking a **feral** wild-game group spawned by the neglect-escape shed
+/// (`docs/plan_fauna_neglect_escape.md` §2.3). Deliberately **not** [`GAME_ID_PREFIX`]: player-caused
+/// ferals must not count against `abundance.max_total_game` (which would both suppress the shed itself
+/// and throttle later immigration — §5 item 2), so they carry their own prefix the immigration cap
+/// scan skips.
+const FERAL_ID_PREFIX: &str = "feral_";
 
 /// Id prefix marking a short-range wild-game group (migratory herds use `herd_`). The
 /// `abundance.max_total_game` cap applies to these groups only — both at initial spawn
@@ -452,6 +474,14 @@ pub struct Herd {
     /// freshly-tamed or rehydrated-uninitialized managed herd, for which [`herd_herders_needed`]
     /// falls back to the raw ceil until the next `advance_husbandry` seeds this.
     pub herders_needed: u32,
+    /// **Edge-gate for the under-herded feed line** (neglect-escape slice 2,
+    /// `docs/plan_fauna_neglect_escape.md` §4 item 1): `true` while the herd is *already known* to be
+    /// under-contained — too few herders to hold all its animals, so it is shedding this turn. Set on
+    /// the `false → true` transition (`advance_husbandry` fires the notice **once**), cleared the turn
+    /// it recovers (fully staffed / no overage) so a later relapse re-announces. The herder-shortfall
+    /// twin of `pen_starving`, but **snapshot-persisted** (like `herders_needed`) so a rollback rewinds
+    /// the edge and it does not spuriously re-fire after a restore.
+    pub under_herded: bool,
 }
 
 impl Herd {
@@ -525,6 +555,8 @@ impl Herd {
             // A fresh herd is wild (no owner, no pen), so it needs no keepers; `stabilize_herders_needed`
             // seeds the real requirement the first turn it becomes managed. `0` = "not yet stabilized".
             herders_needed: 0,
+            // A fresh herd is fully contained (nothing to hold yet).
+            under_herded: false,
         }
     }
 
@@ -585,31 +617,10 @@ impl Herd {
         }
     }
 
-    /// Decay husbandry progress toward zero when the group isn't being actively tended;
-    /// ownership lapses once progress reaches zero.
-    ///
-    /// # The `is_domesticated()` early return is GONE (intensification ladder slice 8)
-    ///
-    /// It used to open `if self.is_domesticated() { return; }` — *"a domesticated group is left
-    /// alone"* — which made a fully-tamed herd **permanently tame, forever, for zero labor**. That is
-    /// exactly the claim §3 retired at the *yield* ("a tamed herd is not set-and-forget"), left
-    /// standing at the *meter*: it made "you need constant herders" false at the top of the ladder,
-    /// which is the one place the ladder most needs it to be true.
-    ///
-    /// An **under-herded** pastoral herd now decays proportionally to how badly it is staffed
-    /// ([`herded_fraction`]) — floored at zero and fully recoverable — while a **properly-herded** one
-    /// decays not at all, including a herd you are merely *harvesting* under Sustain/Surplus/Market:
-    /// the crew is there, so the animals stay tame. The caller (`advance_husbandry`) owns that gate;
-    /// this stays a pure "subtract and reconcile".
-    pub(crate) fn decay_domestication(&mut self, amount: f32) {
-        self.domestication_progress = (self.domestication_progress - amount).max(0.0);
-        // Reconcile the `owner is Some ⟺ progress > 0` invariant unconditionally, so a
-        // group that reaches (or somehow sits at) zero progress never keeps a stale owner
-        // — which would otherwise block another faction from ever tending it.
-        if self.domestication_progress <= 0.0 {
-            self.owner = None;
-        }
-    }
+    // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
+    // the retired `decay_under_herded` tameness-bleed; `domestication_progress` is now monotone-up
+    // (earned via `Tame`, never lost to neglect), and ownership clears only when a managed herd sheds
+    // to zero animals (`advance_husbandry`), not when progress reaches zero.
 
     /// A **corralled** (penned) herd: fixed at `corralled_at`, doesn't roam, and is paid its keeper
     /// place-local at the higher corral rate. The animal mirror of `ForagePatch::is_cultivated`
@@ -796,6 +807,13 @@ impl Herd {
 /// A fully-fed pen (`paid == demand`, or nothing demanded). The neutral value of
 /// `Herd::pen_fed_fraction`, so an un-penned / freshly-rehydrated herd never starves.
 pub(crate) const PEN_FULLY_FED: f32 = 1.0;
+
+/// A pen with **no keeper at all** — unfed (`docs/plan_fauna_neglect_escape.md` §2.4). `advance_husbandry`
+/// stamps this on an abandoned pen so next turn's `regrow_biomass` scales its growth to zero: without it
+/// a fast breeder's regrowth (`r` up to 1.0) cancels the ~10%/turn shed and the pen leaks strays forever
+/// instead of shedding to zero and losing the pen. It is the "nobody is bringing food" reading, distinct
+/// from a *keeper who cannot pay* (which flows through `starve_underfed_pen`, unchanged).
+pub(crate) const PEN_NOT_FED: f32 = 0.0;
 
 /// **THE ecology a herd actually lives under** — the one place the husbandry ladder's
 /// rung → growth-rate mapping lives (`docs/plan_corral_managed_population.md` §3). Management buys a
@@ -1052,17 +1070,17 @@ pub fn herders_needed(biomass: f32, body_mass: f32, animals_per_herder: f32) -> 
 /// # "Managed" is `is_corralled() || owner.is_some()` — a herd you have STARTED to tame, not only a
 /// finished one
 ///
-/// **Herders maintain the meter at whatever level it sits; `Tame` is what pushes it up.** Scoping
-/// maintenance to `is_domesticated()` (progress *exactly* `1.0`) instead looks right and is a trap:
-/// the flag is a **threshold**, so the first under-herded turn drops the herd under it, after which it
-/// is no longer "managed", the proportional rule stops applying, and it decays at the **full**
-/// abandonment rate **no matter how many herders you assign**. The proportional regime would be
-/// measure-zero, and "understaffing degrades proportionally, floored, and **recoverable**" would be
-/// false — re-staffing could not stop the bleed, only re-`Tame`-ing could. Pinned by
-/// `fauna_husbandry::an_under_herded_tamed_herd_decays_proportionally_and_recovers`.
+/// **Herders set how large a tame flock you can HOLD; `Tame` is what earns the tameness.** Scoping the
+/// requirement to `is_domesticated()` (progress *exactly* `1.0`) instead looks right and is a trap:
+/// the flag is a **threshold**, so a herd still mid-taming (an `owner`, but progress `< 1.0`) would owe
+/// no keepers and never shed — yet it is just as much your herd to hold. A managed herd whose herders
+/// cannot hold all its animals **sheds the overage to the wild web** (`shed_uncontained_animals`); it
+/// does **not** bleed tameness — tameness is permanent, it leaves only *with the animals that leave*
+/// (neglect sheds animals, not the meter). Full abandonment sheds the whole flock and the empty herd
+/// despawns. Pinned by `fauna_husbandry::neglect_never_un_tames_a_herd` and
+/// `the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary`.
 ///
-/// `owner.is_some()` ⟺ `domestication_progress > 0` (the invariant `decay_domestication` reconciles),
-/// so this is exactly "somebody's herd". A **wild** herd — no owner, no pen — reads `0` and is
+/// `owner.is_some()` is exactly "somebody's herd" — a **wild** herd (no owner, no pen) reads `0` and is
 /// untouched. `corral_at` does **not** require domestication (it gates on `can_pen()` only), so the
 /// `is_corralled()` half keeps a penned-but-untamed fixture staffed.
 pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
@@ -1078,6 +1096,40 @@ pub fn herd_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
     }
     // `0` = not yet stabilized: a herd the turn it becomes managed (before the next `advance_husbandry`
     // seeds it) or a test-built managed herd. Fall back to the raw ceil so it is never wrong for a turn.
+    herders_needed(
+        herd.biomass,
+        herd.body_mass,
+        fauna.animals_per_herder_for(&herd.species),
+    )
+}
+
+/// **The crew this herd WOULD owe if it were managed** — ownership-INDEPENDENT (fauna neglect-escape,
+/// the taming-startup-lag fix). Identical to [`herd_herders_needed`] **except the gate**: it returns `0`
+/// only for a species that can never be tamed (`!can_domesticate()` — a `Wild` husbandry ceiling), where
+/// `herd_herders_needed` returns `0` for any herd not *yet* owned/corralled.
+///
+/// On the turn a **Tame/Corral** (investment) assignment starts, ownership has not been set yet
+/// (`accrue_domestication` runs later, in Population), so the ownership-gated count reads `0` and the crew
+/// collapses to the take-side hauler count — the herd reads "1 of N working" on a full crew for a turn. An
+/// investment assignment *means* the herd is being managed, so its herder requirement is the
+/// biomass-derived crew regardless of whether ownership is recorded yet. Call this for an investment
+/// policy, [`herd_herders_needed`] for an extractive one (a wild Sustain-hunted herd must stay
+/// ownership-gated to `0`, or its `herded_fraction` would drop below `1` and it would falsely read
+/// under-herded and shed). Both the labor arm and the `herdersNeededIfManaged` wire field resolve through
+/// this — one definition.
+///
+/// **Prefers the hysteresis-stabilized `Herd::herders_needed`** exactly as `herd_herders_needed` does, so
+/// an *already-managed* herd (owner set — e.g. a corralled herd under `Corral`) returns the stabilized
+/// count and does not re-flicker ±1; only a not-yet-owned tameable herd (field `0`) falls back to the raw
+/// ceil. So for every managed herd this equals `herd_herders_needed` — they diverge only where the
+/// ownership gate does.
+pub fn would_be_herders_needed(herd: &Herd, fauna: &FaunaConfig) -> u32 {
+    if !herd.can_domesticate() {
+        return 0;
+    }
+    if herd.herders_needed > 0 {
+        return herd.herders_needed;
+    }
     herders_needed(
         herd.biomass,
         herd.body_mass,
@@ -1259,6 +1311,9 @@ fn herd_from_state(state: &HerdState) -> Herd {
         // Persisted authoritative sim state (like `corral_progress`): a rollback restores the
         // hysteresis-remembered requirement rather than re-flickering for a turn.
         herders_needed: state.herders_needed,
+        // Persisted edge-gate (slice 2): a rollback restores the under-herded state so the notice does
+        // not spuriously re-fire (unlike the transient `pen_starving`, which re-announces on restore).
+        under_herded: state.under_herded,
     }
 }
 
@@ -1983,8 +2038,16 @@ pub fn advance_herds(
     // extinction floor (`advance_husbandry`) and **recovers when fed again**, keeping the pen. That is
     // deliberate: a recoverable famine the player can watch and fix is better play than silently
     // voiding a 25-turn investment, and it keeps starvation out of this despawn path entirely.
+    //
+    // An **owned** (managed) herd is likewise exempt (`docs/plan_fauna_neglect_escape.md` §2.4): a
+    // managed herd does not *disperse* — it is held by its keepers, and the only way it leaves play is
+    // the neglect-escape **bleed-out**, which `advance_husbandry` resolves by shedding it into the wild
+    // web and despawning the empty entity itself. Without this exemption a fully-abandoned pastoral herd
+    // would be despawned here the moment it dipped below the extinction floor, stranding ~a floor's
+    // worth of biomass instead of shedding it out — the animals would vanish rather than go feral.
     registry.herds.retain(|herd| {
         herd.is_corralled()
+            || herd.owner.is_some()
             || herd.biomass
                 > herd_ecology(herd, &fauna).extinction_floor * herd_capacity(herd, &fauna)
     });
@@ -2976,10 +3039,19 @@ pub fn repopulate_fauna(
     }
 }
 
-/// Per-turn husbandry (`TurnStage::Logistics`, after `advance_herds`): run the **penned** groups'
-/// escape/starvation checks and decay husbandry progress on any not-yet-tamed group. Runs before the
-/// same turn's accrual in `advance_labor_allocation` (`Population`), so a `Tame`-worked group nets
-/// `progress_per_turn - decay_per_turn` while an abandoned one only decays.
+/// Per-turn husbandry (`TurnStage::Logistics`, after `advance_herds`): the pen **feed** check and the
+/// shared **shed** mechanic for every managed (pastoral or penned) herd. Runs before the same turn's
+/// `Tame` accrual in `advance_labor_allocation` (`Population`), the deliberate one-turn lag.
+///
+/// **NEGLECT SHEDS ANIMALS, IT DOES NOT UN-TAME THEM** (`docs/plan_fauna_neglect_escape.md`). This
+/// pass **replaced both** the tameness-bleed (`decay_under_herded`) and the binary corral escape with
+/// **one** mechanic: an under-contained managed herd sheds whole animals over its labor capacity into a
+/// nearby **wild** herd of the same species ([`shed_uncontained_animals`] → [`place_shed_animals`]),
+/// and `domestication_progress` is **never** decayed by neglect (it is monotone-up, earned via `Tame`).
+/// Total abandonment falls out as the `herded_fraction == 0` limit: the whole flock **bleeds out** to
+/// the wild web over turns, and when the herd can no longer shed a whole animal the empty managed entity
+/// is **despawned** (Phase 3; the pen, if any, is announced lost via [`announce_pen_lost`] first, §2.4).
+/// The pen's **feed** (`starve_underfed_pen`) is orthogonal and unchanged (§2.5).
 ///
 /// **PASSIVE-FREE PASTORAL IS RETIRED — this pass pays NOTHING** (slice 3b,
 /// `docs/plan_intensification_ladder.md` §3: *every* rung is worker-driven). A tamed herd used to pay
@@ -2994,39 +3066,47 @@ pub fn repopulate_fauna(
 /// `worked_this_turn` no-double-pay flag is gone with the payout it guarded.
 ///
 /// **Corral (Rung 1c).** A **corralled** herd's keeper harvests the *pen's* MSY place-locally
-/// (`advance_labor_allocation`); this pass runs its two neglect checks and nothing else. Logistics
-/// runs before Population, so both flags were written **last** turn (the
-/// deliberate one-turn lag, mirroring `ForagePatch::tended_this_turn`):
-/// - **No keeper → escape.** An untended pen clears `corralled_at`, **zeroes `corral_progress`, and
-///   resets the whole fenced-footprint state** (`pen_radius` / `pen_extend_progress` / `pen_extending`,
-///   Grazing 2d — the pen is lost with the herd that roamed off it, so re-penning rebuilds every
-///   ExtendPen ring from scratch and no stale radius teleports onto the next tile), and pushes a
-///   `CommandEventKind::Corral` feed line, so a destroyed investment is never silent. Nobody was
-///   minding the gate.
-/// - **A keeper who cannot pay the feed → starvation.** An underfed pen (`pen_fed_fraction < 1`)
-///   **shrinks** by `pen.starve_shrink_rate × (1 − fed) × biomass`, floored at
+/// (`advance_labor_allocation`); this pass runs its feed check and the shared shed. Logistics runs
+/// before Population, so both flags were written **last** turn (the deliberate one-turn lag, mirroring
+/// `ForagePatch::tended_this_turn`):
+/// - **Under-contained → shed** (§2.2). Too few keepers (or none) sheds animals over the labor
+///   capacity into the wild web, per-rung rate (`pen_escape_fraction` < `pastoral_escape_fraction` —
+///   the fence buys time). The pen is lost only on shed-to-zero, not on the first untended turn.
+/// - **A keeper who cannot pay the feed → starvation** (unchanged, §2.5). An underfed pen
+///   (`pen_fed_fraction < 1`) **shrinks** by `pen.starve_shrink_rate × (1 − fed) × biomass`, floored at
 ///   `pen.ecology.extinction_floor × K_pen`. It does **not** despawn and does **not** lose the pen: the
-///   herd withers to a remnant and **recovers when fed again** — a recoverable famine the player can
-///   see and fix (edge-gated feed line on the first starving turn), not a silent void of the
-///   investment. Starving your animals to feed your people becomes a *decision*.
+///   herd withers to a remnant and **recovers when fed again** — a recoverable famine (edge-gated feed
+///   line on the first starving turn). Starving your animals to feed your people is a *decision*.
 ///
 /// The animal mirror of `forage::advance_cultivation`'s feral pass.
+#[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn advance_husbandry(
     mut registry: ResMut<HerdRegistry>,
+    config: Res<SimulationConfig>,
     fauna_config: Res<FaunaConfigHandle>,
-    ladder_config: Res<LadderConfigHandle>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
+    // The shed jitter draws from the world seed stream (deterministic under rollback), so this pass
+    // now needs the seed + grid geometry + the tiles, exactly like `advance_herds`.
+    world_seed: Option<Res<WorldGenSeed>>,
+    tile_registry: Res<TileRegistry>,
+    tiles: Query<&Tile>,
 ) {
     let fauna = fauna_config.get();
-    let ladder = ladder_config.get();
-    // The go-feral rate is the `animal:pastoral` rung's own build decay — the shared ladder seam
-    // (`crate::intensification`), exactly as `advance_cultivation` reads the `plant:tended` rung's.
-    // It is read **per herd** below, at that species' `taming_rate` (slice 3c): the multiplier scales
-    // the rung's whole build timescale, decay included, so a species that is slow to tame is equally
-    // slow to forget (a Steppe Runner bleeds its partial taming 5× slower than a rabbit).
-    let pastoral_rung = ladder.rung(RungKey::AnimalPastoral);
-    for herd in registry.herds.iter_mut() {
+    let width = config.grid_size.x.max(1);
+    let height = config.grid_size.y.max(1);
+    let wrap = config.map_topology.wrap_horizontal;
+    // Mirrors `advance_herds`' seeding: `map_seed ^ tick`, per-herd salted below.
+    let base_seed = world_seed.map(|s| s.0).unwrap_or(config.map_seed) ^ tick.0;
+
+    // **Phase 1 — shed.** While we hold `&mut` on each managed herd we reduce its biomass in place and
+    // record where the escapees came from; we cannot mutate/add OTHER herds mid-iteration, so the
+    // placement of that biomass into the wild web is a second pass (Phase 2) over the whole registry.
+    let mut shed_events: Vec<ShedEvent> = Vec::new();
+    // Herds that bled out entirely this turn (fully abandoned, shed below one animal) — despawned in
+    // Phase 3, after placement, so the Phase-2 source indices stay valid.
+    let mut despawn_ids: Vec<String> = Vec::new();
+    for (source_index, herd) in registry.herds.iter_mut().enumerate() {
         // **Stabilize the herder requirement** (slice: herder hysteresis) — once per turn, before the
         // labor arm (Population, next stage) reads it via `herd_herders_needed`. A wild herd stays `0`;
         // a managed one moves up immediately but down only past a deadband, so a Sustain-hunted herd
@@ -3037,9 +3117,9 @@ pub fn advance_husbandry(
             animals_per_herder,
             animals_per_herder * fauna.husbandry.herders_hysteresis_fraction,
         );
-        // One-turn-lag treatment for the *taming* flag (written last turn by the `Tame` arm),
-        // cleared for every herd so it can never go stale.
-        let tamed_last_turn = herd.tamed_this_turn;
+        // The `tamed_this_turn` flag is still cleared each turn so it can never go stale — but its one
+        // consumer, the retired tameness decay, is GONE (`docs/plan_fauna_neglect_escape.md` §2.1):
+        // `domestication_progress` is monotone-up now, never bled by neglect.
         herd.tamed_this_turn = false;
         // **How well the herd was STAFFED last turn** (slice 8) — the same Population→Logistics lag as
         // `pen_fed_fraction`, read here and reset so it can never go stale. A herd nobody worked reads
@@ -3050,176 +3130,437 @@ pub fn advance_husbandry(
         } else {
             FULLY_HERDED
         };
-        if herd.is_domesticated() {
-            // **A tamed herd is paid NOTHING here** — passive-free pastoral is retired (§3): it
-            // yields only through a worker's `Hunt` assignment, at the pastoral rung's better `r`.
-            //
-            // Corral (Rung 1c): a penned herd's keeper harvests the **pen's** MSY place-local
-            // (`advance_labor_allocation`), and the pen **escapes** if left untended, or **starves**
-            // if its keeper cannot pay the feed. Logistics runs before Population, so both flags read
-            // here were written last turn (a one-turn lag, mirroring `ForagePatch::tended_this_turn`).
-            if herd.is_corralled() {
-                if herd.corralled_tended_this_turn {
-                    herd.corralled_tended_this_turn = false;
-                    starve_underfed_pen(herd, &fauna, &mut event_log, tick.0);
-                    // **A penned herd still has to be HERDED, not just fed** (slice 8). Understaffing
-                    // is proportional and never an escape — the fence is up and someone is at the
-                    // gate, there are simply too few hands, so the herd's taming bleeds exactly as an
-                    // under-herded pastoral herd's does. It cannot lose the pen this way; only total
-                    // abandonment (the `else` arm) does that.
-                    decay_under_herded(
-                        herd,
-                        herded_last_turn,
-                        pastoral_rung,
-                        fauna.taming_rate_for(&herd.species),
-                    );
-                } else {
-                    let pen = herd.corralled_at;
-                    herd.corralled_at = None;
-                    // The pen is LOST, not merely opened: zero the build progress **and the whole
-                    // fenced-footprint state** (Grazing 2d — `pen_radius`, `pen_extend_progress`,
-                    // `pen_extending`) so re-penning pays the full `corral_build_progress_per_turn`
-                    // investment again AND rebuilds every ExtendPen ring from scratch (~25 turns/ring).
-                    // **A patch is a place and a herd is not** — `cultivation_progress` may decay
-                    // gradually because the improvement sits on a tile that cannot move, so partial
-                    // progress still refers to the same patch; `corral_progress` and the fence live on
-                    // the *herd*, which roams, so any retained state would re-materialize the pen (and
-                    // its grown radius) at whatever tile the animal has since wandered to (a teleporting
-                    // corral inheriting its old fence for free) and make abandoning a pen cost one turn
-                    // instead of the rebuild. Resetting here — the single place a completed pen's
-                    // `corralled_at` is cleared — also clears the stale `penRadius`/`penExtendProgress`
-                    // the wire would otherwise export on the now-mobile herd (a phantom "Fencing N%"
-                    // badge). Contrast the **mid-build** gate lapse, which is NOT this branch (it only
-                    // fires on a completed pen): a half-built pen keeps its progress — materials on the
-                    // ground at a tile the herd is still at.
-                    herd.corral_progress = 0.0;
-                    herd.pen_radius = 0;
-                    herd.pen_extend_progress = 0.0;
-                    herd.pen_extending = false;
-                    // Also clear the last penned pasture share: it is written only in the corral-tend
-                    // branch (never for a mobile herd), so without this the escaped herd would keep its
-                    // last value (~1.0 on lush pasture) and the wire would re-export it, violating the
-                    // "0.0 for an unpenned herd" contract on `penPastureFraction`. (`footprint_intake`
-                    // needs no reset — it is recomputed for every herd each turn in `advance_herd_grazing`
-                    // and is not on the wire.)
-                    herd.pen_pasture_fraction = 0.0;
-                    // Same reasoning for the F3 feed-split scratch (`fodder_draw` and its two derived
-                    // food-unit terms), all written ONLY in the corral-tend branch: clear them so an
-                    // escaped, now-mobile herd exports `0` for the whole "fed by pasture/hay/larder"
-                    // split — each of `fodderDraw`/`penHayFood`/`penLarderBill` reads "0 for an unpenned
-                    // herd" on the wire. (`fodder_draw` previously kept its stale value here; resetting
-                    // it alongside `pen_pasture_fraction` closes that gap.)
-                    herd.fodder_draw = 0.0;
-                    herd.pen_hay_food = 0.0;
-                    herd.pen_larder_bill = 0.0;
-                    // **The one F3 scratch field that feeds `K`, and the reason this reset matters most**
-                    // (Flora Roster F3, §5.3). `fodder_delivery_rate` is the sustained hay inflow the
-                    // labor arm stamps onto a *kept* pen; `ecological_carrying_capacity` adds it inside
-                    // the one `K` seam for *every* herd with `fodder_per_biomass > 0`, penned or not. An
-                    // escaped herd is no longer in any band's `kept_pens`, so the labor arm never
-                    // re-stamps it — without this reset it reverts to a mobile pastoral/wild herd still
-                    // carrying its old hay rate, and its roam-range `K` stays inflated by hay it no
-                    // longer receives (breaking the "a wild/unfoddered herd's `K` is byte-identical to
-                    // its footprint-only self" invariant at `ecological_carrying_capacity`). Logistics
-                    // runs before Population, so a still-kept pen is re-stamped the same turn; only a
-                    // genuinely escaped herd is zeroed here.
-                    herd.fodder_delivery_rate = 0.0;
-                    info!(
-                        target: "shadow_scale::analytics",
-                        event = "corral_escape",
-                        herd = %herd.id,
-                        faction = herd.owner.map(|f| f.0).unwrap_or_default(),
-                    );
-                    // Tell the player. The escape now DESTROYS a 25-turn investment (the reset
-                    // above), so it must never be silent: the corral meter would otherwise snap
-                    // 1.0 → 0.0 with no explanation. Same `CommandEventKind::Corral` the pen's
-                    // *completion* pushes from `advance_labor_allocation` — one feed line for the
-                    // pen's whole life. Human text names the **species** (`herd.species`), not the
-                    // internal id, and says what happened AND why; the detail carries the
-                    // machine-readable `status=… reason=… herd=…` fields.
-                    if let Some(owner) = herd.owner {
-                        let (pen_x, pen_y) = pen.map(|t| (t.x, t.y)).unwrap_or_default();
-                        event_log.push(CommandEventEntry::new(
-                            tick.0,
-                            CommandEventKind::Corral,
-                            owner,
-                            format!(
-                                "The {} herd broke out — untended, the pen is lost",
-                                herd.species
-                            ),
-                            Some(format!(
-                                "status=escaped reason=untended action=corral herd={} x={} y={}",
-                                herd.id, pen_x, pen_y
-                            )),
-                        ));
-                    }
-                }
+        // **Only a MANAGED herd sheds / feeds.** A wild herd is nobody's to keep, so it neither pays
+        // a larder bill nor loses animals to under-containment — it simply roams. (Same scope the
+        // retired tameness decay used: `is_corralled() || owner.is_some()`, never `is_domesticated()`,
+        // which is a `>= 1.0` threshold that would drop a herd out of the managed set the moment it
+        // dipped.)
+        if !(herd.is_corralled() || herd.owner.is_some()) {
+            continue;
+        }
+
+        // **FEED (§2.5).** A penned herd whose keeper tended it last turn pays — or fails to pay — its
+        // larder bill. This is orthogonal to *herding*: a pen can be fully fed AND under-contained in
+        // the same turn (a keeper who can pay, but with too few hands to hold the whole flock).
+        // `starve_underfed_pen`, `herders_needed`, and the hysteresis are untouched by this arc.
+        if herd.is_corralled() {
+            if herd.corralled_tended_this_turn {
+                herd.corralled_tended_this_turn = false;
+                starve_underfed_pen(herd, &fauna, &mut event_log, tick.0);
             } else {
-                // **A PASTORAL herd must be herded too** (slice 8) — the case
-                // `decay_domestication`'s deleted `is_domesticated()` early return used to hide
-                // entirely, and the reason it was deleted: a fully-tamed roaming herd was permanently
-                // tame, forever, for **zero labor**, which makes "you need constant herders" false at
-                // the top of the ladder. Under-herd it and it forgets, proportionally and
-                // recoverably; herd it properly — even under a plain harvest policy — and it does not
-                // decay at all.
-                decay_under_herded(
-                    herd,
-                    herded_last_turn,
-                    pastoral_rung,
-                    fauna.taming_rate_for(&herd.species),
-                );
+                // **No keeper → unfed** (§2.4). Stamping `NOT_FED` zeroes next turn's `regrow_biomass`,
+                // which is what lets the shed actually drive an abandoned pen to zero: a fast breeder's
+                // regrowth would otherwise cancel the ~10%/turn shed and the pen would leak strays
+                // forever. Distinct from a keeper who cannot pay (that runs `starve_underfed_pen`,
+                // unchanged) — nobody is bringing food at all.
+                herd.pen_fed_fraction = PEN_NOT_FED;
             }
-        } else if !tamed_last_turn {
-            // **Feral if unworked** — the animal mirror of `advance_cultivation`. A herd a crew worked
-            // under `Tame` last turn is **spared** outright; otherwise it bleeds the `animal:pastoral`
-            // rung's own `decay_per_turn` back toward wild (its owner lapsing at zero), **at its
-            // species' own taming timescale**. Reading the rate off the ladder is what keeps the two
-            // food webs' abandon-decay tuned together — it is the shared build seam's, not a
-            // fauna-only lever.
-            //
-            // **Scaled by staffing (slice 8), for the same reason the finished rung is**: an *owned*
-            // herd with enough herders on it does not re-wild, whatever policy those hands are working
-            // under — they are living with the animals. Only an **abandoned** one (no crew ⇒
-            // `herded_fraction` 0) takes the full rate, which is the pre-slice-8 behaviour exactly. A
-            // herd with no owner has no progress to lose, so this is a no-op for wild game.
-            decay_under_herded(
-                herd,
-                herded_last_turn,
-                pastoral_rung,
-                fauna.taming_rate_for(&herd.species),
-            );
+        }
+
+        // **SHED (the arc, §2.2).** An under-contained managed herd sheds whole animals over its labor
+        // capacity into the wild web — the one mechanic that replaced BOTH the tameness-bleed and the
+        // binary corral escape. The jitter draws from a per-herd seeded RNG (`map_seed ^ tick ^ salt ^
+        // fnv(id)`, the `advance_herds` recipe) so it is deterministic under rollback.
+        let mut rng = {
+            let mut hasher = FnvHasher::new();
+            herd.id.hash(&mut hasher);
+            SmallRng::seed_from_u64(base_seed ^ ESCAPE_SEED_SALT ^ hasher.finish())
+        };
+        let shed = shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng);
+        // A shed occurring **is** the "under-contained this turn" signal: `shed_uncontained_animals`
+        // returns `Some` exactly when the herd has a real overage (herded_fraction < 1 with ≥ 1 animal
+        // over its labor capacity), i.e. its herders can't hold all its animals and it is drifting off.
+        let under_contained = shed.is_some();
+        if let Some(event) = shed {
+            shed_events.push(event);
+        }
+
+        // **UNDER-HERDED EDGE NOTICE (slice 2, `docs/plan_fauna_neglect_escape.md` §4 item 1).** Fire a
+        // command-feed line the turn a managed herd **becomes** under-contained — edge-gated on the
+        // persisted `under_herded` bool so it fires **once** on the `false → true` transition, not every
+        // turn it stays under-contained, and re-fires after a recovery + relapse. Cleared the turn the
+        // herd is no longer shedding (fully staffed / within capacity). Distinct from the pen-*lost*
+        // (`announce_pen_lost`) and pen-*starving* (`starve_underfed_pen`) edges — this is the
+        // herder-shortfall edge, and it fires for pastoral herds too. The precedent is the pen-starving
+        // edge gate (`Herd::pen_starving`); this bool is persisted so a rollback doesn't re-fire it.
+        if under_contained {
+            if !herd.under_herded {
+                herd.under_herded = true;
+                if let Some(owner) = herd.owner {
+                    let pos = herd.position();
+                    event_log.push(CommandEventEntry::new(
+                        tick.0,
+                        CommandEventKind::HerdUnderHerded,
+                        owner,
+                        format!(
+                            "The {} has too few herders — animals are drifting off",
+                            herd.species
+                        ),
+                        Some(format!(
+                            "status=under_herded herded={:.2} needed={} herd={} x={} y={}",
+                            herded_last_turn, herd.herders_needed, herd.id, pos.x, pos.y
+                        )),
+                    ));
+                }
+            }
+        } else {
+            herd.under_herded = false;
+        }
+
+        // **BLEED-OUT ON TOTAL ABANDONMENT (§2.4).** A herd with ZERO herders last turn
+        // (`herded_fraction == NOT_HERDED`) keeps shedding — regrowth already suppressed
+        // (`regrow_biomass`), and for a pen unfed above — until it can no longer shed a whole animal
+        // (`biomass < body_mass`). At that point it has **bled out entirely** into the wild web, so the
+        // managed entity is **despawned** (Phase 3, after placement), NOT left as an ownerless-but-tame
+        // husk. Ownership and the pen/fence state are **never cleared at a floor**: clearing `owner`
+        // would drop the herd out of the managed set (`is_corralled() || owner.is_some()`) and stop the
+        // shed, stranding exactly the husk this eliminates — so it stays owned/corralled and bleeds all
+        // the way down, then vanishes with its (now-empty) fence. Tameness is never reset — it leaves
+        // with the animals (each shed batch becomes a wild herd at domestication 0). Distinct from FEED
+        // starvation, which floors a *fed* pen and keeps it (`starve_underfed_pen`, §2.5): a starving
+        // pen has a keeper (`herded_fraction > 0`), so it never reaches this branch — only animals
+        // *leaving* empty a herd.
+        let body_mass = herd.body_mass;
+        if herded_last_turn <= NOT_HERDED && body_mass > 0.0 && herd.biomass < body_mass {
+            if herd.is_corralled() {
+                // The pen dies with the entity — no fence reset needed (it despawns too). Announce it so
+                // pen destruction is never silent.
+                announce_pen_lost(herd, &mut event_log, tick.0);
+            }
+            despawn_ids.push(herd.id.clone());
+        }
+    }
+
+    // **Phase 2 — place the shed biomass into the WILD web (§2.3).** Merge over the tile + adjacent
+    // ring into a same-species wild herd, else spawn a fresh wild herd on an adjacent land tile.
+    place_shed_animals(
+        &mut registry,
+        &shed_events,
+        &fauna,
+        base_seed,
+        tick.0,
+        width,
+        height,
+        wrap,
+        &tile_registry,
+        &tiles,
+    );
+
+    // **Phase 3 — despawn the herds that bled out (§2.4).** Their biomass is already in the wild web
+    // via the shed, so the empty managed entity is removed. After placement so the Phase-2 source
+    // indices stayed valid.
+    if !despawn_ids.is_empty() {
+        registry
+            .herds
+            .retain(|herd| !despawn_ids.contains(&herd.id));
+    }
+}
+
+/// The escapees recorded by [`shed_uncontained_animals`] during Phase 1 of `advance_husbandry`, placed
+/// into the wild web in Phase 2 ([`place_shed_animals`]). Carries the source species' cached traits so
+/// the wild herd it merges into / spawns is byte-identical to a naturally-spawned one of that species.
+struct ShedEvent {
+    species: String,
+    size_class: SizeClass,
+    /// The managed herd's own tile — the merge/spawn centres on it and its adjacent ring.
+    from_pos: UVec2,
+    escaped_biomass: f32,
+    fodder_per_biomass: f32,
+    regrowth_rate: f32,
+    body_mass: f32,
+    husbandry_ceiling: HusbandryCeiling,
+    /// Index of the herd that shed, excluded from being its own merge target (a herd that shed to zero
+    /// and had its owner cleared is now a sub-viability wild residual at `from_pos` — merging the
+    /// escapees back into it would defeat the drift-out).
+    source_index: usize,
+}
+
+/// **The shared "animals leave" mechanic** (`docs/plan_fauna_neglect_escape.md` §2.2/§3.2) — an
+/// under-contained managed herd sheds whole animals over its labor capacity into the wild web. It
+/// replaced BOTH `decay_under_herded` (the tameness-bleed) and the binary corral escape: neglect now
+/// costs the **visible** axis (herd size), never the invisible one (`domestication_progress`, which is
+/// monotone-up and never touched here).
+///
+/// The overage is the herd's **actual** count over what its keepers can hold, reconstructed from the
+/// real staffing: `capacity_animals = herded_fraction × herders_needed × animals_per_herder` (the
+/// `herded_fraction × needed` product recovers `assigned` exactly, since `herded_fraction =
+/// min(1, assigned/needed)`), and `overage_animals = max(0, current − capacity)`. **NOT** the
+/// `(1 − herded_fraction) × current` shorthand (a review-caught spec bug): that over-estimates near a
+/// `ceil` boundary because it assumes `current ≈ needed × animals_per_herder`, which is false when
+/// `herders_needed = ceil(animals/aph)` rounds up hard — 101 animals @ aph 50 staffed at 2 has a true
+/// overage of **1** (`101 − 2×50`), but the shorthand reads `0.333 × 101 = 33.7` and sheds ~8/turn.
+/// A **fraction of the OVERAGE** leaves, not of the total, so as the herd shrinks toward its capacity
+/// fewer leave and it **stops exactly** at `overage < 1` — no overshoot below the real labor capacity,
+/// and none to zero unless capacity is `0` (total abandonment, the `herders_needed`-and-`herded == 0`
+/// limit). The count is in **whole animals**, with a **min-1 floor** when the overage is `≥ 1` so a
+/// small overage clears instead of asymptoting one or two over forever.
+///
+/// `herders_needed` is read through [`herd_herders_needed`] (the stabilized field, falling back to the
+/// raw `ceil` for a not-yet-stabilized managed herd) so a `0` can never collapse capacity to zero and
+/// shed a fully-staffed fresh herd. `stabilize_herders_needed` runs earlier in `advance_husbandry`, so
+/// for a managed herd the stabilized value is already `> 0` by the time the shed reads it.
+///
+/// The rate is **per-rung**: `pen_escape_fraction` for a corralled herd (slower — the fence),
+/// `pastoral_escape_fraction` otherwise, each `× (1 + jitter)` from the caller's seeded RNG. Reduces
+/// this herd's biomass and returns the placement event, or `None` when nothing leaves this turn.
+fn shed_uncontained_animals(
+    herd: &mut Herd,
+    source_index: usize,
+    herded_last_turn: f32,
+    fauna: &FaunaConfig,
+    rng: &mut SmallRng,
+) -> Option<ShedEvent> {
+    let body_mass = herd.body_mass;
+    if body_mass <= 0.0 || herd.biomass <= 0.0 {
+        return None;
+    }
+    let current_animals = herd.biomass / body_mass;
+    // **Reconstruct the real labor capacity from actual staffing** (review fix — see the doc comment):
+    // `capacity = assigned × animals_per_herder`, with `assigned = herded_fraction × herders_needed`.
+    // A fully-staffed herd reads `herded == 1` ⇒ `capacity = needed × aph ≥ current` ⇒ no shed; a herd
+    // nobody worked reads `herded == 0` ⇒ `capacity = 0` ⇒ the whole flock is overage.
+    let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
+    let needed = herd_herders_needed(herd, fauna) as f32;
+    let capacity_animals = herded_last_turn.max(0.0) * needed * animals_per_herder;
+    let overage_animals = (current_animals - capacity_animals).max(0.0);
+    if overage_animals < MIN_ESCAPE_ANIMALS {
+        // Fits its labor capacity (or within one animal of it) — the self-limiting attractor.
+        return None;
+    }
+    let husbandry = &fauna.husbandry;
+    let rate = if herd.is_corralled() {
+        husbandry.pen_escape_fraction
+    } else {
+        husbandry.pastoral_escape_fraction
+    };
+    let jitter_band = husbandry.escape_fraction_jitter;
+    let jitter = if jitter_band > 0.0 {
+        rng.gen_range(-jitter_band..=jitter_band)
+    } else {
+        0.0
+    };
+    let jittered = (rate * (1.0 + jitter)).max(0.0);
+    // Whole animals, min-1 floor (the overage is `>= 1` here, so at least one head always clears).
+    let leaving = (jittered * overage_animals).floor().max(MIN_ESCAPE_ANIMALS);
+    let escaped_biomass = (leaving * body_mass).min(herd.biomass);
+    if escaped_biomass <= 0.0 {
+        return None;
+    }
+    herd.biomass = (herd.biomass - escaped_biomass).max(0.0);
+    herd.refresh_ecology_phase(fauna);
+    Some(ShedEvent {
+        species: herd.species.clone(),
+        size_class: herd.size_class,
+        from_pos: herd.position(),
+        escaped_biomass,
+        fodder_per_biomass: herd.fodder_per_biomass,
+        regrowth_rate: herd.regrowth_rate,
+        body_mass,
+        husbandry_ceiling: herd.husbandry_ceiling,
+        source_index,
+    })
+}
+
+/// **Announce a lost pen** (`docs/plan_fauna_neglect_escape.md` §2.4). A fully-abandoned pen has shed
+/// its last animal and the managed entity is about to be despawned (its biomass is already in the wild
+/// web via the shed), so there is **no fence state to reset** — it goes with the entity. Pushes the same
+/// `CommandEventKind::Corral` line the pen's *completion* and old escape pushed — one kind for the pen's
+/// whole life — so pen destruction is **never silent**. Reads `&Herd` (the caller despawns it next).
+fn announce_pen_lost(herd: &Herd, event_log: &mut CommandEventLog, tick: u64) {
+    info!(
+        target: "shadow_scale::analytics",
+        event = "corral_escape",
+        herd = %herd.id,
+        faction = herd.owner.map(|f| f.0).unwrap_or_default(),
+    );
+    if let Some(owner) = herd.owner {
+        let (pen_x, pen_y) = herd.corralled_at.map(|t| (t.x, t.y)).unwrap_or_default();
+        event_log.push(CommandEventEntry::new(
+            tick,
+            CommandEventKind::Corral,
+            owner,
+            format!(
+                "The {} herd has drifted off — untended, the pen is lost",
+                herd.species
+            ),
+            Some(format!(
+                "status=escaped reason=untended action=corral herd={} x={} y={}",
+                herd.id, pen_x, pen_y
+            )),
+        ));
+    }
+}
+
+/// **Phase 2 of the shed** (`docs/plan_fauna_neglect_escape.md` §2.3): resolve each [`ShedEvent`] into
+/// the wild web, over the full registry (which Phase 1 could not touch while iterating it mutably).
+/// Merge over the tile + adjacent ring into a same-species wild herd, else spawn a fresh wild herd on
+/// an adjacent land tile, falling back to the source tile only if hemmed in.
+#[allow(clippy::too_many_arguments)]
+fn place_shed_animals(
+    registry: &mut HerdRegistry,
+    events: &[ShedEvent],
+    fauna: &FaunaConfig,
+    base_seed: u64,
+    tick: u64,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    // Every herd that shed is excluded from being a merge target: a still-managed source won't match
+    // the wild filter anyway, and a shed-to-zero source is a dying residual we must not merge back into.
+    let source_indices: HashSet<usize> = events.iter().map(|e| e.source_index).collect();
+    for (seq, event) in events.iter().enumerate() {
+        // 1. MERGE over the tile + adjacent ring — reinforce an existing wild population of the same
+        //    species instead of proliferating herds (which also sidesteps `abundance.max_total_game`).
+        if let Some(target) =
+            nearest_wild_merge_target(registry, event, &source_indices, width, wrap)
+        {
+            registry.herds[target].biomass += event.escaped_biomass;
+            registry.herds[target].refresh_ecology_phase(fauna);
+            continue;
+        }
+        // 2/3. ELSE spawn a fresh wild herd on an adjacent land tile (fall back to the source tile only
+        //      if every neighbour is water/off-map). Seeded per event so the drift-out is reproducible.
+        let mut rng = {
+            let mut hasher = FnvHasher::new();
+            event.species.hash(&mut hasher);
+            event.from_pos.x.hash(&mut hasher);
+            event.from_pos.y.hash(&mut hasher);
+            SmallRng::seed_from_u64(base_seed ^ ESCAPE_SEED_SALT ^ hasher.finish() ^ seq as u64)
+        };
+        let spawn_pos = pick_adjacent_land(
+            event.from_pos,
+            width,
+            height,
+            wrap,
+            tile_registry,
+            tiles,
+            &mut rng,
+        )
+        .unwrap_or(event.from_pos);
+        if let Some(herd) = spawn_feral_group(
+            event,
+            spawn_pos,
+            fauna,
+            tick,
+            seq,
+            width,
+            height,
+            tile_registry,
+            tiles,
+            &mut rng,
+        ) {
+            registry.herds.push(herd);
         }
     }
 }
 
-/// **An under-herded PASTORAL herd forgets, proportionally** (intensification ladder slice 8) — the
-/// herding twin of [`starve_underfed_pen`], and the consumer of `decay_domestication`'s deleted
-/// `is_domesticated()` early return.
-///
-/// A tamed herd used to be **permanently tame, forever, for zero labor**: the decay path returned
-/// early the moment `domestication_progress` hit `1.0`, so the top of the ladder cost nothing to hold.
-/// §3 retired "set and forget" at the *yield*; this retires it at the *meter*.
-///
-/// The rule is the one this file already uses for feed: **proportional, floored, recoverable.** A herd
-/// staffed at `herded_fraction` bleeds `(1 − herded_fraction) ×` the `animal:pastoral` rung's own
-/// `decay_per_turn` (at the species' `taming_rate`, so a Steppe Runner forgets as slowly as it
-/// learned). So:
-///
-/// - **Fully herded ⇒ no decay at all** — including a herd you are merely *harvesting* under
-///   Sustain/Surplus/Market. The crew is standing there; the animals stay tame. Harvesting your own
-///   herd must never rot it.
-/// - **Half-staffed ⇒ half the decay** — visible, reversible, and *nothing snaps*.
-/// - **Zero herders ⇒ full decay**, which is the abandonment case and the only place a cliff belongs.
-///
-/// **No binary escape lives here**, deliberately: a threshold would void a long investment on
-/// *rounding*, as biomass breathes across a herder boundary. (The pen's escape-on-abandonment is a
-/// separate, deliberate cliff — nobody is minding the gate — and it stays in `advance_husbandry`.)
-fn decay_under_herded(herd: &mut Herd, herded: f32, rung: &RungDef, taming_rate: f32) {
-    let shortfall = (FULLY_HERDED - herded).clamp(0.0, FULLY_HERDED);
-    if shortfall <= 0.0 {
-        return;
+/// The nearest **wild** herd of the event's species on its tile or the adjacent ring — the merge
+/// target for the shed (`docs/plan_fauna_neglect_escape.md` §2.3 step 1). "Wild" = unowned,
+/// uncorralled, zero domestication; the source herd (and any other shedder) is excluded. Ordered
+/// `(hex distance ASC, y ASC, x ASC, index ASC)` so the pick is total and hasher-independent.
+fn nearest_wild_merge_target(
+    registry: &HerdRegistry,
+    event: &ShedEvent,
+    source_indices: &HashSet<usize>,
+    width: u32,
+    wrap: bool,
+) -> Option<usize> {
+    registry
+        .herds
+        .iter()
+        .enumerate()
+        .filter(|(i, h)| {
+            !source_indices.contains(i)
+                && h.owner.is_none()
+                && !h.is_corralled()
+                && h.domestication_progress == 0.0
+                && h.species == event.species
+                && hex_distance_wrapped(h.position(), event.from_pos, width, wrap) <= 1
+        })
+        .min_by(|(ai, ah), (bi, bh)| {
+            let da = hex_distance_wrapped(ah.position(), event.from_pos, width, wrap);
+            let db = hex_distance_wrapped(bh.position(), event.from_pos, width, wrap);
+            da.cmp(&db)
+                .then_with(|| ah.position().y.cmp(&bh.position().y))
+                .then_with(|| ah.position().x.cmp(&bh.position().x))
+                .then_with(|| ai.cmp(bi))
+        })
+        .map(|(i, _)| i)
+}
+
+/// Pick an adjacent **land** tile to drift the escapees onto (`docs/plan_fauna_neglect_escape.md` §2.3
+/// step 2), wrap-aware. Deterministic: land neighbours are sorted `(y, x)` then a seeded draw picks
+/// one, so the drift-out is reproducible under rollback. `None` = hemmed in (every neighbour
+/// water/off-map), which the caller turns into the same-tile fallback (step 3).
+fn pick_adjacent_land(
+    from: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+) -> Option<UVec2> {
+    let mut candidates: Vec<UVec2> = hex_neighbors_wrapped(from.x, from.y, width, height, wrap)
+        .map(|(x, y)| UVec2::new(x, y))
+        .filter(|p| is_land_tile(*p, tile_registry, tiles))
+        .collect();
+    if candidates.is_empty() {
+        return None;
     }
-    herd.decay_domestication(rung.build_decay(taming_rate) * shortfall);
+    candidates.sort_by_key(|p| (p.y, p.x));
+    Some(candidates[rng.gen_range(0..candidates.len())])
+}
+
+/// Construct the fresh **wild** herd a shed spawns (`docs/plan_fauna_neglect_escape.md` §2.3 step 2),
+/// carrying the escapees' biomass at `owner = None` / `domestication_progress = 0` / `corralled_at =
+/// None` — a fresh wild group whatever its origin stock. Reuses the source species' cached traits and
+/// the same `build_short_route` land-neighbour path `spawn_game_group_at` uses, so it is byte-identical
+/// to a naturally-spawned herd of that species. **Exempt from `abundance.max_total_game`** (§5 item 2)
+/// and carries the [`FERAL_ID_PREFIX`] the immigration cap scan skips.
+#[allow(clippy::too_many_arguments)]
+fn spawn_feral_group(
+    event: &ShedEvent,
+    spawn_pos: UVec2,
+    fauna: &FaunaConfig,
+    tick: u64,
+    seq: usize,
+    width: u32,
+    height: u32,
+    tile_registry: &TileRegistry,
+    tiles: &Query<&Tile>,
+    rng: &mut SmallRng,
+) -> Option<Herd> {
+    let def = fauna.species_by_display(&event.species);
+    let steps = def.map(|d| d.sample_route_len(rng)).unwrap_or(1);
+    let route = build_short_route(spawn_pos, steps, width, height, tile_registry, tiles, rng)
+        .unwrap_or_else(|| vec![spawn_pos]);
+    // A wild herd's `K` is recomputed from its range by `advance_herds` next turn; seed it with the
+    // species' own wild carrying capacity so the interim readout is sane.
+    let carrying_capacity = def
+        .map(|d| d.carrying_capacity())
+        .unwrap_or(event.escaped_biomass.max(1.0));
+    let id = format!("{FERAL_ID_PREFIX}{tick}_{seq}");
+    let mut herd = Herd::new(
+        id,
+        event.species.clone(),
+        event.size_class,
+        route,
+        event.escaped_biomass,
+        carrying_capacity,
+        event.fodder_per_biomass,
+        event.regrowth_rate,
+        event.body_mass,
+    );
+    herd.husbandry_ceiling = event.husbandry_ceiling;
+    herd.refresh_ecology_phase(fauna);
+    Some(herd)
 }
 
 /// **A keeper who cannot pay the feed starves the herd.** Reads the `pen_fed_fraction` its keeper
@@ -3708,10 +4049,12 @@ fn forecast_production_and_take(
 ///
 /// Every signal is computed for **every** rung, from the one expected take: the rung-kinds differ in
 /// what their ceilings mean, never in whether the crew has to carry the food home.
+#[allow(clippy::too_many_arguments)] // one row's worth of yield context — bundling it would just move the noise
 pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
     managed: bool,
+    herders_needed: u32,
     workers: u32,
     policy: FollowPolicy,
     realized: f32,
@@ -3730,19 +4073,22 @@ pub(crate) fn forecast_source_yield(
         // source state — a pure function of state, so the seed and the resolved row agree exactly.
         realized,
         wasted: (production - actual).max(0.0),
-        // **A whole-animal (hunt) source reports its STEADY carry crew, not this-turn's carried.**
-        // `actual` is the lumpy quantised take — `0` on a wait turn for a slow breeder whose MSY <
-        // `body_mass` — so inverting it collapses `workers_needed` and contradicts `wasted`. The steady
-        // peak-drop crew ([`hunt_haul_workers`], off the policy's steady ceiling) equals the client's
-        // `_max_useful_workers`, so the compose cap and the band-panel overstaff note agree. A
-        // **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is un-lumpy, so it
-        // keeps the ordinary overstaffing inversion.
+        // **A whole-animal (hunt) source reports its whole CREW: `max(herders, steady carry crew)`** —
+        // the SAME `managed_crew_needed` shape the resolved Hunt arm records, so the assign-time seed and
+        // the post-turn row agree (no "1 of N" on a pending Tame). `actual` is the lumpy quantised take —
+        // `0` on a wait turn for a slow breeder whose MSY < `body_mass` — so inverting it collapses
+        // `workers_needed` and contradicts `wasted`; the steady peak-drop crew ([`hunt_haul_workers`],
+        // off the policy's steady ceiling) equals the client's `_max_useful_workers`. The caller passes
+        // the herder term ownership-INDEPENDENTLY for an investment policy (`would_be_herders_needed`), so
+        // a not-yet-owned Tame source seeds its real crew; `0` for a wild herd, collapsing the `max` to
+        // the haul side. A **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is
+        // un-lumpy, so it keeps the ordinary overstaffing inversion (its herder term is `0`).
         workers_needed: if forecast.body_mass_yield > 0.0 {
-            hunt_haul_workers(
+            herders_needed.max(hunt_haul_workers(
                 forecast.ceiling_for(policy),
                 forecast.body_mass_yield,
                 forecast.per_worker_yield,
-            )
+            ))
         } else {
             workers_needed_for_take(actual, forecast.per_worker_yield, workers)
         },
@@ -3809,10 +4155,22 @@ pub fn hunt_source_yield_preview(
         policy,
         arrivals_horizon,
     );
+    // **The herder term, ownership-INDEPENDENT for an investment policy** (taming-startup-lag fix): a
+    // Tame/Corral compose means the herd is being managed, but ownership is set only later in Population,
+    // so `herd_herders_needed` would read `0` on the compose turn and the seed's `workers_needed` would
+    // collapse to the haul crew ("1 of N" on a pending Tame). `would_be_herders_needed` is the real crew
+    // regardless of recorded ownership; an extractive policy stays ownership-gated (wild = 0). This is the
+    // SAME rule the resolved Hunt arm applies at its `managed_crew_needed`, so seed == resolved.
+    let herders_needed = if policy.is_investment() {
+        would_be_herders_needed(herd, fauna)
+    } else {
+        herd_herders_needed(herd, fauna)
+    };
     forecast_source_yield(
         &forecast,
         sustainable,
         herd.is_corralled(),
+        herders_needed,
         workers,
         policy,
         realized,
@@ -4338,6 +4696,19 @@ pub(crate) fn regrow_biomass(herd: &mut Herd, fauna: &FaunaConfig) {
     // `K/2`, and quietly pay its keeper a yield for feed they never bought.
     // `pen_fed_fraction` is 1.0 for every herd that is not penned, so this is inert elsewhere.
     let delta = delta * herd.pen_fed_fraction.clamp(0.0, PEN_FULLY_FED);
+    // **A TOTALLY-ABANDONED pastoral herd does not regrow** (`docs/plan_fauna_neglect_escape.md` §2.4,
+    // option B). An owned, unfenced herd with ZERO herders last turn (`herded_fraction == NOT_HERDED` —
+    // the same one-turn-lag signal the pen reads, written by the labor arm and reset by
+    // `advance_husbandry`) is suppressed to zero growth, so the shed drives it to the extinction floor
+    // and it goes **fully feral** (ownership clears on shed-to-zero) instead of persisting at a leaky
+    // ~0.6·K equilibrium. This is a **binary abandonment gate, not a scaling**: PARTIAL neglect
+    // (`herded_fraction > 0` — understaffed but still herded) keeps normal regrowth and settles at its
+    // labor-supported capacity as a stable smaller TAME herd, mirroring the pen's untended/tended split.
+    // A corralled herd is handled by `pen_fed_fraction` above (`!is_corralled()` here), and a wild herd
+    // has no owner, so this is inert for both.
+    let abandoned_pastoral =
+        herd.owner.is_some() && !herd.is_corralled() && herd.herded_fraction <= NOT_HERDED;
+    let delta = if abandoned_pastoral { 0.0 } else { delta };
     herd.biomass = (herd.biomass + delta).clamp(0.0, cap);
     herd.refresh_ecology_phase(fauna);
 }

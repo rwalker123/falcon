@@ -372,7 +372,13 @@ func _render_occupant_drawer() -> void:
         lines = _banddetail.unit_summary_lines(
             _selection.unit(), _selectioncard.selected_terrain_label(), ctx)
     elif not _selection.herd().is_empty():
-        lines = DetailFormat.herd_summary_lines(_selection.herd(), _band_labor.world_herds())
+        # Thread in the ACTUAL herders staffed/staged on this herd (summed across the player's bands,
+        # pending-aware) so the "N / M" staffing readout is right the instant one is assigned — never a
+        # reconstruction from last turn's resolved `herded_fraction` (fauna neglect-escape arc).
+        var herd := _selection.herd()
+        lines = DetailFormat.herd_summary_lines(
+            herd, _band_labor.world_herds(),
+            _band_labor.assigned_herders_for(String(herd.get("id", ""))))
     _occupant_detail.text = DetailFormat.detail_bbcode(lines, ctx)
     if is_expedition:
         _build_expedition_panel(_selection.unit())

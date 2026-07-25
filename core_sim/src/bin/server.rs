@@ -4842,6 +4842,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::Sow => "Sow",
         CommandEventKind::Corral => "Corral",
         CommandEventKind::HuntDanger => "Dangerous hunt",
+        CommandEventKind::PredatorRaid => "Predator raid",
         CommandEventKind::CancelOrder => "Cancel order",
         CommandEventKind::SedentarizationPrompt => "Sedentarization",
         CommandEventKind::SiteDiscovered => "Site discovered",
@@ -4851,6 +4852,7 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::ExpeditionArrived => "Expedition arrived",
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",
         CommandEventKind::ExpeditionReturned => "Expedition returned",
+        CommandEventKind::HerdUnderHerded => "Under-herded",
     }
 }
 

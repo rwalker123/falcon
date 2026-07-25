@@ -1178,6 +1178,11 @@ pub enum CommandEventKind {
     /// event fires on `killed + wounded > 0`, so a wound-only hunt narrates too). The hunting party
     /// answers the danger with its own hunters — **Warriors do NOT mitigate a hunt**.
     HuntDanger,
+    /// A **carnivore raided a band's camp** (Predators Phase 1b, `docs/plan_predators.md`). A
+    /// carnivore with `aggression > 0` within `predators.raid_radius` of a band turns on it, and the
+    /// band is defended by its **Warriors** — the Warrior role's **first live consumer**. Fires each
+    /// casualty-causing raid turn (edge-gating a repeated raid to one line is deferred to Phase 3).
+    PredatorRaid,
     CancelOrder,
     SedentarizationPrompt,
     SiteDiscovered,
@@ -1192,6 +1197,12 @@ pub enum CommandEventKind {
     /// it to its defer choice). The chosen line joins the story record rather than the decision
     /// being a silent state change.
     NarrativeFork,
+    /// A managed herd **became under-contained** (neglect-escape slice 2,
+    /// `docs/plan_fauna_neglect_escape.md` §4): too few herders to hold all its animals, so it is
+    /// shedding whole animals into the wild web. Edge-gated (fires once on the transition, not every
+    /// turn), distinct from the pen-*lost* (`Corral`) and pen-*starving* (`Corral`) edges — this is the
+    /// herder-shortfall edge, and it applies to pastoral herds too.
+    HerdUnderHerded,
 }
 
 impl CommandEventKind {
@@ -1210,6 +1221,7 @@ impl CommandEventKind {
             CommandEventKind::Sow => "sow",
             CommandEventKind::Corral => "corral",
             CommandEventKind::HuntDanger => "hunt_danger",
+            CommandEventKind::PredatorRaid => "predator_raid",
             CommandEventKind::CancelOrder => "cancel_order",
             CommandEventKind::SedentarizationPrompt => "sedentarization_prompt",
             CommandEventKind::SiteDiscovered => "site_discovered",
@@ -1219,6 +1231,7 @@ impl CommandEventKind {
             CommandEventKind::ExpeditionReturned => "expedition_returned",
             CommandEventKind::NarrativeBeat => "narrative_beat",
             CommandEventKind::NarrativeFork => "narrative_fork",
+            CommandEventKind::HerdUnderHerded => "herd_under_herded",
         }
     }
 }
