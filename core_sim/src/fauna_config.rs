@@ -539,6 +539,9 @@ pub struct AbundanceConfig {
     pub per_biome: HashMap<String, f32>,
     pub max_total_game: usize,
     pub min_spacing: u32,
+    /// **How many migratory herds a map holds** — the long-route pass's own budget, separate from
+    /// `max_total_game` (see [`MigratoryAbundanceConfig`]).
+    pub migratory: MigratoryAbundanceConfig,
 }
 
 impl AbundanceConfig {
@@ -548,6 +551,69 @@ impl AbundanceConfig {
             .copied()
             .unwrap_or(0.0)
             .clamp(0.0, 1.0)
+    }
+}
+
+/// **The migratory herd budget** (issue #290) — `tiles_per_herd` sets the density, `min_herds` /
+/// `max_herds` clamp it. These were three bare literals inside `fauna::determine_herd_count`
+/// (`area / 3000`, clamped `[2, 6]`), which made the single number that decides whether a migratory
+/// species appears on a map untunable without a rebuild.
+///
+/// **It is a per-map budget shared by the WHOLE migratory roster, drawn with replacement** — so
+/// presence per species is `1 − ((n−1)/n)^herds` for `n` migratory rows, *not* linear in the herd
+/// count, and the marginal slot buys less each time:
+///
+/// | herds | presence per species (5 rows) |
+/// |---|---|
+/// | 2 | 36% |
+/// | 3 | 49% |
+/// | 5 | **67%** |
+/// | 8 | 83% |
+/// | 12 | 93% |
+///
+/// The shipped `tiles_per_herd: 800` puts the standard 80×52 map (area 4160) at **5** — one slot per
+/// migratory row, so each row's *expected* herd count is exactly 1 and two thirds of maps carry any
+/// given species. It replaces `3000`, under which the standard map computed **1** and was
+/// clamp-floored to 2: the density was inert at the shipped size and `min_herds` silently decided
+/// everything. Measured before/after in `core_sim/tests/fauna_migratory_representation.rs`.
+///
+/// **Raising this raises migratory BIOMASS steeply** — a migratory herd carries 4,000–12,000 biomass
+/// against a deer's 600–1,200 — so it is a food-economy dial, not just a variety dial. Playtest dial.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MigratoryAbundanceConfig {
+    /// Map tiles (full grid, water included) per migratory herd. Validated `> 0` — a `0` would divide
+    /// by zero and, before the clamp, is the one value with no sensible reading.
+    pub tiles_per_herd: u32,
+    /// Floor on the per-map count, so a small map still gets a migration to follow. Validated `>= 1`
+    /// (at `0` a small map has no migratory game at all, which no preset wants).
+    pub min_herds: u32,
+    /// Ceiling on the per-map count. Validated `>= min_herds` — an inverted clamp would make
+    /// `min_herds` unreachable and silently win, the exact failure this block exists to remove.
+    pub max_herds: u32,
+}
+
+impl Default for MigratoryAbundanceConfig {
+    /// Mirrors the shipped JSON, so a config that omits the block behaves like the shipped one rather
+    /// than deriving all-zeros (`AbundanceConfig` is `#[serde(default)]`, so an omitted block is
+    /// reachable) — a `tiles_per_herd: 0` is the divisor in [`Self::herds_for_map`].
+    fn default() -> Self {
+        Self {
+            tiles_per_herd: 800,
+            min_herds: 2,
+            max_herds: 12,
+        }
+    }
+}
+
+impl MigratoryAbundanceConfig {
+    /// How many migratory herds a `width × height` map holds — the density, clamped. `area` is the
+    /// full grid (water included), which is what the retired literal formula measured too, so the
+    /// promote is a pure re-parameterization of the same shape.
+    pub fn herds_for_map(&self, width: u32, height: u32) -> u32 {
+        let area = width.saturating_mul(height).max(1);
+        let density = area / self.tiles_per_herd.max(1);
+        density.clamp(self.min_herds, self.max_herds.max(self.min_herds))
     }
 }
 
@@ -1256,6 +1322,39 @@ impl FaunaConfig {
     /// their food situation strictly worse, with nothing in the UI to explain it. See
     /// [`DEFAULT_PEN_UPKEEP_PER_BIOMASS`].
     pub fn validate(&self) -> Result<(), FaunaConfigError> {
+        // --- The migratory herd budget (issue #290). All three are integer *counts*, so the checks
+        // are the degenerate readings rather than range bands: a `0` divide-by-zero density, a `0`
+        // floor that leaves a small map with no migration at all, and an inverted clamp — which is the
+        // specific failure this block exists to remove, since it would make `min_herds` unreachable
+        // and hand the decision back to a silent default.
+        let migratory = &self.abundance.migratory;
+        if migratory.tiles_per_herd == 0 {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.tiles_per_herd",
+                constraint: "be greater than 0 (it is a divisor — tiles per migratory herd)".into(),
+                value: migratory.tiles_per_herd.to_string(),
+            });
+        }
+        if migratory.min_herds == 0 {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.min_herds",
+                constraint:
+                    "be at least 1 (a map with no migratory herd has no migration to follow)".into(),
+                value: migratory.min_herds.to_string(),
+            });
+        }
+        if migratory.max_herds < migratory.min_herds {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.max_herds",
+                constraint: format!(
+                    "be at least abundance.migratory.min_herds (= {}) — an inverted clamp makes the \
+                     floor unreachable",
+                    migratory.min_herds
+                ),
+                value: migratory.max_herds.to_string(),
+            });
+        }
+
         // --- Hunt: the biomass→provisions rate the WHOLE ladder is denominated in. At `0` every rung
         // (wild, pastoral, pen) pays nothing and the food economy silently stops.
         require_positive_finite(
@@ -2374,6 +2473,69 @@ mod tests {
             FaunaConfigError::Invalid { field, .. } => assert_eq!(field, expected),
             other => panic!("expected an Invalid error for {expected}, got {other:?}"),
         }
+    }
+
+    /// `tiles_per_herd` is a **divisor** (`area / tiles_per_herd`), so a `0` is the one value with no
+    /// sensible reading at all.
+    #[test]
+    fn validate_rejects_a_zero_migratory_tiles_per_herd() {
+        let err = reject(|json| json["abundance"]["migratory"]["tiles_per_herd"] = (0).into());
+        assert_rejects_field(err, "abundance.migratory.tiles_per_herd");
+    }
+
+    /// A `0` floor lets a small map hold **no** migratory herd at all — no migration to follow, on a
+    /// map that still shows the biomes those species host.
+    #[test]
+    fn validate_rejects_a_zero_migratory_min_herds() {
+        let err = reject(|json| json["abundance"]["migratory"]["min_herds"] = (0).into());
+        assert_rejects_field(err, "abundance.migratory.min_herds");
+    }
+
+    /// **The load-bearing one for this block.** An inverted clamp makes `min_herds` unreachable and
+    /// hands the per-map count back to a silent ceiling — precisely the "one clamp quietly decides
+    /// everything" failure (issue #290) that promoting these literals into config exists to remove.
+    #[test]
+    fn validate_rejects_an_inverted_migratory_herd_clamp() {
+        let err = reject(|json| {
+            json["abundance"]["migratory"]["min_herds"] = (6).into();
+            json["abundance"]["migratory"]["max_herds"] = (5).into();
+        });
+        assert_rejects_field(err, "abundance.migratory.max_herds");
+    }
+
+    /// The shipped budget puts the standard 80×52 map at **5** migratory herds — one slot per migratory
+    /// row, so each row's *expected* count is 1 and presence per species is `1 − (4/5)^5 ≈ 67%`. Pinned
+    /// because it is the number issue #290 measured, and because the previous value's real defect was
+    /// that the density was **inert** at the shipped size (4160/3000 = 1, clamp-floored to 2) — a
+    /// regression here would be silent again.
+    #[test]
+    fn the_standard_map_budgets_one_migratory_slot_per_roster_row() {
+        let config = FaunaConfig::builtin();
+        let rows = config.migratory_species().len();
+        assert_eq!(rows, 5, "the shipped migratory roster is 5 rows");
+        assert_eq!(
+            config.abundance.migratory.herds_for_map(80, 52),
+            rows as u32,
+            "the standard map should budget one migratory slot per migratory row"
+        );
+    }
+
+    /// The clamps bind at both ends, and the density — not a clamp — decides the shipped size. The
+    /// retired `area/3000` formula failed exactly this: every real map sat on a clamp.
+    #[test]
+    fn the_migratory_budget_clamps_at_both_ends_but_scales_between_them() {
+        let migratory = &FaunaConfig::builtin().abundance.migratory;
+        // Tiny map → the floor binds.
+        assert_eq!(migratory.herds_for_map(10, 10), migratory.min_herds);
+        // Huge map → the ceiling binds.
+        assert_eq!(migratory.herds_for_map(256, 192), migratory.max_herds);
+        // Between them the density is the authority, and it is monotone in area.
+        assert!(
+            migratory.herds_for_map(80, 52) > migratory.min_herds
+                && migratory.herds_for_map(80, 52) < migratory.max_herds,
+            "the shipped map size must sit strictly inside the clamps, or the density is inert"
+        );
+        assert!(migratory.herds_for_map(120, 80) >= migratory.herds_for_map(80, 52));
     }
 
     /// **The load-bearing one.** A pen whose feed costs more than its harvest yields is a trap: the

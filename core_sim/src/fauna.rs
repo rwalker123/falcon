@@ -1499,8 +1499,8 @@ fn log_herd_spawn(herd: &Herd) {
     );
 }
 
-/// Long-range migratory herds: a handful of cross-region walkers, one per
-/// `determine_herd_count`, species drawn from the config's migratory rows.
+/// Long-range migratory herds: a handful of cross-region walkers, as many as
+/// `abundance.migratory` budgets for the map size, species drawn from the config's migratory rows.
 ///
 /// **`host_biomes` is LIVE for migratory species** (it was previously ignored): a herd's loiter
 /// anchors sit on tiles suitable for its species (`module_at ∈ host_biomes`), drawn from a regional
@@ -1536,8 +1536,16 @@ fn spawn_migratory_herds(
             }
         }
     }
-    let herd_target = determine_herd_count(width, height);
-    for idx in 0..herd_target {
+    let herd_target = fauna.abundance.migratory.herds_for_map(width, height);
+    // `idx` is the *seated* herd count, not the attempt count: a `build_migratory_route` failure used
+    // to `continue` the `0..herd_target` loop, which consumed the slot and left the map one migratory
+    // herd short (measured: 1 map in 120). The budget names how many herds a map should HOLD, so a
+    // failure re-draws instead — bounded by `MIGRATORY_ROUTE_ATTEMPTS_PER_HERD` so a map that can seat
+    // none (no land, or every migratory row's route unbuildable) still terminates rather than spinning.
+    let mut idx = 0u32;
+    let mut attempts_left = herd_target.saturating_mul(MIGRATORY_ROUTE_ATTEMPTS_PER_HERD);
+    while idx < herd_target && attempts_left > 0 {
+        attempts_left -= 1;
         let (key, def) = migratory[rng.gen_range(0..migratory.len())];
         let steps = def.sample_route_len(rng);
         let suitable = suitable_tiles_for(def, &suitable_by_module);
@@ -1579,8 +1587,30 @@ fn spawn_migratory_herds(
         herd.refresh_ecology_phase(fauna);
         log_herd_spawn(&herd);
         herds.push(herd);
+        idx += 1;
+    }
+    if idx < herd_target {
+        // UNDER-FILL AND REPORT, never relax the budget — the same contract the tag solver's
+        // `mapgen.tag_solver.under_filled_climate_gated` states. Every migratory row's route was
+        // unbuildable often enough to exhaust the retries, which means the map genuinely cannot seat
+        // the budget (no land, or no host biome anywhere). Silence here is what made the retired
+        // slot-eating `continue` cost a herd per ~120 maps with nothing to read.
+        info!(
+            target: "shadow_scale::fauna",
+            shortfall = herd_target - idx,
+            target = herd_target,
+            seated = idx,
+            "fauna.migratory.under_filled"
+        );
     }
 }
+
+/// How many `build_migratory_route` attempts each migratory slot is allowed before the slot is given
+/// up (`spawn_migratory_herds`). A route failure re-draws rather than eating the slot, so this is the
+/// loop's termination bound: on a map where no migratory row can build a route (no land at all) the
+/// pass must still finish. Small — a failure is rare (1 map in 120 measured), so the retries are
+/// nearly free, and a slot that fails this many times in a row is genuinely unseatable.
+const MIGRATORY_ROUTE_ATTEMPTS_PER_HERD: u32 = 8;
 
 /// Short-range wild game (big + small): iterate land tiles, roll the per-biome
 /// abundance, then greedily place bounded, spaced-out groups from a shuffled pool
@@ -4795,12 +4825,6 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
         route_length: herd.route_length() as u32,
         next_position: herd.next_position(),
     }
-}
-
-fn determine_herd_count(width: u32, height: u32) -> u32 {
-    let area = width.saturating_mul(height).max(1);
-    let baseline = area / 3000;
-    baseline.clamp(2, 6)
 }
 
 /// Radius (hexes) of the neighbourhood `build_route` searches to pull a migratory anchor onto the
