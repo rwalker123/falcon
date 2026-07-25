@@ -516,23 +516,35 @@ pub fn tile_forage_capacity(forage: &ForageLaborConfig, tile: &Tile) -> f32 {
 /// capacity it decomposes can never disagree about a tile's shape.
 ///
 /// A `NavigableRiver` hex has a **two-term** capacity (the valley it cut **plus** the fishery the
-/// channel is), so it gets the blended basket ([`FloraConfig::navigable_composition`]); every other
-/// tile reads its own biome's basket directly. Borrowed for the common case, owned only for the
-/// navigable blend — the blend is the only shape that has to be built.
+/// channel is), so it gets the blended basket ([`FloraConfig::realized_navigable_composition`]); every
+/// other tile reads its own biome's basket. **The result is `Cow::Owned` on both arms** — since the
+/// §10 realization addition each tile's basket is a freshly-built subset, so neither arm borrows.
 ///
 /// Every caller (today: the snapshot capture) must go through this, never
 /// [`FloraConfig::composition`] on a raw terrain: reading the underlying biome alone on a navigable
 /// hex leaves that hex's fishery bonus **unnamed**, which breaks the decomposition ruling on a whole
 /// class of tiles and is invisible to `validate_against_forage`.
+/// **Now realizes per tile** (`docs/plan_flora_roster.md` §10): the affinity roster answers *what CAN
+/// grow here*, and this seam answers *what IS growing here* — a seeded, deterministic subset keyed on
+/// `(map_seed, tile)`, so two tiles of one biome carry different baskets. Every non-Sow-from-nothing
+/// caller (display, wild gather, Cultivate, Sow-upgrade, and the wire `ForagePatchState.composition`)
+/// reads the realized basket through this one function. Owned on both arms now, because realization
+/// always produces a fresh subset.
 pub fn tile_flora_composition<'a>(
     flora: &'a FloraConfig,
     forage: &ForageLaborConfig,
     tile: &Tile,
+    map_seed: u64,
 ) -> Cow<'a, [FloraShare]> {
     if tile.terrain == sim_runtime::TerrainType::NavigableRiver {
-        Cow::Owned(flora.navigable_composition(tile.resource_terrain(), forage))
+        Cow::Owned(flora.realized_navigable_composition(
+            tile.resource_terrain(),
+            forage,
+            tile.position,
+            map_seed,
+        ))
     } else {
-        Cow::Borrowed(flora.composition(tile.resource_terrain()))
+        Cow::Owned(flora.realized_composition(tile.resource_terrain(), tile.position, map_seed))
     }
 }
 
@@ -964,6 +976,37 @@ pub fn commit_fodder_payoff(
     field_fodder(&patch, forage, flora, output_multiplier)
 }
 
+/// **The TRADE GOODS a sown Field of THIS plant would credit per turn on this tile** (Flora Roster
+/// F4, §6) — the exact trade twin of [`commit_fodder_payoff`], routing the yield vector's
+/// `trade_goods_per_biomass` component instead of its `fodder_per_biomass` one. Built through the
+/// *same* `hypothetical_patch` construction and the *same* `field_trade_goods` the sim pays with (the
+/// §4.3 "assert the quote against the payoff function" rule), so the picker's cash-crop row and the
+/// payout cannot drift. `sowYieldRatio`/`sowPayoff` read `0` for a cash crop — it is worthless as
+/// food — so this is the number that lets the picker show its real value instead of a bare `0×`.
+/// `0.0` for a staple/hay (its vector pays no trade) or a plant that cannot climb to the Field rung
+/// here.
+pub fn commit_trade_payoff(
+    tile: UVec2,
+    tile_capacity: f32,
+    species: &str,
+    share: f32,
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    output_multiplier: f32,
+) -> f32 {
+    if !species_climbs(species, share, flora, RungKey::PlantField) {
+        return 0.0;
+    }
+    let patch = hypothetical_patch(
+        tile,
+        tile_capacity,
+        Some((species, share)),
+        forage,
+        RungKey::PlantField,
+    );
+    field_trade_goods(&patch, forage, flora, output_multiplier)
+}
+
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
 /// same Sustain skim `rung_payoff` gives any uncommitted patch.
 pub fn wild_payoff(
@@ -1052,12 +1095,14 @@ pub fn advance_forage_regrowth(
     mut registry: ResMut<ForageRegistry>,
     labor_config: Res<LaborConfigHandle>,
     flora_config: Res<crate::flora_config::FloraConfigHandle>,
+    sim_config: Res<crate::resources::SimulationConfig>,
     tile_registry: Res<crate::resources::TileRegistry>,
     tiles: Query<&Tile>,
 ) {
     let labor = labor_config.get();
     let forage = &labor.forage;
     let flora = flora_config.get();
+    let map_seed = sim_config.map_seed;
     for patch in registry.patches.values_mut() {
         // **Concentration, recomputed fresh from the tile every turn** — the plant twin of
         // `fauna::ecological_carrying_capacity`'s one write. Idempotent (`tile_K × concentration`
@@ -1071,7 +1116,7 @@ pub fn advance_forage_regrowth(
                 .index(patch.tile.x, patch.tile.y)
                 .and_then(|entity| tiles.get(entity).ok())
             {
-                let composition = tile_flora_composition(&flora, forage, tile);
+                let composition = tile_flora_composition(&flora, forage, tile, map_seed);
                 patch.carrying_capacity = effective_forage_capacity(
                     patch,
                     tile_forage_capacity(forage, tile),
@@ -1466,6 +1511,62 @@ pub(crate) fn managed_per_worker_fodder(
     forage_provisions(
         forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
         projected_fodder_per_biomass(patch, flora),
+        output_multiplier,
+    )
+}
+
+/// The **projected** trade conversion rate — a committed patch's `yield.trade_goods_per_biomass` as
+/// it will read once the improvement completes (the trade twin of [`projected_fodder_per_biomass`],
+/// `docs/plan_flora_roster.md` §6). Reads `0.0` for anything not committed to a trade crop, which is
+/// exactly what makes a grain/hay Field credit no trade and a cash crop no food, with **no `role`
+/// branch** — the vector does the routing. Used by the managed-trade payout and forecast so a cash
+/// Field being sown quotes the trade goods it *will* pay.
+fn projected_trade_per_biomass(patch: &ForagePatch, flora: &FloraConfig) -> f32 {
+    projected_species(patch, flora).map_or(0.0, |def| def.yield_.trade_goods_per_biomass)
+}
+
+/// The place-local managed **trade goods** a sown cash-crop **Field** (rung 3) credits to the
+/// faction `trade_goods` stockpile each turn — the exact trade twin of [`field_fodder`], routed by
+/// the yield vector's trade component instead of its fodder component. Same shape
+/// (`biomass × field_provisions_per_biomass × trade_quality`, no biomass drawn down), so a cash
+/// Field and a grain Field of the same standing crop harvest the same *fraction* of their biomass —
+/// they differ only in which account it lands in. `0` for any patch not committed to a cash crop, so
+/// a grain Field credits no trade, with no role branch.
+///
+/// `trade_quality` = the committed crop's `trade_goods_per_biomass` relative to the **wild provisions
+/// baseline** — the same normalization [`patch_species_quality`] uses for the food account, so the
+/// field rung's one rate dial (`field_provisions_per_biomass`) prices all three accounts
+/// consistently. **No Market `trade_goods_multiplier` is applied**: that markup is a Market-*policy*
+/// concept for wild commercial gathering; a managed Field harvest does not carry it.
+pub(crate) fn field_trade_goods(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    if forage.provisions_per_biomass <= 0.0 {
+        return 0.0;
+    }
+    let trade_quality = projected_trade_per_biomass(patch, flora) / forage.provisions_per_biomass;
+    patch.biomass
+        * forage.cultivation.field_provisions_per_biomass
+        * trade_quality
+        * output_multiplier
+}
+
+/// **What one worker can carry home from a cash-crop Field**, in trade-goods/turn — the trade twin of
+/// [`managed_per_worker_fodder`]. The crew carries the cash crop exactly as it carries grain, at the
+/// same per-worker throughput, so the collection cap on a cash Field is this, in trade units. `0` for
+/// a non-cash crop (a grain Field's trade collection is moot).
+pub(crate) fn managed_per_worker_trade(
+    patch: &ForagePatch,
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        forage_per_worker_biomass(forage, MANAGED_HARVEST_SEASON),
+        projected_trade_per_biomass(patch, flora),
         output_multiplier,
     )
 }

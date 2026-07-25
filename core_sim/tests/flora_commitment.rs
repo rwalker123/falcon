@@ -11,11 +11,33 @@
 //! `r`) the whole trade reduces to the product `concentration × species_rate` against the wild
 //! `1.0 × forage.provisions_per_biomass`. That product is exactly what these tests compare.
 
+use bevy::math::UVec2;
 use core_sim::{
-    FloraConfig, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG, FULL_TILE_CONCENTRATION,
-    NO_CONCENTRATION,
+    FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
+    FULL_TILE_CONCENTRATION, NO_CONCENTRATION,
 };
 use sim_runtime::TerrainType;
+
+/// A pinned seed for every per-tile realization sweep (§10).
+const SWEEP_SEED: u64 = 0x_F10A_5EED_C011_0010;
+/// Side of the tile grid a sweep samples per biome (8×8 = 64 tiles — enough draws to see a crop both
+/// dominant and absent across a biome).
+const SWEEP_SIDE: u32 = 8;
+
+/// The tile coords a realization sweep samples.
+fn sweep_tiles() -> impl Iterator<Item = UVec2> {
+    (0..SWEEP_SIDE).flat_map(|x| (0..SWEEP_SIDE).map(move |y| UVec2::new(x, y)))
+}
+
+/// `species`' realized share of `terrain`'s basket on tile `coord` — `0.0` where it is absent.
+fn realized_share(flora: &FloraConfig, terrain: TerrainType, species: &str, coord: UVec2) -> f32 {
+    flora
+        .realized_composition(terrain, coord, SWEEP_SEED)
+        .iter()
+        .find(|entry| entry.species == species)
+        .map(|entry| entry.share)
+        .unwrap_or(0.0)
+}
 
 /// f32 slack on a product of two normalized-ish terms.
 const EPSILON: f32 = 1e-6;
@@ -40,14 +62,15 @@ fn tended_patch(terrain: TerrainType, species: Option<&str>, capacity: f32) -> F
     patch
 }
 
-/// What one unit of this patch's food-bearing land is worth per turn, relative to the wild basket:
-/// `effective_capacity × conversion rate`. The rung's `r` is the same on both sides of every
-/// comparison below, so this product **is** the trade.
-fn commit_value(patch: &ForagePatch, terrain: TerrainType) -> f32 {
+/// What one unit of this patch's food-bearing land is worth per turn against `composition`, relative
+/// to the wild basket: `effective_capacity × conversion rate`. The rung's `r` is the same on both
+/// sides of every comparison below, so this product **is** the trade. Since §10 the composition is
+/// per-tile REALIZED (an uncommitted wild patch reads [`NO_CONCENTRATION`], so its value is
+/// composition-independent).
+fn commit_value(patch: &ForagePatch, terrain: TerrainType, composition: &[FloraShare]) -> f32 {
     let labor = labor();
     let flora = FloraConfig::builtin();
     let tile_capacity = labor.forage.capacity_for(terrain);
-    let composition = flora.composition(terrain);
     core_sim::effective_forage_capacity(patch, tile_capacity, composition, &labor.forage)
         * core_sim::patch_provisions_per_biomass(patch, &flora, &labor.forage)
 }
@@ -143,43 +166,66 @@ fn concentration_never_exceeds_the_tiles_own_capacity() {
     }
 }
 
-/// **The commit trade is real, in both directions.** Committing a tile to the plant that already
-/// dominates its basket beats leaving it wild; committing it to a marginal one does not. If the
-/// first were false rung 2 would be a rung nobody climbs; if the second were false it would be a
-/// free lunch, and the roster would have stopped being a decision.
+/// **The commit trade is real, and it is now PER-TILE** (§10). On its best country a crop realizes
+/// dominant on *some* tiles — where committing beats leaving it wild — while other tiles of the same
+/// biome realize a different crop entirely (not every alluvial tile is wheat, which is the whole
+/// point of realization). And a crop's best *country* still out-pays its marginal one: wheat's best
+/// alluvial realization beats its best rolling-hills realization. If the first were false rung 2
+/// would be a rung nobody climbs; if the second were false a river valley and a hillside would be
+/// interchangeable.
 #[test]
-fn committing_beats_wild_on_a_dominant_share_and_loses_on_a_marginal_one() {
+fn committing_is_worth_it_where_a_crop_realizes_dominant_and_a_tile_is_not_always_that_crop() {
     let labor = labor();
     let flora = FloraConfig::builtin();
-
-    // Wild Emmer is most of an alluvial plain's basket and a bit-part on rolling hills — the same
-    // plant, the same rung, the same rate, judged only by how much of the ground is already it.
-    let dominant = TerrainType::AlluvialPlain;
-    let marginal = TerrainType::RollingHills;
     let crop = "wild_emmer";
     assert!(
         flora.species[crop].cultivation_ceiling.allows_cultivate(),
         "the fixture crop must actually climb"
     );
 
-    for (terrain, expect_worth_it) in [(dominant, true), (marginal, false)] {
+    // The best realized commit value for `crop` on `terrain`, over a tile sweep — the tile where it
+    // realizes most dominant.
+    let best_realized = |terrain: TerrainType| -> f32 {
         let capacity = labor.forage.capacity_for(terrain);
-        let committed = commit_value(&tended_patch(terrain, Some(crop), capacity), terrain);
-        let wild = commit_value(&tended_patch(terrain, None, capacity), terrain);
-        if expect_worth_it {
-            assert!(
-                committed > wild,
-                "{terrain:?}: tending the dominant plant must beat the wild basket \
-                 ({committed} vs {wild})"
-            );
-        } else {
-            assert!(
-                committed < wild,
-                "{terrain:?}: tending a marginal plant must LOSE to the wild basket \
-                 ({committed} vs {wild}) — otherwise committing is free"
-            );
-        }
-    }
+        sweep_tiles()
+            .map(|coord| {
+                let comp = flora.realized_composition(terrain, coord, SWEEP_SEED);
+                commit_value(&tended_patch(terrain, Some(crop), capacity), terrain, &comp)
+            })
+            .fold(f32::MIN, f32::max)
+    };
+    // A wild (uncommitted) patch reads NO_CONCENTRATION, so its value is composition-independent.
+    let wild = |terrain: TerrainType| -> f32 {
+        let capacity = labor.forage.capacity_for(terrain);
+        commit_value(&tended_patch(terrain, None, capacity), terrain, &[])
+    };
+
+    let dominant = TerrainType::AlluvialPlain;
+    let marginal = TerrainType::RollingHills;
+
+    // On its best country, some tile realizes wheat dominant enough to beat the wild basket.
+    assert!(
+        best_realized(dominant) > wild(dominant),
+        "{dominant:?}: wheat's best realization must beat the wild basket \
+         ({} vs {})",
+        best_realized(dominant),
+        wild(dominant)
+    );
+    // But not every alluvial tile is wheat — realization spreads the crops, so wheat is *absent* on
+    // at least one sampled tile. That absence is what makes "which tile grows wheat" a real question.
+    assert!(
+        sweep_tiles().any(|coord| realized_share(&flora, dominant, crop, coord) == 0.0),
+        "{dominant:?}: some tile must realize a basket WITHOUT wheat — realization is what spreads \
+         the crops across a biome's tiles"
+    );
+    // And the best *country* still out-pays the marginal one: a river valley is not a hillside.
+    assert!(
+        best_realized(dominant) > best_realized(marginal),
+        "wheat's best alluvial realization must out-pay its best rolling-hills realization \
+         ({} vs {})",
+        best_realized(dominant),
+        best_realized(marginal)
+    );
 }
 
 /// **The PUBLISHED ratio IS the sim's own payoff, divided** — not a re-derivation that happens to
@@ -266,16 +312,18 @@ fn the_cultivate_ratio_carries_the_tended_regrowth_gain() {
     let flora = FloraConfig::builtin();
     let forage = &labor.forage;
 
-    // Reeds are the whole basket on a river delta, so concentration saturates and the ratio is
-    // exactly `tended_regrowth_gain × the crop's conversion advantage`.
+    // On a delta tile that realizes reeds DOMINANT (§10), concentration saturates and the ratio is
+    // exactly `tended_regrowth_gain × the crop's conversion advantage`. Take reeds' most-dominant
+    // realized share over a tile sweep — the delta tile a reed farmer would pick.
     let terrain = TerrainType::RiverDelta;
     let crop = "reed_and_root";
-    let share = flora
-        .composition(terrain)
-        .iter()
-        .find(|entry| entry.species == crop)
-        .expect("reeds are the delta's basket")
-        .share;
+    let share = sweep_tiles()
+        .map(|coord| realized_share(&flora, terrain, crop, coord))
+        .fold(f32::MIN, f32::max);
+    assert!(
+        share > 0.0,
+        "reeds must realize on some delta tile — they are the delta's dominant crop"
+    );
     let expected = forage.cultivation.tended_regrowth_gain
         * core_sim::concentration_for_share(
             share,

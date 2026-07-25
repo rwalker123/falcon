@@ -1421,63 +1421,78 @@ pub fn capture_snapshot(
                 &labor_config.forage,
                 FORECAST_OUTPUT_MULTIPLIER,
             );
-            let shares = tile_flora_composition(&flora_config, &labor_config.forage, tile)
-                .iter()
-                .map(|share| {
-                    let def = &flora_config.species[&share.species];
-                    // **What this tile would pay per turn once committed to THIS plant**, per rung —
-                    // through `forage::commit_payoff`, which builds the patch the sim would have and
-                    // asks the *same* payoff functions the sim quotes and pays each rung with
-                    // (`tended_provisions` / `field_provisions`). Nothing is re-derived here, which
-                    // is what stops the published number and the payout from drifting.
-                    let payoff = |rung| {
-                        commit_payoff(
-                            tile.position,
-                            tile_capacity,
-                            &share.species,
-                            share.share,
-                            &flora_config,
-                            &labor_config.forage,
-                            FORECAST_OUTPUT_MULTIPLIER,
-                            rung,
-                        )
-                    };
-                    let cultivate = payoff(RungKey::PlantTended);
-                    let sow = payoff(RungKey::PlantField);
-                    FloraShareInfo {
-                        species: share.species.clone(),
-                        display_name: def.display_name.clone(),
-                        share: share.share,
-                        // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
-                        // `cultivation_ceiling`, straight off the roster, so the client's crop
-                        // picker can grey out what is impossible without holding a roster of its
-                        // own. Species-global: it says nothing about whether this tile is a good
-                        // place for it — the payoff/ratio below answer that, and a legal-but-marginal
-                        // crop is exactly the loss §4.3 leaves the player free to choose.
-                        can_cultivate: def.cultivation_ceiling.allows_cultivate(),
-                        can_sow: def.cultivation_ceiling.allows_sow(),
-                        cultivate_payoff: cultivate,
-                        sow_payoff: sow,
-                        // **Is it worth it?** — the same payoffs over the same wild payoff, so the
-                        // ratio can never disagree with the numbers it relates.
-                        cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
-                        sow_yield_ratio: commit_yield_ratio(sow, wild),
-                        // **What a hay Field of this plant would pay into the FODDER account** (F3) —
-                        // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays
-                        // with, so the picker can show hay's value where `sow_yield_ratio` reads 0×.
-                        // `0` for a staple (no fodder in its vector) or a plant that cannot Sow here.
-                        sow_fodder_payoff: commit_fodder_payoff(
-                            tile.position,
-                            tile_capacity,
-                            &share.species,
-                            share.share,
-                            &flora_config,
-                            &labor_config.forage,
-                            FORECAST_OUTPUT_MULTIPLIER,
-                        ),
-                    }
-                })
-                .collect();
+            let shares =
+                tile_flora_composition(&flora_config, &labor_config.forage, tile, config.map_seed)
+                    .iter()
+                    .map(|share| {
+                        let def = &flora_config.species[&share.species];
+                        // **What this tile would pay per turn once committed to THIS plant**, per rung —
+                        // through `forage::commit_payoff`, which builds the patch the sim would have and
+                        // asks the *same* payoff functions the sim quotes and pays each rung with
+                        // (`tended_provisions` / `field_provisions`). Nothing is re-derived here, which
+                        // is what stops the published number and the payout from drifting.
+                        let payoff = |rung| {
+                            commit_payoff(
+                                tile.position,
+                                tile_capacity,
+                                &share.species,
+                                share.share,
+                                &flora_config,
+                                &labor_config.forage,
+                                FORECAST_OUTPUT_MULTIPLIER,
+                                rung,
+                            )
+                        };
+                        let cultivate = payoff(RungKey::PlantTended);
+                        let sow = payoff(RungKey::PlantField);
+                        FloraShareInfo {
+                            species: share.species.clone(),
+                            display_name: def.display_name.clone(),
+                            share: share.share,
+                            // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
+                            // `cultivation_ceiling`, straight off the roster, so the client's crop
+                            // picker can grey out what is impossible without holding a roster of its
+                            // own. Species-global: it says nothing about whether this tile is a good
+                            // place for it — the payoff/ratio below answer that, and a legal-but-marginal
+                            // crop is exactly the loss §4.3 leaves the player free to choose.
+                            can_cultivate: def.cultivation_ceiling.allows_cultivate(),
+                            can_sow: def.cultivation_ceiling.allows_sow(),
+                            cultivate_payoff: cultivate,
+                            sow_payoff: sow,
+                            // **Is it worth it?** — the same payoffs over the same wild payoff, so the
+                            // ratio can never disagree with the numbers it relates.
+                            cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
+                            sow_yield_ratio: commit_yield_ratio(sow, wild),
+                            // **What a hay Field of this plant would pay into the FODDER account** (F3) —
+                            // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays
+                            // with, so the picker can show hay's value where `sow_yield_ratio` reads 0×.
+                            // `0` for a staple (no fodder in its vector) or a plant that cannot Sow here.
+                            sow_fodder_payoff: commit_fodder_payoff(
+                                tile.position,
+                                tile_capacity,
+                                &share.species,
+                                share.share,
+                                &flora_config,
+                                &labor_config.forage,
+                                FORECAST_OUTPUT_MULTIPLIER,
+                            ),
+                            // **What a cash-crop Field of this plant would pay into the TRADE account**
+                            // (F4) — the exact trade twin, through the same `commit_trade_payoff` seam
+                            // the sim's `field_trade_goods` pays with, so the picker can show a cash
+                            // crop's value where `sow_yield_ratio` reads 0×. `0` for a staple/hay or a
+                            // plant that cannot Sow here.
+                            sow_trade_payoff: commit_trade_payoff(
+                                tile.position,
+                                tile_capacity,
+                                &share.species,
+                                share.share,
+                                &flora_config,
+                                &labor_config.forage,
+                                FORECAST_OUTPUT_MULTIPLIER,
+                            ),
+                        }
+                    })
+                    .collect();
             Some((tile.position, shares))
         })
         .collect();
