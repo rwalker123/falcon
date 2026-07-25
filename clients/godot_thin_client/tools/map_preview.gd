@@ -1432,7 +1432,7 @@ func _snapshot_pasture_wolf() -> Dictionary:
 		{
 			"id": PASTURE_WOLF_ID,
 			"label": "Grey Wolf Pack (%s)" % PASTURE_WOLF_ID,
-			"species": "Grey Wolf",
+			"species": "Grey Wolf Pack",
 			"size_class": "big",
 			"huntable": false,
 			"ecology_phase": "thriving",

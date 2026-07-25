@@ -113,9 +113,9 @@
 # ============================================================================
 #
 # The KEY IS THE ART FILENAME STEM, not the sim's species name — several species
-# alias onto one file (see the notes). 13 prompts; 12 files SHIPPED + wolf.png PENDING
-# (Predators Phase 1a — prompt below is written, art not yet generated). Until wolf.png
-# lands, "Grey Wolf Pack" falls through FaunaSprites' null return to the 🐺 emoji.
+# alias onto one file (see the notes). Coverage is complete: 13 files, 13 prompts
+# (wolf.png landed with Predators Phase 1a — the first predator sprite; "Grey Wolf
+# Pack" resolves via the `wolf` key, no longer the 🐺 emoji fallback).
 
 
 # aurochs.png — Wild Aurochs / bison / buffalo (aliases share this art)
