@@ -9,7 +9,52 @@ paths:
      clients/godot_thin_client/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
+<!-- HAND-EDITED SINCE EXTRACTION: the "rules that keep it safe" + "the process" sections
+     below were moved down out of the client hub (they only bind when you are inside
+     ui/hud/, which is exactly what this file's paths: gate on). A re-run of
+     split_claude_md.sh without re-pinning the blob would drop them. -->
+
 # Hud.gd and the ui/hud module reference
+
+The hub carries the module TAXONOMY — which kind a new piece of code is, and the rule that
+`HudLayer` is none of them. This file carries what you need once you are actually extracting.
+
+## The rules that keep it safe
+
+Each was learned the hard way — see `docs/plan_hud_decomposition.md`.
+
+- **Reflective / harness-reached methods stay as thin `HudLayer` delegators.** `Main.gd` reaches
+  `HudLayer` by `has_method` / `has_signal`, and a failed probe **fails SILENTLY** (no error — the
+  wiring simply never happens). So a controller emits its OWN signals and `HudLayer` RELAYS them, and a
+  `has_method`-probed name is never moved off `HudLayer` (it keeps a thin delegator). The same applies
+  to the `ui_preview` / `band_panel_preview` harnesses, which poke some `HudLayer` privates by DIRECT
+  field access — those hard-error on a move (budget for the repoints).
+- **Watch the hidden member straddle.** A bare `bool` / `int` / `Dictionary` written by one cluster and
+  read by another is invisible to a call-graph scan and silently welds the two. **Before splitting a
+  cluster, grep for shared MEMBERS, not just shared functions** — this bit the arc four times
+  (`_grid_wrap_horizontal`, the three tint scalars, `_food_flow_present`, `_band_zone_tier`).
+- **"An injection you still have to hold is relocated, not eliminated."** Moving a helper out while
+  keeping the Callable to reach it has not reduced coupling. The real win is a controller holding a
+  typed collaborator ref (`TargetingController` collapsed BandPanelController 6→3), or calling an
+  all-`static` layer directly (TopBarReadouts is now injection-free).
+- **A `const` moves iff EVERY reader moved — but dependency DIRECTION outranks that rule.** A leaf
+  (`HudStyle`, a vocab module) must NEVER be made to depend on `HudLayer`; a stray reader becomes a
+  **downward alias** instead. And `const` initializers evaluate at class load, so a cross-class
+  const-ref **cycle fails to load the WHOLE client** — keep vocab leaves acyclic (`HudConst` reads
+  nothing) and honor the co-location constraints noted on the vocab-module row.
+- **Extract shared layers BEFORE controllers.** A controller pulled out over a still-inline shared
+  layer needs a dozen Callable injections to reach it; extracting the all-`static` layer first drops
+  that surface dramatically (this took `DrawerComposeController` from 36 injections to 3).
+- **A `RefCounted` can't `add_child` or `get_tree()`** — pass the HUD `CanvasLayer` as a host `Node`
+  and parent / `await` through it (the `TurnOrbController` fork-panel pattern). **Reparenting a `%Name`
+  node clears `unique_name_in_owner`** — pass scene nodes by reference, never reparent them.
+
+**The process when a cluster genuinely needs extracting:** MEASURE first (grep the surface — functions
+AND members AND every reflective/harness seam), verify each "X-only" claim's REACHABILITY (not just its
+presence — a dead branch is not a dependency), then extract behaviour-neutral with `ui_preview` /
+`band_panel_preview` / `marker_field_guard` as the safety net. The same discipline applies to the other
+big client files that were decomposed the same way (the native `lib.rs` module map; `Inspector.gd` →
+per-tab panels).
 
 ## Key scripts
 

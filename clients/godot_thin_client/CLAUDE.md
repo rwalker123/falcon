@@ -39,45 +39,20 @@ cargo build -p shadow_scale_flatbuffers && cargo xtask godot-build
 cargo xtask decode-guard
 ```
 
-**Sockets** (defaults — see the discovery precedence below):
+**Sockets** (defaults — the client resolves each as env var → ports file → this constant):
 - Snapshot stream: `127.0.0.1:41002` (FlatBuffers via `SimulationConfig::snapshot_flat_bind`)
 - Command socket: `127.0.0.1:41001` (Protobuf `CommandEnvelope`)
 - Log stream: `127.0.0.1:41003` (length-prefixed JSON tracing frames)
-
-**Endpoint discovery — env var → ports file → hardcoded default** (`src/scripts/ServerPortsFile.gd`).
-The packaged playtest build pins the three ports above, but if they are busy at launch the server binds
-a different free block and publishes its choice to a **ports file**; the client reads it so the two
-halves still find each other. Every resolver (`Main._determine_stream_*` / `_determine_command_*`,
-`LogsPanel._determine_host` / `_determine_port`) applies the same three-step precedence:
-1. the explicit env var (`STREAM_HOST`/`STREAM_PORT`/`COMMAND_HOST`/`COMMAND_PORT`/`COMMAND_PROTO_PORT`/
-   `LOG_HOST`/`LOG_PORT`) — **the env var always wins**, so `scripts/run_stack.sh`, which exports them
-   explicitly, is completely unaffected by this feature;
-2. the ports file;
-3. the hardcoded constant.
-
-**Ports-file path** — derived from the environment only, so it matches the server's derivation with no
-shared library: `SIM_PORTS_FILE` (used verbatim if set), else Windows `%LOCALAPPDATA%\ShadowScale\ports.json`,
-macOS `$HOME/Library/Application Support/ShadowScale/ports.json`, Linux/other `$XDG_STATE_HOME/ShadowScale/ports.json`
-(falling back to `$HOME/.local/state/…`). It is a **real filesystem path, not `res://`/`user://`** — opened
-with `FileAccess.open(abs_path, READ)`. Content:
-`{"host":"127.0.0.1","snapshot":41000,"command":41001,"snapshot_flat":41002,"log":41003,"pid":1234}`.
 
 **THE STREAM PORT IS `snapshot_flat`, NOT `snapshot`.** `snapshot` is the legacy JSON snapshot socket;
 the client consumes the **FlatBuffers** one. Reading the wrong key yields a client that connects to a
 live socket and then **silently never renders** — no error, no frames — which is the easiest thing to
 get wrong here and the hardest to diagnose.
 
-The helper is a **static-func script, not an autoload** (it holds no node state, is needed by both
-`Main.gd` and `LogsPanel.gd` before the tree settles, and both `preload` it like their other
-collaborators; the static cache gives the once-per-launch read without an `[autoload]` entry). It reads
-and parses **once per launch and caches the result — including the absent/invalid one**. Missing file,
-unreadable file, malformed JSON, missing keys and non-integer/out-of-range ports **all degrade silently
-to the defaults**: a playtester running a normally-ported server must never see an error because of this.
-(It parses via `JSON.new().parse()` rather than the `JSON.parse_string()` static, which pushes an
-engine-level ERROR to the console on malformed input.) Exactly one informational line is logged, and only
-when the file is actually used. A **stale file from a crashed server is expected and tolerated** — the
-existing connect/retry behaviour handles the refused connection. The client is a **pure reader**: it
-never writes, deletes, or liveness-checks the file.
+The discovery precedence, the handshake-file path derivation and key contract, and
+`ServerPortsFile.gd`'s degrade-silently design are one spec shared with the server —
+`.claude/rules/core_sim/ports.md`, which loads on `ServerPortsFile.gd`, `Main.gd`/`LogsPanel.gd`
+and the server's `port_alloc.rs`.
 
 ---
 
@@ -86,67 +61,30 @@ never writes, deletes, or liveness-checks the file.
 `Hud.gd` (`class_name HudLayer`) was a **~9,850-line god-file**; it is now a **~1,400-line
 coordinator** across 21 modules (`docs/plan_hud_decomposition.md`). It stays small only if new code
 lands in the module that matches its KIND. **Before adding anything to `HudLayer`, ask which of these
-it is — `HudLayer` itself is none of them.** (The Inspector has the parallel "Tab-panel extraction
-pattern" below; this is the HUD's.)
+it is — `HudLayer` itself is none of them:**
 
-**The module taxonomy** (all under `src/scripts/ui/hud/`):
-- **State models** (`RefCounted`, pure DATA, no nodes) — cross-cluster snapshot/selection state:
-  `HudSelectionState` (what's selected), `HudBandLaborState` (the digested player world + optimistic
-  overlay + the thin band-labor readers), `ComposeState` (what's being dialed but not committed). A
-  field read by two+ clusters goes on a model, **not** as a `HudLayer` member.
-- **All-`static`, stateless shared layers** — pure logic shared by 2+ clusters, with state passed as
-  PARAMETERS (never a `_hud` back-ref): `SourceForecast` (yield/forecast math), `HudWidgets` (the
-  widget factory), `HudFormat` (string/vocab format), `DetailFormat` (BBCode detail render + its pure
-  producers). New shared math/format/widget code goes here; if a helper needs HUD state, thread it in.
-- **Vocab modules** (`class_name`d, ALL-`const`, zero funcs/vars) — the topic word/glyph/format/
-  threshold tables: `HudConst` (the universal leaf, reads nothing) + `Hud{Work,Compose,Flora,
-  Expedition,Attention,Selection,Disclosure}Vocab`. **A new label / glyph / threshold goes in the
-  matching vocab module — NEVER as a fresh `const` on `HudLayer`.** That block WAS the merge-conflict
-  surface the whole arc removed; regrowing it re-creates the problem.
-- **Controllers** (`RefCounted`) — one interactive cluster each, owning its nodes + per-cluster state +
-  render/build/dispatch: `SelectionCardController`, `DrawerComposeController`, `SubjectDrawerController`,
-  `BandPanelController`, `TargetingController`, `AttentionController`, `TurnOrbController`,
-  `TopBarReadouts`, `DisclosureController`, `BandDetailLines`, `LegendController`,
-  `CommandFeedController`, `DockRowController`. A new interactive feature EXTENDS the owning
-  controller or is a NEW controller — it does **not** land inline on `HudLayer`.
-- **`HudLayer` = the coordinator ONLY** — the `_ready` wiring, the reflective snapshot/selection ENTRY
-  points `Main` calls, thin reflective delegators, and signal relays. It HOLDS the controllers + models
-  as members; it does not hold feature logic. **A cluster of feature methods accreting on `HudLayer`
-  IS the smell — extract it.**
+- **State models** (`RefCounted`, pure DATA, no nodes) — `HudSelectionState`, `HudBandLaborState`,
+  `ComposeState`. A field read by two+ clusters goes on a model, **not** as a `HudLayer` member.
+- **All-`static`, stateless shared layers** — `SourceForecast`, `HudWidgets`, `HudFormat`,
+  `DetailFormat`. New shared math/format/widget code goes here, with state threaded in as
+  PARAMETERS (never a `_hud` back-ref).
+- **Vocab modules** (`class_name`d, ALL-`const`, zero funcs/vars) — `HudConst` +
+  `Hud{Work,Compose,Flora,Expedition,Attention,Selection,Disclosure}Vocab`. **A new label / glyph /
+  threshold goes in the matching vocab module — NEVER as a fresh `const` on `HudLayer`.** That block
+  WAS the merge-conflict surface the whole arc removed; regrowing it re-creates the problem.
+- **Controllers** (`RefCounted`) — one interactive cluster each, owning its nodes + per-cluster state
+  + render/build/dispatch (13 of them, listed in the rule). A new interactive feature EXTENDS the
+  owning controller or is a NEW controller — it does **not** land inline on `HudLayer`.
+- **`HudLayer` = the coordinator ONLY** — `_ready` wiring, the reflective entry points `Main` calls,
+  thin delegators, signal relays. **A cluster of feature methods accreting on `HudLayer` IS the smell
+  — extract it.**
 
-**The rules that keep it safe** (each learned the hard way — see `docs/plan_hud_decomposition.md`):
-- **Reflective / harness-reached methods stay as thin `HudLayer` delegators.** `Main.gd` reaches
-  `HudLayer` by `has_method` / `has_signal`, and a failed probe **fails SILENTLY** (no error — the
-  wiring simply never happens). So a controller emits its OWN signals and `HudLayer` RELAYS them, and a
-  `has_method`-probed name is never moved off `HudLayer` (it keeps a thin delegator). The same applies
-  to the `ui_preview` / `band_panel_preview` harnesses, which poke some `HudLayer` privates by DIRECT
-  field access — those hard-error on a move (budget for the repoints).
-- **Watch the hidden member straddle.** A bare `bool` / `int` / `Dictionary` written by one cluster and
-  read by another is invisible to a call-graph scan and silently welds the two. **Before splitting a
-  cluster, grep for shared MEMBERS, not just shared functions** — this bit the arc four times
-  (`_grid_wrap_horizontal`, the three tint scalars, `_food_flow_present`, `_band_zone_tier`).
-- **"An injection you still have to hold is relocated, not eliminated."** Moving a helper out while
-  keeping the Callable to reach it has not reduced coupling. The real win is a controller holding a
-  typed collaborator ref (`TargetingController` collapsed BandPanelController 6→3), or calling an
-  all-`static` layer directly (TopBarReadouts is now injection-free).
-- **A `const` moves iff EVERY reader moved — but dependency DIRECTION outranks that rule.** A leaf
-  (`HudStyle`, a vocab module) must NEVER be made to depend on `HudLayer`; a stray reader becomes a
-  **downward alias** instead. And `const` initializers evaluate at class load, so a cross-class
-  const-ref **cycle fails to load the WHOLE client** — keep vocab leaves acyclic (`HudConst` reads
-  nothing) and honor the co-location constraints noted on the vocab-module row.
-- **Extract shared layers BEFORE controllers.** A controller pulled out over a still-inline shared
-  layer needs a dozen Callable injections to reach it; extracting the all-`static` layer first drops
-  that surface dramatically (this took `DrawerComposeController` from 36 injections to 3).
-- **A `RefCounted` can't `add_child` or `get_tree()`** — pass the HUD `CanvasLayer` as a host `Node`
-  and parent / `await` through it (the `TurnOrbController` fork-panel pattern). **Reparenting a `%Name`
-  node clears `unique_name_in_owner`** — pass scene nodes by reference, never reparent them.
-
-**The process when a cluster genuinely needs extracting:** MEASURE first (grep the surface — functions
-AND members AND every reflective/harness seam), verify each "X-only" claim's REACHABILITY (not just its
-presence — a dead branch is not a dependency), then extract behaviour-neutral with `ui_preview` /
-`band_panel_preview` / `marker_field_guard` as the safety net. The same discipline applies to the other
-big client files that were decomposed the same way (the native `lib.rs` module map below; `Inspector.gd`
-→ per-tab panels).
+The six invariants that make an extraction safe (silent `has_method` probes, the hidden member
+straddle, relocated-vs-eliminated injections, `const` direction and load cycles, shared-layers-first,
+`RefCounted` node limits) and the measure-then-extract process are in
+`.claude/rules/client/hud-modules.md`, which loads on `Hud.gd` and `ui/hud/**` — i.e. exactly when
+you are in a position to break them. The Inspector has the parallel "Tab-panel extraction pattern"
+below; this is the HUD's.
 
 ---
 
@@ -197,6 +135,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard` | `tools/**` |
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
+| `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
 
 **Cross-reference convention.** A quoted phrase like `see "Map markers"` names a
 *section heading*, not a file. Resolve it with
@@ -227,27 +166,16 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 
 ## Typography & Theming
 
-> **This section described a system that does not exist.** There is **no
-> `INSPECTOR_FONT_SIZE` constant** anywhere in the client, no shared `Theme`
-> resource applied to the root `CanvasLayer`, and no `body`/`heading`/`caption`/
-> `legend`/`control` typography map. `Typography.gd` is a **37-line no-op shim** —
-> `apply()`, `apply_theme()`, `theme()` and `size_for()` all return null or do
-> nothing. Only `DEFAULT_FONT_SIZE := 18` and `base_font_size()` carry real values,
-> consumed at a handful of `Inspector.gd` call sites.
-
-**What actually works today:** set sizes directly with
-`add_theme_font_size_override`, as `TurnOrb.gd` does (`GLYPH_FONT_SIZE`,
-`BADGE_FONT_SIZE`) and `NarrativeForkPanel.gd` does for its prose. The live base
-size is `Inspector.get_resolved_font_size()`.
+**There is no typography system.** Set font sizes directly with
+`add_theme_font_size_override`, as `TurnOrb.gd` does (`GLYPH_FONT_SIZE`, `BADGE_FONT_SIZE`) and
+`NarrativeForkPanel.gd` does for its prose. `Typography.gd` is a **no-op shim** — styling
+through it fails *silently* — and the autopsy is in `.claude/rules/client/sprites-widgets.md`.
 
 **The palette authority is `HudStyle.gd`**, and it is real: `SIGNAL`,
 `SIGNAL_WASH`, `DANGER`, `WARN`, `HEALTHY`, `INK`, `INK_DIM`, `INK_FAINT`,
 `GROUND`, `PANEL_SOLID`, `LINE_SOFT`, plus `card_stylebox()`, `banner_stylebox()`,
 `empty_stylebox()`, `apply_button(btn, "primary"|"ghost")`. **No hardcoded hexes**
 — the one surviving exception is documented at its call site.
-
-Building a panel that expects `Typography` to style it is the trap this note
-exists to prevent; it fails silently, since every method returns without error.
 
 ---
 

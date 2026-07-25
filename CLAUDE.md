@@ -1,6 +1,8 @@
 # Agent Collaboration Guide
 
-Contributors are expected to follow DRY and SOLID principles to ensure code quality, maintainability, and a strong user experience. Avoid shortcuts and prioritize best practices in both development and design.
+**Shadow-Scale** — a turn-based strategy game. A headless Bevy/Rust simulation (`core_sim`)
+resolves turns and streams FlatBuffers snapshots to a Godot thin client
+(`clients/godot_thin_client`); `sim_schema` is the contract between the two halves.
 
 ## Document Hierarchy
 
@@ -45,11 +47,9 @@ The backlog lives in **GitHub Issues + the Falcon Backlog project**:
   | `/task-status` | move Status/Priority/Subsystem, toggle `blocked` / `good-next` |
   | `/task-report` | read the board — in progress, blocked, ready to pick up |
 
-> There is **no `TASKS.md`**. It was the backlog until 2026-07-23, when the open items were
-> migrated to Issues; the file was retained as a historical record for a day and then deleted,
-> because a frozen backlog beside a live one only invites edits to the wrong place. Its
-> engineering reasoning was already duplicated in the subsystem `CLAUDE.md` files, which is
-> where as-built notes belong. `git log -- TASKS.md` still has it if you need the history.
+> There is **no `TASKS.md`** — it was the backlog until 2026-07-23 and was deleted after the
+> open items moved to Issues, because a frozen backlog beside a live one only invites edits to
+> the wrong place. `git log -- TASKS.md` has the history.
 
 ---
 
@@ -121,9 +121,8 @@ human owns the merge. Violating the rules below has cost real work.
 ## PR Expectations for Agents
 - Mention in summaries which document(s) were touched and why
 - Verify narrative additions remain consistent with implementation notes
-- When modifying subsystem code, check if the corresponding CLAUDE.md needs updates
-
-Stay consistent with this flow to keep design intent and engineering execution aligned.
+- When modifying subsystem code, check whether the **rule file that owns the arc** needs
+  updating — see "The hub files are not where rationale goes"
 
 ---
 
@@ -153,49 +152,19 @@ easy:
 
 ## Delegating Implementation to Coder Agents
 
-Long sessions fill the orchestrator's context fast because writing code churns
-through file reads, builds, and test output. Two subagents in `.claude/agents/`
-absorb that churn — they do the read → edit → build → test loop in their own
-context and return only a terse report:
+Writing code churns through file reads, builds, and test output, which fills the
+orchestrator's context fast. **`server-dev`** (Rust: `core_sim`, `sim_runtime`,
+`sim_schema`, `xtask`) and **`client-dev`** (Godot/GDScript + the native extension)
+absorb that churn — they run the read → edit → build → test loop in their own context
+and return a terse report. Their definitions in `.claude/agents/` state what each owns
+and how it self-verifies; what the orchestrator has to get right is:
 
-- **`server-dev`** — Rust side (`core_sim`, `sim_runtime`, `sim_schema`, `xtask`).
-  Self-verifies with `cargo fmt` + `clippy -D warnings` + `cargo test`.
-- **`client-dev`** — Godot/GDScript + native extension (`clients/godot_thin_client`).
-  Self-verifies with `cargo xtask godot-build` + the ui_preview PNG harness (it
-  reads the rendered frames).
-
-**The workflow:** the orchestrator owns design and produces a *complete,
-comprehensive spec* — decided approach, files to touch, contracts, edge cases,
-config levers — and the agent just implements it. Design and architecture
-decisions stay with the orchestrator; only settled specs are delegated. Do **not**
-hand an agent an open-ended or ambiguous task — if the spec isn't complete enough
-to implement without further design judgment, it isn't ready to delegate.
-
-Guidance:
-- Split cross-cutting work: `server-dev` does the schema/sim half, `client-dev`
-  consumes it; each flags the other's remaining work in its report.
-- Continue the *same* agent (via SendMessage) for iterative follow-ups so its
-  context persists, rather than cold-starting a fresh one and re-explaining.
-- Agents don't branch or commit — they leave the tree changed and report; git
+- **Design stays here.** The orchestrator produces a *complete, decided* spec —
+  approach, files, contracts, edge cases, config levers. A task still needing design
+  judgment isn't ready to delegate.
+- **Split cross-cutting work deliberately** — `server-dev` does the schema/sim half,
+  `client-dev` consumes it; each flags the other's remaining work in its report.
+- **Continue the *same* agent (via SendMessage)** for follow-ups so its context
+  persists, rather than cold-starting a fresh one and re-explaining.
+- **Agents don't branch or commit** — they leave the tree changed and report; git
   stays with the orchestrator.
-
----
-
-## UI Panel Sizing
-**The rule is "never reimplement bespoke height/scroll logic."** Which shared
-helper you reuse depends on what the panel *is* — there are two, and picking the
-wrong one silently misbehaves rather than failing:
-
-- **Free-floating panels** (anchored against the viewport — selection panel,
-  hex-info widgets): `clients/godot_thin_client/src/scripts/ui/AutoSizingPanel.gd`.
-  Attach the script to the panel node and call `fit_to_content`. It sizes against
-  the *viewport*, using `global_position` + anchors + `offset_bottom`.
-- **Dock cards** (children of a `PanelDock` `VBoxContainer` — command feed,
-  Telling panel): `src/scripts/ui/hud/DockScrollFit.gd`, via `PanelCard`. A dock
-  child has its size overwritten by the container on every layout pass, and the
-  ceiling that matters is the *dock's* remaining height, not the window's — so
-  `AutoSizingPanel` is the wrong tool there and will fight the container.
-
-If you find yourself writing height math by hand, you have picked the wrong
-helper or found a third case worth extracting — extract it rather than
-open-coding it.
