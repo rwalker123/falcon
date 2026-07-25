@@ -41,6 +41,67 @@ is unchanged. The herd's per-policy rows re-key themselves off `FollowPolicy::as
 returns `"deplete"`. The rung is named for its harvest **pressure** rather than a product, because
 every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md` §2.
 
+> ### THE FORECAST IS A PAIR, not a food scalar (issue #337)
+>
+> Every field of `SourceYieldForecast` is a **`YieldPair { provisions, trade_goods }`** —
+> `per_worker_yield`, all five `ceiling_*`, `managed_yield`, `pastoral_yield`, `body_mass_yield`. So is
+> `SourceYield`'s telemetry: `trade` (the twin of `actual`) and `realized_trade` (the twin of
+> `realized`) ride beside the food ones.
+>
+> **Why vectorised rather than sibling `*_trade` scalars.** A wolf's food ceilings are all `0`
+> (`hunt_yield.provisions_per_biomass == 0`), so a food-denominated forecast cannot express its yield
+> **at all** — the client would read "0/turn" on every rung and the forecast would be *false*, not
+> merely incomplete. Sibling scalars double the surface and let the two halves drift under a retune;
+> one pair per rung cannot, because `ceiling_for` hands both components to every reader at once.
+>
+> **`forecast == actual` now holds PER COMPONENT**, and that is the invariant this whole arc rests on:
+> if the forecast can promise a number the sim will not pay in *either* currency, the UI lies. Pinned
+> on the **exported snapshot** (not the in-process struct) by
+> `hunt_yield_vector::the_forecast_equals_the_paid_take_in_both_products_on_the_wire`, across a
+> defaulting species and an inedible one × all four extractive rungs.
+>
+> **Quantisation picks an AXIS, and it is never assumed to be food.** `forecast_production_and_take`
+> runs `quantise_animal_take` on `SourceYieldForecast::ratio_axis()` — the first component with a
+> *positive* per-biomass rate (`Provisions` preferred, so every edible species divides exactly the
+> numbers it divided before this arc; `TradeGoods` for a wolf) — then `YieldPair::rescaled_to` carries
+> the one animal count back into the other currency. An animal count is a **ratio**, and a ratio is
+> unit-free: any positive component gives the same answer, a zero one gives `0/0`. Correspondingly
+> **"does this source quantise?" is now `!body_mass_yield.is_zero()`**, not
+> `body_mass_yield.provisions > 0` — the old test would call a pack of wolves *continuous* and hand
+> back a smooth fraction of a wolf. Every pre-#337 source reads identically (plants are zero in both
+> components), so it is a widening, not a change.
+>
+> **No trade `arrivals` schedule, deliberately.** `arrivals` answers *"when does food land so my people
+> eat"* — a question with a consumption clock. Trade goods go to a faction stockpile nothing consumes
+> per turn, so a trade timetable would answer a question nobody asks. **And `food_income` stays
+> `Σ actual` and must never include `trade`**: that sum is one side of the pinned larder identity
+> `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and trade never touches the
+> larder.
+>
+> **THE PLANT SIDE'S TRADE COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
+> `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` throughout, and `realized_trade` is `0` on every
+> forage source: the `Deplete` gather really does sell (`labor_config`'s `forage.market.*`), the sim
+> simply has not *projected* it — #337 vectorised the animal web, and the plant web's trade forecast is
+> its own arc. The trade a gather **actually earns** is reported (`SourceYield::trade` /
+> `LaborAssignmentState::trade_yield`). It is safe to ship because of the rendering rule below.
+>
+> **The client renders a trade line ONLY when `trade_goods > 0`** — exactly the rule flora's cash-crop
+> line already uses — so a plant shows *no trade line* rather than a false "0 trade goods/turn".
+>
+> **New wire fields** (each appended at the END of its table — slots are positional):
+> `HuntPolicyCeiling.tradeGoodsPerTurn` · `HuntTripEstimate.deliveredTrade` (beside the already-shipped
+> `deliversTrade`) · `HerdTelemetryState.perWorkerTrade` / `tradePerAnimal` ·
+> `LaborAssignment.tradeYield` / `realizedTradeYield`.
+>
+> **`PopulationCohortState.huntPerWorkerProvisions` is SPECIES-BLIND — do not clamp a per-herd preview
+> with it.** It is a per-*cohort* echo of the global `hunt.provisions_per_biomass`, and a cohort has no
+> herd, so there is no species to resolve a vector from; left unqualified it quotes a wolf's hunters a
+> positive food rate against all-zero food ceilings — a contradiction on the wire. The species-aware
+> rates are the herd's own `perWorkerYield` / `perWorkerTrade`, straight off its `hunt_forecast`, so
+> `min(workers × perWorkerYield, huntPolicyCeilings[p].provisionsPerTurn)` is honest per component.
+> The cohort field survives as the expedition **outfit** lever (rough carry arithmetic before a target
+> is chosen); for a chosen target the sim exports the answer in `huntTripEstimates`.
+
 > **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
 > TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
 > `hunt_credit_ceiling`, so each extractive/investment ceiling is `min(hunt_policy_rate, biomass)` —
@@ -110,7 +171,11 @@ projection* is the sustained MSY. Pinned by
   called by both `systems::hunt_take` / the corral arm of `advance_labor_allocation` **and**
   `hunt_forecast`. The shared `SourceYieldForecast` struct (with `::tended`) is the common return shape.
   A corralled herd's `managed_yield` is **gross**; its `penUpkeep` is exported separately.
-- Guarded by `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_policy_and_staffing`
+- Guarded across **both products, on the exported snapshot**, by
+  `core_sim/tests/hunt_yield_vector.rs` (`the_forecast_equals_the_paid_take_in_both_products_on_the_wire`,
+  `a_wolves_exported_ceilings_read_no_food_and_real_trade_on_every_rung`,
+  `the_eradicate_ceiling_carries_the_windfall_for_an_edible_species`), and on the food component by
+  `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_policy_and_staffing`
   (every policy × labor-bound/ceiling-bound staffing, comparing against the payout of a real
   `advance_labor_allocation` run) and `tended_patch_and_corral_forecast_full_yield_with_one_worker`.
   **Any change to the take math must go through these helpers** — never re-derive a ceiling or a

@@ -901,7 +901,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     );
 
     let total: f32 = schedule.iter().sum();
-    let smooth = realized * horizon as f32;
+    let smooth = realized.provisions * horizon as f32;
     // One whole animal's provisions: the most that can still be sitting in the bank, undelivered.
     let one_animal = core_sim::herd_hunt_yield(herd, &fauna)
         .apply(herd.body_mass, 1.0)

@@ -220,6 +220,8 @@ fn create_populations<'a>(
                                 overdraws: assignment.overdraws,
                                 realizedYield: assignment.realized_yield,
                                 arrivalSchedule: arrival_schedule,
+                                tradeYield: assignment.trade_yield,
+                                realizedTradeYield: assignment.realized_trade_yield,
                             },
                         )
                     })

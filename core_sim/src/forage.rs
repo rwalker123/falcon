@@ -67,7 +67,7 @@ use crate::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
-    fauna_config::EcologyConfig,
+    fauna_config::{EcologyConfig, YieldPair},
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
@@ -1362,7 +1362,7 @@ pub(crate) fn forage_per_worker_biomass(forage: &ForageLaborConfig, seasonal: f3
 
 /// Biomass → provisions for a gather take (× the caller's productivity multiplier) — the one
 /// conversion `forage_take` pays, shared with the forecast. The plant mirror of
-/// `fauna::hunt_provisions`.
+/// the animal web's `HuntYield::apply` (which retired the global `fauna::hunt_provisions`).
 pub(crate) fn forage_provisions(
     biomass_take: f32,
     provisions_per_biomass: f32,
@@ -1591,7 +1591,30 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
 /// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
 /// harvest grain by the handful. The two food webs quantise differently because *their products
 /// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
-const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
+const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
+
+/// **The plant web's forecast trade component — a KNOWN GAP, not a claim that plants sell nothing**
+/// (`docs/plan_hunt_yield_model.md` §8, issue #337).
+///
+/// The `Deplete` gather really does sell its take (`labor_config`'s `forage.market.*`, credited by
+/// `advance_labor_allocation`), so a patch's honest trade forecast is **not** zero — the sim simply
+/// has not projected it yet, exactly as it did not before this arc. #337 vectorised the *animal* web;
+/// the plant web's trade forecast is its own arc.
+///
+/// It is safe to ship as `0.0` because of the client-side rule the animal side introduced: a trade
+/// line renders **only when `trade_goods > 0`** — flora's cash-crop rule — so a patch shows *no trade
+/// line* rather than a false "0 trade goods/turn". Do not let a reader treat this as "plants have no
+/// trade value".
+pub(crate) const PLANT_TRADE_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
+
+/// A plant source's provisions-only forecast component: the food number the plant web computes, with
+/// its trade component the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
+fn plant_food_only(provisions: f32) -> YieldPair {
+    YieldPair {
+        provisions,
+        trade_goods: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+    }
+}
 
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
 /// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same resolved ecology
@@ -1624,8 +1647,13 @@ pub(crate) fn forage_forecast(
     // and be paid, exactly nothing).
     if patch.is_field() {
         return SourceYieldForecast::managed(
-            field_provisions(patch, forage, flora, output_multiplier),
-            managed_per_worker_yield(patch, forage, flora, output_multiplier),
+            plant_food_only(field_provisions(patch, forage, flora, output_multiplier)),
+            plant_food_only(managed_per_worker_yield(
+                patch,
+                forage,
+                flora,
+                output_multiplier,
+            )),
             // Plants never quantise — you harvest grain by the handful (slice 8; see
             // `SourceYieldForecast::body_mass_yield`). The whole-animal rule is animal-only because
             // *the products differ*, not by omission.
@@ -1637,7 +1665,7 @@ pub(crate) fn forage_forecast(
     // below is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, flora, forage);
     let ceiling = |policy| {
-        forage_provisions(
+        plant_food_only(forage_provisions(
             forage_policy_ceiling(
                 policy,
                 patch.biomass,
@@ -1649,14 +1677,14 @@ pub(crate) fn forage_forecast(
             .clamp(0.0, patch.biomass),
             rate,
             output_multiplier,
-        )
+        ))
     };
     SourceYieldForecast {
-        per_worker_yield: forage_provisions(
+        per_worker_yield: plant_food_only(forage_provisions(
             forage_per_worker_biomass(forage, seasonal),
             rate,
             output_multiplier,
-        ),
+        )),
         body_mass_yield: PLANTS_DO_NOT_QUANTISE,
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
@@ -1683,7 +1711,7 @@ pub(crate) fn forage_forecast(
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
         // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
         // one field doing both jobs.)
-        managed_yield: tended_provisions(patch, forage, flora, output_multiplier),
+        managed_yield: plant_food_only(tended_provisions(patch, forage, flora, output_multiplier)),
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
@@ -1934,6 +1962,10 @@ pub fn forage_source_yield_preview(
         workers,
         policy,
         realized,
+        // The plant web's steady TRADE projection is the same gap the forecast carries — see
+        // [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`]. The trade a Deplete gather *actually* earns is
+        // reported (the resolved row fills `SourceYield::trade`); only the projection is missing.
+        PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
         arrivals,
     )
 }

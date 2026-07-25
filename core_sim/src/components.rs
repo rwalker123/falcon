@@ -866,7 +866,32 @@ pub struct SourceYield {
     /// **The discrete arrival schedule** — `arrivals[i]` = the food landing `i + 1` turns from now,
     /// `labor_config.arrivals_horizon_turns` entries long, `0.0` on a turn nothing lands. See the
     /// struct-level doc above.
+    ///
+    /// **There is deliberately NO trade arrivals schedule.** `arrivals` is a *larder* concept — it
+    /// answers *"when does food land so my people eat"*, a question with a consumption clock ticking
+    /// against it. Trade goods go to a faction stockpile that nothing consumes per turn, so a
+    /// per-turn arrival timetable for them would answer a question nobody is asking. The omission is
+    /// a decision, not an oversight (`docs/plan_hunt_yield_model.md` §9).
     pub arrivals: Vec<f32>,
+    /// **Trade goods this source actually produced this turn** — the twin of [`SourceYield::actual`],
+    /// in the *other* currency (`docs/plan_hunt_yield_model.md`, issue #337). Every harvesting policy
+    /// now sells the species' trade component, so this is non-zero on rungs that earned nothing before
+    /// the arc, and it is the ONLY thing a wolf hunt produces.
+    ///
+    /// **It is NOT food income.** `PopulationCohortState.food_income` stays `Σ actual` and must never
+    /// include this — that sum is one side of the larder identity
+    /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and trade goods never touch
+    /// the larder (they credit `FactionInventory`). Pinned by
+    /// `core_sim/tests/hunt_yield_vector.rs`.
+    pub trade: f32,
+    /// **The steady forward-projected trade/turn** — the twin of [`SourceYield::realized`], from the
+    /// same forward simulation (`project_realized_hunt` returns both components), so the smooth trade
+    /// headline can't drift from the smooth food one.
+    ///
+    /// **`0.0` on every forage source**, and that is a known gap rather than a claim: the plant web's
+    /// trade forecast is a separate arc (#337 covers the animal web). The `actual` trade a Deplete
+    /// gather earns *is* reported — only the projection is missing.
+    pub realized_trade: f32,
 }
 
 impl SourceYield {
@@ -881,8 +906,10 @@ impl SourceYield {
         workers_needed: 0,
         // Nothing was taken, so nothing was overdrawn.
         overdraws: false,
-        // Nothing was taken, so the steady average is zero too.
+        // Nothing was taken, so the steady average is zero too — in either currency.
         realized: 0.0,
+        trade: 0.0,
+        realized_trade: 0.0,
         // Nothing is coming either. An **empty** schedule, not a run of zeros: a source with no row
         // has not been projected at all, and the client renders "no data" rather than "famine".
         // `Vec::new` allocates nothing, so this stays a `const`.

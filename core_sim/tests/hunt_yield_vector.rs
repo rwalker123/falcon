@@ -15,16 +15,17 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    advance_labor_allocation, build_headless_app, hunt_source_yield_preview,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_herds, spawn_initial_world, CombatConfigHandle, CommandEventLog,
     CreaturesConfigHandle, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
     FaunaConfig, FaunaConfigHandle, FloraConfigHandle, FogRevealLedger, FollowPolicy,
     ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
     HuntYield, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, TileRegistry,
-    WellbeingConfigHandle, FOOD,
+    ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 /// The four **extractive** rungs — the intensity ladder. Every one of them must pay the species'
@@ -443,4 +444,353 @@ fn edible_and_tradeable_are_derived_from_the_vector() {
         trade_goods_per_biomass: 0.0,
     };
     assert!(!pest.edible() && !pest.tradeable() && pest.yields_nothing());
+}
+
+// ---------------------------------------------------------------------------------------------------
+// B2 — the forecast and the wire
+// ---------------------------------------------------------------------------------------------------
+
+/// The two shipped species this file contrasts: one that omits `hunt_yield` (so both components fall
+/// back to the globals) and the one that declares an inedible, pelt-bearing vector.
+const DEFAULTING_SPECIES: &str = "Red Deer";
+const INEDIBLE_SPECIES: &str = "Grey Wolf Pack";
+
+/// A **full headless app** (the real turn pipeline + the real snapshot capture) with its first game
+/// herd re-shaped into `display_name` at [`TEST_CAPACITY`], returning `(app, herd_id, herd_tile)`.
+///
+/// The B1 tests run on a light harness; these need the *shipped representation*, so they go through
+/// `build_headless_app` + `recapture_snapshot_in_place` — the same path
+/// `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` uses.
+fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
+    let mut app = build_headless_app();
+    app.update();
+    let id = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry
+            .herds
+            .iter()
+            .find(|h| h.id.starts_with("game_"))
+            .map(|h| h.id.clone())
+            .expect("the map seeded game")
+    };
+    let body_mass = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .species_by_display(display_name)
+        .expect("the species is in the shipped roster")
+        .body_mass;
+    let pos = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.species = display_name.to_string();
+        herd.body_mass = body_mass;
+        // Freeze the range-derived K so the forecast and the take see the same capacity: this file
+        // measures the YIELD VECTOR, not the grazing loop.
+        herd.fodder_per_biomass = 0.0;
+        herd.carrying_capacity = TEST_CAPACITY;
+        herd.biomass = TEST_CAPACITY;
+        herd.biomass_before_regrowth = TEST_CAPACITY;
+        herd.hunt_credit = 0.0;
+        herd.position()
+    };
+    (app, id, pos)
+}
+
+/// **Mark the herd's tile `Active` for the viewer faction.** `WorldSnapshot.herds` is fog-filtered
+/// (see "Herd display telemetry is FOG-FILTERED" in the fauna rules), so an unwatched herd is simply
+/// absent from the shipped snapshot — these tests read exported per-herd rows, so they must first put
+/// eyes on it. The `expedition_hunt::reveal_herds` pattern.
+fn reveal_herd(app: &mut App, id: &str) {
+    let pos = {
+        let registry = app.world.resource::<HerdRegistry>();
+        registry.find(id).map(|herd| herd.position())
+    };
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    let viewer = app.world.resource::<core_sim::ViewerFaction>().0;
+    let mut ledger = app.world.resource_mut::<core_sim::VisibilityLedger>();
+    let map = ledger.ensure_faction(viewer, grid.x, grid.y);
+    if let Some(pos) = pos {
+        map.mark_active(pos.x, pos.y, 0);
+    }
+}
+
+/// A resident band of `workers` hunting `fauna_id` under `policy`, standing on the herd's tile.
+fn spawn_resident_hunters(
+    app: &mut App,
+    pos: UVec2,
+    fauna_id: &str,
+    policy: FollowPolicy,
+    workers: u32,
+) -> bevy::prelude::Entity {
+    let tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(pos.x, pos.y)
+        .expect("the herd's tile resolves");
+    app.world
+        .spawn((
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 200,
+                children: scalar_zero(),
+                working: scalar_from_f32(workers as f32),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            ResidentBand,
+            LaborAllocation {
+                assignments: vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: fauna_id.to_string(),
+                        policy,
+                    },
+                    workers,
+                }],
+                ..Default::default()
+            },
+        ))
+        .id()
+}
+
+/// The **pre-commit forecast** for this herd/staffing/policy — the assign-time seed
+/// (`hunt_source_yield_preview`), i.e. the pair the client is shown *before* committing. Read before
+/// the turn resolves.
+fn precommit_pair(app: &App, id: &str, policy: FollowPolicy, workers: u32) -> (f32, f32) {
+    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let labor = app.world.resource::<LaborConfigHandle>().get();
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).expect("the herd is on the map");
+    let seed = hunt_source_yield_preview(
+        herd,
+        &fauna,
+        &ladder,
+        labor.hunt.per_worker_biomass_capacity,
+        FORECAST_OUTPUT_MULTIPLIER,
+        workers,
+        policy,
+        labor.yield_average_horizon_turns,
+        labor.arrivals_horizon_turns,
+    );
+    (seed.actual, seed.trade)
+}
+
+/// A content band's output multiplier — morale `1.0`, so the forecast and the take share it.
+const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
+
+/// The **exported** `(actualYield, tradeYield)` for a band's single assignment, read off the shipped
+/// snapshot rather than the in-process `SourceYield`.
+fn exported_pair(app: &App, band: bevy::prelude::Entity) -> (f32, f32) {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let cohort = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == band.to_bits())
+        .expect("the hunting band is in the snapshot");
+    let row = cohort
+        .labor_assignments
+        .first()
+        .expect("its one Hunt assignment is exported");
+    (row.actual_yield, row.trade_yield)
+}
+
+/// The **exported** per-policy ceiling rows for a herd, as `(policy, provisions, trade)`.
+fn exported_ceilings(app: &App, id: &str) -> Vec<(String, f32, f32)> {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is in the snapshot");
+    herd.hunt_policy_ceilings
+        .iter()
+        .map(|row| {
+            (
+                row.policy.clone(),
+                row.provisions_per_turn,
+                row.trade_goods_per_turn,
+            )
+        })
+        .collect()
+}
+
+/// **7. `forecast == actual` for BOTH products, for a wolf and for a deer — ON THE WIRE.**
+///
+/// **The arc's load-bearing test.** The pre-commit forecast, the assign-time seed and the resolved
+/// take all read the same helpers, so what the client is shown before committing must be exactly what
+/// the sim then pays — *per component*. A food-only forecast could not even state a wolf's yield (all
+/// its food ceilings are `0`), which is precisely why `SourceYieldForecast` is a `YieldPair` rather
+/// than a scalar with a bolted-on sibling: two halves can drift, one pair cannot.
+///
+/// Asserted on the **exported snapshot** (`laborAssignments[].actualYield` / `.tradeYield`), not on
+/// the in-process struct, so it pins the shipped representation — an export that projected the wrong
+/// component would pass an in-memory check and still lie to the client.
+#[test]
+fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
+    for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
+        for policy in EXTRACTIVE {
+            let (mut app, id, pos) = headless_with_species(species);
+            let forecast = precommit_pair(&app, &id, policy, UNBOUNDED_CREW);
+            let band = spawn_resident_hunters(&mut app, pos, &id, policy, UNBOUNDED_CREW);
+
+            app.world.run_system_once(advance_labor_allocation);
+            recapture_snapshot_in_place(&mut app.world);
+            let paid = exported_pair(&app, band);
+
+            assert!(
+                (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
+                "{species} {policy:?}: forecast FOOD {} must equal the paid {}",
+                forecast.0,
+                paid.0
+            );
+            assert!(
+                (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
+                "{species} {policy:?}: forecast TRADE {} must equal the paid {}",
+                forecast.1,
+                paid.1
+            );
+            // …and the test must not be vacuously comparing two zeros: every rung of every species
+            // here pays *something*, in one currency or the other.
+            assert!(
+                paid.0 > 0.0 || paid.1 > 0.0,
+                "{species} {policy:?}: the harness must actually take something ({paid:?})"
+            );
+        }
+    }
+}
+
+/// **8. A wolf's exported per-policy ceilings read ZERO food and NON-ZERO trade, on all four rungs.**
+///
+/// The wire-level statement of *product × intensity*: the rungs are a pressure ladder over one
+/// species' vector, so an inedible quarry offers every rung — each a meaningful rate at which to
+/// collect pelts — and every one of them is honestly `0` food. Also pins the trip-estimate flags,
+/// which say the same thing for an expedition: "pelts, no meat", never "denial mission".
+#[test]
+fn a_wolves_exported_ceilings_read_no_food_and_real_trade_on_every_rung() {
+    let (mut app, id, _pos) = headless_with_species(INEDIBLE_SPECIES);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let rows = exported_ceilings(&app, &id);
+    for policy in EXTRACTIVE {
+        let key = policy.as_str();
+        let (_, provisions, trade) = rows
+            .iter()
+            .find(|(name, _, _)| name == key)
+            .unwrap_or_else(|| panic!("a wolf offers the full ladder — {key} row missing"));
+        assert_eq!(
+            *provisions, 0.0,
+            "{key}: a wolf is not food — its exported food ceiling must be 0"
+        );
+        assert!(
+            *trade > 0.0,
+            "{key}: a wolf is a pelt — its exported trade ceiling must be positive, got {trade}"
+        );
+    }
+
+    // The expedition side says the same thing with two flags rather than two numbers.
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the herd is in the snapshot");
+    assert!(
+        !herd.hunt_trip_estimates.is_empty(),
+        "a huntable herd exports trip estimates"
+    );
+    for row in &herd.hunt_trip_estimates {
+        assert!(
+            !row.delivers_food,
+            "{}: a wolf trip brings home no food",
+            row.policy
+        );
+        assert!(
+            row.delivers_trade,
+            "{}: …but it does bring home pelts — the flag that keeps it from reading as denial",
+            row.policy
+        );
+    }
+    // The per-herd, species-aware per-worker rates agree: no food, real trade. (The cohort-level
+    // `huntPerWorkerProvisions` is species-blind by construction — see its doc — which is exactly why
+    // a band preview must clamp with THESE.)
+    assert_eq!(herd.per_worker_yield, 0.0, "no food per hunter on a wolf");
+    assert!(herd.per_worker_trade > 0.0, "pelts per hunter on a wolf");
+    assert_eq!(herd.food_per_animal, 0.0, "a wolf is worth no food");
+    assert!(
+        herd.trade_per_animal > 0.0,
+        "…but one wolf is worth a pelt — the only quantum it has"
+    );
+}
+
+/// **9. The Eradicate ceiling row is no longer zeroed** on the provisions side for an edible species.
+///
+/// It was zeroed on the premise that denial carries nothing home — the premise #337 reverses. The row
+/// now carries the windfall the take path actually pays: the whole standing stock, so it must be the
+/// **largest** rung on the ladder.
+#[test]
+fn the_eradicate_ceiling_carries_the_windfall_for_an_edible_species() {
+    let (mut app, id, _pos) = headless_with_species(DEFAULTING_SPECIES);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let rows = exported_ceilings(&app, &id);
+    let ceiling_of = |policy: FollowPolicy| -> (f32, f32) {
+        rows.iter()
+            .find(|(name, _, _)| name == policy.as_str())
+            .map(|(_, provisions, trade)| (*provisions, *trade))
+            .unwrap_or_else(|| panic!("the {} row is exported", policy.as_str()))
+    };
+
+    let eradicate = ceiling_of(FollowPolicy::Eradicate);
+    let deplete = ceiling_of(FollowPolicy::Deplete);
+    assert!(
+        eradicate.0 > 0.0,
+        "Eradicate's exported FOOD ceiling is the windfall, not a zeroed denial row: {}",
+        eradicate.0
+    );
+    assert!(
+        eradicate.0 > deplete.0,
+        "Eradicate takes the whole stock, so it must top the ladder: {} vs Deplete {}",
+        eradicate.0,
+        deplete.0
+    );
+    // Every rung sells, so the trade ladder is ordered the same way — one vector, one intensity axis.
+    assert!(
+        eradicate.1 > deplete.1 && deplete.1 > 0.0,
+        "the trade ceilings ride the same intensity ladder: eradicate {} vs deplete {}",
+        eradicate.1,
+        deplete.1
+    );
 }

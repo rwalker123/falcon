@@ -785,6 +785,115 @@ pub struct YieldPair {
     pub trade_goods: f32,
 }
 
+/// **Which component of a [`YieldPair`] a RATIO is counted on.**
+///
+/// Every whole-animal count in the yield model is a *ratio* — `floor(ceiling / one animal)` — and a
+/// ratio is unit-free: taken on any component whose per-biomass rate is **positive**, it gives the
+/// same animal count, because that component is a positive linear image of biomass. Taken on a
+/// component whose rate is `0` it is a `0/0`. So a ratio never picks a component by convention; it
+/// asks [`YieldPair::ratio_axis`] which one is legal.
+///
+/// This is the operational form of `quantise_animal_take`'s warning: **never divide by a food number
+/// you have not established is positive.** A wolf counts its animals on `TradeGoods`; every edible
+/// species counts on `Provisions`, exactly as before this arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YieldAxis {
+    Provisions,
+    TradeGoods,
+}
+
+impl YieldPair {
+    /// A source that pays nothing in either currency.
+    pub const ZERO: Self = Self {
+        provisions: 0.0,
+        trade_goods: 0.0,
+    };
+
+    /// Both components scaled by the same factor — worker counts, output multipliers, and the
+    /// carried/killed share of a quantised take are all scalar, so they never touch the *mix*.
+    pub fn scale(self, factor: f32) -> Self {
+        Self {
+            provisions: self.provisions * factor,
+            trade_goods: self.trade_goods * factor,
+        }
+    }
+
+    /// Component-wise sum — accumulating a projection turn by turn. (Named `plus`, not `add`, so it
+    /// cannot be confused with `std::ops::Add::add`, which this type deliberately does not implement:
+    /// a yield pair is a pair of *rates in different currencies*, and blanket arithmetic on it invites
+    /// summing food into trade.)
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            provisions: self.provisions + other.provisions,
+            trade_goods: self.trade_goods + other.trade_goods,
+        }
+    }
+
+    /// Component-wise `min` — the continuous take's `min(collection, ceiling)`. Sound because both
+    /// operands are the same biomass put through the same rates, so the two components agree on
+    /// which side binds.
+    pub fn min(self, other: Self) -> Self {
+        Self {
+            provisions: self.provisions.min(other.provisions),
+            trade_goods: self.trade_goods.min(other.trade_goods),
+        }
+    }
+
+    /// Read one component.
+    pub fn component(self, axis: YieldAxis) -> f32 {
+        match axis {
+            YieldAxis::Provisions => self.provisions,
+            YieldAxis::TradeGoods => self.trade_goods,
+        }
+    }
+
+    /// **The axis a ratio against this pair may be counted on** — the first component with a
+    /// strictly positive value, preferring `Provisions` so every edible species keeps *exactly* the
+    /// arithmetic it had before this arc (bit-identical, not merely equivalent). `None` when the pair
+    /// is empty in both currencies: nothing to count, and nothing may divide by it.
+    pub fn ratio_axis(self) -> Option<YieldAxis> {
+        if self.provisions > 0.0 {
+            Some(YieldAxis::Provisions)
+        } else if self.trade_goods > 0.0 {
+            Some(YieldAxis::TradeGoods)
+        } else {
+            None
+        }
+    }
+
+    /// Does this pay nothing at all?
+    pub fn is_zero(self) -> bool {
+        self.ratio_axis().is_none()
+    }
+
+    /// **Rebuild a whole pair from a value measured on ONE axis**, using `self` as the reference mix:
+    /// the result reads exactly `value` on `axis` (bit-identical — no divide-then-multiply round
+    /// trip on the axis that was actually computed) and carries the other component at the same
+    /// proportion.
+    ///
+    /// This is how a quantised take crosses back from the single axis it was counted on: the animal
+    /// count is one number, and it values the same in every currency.
+    pub fn rescaled_to(self, axis: YieldAxis, value: f32) -> Self {
+        let reference = self.component(axis);
+        if reference <= 0.0 {
+            // Nothing to scale against — the caller already established a positive axis, so this is
+            // the degenerate "yields nothing" source.
+            return Self::ZERO;
+        }
+        let share = value / reference;
+        match axis {
+            YieldAxis::Provisions => Self {
+                provisions: value,
+                trade_goods: self.trade_goods * share,
+            },
+            YieldAxis::TradeGoods => Self {
+                provisions: self.provisions * share,
+                trade_goods: value,
+            },
+        }
+    }
+}
+
 /// Ecology tuning: per-turn **critical-depensation** biomass dynamics toward each
 /// species' carrying cap. Above the Allee threshold (`collapse_fraction * cap`) the
 /// group regrows logistically at `regrowth_rate`; below it the group is non-viable and

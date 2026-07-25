@@ -39,10 +39,18 @@ pub struct HuntPolicyCeilingState {
     pub policy: String,
     /// BAND / local-hunt ceiling, in provisions/turn. Produced by projecting the herd's
     /// `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — i.e. the
-    /// per-policy biomass ceiling `fauna::hunt_policy_ceiling` converted by `fauna::hunt_provisions`,
+    /// per-policy biomass ceiling `fauna::hunt_policy_ceiling` converted by the species' own
+    /// `HuntYield::apply` (which retired the global `fauna::hunt_provisions`),
     /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
     #[serde(default)]
     pub provisions_per_turn: f32,
+    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row is a
+    /// [`crate::YieldPair`]-shaped pair, not a food scalar: every harvesting policy sells the species'
+    /// trade component, and an **inedible** species (a wolf) reads `provisions_per_turn == 0` with
+    /// this strictly positive — a food-only row could not express its yield at all. Render a trade
+    /// line **only when this is `> 0`**, the rule flora's cash-crop line already uses, so a source
+    /// with no trade shows no line rather than a false "0".
+    pub trade_goods_per_turn: f32,
 }
 
 /// The sim's **pre-launch hunt-trip estimate** for one (policy, party size) against one herd — the
@@ -93,6 +101,12 @@ pub struct HuntTripEstimateState {
     /// **Food killed but not hauled home over the raid** (append-only). `wasted_food / (delivered_food +
     /// wasted_food)` is the waste fraction the client shows beside the delivered total.
     pub wasted_food: f32,
+    /// **Trade goods the party actually LANDS over the raid** (appended, issue #337) — the twin of
+    /// [`Self::delivered_food`], projected through the same species vector the take path pays with.
+    /// For a **wolf** raid this is the only payload: `delivered_food == 0` and
+    /// `delivers_food == false`.
+    #[serde(default)]
+    pub delivered_trade: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -136,6 +150,14 @@ pub struct HerdTelemetryState {
     /// [`Self::hunt_policy_ceilings`].
     #[serde(default)]
     pub per_worker_yield: f32,
+    /// **The same per-worker rate in TRADE GOODS/turn** (appended, issue #337). Read this and
+    /// [`Self::per_worker_yield`] as one vector: a resident-band preview clamps
+    /// `min(workers × per-worker, ceiling)` **per component**. An inedible species (a wolf) reads
+    /// `per_worker_yield == 0` with this positive.
+    ///
+    /// **THIS is the rate a band preview uses, not `PopulationCohortState::hunt_per_worker_provisions`**
+    /// — that one is a species-blind global echo (see its doc).
+    pub per_worker_trade: f32,
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
     /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
@@ -233,6 +255,11 @@ pub struct HerdTelemetryState {
     /// unknown.
     #[serde(default)]
     pub food_per_animal: f32,
+    /// **One animal's worth of TRADE GOODS** (appended, issue #337) — the twin of
+    /// [`Self::food_per_animal`], and the only quantum an *inedible* species has: a wolf's
+    /// `food_per_animal` is honestly `0`, so a client rendering a kill rhythm from food alone would
+    /// divide by zero. The animal COUNT is the same on either component (a ratio is unit-free).
+    pub trade_per_animal: f32,
     /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
     /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
     /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
@@ -330,6 +357,8 @@ impl Default for HerdTelemetryState {
             corralled: false,
             corral_progress: 0.0,
             per_worker_yield: 0.0,
+            per_worker_trade: 0.0,
+            trade_per_animal: 0.0,
             corral_yield: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),

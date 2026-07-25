@@ -76,6 +76,9 @@ pub(crate) fn labor_assignment_to_state(
         // rather than moved so the caller's telemetry row (which the band roll-ups below still read)
         // is untouched.
         arrival_schedule: yields.arrivals.clone(),
+        // The other currency, beside the food it never joins (issue #337).
+        trade_yield: yields.trade,
+        realized_trade_yield: yields.realized_trade,
         ..Default::default()
     };
     match &assignment.target {

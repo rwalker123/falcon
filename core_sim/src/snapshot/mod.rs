@@ -726,6 +726,8 @@ mod tests {
             ],
             last_yields: vec![
                 SourceYield {
+                    trade: 0.0,
+                    realized_trade: 0.0,
                     actual: 2.5,
                     sustainable: 2.5,
                     wasted: 0.0,
@@ -737,6 +739,8 @@ mod tests {
                     arrivals: vec![2.5; 3],
                 },
                 SourceYield {
+                    trade: 0.0,
+                    realized_trade: 0.0,
                     actual: 0.5,
                     sustainable: 0.25,
                     wasted: 0.0,

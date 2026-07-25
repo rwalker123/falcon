@@ -112,6 +112,7 @@ fn create_herds<'a>(
                         &fb::HuntPolicyCeilingArgs {
                             policy: Some(policy),
                             provisionsPerTurn: ceiling.provisions_per_turn,
+                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
                         },
                     )
                 })
@@ -134,6 +135,7 @@ fn create_herds<'a>(
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
                             deliversTrade: estimate.delivers_trade,
+                            deliveredTrade: estimate.delivered_trade,
                             animalsTaken: estimate.animals_taken,
                             deliveredFood: estimate.delivered_food,
                             wastedFood: estimate.wasted_food,
@@ -162,6 +164,8 @@ fn create_herds<'a>(
                 corralled: herd.corralled,
                 corralProgress: herd.corral_progress,
                 perWorkerYield: herd.per_worker_yield,
+                perWorkerTrade: herd.per_worker_trade,
+                tradePerAnimal: herd.trade_per_animal,
                 corralYield: herd.corral_yield,
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,

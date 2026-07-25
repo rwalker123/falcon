@@ -998,12 +998,31 @@ pub struct HuntTripForecast {
     /// party too small to haul its kills whole; `wasted_food / (delivered_food + wasted_food)` is the
     /// waste fraction the client shows.
     pub wasted_food: f32,
+    /// **Trade goods the party actually LANDS over the raid** — `Σ HuntYield::apply(carried)` on the
+    /// trade component, projected through the *same* vector the live take pays with (#337). For an
+    /// **inedible** quarry this is the whole payload: `delivered_food` is `0` and `delivers_food`
+    /// false, while this is what comes home.
+    pub delivered_trade: f32,
 }
 
-/// One hunter's per-turn **provisions** throughput: their biomass take capacity converted through
-/// the same linear biomass→provisions rate the take uses. Worker-scaled (× party size) it is the
-/// party's uncapped rate — the other half of the forecast, exported per-cohort in the snapshot
+/// One hunter's per-turn **provisions** throughput at the **global** `hunt.provisions_per_biomass`
+/// rate: their biomass take capacity converted through it. Worker-scaled (× party size) it is a
+/// party's uncapped rate, exported per-cohort in the snapshot
 /// (`PopulationCohortState.huntPerWorkerProvisions`).
+///
+/// # It is SPECIES-BLIND, deliberately and unavoidably — do not use it for a per-herd preview
+///
+/// This is a **per-cohort** echo of a global lever: the cohort has no herd, so there is no species to
+/// resolve a [`HuntYield`] from, and threading one in is not possible rather than merely unwritten.
+/// Left un-flagged that is a **contradiction on the wire** (#337): a wolf's per-policy ceilings are
+/// all `0` food, while this would quote every hunter a positive food rate against them.
+///
+/// The **per-herd, species-aware** rates already exist and are what a band preview must clamp with —
+/// `HerdTelemetryState.perWorkerYield` / `perWorkerTrade`, straight off that herd's `hunt_forecast`,
+/// so `min(workers × perWorkerYield, huntPolicyCeilings[p].provisionsPerTurn)` is honest per
+/// component for every species. This constant survives only as the **expedition outfit** lever it was
+/// (a party's rough carry arithmetic before a target is chosen); the *answer* for a chosen target is
+/// the sim's own `huntTripEstimates` row, which is fully species-aware.
 ///
 /// **Snapped to the `Scalar` grid** the larder actually accumulates on — the take path quantizes
 /// every take through `Scalar::from_f32`, so the honest per-worker constant is the *quantized* one.
@@ -1039,7 +1058,7 @@ const FIRST_HUNTING_TURN: u32 = 1;
 /// live sim makes — [`fauna::regrow_biomass`] (as `advance_herds` does in Logistics) then
 /// [`expedition_take_biomass`] (as the `ExpeditionPhase::Hunting` arm does in Population), in that
 /// order — and the "surplus spent ⇒ come home" completion mirrors that arm's `done`. **The larder
-/// accumulates on the fixed-point `Scalar` grid**, exactly as the real one does (`hunt_provisions`
+/// accumulates on the fixed-point `Scalar` grid**, exactly as the real one does (`HuntYield::apply`
 /// quantizes every take), so an evenly-dividing trip cannot invent a phantom extra turn.
 ///
 /// **Travel is not part of this estimate** — it assumes the party is already in reach and stationary,
@@ -1108,6 +1127,7 @@ fn hunt_trip_forecast_seeded(
             animals_taken: 0,
             delivered_food: 0.0,
             wasted_food: 0.0,
+            delivered_trade: 0.0,
         };
     }
 
@@ -1123,6 +1143,7 @@ fn hunt_trip_forecast_seeded(
     let mut first_turn_provisions = 0.0_f32;
     let mut animals_taken = 0u32;
     let mut delivered_food = 0.0_f32;
+    let mut delivered_trade = 0.0_f32;
     let mut wasted_food = 0.0_f32;
 
     for turn in 1..=horizon {
@@ -1160,9 +1181,11 @@ fn hunt_trip_forecast_seeded(
         animals_taken += take.killed;
         // Delivered food (carried) + wasted food (killed but not hauled), matching the per-turn
         // provisions conversion (no output multiplier — `EXPEDITION_OUTPUT_MULTIPLIER` is 1.0).
-        delivered_food += hunt_yield
-            .apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER)
-            .provisions;
+        // **Both products come from ONE conversion of the same carried biomass** — the raid's forecast
+        // cannot promise food it will not pay, nor forget the pelts it will (#337).
+        let landed = hunt_yield.apply(take.carried, EXPEDITION_OUTPUT_MULTIPLIER);
+        delivered_food += landed.provisions;
+        delivered_trade += landed.trade_goods;
         wasted_food += hunt_yield
             .apply(take.wasted, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions;
@@ -1205,6 +1228,7 @@ fn hunt_trip_forecast_seeded(
                 animals_taken,
                 delivered_food,
                 wasted_food,
+                delivered_trade,
             };
         }
     }
@@ -1217,6 +1241,7 @@ fn hunt_trip_forecast_seeded(
         animals_taken,
         delivered_food,
         wasted_food,
+        delivered_trade,
     }
 }
 

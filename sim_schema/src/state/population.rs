@@ -104,6 +104,24 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
+    /// **Trade goods this source produced this turn** — the twin of [`Self::actual_yield`] in the
+    /// other currency (issue #337). Every harvesting policy now sells the species' trade component,
+    /// so this is non-zero on rungs that earned nothing before, and it is the ONLY thing a wolf hunt
+    /// produces. Render a trade line **only when `> 0`**.
+    ///
+    /// **NOT food income.** `PopulationCohortState::food_income` stays `Σ actual_yield`; folding this
+    /// in would break the pinned larder identity (trade goods credit the faction stockpile, never the
+    /// larder).
+    #[serde(default)]
+    pub trade_yield: f32,
+    /// **The steady forward-projected trade/turn** — the twin of [`Self::realized_yield`].
+    ///
+    /// `0.0` on every **forage** source: the plant web's trade *projection* is a known gap (#337
+    /// vectorised the animal web), while the trade a gather actually earned *is* reported in
+    /// [`Self::trade_yield`]. There is deliberately no trade *arrival schedule* — see
+    /// [`Self::arrival_schedule`].
+    #[serde(default)]
+    pub realized_trade_yield: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -313,8 +331,15 @@ pub struct PopulationCohortState {
     /// render "no food delivered", never an ETA.
     ///
     /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
-    /// fauna_config.hunt.provisions_per_biomass`). With a herd's **band** ceiling this drives the
-    /// resident-band local-hunt yield preview.
+    /// fauna_config.hunt.provisions_per_biomass`).
+    ///
+    /// **SPECIES-BLIND — never use it for a per-herd preview** (#337). It is a per-cohort echo of the
+    /// GLOBAL `hunt.provisions_per_biomass`; the cohort has no herd, so there is no species to resolve
+    /// a hunt-yield vector from. A wolf's per-policy ceilings are all `0` food, and quoting a positive
+    /// per-hunter food rate against them is a contradiction. The per-herd, species-aware rates are
+    /// `HerdTelemetryState::per_worker_yield` / `per_worker_trade` — clamp a band preview with THOSE.
+    /// This survives as the expedition **outfit** lever (rough carry arithmetic before a target is
+    /// chosen); for a chosen target the sim exports the answer in `hunt_trip_estimates`.
     #[serde(default)]
     pub hunt_per_worker_provisions: f32,
     /// Turns-to-fill past which a trip is flagged NOT VIABLE

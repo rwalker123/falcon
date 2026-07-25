@@ -298,10 +298,19 @@ follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is retired.
 >   (Eradicate ignores the pack's carry cap, and it has no escapement floor to spend) are stated as
 >   `matches!(policy, Eradicate)` at their two sites in `systems::expeditions`.
 >
-> **Quantisation stays in BIOMASS space** (`quantise_animal_take`) — never derive an animal count from
-> a food number. The old "flooring in provisions and in biomass agree, a positive linear factor
-> cancels" note is **false** for an inedible species: `provisions_per_biomass == 0` makes
-> `floor(food_ceiling / food_per_animal)` a `0/0`.
+> **Quantisation never divides by a food number it has not established is positive.** The old
+> "flooring in provisions and in biomass agree, a positive linear factor cancels" note is **false** for
+> an inedible species: `provisions_per_biomass == 0` makes `floor(food_ceiling / food_per_animal)` a
+> `0/0`. Operationally, the animal count is a **ratio**, so it is taken on
+> `SourceYieldForecast::ratio_axis()` — the first component with a positive rate (`Provisions` for
+> every edible species, bit-identical to the pre-arc arithmetic; `TradeGoods` for a wolf) — and
+> `YieldPair::rescaled_to` carries that one count into the other currency. Correspondingly **"does this
+> source quantise?" is `!body_mass_yield.is_zero()`**, not `body_mass_yield.provisions > 0`: whole
+> animals are a property of the animal, not of what it is worth to you.
+>
+> **The forecast is a `YieldPair` per rung, and `forecast == actual` holds PER COMPONENT** — see
+> `.claude/rules/core_sim/yield-forecast.md` for the wire fields, the plant side's
+> `trade_goods = 0.0` gap, and why `huntPerWorkerProvisions` must not clamp a per-herd preview.
 >
 > **The picker.** The flags gate the yield *components*, not the buttons: a wolf shows the full ladder
 > and is paid in pelts, because each rung is a meaningful *rate* at which to collect pelts. The only
