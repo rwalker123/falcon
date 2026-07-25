@@ -58,7 +58,10 @@ fn decode_snapshot(data: &PackedByteArray) -> Option<VarDictionary> {
     let bytes = data.as_slice();
     let envelope = fb::root_as_envelope(bytes).ok()?;
     match envelope.payload_type() {
-        fb::SnapshotPayload::snapshot => envelope.payload_as_snapshot().map(snapshot_to_dict),
+        // `and_then`, not `map`: `snapshot_to_dict` answers `None` for a headerless snapshot (see
+        // its docs), and that `None` must reach the caller as "no frame" rather than being wrapped
+        // into a `Some(...)` the loader would treat as a decoded world.
+        fb::SnapshotPayload::snapshot => envelope.payload_as_snapshot().and_then(snapshot_to_dict),
         fb::SnapshotPayload::delta => decode_delta(data),
         _ => None,
     }

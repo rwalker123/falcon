@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+flatbuffers = "25"
 glob = "0.3"
 jsonschema = "0.17"
 serde_json = "1.0"
+shadow_scale_flatbuffers = { path = "../shadow_scale_flatbuffers" }
 sim_runtime = { path = "../sim_runtime" }
 sim_schema = { path = "../sim_schema" }
