@@ -48,6 +48,9 @@ const PANEL_CONSUMED_KEYS := [
 	"morale_terrain",      # BandDetailLines morale breakdown
 	"morale_climate",      # BandDetailLines morale breakdown
 	"morale_unrest",       # BandDetailLines morale breakdown
+	"fertility_hunger",    # BandDetailLines Growth row + fertility breakdown
+	"fertility_reserve",   # BandDetailLines Growth row — ALSO the not-projected sentinel (0 = no reading)
+	"fertility_trend",     # BandDetailLines Growth row + fertility breakdown
 	"working_age",         # allocation header Workers / _effective_idle
 	"idle_workers",        # allocation header Idle / quick_assign_hunters
 	"age_children",        # band panel age-structure row (children / working / elders)
@@ -113,6 +116,11 @@ const FRACTIONAL_ROUND_TRIP_KEYS := {
 	# Wellbeing scalars — fixed-point.
 	"output_multiplier": 0.7225,
 	"discontent_fraction": 0.1837,
+	# The three fertility factors — fixed-point Scalars, neutral at 1.0 (NOT at 0), so an int(...)
+	# copy would flatten a 0.6225 hunger to 0 and read a fed band as starving.
+	"fertility_hunger": 0.6225,
+	"fertility_reserve": 1.4375,
+	"fertility_trend": 0.2575,
 	# Food ledger — `float` wire fields (foodIncome / foodConsumption / penFeedUpkeep / turnsOfFood).
 	"turns_of_food": 12.75,
 	"food_income": 0.8325,
