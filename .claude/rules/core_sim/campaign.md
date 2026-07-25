@@ -10,7 +10,7 @@ paths:
 
 <!-- Extracted verbatim from core_sim/CLAUDE.md lines 4260-4638.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
-     Regenerate with scripts/split_core_sim_claude_md.sh -->
+     Regenerate with scripts/split_claude_md.sh -->
 
 # Campaign Loop & System Activation
 

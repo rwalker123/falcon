@@ -18,7 +18,12 @@ This repository uses a layered documentation structure:
   frontmatter and **loads only when you touch the code it describes**. Put new per-arc
   rationale in the rule file that owns the arc — that is what keeps two concurrent
   worktrees off the same file.
-- `clients/godot_thin_client/CLAUDE.md` — Godot inspector: 2D hex map rendering, panels, overlays, scripting capability model
+- `clients/godot_thin_client/CLAUDE.md` — Godot client **hub**: build/verify commands, the
+  `Hud.gd` decomposition invariant, boot/menu scripts, scene structure, theming, hotkeys
+- `.claude/rules/client/*.md` — the per-arc rationale for the Godot client (HUD modules,
+  labor UI, terrain shader, panels, overlays, test harnesses, …), same `paths:` gating.
+  **The per-script index went with them**: each rule carries a `## Key scripts` table for
+  the scripts it covers, so a new script's row goes there, not in the hub
 - `sim_schema/README.md` — FlatBuffers schema contracts
 - `sim_runtime/README.md` — Shared runtime utilities
 

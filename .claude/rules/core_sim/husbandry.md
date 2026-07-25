@@ -7,7 +7,7 @@ paths:
 
 <!-- Extracted verbatim from core_sim/CLAUDE.md lines 1507-1983.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
-     Regenerate with scripts/split_core_sim_claude_md.sh -->
+     Regenerate with scripts/split_claude_md.sh -->
 
 # Husbandry — the yield ladder, the `Tame` verb, Corral
 

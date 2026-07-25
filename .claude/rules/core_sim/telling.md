@@ -8,7 +8,7 @@ paths:
 
 <!-- Extracted verbatim from core_sim/CLAUDE.md lines 3447-3881.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
-     Regenerate with scripts/split_core_sim_claude_md.sh -->
+     Regenerate with scripts/split_claude_md.sh -->
 
 # The Telling — the narrative beat engine
 

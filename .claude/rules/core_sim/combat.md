@@ -8,7 +8,7 @@ paths:
 
 <!-- Extracted verbatim from core_sim/CLAUDE.md lines 3115-3307.
      Routing table and shared vocabulary live in core_sim/CLAUDE.md.
-     Regenerate with scripts/split_core_sim_claude_md.sh -->
+     Regenerate with scripts/split_claude_md.sh -->
 
 # Combat & Casualties (Predators arc — Phase 0)
 
