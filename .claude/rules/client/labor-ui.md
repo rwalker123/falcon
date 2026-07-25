@@ -752,6 +752,10 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   and trade are judged identically everywhere.
 - `format_trade(v)` → `⇄ +0.35`; **`yield_components(food, trade)`** → `+0.31 /turn · ⇄ +0.12` — the ONE
   joiner every per-turn readout goes through, so no two surfaces can word the pair differently.
+- **`magnitude_components(food, trade)`** → `0.20 ⇄ 0.22` — its COMPACT twin for a surface that
+  supplies its own framing and states levels rather than deltas (the work zone's filter chips). Same
+  rule, same food-leads order, bare magnitudes joined by `COMPACT_COMPONENT_SEPARATOR` (a space, since
+  those chips already spend their `·` separating a count from its total).
 - **`extractive_take_pair(food, trade)`** — the rung metric `{compact, full}` (the food-only
   `extractive_take` survives for the forage picker, whose plant-side trade is not projected).
 - `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
@@ -807,9 +811,26 @@ work **inspector strip** beside the row states both components in full, which is
 shows.
 
 **`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
-`food_income` still sum `actual_yield` alone — trade goods credit the faction stockpile and never the
-larder — so a trade-only hunt must not move the Food line, and the work zone's header/chip totals stay
-food-denominated. That is what keeps the larder identity closed for an inedible quarry.
+`food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
+`band_has_food_flow`, and the arrivals schedule) still sum `actual_yield` alone — trade goods credit
+the faction stockpile and never the larder — so a trade-only hunt must not move the Food line. That is
+what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
+AGGREGATE is never "add trade to the food total".
+
+**But an aggregate that omits trade entirely is the same lie one level up.** The work zone's header
+read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it — the arithmetic visibly did
+not add up, and the one source paying only trade read as contributing nothing to the band. So the
+render-only-when-non-zero rule applies to totals too, as a **SIBLING**: `3 sources +0.35 /turn ⇄
++0.22`, and `🦌 2 · 0.20 ⇄ 0.22` on the per-kind chips (`SourceForecast.magnitude_components`, the
+bare-magnitude twin of `yield_components` — a chip states levels, not deltas). A band with no
+trade-paying source renders exactly as before. Details in `band-city-panel.md`.
+
+**When you add an aggregate, ask which of the two it is** — a *larder* figure (food alone, by the
+identity above) or a *productivity* figure (both products, each when non-zero). Nothing else in the
+client currently sums or counts across sources: the parties header counts parties and workers, and the
+attention producers key off `idle_workers` / `turns_of_food` / pen status, never "this source yields
+no food", so a trade-only source is already productive to them. **Do not add a "produces nothing"
+empty-state that tests food alone.**
 
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
 rungs read `⇄ +0.90 / +1.35 / +1.95 / +2.70`, no food line, no zeros, and the animals-first preview +
@@ -820,5 +841,8 @@ denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food 
 `hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the
 forage control — food only, no "0 trade"). `band_panel_preview`:
 **`band_panel_work_trade_rows`** / **`band_panel_work_trade_inspector`** (a food row, a food+trade row
-and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 · Deplete · Working`).
+and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 · Deplete · Working`) ·
+**`band_panel_work_trade_totals`** (the aggregates — the same band with the deer unassigned, so its
+sole hunt pays trade: header `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` with the food term
+suppressed).
 `map_preview`: `map_band_work` (the hunted wolf labels `⇄+0.22 ⇊` beside the deer's `+0.20`).

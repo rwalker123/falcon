@@ -457,6 +457,21 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
+	# THE AGGREGATES (issue #337, phase 2). Same board with the deer removed, so the band's ONLY hunt
+	# pays trade: the head must read `2 sources +0.15 /turn ⇄ +0.22` — a SIBLING trade total, never
+	# folded into the food one — and the hunt chip `🦌 1 · ⇄ 0.22`, with the food component suppressed
+	# rather than printed as a `0.00` that says the wolf pack yields nothing. This is the frame the
+	# fix is judged on: the previous state's header excluded the wolf's `+0.22` while its row sat
+	# directly underneath, so the arithmetic visibly did not add up.
+	_hud.update_band_alerts([_trade_only_hunt_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_trade_totals")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
 	# until now (`_work_policy_open` was never set true in either harness). Two rows, two behaviours:
 	# a source standing on an INVESTMENT rung (Corral) highlights none of the four extractive rungs,
@@ -1757,6 +1772,16 @@ func _concerning_food_band_fixture() -> Dictionary:
 		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "policy": "deplete", "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
 		{"kind": "scout", "workers": 2},
 	]
+	return band
+
+## The trade-only-HUNT variant of the band above: the deer is unassigned, so every hunt this band works
+## pays trade and no food. It exists to exercise the AGGREGATE suppression path — the per-kind hunt chip
+## has no food component to state at all — which the mixed board cannot reach, since one food-paying
+## hunt there keeps the chip's food term alive.
+func _trade_only_hunt_band_fixture() -> Dictionary:
+	var band := _concerning_food_band_fixture()
+	band["labor_assignments"] = (band["labor_assignments"] as Array).filter(
+		func(a): return String((a as Dictionary).get("fauna_id", "")) != EXTRACTIVE_ROW_HERD_ID)
 	return band
 
 ## A TALLER band variant (same entity 904, so the expeditions still attach): starving + declining

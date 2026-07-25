@@ -242,9 +242,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   is what `_on_zones_resized` distinguishes, and skipping it lands a tall-shell band zone in a short
   box where its host silently clips it.
 - **Zone `work` — THE PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
-  n sources · total /turn · a `⋯` `MenuButton`) · filter CHIPS · the board · pager · inspector strip.
+  n sources · total /turn · the trade total when non-zero · a `⋯` `MenuButton`) · filter CHIPS · the
+  board · pager · inspector strip.
   **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
-  the last hidden at k = 0), replacing collapsible group headers. Rows are ONE line at a fixed
+  the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip
+  rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products". Rows are ONE line at a fixed
   `WORK_ROW_HEIGHT`: severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · clipped
   label · rate · policy/⚠ marks · the existing `−/+`. **Capacity is derived ENTIRELY from
   `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
@@ -468,6 +470,37 @@ food when there is food (unchanged for every forage patch and edible quarry), el
 `FoodIcons.TRADE_GOODS_GLYPH` — `⇄+0.22` on a hunted wolf pack, never the `+0.00` that said the hunt
 was worth nothing. `_work_row_rate_text` is the one definition. The **inspector strip** has room for
 the pair and states both (`SourceForecast.yield_components`), which is where an edible quarry's trade
-shows. The zone's header total and the filter chips stay **food-denominated**: they mirror the sim's
-`food_income`, and trade goods never enter the larder. Frames `band_panel_work_trade_rows` /
-`band_panel_work_trade_inspector`; the rule and the axis contract live in `labor-ui.md`.
+shows.
+
+**The AGGREGATES carry a SIBLING trade total, never a folded-in one.** The header's food figure and
+each chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity, and
+folding trade in would break the one invariant this arc preserved — but omitting trade entirely made
+the header *visibly* not add up: `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it,
+so the one source paying only trade read as contributing nothing. So the per-row rule is applied one
+level up: a second total beside the first, shown only when non-zero. The header reads `3 sources +0.35
+/turn ⇄ +0.22` (`WORK_TRADE_TOTAL_TOOLTIP` spells out that it is counted beside the food total, not in
+it) and a per-kind chip reads `🦌 2 · 0.20 ⇄ 0.22` — via `SourceForecast.magnitude_components`, the
+bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
+whole set pays trade alone drops the food term: `🦌 1 · ⇄ 0.22`, not a `0.00` denying that its sources
+produce anything. **A band with no trade-paying source renders exactly as it did before.**
+`_work_component_sum(models, key)` is the zone's ONE summing primitive, so head and chips add the same
+rows the same way.
+
+**"Sort by yield" is TWO TIERS, not a raw magnitude sort** (`_work_sorts_before`): food-paying sources
+first by their food figure descending, then trade-only sources by their trade figure descending.
+Sorting on food *alone* was the bug — it interleaved every trade-only source among the zero-food rows
+at the bottom of the board, off page one on a busy band, the same "an inedible quarry is worth
+nothing" reading the per-row work removed. But ranking them by raw displayed magnitude is a DIFFERENT
+error and must not be "fixed" back to it: a wolf's `0.22` trade above a patch's `0.15` food compares
+two quantities the sim publishes **no exchange rate** between, and under a control labelled *sort by
+yield* that asserts the wolf is the more productive source — a claim the game does not make and the
+player cannot check. Tiering asserts nothing about an exchange rate; it only orders attention. **Food
+leads not because it is worth more per unit** but because the larder is the live survival constraint
+the player decides against every turn, while trade is still economically thin (the design doc's own
+Deferred section). Revisit when trade acquires a sink, not before.
+
+Frames `band_panel_work_trade_rows` (mixed board — food row, food+trade row, trade-only row) /
+`band_panel_work_trade_inspector` / **`band_panel_work_trade_totals`** (the same band with the deer
+unassigned, so the sole hunt pays trade: `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` — the
+aggregate suppression path the mixed board cannot reach). The rule and the axis contract live in
+`labor-ui.md`.

@@ -445,10 +445,8 @@ func _repage_work_zone() -> void:
 func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     var idle := _band_labor.effective_idle(band)
     var models := _work_source_models(band, idle)
-    var income := 0.0
-    for m in models:
-        income += float((m as Dictionary).get("rate", 0.0))
-    col.add_child(_build_work_head(band, models, income))
+    col.add_child(_build_work_head(band, models,
+        _work_component_sum(models, "rate"), _work_component_sum(models, "trade_rate")))
     # BEFORE the chips are built, so the pressed chip is always one that actually renders.
     _reconcile_work_filter(models)
     col.add_child(_build_work_chips(models))
@@ -523,8 +521,8 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
             column.add_child(_build_work_row(band, page[index]))
     return board
 
-## The zone's head row: WORK · n sources · the band's total rate · the `⋯` section menu.
-func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxContainer:
+## The zone's head row: WORK · n sources · the band's total rate(s) · the `⋯` section menu.
+func _build_work_head(band: Dictionary, models: Array, income: float, trade_income: float) -> HBoxContainer:
     var menu := HudWidgets.build_section_menu([
         {"label": HudWorkVocab.WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
         {"label": HudWorkVocab.WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
@@ -540,6 +538,21 @@ func _build_work_head(band: Dictionary, models: Array, income: float) -> HBoxCon
     HudWidgets.set_label_tooltip(total, HudWorkVocab.WORK_TOTAL_TOOLTIP)
     head.add_child(total)
     head.move_child(total, head.get_child_count() - 2)
+    # THE TRADE TOTAL IS A SIBLING, NEVER A SUMMAND (issue #337). The food figure beside it is
+    # `actual_yield`-denominated because that is the sim's larder identity (`larder_delta ==
+    # food_income − food_consumption − pen_feed_upkeep`); folding trade in would break the one
+    # invariant this arc preserved. But leaving it out entirely made the header VISIBLY not add up —
+    # a trade-only wolf row sat directly beneath a total that excluded it, so the one source paying
+    # only trade read as contributing nothing. So: the arc's own rule, one level up. Rendered only
+    # when non-zero, hence a band with no trade-paying source renders exactly as it did before.
+    if SourceForecast.has_component(trade_income):
+        var trade_total := Label.new()
+        trade_total.text = SourceForecast.format_trade(trade_income)
+        trade_total.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
+        trade_total.add_theme_color_override("font_color", HudStyle.HEALTHY)
+        HudWidgets.set_label_tooltip(trade_total, HudWorkVocab.WORK_TRADE_TOTAL_TOOLTIP)
+        head.add_child(trade_total)
+        head.move_child(trade_total, head.get_child_count() - 2)
     return head
 
 ## The filter chips ARE the summary: counts + per-kind rates, and pressing one filters the board.
@@ -554,21 +567,32 @@ func _build_work_chips(models: Array) -> HFlowContainer:
     var hunt: Array = models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_HUNT)
     var attention: Array = models.filter(func(m): return bool(m["attention"]))
     chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ALL, HudWorkVocab.WORK_CHIP_ALL_FORMAT % models.size(), false))
+    # A chip's rate is BOTH products, each only when non-zero (issue #337) — the chip is a per-kind
+    # summary of the same rows the head totals, so counting `🦌 2` sources and then quoting only the
+    # food-paying one's rate is the same arithmetic that visibly failed in the header.
     if not forage.is_empty():
         chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_FORAGE, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
-            FoodIcons.DEFAULT, forage.size(), SourceForecast.format_magnitude(_work_rate_sum(forage))], false))
+            FoodIcons.DEFAULT, forage.size(), _work_chip_rate_text(forage)], false))
     if not hunt.is_empty():
         chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_HUNT, HudWorkVocab.WORK_CHIP_KIND_FORMAT % [
-            FoodIcons.HUNT, hunt.size(), SourceForecast.format_magnitude(_work_rate_sum(hunt))], false))
+            FoodIcons.HUNT, hunt.size(), _work_chip_rate_text(hunt)], false))
     if not attention.is_empty():
         chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ATTENTION,
             HudWorkVocab.WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
     return chips
 
-func _work_rate_sum(models: Array) -> float:
+## A filter chip's rate face: this kind's food total and trade total, each rendered only when non-zero.
+func _work_chip_rate_text(models: Array) -> String:
+    return SourceForecast.magnitude_components(
+        _work_component_sum(models, "rate"), _work_component_sum(models, "trade_rate"))
+
+## Σ of ONE yield component over a model set — the zone's single summing primitive, so the head's two
+## totals and every chip's two totals are added up the same way over the same rows and cannot drift.
+## `key` names a model's yield component (`"rate"` = food, `"trade_rate"`), never a rate itself.
+func _work_component_sum(models: Array, key: String) -> float:
     var total := 0.0
     for m in models:
-        total += float((m as Dictionary).get("rate", 0.0))
+        total += float((m as Dictionary).get(key, 0.0))
     return total
 
 func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
@@ -936,7 +960,34 @@ func _sort_work_models(models: Array) -> void:
     if _work_sort == HudWorkVocab.WORK_SORT_NAME:
         models.sort_custom(func(a, b): return String(a["label"]).naturalnocasecmp_to(String(b["label"])) < 0)
     else:
-        models.sort_custom(func(a, b): return float(a["rate"]) > float(b["rate"]))
+        models.sort_custom(func(a, b): return _work_sorts_before(a as Dictionary, b as Dictionary))
+
+## "Sort by yield", in TWO TIERS (issue #337): every FOOD-paying source first, ordered by its food
+## figure descending, then the trade-only sources, ordered by their trade figure descending.
+##
+## **THIS IS NOT A RAW MAGNITUDE SORT, AND MUST NOT BE "FIXED" INTO ONE.** Ranking a wolf's 0.22 trade
+## above a patch's 0.15 food compares two quantities the sim publishes NO exchange rate between, and
+## under a control labelled "sort by yield" that ordering asserts the wolf is the more productive
+## source — a claim the game does not make and the player cannot check. Tiering asserts nothing about
+## an exchange rate; it only fixes the ORDER OF ATTENTION.
+##
+## Why food takes the first tier is NOT "food is worth more per unit". It is that the larder is the
+## live survival constraint the player is deciding against every turn, while trade is still
+## economically thin — the design doc's own Deferred section says trade goods do little yet, and this
+## arc commits only to PRODUCING them honestly. Revisit the tiering when trade acquires a sink, not
+## before. (Sorting on food ALONE was the original bug: it interleaved trade-only sources among the
+## zero-food rows at the bottom of the board, off page one on a busy band, which is the same "an
+## inedible quarry is worth nothing" reading the per-row work removed.)
+##
+## A source paying NEITHER component sorts into the trade tier at 0.0, i.e. last — unchanged.
+func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
+    var a_pays_food := SourceForecast.has_component(float(a.get("rate", 0.0)))
+    var b_pays_food := SourceForecast.has_component(float(b.get("rate", 0.0)))
+    if a_pays_food != b_pays_food:
+        return a_pays_food
+    if a_pays_food:
+        return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
+    return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
 
 func _find_work_model(models: Array, key: String) -> Dictionary:
     if key == "":

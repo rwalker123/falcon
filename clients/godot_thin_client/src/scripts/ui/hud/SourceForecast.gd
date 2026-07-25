@@ -109,6 +109,10 @@ const POLICY_CAP_FORMAT := "up to %s/turn"
 # Trade is stated GENERICALLY, with `FoodIcons.TRADE_GOODS_GLYPH` and the word "trade goods". The sim
 # models a scalar; naming it per species (pelts/ivory/hide) is a deferred flavor layer.
 const TRADE_COMPONENT_SEPARATOR := " · "
+# The joiner for the COMPACT (magnitude-only) pair. A plain space, not `·`, because the surfaces that
+# use it — the work-zone filter chips — already spend their `·` separating a count from its total, and
+# a second one would read as a third field rather than a second product.
+const COMPACT_COMPONENT_SEPARATOR := " "
 # The bare trade rate as it rides a button face / row suffix: `⇄ +0.35`. No "/turn" — it sits beside a
 # food term that already carries one, or under a tooltip that spells the unit out.
 const TRADE_COMPONENT_FORMAT := "%s %s"
@@ -336,6 +340,21 @@ static func yield_components(food: float, trade: float) -> String:
     if has_component(trade):
         parts.append(format_trade(trade))
     return TRADE_COMPONENT_SEPARATOR.join(parts)
+
+## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
+## to repeat "/turn" — today the work zone's per-kind filter chips (`🦌 2 · 0.20 ⇄ 0.22`). Same
+## render-only-when-non-zero rule and same food-leads order, but BARE MAGNITUDES: a chip states a
+## count and that kind's total, and a `+` beside a count would read as a change rather than a level.
+## The point of the pair here is aggregate honesty — a hunt chip covering one deer and one wolf must
+## not report only the deer, and a chip whose whole set pays trade alone shows the trade total rather
+## than a `0.00` asserting its sources produce nothing.
+static func magnitude_components(food: float, trade: float) -> String:
+    var parts: Array[String] = []
+    if has_component(food) or not has_component(trade):
+        parts.append(format_magnitude(food))
+    if has_component(trade):
+        parts.append(TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
+    return COMPACT_COMPONENT_SEPARATOR.join(parts)
 
 ## A `{compact, full}` metric pair for an EXTRACTIVE rung that pays BOTH products — the hunt picker's
 ## button metric. Food leads; each component appears only when it is non-zero, so a wolf's four rungs

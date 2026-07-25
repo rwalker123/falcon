@@ -272,6 +272,12 @@ const WORK_SOURCES_FORMAT := "%d sources"
 
 const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 
+# The TRADE total's tooltip (issue #337). It is a SIBLING of the food total, never part of it: trade
+# goods credit the faction stockpile and never the larder, so folding them into the food figure would
+# break the identity the Food line is denominated in. Shown only when a worked source actually pays
+# trade, so a band with none reads exactly as it did before the two-product model.
+const WORK_TRADE_TOTAL_TOOLTIP := "Total trade goods per turn from every worked source. Trade goods are stockpiled for exchange — they are not food, so they are counted beside the food total, not in it."
+
 const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
 
 const WORK_MENU_SORT_YIELD := "Sort by yield"
