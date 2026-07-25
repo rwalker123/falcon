@@ -286,6 +286,14 @@ pub struct HerdTelemetryState {
     /// BEHAVIOUR — P(initiates a raid unprovoked); scales camp-threat. See [`Self::attack`].
     #[serde(default)]
     pub aggression: f32,
+    /// **The herd's prey-SENSING radius in hexes** (Predators Phase 1a) — `fauna.predators.prey_sense_radius`
+    /// when this herd's species is a CARNIVORE, else `0`. So `> 0` is BOTH the client's "this is a
+    /// predator" signal AND its view-ring radius: a carnivore eats other herds, not the tile's graze, so
+    /// its graze-range ring is meaningless and the client draws a prey-sense "view" ring of this radius
+    /// instead. A herbivore reads `0` and the client keeps drawing its [`Self::graze_range_radius`] ring.
+    /// Appended last (append-only).
+    #[serde(default)]
+    pub prey_sense_radius: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -331,6 +339,7 @@ impl Default for HerdTelemetryState {
             defense: 0.0,
             ferocity: 0.0,
             aggression: 0.0,
+            prey_sense_radius: 0,
         }
     }
 }

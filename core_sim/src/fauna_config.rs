@@ -514,6 +514,14 @@ impl SpeciesDef {
         self.biomass[1].max(self.biomass[0]).max(0.0)
     }
 
+    /// The **low end** of the species' `biomass` range — a pack's smallest viable size (Predators
+    /// Phase 1a). The prey-gated spawn (`fauna::spawn_predator_group_at`) requires a tile's prey-derived
+    /// `K` to reach at least this, so a pack only lands where the local prey base can sustain even its
+    /// smallest form rather than being stillborn on prey-sparse ground.
+    pub fn min_spawn_biomass(&self) -> f32 {
+        self.biomass[0].min(self.biomass[1]).max(0.0)
+    }
+
     /// The **wild** per-species logistic regrowth rate to cache on a spawned `Herd`, falling back to
     /// the global `fauna.ecology.regrowth_rate` when the row omits its own (Grazing Phase 2b-ii). The
     /// pastoral/pen rungs never read this — they keep their own faster `r` (see

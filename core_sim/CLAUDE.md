@@ -3102,6 +3102,19 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   shipped `min_spacing 6` + low per-biome probabilities cannot seat 11 well-spaced packs there). The
   lever to close that gap, if wanted, is `min_spacing`/`predators.per_biome`, not the target.
   (Guard: `predators::the_predator_count_scales_with_the_prey_base`.)
+- **Spawn is PREY-GATED — no stranded pack** (idea 6 at spawn). A winning tile only seats a carnivore
+  species whose **prey-derived `K` at that tile reaches its `min_spawn_biomass()`** (the low end of its
+  `biomass` range) — the gate lives in `spawn_predator_group_at`'s candidate filter, measured with
+  **`carnivore_k_at(pos, attack, prey_per_biomass, prey_index, prey_sense_radius, …)`**, the *same*
+  position-parameterized formula the live per-turn `K` reads (`carnivore_carrying_capacity` now
+  delegates to it), so the spawn gate and the running `K` can never diverge (DRY, and the prey rule
+  stays the single `attack_clears_defense`). Without it a pack drops onto an isolated tundra tile with
+  no game in reach, gets `K ≈ 0`, and despawns almost immediately (observed live: a wolf stranded on
+  Tundra with the nearest game several tiles off across water). On a prey-sparse map this places
+  **fewer** than the derived target — correct: a viable pack near game beats a stillborn one. **Measured
+  a no-op on the standard-map sweep** (prey is dense enough that every winning wolf-host tile already
+  clears the gate — counts still `11 / 6 / 10 / 11 / 10 / 11`); it only bites where prey is genuinely
+  sparse. (Guard: `predators::every_spawned_predator_lands_where_the_prey_can_feed_it`.)
 - **The wolf row** (`fauna_config.json`, playtest anchors): `Grey Wolf Pack`, `diet carnivore`,
   `combat { attack 3, defense 3 }`, `prey_per_biomass 0.3`, **`prey_ratio 0.10`** (a pack per ~10 prey
   herds), `regrowth_rate 0.15`, `ferocity 0.8`, `aggression 0.6` (set now, **inert until 1b**),
@@ -3109,6 +3122,15 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   prey set for free. `FaunaConfig::validate` requires a carnivore's `prey_ratio` finite `> 0` (a `0`
   seats no packs). Plus a **`predators` config block** (`per_biome` / `min_spacing` /
   `predation_escapement_fraction` / `prey_sense_radius`, all validated — no `max_packs`).
+- **The prey-sense ring is on the wire** — `HerdTelemetryState.preySenseRadius:uint` (append-only,
+  strictly after `aggression`; `snapshot/subsistence.rs`'s `herd_snapshot_entries`) =
+  `fauna.predators.prey_sense_radius` when the herd's species is a **carnivore** (`def.diet ==
+  Diet::Carnivore`, resolved via `species_by_display`), else **0**. So `preySenseRadius > 0` is BOTH the
+  client's "this is a predator" signal AND its view-ring radius: a carnivore's graze-range ring is
+  meaningless (it hunts other herds), so the client draws a prey-sense "view" ring of this radius
+  instead; a herbivore reads 0 and keeps drawing its `grazeRangeRadius` ring. **Client half (a separate
+  task):** the native reader + the view-ring render. Guard:
+  `snapshot::tests::herd_snapshot_reports_prey_sense_radius_for_carnivores_only`.
 
 ---
 

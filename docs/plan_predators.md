@@ -402,6 +402,15 @@ basic.
       Placement (`min_spacing` + the per-biome roll) can still cap below the target on prey-rich maps.
       Carnivores are filtered **out** of the herbivore short-range pool *and* out of `repopulate_fauna`
       immigration (they seed once; if prey collapse they die out and do not respawn — idea 6).
+    - **Spawn is PREY-GATED (idea 6 at spawn).** A winning tile only seats a carnivore species whose
+      prey-derived `K` at that tile reaches its **minimum spawn biomass** (the low end of its `biomass`
+      range) — measured with the *same* `carnivore_k_at` formula the live per-turn `K` reads, so the
+      spawn gate and the running `K` can never diverge (DRY). Without it a pack could drop onto an
+      isolated tundra tile with no game in reach, get `K ≈ 0`, and despawn almost immediately (observed
+      live). On a prey-sparse map this can place **fewer** than the derived target — correct: a viable
+      pack near game beats a stranded one. On the standard earthlike map prey is dense enough that the
+      gate is a measured **no-op** on the sweep counts (still 11 / 6 / 10 / 11 / 10 / 11); it only bites
+      where prey is genuinely sparse.
     - **Seed the wolf pack** in `fauna_config.json`: `carnivore`, `attack 3 / defense 3`,
       `ferocity 0.8` (a cornered pack is a dangerous hunt), `aggression 0.6` (set now, inert until
       1b's raid), `prey_ratio 0.10` (a pack per ~10 prey herds — the derived-count dial),
@@ -414,9 +423,16 @@ basic.
       despawns it — *no game, they leave/die*. The abruptness of a **transient** zero-prey turn is
       mitigated by the wide disk and is precisely what **Phase 2's active prey-pursuit** exists to
       solve; a `K` smoothing lever is the fallback if playtest demands it.
+    - **The prey-sense ring is on the wire.** `HerdTelemetryState.preySenseRadius:uint` (append-only,
+      strictly after `aggression`) = `fauna.predators.prey_sense_radius` when the herd's species is a
+      **carnivore**, else `0`. So `> 0` is BOTH the client's "this is a predator" signal AND its
+      view-ring radius: a carnivore's graze-range ring is meaningless (it eats other herds), so the
+      client draws a prey-sense "view" ring of this radius instead; a herbivore reads `0` and keeps its
+      graze ring. **Client half (separate task):** the native reader + the view-ring render.
     - **Testable:** spawn wolves near deer → deer biomass draws down; wolf biomass tracks prey (grows
       when fed, declines and despawns when the deer are gone); predator–prey oscillation visible in
-      herd telemetry.
+      herd telemetry. A pack never spawns on a tile whose prey-derived `K` is below its minimum spawn
+      biomass (`every_spawned_predator_lands_where_the_prey_can_feed_it`).
 
   - **Phase 1b — The raid trigger + Warrior goes live.** *(Held until 1a merges.)*
     A carnivore with `aggression > 0` in range of a band raids it — band as **Defender**, band-side

@@ -139,9 +139,9 @@ pub use expedition_config::{
     ExpeditionConfigMetadata, BUILTIN_EXPEDITION_CONFIG,
 };
 pub use fauna::{
-    advance_herd_grazing, advance_herds, advance_husbandry, advance_predation,
-    forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed, herded_fraction,
-    herders_needed, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
+    advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, build_prey_index,
+    carnivore_k_at, forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed,
+    herded_fraction, herders_needed, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
     hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
     quantise_animal_take, repopulate_fauna, spawn_initial_herds, AnimalTake, EcologyPhase, Herd,
     HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, PreyDatum, RoamState,

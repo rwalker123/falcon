@@ -197,6 +197,9 @@ fn create_herds<'a>(
                 defense: herd.defense,
                 ferocity: herd.ferocity,
                 aggression: herd.aggression,
+                // Prey-sensing radius (Predators Phase 1a) — the predator's view-ring / "is a predator"
+                // signal. Appended last (append-only wire).
+                preySenseRadius: herd.prey_sense_radius,
             },
         );
         entries.push(entry);

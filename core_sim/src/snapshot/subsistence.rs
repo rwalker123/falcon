@@ -339,6 +339,14 @@ pub(crate) fn herd_snapshot_entries(
                 defense: species_def.map(|def| def.combat.defense).unwrap_or(0.0),
                 ferocity: species_def.map(|def| def.ferocity).unwrap_or(0.0),
                 aggression: species_def.map(|def| def.aggression).unwrap_or(0.0),
+                // Predators Phase 1a — the herd's prey-sensing radius, but ONLY for a carnivore
+                // (`docs/plan_predators.md`): `> 0` is the client's "this is a predator" signal + its
+                // view-ring radius (a carnivore's graze ring is meaningless — it hunts other herds). A
+                // herbivore reads `0` and the client keeps drawing its graze-range ring.
+                prey_sense_radius: species_def
+                    .filter(|def| def.diet == crate::fauna_config::Diet::Carnivore)
+                    .map(|_| fauna.predators.prey_sense_radius)
+                    .unwrap_or(0),
             }
         })
         .collect()

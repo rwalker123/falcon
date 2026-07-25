@@ -2501,11 +2501,20 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
     Pasture overlay (so the ring sits on the actual graze). Reuses the band ring's odd-r `_hex_distance`
     / `_band_effective_col` (seam-wrapped) / `_fill_hex` / `_outline_hex` primitives. `graze_range_radius
     == 0` (small game) → the herd's own single tile. A **corralled** herd draws nothing. Fog-gated via
-    `_is_tile_visible` like the herd marker.
+    `_is_tile_visible` like the herd marker. **CARNIVORE PREY-SENSE RING (Predators Phase 1a):** a
+    predator doesn't graze, so its graze ring is meaningless — when the herd carries
+    **`prey_sense_radius > 0`** (`HerdTelemetryState.preySenseRadius`, decoded beside `graze_range_radius`;
+    `predators.prey_sense_radius` = 4 for a carnivore, 0 for a herbivore, so **`> 0` is BOTH the "this is a
+    predator" signal AND the ring radius**) the SAME disk is drawn at that radius in a distinct predator
+    ORANGE (`PREY_SENSE_RING_FILL` / `PREY_SENSE_RING_OUTLINE`, echoing MapView's
+    `HUNT_DANGER_OVERLAY_COLOR`) **INSTEAD OF** the gold graze ring (a REPLACEMENT, not an addition — the
+    same `is_predator` branch swaps radius + colours). A herbivore (`prey_sense_radius == 0`) is unchanged.
   - Verify: ui_preview `herd_grazing_healthy` (`Biomass: 1480 / 2150`, current < max, no warning) /
     `herd_overgrazing` (`Biomass: 2100 / 1352`, current > max → the ⚠ row) / `herd_grazing_small_game`
     (radius 0 → "Range: 1 tile") / `herd_domesticated` (the penned case: `Biomass: X / Y` with NO Range
-    row and no ⚠); map_preview `map_pasture_herd_range` (the gold ring over the Pasture overlay).
+    row and no ⚠); map_preview `map_pasture_herd_range` (the gold graze ring over the Pasture overlay) /
+    `map_predator_prey_sense` (a selected Grey Wolf Pack drawing the wide radius-4 ORANGE prey-sense ring —
+    a 61-tile disk — beside a herbivore deer; NOT the small gold graze ring).
 - **Clear-all / move-band** (`Hud.gd`, Early-Game Labor slice 3b): the single-task
   Scout/Cancel affordance + its optimistic `_pending_transition_bands` machinery were
   **retired** with the labor-allocation model. There is no longer a band-global task to

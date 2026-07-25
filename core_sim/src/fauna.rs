@@ -1417,6 +1417,7 @@ pub fn spawn_initial_herds(
         &fauna,
         width,
         height,
+        wrap,
         &tile_registry,
         &tiles,
         &mut rng,
@@ -1670,13 +1671,15 @@ fn spawn_game_group_at(
 /// them, as before), and the loop ends when every species' target is met or the winners are exhausted.
 /// For the single shipped carnivore this is exactly "place up to `target` packs", but it generalizes to
 /// N predators.
-// Predators carry no shore/site rule, so — unlike `spawn_short_range_game` — this pass needs no `wrap`
-// (there is no wrap-aware neighbour scan to run); `spawn_predator_group_at` places on the tile directly.
+// Predators carry no shore/site rule (there is no wrap-aware neighbour scan to run), but the **prey
+// gate** (Predators Phase 1a) measures each candidate's prey-derived `K` over a wrap-aware sensing disk,
+// so this pass now needs `wrap` for that distance test.
 #[allow(clippy::too_many_arguments)] // mirrors `spawn_short_range_game`'s Bevy-resource plumbing
 fn spawn_predators(
     fauna: &FaunaConfig,
     width: u32,
     height: u32,
+    wrap: bool,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     rng: &mut SmallRng,
@@ -1742,10 +1745,12 @@ fn spawn_predators(
             fauna,
             width,
             height,
+            wrap,
             tile_registry,
             tiles,
             &targets,
             &placed_by_species,
+            &prey_index,
             rng,
         ) else {
             continue;
@@ -1759,10 +1764,18 @@ fn spawn_predators(
 }
 
 /// Build a single predator pack at `pos`: pick a **carnivore** species hosting `module_key` **whose
-/// per-species target is not yet met**, roll its route/biomass, and stamp its initial `ecology_phase` —
-/// the carnivore twin of [`spawn_game_group_at`], with a distinct [`PREDATOR_ID_PREFIX`]. Returns
-/// `None` if no such species hosts the biome (all hosting species are at target, or none host it) or
-/// the origin is not land. Predators carry no shore rule, so there is no site filter here.
+/// per-species target is not yet met** *and* whose **prey-derived `K` at this tile reaches its minimum
+/// spawn biomass**, roll its route/biomass, and stamp its initial `ecology_phase` — the carnivore twin
+/// of [`spawn_game_group_at`], with a distinct [`PREDATOR_ID_PREFIX`]. Returns `None` if no such species
+/// qualifies (all hosting species are at target, none host the biome, or none has enough prey in reach)
+/// or the origin is not land. Predators carry no shore rule, so there is no site filter here.
+///
+/// **The prey gate** (Predators Phase 1a): a pack must land where the local prey base can sustain at
+/// least its smallest form. Placing on prey-sparse ground gives a stranded pack `K → 0` that despawns
+/// almost immediately (idea 6 applied at spawn), so a species is a candidate only when
+/// [`carnivore_k_at`]`(pos, …) >= def.min_spawn_biomass()` — the *same* prey-derived K formula the live
+/// per-turn K reads, so the spawn gate and the running K never disagree. On prey-sparse maps this can
+/// place fewer than the derived target; a viable pack near game beats a stillborn one.
 #[allow(clippy::too_many_arguments)] // mirrors `spawn_game_group_at`'s Bevy-resource plumbing
 fn spawn_predator_group_at(
     pos: UVec2,
@@ -1771,14 +1784,18 @@ fn spawn_predator_group_at(
     fauna: &FaunaConfig,
     width: u32,
     height: u32,
+    wrap: bool,
     tile_registry: &TileRegistry,
     tiles: &Query<&Tile>,
     // The per-species prey-derived targets + the running placed counts (both keyed by display name), so
     // a winning tile only seats a species that still has room under its target.
     targets: &BTreeMap<String, usize>,
     placed_by_species: &BTreeMap<String, usize>,
+    // The map-wide prey index (start-of-spawn herbivore herds) the prey gate measures `K` against.
+    prey_index: &[PreyDatum],
     rng: &mut SmallRng,
 ) -> Option<Herd> {
+    let radius = fauna.predators.prey_sense_radius;
     let candidates: Vec<(&String, &SpeciesDef)> = fauna
         .carnivore_species_for_biome(module_key)
         .into_iter()
@@ -1788,7 +1805,19 @@ fn spawn_predator_group_at(
                 .get(&def.display_name)
                 .copied()
                 .unwrap_or(0);
-            placed < target
+            if placed >= target {
+                return false;
+            }
+            // The prey gate: enough prey in reach to sustain at least the pack's smallest size.
+            carnivore_k_at(
+                pos,
+                def.combat.attack,
+                def.prey_per_biomass,
+                prey_index,
+                radius,
+                width,
+                wrap,
+            ) >= def.min_spawn_biomass()
         })
         .collect();
     if candidates.is_empty() {
@@ -2034,7 +2063,7 @@ pub struct PreyDatum {
 /// prey and is skipped; an unresolved species (an isolated test fixture) is treated as a herbivore
 /// with the default `combat.defense`. Called once at the top of [`advance_herds`], before the mutable
 /// herd loop.
-fn build_prey_index(herds: &[Herd], fauna: &FaunaConfig) -> Vec<PreyDatum> {
+pub fn build_prey_index(herds: &[Herd], fauna: &FaunaConfig) -> Vec<PreyDatum> {
     let default_defense = crate::combat::CombatStats::default().defense;
     herds
         .iter()
@@ -2181,17 +2210,42 @@ fn carnivore_carrying_capacity(
     width: u32,
     wrap: bool,
 ) -> Option<f32> {
-    let attack = def.combat.attack;
-    let radius = fauna.predators.prey_sense_radius;
+    Some(carnivore_k_at(
+        herd.current_pos,
+        def.combat.attack,
+        def.prey_per_biomass,
+        prey,
+        fauna.predators.prey_sense_radius,
+        width,
+        wrap,
+    ))
+}
+
+/// **The position-parameterized prey-derived `K`** (Predators Phase 1a) — the one formula for a
+/// carnivore's prey-limited carrying capacity, shared by the live per-turn K
+/// ([`carnivore_carrying_capacity`]) and the prey-gated spawn ([`spawn_predator_group_at`]) so the two
+/// can never diverge (DRY): `K = Σ_prey prey_sustainable_flow(prey) / prey_per_biomass` over the prey
+/// herds inside `radius` of `pos` whose `defense` the predator's `attack` clears
+/// ([`attack_clears_defense`], the single prey rule). `prey_per_biomass > 0` is guaranteed for a
+/// carnivore by [`FaunaConfig::validate`], so the division is safe.
+pub fn carnivore_k_at(
+    pos: UVec2,
+    attack: f32,
+    prey_per_biomass: f32,
+    prey: &[PreyDatum],
+    radius: u32,
+    width: u32,
+    wrap: bool,
+) -> f32 {
     let flow: f32 = prey
         .iter()
         .filter(|p| {
             attack_clears_defense(attack, p.defense)
-                && hex_distance_wrapped(herd.current_pos, p.pos, width, wrap) <= radius
+                && hex_distance_wrapped(pos, p.pos, width, wrap) <= radius
         })
         .map(|p| prey_sustainable_flow(p.biomass, p.carrying_capacity, p.regrowth_rate))
         .sum();
-    Some(flow / def.prey_per_biomass)
+    flow / prey_per_biomass
 }
 
 /// **The graze draw-down** (Grazing Phase 2b-i, `docs/plan_grazing_2b.md` §3). Each **mobile,

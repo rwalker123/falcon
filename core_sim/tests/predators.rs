@@ -801,6 +801,9 @@ struct PredCensus {
     packs: usize,
     /// The prey-derived target `round(prey_herds × prey_ratio)`.
     target: usize,
+    /// The prey-derived `K` at each seeded pack's tile, measured with `carnivore_k_at` against the
+    /// spawn-time prey index — the exact gate `spawn_predator_group_at` places under.
+    pack_k: Vec<f32>,
 }
 
 /// Generate `seed`'s standard earthlike map through the real Startup chain (worldgen → … →
@@ -821,12 +824,32 @@ fn predator_census(seed: u64) -> PredCensus {
         .species_by_display(WOLF)
         .expect("the wolf is in the shipped roster");
 
+    let width = PRED_GRID.x;
+    let wrap = app
+        .world
+        .resource::<SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+
     let registry = app.world.resource::<HerdRegistry>();
+    // The spawn-time prey index (herbivore herds), the same layer the spawn gate measured its `K`
+    // against — herds have not moved since Startup only spawned them.
+    let prey_index = core_sim::build_prey_index(&registry.herds, &fauna);
     let mut prey_herds = 0usize;
     let mut packs = 0usize;
+    let mut pack_k = Vec::new();
     for herd in &registry.herds {
         if herd.id.starts_with(PRED_ID_PREFIX) {
             packs += 1;
+            pack_k.push(core_sim::carnivore_k_at(
+                herd.current_pos,
+                wolf.combat.attack,
+                wolf.prey_per_biomass,
+                &prey_index,
+                fauna.predators.prey_sense_radius,
+                width,
+                wrap,
+            ));
             continue;
         }
         // Prey = a herbivore herd whose defense the wolf's attack clears (the same rule the K seam and
@@ -847,6 +870,7 @@ fn predator_census(seed: u64) -> PredCensus {
         prey_herds,
         packs,
         target,
+        pack_k,
     }
 }
 
@@ -867,6 +891,16 @@ fn predator_census(seed: u64) -> PredCensus {
 /// The number that varies with a retune is which seeds are placement-starved, so the majority bound is
 /// deliberately loose. **If more seeds starve, the lever is `min_spacing` / `predators.per_biome`, not
 /// this test** (raising the placement ceiling toward the prey-derived target).
+///
+/// **The prey-gated spawn (Phase 1a) is now co-active** — a winning tile only seats a species whose
+/// prey-derived `K` reaches its minimum spawn biomass — and it is a **measured no-op on these seeds**:
+/// prey is dense enough on the standard earthlike map that every wolf-host tile that wins already
+/// clears the gate, so the counts are byte-identical to the pre-gate sweep (11 / 6 / 10 / 11 / 10 /
+/// 11). The gate can only ever *lower* a count (never raise one), so the `packs ≤ target + 1` ceiling
+/// still holds; on a prey-sparse map it is what would pull `packs` further below `target`, which is
+/// correct — a viable pack near game beats a stranded one (see
+/// `every_spawned_predator_lands_where_the_prey_can_feed_it`). If a future prey retune starves the
+/// majority bound, relax it: the ceiling + the no-stranded-pack invariant are the load-bearing guards.
 #[test]
 fn the_predator_count_scales_with_the_prey_base() {
     let mut total_packs = 0usize;
@@ -896,6 +930,37 @@ fn the_predator_count_scales_with_the_prey_base() {
         "a majority of seeds must REACH the prey-derived target (only {reached_target}/{} did) — \
          else the count is placement-floored, not prey-sized",
         PRED_SWEEP_SEEDS.len(),
+    );
+}
+
+/// **NO STRANDED PACK** (Predators Phase 1a — the direct encoding of the prey-gated spawn). Every
+/// seeded pack lands on a tile whose prey-derived `K` reaches at least the wolf's **minimum spawn
+/// biomass** (the low end of its `biomass` range), so no pack is stillborn on prey-sparse ground with
+/// `K ≈ 0` that the extinction `retain` would despawn within a handful of turns. Measured with the SAME
+/// `carnivore_k_at` formula the live per-turn K and the spawn gate share, against the spawn-time prey
+/// index — swept over every [`PRED_SWEEP_SEEDS`] seed and every seeded pack.
+#[test]
+fn every_spawned_predator_lands_where_the_prey_can_feed_it() {
+    let fauna = FaunaConfig::builtin();
+    let wolf = fauna
+        .species_by_display(WOLF)
+        .expect("the wolf is in the shipped roster");
+    let min_spawn = wolf.min_spawn_biomass();
+    let mut total = 0usize;
+    for seed in PRED_SWEEP_SEEDS {
+        let census = predator_census(seed);
+        for k in census.pack_k {
+            total += 1;
+            assert!(
+                k >= min_spawn,
+                "seed {seed}: a pack spawned on a tile whose prey-derived K {k} is below the wolf's \
+                 minimum spawn biomass {min_spawn} — the prey gate must never seat a stranded pack",
+            );
+        }
+    }
+    assert!(
+        total > 0,
+        "the sweep must seat at least one pack for the invariant to mean anything",
     );
 }
 
