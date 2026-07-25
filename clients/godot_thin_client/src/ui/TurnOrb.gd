@@ -108,6 +108,35 @@ const TURN_FONT_SIZE_MIN := 13
 ## chord at full diameter would touch the border, and the border is the severity tint.
 const TURN_TEXT_WIDTH_FRACTION := 0.72
 
+# ---- the curved word ABOVE the number, inside the face ----------------------
+## The number is the information; the word is only its LABEL, so it is small, subordinate in alpha, and
+## follows the face's own curve instead of sitting as a straight caption. Curved text is not a `Label` —
+## it is per-glyph drawing with a per-glyph rotation, the same "hand-draw it rather than fight a font"
+## idiom `MagnifierButton` establishes.
+## UPPERCASE, matching this HUD's existing eyebrow vocabulary (`WORK`, `PARTIES`, `AT THE FIRE`);
+## lowercase would be the odd one out.
+const TURN_WORD := "TURN"
+## TUNED BY RENDERING, and this is the TOP of the usable range — do not raise it without re-measuring.
+## At 10px the run was legible but thin at a 1:1 (non-HiDPI) raster; 11px gives the letterforms body while
+## staying obviously subordinate to a 23–30px number. Measured at 11px: the run spans 84° of the circle,
+## its ink reaches 31.1 of the face's 37px radius (≈4px of dark clear of the 2px border), and the arc
+## sits 8px above a 30px number's cap line (11px above a 4-digit 23px one). The ascent-based ceiling the
+## ui_preview guard checks lands at 34.9 of 37 — ~2px of headroom, so a bump needs the frames re-read.
+const TURN_WORD_FONT_SIZE := 11
+## The arc's radius as a fraction of the face's OWN radius — pulled well inside the border so the glyph
+## tops clear it, and high enough that the run sits above the number's cap line at every digit count.
+const TURN_WORD_ARC_FRACTION := 0.62
+## Extra arc length (px) inserted between glyphs. Curved text at this small an inner radius reads
+## cramped with zero tracking, which is why this is a real lever rather than an implicit 0.
+const TURN_WORD_TRACKING := 1.2
+## The word wears the current accent — the same calm-cyan / severity tint `_style_face` gives the number
+## — at reduced alpha, so it inherits the state without competing with the thing being read.
+const TURN_WORD_ALPHA := 0.75
+## Sanity ceiling on the COMPUTED run: a word wrapping past a third of the circle is a bug (a font or
+## tracking change gone wrong), not a style choice. Asserted by ui_preview rather than clamped here —
+## silently squeezing a broken layout would hide the fault instead of reporting it.
+const TURN_WORD_MAX_ARC_ANGLE := TAU / 3.0
+
 # Calm pulse (only while the registry is empty).
 const PULSE_PERIOD := 2.6            # seconds for a full breath
 const PULSE_ALPHA_MIN := 0.30
@@ -157,10 +186,15 @@ var _pulse_time: float = 0.0
 var _layout: HBoxContainer
 var _orb_area: Control
 var _face: Button
+## The curved-`TURN` overlay — a child of `_face`, NOT of `_orb_area`. See `_ready` for why.
+var _turn_word: Control
 ## True while the pointer is over the face AND the face is showing the advance GLYPH instead of the
 ## turn number. Tracked (rather than read off the Button) because the swap must be re-evaluated when the
 ## attention registry changes, not only on enter/exit — see `_refresh_face_text`.
 var _face_hovered: bool = false
+## Whether the face currently shows `GLYPH` in place of the number. Written by the one place that
+## decides it (`_refresh_face_text`) and read by the word overlay, so the two cannot disagree.
+var _face_shows_glyph: bool = false
 
 var _popover: PanelContainer = null
 var _catcher: Control = null
@@ -203,6 +237,18 @@ func _ready() -> void:
 	_face.mouse_entered.connect(func() -> void: _set_face_hovered(true))
 	_face.mouse_exited.connect(func() -> void: _set_face_hovered(false))
 	_orb_area.add_child(_face)
+
+	# The curved word gets its OWN overlay, a child of `_face`. `_face` is itself a child of `_orb_area`,
+	# so EVERY draw command `_orb_area` issues renders BEHIND the face's stylebox (the count badge
+	# included) — drawing the word in `_on_orb_area_draw` would bury it under the filled face. A child of
+	# the face renders above it, and this reuses the same `draw.connect` idiom `_orb_area` already uses:
+	# no new script file, nothing relocated.
+	_turn_word = Control.new()
+	_turn_word.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_turn_word.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_turn_word.draw.connect(_on_turn_word_draw)
+	_face.add_child(_turn_word)
+
 	_position_face()
 	_refresh_face_text()
 
@@ -272,6 +318,9 @@ func _refresh_face_text() -> void:
 	_face.text = text
 	_face.add_theme_font_size_override(
 		"font_size", GLYPH_FONT_SIZE if show_glyph else _turn_font_size(text))
+	# The word labels the NUMBER, so the swap decides whether it draws at all.
+	_face_shows_glyph = show_glyph
+	_queue_turn_word_redraw()
 	if advances:
 		_face.tooltip_text = TOOLTIP_ADVANCE_FORMAT % (_turn + 1)
 	else:
@@ -376,6 +425,9 @@ func _style_face(accent: Color) -> void:
 	_face.add_theme_color_override("font_color", accent)
 	_face.add_theme_color_override("font_hover_color", accent)
 	_face.add_theme_color_override("font_pressed_color", accent)
+	# The word carries the same accent, so a severity change must repaint it too — a stale overlay beside
+	# a re-tinted number is the likeliest bug here.
+	_queue_turn_word_redraw()
 
 func _on_orb_area_draw() -> void:
 	var center := _orb_area.size * 0.5
@@ -407,6 +459,81 @@ func _draw_badge() -> void:
 	var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, BADGE_FONT_SIZE)
 	var origin := badge_center + Vector2(-text_size.x * 0.5, BADGE_FONT_SIZE * 0.35)
 	_orb_area.draw_string(font, origin, text, HORIZONTAL_ALIGNMENT_LEFT, -1, BADGE_FONT_SIZE, HudStyle.GROUND)
+
+# ---- the curved word -------------------------------------------------------
+
+## The face's font, for the curved word. Falls back to the engine default so the word is never silently
+## dropped when the button carries no theme font of its own.
+func _word_font() -> Font:
+	var font: Font = _face.get_theme_font("font") if _face != null else null
+	return font if font != null else ThemeDB.fallback_font
+
+## THE WORD'S WHOLE LAYOUT ARITHMETIC, in ONE place — the draw and the ui_preview assertion both read it,
+## so the guard can never measure something the renderer does not.
+##
+## Per-glyph advances come from the FONT (`get_char_size`), never an assumed uniform width: a fixed
+## advance spaces the letters unevenly around the arc and the word looks drunk. From those:
+##   arc_length = Σ advances + TURN_WORD_TRACKING × (glyph_count − 1)
+##   arc_angle  = arc_length / radius        (what `TURN_WORD_MAX_ARC_ANGLE` ceilings)
+##   glyph_height = the font's ascent, i.e. how far a glyph reaches RADIALLY OUTWARD from the arc, since
+##                  each glyph is drawn on its baseline with the arc as its baseline.
+func turn_word_metrics() -> Dictionary:
+	var font := _word_font()
+	var advances := PackedFloat32Array()
+	var arc_length := 0.0
+	for i in TURN_WORD.length():
+		var advance: float = font.get_char_size(TURN_WORD.unicode_at(i), TURN_WORD_FONT_SIZE).x
+		advances.append(advance)
+		arc_length += advance
+	if advances.size() > 1:
+		arc_length += TURN_WORD_TRACKING * float(advances.size() - 1)
+	var radius := FACE_DIAMETER * 0.5 * TURN_WORD_ARC_FRACTION
+	return {
+		"font": font,
+		"advances": advances,
+		"radius": radius,
+		"arc_length": arc_length,
+		"arc_angle": arc_length / radius,
+		"glyph_height": font.get_ascent(TURN_WORD_FONT_SIZE),
+	}
+
+## Does the word draw at all? It LABELS the number, so when the face swaps the number out for the advance
+## `GLYPH` it labels nothing and is suppressed. Deliberately ONE named branch, so flipping to a
+## "TURN ‣‣" verb phrase later is a one-line change.
+func _show_turn_word() -> bool:
+	return not _face_shows_glyph
+
+func _queue_turn_word_redraw() -> void:
+	if _turn_word != null:
+		_turn_word.queue_redraw()
+
+## Draw `TURN` along the top of the face's circle, one rotated glyph at a time. Face-local coordinates;
+## canvas +y is DOWN, so the circle's apex is at `-PI/2` and the run is centred on it.
+func _on_turn_word_draw() -> void:
+	if _turn_word == null or not _show_turn_word():
+		return
+	var metrics := turn_word_metrics()
+	var font: Font = metrics["font"]
+	var advances: PackedFloat32Array = metrics["advances"]
+	var radius: float = metrics["radius"]
+	var total_angle: float = metrics["arc_angle"]
+	var center := Vector2(FACE_DIAMETER, FACE_DIAMETER) * 0.5
+	var color := _accent_color
+	color.a *= TURN_WORD_ALPHA
+	var tracking_angle := TURN_WORD_TRACKING / radius
+	var angle := -PI * 0.5 - total_angle * 0.5
+	for i in advances.size():
+		var advance := advances[i]
+		var half_angle := advance / radius * 0.5
+		angle += half_angle
+		var pos := center + radius * Vector2(cos(angle), sin(angle))
+		# `angle + PI/2` puts the baseline tangent to the arc with the glyph upright relative to it.
+		_turn_word.draw_set_transform(pos, angle + PI * 0.5)
+		_turn_word.draw_char(
+			font, Vector2(-advance * 0.5, 0.0), TURN_WORD.substr(i, 1), TURN_WORD_FONT_SIZE, color)
+		angle += half_angle + tracking_angle
+	# MANDATORY: a transform left set corrupts every subsequent draw call on this canvas item.
+	_turn_word.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 # ---- popover ---------------------------------------------------------------
 
