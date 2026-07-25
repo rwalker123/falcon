@@ -113,8 +113,19 @@ const DOCKROW_MAP := MapSizes.DEFAULT_KEY
 const DOCKROW_MINIMAP_FILL := Color(0.16, 0.24, 0.20, 1.0)
 # The window every state but the ultrawide one renders at.
 const PREVIEW_SIZE := Vector2i(1500, 900)
-# How many frames to keep re-asserting the window before giving up and warning.
+# How many frames to keep re-asserting the window before giving up and warning. Also the bound on
+# `_capture`'s geometry retry, so a WM that refuses to honour the pin fails loudly instead of hanging.
 const WINDOW_PIN_MAX_FRAMES := 30
+## How many CONSECUTIVE frames the window must hold `PREVIEW_SIZE` in `_stabilize_canvas` before the
+## first state renders, and the bound on how long it waits for that. The maximize is applied — and
+## RE-applied — asynchronously, so "it is the right size once" is not the same as "it stays".
+const CANVAS_STABLE_FRAMES := 30
+const CANVAS_STABLE_MAX_FRAMES := 600
+## Phase to seed the turn orb's calm breath at, as a fraction of `TurnOrb.PULSE_PERIOD`. The breath is
+## `0.5 - 0.5 * cos(t)`, which is ZERO — its faintest, smallest instant — at phase 0, so freezing the
+## clock there would render the pulse at the bottom of its range. A quarter period puts `cos` at 0,
+## i.e. the breath's MIDPOINT, which is what an unfrozen frame averaged.
+const TURN_ORB_PULSE_MIDPOINT_FRACTION := 0.25
 
 ## The size every state re-asserts before it renders — see `_pin_window`.
 var _pinned_size := PREVIEW_SIZE
@@ -126,6 +137,27 @@ var _panel: BandCityPanel
 var _current_state := "<pre-render>"
 
 func _ready() -> void:
+	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
+	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
+	# refactor changed nothing. Measured before the freeze, two runs of IDENTICAL code differed byte-wise
+	# in `band_panel_no_idle` — 51 px inside the turn orb's 71×70 ring box, the calm breath.
+	#
+	# What survives phase 0 was CHECKED against the draw code, not assumed:
+	#   • the turn orb's breath is `0.5 - 0.5 * cos(t)`, which DEGENERATES to its faintest, smallest
+	#     instant at phase 0, so its phase is seeded to the midpoint below rather than left at 0. It is
+	#     drawn only while the orb has no attention entries (`_draw_pulse` vs `_draw_badge`), which is
+	#     why just one frame moved;
+	#   • MapView's awaiting-expedition / targeting pulses are not in any frame — both MapViews this
+	#     harness builds are `visible = false`, data only;
+	#   • the ONE tween in the whole client is `TellingPanel`'s page turn, and this harness pushes no
+	#     narrative beats, so no tween is ever created here. `ui_preview` has to flush tweens in its
+	#     settle; there is deliberately nothing to flush here. RE-CHECK THAT if a state ever drives the
+	#     Telling panel: a Tween at `time_scale = 0` never advances AT ALL, so it would pin at its
+	#     starting frame rather than merely render at a fixed phase.
+	# `Hud._process` only hides a tooltip and `MapView._process` is input-driven, so neither carries a
+	# time term; `Main` / `LogsPanel` / `ScriptHostManager` are not instanced. `_settle` waits on
+	# `process_frame`, which still fires at `time_scale` 0.
+	Engine.time_scale = 0.0
 	# PIN THE WINDOW. `project.godot` opens MAXIMIZED and macOS applies — and re-applies — that
 	# asynchronously, so a bare `size =` is a race the harness does not stay winning: every frame then
 	# renders at monitor size instead of PREVIEW_SIZE, silently changing what each state proves (a
@@ -163,6 +195,15 @@ func _ready() -> void:
 
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# Hold the canvas until the WM stops fighting it — before the first state, so no LATER settle has
+	# to spend a frame on it. See `_stabilize_canvas`.
+	await _stabilize_canvas()
+
+	# Seed the turn orb's calm breath at its MIDPOINT. `_pulse_time` only ever advances by `delta`,
+	# which is 0 with the clock frozen, so whatever is set here is the phase every frame renders at —
+	# and phase 0 is the breath's trough (alpha 0.30 / radius 44 of a 0.30..0.85 / 44..47 range), i.e.
+	# a deterministic frame whose subject has faded to its faintest. Set once; nothing resets it.
+	_hud.turn_orb._pulse_time = TurnOrb.PULSE_PERIOD * TURN_ORB_PULSE_MIDPOINT_FRACTION
 
 	# Seed the top bar so the HUD reflow reads against real content.
 	_hud.update_sedentarization([{"faction": 0, "score": 62.0, "stage": "soft"}])
@@ -1442,6 +1483,65 @@ func _pin_window(size: Vector2i) -> void:
 	if window.size != size:
 		push_warning("band_panel_preview: window pinned to %s but reports %s" % [size, window.size])
 
+## Settle the window ONCE, in `_ready`, before any state renders — and take the maximize DELIBERATELY
+## on the way, which is what closes the last of the drift.
+##
+## `project.godot` opens the window MAXIMIZED and macOS applies that asynchronously, so whether a run
+## ever passed through the monitor-sized window was a COIN FLIP — and it is a coin flip the pixels
+## remember: `window/stretch` is `canvas_items` with an `expand` aspect, so the stretch scale swings
+## across a maximize and the rasterized-glyph coverage state does not come back bit-identical. It is
+## also a LAYOUT flip, not merely a pixel one — a run that loses the race renders the "bottom dock"
+## states at the monitor's width, i.e. against the ultrawide content cap rather than the wide shell
+## the state exists to judge (one measured run drew `band_panel_left` at 5120×1410). Dodging the
+## maximize is not available — `ui_preview` measured a late one landing mid-run after 30 stable frames
+## — so ASK for it, then undo it: every run then takes the same path.
+func _stabilize_canvas() -> void:
+	get_window().mode = Window.MODE_MAXIMIZED
+	for _i in range(CANVAS_STABLE_MAX_FRAMES):
+		if get_window().size != PREVIEW_SIZE:
+			break
+		await get_tree().process_frame
+	# Restore and HOLD: the maximize is re-applied asynchronously, so "the right size once" is not the
+	# same as "it stays" — wait for CANVAS_STABLE_FRAMES consecutive good frames. After this every
+	# `_pin_window` at the same size returns without awaiting, so each state gets the same number of
+	# layout passes in every run.
+	var stable := 0
+	for _i in range(CANVAS_STABLE_MAX_FRAMES):
+		if get_window().size == PREVIEW_SIZE and get_window().mode == Window.MODE_WINDOWED:
+			stable += 1
+			if stable >= CANVAS_STABLE_FRAMES:
+				return
+		else:
+			stable = 0
+			await _pin_window(PREVIEW_SIZE)
+		await get_tree().process_frame
+	push_error("band_panel_preview: the window never held the pinned %s canvas — frames will drift" % PREVIEW_SIZE)
+
+## The viewport image, GUARANTEED to be at the size this state pinned (or an integer HiDPI multiple of
+## it). The WM's deferred maximize can resize the render target between a settle and a capture, so
+## re-pin and re-draw until the geometry is the pinned one, then give up loudly rather than save a
+## frame that silently renders the panel at a width the state never asked for.
+func _capture(name: String) -> Image:
+	for _i in range(WINDOW_PIN_MAX_FRAMES):
+		var image := get_viewport().get_texture().get_image()
+		if image == null:
+			# No image to read back — the dummy renderer (i.e. someone ran this with `--headless`,
+			# which selects it on Godot 4.5+). Capture is impossible, but the compile/scene gate and
+			# every assertion still ran. Run WITHOUT `--headless` for PNGs.
+			push_warning("band_panel_preview: null image (dummy renderer?) — skipping %s.png; run without --headless" % name)
+			return null
+		var w := image.get_width()
+		var h := image.get_height()
+		if w % _pinned_size.x == 0 and h % _pinned_size.y == 0 \
+				and w / _pinned_size.x == h / _pinned_size.y:
+			return image
+		await _pin_window(_pinned_size)
+		await get_tree().process_frame
+		RenderingServer.force_draw()
+		await get_tree().process_frame
+	push_error("band_panel_preview: viewport never came back to the pinned %s canvas for %s" % [_pinned_size, name])
+	return null
+
 func _settle() -> void:
 	# Re-assert the window EVERY state: the WM's maximize lands asynchronously and can arrive between
 	# two states, rendering them at different resolutions (blend_probe hit the same thing).
@@ -1455,9 +1555,8 @@ func _save(name: String) -> void:
 	# Check the herd fixtures RENDERING IN THIS FRAME, so a half-set field pair fails against the state
 	# it silently mis-renders rather than against nothing at all.
 	_guard_frame_herd_fields(name)
-	var image := get_viewport().get_texture().get_image()
+	var image: Image = await _capture(name)
 	if image == null:
-		push_warning("band_panel_preview: null image (dummy renderer?) — skipping %s.png; run without --headless" % name)
 		return
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
@@ -1548,6 +1647,21 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 				+ "take-side count. Set both through _set_managed_herders.") % [where,
 				String(dict.get("id", "?")), HERDERS_NEEDED_KEY, needed,
 				HERDERS_NEEDED_IF_MANAGED_KEY, if_managed])
+		elif needed > 0 and if_managed != needed:
+			# The OTHER half of the invariant, and the one a `>=` test lets through. The gate is the
+			# ONLY difference between the two sim functions, so a NON-ZERO gated count already says the
+			# herd passed the gate — it is corralled or owned — and the would-be crew is then computed
+			# from the same species and headcount by the same arithmetic. A bigger would-be crew is not
+			# a conservative fixture, it is an impossible herd: it claims managing this herd would cost
+			# MORE than managing it already does.
+			_herd_pair_violations += 1
+			push_error(("band_panel_preview: %s — herd \"%s\" declares %s %d and %s %d. Once %s is "
+				+ "above zero the herd IS managed, and the would-be crew is the SAME crew — the sim's "
+				+ "two functions differ only by the ownership gate this herd has already passed, so "
+				+ "they must be EQUAL here. Set both through _set_managed_herders; only a still-WILD "
+				+ "tameable herd may carry a larger would-be crew, and its gated count is 0.")
+				% [where, String(dict.get("id", "?")), HERDERS_NEEDED_KEY, needed,
+				HERDERS_NEEDED_IF_MANAGED_KEY, if_managed, HERDERS_NEEDED_KEY])
 
 	for value in dict.values():
 		_guard_herd_fields(value, where, depth + 1)

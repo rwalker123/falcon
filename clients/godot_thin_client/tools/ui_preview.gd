@@ -3270,6 +3270,21 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 				+ "worker cap floors on the second field, so half-setting the pair silently caps the "
 				+ "crew at the take-side count.") % [where, String(dict.get("id", "?")),
 				HERDERS_NEEDED_KEY, needed, HERDERS_NEEDED_IF_MANAGED_KEY, if_managed])
+		elif needed > 0 and if_managed != needed:
+			# The OTHER half of the invariant, and the one a `>=` test lets through. The gate is the
+			# ONLY difference between the two sim functions, so a NON-ZERO gated count already says the
+			# herd passed the gate — it is corralled or owned — and the would-be crew is then computed
+			# from the same species and headcount by the same arithmetic. A bigger would-be crew is not
+			# a conservative fixture, it is an impossible herd: it claims managing this herd would cost
+			# MORE than managing it already does.
+			_herd_pair_violations += 1
+			push_error(("ui_preview: FAIL herd fields — %s herd \"%s\" declares %s %d and %s %d. Once "
+				+ "%s is above zero the herd IS managed, and the would-be crew is the SAME crew — the "
+				+ "sim's two functions differ only by the ownership gate this herd has already passed, "
+				+ "so they must be EQUAL here. Set both through _set_managed_herders; only a still-WILD "
+				+ "tameable herd may carry a larger would-be crew, and its gated count is 0.")
+				% [where, String(dict.get("id", "?")), HERDERS_NEEDED_KEY, needed,
+				HERDERS_NEEDED_IF_MANAGED_KEY, if_managed, HERDERS_NEEDED_KEY])
 	for value in dict.values():
 		_guard_herd_fields(value, where, depth + 1)
 
