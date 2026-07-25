@@ -4,7 +4,8 @@ Status: **Design approved, not yet implemented.** This is the authoritative spec
 game's core early/mid economy: a demographic population model, labor allocation, and a
 knowledge-gated improvement catalog — the system from which settlements *emerge*. It
 supersedes the discrete `found_settlement` / Founders-unit model and the `Camp`-entity
-backlog (the Nomadic Start Prototype work, issue #172), and it is the destination of the
+backlog (the Nomadic Start Prototype work — superseded by this arc rather than migrated to an
+issue), and it is the destination of the
 `SedentarizationScore` seam built by the Wildlife & Hunting Overlay.
 
 ## Motivation
