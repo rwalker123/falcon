@@ -78,6 +78,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
+| `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
 names a *section heading*, not a file. Resolve it with
@@ -121,13 +122,9 @@ Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archety
 
 Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted per-row.
 
-**Boot config loading is strict, subsystem-wide.** An absent *default* path falls back to the
-compiled-in builtin — benign, because the builtin is `include_str!` of that exact file. A file that
-is **present but unreadable, unparseable, or invalid**, and any `*_CONFIG_PATH` naming a missing or
-broken file, is a **boot panic** naming the path, the error and the remedy: the sim never runs
-tuning nobody chose. `config_load.rs` is the single implementation (`resolve_config` /
-`load_config_from_env`); every `load_*_from_env` delegates to it. The `reload_config` hot-reload
-path is deliberately the opposite — it logs and keeps the live world.
+**Boot config loading is strict**: only an *absent default* path falls back to the builtin; a
+present-but-broken file, or a `*_CONFIG_PATH` naming a missing or broken one, is a boot panic. Why,
+and how to add a loader — see `.claude/rules/core_sim/config-loading.md`.
 
 **Port allocation, the handshake file, and how the client discovers a bumped block** are one
 two-sided contract — see `.claude/rules/core_sim/ports.md`, which loads on `port_alloc.rs`,
