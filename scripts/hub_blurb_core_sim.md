@@ -1,9 +1,19 @@
 ## Where the rest of this document lives
 
-This file is the **hub**: build commands, config layout, the shared food-module
-vocabulary, and the turn loop — the things true of *all* `core_sim` work. The
-per-arc engineering rationale lives in `.claude/rules/core_sim/`, scoped with
-`paths:` frontmatter so a file loads only when you touch the code it describes.
+This file is the **hub**: build commands, global config layout, the shared
+food-module vocabulary, and the turn loop — the things true of *all* `core_sim`
+work. The per-arc engineering rationale lives in `.claude/rules/core_sim/`,
+scoped with `paths:` frontmatter so a file loads only when you touch the code it
+describes.
+
+**The heavy config rows went with them.** A per-config-file description belongs
+with the arc that owns that config, so the big ones — `fauna_config.json`,
+`flora_config.json`, `labor_config.json`, `intensification_ladder.json`,
+`expedition_config.json`, `combat_config.json`, the beat and campaign configs —
+now ride in their rule file's `## Config files` table. What stays below is the
+global/boot set (`simulation_config.json`, `turn_pipeline_config.json`,
+`start_profiles.json`, the ECS-subsystem configs) plus hot reload and the
+environment overrides. A new config's row goes in its arc's rule, not here.
 
 | Rule file | Covers | Loads when you touch |
 |---|---|---|

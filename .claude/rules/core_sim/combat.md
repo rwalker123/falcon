@@ -6,12 +6,19 @@ paths:
   - "core_sim/tests/predators.rs"
 ---
 
-<!-- Extracted verbatim from lines 3194-3429 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+<!-- Extracted verbatim from lines 54-54;3194-3429 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
      (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
      core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
-# Combat & Casualties (Predators arc — Phase 0)
+# Combat & casualties, predation
+
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `src/data/combat_config.json` | **Combat resolver tuning** (Predators Phase 0, `docs/plan_predators.md`; loader `combat_config.rs`, env override `COMBAT_CONFIG_PATH`). The severity constants the pure `combat::resolve_fight` reads — `lethality` (**1.0** — scales every side's total losses) / `disengage_fraction` (**0.5** — a loser past this loss share is driven off, not annihilated) / **`expedition_danger_multiplier`** (**1.5** — a multiplier on `lethality` applied **only** in the expedition-hunt adapter, never the resident-band path: a detached party is far from home, unsupported and tired, so the same beast costs it more; a deferred general combat-modifiers layer — proximity/fatigue/supply + a home-advantage discount for local hunts — will supersede this flat dial). **Resolver tuning, NOT creature identity** (creature stats live on `fauna_config`/`creatures.json`). **Validated** inside `from_json_str` (all three finite & `> 0`, `disengage_fraction ≤ 1`); a broken invariant is rejected at **error** level (`combat_config.invalid_rejected`) and the builtin used. Not on the hot-reload path. See "Combat & Casualties" |
+## Combat & Casualties (Predators arc — Phase 0)
 
 The **combat subsystem** and the first live consumer of the long-inert **Warrior** role. Authoritative
 design: `docs/plan_predators.md`. Phase 0 stands up the *seam* — a dangerous hunt is just a *fight*, so
@@ -110,7 +117,7 @@ hunts a harmless species — wiring casualties into the launch forecast is a Pha
 See Also: `docs/plan_predators.md` (the whole arc), "Fauna & Wild Game" (the `SpeciesDef` table + the
 Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam casualties apply at).
 
-## Predation (Phase 1a) — carnivore herds
+### Predation (Phase 1a) — carnivore herds
 
 **A predator is an ordinary `Herd` whose food layer is *other herds* (prey) instead of the per-tile
 `GrazeRegistry`** — the trophic transpose of the grazer model. `SpeciesDef.diet` (`herbivore` |
@@ -202,7 +209,7 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   task):** the native reader + the view-ring render. Guard:
   `snapshot::tests::herd_snapshot_reports_prey_sense_radius_for_carnivores_only`.
 
-## Predator raids (Phase 1b) — the raid trigger + the Warrior goes live
+### Predator raids (Phase 1b) — the raid trigger + the Warrior goes live
 
 **A carnivore with `aggression > 0` within `predators.raid_radius` of a resident band raids its camp**,
 and the band is defended by its **Warriors** — the long-inert Warrior role's **first live consumer**.

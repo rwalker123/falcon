@@ -8,14 +8,24 @@ paths:
   - "core_sim/tests/{supply_network,sedentarization}.rs"
 ---
 
-<!-- Extracted verbatim from lines 4382-4760 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+<!-- Extracted verbatim from lines 48-51;4382-4760 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
      (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
      core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
-# Campaign Loop & System Activation
+# Campaign loop & system activation
 
-## Start Flow
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `src/data/sedentarization_config.json` | Sedentarization Score tuning: soft/hard prompt thresholds, EMA `smoothing`, input `weights` (domestication/surplus/resource_density/population), and saturation `references` |
+| `src/data/demographics_config.json` | Demographic population tuning: `initial_distribution` (children/working/elders split), `consumption` (per-capita food draw + per-bracket factors), `startup` (`food_reserve_days` seeded into each band's larder + `well_fed_morale_bonus`), `births` (rate/surplus_bonus; morale-independent), `maturation_rate`/`aging_rate`/`elder_mortality_rate`, `scarcity` (starvation + per-bracket vulnerability, deficit-capped), `cold` (temperature-death) |
+| `src/data/supply_network_config.json` | Supply-network tuning: `reach_tiles` (connection radius), `throughput_per_turn` (max goods moved per node/turn), `friction` (fraction lost in transit), `min_transfer` (dead-band) |
+| `src/data/wellbeing_config.json` | Civilization Wellbeing tuning: `discontent` (`content_morale`/`floor_morale` productivity curve, `grievance_gain`/`grievance_decay`/`trapped_multiplier`), `productivity` (`floor_mult`, `discontent_weight`), `migration` (own morale-scaled onset: `morale_threshold`, `max_rate`, `base_reach`, `attractive_morale`, `min_morale_gap`, `dependent_weight`) |
+## Campaign Loop & System Activation
+
+### Start Flow
 - **Boot idle → `new_game`**: `bin/server.rs` boots **IDLE** — it binds its ports and command
   listener but does **not** run the Startup worldgen, so no world exists and nothing is captured or
   broadcast (Bevy's `Startup` schedule only fires on the first `app.update()`, so simply not calling
@@ -32,7 +42,7 @@ paths:
 - **Sedentarization**: implemented — see the dedicated section below.
 - **Founding**: `Command::FoundSettlement { q, r }` requires Founders unit, consumes provisions, spawns Settlement
 
-## Population & Demographics (Settlement & Population Economy — Phase 1)
+### Population & Demographics (Settlement & Population Economy — Phase 1)
 The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a band — the first
 "location"; tile-housed population arrives in Phase 3) carries three fixed-point **age brackets** —
 **children / working-age / elders** — plus a local **`stores`** larder (food under the `FOOD` key).
@@ -97,7 +107,7 @@ the exact larder. A per-faction age-structure + dependency-ratio HUD readout shi
 `PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
 sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
 
-## Supply Network (logistics from turn 0)
+### Supply Network (logistics from turn 0)
 Bands are small logistics nodes: `balance_supply_networks` (`supply.rs`, `TurnStage::Logistics`,
 before Population consumes) connects **same-faction** bands within `reach_tiles` (via
 `grid_utils::wrapped_distance_sq`) into **supply networks** (union-find connected components) and
@@ -312,7 +322,7 @@ Trade note below). *v1:* population is the universal balancing weight, so a zero
 node would compute a 0 fair share — revisit (→ capacity weight) when storage-pits land. The
 connected-components pass is also what Phase 4 will use to derive settlement clusters.
 
-## Sedentarization
+### Sedentarization
 The emergent per-faction "pressure to root in place" — the first slice of the pastoral→
 settlement chain, and the consumer of Phase E's domestication seam.
 
@@ -340,7 +350,7 @@ in `data/sedentarization_config.json` (`sedentarization_config.rs`).
 > *tether* rather than a gate. See that design doc for the population/labor/improvement model
 > this score ultimately feeds.
 
-## Civilization Wellbeing (Morale → Discontent → Consequences)
+### Civilization Wellbeing (Morale → Discontent → Consequences)
 The three-layer spine **factors → morale → discontent → consequences** (Phase 1). Authoritative
 design: `docs/plan_civ_wellbeing.md`. Config: `wellbeing_config.rs` / `data/wellbeing_config.json`.
 Extension seams are present and empty — future factors/consequences slot in without a rewrite.
@@ -384,10 +394,10 @@ Extension seams are present and empty — future factors/consequences slot in wi
   `moraleSettling/Terrain/Climate/Unrest` (surfaced so the client can render the breakdown). All
   fixed-point except the two head-counts; all derived per-turn except `grievance` (persisted).
 
-## Capability Flags
+### Capability Flags
 `CapabilityFlags` bitflags: `AlwaysOn`, `Construction`, `IndustryT1/T2`, `Power`, `NavalOps`, `AirOps`, `EspionageT2`, `Megaprojects`. Systems are inert until corresponding flag is set.
 
-## Victory Engine
+### Victory Engine
 `VictoryState` with per-mode progress meters. Modes: Hegemony, Ascension, Economic, Diplomatic, Stewardship, Survival. `victory_tick` runs after end-of-turn accounting.
 
 ---

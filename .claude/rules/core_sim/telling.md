@@ -6,12 +6,20 @@ paths:
   - "core_sim/tests/telling_support/**"
 ---
 
-<!-- Extracted verbatim from lines 3569-4003 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+<!-- Extracted verbatim from lines 46-47;3569-4003 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
      (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
      core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
 # The Telling — the narrative beat engine
+
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, **`remembers`** (slot → memory-thread kind — see "Memory threads"), `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
+| `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns` **16** — must exceed every authored `trend` window, validated at catalog load, `min_delta`), `voice` (`default_register`, `registers`, **`mediums`** — the ordered oral→painted→written ladder, see "The maturing voice"), **`memory.max_threads_per_kind`** (8), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
+## The Telling — the narrative beat engine
 
 Watches sim state, fires **edge-gated** narrative beats, dresses them in nouns drawn from the live
 world, and pushes them through the existing `CommandEventLog`. The feed stops saying
@@ -22,7 +30,7 @@ design: `docs/plan_the_telling.md` (§2 schema, §3 runtime); concept `docs/Emer
 (memory threads, callback predicates, and the maturing voice).** All three tiers are live; see "The
 fork tier", "Stance", "Memory threads", "The `answered` gate" and "The maturing voice" below.
 
-## Three layers, and the mod surface is content
+### Three layers, and the mod surface is content
 
 | Layer | Home | Moddable | Deterministic |
 |---|---|---|---|
@@ -30,7 +38,7 @@ fork tier", "Stance", "Memory threads", "The `answered` gate" and "The maturing 
 | **Content** — souls, wardrobes, conditions | `src/data/beat_*.json` | **yes — this is the mod API** | yes, by construction |
 | **Presentation** — how a beat renders | Godot client (generic feed today) | yes | n/a |
 
-## Module layout (`core_sim/src/telling/`)
+### Module layout (`core_sim/src/telling/`)
 
 | Module | Owns |
 |---|---|
@@ -45,7 +53,7 @@ fork tier", "Stance", "Memory threads", "The `answered` gate" and "The maturing 
 | `memory.rs` | **memory threads** — the durable nouns callbacks are made of, their selectors, and eviction |
 | `medium.rs` | **the maturing voice** — the medium ladder and its never-regress rule |
 
-## Turn-pipeline placement
+### Turn-pipeline placement
 
 **`TurnStage::Telling`, between `Crisis` and `Finalize`** — it must see population, fauna,
 sedentarization and crisis output, and must land **before `Snapshot`** so a beat reaches the client
@@ -53,7 +61,7 @@ the same turn it fires. `telling_tick` carries **no `run_if` capability gate**: 
 on. (The ordering that actually binds is the tuple position in `.configure_sets(Update, (…).chain())`,
 not the enum declaration order.)
 
-## The two extension points (the engine/content boundary)
+### The two extension points (the engine/content boundary)
 
 Content **composes** signals and resolvers; it cannot invent them. Adding either is a deliberate
 engine change, which keeps the surface auditable and every condition cheap.
@@ -96,7 +104,7 @@ Deliberately **no English pluralisation** — many of these names are already co
 "deer", "fowl") and a naive `+s` gives "deers". `TerrainType::as_adjective()` (`sim_schema`) is the
 terrain equivalent, written out rather than derived from the enum's debug name.
 
-## The `when` grammar (`predicate.rs`)
+### The `when` grammar (`predicate.rs`)
 
 Combinators `all` / `any` / `not`; leaves dispatch on which keys are present, with a clear error on
 an unrecognised shape (content authors will hit this).
@@ -123,7 +131,7 @@ an unrecognised shape (content authors will hit this).
 > against the ledger's still-previous `edge_state`** → emit → *then* commit this turn's samples as
 > next turn's `prev`. Committing before evaluation would make `Crosses` structurally unfireable.
 
-## Selection, budget, emission
+### Selection, budget, emission
 
 Per turn: sample → candidate filter (in **catalog order**) → resolve nouns → weigh wardrobe →
 seeded draw → render → emit.
@@ -169,7 +177,7 @@ it must show the actual numbers. Analytics mirror:
 > overrun the feed — but it now shares that budget with every command echo, and if the feed starts
 > churning, this bound is the first lever to look at.
 
-## Validation — content typos fail at LOAD, not at render
+### Validation — content typos fail at LOAD, not at render
 
 `validate()` runs inside `from_json_str` for **both** files, so every load path (builtin, default
 file, env override) is covered; a break is logged at **error** level and the known-good builtin is
@@ -188,7 +196,7 @@ Config invariants: `novelty_window_turns > 0`; `0 ≤ novelty_floor ≤ 1`; ever
 `BeatTier` round-trips by string key (`as_str`/`from_key`) with an **unknown key erroring at load**,
 per the persisted-enum convention.
 
-## Stance — accreted signal + declared offset
+### Stance — accreted signal + declared offset
 
 The concept's flow is *accrete → name → ratify or resist → steer*, so an axis has **two** halves and
 the engine keeps them apart:
@@ -217,7 +225,7 @@ on the ledger as **derived scratch** (`last_effective_stance`, not persisted, ex
 equality — the `LaborAllocation::last_yields` convention) purely so the snapshot can export them
 without re-sampling.
 
-## The fork tier — the decision surface
+### The fork tier — the decision surface
 
 A `fork`-tier beat carries a **`choices` array**. It does *not* push a line to the feed; it posts a
 `PendingFork` onto `BeatLedger.pending` for the faction, which the client renders and answers.
@@ -272,7 +280,7 @@ defer** (an empty `writes`). That last one is load-bearing: it is the explicit o
 gate depends on, and a fork without it would trap the player in an unanswerable-without-committing
 decision.
 
-## The fork tier on the wire
+### The fork tier on the wire
 
 Unlike `BeatLedger` (sim-only serde), the fork tier **is** client-consumed, so it follows the
 per-faction `SedentarizationState` / `DiscoveredSitesState` pattern on **both** `WorldSnapshot` and
@@ -294,7 +302,7 @@ choice a defer, and its turn gate depends on the answer. `stanceAxes` carries th
 value, so the client shows what the player's identity currently reads as, drift and declaration
 together.
 
-## Memory threads — what the story remembers
+### Memory threads — what the story remembers
 
 The concept's memory ledger: *a small set of durable threads (a rival tribe, a sacred mountain, a
 valley you refused) so later beats can call back. **Callbacks are what make a 200-turn emergent game
@@ -331,7 +339,7 @@ A `Thread` is `{ kind, key, name, plural, adjective, first_seen_tick, last_refer
   `thread.*` resolver and a `{ "thread": K }` gate must both name a kind some beat's `remembers`
   actually declares (otherwise they could never resolve or be satisfied).
 
-## The `answered` gate — one sim, two stories
+### The `answered` gate — one sim, two stories
 
 `{ "answered": B, "choice": C, "min_turns_since": n }` is true when the player answered fork `B` with
 choice `C` at least `n` turns ago. PR-B stored `answers` and nothing read it; this is what makes it
@@ -370,7 +378,7 @@ load-bearing. The fork promised *"the stories that will find you now"*, and `ide
 > on the mis-authored identity beats above; with those fixed the widest authored window is 5, so
 > `trend.max_history_turns` stays at its original **16**.)
 
-## The maturing voice — medium
+### The maturing voice — medium
 
 Concept §7: the voice changes **medium** as the civilization crosses milestones — oral saga → painted
 chronicle → written record — and *"the narrator maturing is itself a narrative arc that makes
@@ -408,7 +416,7 @@ progression felt."* Lives in `telling/medium.rs`.
   on a registered signal; and `memory.max_threads_per_kind > 0` (a zero cap would silently discard
   every thread, making every `thread` gate and `thread.*` resolver permanently unsatisfiable).
 
-## Ledger + rollback
+### Ledger + rollback
 
 `BeatLedger` (resource) holds `fired` (beat → ticks), `edge_state` (signal → last turn's sample),
 `history` (signal → rolling, capped at `trend.max_history_turns`), `wardrobe_usage` (novelty),

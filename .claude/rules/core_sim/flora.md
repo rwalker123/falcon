@@ -5,12 +5,19 @@ paths:
   - "core_sim/tests/flora_*.rs"
 ---
 
-<!-- Extracted verbatim from lines 2199-2553 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
+<!-- Extracted verbatim from lines 45-45;2199-2553 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
      (the PRE-SPLIT original — read it with `git cat-file blob dcc757587f8c9308590997ee600abc64a34e6712`;
      core_sim/CLAUDE.md itself is now the hub, where the routing table lives).
      Regenerate with scripts/split_claude_md.sh -->
 
-# Depletable Forage (Intensification §0-ii)
+# Depletable forage and the flora roster
+
+## Config files
+
+| File | Purpose |
+|------|---------|
+| `src/data/flora_config.json` | **The flora roster** (Flora Roster F1, `flora_config.rs`, env override **`FLORA_CONFIG_PATH`**; design `docs/plan_flora_roster.md`) — the plant twin of `fauna_config.json`'s species table, and the first time a plant has a **name**. **33 species** (18 F1–F4 families + the **F5 fine-grained mass-fill** of 15 — kelp, sea_kale, wild_rice, cattail, chestnut, wild_orchard, sunflower, wild_pulses, mesquite, wild_fig, cloudberry, rock_tripe, alpine_herbs, cave_fungi, grapevine — so every non-zero biome now carries a **3–5 species basket** and per-tile realization (§10) has enough breadth to vary tile-to-tile). The F1 core is 12 biome-keyed staples + `river_fish`, which alone hosts `NavigableRiver` and means the *fishery bonus term*, not the vestigial capacity row; each: `display_name`/`plural`/`adjective`, **`role`** (`staple`\|`fodder`\|`cash` — a **DISPLAY TAG ONLY**, derived from which component of the yield vector dominates, never branched on in the sim), **`cultivation_ceiling`** (`wild`\|`tended`\|`field`, default `field` — the exact twin of `husbandry_ceiling`: one ceiling, not two flags, so "sowable but not tendable" is unrepresentable; `allows_cultivate`/`allows_sow` are **LIVE since S1** — they gate which species a `Cultivate`/`Sow` may commit a patch to, so a basket that is all-`wild` cannot be tended or sown at all), **`host_biomes`** (`TerrainType` → a **relative affinity WEIGHT, not a capacity**), **`yield`** (`provisions_per_biomass` / `fodder_per_biomass` / `trade_goods_per_biomass` — one vector, three accounts; **all three are LIVE**: `provisions_per_biomass` since S1 as a *committed* patch's conversion rate, `fodder_per_biomass` since F3 on hay Fields, and `trade_goods_per_biomass` since **F4** on cash Fields — see "Cash crops — the F4 coupling"), and `regrowth_rate`. **NAMING DECOMPOSES, IT DOES NOT ADD:** `FloraConfig::composition(terrain)` is a **derived, precomputed** share table — `share = weight / Σ weights hosting that biome` — so the shares sum to `1.0` by construction and `share × forage.capacity_by_biome[biome]` always re-sums to the biome's own capacity. Adding a species **dilutes** the others; it cannot inflate a tile. Built once at load through the single constructor every `Deserialize` path routes through, so a stale table is unrepresentable, and sorted **share DESC then species key ASC** because it goes on the wire (`ForagePatchState.composition`). **The share DENOMINATOR must be summed in a deterministic order, not merely presented in one** — `HashMap` iteration order is randomized per instance and f32 addition is not associative, so a `Σ weights` accumulated in map order lands a ULP apart between two builds, and that ULP divides into every published share and changes the snapshot hash. Both share tables therefore order *before* they sum: `build_composition` sorts its rows first, and `navigable_composition` merges through a `BTreeMap`. Sorting the *output* does not fix the arithmetic — this was a ~50%-of-runs `deterministic_snapshots_match` flake, pinned now by `the_share_table_is_bit_identical_across_builds` / `navigable_composition_is_bit_identical_across_calls`. Navigable hexes blend two baskets — see `FloraConfig::navigable_composition` / `forage::tile_flora_composition`, the twin of `navigable_forage_capacity`. **`provisions_per_biomass` is hand-tuned per species and LIVE since S1** — it is the *conversion* half of the commit trade (see "Committing a patch to one plant"), so the F1 "flat 0.05 verbatim" rule is deliberately gone: identical rates would make committing a strict downgrade for every species whose `share × gain < 1`. Grains/tubers on their best ground are strongest (wild_emmer **0.080**); the `wild`-ceiling gathered things sit at or below the 0.05 baseline (shellfish/river fish 0.050, pine nut 0.048, oak mast 0.045, arctic greens 0.040) and their rates are **inert by construction** (they can never commit). `fodder_per_biomass` is **live since F3** on the one fodder crop **hay_grass** (0.20 — a hay Field harvests into the band's `FODDER` store, a pen that knows **Foddering** draws it) and 0.0 on every staple; `trade_goods_per_biomass` is **live since F4** — the flat **0.005 token** on every staple (the F1 baseline that differentiates trade value) and **trade-dominant** on the four **cash crops** **cotton** (0.20) / **flax** (0.15) / **tobacco** (0.18) / **tea** (0.16), whose harvest as a Field credits the faction `trade_goods` stockpile (see "Cash crops — the F4 coupling"); `regrowth_rate` is still `forage.ecology.regrowth_rate` verbatim — all pinned by `core_sim/tests/flora_roster.rs` **against the loaded labor config, not literals**, along with the design's own bar: every climbing species must be worth committing on its best country and not on its worst. The cash crops are hosted **honestly on the river valleys** (cotton/tobacco/flax on AlluvialPlain/Floodplain/RiverDelta, tea on the uplands); **per-tile realization (§10) keeps the staples dominant on their own realized tiles** — the commit bar reads a tile's local realized share, not the uniform biome share — rather than keeping cash crops off that ground (the S1 commit-worthiness bar). `reed_and_root` is `field`-ceiling (rice/taro on a delta are the archetypal field crop; at `tended` the richest sowable ground in the game would be unsowable). **Validated** — `FloraConfig::validate()` runs inside `from_json_str` (every load path) for the per-row invariants (empty `display_name`, empty `host_biomes`, a non-positive weight, an all-zero `yield`, a non-positive `regrowth_rate`), and the **cross-web** pair `FloraConfig::validate_against_forage(&forage.capacity_by_biome)` runs on the load path with `labor_config`'s table passed in (one copy): **no nameless food** — a biome with non-zero forage capacity that no species hosts is rejected, which is what forces a **complete** roster rather than a couple of species — and **no claiming barren ground** — a species hosting a stated-zero biome is rejected. A broken invariant is logged at **error** level (`flora_config.invalid_rejected`) and the builtin is used |
+## Depletable Forage (Intensification §0-ii)
 
 Forage tiles are **depletable**, the herd biomass/regrowth model transposed onto plants (design:
 `docs/plan_intensification.md` §0). Every `FoodModuleTag` tile carries a live per-patch
@@ -91,7 +98,7 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology
   readout (thriving/stressed/collapsing on the map/tile, like herds) is a possible later slice.
 
-## The Flora Roster (F1) — what a tile's capacity is MADE OF
+### The Flora Roster (F1) — what a tile's capacity is MADE OF
 
 Fauna is a named roster; **plants had no identity at all** — `forage.capacity_by_biome` said *how
 much*, `FoodModule` said *what kind of gathering*, and neither said *which plant*. `flora_config.json`
@@ -143,7 +150,7 @@ No `ForagePatch` field feeds it. **Client follow-up:** nothing renders it — th
 readout is a client-dev slice, and so is exposing the per-patch **commitment** (S1, below), which is
 sim/rollback state only today.
 
-## Per-tile realization — what *can* grow vs what *is* growing (Flora Roster §10)
+### Per-tile realization — what *can* grow vs what *is* growing (Flora Roster §10)
 
 `FloraConfig::composition(terrain)` is the **affinity** roster — *what CAN grow on this biome* —
 uniform across every tile of a biome. `FloraConfig::realized_composition(terrain, tile, map_seed)` (and
@@ -184,7 +191,7 @@ instead of every tile carrying a diluted slice of all of them.
   it "just works" — but the ui_preview crop-picker fixture needs **two tiles of one biome** to *show*
   the variance. Flag for the client half.
 
-## Committing a patch to one plant (Flora Roster S1) — the land owns `K`
+### Committing a patch to one plant (Flora Roster S1) — the land owns `K`
 
 **The one-sentence model:** committing a patch to one named plant **redistributes** the tile's `K`
 (concentration) and changes how well its biomass **converts** to food (conversion) — and *tending
@@ -273,7 +280,7 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   as concentration, a growth boost double-counts it, so tending pays through concentration + conversion
   and the rung-2 "wild < tended" guarantee moved to the roster's own bar (see "Cultivation").
 
-## Fodder — the F3 coupling (hay is delivered graze-flow)
+### Fodder — the F3 coupling (hay is delivered graze-flow)
 
 The arc's one reach into the animal web (`docs/plan_flora_roster.md` §5). **The one-sentence model:** a
 fodder crop (**hay_grass**) is a Field whose harvest fills a band's **`FODDER` store**; a pen that knows
@@ -323,7 +330,7 @@ and the two stores **never convert**.
   snapshot" for the `pasture_food + penHayFood + penLarderBill == penUpkeep` invariant the client draws
   the feed row from.
 
-## Cash crops — the F4 coupling (trade is the vector's third routing)
+### Cash crops — the F4 coupling (trade is the vector's third routing)
 
 The yield vector's **third and final** account, the exact twin of the F3 fodder work
 (`docs/plan_flora_roster.md` §6). **The one-sentence model:** a cash crop (**cotton**/**flax**/

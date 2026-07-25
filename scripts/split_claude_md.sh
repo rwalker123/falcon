@@ -21,10 +21,13 @@
 #   promote=yes   shift headings up one level (`## `->`# `, `### `->`## `), so a
 #                 file carrying one original `##` section gets it as the H1.
 #                 Safe: neither source has `##`/`###` inside a fenced block.
-#   table=yes     the file receives rows lifted out of "Key Scripts Reference".
-#                 Re-emit the 2-line table header so they render, under a
-#                 `## Key scripts` heading. Row anchors sort above the prose
-#                 anchors, so the rows land first.
+#   table=scripts the file receives rows lifted out of "Key Scripts Reference"
+#   table=config  ... or out of "Configuration Files". Either way, re-emit the
+#                 2-line table header so the rows render, under their own
+#                 heading. Row anchors sort above the prose anchors, so the
+#                 rows land first — which is why these files use promote=no
+#                 and an explicit H1 (a promoted section heading arriving after
+#                 the table would leave an H2 above the H1).
 #
 # SOURCE is a PINNED pre-split blob, not `HEAD:` — once the split lands, `HEAD:`
 # is the slim hub and re-running against it would re-split the hub. Re-pin when
@@ -97,7 +100,10 @@ emit_rule() {
     echo "     Regenerate with scripts/split_claude_md.sh -->"
     echo
     [ -n "$h1" ] && { echo "$h1"; echo; }
-    [ "$table" = yes ] && { echo "## Key scripts"; echo; echo "| Script | Purpose |"; echo "|--------|---------|"; }
+    case "$table" in
+      scripts) echo "## Key scripts"; echo; echo "| Script | Purpose |"; echo "|--------|---------|" ;;
+      config)  echo "## Config files"; echo; echo "| File | Purpose |"; echo "|------|---------|" ;;
+    esac
     # Portable BRE: BSD sed (macOS) has no `\+`, so `#\(#\+ \)` matches nothing.
     if [ "$promote" = yes ]; then extract "$ranges" | sed 's/^##\(#*\) /#\1 /'
     else                          extract "$ranges"; fi
@@ -159,6 +165,16 @@ split_core_sim() {
   CUTS=(
     "# core_sim - Simulation Engine|hub^"
     "## Configuration Files|hub"
+    "| \`src/data/labor_config.json\` ||yield-forecast"
+    "| \`src/data/intensification_ladder.json\` ||intensification"
+    "| \`src/data/fauna_config.json\` ||fauna"
+    "| \`src/data/flora_config.json\` ||flora"
+    "| \`src/data/beat_definitions.json\` ||telling"
+    "| \`src/data/sedentarization_config.json\` ||campaign"
+    "| \`src/data/sites_config.json\` ||expeditions"
+    "| \`src/data/combat_config.json\` ||combat"
+    "| \`src/data/creatures.json\` ||fauna"
+    "Hot reload: \`reload_config [path]\`|hub"
     "## World Generation Pipeline|worldgen"
     "## Ecosystem Food Modules|hub"
     "## Fauna & Wild Game|fauna"
@@ -179,10 +195,16 @@ split_core_sim() {
   META=(
     "husbandry|# Husbandry — the yield ladder, the \`Tame\` verb, Corral|yes|no"
     "cultivation|# Cultivation and the \`Sow\` verb — the plant twin of the pen|yes|no"
-    "expeditions|# Expeditions — wondrous sites, scouting, and the hunt|no|no"
+    "expeditions|# Expeditions — wondrous sites, scouting, and the hunt|no|config"
     "ecs-systems|# ECS systems reference — power, crisis, culture, knowledge, fog of war|no|no"
-    "worldgen||yes|no" "fauna||yes|no" "intensification||yes|no" "flora||yes|no"
-    "graze||yes|no" "combat||yes|no" "yield-forecast||yes|no" "telling||yes|no" "campaign||yes|no"
+    "fauna|# Fauna & wild game|no|config"
+    "flora|# Depletable forage and the flora roster|no|config"
+    "intensification|# The intensification ladder|no|config"
+    "yield-forecast|# Pre-commit yield forecast (per-source, on the wire)|no|config"
+    "telling|# The Telling — the narrative beat engine|no|config"
+    "campaign|# Campaign loop & system activation|no|config"
+    "combat|# Combat & casualties, predation|no|config"
+    "worldgen||yes|no" "graze||yes|no"
   )
   paths_for() {
     case "$1" in
@@ -322,25 +344,25 @@ split_client() {
   )
   META=(
     "native-extension|# Native extension — the GDExtension module map|yes|no"
-    "map-renderers|# MapView renderers and the 2D minimap|no|yes"
-    "terrain-textures|# Terrain textures — assets, config, loading, 2D pipeline|no|yes"
+    "map-renderers|# MapView renderers and the 2D minimap|no|scripts"
+    "terrain-textures|# Terrain textures — assets, config, loading, 2D pipeline|no|scripts"
     "terrain-blend-shader|# The terrain blend shader — edge blending, shore, canopy, peaks, rivers|yes|no"
-    "panel-framework|# HUD panel framework — docked PanelCards|no|yes"
+    "panel-framework|# HUD panel framework — docked PanelCards|no|scripts"
     "map-markers||yes|no"
-    "selection-card|# The selection card — ONE card, ONE list, ONE drawer|no|yes"
-    "labor-ui|# Labor allocation UI — the compose sheet and forecasts|no|yes"
+    "selection-card|# The selection card — ONE card, ONE list, ONE drawer|no|scripts"
+    "labor-ui|# Labor allocation UI — the compose sheet and forecasts|no|scripts"
     "herd-readouts|# Herd readouts — fog gate, ecology, husbandry, corral, the pen|no|no"
     "land-readouts|# Land readouts — forage, flora, the crop picker, pasture, the meters|no|no"
-    "band-readouts|# Band readouts — demographics, food, morale, wellbeing, tile facts|no|yes"
-    "turn-orb|# The turn orb and the attention model|no|yes"
-    "targeting|# Command targeting — move-band and expeditions|no|yes"
-    "band-city-panel|# The Band/City dockable panel|no|yes"
-    "inspector-panels|# Inspector panels|no|yes"
+    "band-readouts|# Band readouts — demographics, food, morale, wellbeing, tile facts|no|scripts"
+    "turn-orb|# The turn orb and the attention model|no|scripts"
+    "targeting|# Command targeting — move-band and expeditions|no|scripts"
+    "band-city-panel|# The Band/City dockable panel|no|scripts"
+    "inspector-panels|# Inspector panels|no|scripts"
     "overlay-channels||yes|no"
-    "hud-modules|# Hud.gd and the ui/hud module reference|no|yes"
-    "telling-panel|# The Telling panel and the narrative fork|no|yes"
-    "sprites-widgets|# Sprites, icons, styling and small widgets|no|yes"
-    "test-harnesses|# Headless verification harnesses (tools/)|no|yes"
+    "hud-modules|# Hud.gd and the ui/hud module reference|no|scripts"
+    "telling-panel|# The Telling panel and the narrative fork|no|scripts"
+    "sprites-widgets|# Sprites, icons, styling and small widgets|no|scripts"
+    "test-harnesses|# Headless verification harnesses (tools/)|no|scripts"
     "scripting-capability||yes|no"
   )
   paths_for() {
