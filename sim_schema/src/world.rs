@@ -55,6 +55,16 @@ pub struct SnapshotHeader {
     /// snapshot server replays to reconnecting subscribers. Set by core_sim.
     #[serde(default)]
     pub world_epoch: u32,
+    /// Monotonic **publication** counter, reset with `world_epoch` (see `snapshot.fbs`). Counts
+    /// frames, not ticks — `recapture_and_broadcast` publishes mid-tick on every world-mutating
+    /// command, so several frames share a tick and tick-continuity cannot detect a gap. Set by
+    /// core_sim.
+    #[serde(default)]
+    pub frame_seq: u64,
+    /// Delta only: the [`Self::frame_seq`] this delta applies to. `0` on a full snapshot, which is
+    /// always applicable. See `docs/plan_delta_streaming.md` §3.3 for the client's contract.
+    #[serde(default)]
+    pub base_frame_seq: u64,
 }
 
 impl SnapshotHeader {
@@ -80,6 +90,8 @@ impl SnapshotHeader {
             wrap_horizontal: false,
             server_build: String::new(),
             world_epoch: 0,
+            frame_seq: 0,
+            base_frame_seq: 0,
         }
     }
 
@@ -228,6 +240,14 @@ pub struct WorldDelta {
     pub victory: Option<VictorySnapshotState>,
     pub capability_flags: Option<u32>,
     pub command_events: Option<Vec<CommandEventState>>,
+    /// The campaign profile roster. `None` means unchanged.
+    ///
+    /// This was absent from `WorldDelta` entirely until delta streaming — harmless while the
+    /// client only ever saw the field on a full snapshot, and a silent hole the moment deltas
+    /// became the steady-state carrier (`docs/plan_delta_streaming.md` §2.4). The FlatBuffers
+    /// slot always existed on the shared `CampaignSection`; only this side and the codec were
+    /// missing.
+    pub campaign_profiles: Option<Vec<CampaignProfileState>>,
     pub pending_forks: Option<Vec<PendingForksState>>,
     pub stance_axes: Option<Vec<StanceState>>,
     pub voice_medium: Option<Vec<VoiceMediumState>>,

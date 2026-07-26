@@ -37,6 +37,10 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
     delta: &WorldDelta,
     victory_state: Option<WIPOffset<fb::VictoryState<'a>>>,
 ) -> WIPOffset<fb::CampaignSection<'a>> {
+    let campaign_profiles = delta
+        .campaign_profiles
+        .as_ref()
+        .map(|entries| create_campaign_profiles(builder, entries));
     let command_events = delta
         .command_events
         .as_ref()
@@ -56,7 +60,7 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
     fb::CampaignSection::create(
         builder,
         &fb::CampaignSectionArgs {
-            campaignProfiles: None,
+            campaignProfiles: campaign_profiles,
             commandEvents: command_events,
             victory: victory_state,
             pendingForks: pending_forks,

@@ -180,6 +180,7 @@ pub struct SnapshotHistory {
     demographics: Vec<SchemaPopulationDemographicsState>,
     forage_patches: Vec<ForagePatchState>,
     intensification_knowledge: Vec<IntensificationKnowledgeState>,
+    campaign_profiles: Vec<CampaignProfileState>,
     command_events: Vec<CommandEventState>,
     pending_forks: Vec<PendingForksState>,
     stance_axes: Vec<StanceState>,
@@ -247,6 +248,7 @@ impl SnapshotHistory {
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
+            campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
@@ -557,6 +559,12 @@ impl SnapshotHistory {
             } else {
                 Some(intensification_knowledge_state.clone())
             };
+        let campaign_profiles_state = snapshot.campaign_profiles.clone();
+        let campaign_profiles_delta = if self.campaign_profiles == campaign_profiles_state {
+            None
+        } else {
+            Some(campaign_profiles_state.clone())
+        };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -625,6 +633,7 @@ impl SnapshotHistory {
             knowledge_metrics: knowledge_metrics_delta.clone(),
             victory: victory_delta.clone(),
             capability_flags: capability_flags_delta,
+            campaign_profiles: campaign_profiles_delta.clone(),
             command_events: command_events_delta.clone(),
             pending_forks: pending_forks_delta.clone(),
             stance_axes: stance_axes_delta.clone(),
@@ -714,6 +723,7 @@ impl SnapshotHistory {
         self.demographics = demographics_state;
         self.forage_patches = forage_patches_state;
         self.intensification_knowledge = intensification_knowledge_state;
+        self.campaign_profiles = campaign_profiles_state;
         self.command_events = command_events_state;
         self.pending_forks = pending_forks_state;
         self.stance_axes = stance_axes_state;
@@ -798,6 +808,7 @@ impl SnapshotHistory {
         self.demographics = entry.snapshot.demographics.clone();
         self.forage_patches = entry.snapshot.forage_patches.clone();
         self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
+        self.campaign_profiles = entry.snapshot.campaign_profiles.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.pending_forks = entry.snapshot.pending_forks.clone();
         self.stance_axes = entry.snapshot.stance_axes.clone();
@@ -886,6 +897,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,
@@ -1070,6 +1082,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,
@@ -1184,6 +1197,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,

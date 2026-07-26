@@ -88,6 +88,9 @@ fn build_snapshot_flatbuffer<'a>(
             wrapHorizontal: snapshot.header.wrap_horizontal,
             serverBuild: Some(server_build_fb),
             worldEpoch: snapshot.header.world_epoch,
+            frameSeq: snapshot.header.frame_seq,
+            // A full snapshot is applicable against any client state, so it names no base.
+            baseFrameSeq: 0,
         },
     );
 
@@ -161,6 +164,8 @@ fn build_delta_flatbuffer<'a>(
             wrapHorizontal: delta.header.wrap_horizontal,
             serverBuild: server_build_fb,
             worldEpoch: delta.header.world_epoch,
+            frameSeq: delta.header.frame_seq,
+            baseFrameSeq: delta.header.base_frame_seq,
         },
     );
 
