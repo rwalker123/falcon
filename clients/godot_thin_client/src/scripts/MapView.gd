@@ -611,9 +611,40 @@ var _terrain: TerrainRenderer = null
 var _hud_layer: Node = null  # HudLayer reference, set via set_hud_reference() for embedded minimap
 var _explored_bounds_world: Rect2 = Rect2()  # World coords of explored area at unit radius (scaled in _clamp_pan_offset)
 
-# Profiling for performance measurement
+# Profiling for performance measurement. `_profiling_enabled` is seated from the SAME flag as the
+# per-snapshot profile (`TurnProfile.ENV_FLAG`) so one switch governs both halves of the client's
+# turn cost — the ingest line below and this rolling `_draw` average.
 var _draw_frame_times: Array[float] = []
-var _profiling_enabled: bool = false  # Opt-in draw-time profiling; enable manually when profiling
+var _profiling_enabled: bool = false
+## Frames folded into one rolling `_draw` average before it is printed. At 60 fps that is a line
+## roughly every 1.7 s — often enough to watch a change land, rare enough not to drown the ingest
+## lines it shares a console with.
+const DRAW_PROFILE_WINDOW_FRAMES := 100
+
+# Phase labels for `display_snapshot`'s breakdown. `Main` prefixes them with `display.` when it
+# splices `last_display_profile` into its line, so these stay short and unqualified.
+const PROFILE_OVERLAYS := "overlays"   # channel ingest + terrain raster + biome colours + cache kill
+const PROFILE_LAYERS := "layers"       # palette/tags, culture layers, crisis annotations, routes
+const PROFILE_SITES := "sites"         # food / discovered / forage / harvest / scout deep copies
+# `layers` and `sites` each cover several unrelated ingests and were the two biggest surprises in the
+# first live run (layers 31.6 ms, sites 9.8 ms), so each is broken down one level further. The parent
+# still reports the whole block; these say which part of it.
+const PROFILE_LAYERS_TAGS := "layers.tags"                # terrain palette + the terrain_tags full-grid conversion + tag labels
+const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_map duplicate(true) loop + removals
+const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
+const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
+const PROFILE_SITES_FOOD := "sites.food"                  # food_modules deep copies + terrain stamping
+const PROFILE_SITES_DISCOVERED := "sites.discovered"      # per-faction discovered-site deep copies
+const PROFILE_SITES_FORAGE := "sites.forage"              # forage_patches deep copies
+const PROFILE_SITES_POPULATIONS := "sites.populations"    # the populations harvest/scout target extraction
+const PROFILE_TILES := "tiles"         # the full-grid per-tile GDScript loop
+const PROFILE_SHADER := "shader"       # the six full-grid splatmap rebuilds
+const PROFILE_MARKERS := "markers"     # province overlay + unit + herd markers
+const PROFILE_TAIL := "tail"           # trade overlay, layout/clamp/redraw, legend, minimap, metrics
+
+## Cost breakdown of the LAST `display_snapshot`, published for `Main` to fold into its per-turn
+## `[TurnProfile]` line. Inert (records nothing) unless profiling is on.
+var last_display_profile: TurnProfile = null
 
 # Cached map rendering (Single-buffer with simple invalidation)
 var _map_cache_enabled: bool = true
@@ -631,6 +662,7 @@ var _cache_rendering: bool = false  # Is cache currently rendering?
 func _ready() -> void:
 	set_process_unhandled_input(true)
 	set_process(true)
+	_profiling_enabled = TurnProfile.is_enabled()
 	# Use nearest-neighbor filtering to prevent seams from bilinear interpolation
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_load_fow_config()
@@ -762,9 +794,14 @@ func _on_cache_rendered() -> void:
 	_cache_rendering = false
 
 func display_snapshot(snapshot: Dictionary) -> Dictionary:
-	print("[MapView] display_snapshot called. Keys: ", snapshot.keys())
 	if snapshot.is_empty():
 		return {}
+	# Per-turn cost breakdown for this ingest, published on `last_display_profile` for `Main` to
+	# splice into the one `[TurnProfile]` line it prints (see TurnProfile.gd). Inert unless the
+	# profile flag is on; the labels here render as `display.<label>`.
+	last_display_profile = TurnProfile.start()
+	var profile: TurnProfile = last_display_profile
+	var t_overlays: int = profile.begin(PROFILE_OVERLAYS)
 	var previous_width: int = grid_width
 	var previous_height: int = grid_height
 	var grid: Dictionary = snapshot.get("grid", {})
@@ -784,11 +821,16 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_minimap.bump_data_version()
 	# Invalidate map cache when terrain data changes
 	_invalidate_map_cache()
+	profile.end(PROFILE_OVERLAYS, t_overlays)
+	var t_layers: int = profile.begin(PROFILE_LAYERS)
+	var t_layers_tags: int = profile.begin(PROFILE_LAYERS_TAGS)
 	var palette_raw: Variant = overlays.get("terrain_palette", {})
 	terrain_palette = palette_raw if typeof(palette_raw) == TYPE_DICTIONARY else {}
 	terrain_tags_overlay = PackedInt32Array(overlays.get("terrain_tags", []))
 	var tag_labels_raw: Variant = overlays.get("terrain_tag_labels", {})
 	terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
+	profile.end(PROFILE_LAYERS_TAGS, t_layers_tags)
+	var t_layers_culture: int = profile.begin(PROFILE_LAYERS_CULTURE)
 	var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
 	if culture_layers_variant is Array:
 		for layer_variant in culture_layers_variant:
@@ -803,14 +845,22 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			var id := int(raw_id)
 			if culture_layer_map.has(id):
 				culture_layer_map.erase(id)
+	profile.end(PROFILE_LAYERS_CULTURE, t_layers_culture)
+	var t_layers_crisis: int = profile.begin(PROFILE_LAYERS_CRISIS)
 	_annotations.set_crisis_annotations(overlays.get("crisis_annotations", []))
+	profile.end(PROFILE_LAYERS_CRISIS, t_layers_crisis)
+	var t_layers_routes: int = profile.begin(PROFILE_LAYERS_ROUTES)
 	_annotations.set_routes(snapshot.get("orders", []))
+	profile.end(PROFILE_LAYERS_ROUTES, t_layers_routes)
+	profile.end(PROFILE_LAYERS, t_layers)
+	var t_sites: int = profile.begin(PROFILE_SITES)
 	food_sites = []
 	food_site_lookup.clear()
 	harvest_sites.clear()
 	scout_sites.clear()
 	var food_variant: Variant = snapshot.get("food_modules", [])
 	if food_variant is Array:
+		var t_sites_food: int = profile.begin(PROFILE_SITES_FOOD)
 		for entry in food_variant:
 			if not (entry is Dictionary):
 				continue
@@ -824,6 +874,11 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 			site["terrain_id"] = _terrain_id_at(x_site, y_site)
 			if x_site >= 0 and y_site >= 0:
 				food_site_lookup[Vector2i(x_site, y_site)] = site
+		profile.end(PROFILE_SITES_FOOD, t_sites_food)
+		# NOTE: the discovered-site and forage-patch ingests below are nested INSIDE the
+		# `food_modules is Array` branch. Harmless today (`get("food_modules", [])` always yields an
+		# Array, so the branch always runs) but the coupling is accidental — see the profile report.
+		var t_sites_discovered: int = profile.begin(PROFILE_SITES_DISCOVERED)
 		discovered_sites = []
 		discovered_site_lookup.clear()
 		var sites_variant: Variant = snapshot.get("discovered_sites", [])
@@ -846,6 +901,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					var wy: int = int(wsite.get("y", -1))
 					if wx >= 0 and wy >= 0:
 						discovered_site_lookup[Vector2i(wx, wy)] = wsite
+		profile.end(PROFILE_SITES_DISCOVERED, t_sites_discovered)
+		var t_sites_forage: int = profile.begin(PROFILE_SITES_FORAGE)
 		forage_patch_lookup.clear()
 		var patch_variant: Variant = snapshot.get("forage_patches", [])
 		if patch_variant is Array:
@@ -857,6 +914,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 				var py: int = int(patch.get("y", -1))
 				if px >= 0 and py >= 0:
 					forage_patch_lookup[Vector2i(px, py)] = patch
+		profile.end(PROFILE_SITES_FORAGE, t_sites_forage)
+	var t_sites_populations: int = profile.begin(PROFILE_SITES_POPULATIONS)
 	var population_variant: Variant = snapshot.get("populations", [])
 	if population_variant is Array:
 		for entry in population_variant:
@@ -884,7 +943,10 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					var scout_existing: Array = scout_sites.get(scout_key, [])
 					scout_existing.append(scout)
 					scout_sites[scout_key] = scout_existing
+	profile.end(PROFILE_SITES_POPULATIONS, t_sites_populations)
+	profile.end(PROFILE_SITES, t_sites)
 
+	var t_tiles: int = profile.begin(PROFILE_TILES)
 	tile_lookup.clear()
 	tile_habitability.clear()
 	tile_temperature.clear()
@@ -952,15 +1014,20 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 						var index: int = y * grid_width + x
 						if index >= 0 and index < culture_layer_grid.size():
 							culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+	profile.end(PROFILE_TILES, t_tiles)
 	# Rebuild the Approach-B blend-shader splatmaps (id-map + FoW vis-map + elev-map + river-map) from the
 	# new terrain/fog/elevation/river-edges. Runs AFTER the tile loop, not beside the terrain ingest above:
 	# the river-map is built from `tile_river_edges`, which only exists once the tiles have been read.
+	var t_shader: int = profile.begin(PROFILE_SHADER)
 	_terrain.rebuild_shader_maps()
+	profile.end(PROFILE_SHADER, t_shader)
+	var t_markers: int = profile.begin(PROFILE_MARKERS)
 	_install_province_overlay()
 	_rebuild_unit_markers(snapshot)
 	_rebuild_herd_markers(snapshot)
-	# Removed snapshot ingest logging (noise in normal runs).
+	profile.end(PROFILE_MARKERS, t_markers)
 
+	var t_tail: int = profile.begin(PROFILE_TAIL)
 	if snapshot.has("trade_links"):
 		var trade_variant: Variant = snapshot.get("trade_links")
 		if trade_variant is Array:
@@ -979,7 +1046,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_emit_overlay_legend()
 	_minimap.update()
 
-	return {
+	# Built into a local first so the six `_average_overlay` full-grid passes land inside the tail
+	# measurement rather than escaping it after the last `profile.end`.
+	var metrics: Dictionary = {
 		"unit_count": units.size(),
 		"avg_logistics": _average_overlay("logistics"),
 		"avg_sentiment": _average_overlay("sentiment"),
@@ -990,6 +1059,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		"dimensions_changed": dimensions_changed,
 		"active_overlay": active_overlay_key
 	}
+	profile.end(PROFILE_TAIL, t_tail)
+	return metrics
 
 func _ingest_overlay_channels(overlays: Variant) -> void:
 	var preserve_tag_overlay: bool = (active_overlay_key == "terrain_tags")
@@ -1181,16 +1252,17 @@ func _draw() -> void:
 	# pending overlays all used to scribble across the text. This call MUST stay LAST.
 	_band_overlays.flush_yield_labels()
 
-	# Profiling output
+	# Profiling output — same `[TurnProfile]` prefix and `label=ms` shape as the per-snapshot line,
+	# so one grep collects the whole client-side turn picture.
 	if _profiling_enabled:
-		var elapsed: float = (Time.get_ticks_usec() - _profile_start) / 1000.0
+		var elapsed: float = float(Time.get_ticks_usec() - _profile_start) / TurnProfile.USEC_PER_MSEC
 		_draw_frame_times.append(elapsed)
-		if _draw_frame_times.size() >= 100:
+		if _draw_frame_times.size() >= DRAW_PROFILE_WINDOW_FRAMES:
 			var total: float = 0.0
 			for t: float in _draw_frame_times:
 				total += t
 			var avg: float = total / _draw_frame_times.size()
-			print("[MapView] Avg draw time (100 frames): %.2f ms" % avg)
+			print("%s %s" % [TurnProfile.LINE_PREFIX, TurnProfile.ENTRY_FORMAT % ["draw.avg%d" % DRAW_PROFILE_WINDOW_FRAMES, avg]])
 			_draw_frame_times.clear()
 
 ## Highlights all hexes of a given terrain id (Terrain-tab dropdown). Pass -1 to clear.
