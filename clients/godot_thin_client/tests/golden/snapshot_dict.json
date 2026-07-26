@@ -208,64 +208,20 @@
   },
   "culture_layers": [
     {
-      "divergence": 0.000067,
-      "hard_threshold": 0.000106,
       "id": 94,
-      "last_updated_tick": 5,
       "owner": "0000000000000068",
       "owner_value": 104,
       "parent": 129,
       "scope": "Regional",
-      "scope_label": "Regional",
-      "soft_threshold": 0.000145,
-      "ticks_above_hard": 193,
-      "ticks_above_soft": 74,
-      "traits": [
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000171,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000169,
-          "value": 0.000115
-        },
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000146,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000012,
-          "value": 0.000016
-        }
-      ]
+      "scope_label": "Regional"
     },
     {
-      "divergence": 0.000166,
-      "hard_threshold": 0.000019,
       "id": 163,
-      "last_updated_tick": 174,
       "owner": "00000000000000BB",
       "owner_value": 187,
       "parent": 80,
       "scope": "Regional",
-      "scope_label": "Regional",
-      "soft_threshold": 0.00008,
-      "ticks_above_hard": 100,
-      "ticks_above_soft": 103,
-      "traits": [
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.00013,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000004,
-          "value": 0.000176
-        },
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000123,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000057,
-          "value": 0.000051
-        }
-      ]
+      "scope_label": "Regional"
     }
   ],
   "culture_tensions": [

@@ -282,13 +282,25 @@ table CultureLayerState {
   owner:ulong;
   parent:uint;
   scope:CultureLayerScope;
-  traits:[CultureTraitEntry];
-  divergence:long;
-  softThreshold:long;
-  hardThreshold:long;
-  ticksAboveSoft:ushort;
-  ticksAboveHard:ushort;
-  lastUpdatedTick:ulong;
+  // RETIRED from the client stream (#386). `MapView` reads only this table's topology —
+  // id / owner / parent / scope — to walk the tree and resolve a tile's province. The 45 numbers
+  // below (15 axes x baseline/modifier/value, plus divergence and the thresholds) were read by
+  // nothing but the Inspector's Culture tab, and `lastUpdatedTick` by nothing at all.
+  //
+  // They were the largest single item on the wire: culture layers outnumber tiles (4201 vs 4160)
+  // and each of those numbers drifts ~0.0025/turn, so across 45 of them something crossed a
+  // hundredths boundary every turn and no quantisation could ever settle the layer. Dropping them
+  // took `encode.flat_delta` from 5.5 ms to 0.62 ms.
+  //
+  // Deprecated rather than deleted because slots are positional. The values still ride the bincode
+  // snapshot, which is what rollback restores from.
+  traits:[CultureTraitEntry] (deprecated);
+  divergence:long (deprecated);
+  softThreshold:long (deprecated);
+  hardThreshold:long (deprecated);
+  ticksAboveSoft:ushort (deprecated);
+  ticksAboveHard:ushort (deprecated);
+  lastUpdatedTick:ulong (deprecated);
 }
 
 table CultureTensionState {

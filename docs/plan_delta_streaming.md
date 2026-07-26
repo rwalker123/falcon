@@ -271,7 +271,31 @@ resonance that changes as influencers rise and fall.
 2. **Does the client need per-layer, per-axis traits every turn** when what it renders is a culture
    *raster*? 4201 layers × 15 axes × 3 values is the payload; the overlay is one number per tile.
 
-Neither is a delta-streaming decision, so neither is made here.
+### Resolved: the client never wanted the numbers
+
+Both questions turned out to have the same answer, found by asking what the client actually reads.
+`MapView` consumes exactly four keys from a culture layer — `id`, `owner`, `parent`, `scope` — and
+uses them only to walk the tree and resolve a tile's **province**. It reads no trait, no
+divergence, no threshold. The sole consumer of those was the Inspector's Culture tab.
+
+So the layer's 45 numbers (15 axes × baseline/modifier/value) plus divergence, the thresholds and
+`lastUpdatedTick` came off the client stream; their FlatBuffers slots are `(deprecated)`. What
+remains is topology, which changes only when the culture tree restructures.
+
+**And no amount of quantisation could have substituted for this.** Each of those 45 numbers drifts
+~0.0025/turn — a quarter of a hundredth, comfortably inside the deadband on its own. But across 45
+of them, *something* crosses a grid line essentially every turn, so the layer was always "changed".
+**Per-entity width defeats per-field precision**: the more numbers an entity carries, the closer its
+change probability gets to 1 regardless of how coarsely each is compared. That is the sharper
+version of §3.5's lesson and the one to carry forward.
+
+    encode.flat_delta   5.5 ms  ->  0.62 ms
+    snapshot phase     14.3 ms  ->  ~9.7 ms
+
+Against the 7.3 ms full snapshot this arc started from, publishing a turn is now **~12x cheaper**.
+
+The culture *drift* fix is separate and still stands on its own (the global layer was integrating
+its resonance — see the commit); it is a gameplay correctness fix, not the performance one.
 
 ## 4. What this does NOT try to do
 

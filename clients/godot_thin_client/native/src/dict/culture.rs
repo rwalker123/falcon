@@ -269,51 +269,25 @@ fn culture_resonance_to_array(
     array
 }
 
+/// A culture layer as the client receives it: **topology only** (#386).
+///
+/// `MapView` reads `id` / `scope` / `owner` / `parent` and walks the tree to resolve a tile's
+/// province. It reads no trait, divergence or threshold — those were consumed only by the
+/// Inspector's Culture tab and are now `(deprecated)` slots that the encoder no longer writes.
+/// See `docs/plan_delta_streaming.md` §3.6 for why they had to go: 45 drifting numbers per layer,
+/// on more layers than there are tiles, meant no quantisation could ever settle one.
 fn culture_layer_to_dict(layer: fb::CultureLayerState<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
-    let id = layer.id();
     let scope = layer.scope();
-    let scope_label = culture_scope_to_label(scope);
     let owner = layer.owner();
-    let parent = layer.parent();
-    let baseline = layer.divergence();
-    let soft = layer.softThreshold();
-    let hard = layer.hardThreshold();
-    let _ = dict.insert("id", id as i64);
+    let _ = dict.insert("id", layer.id() as i64);
     let _ = dict.insert("scope", culture_scope_to_key(scope));
-    let _ = dict.insert("scope_label", scope_label);
+    let _ = dict.insert("scope_label", culture_scope_to_label(scope));
     let _ = dict.insert("owner", format!("{owner:016X}"));
     if owner <= i64::MAX as u64 {
         let _ = dict.insert("owner_value", owner as i64);
     }
-    let _ = dict.insert("parent", parent as i64);
-    let _ = dict.insert("divergence", fixed64_to_f64(baseline));
-    let _ = dict.insert("soft_threshold", fixed64_to_f64(soft));
-    let _ = dict.insert("hard_threshold", fixed64_to_f64(hard));
-    let _ = dict.insert("ticks_above_soft", layer.ticksAboveSoft() as i64);
-    let _ = dict.insert("ticks_above_hard", layer.ticksAboveHard() as i64);
-    let _ = dict.insert("last_updated_tick", layer.lastUpdatedTick() as i64);
-
-    let mut traits_array = VarArray::new();
-    if let Some(traits) = layer.traits() {
-        for trait_entry in traits {
-            let trait_dict = culture_trait_to_dict(trait_entry);
-            traits_array.push(&trait_dict.to_variant());
-        }
-    }
-    let _ = dict.insert("traits", &traits_array);
-
-    dict
-}
-
-fn culture_trait_to_dict(entry: fb::CultureTraitEntry<'_>) -> VarDictionary {
-    let mut dict = VarDictionary::new();
-    let axis = entry.axis();
-    let _ = dict.insert("axis", culture_axis_to_key(axis));
-    let _ = dict.insert("label", culture_axis_to_label(axis));
-    let _ = dict.insert("baseline", fixed64_to_f64(entry.baseline()));
-    let _ = dict.insert("modifier", fixed64_to_f64(entry.modifier()));
-    let _ = dict.insert("value", fixed64_to_f64(entry.value()));
+    let _ = dict.insert("parent", layer.parent() as i64);
     dict
 }
 

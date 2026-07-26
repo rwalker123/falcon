@@ -1,6 +1,5 @@
 //! Culture-section state: culture layers, influential individuals, and sentiment.
 
-use crate::state::same_to_hundredths_fixed;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -83,16 +82,6 @@ pub struct CultureLayerState {
     pub last_updated_tick: u64,
 }
 
-impl CultureTraitEntry {
-    /// Trait equality at the client stream's precision (hundredths).
-    fn same_published_state(&self, other: &Self) -> bool {
-        self.axis == other.axis
-            && same_to_hundredths_fixed(self.baseline, other.baseline)
-            && same_to_hundredths_fixed(self.modifier, other.modifier)
-            && same_to_hundredths_fixed(self.value, other.value)
-    }
-}
-
 impl CultureLayerState {
     /// Does this layer look identical to `other` **as the client stream sees it**?
     ///
@@ -107,21 +96,13 @@ impl CultureLayerState {
     ///
     /// Everything else compares at hundredths, per `WIRE_COMPARE_SCALE`.
     pub fn same_published_state(&self, other: &Self) -> bool {
+        // Topology only — the client is sent nothing else (see `codec/culture.rs`). Comparing a
+        // field that is not published can only ever mark a layer dirty for a change no one
+        // receives, which is exactly what kept all 4201 layers in every delta.
         self.id == other.id
             && self.owner == other.owner
             && self.parent == other.parent
             && self.scope == other.scope
-            && self.ticks_above_soft == other.ticks_above_soft
-            && self.ticks_above_hard == other.ticks_above_hard
-            && same_to_hundredths_fixed(self.divergence, other.divergence)
-            && same_to_hundredths_fixed(self.soft_threshold, other.soft_threshold)
-            && same_to_hundredths_fixed(self.hard_threshold, other.hard_threshold)
-            && self.traits.len() == other.traits.len()
-            && self
-                .traits
-                .iter()
-                .zip(other.traits.iter())
-                .all(|(a, b)| a.same_published_state(b))
     }
 }
 
