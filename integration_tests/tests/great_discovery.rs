@@ -150,7 +150,7 @@ fn gds_snapshot_stream_carries_resolved_records() {
         "binary snapshot stream should not be empty"
     );
     assert!(
-        !stored.encoded_snapshot_flat.is_empty(),
+        !stored.encode_flat().is_empty(),
         "flatbuffer snapshot stream should not be empty"
     );
 

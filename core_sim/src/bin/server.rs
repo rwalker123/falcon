@@ -5054,14 +5054,6 @@ fn handle_axis_bias(
         }
     }
 
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
-        }
-    }
-
     info!(
         target: "shadow_scale::server",
         axis,
@@ -5216,14 +5208,6 @@ fn broadcast_influencer_update(
             server.broadcast(flat.as_ref());
         }
     }
-
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
-        }
-    }
 }
 
 fn handle_influencer_command(
@@ -5315,14 +5299,6 @@ fn handle_inject_corruption(
         {
             let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
-        }
-    }
-
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
         }
     }
 
@@ -5725,7 +5701,9 @@ fn handle_rollback(
     }
     {
         let server = snapshot_server_flat;
-        server.broadcast(entry.encoded_snapshot_flat.as_ref());
+        // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand,
+        // since under delta streaming a ring entry almost never carries one.
+        server.broadcast(entry.encode_flat().as_ref());
     }
 }
 

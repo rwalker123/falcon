@@ -90,7 +90,8 @@ pub struct StoredSnapshot {
     pub delta: Arc<WorldDelta>,
     pub encoded_snapshot: Arc<Vec<u8>>,
     pub encoded_delta: Arc<Vec<u8>>,
-    pub encoded_snapshot_flat: Arc<Vec<u8>>,
+    /// `None` on every turn but the world's first — see [`StoredSnapshot::encode_flat`].
+    pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
 }
 
 impl StoredSnapshot {
@@ -103,7 +104,7 @@ impl StoredSnapshot {
     ///
     /// The three encodings that remain are profiled separately so the log says which costs what
     /// (see [`crate::turn_profile`]).
-    fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>) -> Self {
+    fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>, flat_snapshot: bool) -> Self {
         let encoded_snapshot = {
             let _s = crate::turn_profile::scope("encode.bincode_snapshot");
             Arc::new(encode_snapshot(snapshot.as_ref()).expect("snapshot serialization failed"))
@@ -112,10 +113,13 @@ impl StoredSnapshot {
             let _s = crate::turn_profile::scope("encode.bincode_delta");
             Arc::new(encode_delta(delta.as_ref()).expect("delta serialization failed"))
         };
-        let encoded_snapshot_flat = {
+        // Only the world's FIRST publication pays for a flat snapshot; every later turn broadcasts
+        // the flat delta instead. This is the 44%-of-a-turn line item from #384, and it is now the
+        // baseline's cost rather than every turn's.
+        let encoded_snapshot_flat = flat_snapshot.then(|| {
             let _s = crate::turn_profile::scope("encode.flat_snapshot");
             Arc::new(encode_snapshot_flatbuffer(snapshot.as_ref()))
-        };
+        });
         Self {
             tick: snapshot.header.tick,
             snapshot,
@@ -123,6 +127,20 @@ impl StoredSnapshot {
             encoded_snapshot,
             encoded_delta,
             encoded_snapshot_flat,
+        }
+    }
+
+    /// The flat snapshot for this entry, encoding it if this turn did not.
+    ///
+    /// Rollback and the resync path need a full frame for an arbitrary ring entry, and under delta
+    /// streaming almost no entry carries one. Encoding on demand is right for both: they are rare,
+    /// and the alternative is paying for every entry to serve the few that are ever asked for —
+    /// exactly the dead work `.claude/rules/core_sim/turn-profiling.md` records being removed once
+    /// already.
+    pub fn encode_flat(&self) -> Arc<Vec<u8>> {
+        match self.encoded_snapshot_flat.as_ref() {
+            Some(bytes) => Arc::clone(bytes),
+            None => Arc::new(encode_snapshot_flatbuffer(self.snapshot.as_ref())),
         }
     }
 }
@@ -135,6 +153,12 @@ pub struct SnapshotHistory {
     pub encoded_snapshot: Option<Arc<Vec<u8>>>,
     pub encoded_delta: Option<Arc<Vec<u8>>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
+    /// The flat DELTA broadcast on the client's socket every turn after the first.
+    pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
+    /// `frameSeq` of the last frame published for this world. Fresh per world, because a rebuild
+    /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
+    /// "first publication" simply mean `frame_seq == 0`.
+    frame_seq: u64,
     tiles: HashMap<u64, TileState>,
     logistics: HashMap<u64, LogisticsLinkState>,
     trade_links: HashMap<u64, TradeLinkState>,
@@ -205,6 +229,8 @@ impl SnapshotHistory {
             encoded_snapshot: None,
             encoded_delta: None,
             encoded_snapshot_flat: None,
+            encoded_delta_flat: None,
+            frame_seq: 0,
             tiles: HashMap::new(),
             logistics: HashMap::new(),
             trade_links: HashMap::new(),
@@ -676,9 +702,25 @@ impl SnapshotHistory {
 
         drop(diff_scope);
 
+        // Claim this frame's place in the publication sequence. `base_frame_seq == 0` means no
+        // frame has been published for this world yet, so this turn is the BASELINE and must go
+        // out as a full snapshot — a first-turn delta is not equivalent to one, because a field
+        // that happens to equal its default compares unchanged and is never sent.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let first_publication = base_frame_seq == 0;
+        let mut snapshot = snapshot;
+        snapshot.header.frame_seq = frame_seq;
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let snapshot_arc = Arc::new(snapshot);
         let delta_arc = Arc::new(delta);
-        let stored = StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone());
+        let stored =
+            StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone(), first_publication);
+        let encoded_delta_flat = {
+            let _s = crate::turn_profile::scope("encode.flat_delta");
+            Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
+        };
 
         self.tiles = tiles_index;
         self.logistics = logistics_index;
@@ -734,9 +776,24 @@ impl SnapshotHistory {
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
         self.encoded_delta = Some(stored.encoded_delta.clone());
-        self.encoded_snapshot_flat = Some(stored.encoded_snapshot_flat.clone());
+        // `None` on every turn but the world's first, which is what makes `broadcast_latest`'s
+        // "full frame if there is one, else the delta" a statement of the publication rule rather
+        // than a preference — and what stops a later turn re-broadcasting a stale full snapshot.
+        self.encoded_snapshot_flat = stored.encoded_snapshot_flat.clone();
+        self.encoded_delta_flat = Some(encoded_delta_flat);
         self.history.push_back(stored);
         self.prune();
+    }
+
+    /// Claim the next publication sequence, returning `(frame_seq, base_frame_seq)`.
+    ///
+    /// Counts **publications, not ticks**: `recapture_and_broadcast` publishes mid-tick on every
+    /// world-mutating command, so several frames share a tick and tick-continuity could not detect
+    /// a gap (`docs/plan_delta_streaming.md` §3.1).
+    fn next_publication(&mut self) -> (u64, u64) {
+        let base = self.frame_seq;
+        self.frame_seq = base + 1;
+        (self.frame_seq, base)
     }
 
     pub fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
@@ -851,7 +908,7 @@ impl SnapshotHistory {
         self.last_delta = Some(entry.delta.clone());
         self.encoded_snapshot = Some(entry.encoded_snapshot.clone());
         self.encoded_delta = Some(entry.encoded_delta.clone());
-        self.encoded_snapshot_flat = Some(entry.encoded_snapshot_flat.clone());
+        self.encoded_snapshot_flat = entry.encoded_snapshot_flat.clone();
 
         while let Some(back) = self.history.back() {
             if back.tick > entry.tick {
@@ -938,6 +995,13 @@ impl SnapshotHistory {
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("axis bias delta encoding failed"));
@@ -962,7 +1026,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc;
                 back.encoded_snapshot = encoded_snapshot;
-                back.encoded_snapshot_flat = encoded_snapshot_flat;
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat);
             }
         }
 
@@ -1001,7 +1065,7 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.snapshot = snapshot_arc.clone();
             back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+            back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
         }
 
         Some((encoded_snapshot, encoded_snapshot_flat))
@@ -1020,6 +1084,13 @@ impl SnapshotHistory {
     /// structural changes (a redundant but idempotent re-send on top of this full snapshot). Never
     /// advances the turn or the `TurnQueue`.
     pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
+        // A recapture is a publication, and it publishes a FULL frame: the world has moved since
+        // the last turn's delta (a command mutated it), and a full snapshot re-baselines the client
+        // without needing a diff against the uncommitted baseline. It therefore takes a sequence
+        // number and names no base, like every other full frame.
+        let (frame_seq, _base_frame_seq) = self.next_publication();
+        let mut snapshot = snapshot;
+        snapshot.header.frame_seq = frame_seq;
         let snapshot_arc = Arc::new(snapshot);
         let encoded_snapshot = Arc::new(
             encode_snapshot(snapshot_arc.as_ref()).expect("recapture snapshot encoding failed"),
@@ -1032,7 +1103,7 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.snapshot = snapshot_arc.clone();
             back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+            back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
         }
 
         Some((encoded_snapshot, encoded_snapshot_flat))
@@ -1123,6 +1194,13 @@ impl SnapshotHistory {
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("influencer delta encoding failed"));
@@ -1148,7 +1226,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
                 back.encoded_snapshot = encoded_snapshot.clone();
-                back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
 
@@ -1238,6 +1316,13 @@ impl SnapshotHistory {
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("corruption delta encoding failed"));
@@ -1262,7 +1347,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
                 back.encoded_snapshot = encoded_snapshot.clone();
-                back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
 

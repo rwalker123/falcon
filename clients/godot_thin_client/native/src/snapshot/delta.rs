@@ -1,12 +1,19 @@
-//! Delta application. A delta carries only the sections that changed, so
-//! [`DeltaAggregator`] accumulates them into the same shape a full snapshot has and
-//! then hands that to [`crate::snapshot::snapshot_dict`].
+//! Delta application. A delta carries only the sections that changed, so [`DeltaAggregator`]
+//! accumulates them into the same shape a full snapshot has and then hands that to
+//! [`crate::snapshot::snapshot_dict`].
+//!
+//! **It is seeded from the previous frame's [`RasterCache`], and that is what makes it correct.**
+//! Unseeded, every channel the delta did not carry came out as a field of zeros — a world claiming
+//! no pasture, no gathering sites, no visibility — which is why the live stream had to be full
+//! snapshots (`docs/plan_delta_streaming.md` §2.1). Seeded, "absent" means what the wire says it
+//! means: unchanged.
 
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::HashMap;
 
 use crate::dict::fixed64_to_f32;
+use crate::snapshot::cache::RasterCache;
 use crate::snapshot::raster::{GridSize, OverlaySlices, TerrainSlices, FOG_ENABLED_WHEN_ABSENT};
 use crate::snapshot::snapshot_dict;
 
@@ -69,15 +76,87 @@ pub(crate) struct DeltaAggregator {
     moisture_width: u32,
     moisture_height: u32,
     moisture_samples: Vec<f32>,
+    /// Tile-derived channels, carried whole from the cache and patched per changed tile — a delta's
+    /// tile list is sparse and cannot rebuild them (see `crate::snapshot::cache`).
+    pasture_capacity: Vec<f32>,
+    forage_capacity: Vec<f32>,
     crisis_annotations: Vec<CrisisAnnotationRecord>,
 }
 
 impl DeltaAggregator {
-    pub(crate) fn update_tile(&mut self, x: u32, y: u32, temperature: i64) {
+    /// Start from the state the previous frame rendered, so every channel this delta omits keeps
+    /// its value rather than collapsing to zero.
+    pub(crate) fn from_cache(cache: &RasterCache) -> Self {
+        Self {
+            width: cache.width,
+            height: cache.height,
+            wrap_horizontal: cache.wrap_horizontal,
+            fog_enabled: Some(cache.fog_enabled),
+            terrain_width: cache.width,
+            terrain_height: cache.height,
+            terrain_types: cache.terrain.clone(),
+            terrain_tags: cache.terrain_tags.clone(),
+            logistics_width: cache.width,
+            logistics_height: cache.height,
+            logistics_samples: cache.logistics.clone(),
+            sentiment_width: cache.width,
+            sentiment_height: cache.height,
+            sentiment_samples: cache.sentiment.clone(),
+            corruption_width: cache.width,
+            corruption_height: cache.height,
+            corruption_samples: cache.corruption.clone(),
+            visibility_width: cache.width,
+            visibility_height: cache.height,
+            visibility_samples: cache.visibility.clone(),
+            culture_width: cache.width,
+            culture_height: cache.height,
+            culture_samples: cache.culture.clone(),
+            military_width: cache.width,
+            military_height: cache.height,
+            military_samples: cache.military.clone(),
+            crisis_width: cache.width,
+            crisis_height: cache.height,
+            crisis_samples: cache.crisis.clone(),
+            elevation_width: cache.width,
+            elevation_height: cache.height,
+            elevation_samples: cache.elevation.clone(),
+            elevation_sea_level: cache.elevation_sea_level,
+            climate_bands: cache.climate_bands,
+            moisture_width: cache.width,
+            moisture_height: cache.height,
+            moisture_samples: cache.moisture.clone(),
+            pasture_capacity: cache.pasture_capacity.clone(),
+            forage_capacity: cache.forage_capacity.clone(),
+            ..Self::default()
+        }
+    }
+
+    /// Patch the tile-derived channels at one changed tile.
+    ///
+    /// Graze and forage capacity ride `TileState` rather than a raster (an ungrazed turn then
+    /// costs zero delta bytes), so this is the only place a delta can move them. A tile outside
+    /// the seeded grid is ignored — see `RasterCache::index_of`.
+    pub(crate) fn update_tile(
+        &mut self,
+        x: u32,
+        y: u32,
+        temperature: i64,
+        graze_capacity: f32,
+        forage_capacity: f32,
+    ) {
         self.width = self.width.max(x + 1);
         self.height = self.height.max(y + 1);
         self.tile_updates
             .insert((x, y), fixed64_to_f32(temperature));
+        if x < self.width && y < self.height {
+            let idx = (y as usize) * (self.width as usize) + (x as usize);
+            if idx < self.pasture_capacity.len() {
+                self.pasture_capacity[idx] = graze_capacity;
+            }
+            if idx < self.forage_capacity.len() {
+                self.forage_capacity[idx] = forage_capacity;
+            }
+        }
     }
 
     pub(crate) fn apply_terrain_overlay(&mut self, overlay: fb::TerrainOverlay<'_>) {
@@ -287,6 +366,35 @@ impl DeltaAggregator {
         }
     }
 
+    /// The post-merge raster state, to become the next frame's seed.
+    ///
+    /// Taken **before** `into_dictionary` consumes the aggregator, and deliberately from the same
+    /// pre-normalization values that call is about to render: caching the normalized output would
+    /// rebase the next frame onto a stale map range.
+    pub(crate) fn raster_cache(&self) -> RasterCache {
+        RasterCache {
+            width: self.width.max(self.terrain_width),
+            height: self.height.max(self.terrain_height),
+            wrap_horizontal: self.wrap_horizontal,
+            logistics: self.logistics_samples.clone(),
+            sentiment: self.sentiment_samples.clone(),
+            corruption: self.corruption_samples.clone(),
+            culture: self.culture_samples.clone(),
+            military: self.military_samples.clone(),
+            crisis: self.crisis_samples.clone(),
+            elevation: self.elevation_samples.clone(),
+            elevation_sea_level: self.elevation_sea_level,
+            climate_bands: self.climate_bands,
+            moisture: self.moisture_samples.clone(),
+            visibility: self.visibility_samples.clone(),
+            fog_enabled: self.fog_enabled.unwrap_or(FOG_ENABLED_WHEN_ABSENT),
+            pasture_capacity: self.pasture_capacity.clone(),
+            forage_capacity: self.forage_capacity.clone(),
+            terrain: self.terrain_types.clone(),
+            terrain_tags: self.terrain_tags.clone(),
+        }
+    }
+
     pub(crate) fn into_dictionary(self) -> VarDictionary {
         let DeltaAggregator {
             tick,
@@ -330,6 +438,8 @@ impl DeltaAggregator {
             moisture_width,
             moisture_height,
             moisture_samples,
+            pasture_capacity,
+            forage_capacity,
             crisis_annotations,
         } = self;
 
@@ -555,14 +665,12 @@ impl DeltaAggregator {
                 fog_enabled: fog_enabled.unwrap_or(FOG_ENABLED_WHEN_ABSENT),
                 moisture: &moisture,
                 visibility: &visibility,
-                // A delta carries only the tiles that CHANGED, so it can never assemble a whole
-                // pasture field — it publishes NO pasture channel rather than a field of zeros
-                // that would claim the world has no pasture. (The delta path degrades the same way
-                // for every other channel it did not receive; the live stream is full snapshots.)
-                pasture_capacity: &[],
-                // Same reasoning: a delta carries no forage-patch list, so it publishes NO forage
-                // channel rather than a field of zeros that would claim there are no gathering sites.
-                forage_capacity: &[],
+                // Both ride the previous frame's field, patched at the tiles this delta carried
+                // (`update_tile`). A delta's tile list is sparse and could never assemble either
+                // field on its own — publishing what it *could* assemble would claim the world has
+                // no pasture and no gathering sites anywhere.
+                pasture_capacity: &pasture_capacity,
+                forage_capacity: &forage_capacity,
             },
             TerrainSlices {
                 terrain: terrain_ref.as_deref(),

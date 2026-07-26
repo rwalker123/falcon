@@ -2,6 +2,7 @@
 //! dictionary from already-decoded rasters and sections, and [`snapshot_to_dict`]
 //! walks a `WorldSnapshot` FlatBuffer to feed it.
 
+pub(crate) mod cache;
 pub(crate) mod delta;
 pub(crate) mod raster;
 
@@ -34,6 +35,7 @@ use crate::dict::subsistence::{
     food_modules_to_array, forage_patches_to_array, herds_to_array,
     intensification_knowledge_to_array, sedentarization_to_array,
 };
+use crate::snapshot::cache::RasterCache;
 use crate::snapshot::delta::CrisisAnnotationRecord;
 use crate::snapshot::raster::{
     insert_overlay_channel, normalize_overlay, packed_from_slice, GridSize, OverlayChannelParams,
@@ -678,7 +680,15 @@ fn snapshot_dict(
 ///
 /// The delta path in `bridge/decoder.rs` reaches the same "never unwrap" outcome by its own route
 /// (`if let Some(header)`), which is what this function was inconsistent with.
-pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDictionary> {
+/// Decode a full snapshot into the client dictionary **and** the [`RasterCache`] a later delta
+/// needs in order to re-derive the channels it does not carry.
+///
+/// Returning the cache rather than recomputing it is the point: these vectors are already built
+/// here as locals on the way to `snapshot_dict`, and rebuilding them from the produced dictionary
+/// would mean un-normalizing values that normalization is not injective over.
+pub(crate) fn snapshot_to_dict(
+    snapshot: fb::WorldSnapshot<'_>,
+) -> Option<(VarDictionary, RasterCache)> {
     let header = snapshot.header()?;
 
     let mut logistics_grid: Vec<f32> = Vec::new();
@@ -1524,5 +1534,33 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
         let _ = dict.insert("discovery_progress", &discovery_progress_to_array(progress));
     }
 
-    Some(dict)
+    // Capture the raster inputs as they were handed to `snapshot_dict` above — pre-normalization,
+    // already resized to the final grid, so a delta can seed itself from exactly the state this
+    // frame rendered.
+    let rasters = RasterCache {
+        width: final_width,
+        height: final_height,
+        wrap_horizontal: header.wrapHorizontal(),
+        logistics: logistics_resized,
+        sentiment: sentiment_resized,
+        corruption: corruption_resized,
+        culture: culture_resized,
+        military: military_resized,
+        crisis: crisis_resized,
+        elevation: elevation_resized,
+        elevation_sea_level,
+        climate_bands,
+        moisture: moisture_resized,
+        visibility: visibility_resized,
+        fog_enabled: snapshot
+            .vision()
+            .map(|s| s.fogEnabled())
+            .unwrap_or(FOG_ENABLED_WHEN_ABSENT),
+        pasture_capacity: pasture_capacity_vec,
+        forage_capacity: forage_capacity_vec,
+        terrain: terrain_vec,
+        terrain_tags: tag_vec,
+    };
+
+    Some((dict, rasters))
 }

@@ -31,6 +31,7 @@ use crate::dict::subsistence::{
 use crate::dict::{
     u16_vector_to_packed_int32, u32_vector_to_packed_int32, u64_vector_to_packed_int64,
 };
+use crate::snapshot::cache::{RasterCache, WorldCache};
 use crate::snapshot::delta::DeltaAggregator;
 use crate::snapshot::snapshot_to_dict;
 
@@ -62,6 +63,11 @@ const BASE_FRAME_SEQ_KEY: &str = "base_frame_seq";
 #[derive(Default, GodotClass)]
 #[class(init, base=RefCounted)]
 pub struct SnapshotDecoder {
+    /// The world the next delta will be applied to: the last complete dictionary, the raster
+    /// inputs behind it, and the publication identity that decides whether a delta may be merged
+    /// at all. `None` until the first full snapshot — a delta arriving before one is dropped,
+    /// because there is nothing for it to be a delta *of*.
+    cache: Option<WorldCache>,
     /// Microseconds the most recent `decode_snapshot`/`decode_delta` spent inside
     /// `snapshot_to_dict` — i.e. the whole FlatBuffers→`VarDictionary` conversion, which is the
     /// dominant term. Read from GDScript by `SnapshotLoader` for its `decode.native` phase, so the
@@ -73,20 +79,38 @@ pub struct SnapshotDecoder {
 
 #[godot_api]
 impl SnapshotDecoder {
+    /// Decode one frame of either kind, applying a delta to the cached world.
+    ///
+    /// **An unapplicable delta answers an empty dictionary**, which reaches the loader as "no
+    /// frame" and is skipped — the same contract a malformed snapshot already had. That is the
+    /// whole point of the frame-sequence gate: merging a delta whose base the client never saw
+    /// produces a world that is silently wrong rather than visibly broken, and silently wrong is
+    /// the failure mode this arc is least able to detect (`docs/plan_delta_streaming.md` §3.3).
+    /// The caller recovers by asking for a full snapshot.
     #[func]
     pub fn decode_snapshot(&mut self, data: PackedByteArray) -> VarDictionary {
         let started = std::time::Instant::now();
-        let decoded = decode_snapshot(&data).unwrap_or_default();
+        let decoded = self.decode_frame(&data).unwrap_or_default();
         self.last_decode_usec = elapsed_usec(started);
         decoded
     }
 
     #[func]
     pub fn decode_delta(&mut self, data: PackedByteArray) -> VarDictionary {
-        let started = std::time::Instant::now();
-        let decoded = decode_delta(&data).unwrap_or_default();
-        self.last_decode_usec = elapsed_usec(started);
-        decoded
+        self.decode_snapshot(data)
+    }
+
+    /// True once a full snapshot has established a baseline. `SnapshotLoader` reads it to tell
+    /// "dropped because we have no baseline yet" from "dropped because the frame was bad".
+    #[func]
+    pub fn has_baseline(&self) -> bool {
+        self.cache.is_some()
+    }
+
+    /// `frameSeq` of the last frame merged, or 0 before any. The value a resync request quotes.
+    #[func]
+    pub fn get_applied_frame_seq(&self) -> i64 {
+        self.cache.as_ref().map(|c| c.frame_seq as i64).unwrap_or(0)
     }
 
     /// Microseconds the LAST decode call took, or [`NO_DECODE_RECORDED_USEC`] before the first
@@ -104,48 +128,73 @@ fn elapsed_usec(started: std::time::Instant) -> i64 {
     i64::try_from(started.elapsed().as_micros()).unwrap_or(i64::MAX)
 }
 
-fn decode_snapshot(data: &PackedByteArray) -> Option<VarDictionary> {
-    if data.is_empty() {
-        return None;
-    }
-    let bytes = data.as_slice();
-    let envelope = fb::root_as_envelope(bytes).ok()?;
-    match envelope.payload_type() {
-        fb::SnapshotPayload::snapshot => {
-            let snapshot = envelope.payload_as_snapshot()?;
-            // `?`, not `map`: `snapshot_to_dict` answers `None` for a headerless snapshot (see its
-            // docs), and that `None` must reach the caller as "no frame" rather than being wrapped
-            // into a `Some(...)` the loader would treat as a decoded world.
-            let mut dict = snapshot_to_dict(snapshot)?;
-            let _ = dict.insert(FRAME_KIND_KEY, FRAME_KIND_SNAPSHOT);
-            // A full snapshot names no base — it is applicable against any client state — so only
-            // `frame_seq` is published here.
-            let frame_seq = snapshot
-                .header()
-                .map(|header| header.frameSeq())
-                .unwrap_or(0);
-            let _ = dict.insert(FRAME_SEQ_KEY, frame_seq as i64);
-            Some(dict)
+impl SnapshotDecoder {
+    /// Decode one envelope, updating [`Self::cache`]. `None` means "no frame" — malformed,
+    /// headerless, or a delta that cannot be applied to what we hold.
+    fn decode_frame(&mut self, data: &PackedByteArray) -> Option<VarDictionary> {
+        if data.is_empty() {
+            return None;
         }
-        fb::SnapshotPayload::delta => decode_delta(data),
-        _ => None,
+        let envelope = fb::root_as_envelope(data.as_slice()).ok()?;
+        match envelope.payload_type() {
+            fb::SnapshotPayload::snapshot => {
+                let snapshot = envelope.payload_as_snapshot()?;
+                // `?`, not `map`: `snapshot_to_dict` answers `None` for a headerless
+                // snapshot (see its docs), and that `None` must reach the caller as "no frame"
+                // rather than a `Some(...)` the loader would treat as a decoded world.
+                let (mut dict, rasters) = snapshot_to_dict(snapshot)?;
+                let header = snapshot.header()?;
+                let _ = dict.insert(FRAME_KIND_KEY, FRAME_KIND_SNAPSHOT);
+                // A full snapshot names no base — it is applicable against any client state — so
+                // only `frame_seq` is published here.
+                let _ = dict.insert(FRAME_SEQ_KEY, header.frameSeq() as i64);
+                self.cache = Some(WorldCache {
+                    world_epoch: header.worldEpoch(),
+                    frame_seq: header.frameSeq(),
+                    dict: dict.duplicate_shallow(),
+                    rasters,
+                });
+                Some(dict)
+            }
+            fb::SnapshotPayload::delta => {
+                let delta = envelope.payload_as_delta()?;
+                let header = delta.header()?;
+                // No baseline, wrong world, or a base we never applied: drop the frame. Merging it
+                // anyway is precisely how the client's world drifts from the server's without
+                // anything failing.
+                let cache = self.cache.as_ref()?;
+                if !cache.accepts(header.worldEpoch(), header.baseFrameSeq()) {
+                    return None;
+                }
+                let (delta_dict, rasters) = decode_delta_against(delta, &cache.rasters)?;
+                // Merge: the cached world, overwritten by every key this delta carried. Absent
+                // keys keep their cached value, which is what "absent means unchanged" has always
+                // meant on the wire — the difference is that there is now something for it to be
+                // unchanged *from*.
+                let mut merged = cache.dict.duplicate_shallow();
+                for (key, value) in delta_dict.iter_shared() {
+                    merged.set(&key, &value);
+                }
+                self.cache = Some(WorldCache {
+                    world_epoch: header.worldEpoch(),
+                    frame_seq: header.frameSeq(),
+                    dict: merged.duplicate_shallow(),
+                    rasters,
+                });
+                Some(merged)
+            }
+            _ => None,
+        }
     }
 }
 
-fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
-    if data.is_empty() {
-        return None;
-    }
-    let bytes = data.as_slice();
-    let envelope = fb::root_as_envelope(bytes).ok()?;
-    if envelope.payload_type() != fb::SnapshotPayload::delta {
-        return None;
-    }
-    let delta = envelope.payload_as_delta()?;
-    // For now, render deltas by synthesizing a snapshot-sized dictionary where only
-    // updated tiles affect the overlays. This keeps the UI responsive while we pump
-    // full snapshots on the same stream.
-    let mut agg = DeltaAggregator::default();
+/// Build the dictionary of everything one delta carried, seeded from `cache` so the channels it
+/// omits re-derive from the previous frame instead of zeroing.
+fn decode_delta_against(
+    delta: fb::WorldDelta<'_>,
+    cache: &RasterCache,
+) -> Option<(VarDictionary, RasterCache)> {
+    let mut agg = DeltaAggregator::from_cache(cache);
     let mut frame_seq: u64 = 0;
     let mut base_frame_seq: u64 = 0;
     if let Some(header) = delta.header() {
@@ -160,7 +209,13 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     }
     if let Some(tiles) = delta.map().and_then(|s| s.tiles()) {
         for tile in tiles {
-            agg.update_tile(tile.x(), tile.y(), tile.temperature());
+            agg.update_tile(
+                tile.x(),
+                tile.y(),
+                tile.temperature(),
+                tile.grazeCapacity(),
+                tile.forageCapacity(),
+            );
         }
     }
     if let Some(layer) = delta.map().and_then(|s| s.terrainOverlay()) {
@@ -199,6 +254,7 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     if let Some(raster) = delta.map().and_then(|s| s.moistureRaster()) {
         agg.apply_moisture_raster(raster);
     }
+    let rasters = agg.raster_cache();
     let mut dict = agg.into_dictionary();
     let _ = dict.insert(FRAME_KIND_KEY, FRAME_KIND_DELTA);
     let _ = dict.insert(FRAME_SEQ_KEY, frame_seq as i64);
@@ -399,5 +455,5 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         );
     }
 
-    Some(dict)
+    Some((dict, rasters))
 }

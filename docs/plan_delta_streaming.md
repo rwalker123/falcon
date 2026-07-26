@@ -130,6 +130,58 @@ world" flow — it is client-initiated, so it cannot hand back a world nobody as
 
 ---
 
+## 3.5 MEASURED: one field defeats the whole premise
+
+Phase 2 shipped and was measured on a live release server (80×52, `earthlike`, seed 12345,
+`late_forager_tribe`, steady state). The result contradicts this plan's own premise and is the most
+important thing on this page.
+
+```
+encode.flat_snapshot   7.3 ms   (before — full world every turn)
+encode.flat_delta      6.0 ms   (after  — "delta" every turn)
+```
+
+**An 18% saving, not 44%.** The reason, straight off the instrumented turn:
+
+```
+DELTA_SIZE tiles_changed=4160 of 4160
+```
+
+**Every tile is in every delta.** The delta *is* a full world, in delta clothing. Diffing a world
+where every entity changed buys only the cost of the sections that did not.
+
+The culprit is a single field. Two consecutive states of the same **DeepOcean** tile — no life, no
+graze, no forage, nothing a player could act on:
+
+```
+TILE_OLD  … mass: 1101644, temperature: -1009804, graze_biomass: 0.0, forage_capacity: 0.0 …
+TILE_NEW  … mass: 1131380, temperature: -1009804, graze_biomass: 0.0, forage_capacity: 0.0 …
+```
+
+Only `mass` differs. It drifts every turn on every tile including open ocean, so it alone puts all
+4160 tiles into the diff and pins per-turn cost to tile count — the exact property this arc exists
+to remove.
+
+**`mass` has one consumer in the entire client:** `TerrainPanel.gd`, an Inspector panel, which
+renders it as `"Mass: %.1f"`. It is fixed-point (1e6), so that sample is `1.10 → 1.13`. Nothing
+else — no renderer, no HUD module, no overlay — reads it.
+
+**So the next lever is not a better diff, it is a narrower payload.** In rough order of value:
+
+1. **Quantise `mass` on the wire** to the precision its only reader displays. A field diffed at
+   1e-6 and rendered at 1e-1 is generating five digits of pure delta traffic.
+2. **Or drop it**, given the standing decision that the Inspector is expendable (§4). That makes
+   this the first concrete case where the Inspector's cost is not hypothetical.
+3. **Then re-measure and repeat** — `mass` is the field that dominates *today*; there is no reason
+   to assume it is the only one, and the instrumentation above (a `DELTA_SIZE` count plus a
+   first-differing-tile dump) is four lines and should be re-run, not re-derived.
+
+**The generalisable lesson, which outlives `mass`:** a delta pipeline is only as good as the
+stability of the fields it diffs, and **wire precision is a performance decision, not a fidelity
+one**. Any per-tile field that drifts every turn costs the full map every turn, forever, no matter
+how good the delta encoder is. That belongs in the review checklist for every new `TileState`
+field.
+
 ## 4. What this does NOT try to do
 
 **Do not design this around the Inspector.** Standing decision (Ray, 2026-07-26): the Inspector is
