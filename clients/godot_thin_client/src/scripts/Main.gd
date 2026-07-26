@@ -34,6 +34,11 @@ var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
 var _campaign_label_signature: String = ""
+# Per-HUD-method time accumulated during one `_apply_snapshot` fan-out, in microseconds. Filled by
+# `_hud_invoke` only while `_hud_profiling` is up (i.e. inside the fan-out block), drained by
+# `_record_hud_calls`.
+var _hud_call_usec: Dictionary = {}
+var _hud_profiling: bool = false
 var _victory_analytics_signature: String = ""
 # Reserved-edge registry (id → {edge, size}), mirrored from `_apply_reservation` so co-edge
 # panels can be STACKED (not just summed): the Band panel is offset inboard by the Σ sizes of
@@ -60,6 +65,28 @@ const DEV_DEFAULT_NEW_GAME := {
 }
 const STREAM_HOST = "127.0.0.1"
 const STREAM_PORT = 41002
+
+# --- Per-turn client profile (TurnProfile.gd) -------------------------------------------------
+# Phase labels for the one `[TurnProfile]` line printed per applied snapshot. Flat and dotted, the
+# server's `turn.profile` convention: a parent INCLUDES its children, so `apply` contains all of
+# these and `display` contains every `display.*` MapView contributes.
+const PROFILE_APPLY := "apply"
+const PROFILE_DECODE := "decode"
+const PROFILE_DECODE_NATIVE := "decode.native"
+const PROFILE_DISPLAY := "display"
+const PROFILE_DISPLAY_PREFIX := "display."
+const PROFILE_HUD := "hud"
+const PROFILE_HUD_PREFIX := "hud."
+const PROFILE_INSPECTOR := "inspector"
+const PROFILE_SELECTION := "selection"
+const PROFILE_SCRIPTING := "scripting"
+## Annotates `decode` with how many frames the poll converted and how many of those it then threw
+## away — `decode=12.10(x3 discarded 2)`.
+const DECODE_NOTE_FORMAT := "x%d discarded %d"
+## An individual HUD fan-out call is only worth its own `hud.<method>` entry above this. Below it
+## a call is noise against a turn measured in tens of milliseconds, and eighteen such entries would
+## bury the line; the `hud` aggregate always reports the whole block regardless.
+const HUD_CALL_REPORT_MIN_MSEC := 0.5
 # Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
 # map/HUD until the new world reveals.
 const LOADING_OVERLAY_LAYER = 150
@@ -396,9 +423,18 @@ func _hide_loading_overlay() -> void:
     if loading_overlay != null:
         loading_overlay.visible = false
 
+## Push one decoded snapshot (or delta) through the whole client: map render, HUD fan-out,
+## Inspector, selection refresh, script host.
+##
+## THE PER-TURN PROFILE LIVES HERE because this is the only place that sees all of it. The line is
+## emitted at the bottom via `TurnProfile.emit()`; every `profile.begin/end` pair below is inert
+## unless the flag is on (see `TurnProfile.ENV_FLAG`).
 func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
         return
+    var profile := TurnProfile.start()
+    var t_apply: int = profile.begin(PROFILE_APPLY)
+    _record_decode_phase(profile)
     var is_delta := _snapshot_is_delta(snapshot)
     # WORLD BOUNDARY. A full snapshot carrying a new `world_epoch` describes a DIFFERENT world — a
     # `new_game`, or a `map_size` rebuild, which regenerates in place with no scene reload — and every
@@ -414,12 +450,19 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     _sync_fog_of_war(snapshot, is_delta)
     _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics: Dictionary = {}
+    var t_display: int = profile.begin(PROFILE_DISPLAY)
     if map_view != null and map_view.has_method("display_snapshot"):
         var metrics_variant: Variant = map_view.call("display_snapshot", snapshot)
         metrics = metrics_variant if metrics_variant is Dictionary else {}
     elif not _warned_missing_map_view_method:
         push_warning("Map view missing display_snapshot(); skipping map render.")
         _warned_missing_map_view_method = true
+    profile.end(PROFILE_DISPLAY, t_display)
+    # MapView times its own ingest blocks; splice them in behind `display` as `display.*`.
+    if map_view != null:
+        profile.absorb(map_view.get("last_display_profile"), PROFILE_DISPLAY_PREFIX)
+    var t_hud: int = profile.begin(PROFILE_HUD)
+    _hud_profiling = profile.enabled
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
@@ -470,6 +513,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         if victory_variant is Dictionary:
             _hud_invoke("update_victory_state", [victory_variant])
             _emit_victory_analytics(victory_variant)
+    _hud_profiling = false
+    profile.end(PROFILE_HUD, t_hud)
+    _record_hud_calls(profile)
+    var t_inspector: int = profile.begin(PROFILE_INSPECTOR)
     if inspector != null:
         if is_delta:
             if inspector.has_method("update_delta"):
@@ -482,13 +529,44 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
                 inspector.call("update_capability_flags", int(snapshot["capability_flags"]))
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
+    profile.end(PROFILE_INSPECTOR, t_inspector)
+    var t_selection: int = profile.begin(PROFILE_SELECTION)
     _refresh_hud_selection()
+    profile.end(PROFILE_SELECTION, t_selection)
     _camera_initialized = true
+    var t_scripting: int = profile.begin(PROFILE_SCRIPTING)
     if script_host_manager != null and script_host_manager.has_host():
         if is_delta:
             script_host_manager.handle_delta(snapshot)
         else:
             script_host_manager.handle_snapshot(snapshot)
+    profile.end(PROFILE_SCRIPTING, t_scripting)
+    profile.end(PROFILE_APPLY, t_apply)
+    profile.emit()
+
+## Fold the decode cost of the poll that produced this snapshot into `profile`.
+##
+## Read off `SnapshotLoader`'s `last_poll_*` fields rather than measured here: the decode happens
+## in `poll_stream`, one call up the stack, and both `_apply_snapshot` call sites run immediately
+## after a poll that returned a frame — so the fields describe THIS snapshot's arrival.
+func _record_decode_phase(profile: TurnProfile) -> void:
+    if snapshot_loader == null:
+        return
+    var note: String = DECODE_NOTE_FORMAT % [
+        snapshot_loader.last_poll_decoded_frames,
+        snapshot_loader.last_poll_discarded_frames,
+    ]
+    profile.record_ms(PROFILE_DECODE, snapshot_loader.last_poll_decode_msec, note)
+    profile.record_ms(PROFILE_DECODE_NATIVE, snapshot_loader.last_poll_native_decode_msec)
+
+## Drain `_hud_call_usec` into `profile`, keeping only the calls worth naming
+## (`HUD_CALL_REPORT_MIN_MSEC`). Insertion order is call order, so the entries read as the fan-out ran.
+func _record_hud_calls(profile: TurnProfile) -> void:
+    for method: String in _hud_call_usec:
+        var millis: float = float(_hud_call_usec[method]) / TurnProfile.USEC_PER_MSEC
+        if millis >= HUD_CALL_REPORT_MIN_MSEC:
+            profile.record_ms(PROFILE_HUD_PREFIX + method, millis)
+    _hud_call_usec.clear()
 
 ## Drop every client-side cache that belongs to ONE world. The coordinator only decides WHEN — each
 ## surface owns its own reset and is reached through the same silent `has_method` probe the rest of
@@ -1077,7 +1155,14 @@ func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null
     if hud != null and hud.has_method(method):
         # print("[HUD->Main]", method, args)  # Commented out to reduce log spam
-        result = hud.callv(method, args)
+        if _hud_profiling:
+            # Only inside `_apply_snapshot`'s fan-out, and only while profiling: everything else
+            # reaching the HUD through this helper stays on the untimed branch.
+            var started: int = Time.get_ticks_usec()
+            result = hud.callv(method, args)
+            _hud_call_usec[method] = int(_hud_call_usec.get(method, 0)) + (Time.get_ticks_usec() - started)
+        else:
+            result = hud.callv(method, args)
     return result
 
 # Endpoint resolution order is uniform across stream/command/log:

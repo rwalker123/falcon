@@ -91,17 +91,31 @@ pub struct StoredSnapshot {
     pub encoded_snapshot: Arc<Vec<u8>>,
     pub encoded_delta: Arc<Vec<u8>>,
     pub encoded_snapshot_flat: Arc<Vec<u8>>,
-    pub encoded_delta_flat: Arc<Vec<u8>>,
 }
 
 impl StoredSnapshot {
+    /// **There is deliberately no flat-encoded delta here.** The turn path broadcasts the *bincode*
+    /// delta and the *flat* snapshot ([`crate::network::broadcast_latest`]), so a per-turn
+    /// FlatBuffers delta was pure dead work — it cost ~24% of an 80×52 turn and had no reader in the
+    /// repo. The on-demand feed paths (`update_axis_bias` / `update_influencers` /
+    /// `update_command_events`) still build one, but locally, and return it for immediate broadcast
+    /// rather than storing it.
+    ///
+    /// The three encodings that remain are profiled separately so the log says which costs what
+    /// (see [`crate::turn_profile`]).
     fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>) -> Self {
-        let encoded_snapshot =
-            Arc::new(encode_snapshot(snapshot.as_ref()).expect("snapshot serialization failed"));
-        let encoded_delta =
-            Arc::new(encode_delta(delta.as_ref()).expect("delta serialization failed"));
-        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot.as_ref()));
-        let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta.as_ref()));
+        let encoded_snapshot = {
+            let _s = crate::turn_profile::scope("encode.bincode_snapshot");
+            Arc::new(encode_snapshot(snapshot.as_ref()).expect("snapshot serialization failed"))
+        };
+        let encoded_delta = {
+            let _s = crate::turn_profile::scope("encode.bincode_delta");
+            Arc::new(encode_delta(delta.as_ref()).expect("delta serialization failed"))
+        };
+        let encoded_snapshot_flat = {
+            let _s = crate::turn_profile::scope("encode.flat_snapshot");
+            Arc::new(encode_snapshot_flatbuffer(snapshot.as_ref()))
+        };
         Self {
             tick: snapshot.header.tick,
             snapshot,
@@ -109,7 +123,6 @@ impl StoredSnapshot {
             encoded_snapshot,
             encoded_delta,
             encoded_snapshot_flat,
-            encoded_delta_flat,
         }
     }
 }
@@ -122,7 +135,6 @@ pub struct SnapshotHistory {
     pub encoded_snapshot: Option<Arc<Vec<u8>>>,
     pub encoded_delta: Option<Arc<Vec<u8>>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
-    pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
     tiles: HashMap<u64, TileState>,
     logistics: HashMap<u64, LogisticsLinkState>,
     trade_links: HashMap<u64, TradeLinkState>,
@@ -192,7 +204,6 @@ impl SnapshotHistory {
             encoded_snapshot: None,
             encoded_delta: None,
             encoded_snapshot_flat: None,
-            encoded_delta_flat: None,
             tiles: HashMap::new(),
             logistics: HashMap::new(),
             trade_links: HashMap::new(),
@@ -275,6 +286,9 @@ impl SnapshotHistory {
     }
 
     pub fn update(&mut self, snapshot: WorldSnapshot) {
+        // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
+        // the `diff_new`/`diff_removed` comparisons against last turn's indices.
+        let diff_scope = crate::turn_profile::scope("snapshot.history.diff");
         let mut tiles_index = HashMap::with_capacity(snapshot.tiles.len());
         for state in &snapshot.tiles {
             tiles_index.insert(state.entity, state.clone());
@@ -651,6 +665,8 @@ impl SnapshotHistory {
             fog_enabled: fog_enabled_state,
         };
 
+        drop(diff_scope);
+
         let snapshot_arc = Arc::new(snapshot);
         let delta_arc = Arc::new(delta);
         let stored = StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone());
@@ -709,7 +725,6 @@ impl SnapshotHistory {
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
         self.encoded_delta = Some(stored.encoded_delta.clone());
         self.encoded_snapshot_flat = Some(stored.encoded_snapshot_flat.clone());
-        self.encoded_delta_flat = Some(stored.encoded_delta_flat.clone());
         self.history.push_back(stored);
         self.prune();
     }
@@ -826,7 +841,6 @@ impl SnapshotHistory {
         self.encoded_snapshot = Some(entry.encoded_snapshot.clone());
         self.encoded_delta = Some(entry.encoded_delta.clone());
         self.encoded_snapshot_flat = Some(entry.encoded_snapshot_flat.clone());
-        self.encoded_delta_flat = Some(entry.encoded_delta_flat.clone());
 
         while let Some(back) = self.history.back() {
             if back.tick > entry.tick {
@@ -915,10 +929,12 @@ impl SnapshotHistory {
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("axis bias delta encoding failed"));
+        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
+        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
+        // per-turn encode this arc removed (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
         self.encoded_delta = Some(encoded_delta.clone());
-        self.encoded_delta_flat = Some(encoded_delta_flat.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
@@ -941,7 +957,6 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
             back.encoded_delta = encoded_delta.clone();
-            back.encoded_delta_flat = encoded_delta_flat.clone();
         }
 
         Some((encoded_delta, encoded_delta_flat))
@@ -1098,10 +1113,12 @@ impl SnapshotHistory {
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("influencer delta encoding failed"));
+        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
+        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
+        // per-turn encode this arc removed (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
         self.encoded_delta = Some(encoded_delta.clone());
-        self.encoded_delta_flat = Some(encoded_delta_flat.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
@@ -1127,7 +1144,6 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
             back.encoded_delta = encoded_delta.clone();
-            back.encoded_delta_flat = encoded_delta_flat.clone();
         }
 
         Some((encoded_delta, encoded_delta_flat))
@@ -1211,10 +1227,12 @@ impl SnapshotHistory {
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("corruption delta encoding failed"));
+        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
+        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
+        // per-turn encode this arc removed (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
         self.encoded_delta = Some(encoded_delta.clone());
-        self.encoded_delta_flat = Some(encoded_delta_flat.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
@@ -1237,7 +1255,6 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
             back.encoded_delta = encoded_delta.clone();
-            back.encoded_delta_flat = encoded_delta_flat.clone();
         }
 
         Some((encoded_delta, encoded_delta_flat))
@@ -1281,6 +1298,11 @@ pub fn capture_snapshot(
     culture: Res<CultureManager>,
     mut history: ResMut<SnapshotHistory>,
 ) {
+    // Whole-capture profiling. `snapshot.build` covers assembling the `WorldSnapshot` and CONTAINS
+    // its `snapshot.build.*` sub-scopes — the profiler's labels nest flat, so a parent includes its
+    // children (see `crate::turn_profile`). Hashing, history diffing and encoding are separate
+    // top-level labels below.
+    let build_scope = crate::turn_profile::scope("snapshot.build");
     let SnapshotContext {
         config,
         tick,
@@ -1355,17 +1377,21 @@ pub fn capture_snapshot(
     // pass so the refusal sweep below is one more read of the same query rather than a second walk of
     // the world.
     let mut tile_tags: HashMap<UVec2, sim_runtime::TerrainTags> = HashMap::new();
-    for (entity, tile, food_module) in tiles.iter() {
-        tile_states.push(tile_state(
-            entity,
-            tile,
-            &morale_pressure_cfg,
-            graze_registry.patch(tile.position),
-            &labor_config.forage,
-        ));
-        tile_tags.insert(tile.position, tile.terrain_tags);
-        if let Some(module) = food_module {
-            seasonal_weights.insert(tile.position, module.seasonal_weight);
+    {
+        // Sweep 1 of 3 over the full tile query.
+        let _s = crate::turn_profile::scope("snapshot.build.tiles");
+        for (entity, tile, food_module) in tiles.iter() {
+            tile_states.push(tile_state(
+                entity,
+                tile,
+                &morale_pressure_cfg,
+                graze_registry.patch(tile.position),
+                &labor_config.forage,
+            ));
+            tile_tags.insert(tile.position, tile.terrain_tags);
+            if let Some(module) = food_module {
+                seasonal_weights.insert(tile.position, module.seasonal_weight);
+            }
         }
     }
     // **Why the ground under each patch will not take seed** — the `plant:field` rung's own
@@ -1377,6 +1403,8 @@ pub fn capture_snapshot(
     // Patches only — the client asks "why can't I sow *here*?" of a tile it is looking at, and a
     // patch is on every food-bearing tile there is (see core_sim/CLAUDE.md → the Field).
     let sow_site_refusals: HashMap<UVec2, SiteRefusal> = {
+        // Sweep 2 of 3 over the full tile query.
+        let _s = crate::turn_profile::scope("snapshot.build.sow_refusals");
         let field_rung = ladder_config.rung(RungKey::PlantField);
         let grid = config.grid_size;
         let wrap_horizontal = config.map_topology.wrap_horizontal;
@@ -1397,6 +1425,9 @@ pub fn capture_snapshot(
     // resolved through the ONE `forage::tile_flora_composition` seam (the twin of
     // `tile_forage_capacity`), so a navigable hex's *two* capacity terms are both named and the wire
     // cannot disagree with the table. Patch tiles only, mirroring the `sow_site_refusals` sweep above.
+    // Sweep 3 of 3 over the full tile query. Held as an explicit guard rather than a wrapping block
+    // so the (long) composition closure below keeps its indentation.
+    let flora_scope = crate::turn_profile::scope("snapshot.build.flora");
     let flora_compositions: HashMap<UVec2, Vec<FloraShareInfo>> = tiles
         .iter()
         .filter_map(|(_, tile, _)| {
@@ -1490,6 +1521,8 @@ pub fn capture_snapshot(
             Some((tile.position, shares))
         })
         .collect();
+    drop(flora_scope);
+
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
             x: site.position.x,
@@ -1664,6 +1697,11 @@ pub fn capture_snapshot(
     let great_discovery_progress_states = snapshot_progress(&gds.readiness);
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
 
+    // The contiguous full-grid raster block: terrain, logistics, sentiment, corruption, culture,
+    // military, visibility. The moisture/elevation overlays are built further down (they need
+    // state assembled in between), so they re-enter this same label there — hence `rasters` reports
+    // two calls per capture.
+    let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
     let terrain_overlay = terrain_overlay_from_tiles(&tile_states, config.grid_size);
     let logistics_raster =
         logistics_raster_from_links(&tile_states, &logistics_states, config.grid_size);
@@ -1702,6 +1740,7 @@ pub fn capture_snapshot(
         config.grid_size,
         config.fog_enabled,
     );
+    drop(raster_scope);
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -1845,11 +1884,15 @@ pub fn capture_snapshot(
         .position()
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
 
+    // Second entry into `snapshot.build.rasters` (see the block above) — the two remaining
+    // full-grid overlays, which could not be built with the others.
+    let raster_scope = crate::turn_profile::scope("snapshot.build.rasters");
     let moisture_overlay_state =
         moisture_overlay_from_resource(moisture.as_ref().map(|res| res.as_ref()), config.grid_size);
 
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
+    drop(raster_scope);
     // The climate-band cut points ride the snapshot beside the other worldgen overlays
     // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
     // told. A per-map constant read straight off the active `ClimateConfig`.
@@ -1919,7 +1962,7 @@ pub fn capture_snapshot(
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
 
-    let snapshot = WorldSnapshot {
+    let assembled = WorldSnapshot {
         header,
         tiles: tile_states,
         logistics: logistics_states,
@@ -1975,13 +2018,23 @@ pub fn capture_snapshot(
         knowledge_metrics: knowledge_metrics_state,
         crisis_telemetry: crisis_telemetry_state.clone(),
         crisis_overlay: crisis_overlay_state.clone(),
-    }
-    .finalize();
+    };
+    drop(build_scope);
+
+    // `finalize` stamps the content hash. It takes `self` by value and zeroes `header.hash` in place
+    // — no deep clone (that lives only in the free-standing `hash_snapshot`, which `finalize`
+    // deliberately does not call) — but it still bincode-encodes the *whole* snapshot just to
+    // produce a `u64`. Its own label so that cost is visible rather than buried in build.
+    let snapshot = {
+        let _s = crate::turn_profile::scope("snapshot.finalize_hash");
+        assembled.finalize()
+    };
 
     // Turn path: record a fresh ring entry (`update`). Post-command re-capture path
     // (`SnapshotCaptureMode::refresh_in_place`): refresh the latest broadcast + back ring entry in
     // place so a mid-turn command's world mutation reaches the client now, without pushing a ring
     // entry / advancing the turn.
+    let _history_scope = crate::turn_profile::scope("snapshot.history");
     if capture_mode.refresh_in_place {
         history.refresh_latest(snapshot);
     } else {

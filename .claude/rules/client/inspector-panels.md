@@ -11,6 +11,19 @@ paths:
 
 # Inspector panels
 
+> ## ⚠ The Inspector is legacy scaffolding and is expendable
+>
+> **Standing decision (Ray, 2026-07-26).** It dates from before the client had a real UX and was
+> the stand-in for seeing simulation state at all. Many of its tabs need redoing, and it is slated
+> for **rework after the performance arc lands** (#386 delta streaming, #392 multi-core, and their
+> sub-issues).
+>
+> **Breaking it in the meantime is acceptable.** Do not let this panel constrain, delay, or
+> complicate performance work, and do not invest in optimising code here — it is more likely to be
+> replaced than tuned (#390 is parked for exactly this reason). The contracts below describe how it
+> works *today* and are worth honouring for correctness while it lives; they are **not** a reason to
+> hold back a change elsewhere.
+
 ## Key scripts
 
 | Script | Purpose |
@@ -32,6 +45,77 @@ paths:
 | `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
+## A hidden Inspector does not render — the contract on `_apply_update`
+
+**The Inspector is hidden by default** (`Main.gd` seats `set_panel_visible(false)` at startup; the
+player reopens it with `I`), and `Main` calls `update_snapshot` on **every** snapshot. Before issue
+#384 that fan-out ran unconditionally: `_apply_update` walked every `_tab_panels` entry and then
+`_render_dynamic_sections()`, costing **~113 ms per turn — 61% of the client's entire
+snapshot-apply cost — to render a panel nobody could see.**
+
+The gate lives **inside `Inspector`**, not at the `Main.gd` call site: `Inspector` owns
+`_panel_visible` and `set_panel_visible`, so the skip and the show-hook that undoes it sit
+together and cannot drift, `update_snapshot` has more than one caller, and part of `_apply_update`
+must run while hidden anyway.
+
+Three clauses, and the third is the one that bites:
+
+1. **Only a full snapshot is skippable.** A delta describes a change against state the panels
+   already hold, and nothing later reconstructs a dropped one — so a delta is applied in full,
+   hidden or not. The live path is the fast one because the client consumes the full-snapshot
+   stream (`.claude/rules/core_sim/ports.md` — the stream port is `snapshot_flat`).
+
+   **…but applying a delta does not discharge the catch-up.** `_hidden_snapshot_pending` means
+   *a full snapshot has arrived that the panels have not ingested*, so *only* the full-snapshot
+   path may set or clear it. The first version of this gate cleared it on every non-skipped
+   update, hidden deltas included, which broke the sequence **full-while-hidden →
+   delta-while-hidden → `I`**: the replay was declared complete and the panels opened holding
+   only what the delta carried — precisely the stale-when-opened failure clause 2 exists to
+   prevent. It is reachable live, not theoretical: `Main._snapshot_is_delta` routes the server's
+   between-turn on-demand feeds (`update_influencers` / `update_axis_bias` /
+   `update_command_events`) to `update_delta`. It self-heals on the next turn's full snapshot,
+   which is why neither review nor the first guard harness caught it — the harness fed no deltas.
+   `inspector_hidden_guard` case 5 now pins it, with roster sizes chosen so replay (5) and
+   no-replay (4) cannot coincide.
+
+   **Known residual, accepted — and it expires with #386.** The replay rebuilds panels from the
+   cached *full* snapshot, so a delta that arrived after it is overwritten and its sub-turn
+   changes are lost until the next full snapshot. Strictly better than the bug it replaced (which
+   lost the entire full snapshot), and today it self-heals within one turn because full snapshots
+   arrive every turn.
+
+   **That last clause is the load-bearing one.** This whole gate assumes deltas are rare. Under
+   #386 (client consumes a delta stream) full snapshots become rare instead — connect, epoch
+   change, rollback — so the lossy window stretches to the gap between them, *and* "always apply
+   deltas in full" means a hidden Inspector resumes fanning out every turn, giving back most of
+   what the gate saves.
+
+   **This is explicitly NOT a reason to hold up #386** — see the banner at the top of this file;
+   the Inspector is expendable and #386 says so in as many words. If the panel survives in
+   something like its current shape, both problems have the same answer, and it is the right design
+   under delta streaming anyway: **queue deltas while hidden and replay `cached full + queued
+   deltas in order` on show**, with a capped queue falling back to requesting a full snapshot.
+   Recorded as the eventual fix, not as a prerequisite. Either way, do not reason about this
+   section without checking whether #386 has landed.
+2. **Catch up on show.** `set_panel_visible(false→true)` replays the cached latest snapshot. The
+   cache holds it **by reference** — deep-copying would cost exactly the work the gate saves, and
+   the decoder builds a fresh tree per frame that no consumer mutates.
+3. **Anything ACCUMULATING must stay above the gate.** The test is not "is it cheap", it is **"is
+   it reconstructible from the next full snapshot?"** Panel state is a rebuild-from-keys and so
+   survives being skipped. `_ingest_command_events` is not: those are per-turn *events*, and a
+   dropped one is gone from the running log forever. It runs unconditionally, and replay is safe
+   because `_seen_command_events` dedupes.
+
+   Adding anything to `_apply_update` means answering that question for it. Near-misses that are
+   safe, each checked rather than assumed: `VictoryPanel._log_victory` is edge-triggered but on
+   *persistent* state that rides every snapshot; `CulturePanel._log_new_culture_tensions` runs only
+   on the delta branch, which is never gated; `KnowledgePanel.append_events` accumulates but hangs
+   off `ingest_log_entry`, the log-stream path, not this one.
+
+`tools/inspector_hidden_guard.gd` pins all of it (see `test-harnesses.md`) — the property is
+invisible in normal play, since a stale-when-opened Inspector looks like a panel that just hasn't
+updated yet.
+
 ## Inspector Panels
 
 See `docs/godot_inspector_plan.md` for full roadmap.

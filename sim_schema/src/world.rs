@@ -274,11 +274,23 @@ pub struct WorldDelta {
 }
 
 impl WorldSnapshot {
+    /// Stamp the content hash onto the header.
+    ///
+    /// **Deliberately does not call [`hash_snapshot`], and must not be "simplified" back into one.**
+    /// That helper takes `&WorldSnapshot`, so it has to deep-clone the entire world just to zero one
+    /// `u64` before serializing — ~8% of a turn on an 80×52 map. `finalize` already *owns* `self`,
+    /// so it can zero the header in place and hash the same bytes with no copy at all.
+    ///
+    /// The two are byte-for-byte equivalent by construction: both serialize the whole snapshot with
+    /// `header.hash == 0` and hash the resulting buffer with the same fixed-seed hasher. Zeroing
+    /// first also matters for re-finalizing an already-stamped snapshot (the on-demand feed paths
+    /// clone the previous snapshot and call `finalize` again) — the stale hash must not be hashed in.
     pub fn finalize(mut self) -> Self {
-        let hash = hash_snapshot(&self);
-        let mut header = self.header;
-        header.hash = hash;
-        self.header = header;
+        self.header.hash = 0;
+        let encoded = bincode::serialize(&self).expect("snapshot serialization for hashing");
+        let mut hasher = RandomState::with_seeds(0, 0, 0, 0).build_hasher();
+        hasher.write(&encoded);
+        self.header.hash = hasher.finish();
         self
     }
 }
@@ -380,4 +392,48 @@ pub fn encode_map_export_json(export: &MapExport) -> serde_json::Result<String> 
 /// Decode a [`MapExport`] previously written by [`encode_map_export_json`].
 pub fn decode_map_export_json(data: &str) -> serde_json::Result<MapExport> {
     serde_json::from_str(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `WorldSnapshot::finalize` hashes in place instead of deep-cloning through [`hash_snapshot`],
+    /// which is only sound while the two produce identical bytes. Pin that equivalence here: the
+    /// optimisation is invisible in behaviour, so nothing else would catch a divergence, and
+    /// `hash_snapshot` still has a direct caller (`integration_tests/tests/determinism.rs`).
+    #[test]
+    fn finalize_stamps_exactly_the_free_standing_hash() {
+        let mut snapshot = WorldSnapshot {
+            fog_enabled: true,
+            ..Default::default()
+        };
+        snapshot.header.tick = 7;
+        snapshot.header.population_count = 3;
+
+        let expected = hash_snapshot(&snapshot);
+        let finalized = snapshot.clone().finalize();
+
+        assert_eq!(finalized.header.hash, expected);
+        assert_ne!(
+            finalized.header.hash, 0,
+            "a real hash, not the zeroed field"
+        );
+    }
+
+    /// Re-finalizing an already-stamped snapshot must ignore the stale hash — the on-demand feed
+    /// paths clone the previous snapshot, mutate one field, and call `finalize` again, so hashing
+    /// the old value in would make the hash depend on its own history.
+    #[test]
+    fn finalize_is_idempotent_and_ignores_a_stale_hash() {
+        let snapshot = WorldSnapshot::default().finalize();
+        let first = snapshot.header.hash;
+
+        let refinalized = snapshot.clone().finalize();
+        assert_eq!(refinalized.header.hash, first);
+
+        let mut stale = snapshot;
+        stale.header.hash = u64::MAX;
+        assert_eq!(stale.finalize().header.hash, first);
+    }
 }

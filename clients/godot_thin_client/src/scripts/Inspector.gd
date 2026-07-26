@@ -61,6 +61,11 @@ var _axis_bias: Dictionary = {}
 var _map_view: Node = null
 # Map-size + scenario state moved to MapPanel.
 var _panel_visible: bool = true
+## Newest FULL snapshot seen, and whether it arrived while the panel was hidden (so the panels have
+## not consumed it yet). Together they are the catch-up path that makes the hidden-panel skip in
+## `_apply_update` safe — see its header.
+var _cached_snapshot: Dictionary = {}
+var _hidden_snapshot_pending: bool = false
 var _seen_command_events: Dictionary = {}
 var _resolved_font_size: int = Typography.DEFAULT_FONT_SIZE
 var _last_turn: int = 0
@@ -142,12 +147,31 @@ func is_panel_visible() -> bool:
 	return _panel_visible
 
 func set_panel_visible(visible: bool) -> void:
+	var was_visible: bool = _panel_visible
 	_panel_visible = visible
 	if root_panel != null:
 		root_panel.visible = visible
 	set_process(visible)
 	set_process_input(visible)
 	reserved_width_changed.emit(reserved_width())
+	# Catch up on whatever arrived while hidden BEFORE the player can look at the panel, so being
+	# shown never reveals stale numbers (see `_apply_update`'s header).
+	if visible and not was_visible:
+		_catch_up_hidden_snapshot()
+
+## Replay the newest cached full snapshot if the panels have not ingested it — i.e. discharge
+## `_hidden_snapshot_pending`. Called on hide→show, and by `_render_static_sections` when a reset
+## empties the panels while they are already visible.
+##
+## Safe to re-run against a snapshot already partly consumed: every panel rebuilds its state from
+## the snapshot's keys, and the one accumulator on this path (`_ingest_command_events`) dedupes on
+## `_seen_command_events`, so the events ingested while hidden are not logged twice.
+func _catch_up_hidden_snapshot() -> void:
+	if not _hidden_snapshot_pending or _cached_snapshot.is_empty():
+		return
+	_hidden_snapshot_pending = false
+	_apply_update(_cached_snapshot, true)
+	_render_dynamic_sections()
 
 func toggle_panel_visibility() -> void:
 	set_panel_visible(not _panel_visible)
@@ -171,7 +195,32 @@ func update_delta(delta: Dictionary) -> void:
 	if delta.has("capability_flags"):
 		update_capability_flags(int(delta["capability_flags"]))
 
+## Route one snapshot/delta into the coordinator's own state and then out to the tab panels.
+##
+## # The hidden-panel skip
+##
+## The Inspector ships HIDDEN (`Main` calls `set_panel_visible(false)` at startup; `I` re-opens it)
+## and the whole fan-out below — every panel's `apply_update` plus `_render_dynamic_sections` — was
+## measured at **113 ms per turn** on an 80×52 map, 61 % of the client's per-turn apply cost, spent
+## rendering a panel nobody can see. So while hidden this method stops after the prefix and the
+## snapshot is stashed for `_catch_up_hidden_snapshot` to replay on show.
+##
+## **Only a FULL snapshot may be skipped.** It is self-contained, so replaying the latest one
+## reconstructs every panel; the client consumes the full-snapshot stream, so that is the live path.
+## A DELTA describes a *change* against state the panels already hold and nothing later can
+## reconstruct a dropped one, so a delta is always applied in full, hidden or not.
+##
+## **The prefix below runs hidden or not**, and the dividing line is not "cheap" but
+## *reconstructible*: `_ingest_command_events` consumes a per-turn EVENT array and appends to a
+## running log — history no later snapshot carries — so skipping it would silently lose command
+## feed entries. Everything after the gate rebuilds panel state from snapshot keys and is therefore
+## recoverable. Anything added to this method must be classified the same way before it is placed.
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
+	if full_snapshot:
+		# Held by REFERENCE, not deep-copied: the native decoder builds a fresh Dictionary tree per
+		# frame and no consumer mutates it in place (MapView duplicates the sub-dicts it keeps), so
+		# a copy would cost exactly the work this gate exists to avoid.
+		_cached_snapshot = data
 	if data.has("turn"):
 		_last_turn = int(data.get("turn", _last_turn))
 	if data.has("capability_flags"):
@@ -179,10 +228,26 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 
 	# campaign_profiles / campaign_label / faction_inventory / grid are consumed by
 	# MapPanel via the _tab_panels fan-out at the end of this method.
+	# ACCUMULATOR — see the header: a running log, not reconstructible state, so it runs while hidden.
 	if data.has("command_events"):
 		_ingest_command_events(data["command_events"])
 	# food_modules + tiles/tile_updates/tile_removed are consumed by TerrainPanel via the
 	# _tab_panels fan-out at the end of this method.
+
+	# `_hidden_snapshot_pending` means "a full snapshot has arrived that the panels have NOT
+	# ingested". Only the full-snapshot path may touch it — set it when one is skipped, clear it
+	# when one is actually fanned out. A DELTA is applied below either way, but applying a delta
+	# does NOT discharge that debt: the sequence full-while-hidden → delta-while-hidden → show
+	# would otherwise skip the catch-up replay and open the panels holding only what the delta
+	# carried (the exact stale-when-opened failure the replay exists to prevent, self-healing on
+	# the next turn's full snapshot and so nearly invisible). Deltas do reach a hidden Inspector
+	# on the live path: `Main._snapshot_is_delta` routes the server's between-turn on-demand
+	# feeds (`update_influencers` / `update_axis_bias` / `update_command_events`) to `update_delta`.
+	if full_snapshot:
+		if not _panel_visible:
+			_hidden_snapshot_pending = true
+			return
+		_hidden_snapshot_pending = false
 
 	if data.has("axis_bias"):
 		var axis_dict: Dictionary = data["axis_bias"]
@@ -217,6 +282,12 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 			commands_panel.set_influencer_roster(influencer_panel.get_influencers())
 
 func _render_dynamic_sections() -> void:
+	# Second half of the hidden-panel skip (see `_apply_update`): this is the coordinator's own
+	# render pass, and both `update_snapshot`/`update_delta` call it right after `_apply_update`.
+	# Guarded HERE rather than at those two call sites so a future third caller cannot miss it —
+	# `_catch_up_hidden_snapshot` runs it only once the panel is already visible.
+	if not _panel_visible:
+		return
 	# TerrainPanel renders in its own apply_update (no external dependency).
 	# CulturePanel renders here so the coordinator can supply the influencer-resonance
 	# summary (pulled from InfluencerPanel — panels stay decoupled).
@@ -255,6 +326,14 @@ func _render_static_sections() -> void:
 		map_panel.reset()
 	_panel_width = PANEL_WIDTH_DEFAULT
 	_update_command_controls_enabled()
+	# Every panel is now empty, so a cached full snapshot is once again un-ingested (the invariant
+	# `_hidden_snapshot_pending` tracks) — mark it so, otherwise a reset while hidden would strand
+	# the panels blank. Visibility does not enter into the flag: when the panel IS visible there is
+	# no later show to trigger the replay, so discharge it right here instead of leaving the panels
+	# blank until the next full snapshot arrives.
+	_hidden_snapshot_pending = not _cached_snapshot.is_empty()
+	if _panel_visible:
+		_catch_up_hidden_snapshot()
 
 func apply_typography() -> void:
 	Typography.initialize()

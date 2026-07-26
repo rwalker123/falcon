@@ -22,6 +22,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
+use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
     knows, output_multiplier, resolve_active_profile, resolve_committed_species, rung_site_refusal,
@@ -5613,6 +5614,9 @@ fn resolve_ready_turn(
     snapshot_server_flat: &SnapshotServer,
 ) {
     let turn_start = std::time::Instant::now();
+    // Open the turn's profile here rather than from a stage marker: order application and snapshot
+    // broadcast happen outside `app.update()` and belong to the same turn's breakdown.
+    turn_profile::begin_turn();
     let ready_orders = {
         let mut queue = app.world.resource_mut::<TurnQueue>();
         if !queue.is_ready() {
@@ -5626,7 +5630,10 @@ fn resolve_ready_turn(
         queue.drain_ready_orders()
     };
 
-    apply_orders(&ready_orders);
+    {
+        let _s = turn_profile::scope("orders.apply");
+        apply_orders(&ready_orders);
+    }
     run_turn(app);
 
     {
@@ -5634,8 +5641,11 @@ fn resolve_ready_turn(
         queue.advance_turn();
     }
 
-    let history = app.world.resource::<SnapshotHistory>();
-    broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+    {
+        let _s = turn_profile::scope("broadcast");
+        let history = app.world.resource::<SnapshotHistory>();
+        broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+    }
 
     let metrics = app.world.resource::<SimulationMetrics>();
     let duration_ms = turn_start.elapsed().as_secs_f64() * 1000.0;
@@ -5648,6 +5658,17 @@ fn resolve_ready_turn(
         avg_temp = metrics.avg_temperature,
         duration_ms,
         "turn.completed"
+    );
+    // The per-phase breakdown of the `duration_ms` just reported. One string field because `tracing`
+    // fields must be primitives; see `turn_profile::render` for the format (and note the labels nest
+    // flat, so a parent's figure INCLUDES its `parent.child` entries).
+    let phases = turn_profile::take();
+    info!(
+        target: "shadow_scale::server",
+        turn = metrics.turn,
+        duration_ms,
+        phases = %turn_profile::render(&phases),
+        "turn.profile"
     );
 }
 

@@ -34,21 +34,53 @@ use crate::dict::{
 use crate::snapshot::delta::DeltaAggregator;
 use crate::snapshot::snapshot_to_dict;
 
+/// Wall-clock microseconds a decode that measured nothing reports — the value
+/// [`SnapshotDecoder::get_last_decode_usec`] answers before any frame has been decoded.
+const NO_DECODE_RECORDED_USEC: i64 = 0;
+
 #[derive(Default, GodotClass)]
 #[class(init, base=RefCounted)]
-pub struct SnapshotDecoder;
+pub struct SnapshotDecoder {
+    /// Microseconds the most recent `decode_snapshot`/`decode_delta` spent inside
+    /// `snapshot_to_dict` — i.e. the whole FlatBuffers→`VarDictionary` conversion, which is the
+    /// dominant term. Read from GDScript by `SnapshotLoader` for its `decode.native` phase, so the
+    /// client's per-turn profile line can separate the conversion itself from the Variant
+    /// marshalling the binding adds on top of it.
+    #[init(val = NO_DECODE_RECORDED_USEC)]
+    last_decode_usec: i64,
+}
 
 #[godot_api]
 impl SnapshotDecoder {
     #[func]
-    pub fn decode_snapshot(&self, data: PackedByteArray) -> VarDictionary {
-        decode_snapshot(&data).unwrap_or_default()
+    pub fn decode_snapshot(&mut self, data: PackedByteArray) -> VarDictionary {
+        let started = std::time::Instant::now();
+        let decoded = decode_snapshot(&data).unwrap_or_default();
+        self.last_decode_usec = elapsed_usec(started);
+        decoded
     }
 
     #[func]
-    pub fn decode_delta(&self, data: PackedByteArray) -> VarDictionary {
-        decode_delta(&data).unwrap_or_default()
+    pub fn decode_delta(&mut self, data: PackedByteArray) -> VarDictionary {
+        let started = std::time::Instant::now();
+        let decoded = decode_delta(&data).unwrap_or_default();
+        self.last_decode_usec = elapsed_usec(started);
+        decoded
     }
+
+    /// Microseconds the LAST decode call took, or [`NO_DECODE_RECORDED_USEC`] before the first
+    /// one. Per-call rather than accumulated: a poll decodes every queued frame, and the caller
+    /// (`SnapshotLoader.poll_stream`) is the thing that knows how many that was.
+    #[func]
+    pub fn get_last_decode_usec(&self) -> i64 {
+        self.last_decode_usec
+    }
+}
+
+/// Elapsed microseconds since `started`, saturating rather than wrapping. A decode is milliseconds
+/// long, so the clamp is unreachable in practice and exists only so the cast cannot be lossy.
+fn elapsed_usec(started: std::time::Instant) -> i64 {
+    i64::try_from(started.elapsed().as_micros()).unwrap_or(i64::MAX)
 }
 
 fn decode_snapshot(data: &PackedByteArray) -> Option<VarDictionary> {
