@@ -1876,8 +1876,8 @@ func _ready() -> void:
 
 	# 3w — THE INEDIBLE QUARRY (issue #337). A wolf pays PELTS AND NO MEAT: `provisions == 0` on every
 	# rung, a real trade ceiling on all four. This is the frame the whole arc is judged on. The picker's
-	# four buttons must read FOUR ASCENDING TRADE numbers — `⇄ +0.90 / +1.35 / +1.95 / +2.70` — with NO
-	# food term and NO zeros anywhere; before the fix the client read only food, so all four read `+0.00`
+	# four buttons must read FOUR ASCENDING TRADE numbers on their second line — `0.90 / 1.35 / 1.95 /
+	# 2.70 trade` — with NO food term and NO zeros anywhere; before the fix the client read only food, so all four read `+0.00`
 	# and the pack rendered as a source worth nothing. The preview line below the picker must still show a
 	# per-turn ANIMAL rate (the ratio is unit-free — it divides by the TRADE quantum, since the food one
 	# is honestly 0), and the averaging-window disclaimer must still appear.
@@ -1905,8 +1905,10 @@ func _ready() -> void:
 	await _save("herd_hunt_pelts_raid")
 
 	# 3y — THE BOTH-PRODUCTS CONTROL: the same oracle deer, whose hide sells beside its meat. Each picker
-	# button must carry BOTH components with FOOD LEADING (`+2.33 ⇄ +0.34`), which is the half of the rule
-	# the wolf frame cannot prove. Rendered right after the wolf so the two are compared directly.
+	# button's product line must carry BOTH components with FOOD LEADING (`2.33 food · 0.34 trade`), which
+	# is the half of the rule the wolf frame cannot prove. Rendered right after the wolf so the two are
+	# compared directly. Both frames also judge the TWO-LINE FACE itself: the rung's name over its
+	# products, so `which rung` and `what it pays` stop competing in one line of glyphs.
 	_hud._band_labor._player_bands = [_delivered_oracle_band()]
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	var oracle_pair := _delivered_oracle_herd()

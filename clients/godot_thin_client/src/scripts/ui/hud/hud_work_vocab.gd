@@ -14,13 +14,30 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
-# Policy-picker layout: the compacted glyph+metric buttons wrap 3 per row so the six-rung
-# forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A picker
-# with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker) stays
-# a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
+# Policy-picker layout: the two-line rung buttons (name over product line) wrap 3 per row so the
+# six-rung forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A
+# picker with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker)
+# stays a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
 const POLICY_PICKER_COLUMNS := 3
 
 const POLICY_PICKER_MAX_SINGLE_ROW := 4
+
+# The rung button's vertical box padding, trimmed from `HudStyle._button_stylebox`'s default 9. That 9
+# was sized to give ONE line of text vertical presence; a two-line face already has it, so the untrimmed
+# box spends ~20px of card height per picker ROW on air. That height is not free: the FORAGE compose
+# card is capped at `ComposeSheet.CARD_MAX_HEIGHT` and already spends most of itself on the rung gates
+# and the crop list, and the commit button below is what falls off the fold when the picker grows (the
+# `forage_crop_picker` guard in ui_preview asserts exactly that). Trim rather than shrink the type: the
+# numbers on line 2 are the thing being read.
+const POLICY_PICKER_PADDING_V := 4
+
+# The same trim on the SIDES, from `HudStyle._button_stylebox`'s default 11. The face's longest LINE
+# now sets the rung's width, so 22px of side chrome per button is width the grid spends on nothing:
+# at the ZONE_POLICY_PICKER_COLUMNS width (the Band panel's PARTIES-zone launch picker, two rungs
+# abreast in a ~300px dock) the untrimmed box pushed the picker 18px past its zone, where the zone's
+# `clip_contents` ate the end of every metric line. Trimmed, the same picker fits with room, and the
+# floating compose sheet — which grows to its widest rung — gets ~30px of that width back too.
+const POLICY_PICKER_PADDING_H := 6
 
 # Passed for `columns` to keep `HudWidgets.build_policy_picker`'s width-driven default — a caller that only wants
 # to set a LATER argument must still name this one, and a bare 0 there reads as "no columns".

@@ -376,15 +376,35 @@ paths:
     `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
     amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`) /
     **`herd_hunt_local_eradicate`** (the frame the LOCAL Eradicate hint is judged on: the rung's picker face
-    reads the ladder's top take `💀 +2.40 ⇄ +0.36`, and the hint below describes the one-haul windfall +
+    reads the ladder's top take `💀 Eradicate / 2.40 food · 0.36 trade`, and the hint below describes the one-haul windfall +
     the permanent end state — never "no food, no trade"), and the carry-aware set
     `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
     `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
     band-picker, then a sustain/surplus/deplete/eradicate **policy picker** (`HudWidgets.build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
-    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is ONE line:
-    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇊ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`).
+    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is TWO LINES, ONE PER
+    AXIS — the rung's glyph + NAME over its product line** (`[♻ Sustain / 0.96 food]
+    [⬆ Surplus / 1.92 food] [⇊ Deplete / 2.88 food] [💀 Eradicate / 4.80 food] [🌱 Cultivate / → 1.20 food]
+    [▦ Sow]`), a hunt rung carrying both products (`[⇊ Deplete / 2.70 food · 0.41 trade]`). **THE ONE-LINE
+    `<glyph> <metric>` FACE IT REPLACED WAS AN AXIS COLLISION** (playtest, issue #337 follow-up): the rung
+    glyph (`♻ ⬆ ⇊ 💀`) and the trade-goods glyph `⇄` sat adjacent in one line at one weight saying
+    different things — *which rung* vs *which product* — and dropping the rung NAME left `⬆` beside `⇊`
+    reading as good-vs-bad rather than as neighbouring rungs of one ladder. Naming the rung in text is
+    what defuses that, so `POLICY_ICONS` is UNCHANGED; the products move to words
+    (`SourceForecast.picker_products`) because trade goods have no tintable pictogram (see
+    `sprites-widgets.md`). Both lines are **one `Button.text` with a `\n`**
+    (`POLICY_FACE_LINE_SEPARATOR`) — a Button tints its whole text with one font colour, so the metric row
+    cannot fall out of step with the name row when the rung is selected, hovered or disabled, which two
+    stacked child Labels would have to re-implement per state. **No `+` sign on these numbers**: every rung
+    is a gain, so a sign carries no information here (it stays on the work rows and map labels, where it
+    contrasts against consumption), and the render-only-when-non-zero rule still governs — a wolf rung
+    reads `2.70 trade` alone, never `0.00 food · 2.70 trade`. **The two-line face costs height and width,
+    so the rung button's box is trimmed on both axes** (`POLICY_PICKER_PADDING_V` 4 / `POLICY_PICKER_PADDING_H`
+    6, from `HudStyle._button_stylebox`'s 9/11, applied via `HudWidgets.trim_button_padding` — the chrome half
+    of `compact`, split out so the picker can keep its TYPE SIZE): untrimmed, the forage sheet pushed its
+    `Forage` commit button past the fold (`forage_crop_picker`'s assertion) and the Band panel's PARTIES-zone
+    launch picker ran 18px past its zone, where `clip_contents` ate the end of every metric line.
     **The picker is a `GridContainer` `POLICY_PICKER_COLUMNS` (3) wide, each button `SIZE_EXPAND_FILL`**, so
     the six-rung forage/local-hunt pickers wrap to **two rows of three** (equal-width, filling the panel
     content width) instead of one over-wide row; the six wide two-line `♻ Sustain / up to +0.90/turn`
@@ -392,24 +412,24 @@ paths:
     `≤ POLICY_PICKER_MAX_SINGLE_ROW` (4) rungs — the 4-rung expedition launch/compose picker — stays a
     **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
     on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
-    bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
-    compact `+0.96` (just `SourceForecast.format_signed(ceiling)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
-    full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`
-    (`POLICY_PAYOFF_COMPACT`), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
+    compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
+    compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
+    full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one
+    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.20 food`
+    (`POLICY_PAYOFF_COMPACT`; the payoff every ladder rung builds toward is a provisions rate, so the face
+    names food and the arrow is what keeps it from reading as a take today), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
     `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
     the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
     taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
-    (under the picker) explains the lock. **The name lives ONLY in the tooltip now** — every button's
-    `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g. `Sustain — up
-    to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate reasons below
-    that (so a hover names the rung AND explains any lock; enabled buttons carry the name+metric tooltip
-    too). A rung with **no** metric (older snapshot / metric-less gated rung, or the send-expedition launch
-    picker that passes no `takes`) falls back to the **name** on the face, so a button is never a lone
-    glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
-    locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
-    forage / local hunt / expedition — now wear an **identical** face + metric: `+X` (extractive, `up to
-    X/turn` via `POLICY_CAP_FORMAT` / `SourceForecast.extractive_take`) and `→+X` (investment, Cultivate/Sow AND
-    Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    (under the picker) explains the lock. **The tooltip carries the VERBOSE metric the face compacts** —
+    every button's `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g.
+    `Sustain — up to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate
+    reasons below that (so a hover tells you what the rung costs to unlock as well as what it pays). A rung
+    with **no** metric (the work inspector's picker, which passes no `takes`; a metric-less gated rung) is
+    **line 1 alone** — glyph + name — so a button is never a lone glyph and never a lone number. The three
+    pickers — forage / local hunt / expedition — wear an **identical** face: `<glyph> <Name>` over
+    `X food[ · Y trade]` (extractive, `up to X/turn` in the tooltip via `POLICY_CAP_FORMAT` /
+    `SourceForecast.extractive_take`) or over `→ X food` (investment, Cultivate/Sow AND Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
     is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
@@ -618,8 +638,8 @@ paths:
       divide by `body_mass` (BIOMASS): with `provisions_per_biomass 0.02` that reads ~50× too long. A herd
       whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
       picker** (`HudWidgets.build_policy_picker(…, takes)`, fed
-      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the bare compact `+X` on
-      the button face (full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
+      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the product line on the
+      button face's second row (`2.70 food · 0.41 trade`; full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
       used by the forage picker — the source's worker-independent ceiling, FOOD units, distinct from the
       crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Deplete < Eradicate
       reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
@@ -770,6 +790,12 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   those chips already spend their `·` separating a count from its total).
 - **`extractive_take_pair(food, trade)`** — the rung metric `{compact, full}` (the food-only
   `extractive_take` survives for the forage picker, whose plant-side trade is not projected).
+- **`picker_products(food, trade)`** → `0.96 food · 0.24 trade` — the same rule and the same food-leads
+  order **in WORDS and without the sign**, for the ONE surface that has room to name its products: the
+  policy picker's two-line rung face (`compact` above is written in terms of it). The picker names
+  rather than marks because its line 1 already carries a glyph naming the RUNG, and two glyph families
+  in one line at one weight is the axis collision this treatment removed — see the picker notes above
+  and `sprites-widgets.md`.
 - `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
   `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
   the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
@@ -845,9 +871,9 @@ no food", so a trade-only source is already productive to them. **Do not add a "
 empty-state that tests food alone.**
 
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
-rungs read `⇄ +0.90 / +1.35 / +1.95 / +2.70`, no food line, no zeros, and the animals-first preview +
+rungs read `0.90 / 1.35 / 1.95 / 2.70 trade`, no food line, no zeros, and the animals-first preview +
 averaging-window disclaimer still render off the TRADE quantum) · **`herd_hunt_both_products`** (the
-same picker on a deer: `+2.33 ⇄ +0.34`, food leading) · **`herd_hunt_pelts_raid`** (the wolf as an
+same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_hunt_pelts_raid`** (the wolf as an
 expedition target: `delivers ≈3 Grey Wolf over ≈9 turns · ⇄ ~4 trade goods`, primary Send — NOT a
 denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food · ⇄ ~5 trade goods`) ·
 `hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the

@@ -232,6 +232,20 @@ static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: b
 ## maths SUBTRACTS, so a control that renders taller pushes the page off the bottom of the zone.
 static func compact(control: Control, font_size: int, padding_v: int) -> void:
     control.add_theme_font_size_override("font_size", font_size)
+    trim_button_padding(control, padding_v)
+
+## Passed for `padding_h` to leave a button's SIDE padding exactly as `HudStyle` authored it — what
+## every `compact` caller wants, since a zone row is short on height and not on width.
+const KEEP_AUTHORED_PADDING := -1
+
+## The chrome half of `compact`, on its own for a control that must keep its TYPE SIZE and trim only
+## the box around it — the two-line policy-picker rung, whose second line already supplies the
+## vertical presence `HudStyle._button_stylebox`'s 9px top/bottom was sized to give a lone line of
+## text, and whose LONGEST line is now what sets the button's width (so the 11px sides it also
+## authored are width the picker's grid cannot afford). `padding_h` defaults to leaving those sides
+## alone. Does nothing to a non-Button (a Label has no stylebox to squeeze).
+static func trim_button_padding(control: Control, padding_v: int,
+        padding_h: int = KEEP_AUTHORED_PADDING) -> void:
     if not (control is Button):
         return
     for state in ["normal", "hover", "pressed", "disabled", "focus"]:
@@ -241,6 +255,9 @@ static func compact(control: Control, font_size: int, padding_v: int) -> void:
         var squeezed: StyleBox = box.duplicate()
         squeezed.content_margin_top = padding_v
         squeezed.content_margin_bottom = padding_v
+        if padding_h != KEEP_AUTHORED_PADDING:
+            squeezed.content_margin_left = padding_h
+            squeezed.content_margin_right = padding_h
         control.add_theme_stylebox_override(state, squeezed)
 
 ## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
@@ -495,27 +512,40 @@ static func build_policy_picker(
     grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     for policy in options:
         var policy_key := String(policy)
-        var icon := FoodIcons.for_policy(policy_key)
         var reasons := gate_reasons(gates, policy_key)
         var btn := Button.new()
-        # ONE-LINE FACE: the FoodIcons policy glyph (the same icon the map's yield labels append, so a
-        # policy reads identically on the picker and on the worked tile/herd) + the compact per-policy
-        # metric, NO name — so the rungs stay compact enough to wrap 3-per-row (see the grid above)
-        # without overflow. The name + full metric live in the
-        # tooltip. The metrics still read as ASCENDING (Sustain < Surplus < Deplete < Eradicate). A rung
-        # with no metric (older snapshot / metric-less gated rung) falls back to the name so the face
-        # is never a lone glyph.
+        # TWO-LINE FACE, one line per AXIS — the fix for the axis collision the one-line face had:
+        #   line 1  WHICH RUNG — `HudFormat.policy_face`, the FoodIcons policy glyph welded to the
+        #           rung's NAME (`♻ Sustain`). The same glyph the map's yield labels append, so a
+        #           policy reads identically on the picker and on the worked tile/herd, and the same
+        #           face the gate-reason lines and the work inspector use.
+        #   line 2  WHAT IT PAYS — the per-policy metric with its products NAMED IN WORDS
+        #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`).
+        # The old face put the rung glyph and the trade-goods glyph adjacent in ONE line at one weight,
+        # where `♻ ⬆ ⇊ 💀` (which rung) and `⇄` (which product) could not be told apart — and dropping
+        # the rung's name left `⬆` beside `⇊` reading as good-vs-bad rather than as two rungs of one
+        # ladder. Naming the rung is what defuses that, so the glyphs themselves are unchanged.
+        # Both lines are ONE Button text, so they tint together — selected/disabled/hover styling comes
+        # from the button's own font colour and cannot desynchronise between the lines.
+        # A rung with no metric (the work inspector's picker, which passes none) is line 1 alone.
         var take: Variant = takes.get(policy_key, null)
-        var compact_face := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
+        var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        var face := compact_face if compact_face != "" else policy_key.capitalize()
-        btn.text = "%s%s" % [HudFormat.source_icon_prefix(icon), face]
+        var face := HudFormat.policy_face(policy_key)
+        btn.text = face if metric == "" \
+            else face + HudComposeVocab.POLICY_FACE_LINE_SEPARATOR + metric
         # EXPAND_FILL so the buttons sharing a grid row are equal width and fill the panel content width.
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
-        # Tooltip names the rung for EVERY button (the face no longer does), led by its full metric;
-        # a gated button appends its gate reasons below, so a hover tells you what the rung is AND why
-        # it is locked.
+        # …then trim the box on BOTH axes (AFTER the styleboxes are applied — `trim_button_padding`
+        # duplicates whatever is currently on the button), so the second line costs a line of TEXT,
+        # not a line of text plus the air a one-line face needed, and the longest line's WIDTH is what
+        # sizes the rung rather than the width plus 22px of side chrome.
+        trim_button_padding(btn, HudWorkVocab.POLICY_PICKER_PADDING_V,
+            HudWorkVocab.POLICY_PICKER_PADDING_H)
+        # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
+        # goods/turn"), led by the rung name; a gated button appends its gate reasons below, so a hover
+        # tells you what the rung costs to unlock as well as what it pays.
         var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
             if full != "" else policy_key.capitalize()
         var tooltip_lines: Array[String] = [name_line]

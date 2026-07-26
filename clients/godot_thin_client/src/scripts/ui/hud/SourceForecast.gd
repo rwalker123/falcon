@@ -122,6 +122,35 @@ const POLICY_CAP_TRADE_FORMAT := "%s %s trade goods/turn"
 # The trade half of a worked row's tooltip, beside "Actual +0.31 /turn".
 const TRADE_TOOLTIP_FORMAT := "Trade goods %s %s/turn"
 
+# ---- THE PICKER FACE'S PRODUCT LINE -------------------------------------------------------------
+# THE PRODUCTS IN WORDS, for the policy picker's SECOND line: `0.96 food · 0.24 trade`. The picker is
+# the ONE surface that names its products rather than marking them, and the reason is that its two
+# glyph families were doing incompatible jobs side by side: the POLICY glyph (♻ ⬆ ⇊ 💀) says which
+# RUNG, `FoodIcons.TRADE_GOODS_GLYPH` says which PRODUCT, and adjacent in one line at one weight the
+# eye cannot tell which axis it is reading. Line 1 now names the rung (`HudFormat.policy_face`), so
+# line 2 names the product — and a WORD is the only mark trade goods can wear here anyway: emoji
+# cannot be tinted (🪙 / 💰 / ⚖ were measured and rejected in `FoodIcons`), and the remaining
+# text-presentation arrow is exactly the abstract mark that stopped reading.
+# NO `+` SIGN, deliberately: every rung is a gain, so a sign on a picker face carries no information.
+# It stays on the work rows and map labels, where a `+` genuinely contrasts against consumption.
+# The render-only-when-non-zero rule above still governs — a wolf's rung reads `2.70 trade` alone.
+const PICKER_FOOD_PRODUCT_FORMAT := "%s food"
+
+const PICKER_TRADE_PRODUCT_FORMAT := "%s trade"
+
+## The picker face's product line for a food/trade pair — `0.96 food · 0.24 trade`, `2.70 trade`
+## (inedible quarry), `0.15 food` (forage patch). Same food-leads order and same
+## render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without the
+## sign; when BOTH components are absent the food zero survives, because a rung whose ceiling is
+## honestly empty is a fact worth reading.
+static func picker_products(food: float, trade: float) -> String:
+    var parts: Array[String] = []
+    if has_component(food) or not has_component(trade):
+        parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(food))
+    if has_component(trade):
+        parts.append(PICKER_TRADE_PRODUCT_FORMAT % format_magnitude(trade))
+    return TRADE_COMPONENT_SEPARATOR.join(parts)
+
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
 # component with a POSITIVE rate, provisions preferred so every edible species divides exactly as it
 # did before this arc, trade for an inedible one. Everything that would otherwise DIVIDE BY A
@@ -311,12 +340,12 @@ static func format_signed(value: float) -> String:
 static func format_yield(value: float) -> String:
     return format_signed(value) + YIELD_PER_TURN_SUFFIX
 
-## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the bare signed rate on the
-## button face, the "up to X/turn" wording in the tooltip. The FOOD-ONLY form, kept for the forage
-## picker (the plant web projects no trade rate yet); a hunt rung goes through `extractive_take_pair`.
+## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the named-product line on
+## the button face's second row (`0.15 food`), the "up to X/turn" wording in the tooltip. The
+## FOOD-ONLY form, kept for the forage picker (the plant web projects no trade rate yet); a hunt rung
+## goes through `extractive_take_pair`.
 static func extractive_take(rate: float) -> Dictionary:
-    var signed := format_signed(rate)
-    return {"compact": signed, "full": POLICY_CAP_FORMAT % signed}
+    return {"compact": picker_products(rate, 0.0), "full": POLICY_CAP_FORMAT % format_signed(rate)}
 
 ## The bare trade rate with its glyph — `⇄ +0.35`. The ONE way this client writes a trade number.
 static func format_trade(value: float) -> String:
@@ -359,21 +388,20 @@ static func magnitude_components(food: float, trade: float) -> String:
 ## A `{compact, full}` metric pair for an EXTRACTIVE rung that pays BOTH products — the hunt picker's
 ## button metric. Food leads; each component appears only when it is non-zero, so a wolf's four rungs
 ## read as four ascending TRADE numbers (never four zeros) and a deer's read food-then-trade. When the
-## rung pays nothing at all the food zero is still printed: `+0.00` is the honest reading of a ceiling
-## that exists and is empty, as opposed to a component the species never had.
+## rung pays nothing at all the food zero is still printed: `0.00 food` is the honest reading of a
+## ceiling that exists and is empty, as opposed to a component the species never had. The compact half
+## is the face's product LINE (`picker_products`, named in words); the tooltip keeps the signed
+## "up to …" ceiling wording.
 static func extractive_take_pair(food: float, trade: float) -> Dictionary:
     var show_food := has_component(food) or not has_component(trade)
-    var compact_parts: Array[String] = []
     var full_parts: Array[String] = []
     if show_food:
-        compact_parts.append(format_signed(food))
         full_parts.append(POLICY_CAP_FORMAT % format_signed(food))
     if has_component(trade):
-        compact_parts.append(format_trade(trade))
         full_parts.append(POLICY_CAP_TRADE_FORMAT % [
             FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade)])
     return {
-        "compact": " ".join(compact_parts),
+        "compact": picker_products(food, trade),
         "full": TRADE_COMPONENT_SEPARATOR.join(full_parts),
     }
 

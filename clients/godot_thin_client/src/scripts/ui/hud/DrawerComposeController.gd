@@ -257,11 +257,15 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
     return takes
 
 
-## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led rate on the button
-## face (`→+1.20`), the "builds toward X/turn" wording in the tooltip. Shared by hunt + forage.
+## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led product line on the
+## button face's second row (`→ 1.20 food`), the "builds toward X/turn" wording in the tooltip. Shared
+## by hunt + forage. The payoff every ladder rung builds toward (tended/field/pastoral/corral yield) is
+## a PROVISIONS rate, so the face names food; the arrow is what keeps it from reading as a take today.
 func _payoff_take(payoff: float) -> Dictionary:
-    var signed := SourceForecast.format_signed(payoff)
-    return {"compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % signed, "full": HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % signed}
+    return {
+        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(payoff, 0.0),
+        "full": HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % SourceForecast.format_signed(payoff),
+    }
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
 ## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its

@@ -107,8 +107,14 @@ const POLICY_ICONS := {
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
-# THE TRADE-GOODS GLYPH (issue #337) — the mark on every non-food component of a hunt/gather yield,
-# so a rate is never mistaken for food. ONE glyph for the whole product: the sim models trade goods
+# THE TRADE-GOODS GLYPH (issue #337) — the mark on every non-food component of a hunt/gather yield
+# ON THE TIGHT SURFACES, so a rate is never mistaken for food: the worked-row headlines, the work
+# zone's filter chips, the map's yield labels, the tooltips. NOT the policy picker, which is the one
+# surface with room to say the word (`SourceForecast.picker_products` → `0.96 food · 0.24 trade`):
+# its rung buttons already wear a policy glyph naming the RUNG, and an abstract arrow naming the
+# PRODUCT beside it at the same weight is two axes the eye cannot separate. Where a word does not
+# fit, the mark still beats nothing.
+# ONE glyph for the whole product: the sim models trade goods
 # as a SCALAR, and the client says so. There is deliberately NO per-species noun (pelt / ivory /
 # hide) — a named good per species is a flavor layer on top of the scalar
 # (docs/plan_hunt_yield_model.md, Deferred), and inventing one here would put words on the wire's

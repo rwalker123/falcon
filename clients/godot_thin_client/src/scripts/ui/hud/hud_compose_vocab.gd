@@ -141,14 +141,22 @@ const HUNT_CREW_LABEL := "Hunters"
 
 const HERD_CREW_LABEL := "Herders"
 
-# A policy button carries its per-policy metric TWICE: a bare COMPACT string on the one-line button face
-# (glyph + metric, no name — so all six rungs fit one docked row) and the VERBOSE full string in the
-# tooltip (led by the policy name). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
+# A policy button carries its per-policy metric TWICE: the COMPACT product line on the SECOND row of
+# the button face (`0.96 food · 0.24 trade` — the first row is the rung's glyph + name) and the VERBOSE
+# full string in the tooltip (led by the policy name, and the only one of the two that spells "up
+# to …/turn"). Each `*_policy_takes` helper emits both as a `{compact, full}` pair.
 # The INVESTMENT rungs (Cultivate/Sow, Tame/Corral) wear a metric too, but it is not an immediate take
 # like the extractive rate — it is the PAYOFF the preparation builds TOWARD (the tended/field/pastoral/
-# corral yield). A leading arrow marks it on the compact face (`→+1.20`, distinct from an extractive
-# rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward X/turn".
-const POLICY_PAYOFF_COMPACT := "→%s"
+# corral yield). A leading arrow marks it on the compact face (`→ 1.20 food`, distinct from an
+# extractive rate and never a rung you'd out-earn today); the full tooltip spells it "builds toward
+# X/turn".
+const POLICY_PAYOFF_COMPACT := "→ %s"
+
+# Joins the two rows of a policy button's face (rung name over product line). ONE Button text with a
+# newline, deliberately, rather than two stacked Labels: a Button tints its whole text with one font
+# colour, so the metric row can never fall out of step with the name row on a selected, hovered or
+# disabled rung — which two child Labels would have to re-implement per state.
+const POLICY_FACE_LINE_SEPARATOR := "\n"
 
 const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 
