@@ -548,9 +548,15 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
 ##
 ## Read off `SnapshotLoader`'s `last_poll_*` fields rather than measured here: the decode happens
 ## in `poll_stream`, one call up the stack, and both `_apply_snapshot` call sites run immediately
-## after a poll that returned a frame — so the fields describe THIS snapshot's arrival.
+## after a poll that returned a frame — so the fields describe THIS batch's arrival.
+##
+## Those fields describe the whole BATCH, and a poll can return several frames. `consume_poll_profile`
+## makes the cost land on the FIRST frame applied and report nothing for the rest, so the numbers
+## still sum to one poll's decode rather than being multiplied by the frame count.
 func _record_decode_phase(profile: TurnProfile) -> void:
     if snapshot_loader == null:
+        return
+    if not snapshot_loader.consume_poll_profile():
         return
     var note: String = DECODE_NOTE_FORMAT % [
         snapshot_loader.last_poll_decoded_frames,
@@ -1069,14 +1075,18 @@ func _process(delta: float) -> void:
         command_client.ensure_connected()
     _tick_new_game_retry(delta)
     if streaming_mode:
-        var streamed: Dictionary = snapshot_loader.poll_stream(delta)
-        if not streamed.is_empty():
+        # EVERY frame the poll returns is applied, in order. The loader already dropped the ones a
+        # later full snapshot superseded; what is left are frames whose content exists nowhere else
+        # (see `SnapshotLoader.poll_stream`).
+        var streamed_frames: Array[Dictionary] = snapshot_loader.poll_stream(delta)
+        if not streamed_frames.is_empty():
             if inspector != null and inspector.has_method("set_streaming_active"):
                 inspector.call("set_streaming_active", true)
-            if _world_revealed:
-                _apply_snapshot(streamed)
-            else:
-                _try_reveal_world(streamed)
+            for streamed in streamed_frames:
+                if _world_revealed:
+                    _apply_snapshot(streamed)
+                else:
+                    _try_reveal_world(streamed)
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).
@@ -1145,7 +1155,18 @@ func _ensure_action_binding(action_name: String, keycode: Key) -> void:
     ev.keycode = keycode
     InputMap.action_add_event(action_name, ev)
 
+## Is this frame a delta? Read off `frame_kind`, which the decoder stamps from the envelope's own
+## payload discriminant — the authoritative answer, not an inference.
+##
+## The `SNAPSHOT_DELTA_FIELDS` fallback below is for a native extension built before `frame_kind`
+## existed (the same staleness the `has_method` probes elsewhere tolerate). It guesses from six
+## delta-only keys and is only correct by accident: the delta codec emits an EMPTY vector rather
+## than omitting an untouched section, so `tile_updates` rides every delta including one that
+## changed no tile. Misclassifying a delta as a full snapshot resets the command feed and can trip
+## the world-epoch reset, so the guess is a fallback, never the contract.
 func _snapshot_is_delta(snapshot: Dictionary) -> bool:
+    if snapshot.has("frame_kind"):
+        return String(snapshot["frame_kind"]) == "delta"
     for field in SNAPSHOT_DELTA_FIELDS:
         if snapshot.has(field):
             return true

@@ -5,8 +5,8 @@ use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
 use crate::dict::campaign::{
-    command_events_to_array, pending_forks_to_array, stance_axes_to_array, victory_state_to_dict,
-    voice_medium_to_array,
+    campaign_profiles_to_array, command_events_to_array, pending_forks_to_array,
+    stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
 use crate::dict::culture::{
     axis_bias_to_dict, culture_layers_to_array, culture_tensions_to_array, influencers_to_array,
@@ -37,6 +37,27 @@ use crate::snapshot::snapshot_to_dict;
 /// Wall-clock microseconds a decode that measured nothing reports — the value
 /// [`SnapshotDecoder::get_last_decode_usec`] answers before any frame has been decoded.
 const NO_DECODE_RECORDED_USEC: i64 = 0;
+
+/// Dictionary key naming which of the two envelope payloads produced this frame, and its two
+/// values. **This is the authoritative answer** — it is read straight off
+/// `Envelope::payload_type`, the same discriminant the encoder wrote.
+///
+/// It replaces `Main._snapshot_is_delta`, which guessed from the presence of six delta-only keys
+/// (`tile_updates`, `population_updates`, …). That guess holds today only by accident: the delta
+/// codec emits an *empty* vector rather than omitting an untouched section, so `tile_updates` is
+/// present on every delta including one that changed no tile. A codec that ever starts omitting
+/// empty sections — which is exactly what a bandwidth-conscious delta encoder wants to do — would
+/// silently reclassify deltas as full snapshots, and a full snapshot resets the command feed and
+/// can trip the world-epoch reset. See `docs/plan_delta_streaming.md` §2.
+const FRAME_KIND_KEY: &str = "frame_kind";
+const FRAME_KIND_SNAPSHOT: &str = "snapshot";
+const FRAME_KIND_DELTA: &str = "delta";
+
+/// Publication sequence keys (`snapshot.fbs` `frameSeq` / `baseFrameSeq`). `frame_seq` rides both
+/// frame kinds; `base_frame_seq` is meaningful only on a delta, where it names the frame this one
+/// applies to.
+const FRAME_SEQ_KEY: &str = "frame_seq";
+const BASE_FRAME_SEQ_KEY: &str = "base_frame_seq";
 
 #[derive(Default, GodotClass)]
 #[class(init, base=RefCounted)]
@@ -90,10 +111,22 @@ fn decode_snapshot(data: &PackedByteArray) -> Option<VarDictionary> {
     let bytes = data.as_slice();
     let envelope = fb::root_as_envelope(bytes).ok()?;
     match envelope.payload_type() {
-        // `and_then`, not `map`: `snapshot_to_dict` answers `None` for a headerless snapshot (see
-        // its docs), and that `None` must reach the caller as "no frame" rather than being wrapped
-        // into a `Some(...)` the loader would treat as a decoded world.
-        fb::SnapshotPayload::snapshot => envelope.payload_as_snapshot().and_then(snapshot_to_dict),
+        fb::SnapshotPayload::snapshot => {
+            let snapshot = envelope.payload_as_snapshot()?;
+            // `?`, not `map`: `snapshot_to_dict` answers `None` for a headerless snapshot (see its
+            // docs), and that `None` must reach the caller as "no frame" rather than being wrapped
+            // into a `Some(...)` the loader would treat as a decoded world.
+            let mut dict = snapshot_to_dict(snapshot)?;
+            let _ = dict.insert(FRAME_KIND_KEY, FRAME_KIND_SNAPSHOT);
+            // A full snapshot names no base — it is applicable against any client state — so only
+            // `frame_seq` is published here.
+            let frame_seq = snapshot
+                .header()
+                .map(|header| header.frameSeq())
+                .unwrap_or(0);
+            let _ = dict.insert(FRAME_SEQ_KEY, frame_seq as i64);
+            Some(dict)
+        }
         fb::SnapshotPayload::delta => decode_delta(data),
         _ => None,
     }
@@ -113,10 +146,14 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
     // updated tiles affect the overlays. This keeps the UI responsive while we pump
     // full snapshots on the same stream.
     let mut agg = DeltaAggregator::default();
+    let mut frame_seq: u64 = 0;
+    let mut base_frame_seq: u64 = 0;
     if let Some(header) = delta.header() {
         agg.tick = header.tick();
         agg.wrap_horizontal = header.wrapHorizontal();
         agg.world_epoch = header.worldEpoch();
+        frame_seq = header.frameSeq();
+        base_frame_seq = header.baseFrameSeq();
         if let Some(build) = header.serverBuild() {
             agg.server_build = build.to_string();
         }
@@ -163,6 +200,13 @@ fn decode_delta(data: &PackedByteArray) -> Option<VarDictionary> {
         agg.apply_moisture_raster(raster);
     }
     let mut dict = agg.into_dictionary();
+    let _ = dict.insert(FRAME_KIND_KEY, FRAME_KIND_DELTA);
+    let _ = dict.insert(FRAME_SEQ_KEY, frame_seq as i64);
+    let _ = dict.insert(BASE_FRAME_SEQ_KEY, base_frame_seq as i64);
+
+    if let Some(profiles) = delta.campaign().and_then(|s| s.campaignProfiles()) {
+        let _ = dict.insert("campaign_profiles", &campaign_profiles_to_array(profiles));
+    }
 
     if let Some(victory) = delta.campaign().and_then(|s| s.victory()) {
         let _ = dict.insert("victory", &victory_state_to_dict(victory));

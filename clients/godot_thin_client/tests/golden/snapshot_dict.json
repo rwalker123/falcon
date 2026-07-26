@@ -513,6 +513,8 @@
       "y": 1
     }
   ],
+  "frame_kind": "snapshot",
+  "frame_seq": 84,
   "generations": [
     {
       "bias_agency": 0.000034,

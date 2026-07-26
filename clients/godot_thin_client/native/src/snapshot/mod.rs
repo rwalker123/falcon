@@ -10,7 +10,7 @@ use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::dict::campaign::{
-    campaign_label_to_dict, campaign_profile_to_dict, command_events_to_array,
+    campaign_label_to_dict, campaign_profiles_to_array, command_events_to_array,
     pending_forks_to_array, stance_axes_to_array, victory_state_to_dict, voice_medium_to_array,
 };
 use crate::dict::culture::{
@@ -1309,11 +1309,7 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
     let campaign_label_dict = header.campaignLabel().map(campaign_label_to_dict);
     let mut campaign_profiles_array: Option<VarArray> = None;
     if let Some(profiles) = snapshot.campaign().and_then(|s| s.campaignProfiles()) {
-        let mut arr = VarArray::new();
-        for profile in profiles {
-            let dict = campaign_profile_to_dict(profile);
-            arr.push(&dict.to_variant());
-        }
+        let arr = campaign_profiles_to_array(profiles);
         if !arr.is_empty() {
             campaign_profiles_array = Some(arr);
         }
