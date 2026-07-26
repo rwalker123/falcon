@@ -65,11 +65,19 @@ Three clauses, and the third is the one that bites:
    `inspector_hidden_guard` case 5 now pins it, with roster sizes chosen so replay (5) and
    no-replay (4) cannot coincide.
 
-   **Known residual, accepted:** the replay rebuilds panels from the cached *full* snapshot, so a
-   delta that arrived after it is overwritten and its sub-turn changes are lost until the next
-   full snapshot. Strictly better than the bug it replaced (which lost the entire full snapshot)
-   and it self-heals within one turn. Making it exact means queuing deltas received since the
-   cached full and re-applying them in order after the replay — deliberately out of scope.
+   **Known residual, accepted — and it expires with #386.** The replay rebuilds panels from the
+   cached *full* snapshot, so a delta that arrived after it is overwritten and its sub-turn
+   changes are lost until the next full snapshot. Strictly better than the bug it replaced (which
+   lost the entire full snapshot), and today it self-heals within one turn because full snapshots
+   arrive every turn.
+
+   **That last clause is the load-bearing one.** This whole gate assumes deltas are rare. Under
+   #386 (client consumes a delta stream) full snapshots become rare instead — connect, epoch
+   change, rollback — so the lossy window stretches to the gap between them, *and* "always apply
+   deltas in full" means a hidden Inspector resumes fanning out every turn, giving back most of
+   what the gate saves. Both are fixed the same way, which is the right design under delta
+   streaming anyway: **queue deltas while hidden and replay `cached full + queued deltas in order`
+   on show.** Do not reason about this section without checking whether #386 has landed.
 2. **Catch up on show.** `set_panel_visible(false→true)` replays the cached latest snapshot. The
    cache holds it **by reference** — deep-copying would cost exactly the work the gate saves, and
    the decoder builds a fresh tree per frame that no consumer mutates.
