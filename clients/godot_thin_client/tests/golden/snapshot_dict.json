@@ -14,7 +14,6 @@
   },
   "campaign_profiles": [
     {
-      "fog_mode": "campaign_profiles[0].fog_mode",
       "id": "campaign_profiles[0].id",
       "inventory": [
         {
@@ -52,12 +51,10 @@
       ],
       "subtitle": "campaign_profiles[0].subtitle",
       "subtitle_loc_key": "campaign_profiles[0].subtitle_loc_key",
-      "survey_radius": 64,
       "title": "campaign_profiles[0].title",
       "title_loc_key": "campaign_profiles[0].title_loc_key"
     },
     {
-      "fog_mode": "campaign_profiles[1].fog_mode",
       "id": "campaign_profiles[1].id",
       "inventory": [
         {
@@ -95,7 +92,6 @@
       ],
       "subtitle": "campaign_profiles[1].subtitle",
       "subtitle_loc_key": "campaign_profiles[1].subtitle_loc_key",
-      "survey_radius": 155,
       "title": "campaign_profiles[1].title",
       "title_loc_key": "campaign_profiles[1].title_loc_key"
     }
@@ -392,6 +388,7 @@
       ]
     }
   ],
+  "fog_enabled": true,
   "food_modules": [
     {
       "kind": "food_modules[0].kind",
@@ -928,7 +925,7 @@
   ],
   "orders": [],
   "overlays": {
-    "channel_order": {"__packed": "PackedStringArray", "len": 14, "items": ["logistics", "crisis", "sentiment", "corruption", "fog", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
+    "channel_order": {"__packed": "PackedStringArray", "len": 13, "items": ["logistics", "crisis", "sentiment", "corruption", "visibility", "culture", "military", "moisture", "elevation", "pasture", "forage", "hunt_danger", "threat"]},
     "channels": {
       "corruption": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.959184, 0.92517, 1.0, 0.802721, 0.442177, 0.29932, 0.37415, 0.938775, 0.034014, 0.0, 0.639456, 0.183673]},
@@ -957,13 +954,6 @@
         "label": "Elevation Heatmap",
         "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
         "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000259, 0.001923, 0.001572, 0.000305, 0.001419, 0.00174, 0.002731, 0.001709, 0.002335, 0.002411, 0.002716, 0.00264]}
-      },
-      "fog": {
-        "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
-        "description": "Knowledge gap for the controlling faction and local cohorts (1.0 = unknown, 0.0 = fully scouted).",
-        "label": "Fog of Knowledge",
-        "normalized": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
-        "raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000179, 0.000096, 0.000093, 0.000098, 0.000087, 0.000116, 0.000001, 0.000126, 0.000043, 0.000064, 0.000144, 0.000027]}
       },
       "forage": {
         "contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.652828, 0.859912, 0.44968, 0.115199, 0.366945, 0.982194, 0.480866, 1.0, 0.71333, 0.02184, 0.311658, 0.070438]},
@@ -1059,9 +1049,6 @@
     "elevation_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.0, 0.67284, 0.530864, 0.018519, 0.469136, 0.598765, 1.0, 0.58642, 0.839506, 0.87037, 0.993827, 0.962963]},
     "elevation_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000259, 0.001923, 0.001572, 0.000305, 0.001419, 0.00174, 0.002731, 0.001709, 0.002335, 0.002411, 0.002716, 0.00264]},
     "elevation_sea_level": 22.42,
-    "fog": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
-    "fog_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [1.0, 0.533708, 0.516854, 0.544944, 0.483146, 0.646067, 0.0, 0.702247, 0.235955, 0.353933, 0.803371, 0.146067]},
-    "fog_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000179, 0.000096, 0.000093, 0.000098, 0.000087, 0.000116, 0.000001, 0.000126, 0.000043, 0.000064, 0.000144, 0.000027]},
     "logistics": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.115385, 0.0, 0.104396, 1.0, 0.532967, 0.989011, 0.521978, 0.406593, 0.862637, 0.175824, 0.736264, 0.368132]},
     "logistics_contrast": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.102071, 0.0, 0.093497, 0.0, 0.248913, 0.010868, 0.249517, 0.241275, 0.118494, 0.14491, 0.194179, 0.232611]},
     "logistics_raw": {"__packed": "PackedFloat32Array", "len": 12, "items": [0.000038, 0.000017, 0.000036, 0.000199, 0.000114, 0.000197, 0.000112, 0.000091, 0.000174, 0.000049, 0.000151, 0.000084]},

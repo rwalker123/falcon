@@ -116,6 +116,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "crisis_autoseed [on|off]",
     },
     CommandVerbHelp {
+        verb: "set_fog",
+        aliases: &["fog"],
+        summary: "Toggle fog of war on or off; off reveals every herd and the whole map.",
+        usage: "set_fog [on|off]",
+    },
+    CommandVerbHelp {
         verb: "spawn_crisis",
         aliases: &[],
         summary: "Spawn a crisis by archetype for the specified faction (default 0).",
@@ -628,6 +634,11 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let value_str = parts.next().unwrap_or("on");
             let enabled = parse_bool(value_str, "crisis auto-seed flag")?;
             Ok(CommandPayload::SetCrisisAutoSeed { enabled })
+        }
+        "set_fog" | "fog" => {
+            let value_str = parts.next().unwrap_or("on");
+            let enabled = parse_bool(value_str, "fog of war flag")?;
+            Ok(CommandPayload::SetFogEnabled { enabled })
         }
         "spawn_crisis" => {
             let archetype_id = parts

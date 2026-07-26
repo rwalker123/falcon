@@ -37,7 +37,7 @@ use crate::dict::subsistence::{
 use crate::snapshot::delta::CrisisAnnotationRecord;
 use crate::snapshot::raster::{
     insert_overlay_channel, normalize_overlay, packed_from_slice, GridSize, OverlayChannelParams,
-    OverlaySlices, TerrainSlices,
+    OverlaySlices, TerrainSlices, FOG_ENABLED_WHEN_ABSENT,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -57,6 +57,7 @@ fn snapshot_dict(
 ) -> VarDictionary {
     let mut dict = VarDictionary::new();
     let _ = dict.insert("turn", tick as i64);
+    let _ = dict.insert("fog_enabled", overlays.fog_enabled);
 
     let mut grid_dict = VarDictionary::new();
     let _ = grid_dict.insert("width", grid_size.width as i64);
@@ -80,7 +81,6 @@ fn snapshot_dict(
     let logistics_base = copy_into(overlays.logistics);
     let sentiment_base = copy_into(overlays.sentiment);
     let corruption_base = copy_into(overlays.corruption);
-    let fog_base = copy_into(overlays.fog);
     let visibility_base = copy_into(overlays.visibility);
     let culture_base = copy_into(overlays.culture);
     let military_base = copy_into(overlays.military);
@@ -98,8 +98,6 @@ fn snapshot_dict(
     normalize_overlay(&mut sentiment_normalized);
     let mut corruption_normalized = corruption_base.clone();
     normalize_overlay(&mut corruption_normalized);
-    let mut fog_normalized = fog_base.clone();
-    normalize_overlay(&mut fog_normalized);
     let mut visibility_normalized = visibility_base.clone();
     normalize_overlay(&mut visibility_normalized);
     let mut culture_normalized = culture_base.clone();
@@ -227,7 +225,6 @@ fn snapshot_dict(
     }
 
     let corruption_contrast_vec = corruption_normalized.clone();
-    let fog_contrast_vec = fog_normalized.clone();
     let visibility_contrast_vec = visibility_normalized.clone();
     let culture_contrast_vec = culture_normalized.clone();
     let mut military_contrast_vec = military_normalized.clone();
@@ -243,7 +240,6 @@ fn snapshot_dict(
     let moisture_contrast_vec = moisture_normalized.clone();
 
     let corruption_placeholder = overlays.corruption.is_empty();
-    let fog_placeholder = overlays.fog.is_empty();
     let visibility_placeholder = overlays.visibility.is_empty();
     let culture_placeholder = overlays.culture.is_empty();
     let military_placeholder = overlays.military.is_empty();
@@ -258,9 +254,6 @@ fn snapshot_dict(
     let corruption_array = packed_from_slice(&corruption_normalized);
     let corruption_raw_array = packed_from_slice(&corruption_base);
     let corruption_contrast_array = packed_from_slice(&corruption_contrast_vec);
-    let fog_array = packed_from_slice(&fog_normalized);
-    let fog_raw_array = packed_from_slice(&fog_base);
-    let fog_contrast_array = packed_from_slice(&fog_contrast_vec);
     let visibility_array = packed_from_slice(&visibility_normalized);
     let visibility_raw_array = packed_from_slice(&visibility_base);
     let visibility_contrast_array = packed_from_slice(&visibility_contrast_vec);
@@ -353,21 +346,6 @@ fn snapshot_dict(
             raw: &corruption_raw_array,
             contrast: &corruption_contrast_array,
             placeholder: corruption_placeholder,
-        },
-    );
-    insert_overlay_channel(
-        &mut channels,
-        &mut channel_order,
-        OverlayChannelParams {
-            key: "fog",
-            label: "Fog of Knowledge",
-            description: Some(
-                "Knowledge gap for the controlling faction and local cohorts (1.0 = unknown, 0.0 = fully scouted).",
-            ),
-            normalized: &fog_array,
-            raw: &fog_raw_array,
-            contrast: &fog_contrast_array,
-            placeholder: fog_placeholder,
         },
     );
     insert_overlay_channel(
@@ -534,7 +512,6 @@ fn snapshot_dict(
     let _ = overlays.insert("default_channel", "logistics");
 
     if corruption_placeholder
-        || fog_placeholder
         || culture_placeholder
         || military_placeholder
         || crisis_placeholder
@@ -544,9 +521,6 @@ fn snapshot_dict(
         let mut placeholder_keys = PackedStringArray::new();
         if corruption_placeholder {
             placeholder_keys.push(&GString::from("corruption"));
-        }
-        if fog_placeholder {
-            placeholder_keys.push(&GString::from("fog"));
         }
         if culture_placeholder {
             placeholder_keys.push(&GString::from("culture"));
@@ -576,9 +550,6 @@ fn snapshot_dict(
     let _ = overlays.insert("corruption", &corruption_array.clone());
     let _ = overlays.insert("corruption_raw", &corruption_raw_array.clone());
     let _ = overlays.insert("corruption_contrast", &corruption_contrast_array.clone());
-    let _ = overlays.insert("fog", &fog_array.clone());
-    let _ = overlays.insert("fog_raw", &fog_raw_array.clone());
-    let _ = overlays.insert("fog_contrast", &fog_contrast_array.clone());
     let _ = overlays.insert("culture", &culture_array.clone());
     let _ = overlays.insert("culture_raw", &culture_raw_array.clone());
     let _ = overlays.insert("culture_contrast", &culture_contrast_array.clone());
@@ -714,8 +685,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
     let mut logistics_dims = (0u32, 0u32);
     let mut corruption_grid: Vec<f32> = Vec::new();
     let mut corruption_dims = (0u32, 0u32);
-    let mut fog_grid: Vec<f32> = Vec::new();
-    let mut fog_dims = (0u32, 0u32);
     let mut visibility_grid: Vec<f32> = Vec::new();
     let mut visibility_dims = (0u32, 0u32);
     let mut culture_grid: Vec<f32> = Vec::new();
@@ -857,42 +826,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
             .max(1);
         sentiment_grid = vec![0.0f32; total];
         sentiment_dims = (fallback_width, fallback_height);
-    }
-
-    if let Some(raster) = snapshot.vision().and_then(|s| s.fogRaster()) {
-        let width = raster.width();
-        let height = raster.height();
-        if width > 0 && height > 0 {
-            let total = (width as usize).saturating_mul(height as usize);
-            fog_grid = vec![0.0f32; total];
-            if let Some(samples) = raster.samples() {
-                for (idx, value) in samples.iter().enumerate() {
-                    if idx >= total {
-                        break;
-                    }
-                    fog_grid[idx] = fixed64_to_f32(value);
-                }
-            }
-            fog_dims = (width, height);
-        }
-    }
-
-    if fog_grid.is_empty() {
-        let fallback_width = logistics_dims
-            .0
-            .max(corruption_dims.0)
-            .max(terrain_width)
-            .max(1);
-        let fallback_height = logistics_dims
-            .1
-            .max(corruption_dims.1)
-            .max(terrain_height)
-            .max(1);
-        let total = (fallback_width as usize)
-            .saturating_mul(fallback_height as usize)
-            .max(1);
-        fog_grid = vec![0.0f32; total];
-        fog_dims = (fallback_width, fallback_height);
     }
 
     if let Some(raster) = snapshot.vision().and_then(|s| s.visibilityRaster()) {
@@ -1129,7 +1062,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
         .max(sentiment_dims.0)
         .max(terrain_width)
         .max(corruption_dims.0)
-        .max(fog_dims.0)
         .max(culture_dims.0)
         .max(military_dims.0)
         .max(crisis_dims.0)
@@ -1141,7 +1073,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
         .max(sentiment_dims.1)
         .max(terrain_height)
         .max(corruption_dims.1)
-        .max(fog_dims.1)
         .max(culture_dims.1)
         .max(military_dims.1)
         .max(crisis_dims.1)
@@ -1199,23 +1130,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
                 }
                 let dst_idx = (y as usize) * (final_width as usize) + x as usize;
                 corruption_resized[dst_idx] = corruption_grid[src_idx];
-            }
-        }
-    }
-
-    let mut fog_resized = vec![0.0f32; total];
-    if fog_dims.0 > 0 && fog_dims.1 > 0 {
-        for y in 0..fog_dims.1 {
-            for x in 0..fog_dims.0 {
-                let src_idx = (y as usize) * (fog_dims.0 as usize) + x as usize;
-                if src_idx >= fog_grid.len() {
-                    break;
-                }
-                if x >= final_width || y >= final_height {
-                    continue;
-                }
-                let dst_idx = (y as usize) * (final_width as usize) + x as usize;
-                fog_resized[dst_idx] = fog_grid[src_idx];
             }
         }
     }
@@ -1428,7 +1342,6 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
             logistics: &logistics_resized,
             sentiment: &sentiment_resized,
             corruption: &corruption_resized,
-            fog: &fog_resized,
             culture: &culture_resized,
             military: &military_resized,
             crisis: &crisis_resized,
@@ -1436,6 +1349,10 @@ pub(crate) fn snapshot_to_dict(snapshot: fb::WorldSnapshot<'_>) -> Option<VarDic
             elevation_sea_level,
             climate_bands,
             moisture: &moisture_resized,
+            fog_enabled: snapshot
+                .vision()
+                .map(|s| s.fogEnabled())
+                .unwrap_or(FOG_ENABLED_WHEN_ABSENT),
             visibility: &visibility_resized,
             pasture_capacity: &pasture_capacity_vec,
             forage_capacity: &forage_capacity_vec,

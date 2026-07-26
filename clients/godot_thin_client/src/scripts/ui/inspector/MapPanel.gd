@@ -284,16 +284,6 @@ func _refresh_scenario_description() -> void:
 		if tags.size() > 0:
 			detail_lines.append("Knowledge: %s" % _join_profile_strings(tags))
 
-	var fog_parts: Array = []
-	var fog_mode: String = String(profile.get("fog_mode", "")).strip_edges()
-	if fog_mode != "":
-		fog_parts.append(fog_mode.capitalize())
-	var survey_radius: int = int(profile.get("survey_radius", -1))
-	if survey_radius >= 0:
-		fog_parts.append("radius %d" % survey_radius)
-	if fog_parts.size() > 0:
-		detail_lines.append("Fog: %s" % _join_profile_strings(fog_parts))
-
 	if _faction_inventory_state.size() > 0:
 		var runtime_lines: Array = []
 		for faction_entry in _faction_inventory_state:

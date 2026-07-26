@@ -42,10 +42,10 @@ use core_sim::{
     CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EcologyPhase, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster, LaborConfigHandle,
+    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
+    Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
     SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
     StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
@@ -65,8 +65,6 @@ use sim_schema::{encode_map_export_json, MapExport};
 /// is invoked without an explicit path.
 const DEFAULT_EXPORT_DIR: &str = "exports";
 
-const MIN_SCOUT_REVEAL_RADIUS: u32 = 2;
-const SCOUT_REVEAL_DURATION_TURNS: u64 = 8;
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
 const SETTLEMENT_LOGISTICS_RADIUS: u32 = 4;
@@ -469,6 +467,17 @@ fn main() {
                     "crisis.autoseed.updated"
                 );
             }
+            Command::SetFogEnabled { enabled } => {
+                {
+                    let mut config_res = app.world.resource_mut::<SimulationConfig>();
+                    config_res.fog_enabled = enabled;
+                }
+                info!(
+                    target: "shadow_scale::server",
+                    enabled,
+                    "fog.of_war.updated"
+                );
+            }
             Command::SpawnCrisis {
                 faction,
                 archetype_id,
@@ -691,6 +700,9 @@ enum Command {
         path: Option<String>,
     },
     SetCrisisAutoSeed {
+        enabled: bool,
+    },
+    SetFogEnabled {
         enabled: bool,
     },
     SpawnCrisis {
@@ -1667,38 +1679,18 @@ fn handle_found_settlement(
     ));
     let settlement_id = settlement_entity.id();
 
-    // Update start location and fog reveal based on the new hub.
+    // Re-home the campaign start marker on the new hub.
     let tick = app.world.resource::<SimulationTick>().0;
-    let applied_radius = {
-        let survey_override = app
-            .world
-            .resource::<SimulationConfig>()
-            .start_profile_overrides
-            .survey_radius;
-        let mut start_location = match app.world.get_resource_mut::<StartLocation>() {
-            Some(res) => res,
-            None => {
-                warn!(
-                    target: "shadow_scale::command",
-                    command = "found_settlement",
-                    faction = %faction.0,
-                    "command.found_settlement.rejected=start_location_missing"
-                );
-                return;
-            }
-        };
-        start_location.relocate(target);
-        start_location
-            .survey_radius()
-            .or(survey_override)
-            .or(Some(logistics_radius))
+    let Some(mut start_location) = app.world.get_resource_mut::<StartLocation>() else {
+        warn!(
+            target: "shadow_scale::command",
+            command = "found_settlement",
+            faction = %faction.0,
+            "command.found_settlement.rejected=start_location_missing"
+        );
+        return;
     };
-
-    if let Some(radius) = applied_radius {
-        let expires_at = tick.saturating_add(SCOUT_REVEAL_DURATION_TURNS * 2);
-        let mut reveals = app.world.resource_mut::<FogRevealLedger>();
-        reveals.queue(target, radius.max(MIN_SCOUT_REVEAL_RADIUS), expires_at);
-    }
+    start_location.relocate(target);
 
     push_command_event(
         app,
@@ -4384,6 +4376,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::SetCrisisAutoSeed { enabled } => {
             Some(Command::SetCrisisAutoSeed { enabled })
         }
+        ProtoCommandPayload::SetFogEnabled { enabled } => Some(Command::SetFogEnabled { enabled }),
         ProtoCommandPayload::SpawnCrisis {
             faction_id,
             archetype_id,

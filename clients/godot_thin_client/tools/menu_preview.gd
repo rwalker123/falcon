@@ -18,6 +18,8 @@ const PREVIEW_SIZE := Vector2i(1500, 900)
 # the pause scrim so the scrim + card chrome read against something non-black.
 const GROUND_TONE := Color(0.043, 0.067, 0.078)
 const MAP_TONE := Color(0.10, 0.15, 0.16)
+# Nav id of the client-settings pane in MenuShell.ITEMS.
+const OPTIONS_PANE_ID := "options"
 
 var _root: Control
 var _bg: ColorRect
@@ -53,6 +55,14 @@ func _ready() -> void:
 	_shell.mode = MenuShell.PAUSE
 	await _settle()
 	await _save("menu_pause")
+
+	# Options pane — the client-settings rows (Fog of war toggle + the two speed sliders). Driven
+	# through the same `_activate_item` the nav rail calls, so the pane is built exactly as a click
+	# builds it. Rendered from the PAUSE mode; the shared ITEMS registry gives the landing menu the
+	# identical pane, so one frame covers both.
+	_shell._activate_item(OPTIONS_PANE_ID)
+	await _settle()
+	await _save("menu_options")
 
 	get_tree().quit()
 

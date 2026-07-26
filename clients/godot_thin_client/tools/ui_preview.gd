@@ -2205,6 +2205,12 @@ func _ready() -> void:
 	# Data only — a visible map would render behind the HUD in this and every later frame.
 	sticky_map.visible = false
 	add_child(sticky_map)
+	# FoW OFF, stated explicitly — this assertion DIES SILENTLY without it. `_fow_enabled` defaults
+	# to `true` (it fails closed for the live client), which fog-gates every band and herd out of
+	# `_tile_info_at` / `_units_on_tile` at source: the crowded hex reads "Unexplored / Unknown" and
+	# both asserts below pass VACUOUSLY, with no occupant left to fail to stick to. The guard must
+	# see the occupants it was written to guard.
+	sticky_map.set_fow_enabled(false)
 	sticky_map.display_snapshot(_sticky_map_snapshot())
 	# Main's wiring, verbatim (Main._on_map_tile_selected / _on_map_unit_selected /
 	# _on_hud_roster_occupant_selected).
@@ -5222,7 +5228,9 @@ func _crowded_herds_fixture() -> Array:
 
 ## The MapView snapshot behind `tile_panel_land_sticky` — the crowded hex's OWN bands and herds on a
 ## grid just big enough to hold it, so MapView's `_tile_info_at` / `_units_on_tile` see exactly what
-## the HUD fixture describes. FoW is off by default in a fresh MapView, so nothing is redacted.
+## the HUD fixture describes. Nothing is redacted because the caller turns FoW OFF explicitly — a
+## fresh MapView now defaults to fog ON, and this fixture carries no visibility raster, so every
+## occupant would be gated out and the assertion would pass on an empty hex.
 func _sticky_map_snapshot() -> Dictionary:
 	var terrain: Array = []
 	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)

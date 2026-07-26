@@ -13,7 +13,8 @@
 mod common;
 
 use core_sim::{
-    build_headless_app, HerdRegistry, SnapshotHistory, ViewerFaction, VisibilityLedger,
+    build_headless_app, restore_world_from_snapshot, HerdRegistry, SimulationConfig,
+    SnapshotHistory, ViewerFaction, VisibilityLedger,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -39,6 +40,18 @@ fn herd_ids_on_the_wire(bytes: &[u8]) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// `VisionSection.fogEnabled` as the client reads it — the published state of the server-owned
+/// switch, decoded from the same bytes as the herd list so the two can be compared.
+fn fog_enabled_on_the_wire(bytes: &[u8]) -> bool {
+    let envelope = fb::root_as_envelope(bytes).expect("the snapshot encodes to a valid envelope");
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .vision()
+        .expect("every snapshot carries a vision section")
+        .fogEnabled()
 }
 
 /// The published herd list is exactly the herds the viewer can see — no more, and the sim's own
@@ -105,9 +118,83 @@ fn the_encoded_snapshot_publishes_only_herds_the_viewer_can_see() {
     assert!(
         published.len() < registry.entries().len(),
         "a starting band sees a pinhole of an 80x52 map, so the wire must be a strict subset \
-         (published {} of {} herds) — if this ever fails, check the start profile's fog mode",
+         (published {} of {} herds) — if this ever fails, check the starting visibility ledger",
         published.len(),
         registry.entries().len()
+    );
+}
+
+/// **Turning fog off reveals fauna, and only the server can do it.** The filter above drops unseen
+/// herds *before* the payload is encoded, so no client render flag could bring them back — which is
+/// why `fog_enabled` is a `SimulationConfig` setting driven by the `set_fog` command. Asserted on
+/// the encoded wire bytes, like every other claim in this file.
+#[test]
+fn the_encoded_snapshot_publishes_every_herd_when_the_server_disables_fog() {
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+    // First update builds the world; flip the switch before the turn that captures the snapshot.
+    app.update();
+    app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+    app.update();
+
+    let published = {
+        let history = app.world.resource::<SnapshotHistory>();
+        let bytes = history
+            .encoded_snapshot_flat
+            .as_ref()
+            .expect("a turn was captured and encoded");
+        assert!(
+            !fog_enabled_on_the_wire(bytes),
+            "the switch is published so the client renders the state it is told"
+        );
+        herd_ids_on_the_wire(bytes)
+    };
+
+    let registry = app.world.resource::<HerdRegistry>();
+    assert!(
+        !registry.entries().is_empty(),
+        "worldgen seeded herds — otherwise this test proves nothing"
+    );
+    assert_eq!(
+        published.len(),
+        registry.entries().len(),
+        "with fog off the wire carries every live herd (published {} of {})",
+        published.len(),
+        registry.entries().len()
+    );
+    for herd in registry.entries() {
+        assert!(
+            published.contains(&herd.id),
+            "herd {} is missing from the wire with fog disabled",
+            herd.id
+        );
+    }
+}
+
+/// **The switch is a setting, not world state.** `SimulationConfig` is deliberately outside the
+/// rollback record — rewinding the world must not silently switch fog back on under the player.
+#[test]
+fn disabling_fog_survives_a_rollback() {
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+    app.update();
+    app.update();
+
+    let snapshot = {
+        let history = app.world.resource::<SnapshotHistory>();
+        history
+            .last_snapshot
+            .as_ref()
+            .expect("a turn was captured")
+            .clone()
+    };
+
+    app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
+    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+
+    assert!(
+        !app.world.resource::<SimulationConfig>().fog_enabled,
+        "fog_enabled is a display setting on SimulationConfig, which rollback does not restore"
     );
 }
 

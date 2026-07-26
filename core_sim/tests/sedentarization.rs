@@ -9,11 +9,11 @@ use bevy::MinimalPlugins;
 use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
     CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
-    FactionInventory, FaunaConfigHandle, FogRevealLedger, ForagePatch, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, Scalar,
-    SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    FactionInventory, FaunaConfigHandle, ForagePatch, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, Scalar, SedentarizationConfigHandle,
+    SedentarizationScore, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
 };
 
@@ -52,7 +52,6 @@ fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world
         .insert_resource(SedentarizationConfigHandle::default());

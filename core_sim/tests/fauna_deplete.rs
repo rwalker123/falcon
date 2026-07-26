@@ -12,9 +12,9 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
@@ -71,7 +71,6 @@ fn spawn_world() -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app
 }

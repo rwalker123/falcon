@@ -68,9 +68,9 @@ use crate::{
     resources::{
         ClimateConfig, CommandEventEntry, CommandEventKind, CommandEventLog,
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
-        DiscoveryProgressLedger, FactionInventory, FogRevealLedger, FoodSiteEntry,
-        FoodSiteRegistry, MoistureRaster, SentimentAxisBias, SimulationConfig, SimulationTick,
-        StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry,
+        DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry, MoistureRaster,
+        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
+        TradeDiffusionRecord, TradeTelemetry,
     },
     scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero, Scalar},
     snapshot_overlays_config::SnapshotOverlaysConfigHandle,

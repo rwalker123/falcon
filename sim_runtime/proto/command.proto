@@ -153,6 +153,12 @@ message SetCrisisAutoSeedCommand {
   bool enabled = 1;
 }
 
+// Fog of war master switch. Server-owned on purpose: unseen herds are dropped from the payload
+// before it leaves the sim, so a client-local render flag cannot reveal them.
+message SetFogEnabledCommand {
+  bool enabled = 1;
+}
+
 message SpawnCrisisCommand {
   uint32 faction = 1;
   string archetype_id = 2;
@@ -399,5 +405,7 @@ message CommandEnvelope {
     AnswerForkCommand answer_fork = 42;
     // 42 is held by `answer_fork`, so `new_game` takes 43 (the next free field, append-only).
     NewGameCommand new_game = 43;
+    // 43 is held by `new_game`, so `set_fog` takes 44 (24 and 30 are reserved, not free).
+    SetFogEnabledCommand set_fog = 44;
   }
 }

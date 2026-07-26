@@ -39,7 +39,6 @@ pub struct SnapshotContext<'w> {
     /// The Telling's narrative memory, captured into the rollback snapshot (`beat_ledger`) so a
     /// rollback past a beat lets that beat fire again — see `core_sim/src/telling/mod.rs`.
     pub beat_ledger: Res<'w, BeatLedger>,
-    pub fog_reveals: Res<'w, FogRevealLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
     #[allow(dead_code)]
@@ -151,8 +150,10 @@ pub struct SnapshotHistory {
     logistics_raster: ScalarRasterState,
     sentiment_raster: ScalarRasterState,
     corruption_raster: ScalarRasterState,
-    fog_raster: ScalarRasterState,
     visibility_raster: ScalarRasterState,
+    /// Last published `SimulationConfig::fog_enabled`, so the auxiliary (axis-bias / sentiment)
+    /// deltas below echo the live setting instead of the `bool` derived default (`false`).
+    fog_enabled: bool,
     culture_raster: ScalarRasterState,
     military_raster: ScalarRasterState,
     moisture_raster: FloatRasterState,
@@ -219,8 +220,8 @@ impl SnapshotHistory {
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
-            fog_raster: ScalarRasterState::default(),
             visibility_raster: ScalarRasterState::default(),
+            fog_enabled: true,
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             moisture_raster: FloatRasterState::default(),
@@ -397,13 +398,7 @@ impl SnapshotHistory {
             Some(corruption_raster_state.clone())
         };
 
-        let fog_raster_state = snapshot.fog_raster.clone();
-        let fog_raster_delta = if self.fog_raster == fog_raster_state {
-            None
-        } else {
-            Some(fog_raster_state.clone())
-        };
-
+        let fog_enabled_state = snapshot.fog_enabled;
         let visibility_raster_state = snapshot.visibility_raster.clone();
         let visibility_raster_delta = if self.visibility_raster == visibility_raster_state {
             None
@@ -646,7 +641,6 @@ impl SnapshotHistory {
             logistics_raster: logistics_raster_delta.clone(),
             sentiment_raster: sentiment_raster_delta.clone(),
             corruption_raster: corruption_raster_delta.clone(),
-            fog_raster: fog_raster_delta.clone(),
             culture_raster: culture_raster_delta.clone(),
             military_raster: military_raster_delta.clone(),
             culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
@@ -654,6 +648,7 @@ impl SnapshotHistory {
             culture_tensions: delta_culture_tensions.clone(),
             discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
             visibility_raster: visibility_raster_delta.clone(),
+            fog_enabled: fog_enabled_state,
         };
 
         let snapshot_arc = Arc::new(snapshot);
@@ -687,8 +682,8 @@ impl SnapshotHistory {
         self.logistics_raster = logistics_raster_state;
         self.sentiment_raster = sentiment_raster_state;
         self.corruption_raster = corruption_raster_state;
-        self.fog_raster = fog_raster_state;
         self.visibility_raster = visibility_raster_state;
+        self.fog_enabled = fog_enabled_state;
         self.culture_raster = culture_raster_state;
         self.military_raster = military_raster_state;
         self.moisture_raster = moisture_state;
@@ -769,8 +764,8 @@ impl SnapshotHistory {
         self.logistics_raster = entry.snapshot.logistics_raster.clone();
         self.sentiment_raster = entry.snapshot.sentiment_raster.clone();
         self.corruption_raster = entry.snapshot.corruption_raster.clone();
-        self.fog_raster = entry.snapshot.fog_raster.clone();
         self.visibility_raster = entry.snapshot.visibility_raster.clone();
+        self.fog_enabled = entry.snapshot.fog_enabled;
         self.culture_raster = entry.snapshot.culture_raster.clone();
         self.military_raster = entry.snapshot.military_raster.clone();
         self.moisture_raster = entry.snapshot.moisture_raster.clone();
@@ -901,7 +896,6 @@ impl SnapshotHistory {
             logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
-            fog_raster: None,
             culture_raster: None,
             military_raster: None,
             generations: Vec::new(),
@@ -915,6 +909,7 @@ impl SnapshotHistory {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: None,
+            fog_enabled: self.fog_enabled,
         };
 
         let delta_arc = Arc::new(delta);
@@ -1084,7 +1079,6 @@ impl SnapshotHistory {
             logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
-            fog_raster: None,
             culture_raster: None,
             military_raster: None,
             generations: Vec::new(),
@@ -1098,6 +1092,7 @@ impl SnapshotHistory {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: None,
+            fog_enabled: self.fog_enabled,
         };
 
         let delta_arc = Arc::new(delta);
@@ -1197,7 +1192,6 @@ impl SnapshotHistory {
             logistics_raster: None,
             sentiment_raster: None,
             corruption_raster: None,
-            fog_raster: None,
             culture_raster: None,
             military_raster: None,
             generations: Vec::new(),
@@ -1211,6 +1205,7 @@ impl SnapshotHistory {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: None,
+            fog_enabled: self.fog_enabled,
         };
 
         let delta_arc = Arc::new(delta);
@@ -1299,7 +1294,6 @@ pub fn capture_snapshot(
         forage_registry,
         graze_registry,
         beat_ledger,
-        fog_reveals,
         elevation,
         moisture,
         map_presets: _,
@@ -1688,16 +1682,6 @@ pub fn capture_snapshot(
         grid_size: config.grid_size,
         overlays: overlays_config.as_ref(),
     });
-    let fog_raster = fog_raster_from_discoveries(FogRasterInputs {
-        tiles: &tile_states,
-        populations: &population_states,
-        discovery: &discovery_progress,
-        grid_size: config.grid_size,
-        overlays: overlays_config.as_ref(),
-        start_location: start_location.as_ref(),
-        fog_reveals: fog_reveals.as_ref(),
-        tick: tick.0,
-    });
     let culture_raster = culture_raster_from_layers(
         &tile_states,
         culture.as_ref(),
@@ -1712,8 +1696,12 @@ pub fn capture_snapshot(
         config.grid_size,
         overlays_config.as_ref(),
     );
-    let visibility_raster =
-        visibility_raster_from_ledger(&visibility_ledger, viewer_faction.0, config.grid_size);
+    let visibility_raster = visibility_raster_from_ledger(
+        &visibility_ledger,
+        viewer_faction.0,
+        config.grid_size,
+        config.fog_enabled,
+    );
 
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
@@ -1889,6 +1877,7 @@ pub fn capture_snapshot(
         wrap_horizontal: config.map_topology.wrap_horizontal,
         visibility: &visibility_ledger,
         viewer: viewer_faction.0,
+        fog_enabled: config.fog_enabled,
     });
     // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
     // sorted deterministically by herd id like the generation states.
@@ -1942,10 +1931,10 @@ pub fn capture_snapshot(
         logistics_raster: logistics_raster.clone(),
         sentiment_raster: sentiment_raster.clone(),
         corruption_raster: corruption_raster.clone(),
-        fog_raster: fog_raster.clone(),
         culture_raster: culture_raster.clone(),
         military_raster: military_raster.clone(),
         visibility_raster: visibility_raster.clone(),
+        fog_enabled: config.fog_enabled,
         moisture_raster: moisture_overlay_state.clone(),
         elevation_overlay: elevation_overlay_state.clone(),
         climate_bands: climate_bands_state,

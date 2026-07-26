@@ -489,6 +489,11 @@ fn build_command_pieces(
                 parts.push(value);
             }
         }
+        "set_fog" | "fog" => {
+            if let Some(value) = parser.flag_or_pos(&["enabled", "value", "state"])? {
+                parts.push(value);
+            }
+        }
         "spawn_crisis" => {
             let archetype = parser.flag_or_pos_required(&["archetype", "id"], "archetype id")?;
             parts.push(archetype);

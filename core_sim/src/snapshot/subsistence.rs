@@ -221,6 +221,10 @@ pub(crate) struct HerdSnapshotInputs<'a> {
     /// same faction — so a herd can never be drawn on a tile the raster paints black.
     pub(crate) visibility: &'a crate::visibility::VisibilityLedger,
     pub(crate) viewer: FactionId,
+    /// `SimulationConfig::fog_enabled` — the server-owned fog-of-war master switch. When it is off
+    /// the filter below is a no-op, which is the ONLY way to reveal hidden fauna: unseen herds never
+    /// reach the wire, so no client render flag could put them back.
+    pub(crate) fog_enabled: bool,
 }
 
 impl HerdSnapshotInputs<'_> {
@@ -241,7 +245,13 @@ impl HerdSnapshotInputs<'_> {
     ///   so the client is rendering a black map anyway. The two agree by construction.
     ///
     /// A herd the registry cannot resolve has no owner to check, so it is judged on visibility alone.
+    ///
+    /// With `fog_enabled == false` every herd passes: `visibility_raster_from_ledger` returns an
+    /// all-Active raster in the same state, so the list and the raster still agree by construction.
     fn herd_is_visible(&self, herd: Option<&Herd>, pos: UVec2) -> bool {
+        if !self.fog_enabled {
+            return true;
+        }
         self.visibility.is_visible(self.viewer, pos.x, pos.y)
             || herd.is_some_and(|herd| herd.owner == Some(self.viewer))
     }

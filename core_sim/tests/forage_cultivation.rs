@@ -19,13 +19,13 @@ use core_sim::{
     commit_yield_ratio, default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
     wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
-    FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, FoodModuleTag,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile,
-    TileRegistry, WellbeingConfigHandle, CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
+    FactionInventory, FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
+    CULTIVATION_DISCOVERY_ID, FOOD, RUNG_TIMESCALE_UNSCALED,
 };
 
 /// Grant faction-level **Cultivation** knowledge (Rung 1b) directly via the ledger — the gate the
@@ -90,7 +90,6 @@ fn spawn_world() -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_forage);
     app
 }

@@ -11,10 +11,10 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_herds, repopulate_fauna, spawn_initial_herds, spawn_initial_world, CommandEventLog,
     CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionInventory, FaunaConfig,
-    FaunaConfigHandle, FogRevealLedger, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LadderConfigHandle, MapPresets, MapPresetsHandle, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle,
+    FaunaConfigHandle, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LadderConfigHandle, MapPresets, MapPresetsHandle, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle,
 };
 
 fn spawn_world() -> App {
@@ -53,7 +53,6 @@ fn spawn_world() -> App {
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(LadderConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app
 }

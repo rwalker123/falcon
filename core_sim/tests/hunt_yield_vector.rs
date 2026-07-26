@@ -20,9 +20,9 @@ use core_sim::{
     scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world,
     CombatConfigHandle, CommandEventLog, CreaturesConfigHandle, CultureManager, Diet,
     DiscoveryProgressLedger, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
-    FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, FogRevealLedger,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, HuntYield, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, FollowPolicy,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HuntYield, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -100,7 +100,6 @@ fn spawn_world() -> App {
     app.world.insert_resource(CombatConfigHandle::default());
     app.world.insert_resource(CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
     app

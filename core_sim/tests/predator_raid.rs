@@ -16,11 +16,11 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_predator_raids, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger,
-    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SourceYield, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle, FOOD,
 };
@@ -79,7 +79,6 @@ fn arena() -> (App, UVec2, Entity) {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);
 
