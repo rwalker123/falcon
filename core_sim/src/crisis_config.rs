@@ -821,7 +821,6 @@ impl Default for CrisisTelemetryConfig {
 pub struct CrisisTelemetryThreshold {
     pub warn: f32,
     pub critical: f32,
-    pub escalation_delta: Option<f32>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

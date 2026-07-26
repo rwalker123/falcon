@@ -471,7 +471,7 @@ impl CrisisGauge {
         // Extrapolate the window difference to a PER-100-TICK rate. The raw difference over a
         // 5-tick window is ~0.0002 for a slow gauge — a number that reads as zero at any precision
         // the rest of the wire uses. Informational only: nothing classifies against the trend
-        // (`escalation_delta` is configured but has no consumer), so the rescale cannot move a
+        // (nothing classifies against it), so the rescale cannot move a
         // warn/critical band. See `docs/plan_delta_streaming.md` §3.6.
         let trend = (self.raw - baseline) * (TREND_REPORT_TICKS / self.trend_window.max(1) as f32);
         let band = self.classify(self.raw);
