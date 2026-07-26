@@ -38,7 +38,8 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |
 | `sprites-widgets.md` | Sprites, icons, `HudStyle`, small widgets | `*Sprites.gd`, `HudStyle.gd`, `IconSprites.gd` |
-| `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard` | `tools/**` |
+| `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard`, `inspector_hidden_guard` | `tools/**` |
+| `turn-profiling.md` | Where an applied snapshot's time goes (the client costs ~10× the sim), the `TurnProfile` contract and its flag | `TurnProfile.gd`, `Main.gd`, `SnapshotLoader.gd`, `MapView.gd`, `bridge/decoder.rs` |
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
 | `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
