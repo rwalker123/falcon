@@ -393,25 +393,46 @@ paths:
     reading as good-vs-bad rather than as neighbouring rungs of one ladder. Naming the rung in text is
     what defuses that, so `POLICY_ICONS` is UNCHANGED; the products move to words
     (`SourceForecast.picker_products`) because trade goods have no tintable pictogram (see
-    `sprites-widgets.md`). Both lines are **one `Button.text` with a `\n`**
-    (`POLICY_FACE_LINE_SEPARATOR`) — a Button tints its whole text with one font colour, so the metric row
-    cannot fall out of step with the name row when the rung is selected, hovered or disabled, which two
-    stacked child Labels would have to re-implement per state. **No `+` sign on these numbers**: every rung
+    `sprites-widgets.md`). **Line 2 renders one step SMALLER and one step quieter than line 1**
+    (`POLICY_PICKER_METRIC_FONT_SIZE` 13 against the default control size line 1 keeps by carrying NO
+    override, and `POLICY_PICKER_METRIC_ALPHA` 0.72): the name leads the glance and the numbers answer
+    it — at one size `0.32 food · 0.08 trade` competed with `♻ Sustain` instead of supporting it. **No `+`
+    sign on these numbers**: every rung
     is a gain, so a sign carries no information here (it stays on the work rows and map labels, where it
     contrasts against consumption), and the render-only-when-non-zero rule still governs — a wolf rung
-    reads `2.70 trade` alone, never `0.00 food · 2.70 trade`. **The two-line face costs height and width,
-    so the rung button's box is trimmed on both axes** (`POLICY_PICKER_PADDING_V` 4 / `POLICY_PICKER_PADDING_H`
-    6, from `HudStyle._button_stylebox`'s 9/11, applied via `HudWidgets.trim_button_padding` — the chrome half
-    of `compact`, split out so the picker can keep its TYPE SIZE): untrimmed, the forage sheet pushed its
-    `Forage` commit button past the fold (`forage_crop_picker`'s assertion) and the Band panel's PARTIES-zone
-    launch picker ran 18px past its zone, where `clip_contents` ate the end of every metric line.
-    **The picker is a `GridContainer` `POLICY_PICKER_COLUMNS` (3) wide, each button `SIZE_EXPAND_FILL`**, so
-    the six-rung forage/local-hunt pickers wrap to **two rows of three** (equal-width, filling the panel
-    content width) instead of one over-wide row; the six wide two-line `♻ Sustain / up to +0.90/turn`
-    buttons used to overflow, and even the compacted six-in-a-row read too wide docked. A picker with
-    `≤ POLICY_PICKER_MAX_SINGLE_ROW` (4) rungs — the 4-rung expedition launch/compose picker — stays a
-    **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
-    on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    reads `2.70 trade` alone, never `0.00 food · 2.70 trade`.
+    **TWO FONT SIZES CANNOT LIVE IN ONE `Button.text`, so a rung is a CELL, not a button**
+    (`HudWidgets._policy_rung_cell`): a zero-margin `MarginContainer` holding the `Button` (empty `text`,
+    but still the box, the click, the disabled state, the focus and the tooltip) with the two-Label stack
+    painted over it, inset by `POLICY_PICKER_PADDING_V` 4 / `POLICY_PICKER_PADDING_H` 6 and every overlay
+    control `MOUSE_FILTER_IGNORE` so the click reaches the button beneath. The MarginContainer is what
+    SIZES the cell — a `Button` is not a Container and would not grow to fit children, which is exactly why
+    it cannot be the parent — and it is the CELL that carries `SIZE_EXPAND_FILL` into the grid now.
+    **THE TINT IS ONE COLOUR, DERIVED TWICE, and that invariant is the whole reason the single-`Button.text`
+    face existed:** `HudStyle.button_font_color(variant, disabled)` is asked ONCE and line 2 is that same
+    colour at `POLICY_PICKER_METRIC_ALPHA`, so a selected, disabled — or any future warned — rung moves BOTH
+    lines by construction (the greyed `🐄 Corral` in `hunt_picker_ascending` is the frame). Never give line 2
+    a colour of its own. `modulate` was the other candidate and is worse here: it inherits to children but
+    multiplies the BOX too, so a disabled rung would be dimmed twice, once by the disabled stylebox's own
+    faded fill. That the theme's `font_color` reaches a Button's `text` and nothing else is why
+    `button_font_color` was split out of `apply_button` (which now feeds from it) — a hand-built face and a
+    themed one read one table.
+    **The rung Button carries its policy as `HudWidgets.POLICY_RUNG_META`**, the one stable handle on a
+    rung: `band_panel_preview._picker_rung_buttons` finds them by that meta and recurses past the cells,
+    because a face match on `btn.text` would now find an empty string and pass every assertion vacuously.
+    **The picker is a `GridContainer` of AT MOST `POLICY_PICKER_COLUMNS` (3)**, and 3 is a CEILING, not a
+    target: `grid.columns = clamp(explicit columns or options.size(), 1, 3)`. Six rungs read **3 + 3**, the
+    four extractive rungs read **3 + 1** with Eradicate alone on the second row, and a caller passing an
+    explicit `columns` is clamped DOWN, never up. Four abreast shipped first and read wrong: it made the
+    expedition launch picker a different creature from the local hunt beside it, and it set the widest
+    compose card's width off a row that never needed to be that wide (the deer picker's minimum width fell
+    **714 → 444px**, the wolf's 396 → 296, and the forage sheet 554 → **546** of its 560 cap — the wrap the
+    forage picker already had got SHORTER, since each row costs one 13px line instead of a 16px one). The
+    lone rung is **not** stretched across the row: a GridContainer gives it its COLUMN's width, so it sits
+    under the first cell above at exactly that cell's width, which reads deliberate rather than orphaned.
+    **`ZONE_POLICY_PICKER_COLUMNS` (2) is the one picker that does not follow** — see
+    `band-city-panel.md`; measured at 3 it overruns the L/R dock's ~354px zone by ~90px and the frame comes
+    back sliced. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
     compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
     compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one

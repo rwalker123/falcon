@@ -363,6 +363,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   it drags the whole zone column out past its host, taking the section menu beside it off the edge.
   Hence `ZONE_POLICY_PICKER_COLUMNS` and `band_panel_preview`'s **recursive zone-bounds assertion**,
   which is the only thing that catches either.
+  **`ZONE_POLICY_PICKER_COLUMNS` (2) is deliberately BELOW the shared `POLICY_PICKER_COLUMNS` (3), so the
+  Band panel's launch picker reads 2 + 2 where every free-floating picker reads 3 + 1.** That
+  inconsistency is bought, not overlooked: at 3 the four two-line rungs need ~444px against the ~354px
+  the L/R dock's zone gives, and the measured frame comes back with `⇊ Deplete` cut in half, the Quarry
+  button clipped and the hint text sliced — plus two extra `_assert_zone_content_fits` failures. Closing
+  the gap needs a WIDER parties zone (or a narrower metric line), never a bigger number here.
   **CONTAINMENT IS NOT COMPLETENESS, and that distinction is a second assertion.** Content the box
   cannot hold gets CLIPPED, and clipped content still reports a rect *inside* its host — so the
   bounds assertion passes on a frame that is visibly sliced (the Food/Morale inline breakdown cut the

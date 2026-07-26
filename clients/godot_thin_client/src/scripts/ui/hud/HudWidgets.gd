@@ -234,18 +234,10 @@ static func compact(control: Control, font_size: int, padding_v: int) -> void:
     control.add_theme_font_size_override("font_size", font_size)
     trim_button_padding(control, padding_v)
 
-## Passed for `padding_h` to leave a button's SIDE padding exactly as `HudStyle` authored it — what
-## every `compact` caller wants, since a zone row is short on height and not on width.
-const KEEP_AUTHORED_PADDING := -1
-
 ## The chrome half of `compact`, on its own for a control that must keep its TYPE SIZE and trim only
-## the box around it — the two-line policy-picker rung, whose second line already supplies the
-## vertical presence `HudStyle._button_stylebox`'s 9px top/bottom was sized to give a lone line of
-## text, and whose LONGEST line is now what sets the button's width (so the 11px sides it also
-## authored are width the picker's grid cannot afford). `padding_h` defaults to leaving those sides
-## alone. Does nothing to a non-Button (a Label has no stylebox to squeeze).
-static func trim_button_padding(control: Control, padding_v: int,
-        padding_h: int = KEEP_AUTHORED_PADDING) -> void:
+## the box around it. Leaves a button's SIDE padding exactly as `HudStyle` authored it — a zone row is
+## short on height and not on width. Does nothing to a non-Button (a Label has no stylebox to squeeze).
+static func trim_button_padding(control: Control, padding_v: int) -> void:
     if not (control is Button):
         return
     for state in ["normal", "hover", "pressed", "disabled", "focus"]:
@@ -255,9 +247,6 @@ static func trim_button_padding(control: Control, padding_v: int,
         var squeezed: StyleBox = box.duplicate()
         squeezed.content_margin_top = padding_v
         squeezed.content_margin_bottom = padding_v
-        if padding_h != KEEP_AUTHORED_PADDING:
-            squeezed.content_margin_left = padding_h
-            squeezed.content_margin_right = padding_h
         control.add_theme_stylebox_override(state, squeezed)
 
 ## Give a `Label` a tooltip AND the hover it needs to show one. **`Label` defaults to
@@ -471,6 +460,66 @@ static func gate_reasons(gates: Dictionary, policy: String) -> Array:
     var reasons: Variant = gates.get(policy, null)
     return reasons if reasons is Array else []
 
+## The rung a policy-picker Button stands for, as `Button` meta. THE ONE STABLE HANDLE on a rung: the
+## face is presentation and has already changed twice (glyph+metric → glyph+name over metric → that
+## same pair as child Labels at two sizes), so a harness matching on `btn.text` breaks with every
+## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
+const POLICY_RUNG_META := "policy"
+
+## ONE RUNG of the policy picker: a clickable, styleable, disable-able `Button` with a TWO-LINE face
+## whose lines carry DIFFERENT TYPE — which `Button.text` structurally cannot do (one font size per
+## button), so the lines are child Labels and the button's own `text` stays empty.
+##
+## THE SHAPE. A `MarginContainer` with zero margins lays every child to its full rect and takes its
+## minimum size from the largest, so the cell is exactly: the button, filling it (the box, the border,
+## the hover/pressed/focus/disabled chrome, the click and the tooltip), with the label stack painted
+## over it, inset by `POLICY_PICKER_PADDING_*` and IGNORING the mouse so every click reaches the button
+## beneath. The stack is what SIZES the cell — an empty-text Button's minimum is just its own content
+## margins — which is the whole reason the button cannot be the parent: a `Button` is not a Container
+## and would not grow to fit children, leaving the second line to be laid out by hand.
+##
+## THE TINT IS ONE COLOUR, DERIVED TWICE, and that is the invariant to preserve. The single-`Button.text`
+## face this replaced tinted both lines together for free; here `HudStyle.button_font_color(variant,
+## disabled)` is asked ONCE and line 2 is the same colour at `POLICY_PICKER_METRIC_ALPHA`, so a
+## selected, disabled — or any future warned — rung moves both lines by construction. Never give line 2
+## a literal colour of its own; that is exactly the desynchronisation this note exists to prevent.
+## (`modulate` would also inherit, but it multiplies the BOX too, so a disabled rung would be dimmed
+## twice — once by the disabled stylebox's own faded fill, once again by the tint.)
+static func _policy_rung_cell(btn: Button, title: String, metric: String,
+        variant: String) -> MarginContainer:
+    var cell := MarginContainer.new()
+    cell.add_child(btn)
+    var pad := MarginContainer.new()
+    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    for side in ["left", "right"]:
+        pad.add_theme_constant_override("margin_" + side, HudWorkVocab.POLICY_PICKER_PADDING_H)
+    for side in ["top", "bottom"]:
+        pad.add_theme_constant_override("margin_" + side, HudWorkVocab.POLICY_PICKER_PADDING_V)
+    var stack := VBoxContainer.new()
+    stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    stack.add_theme_constant_override("separation", HudWorkVocab.POLICY_PICKER_FACE_SEPARATION)
+    var tint := HudStyle.button_font_color(variant, btn.disabled)
+    stack.add_child(_policy_rung_line(title, tint, 0))
+    if metric != "":
+        stack.add_child(_policy_rung_line(metric,
+            Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
+            HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE))
+    pad.add_child(stack)
+    cell.add_child(pad)
+    return cell
+
+## One line of a rung's face. `font_size` 0 leaves the theme's own size — what line 1 wants, so the
+## rung name renders at exactly the size the button's `text` did before the face became Labels.
+static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    label.add_theme_color_override("font_color", tint)
+    if font_size > 0:
+        label.add_theme_font_size_override("font_size", font_size)
+    return label
+
 ## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
 ## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
 ## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
@@ -497,17 +546,18 @@ static func build_policy_picker(
     var current := selected
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    # Wrap the rung buttons 3 per row (a GridContainer) so the six-rung pickers read as two rows of
-    # three; a small picker (≤4 rungs, the expedition) stays a single row so it never strands a lone
-    # sub-width button. Each button EXPAND_FILLs so the three in a row are equal width and fill the panel.
+    # Wrap the rung buttons at most `POLICY_PICKER_COLUMNS` (3) per row (a GridContainer), so a six-rung
+    # picker reads 3 + 3 and the four extractive rungs read 3 + 1 with Eradicate alone on the second row.
+    # THE CEILING IS UNIFORM ON PURPOSE: four abreast made the expedition launch picker a different
+    # creature from the local hunt beside it, and set the widest compose card's width off a row that never
+    # needed to be that wide. The lone rung is not stretched — a GridContainer gives it its COLUMN's
+    # width, so it sits under the first cell above at exactly that cell's width, which reads deliberate.
     var grid := GridContainer.new()
-    # `columns > 0` overrides the width-driven default: a zone is a FIXED-width box, and a picker whose
+    # `columns > 0` CLAMPS the default DOWN, never up: a zone is a FIXED-width box, and a picker whose
     # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column
     # out past its host (where it is clipped) — taking the section menu beside it off the edge.
-    if columns > 0:
-        grid.columns = columns
-    else:
-        grid.columns = maxi(1, options.size()) if options.size() <= HudWorkVocab.POLICY_PICKER_MAX_SINGLE_ROW else HudWorkVocab.POLICY_PICKER_COLUMNS
+    var wanted := columns if columns > HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS else options.size()
+    grid.columns = clampi(wanted, 1, HudWorkVocab.POLICY_PICKER_COLUMNS)
     grid.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     for policy in options:
@@ -520,29 +570,22 @@ static func build_policy_picker(
         #           policy reads identically on the picker and on the worked tile/herd, and the same
         #           face the gate-reason lines and the work inspector use.
         #   line 2  WHAT IT PAYS — the per-policy metric with its products NAMED IN WORDS
-        #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`).
+        #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`), one step SMALLER and
+        #           one step quieter, so the name leads the glance and the numbers answer it.
         # The old face put the rung glyph and the trade-goods glyph adjacent in ONE line at one weight,
         # where `♻ ⬆ ⇊ 💀` (which rung) and `⇄` (which product) could not be told apart — and dropping
         # the rung's name left `⬆` beside `⇊` reading as good-vs-bad rather than as two rungs of one
         # ladder. Naming the rung is what defuses that, so the glyphs themselves are unchanged.
-        # Both lines are ONE Button text, so they tint together — selected/disabled/hover styling comes
-        # from the button's own font colour and cannot desynchronise between the lines.
         # A rung with no metric (the work inspector's picker, which passes none) is line 1 alone.
         var take: Variant = takes.get(policy_key, null)
         var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        var face := HudFormat.policy_face(policy_key)
-        btn.text = face if metric == "" \
-            else face + HudComposeVocab.POLICY_FACE_LINE_SEPARATOR + metric
-        # EXPAND_FILL so the buttons sharing a grid row are equal width and fill the panel content width.
-        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        HudStyle.apply_button(btn, "primary" if policy_key == current else "ghost")
-        # …then trim the box on BOTH axes (AFTER the styleboxes are applied — `trim_button_padding`
-        # duplicates whatever is currently on the button), so the second line costs a line of TEXT,
-        # not a line of text plus the air a one-line face needed, and the longest line's WIDTH is what
-        # sizes the rung rather than the width plus 22px of side chrome.
-        trim_button_padding(btn, HudWorkVocab.POLICY_PICKER_PADDING_V,
-            HudWorkVocab.POLICY_PICKER_PADDING_H)
+        var variant := "primary" if policy_key == current else "ghost"
+        # `policy` meta, not the face string: the face is presentation (it grew a name, then a second
+        # line, and its text now lives on a child Label), so a harness that identified a rung by reading
+        # `btn.text` broke each time. The meta is the rung's identity and never moves.
+        btn.set_meta(POLICY_RUNG_META, policy_key)
+        HudStyle.apply_button(btn, variant)
         # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
         # goods/turn"), led by the rung name; a gated button appends its gate reasons below, so a hover
         # tells you what the rung costs to unlock as well as what it pays.
@@ -555,7 +598,11 @@ static func build_policy_picker(
         else:
             btn.pressed.connect(func() -> void: on_pick.call(policy_key))
         btn.tooltip_text = HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
-        grid.add_child(btn)
+        # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
+        # equal width and fill the panel content width.
+        var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric, variant)
+        cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        grid.add_child(cell)
     block.add_child(grid)
     # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach. A caller
     # that is TIGHT ON HEIGHT may opt into collapsing the rungs it is not composing (see

@@ -152,12 +152,6 @@ const HERD_CREW_LABEL := "Herders"
 # X/turn".
 const POLICY_PAYOFF_COMPACT := "→ %s"
 
-# Joins the two rows of a policy button's face (rung name over product line). ONE Button text with a
-# newline, deliberately, rather than two stacked Labels: a Button tints its whole text with one font
-# colour, so the metric row can never fall out of step with the name row on a selected, hovered or
-# disabled rung — which two child Labels would have to re-implement per state.
-const POLICY_FACE_LINE_SEPARATOR := "\n"
-
 const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 
 # The EXPEDITION picker wears the SAME "up to X/turn" cap metric as the local hunt + forage pickers

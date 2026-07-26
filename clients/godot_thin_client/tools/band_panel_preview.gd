@@ -1384,8 +1384,13 @@ func _work_inspector_strip() -> PanelContainer:
 			return child
 	return null
 
-## The inspector picker's rung buttons, keyed by policy. The work inspector passes NO `takes`, so a
-## button's face is exactly `HudFormat.policy_face(policy)` — the same vocabulary the standing line uses.
+## The inspector picker's rung buttons, keyed by policy — found by the `HudWidgets.POLICY_RUNG_META`
+## the picker stamps on each one, NEVER by matching its face. The face is presentation and has already
+## changed twice (glyph + metric → glyph + name over metric → that pair as child Labels at two sizes,
+## which left the Button's own `text` empty), and each time a text match here would have quietly
+## returned nothing and passed every assertion vacuously. It also has to RECURSE now: a rung is a cell
+## (a MarginContainer holding the button and the label stack), so the grid's children are no longer the
+## buttons themselves.
 func _picker_rung_buttons() -> Dictionary:
 	var buttons := {}
 	var strip := _work_inspector_strip()
@@ -1394,13 +1399,14 @@ func _picker_rung_buttons() -> Dictionary:
 	var grid := _find_first_grid(strip)
 	if grid == null:
 		return buttons
-	for child in grid.get_children():
-		if not (child is Button):
-			continue
-		for policy in SourceForecast.LABOR_HUNT_POLICIES:
-			if (child as Button).text == HudFormat.policy_face(String(policy)):
-				buttons[String(policy)] = child
+	_collect_rung_buttons(grid, buttons)
 	return buttons
+
+func _collect_rung_buttons(node: Node, out: Dictionary) -> void:
+	if node is Button and (node as Button).has_meta(HudWidgets.POLICY_RUNG_META):
+		out[String((node as Button).get_meta(HudWidgets.POLICY_RUNG_META))] = node
+	for child in node.get_children():
+		_collect_rung_buttons(child, out)
 
 func _find_first_grid(node: Node) -> GridContainer:
 	if node is GridContainer:
