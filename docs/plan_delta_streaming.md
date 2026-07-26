@@ -391,10 +391,37 @@ of the four bugs this arc produced were found by a *measurement*, not by a test,
 the tests that should have caught them had never been made to fail. `decode-guard` had no delta
 fixture at all while the delta path was carrying every turn.
 
-The one §7 item deliberately left unbuilt is a **chained** multi-delta fixture (frame N → N+1 → N+2).
-`stream_frame_guard` pins the supersession rule with one delta, which is what catches
-keep-only-the-newest; a second chained delta would additionally pin ordering across a batch of
-three. Worth adding when the fixture generator next needs touching, not worth a bespoke pass now.
+### The chained fixture, and why "one delta" was not coverage
+
+This section first recorded a chained multi-delta fixture as *deliberately left unbuilt*, on the
+grounds that it would only add ordering coverage. **That was wrong, and the reasoning is worth
+keeping because the mis-triage is instructive.** The value is not ordering — it is **cumulative
+state**. `decode_guard` applied exactly one delta, and `core_sim/tests/delta_streaming.rs` runs its
+own `apply()` over Rust structs, server-side. So *delta-on-delta*, the path the client takes on
+every turn after the first, had no coverage at all.
+
+Building it surfaced something the plan for it had not anticipated. **There are two independent
+caches, they advance separately, and each needs its own witness:**
+
+| cache | what it holds | witness that catches it failing to advance |
+|---|---|---|
+| `SectionCaches` | the ten keyed sections | a **keyed** row (`tiles`, `populations`, `culture_layers`) |
+| `cache.dict` | the published frame, incl. whole-section keys | a **whole-section** key delta 2 does not carry (`demographics`) |
+
+The obvious mutation — re-base `merged` on the original baseline dictionary — **passes a guard that
+probes only keyed sections**, because `merge_section` republishes each keyed section from
+`SectionCaches` on every frame (`frame.insert_always(spec.key, array)`), so the dictionary it
+started from is irrelevant to them. Only a section carried *by the dict alone*, present in delta 1
+and absent from delta 2, can prove the frame advanced.
+
+So the fixture's two deltas move **provably disjoint** rows (delta 1: tiles 0–2 + row 0; delta 2:
+tiles 3–5 + row 1), asserted on the plans, re-asserted on the encoded entity ids, and re-checked in
+the guard — because overlapping rows would make the whole thing vacuous. Both mutations now fail
+naming a **lost delta-1 value**, not a wrong delta-2 one.
+
+**The general lesson:** a guard is only as good as the mutation used to validate it, and a mutation
+that fails to fail is a finding, not a formality. Had this shipped to the original spec, it would
+have looked like coverage of a path it could not see.
 
 ---
 

@@ -102,6 +102,29 @@ sections' vectors unconditionally — empty when nothing changed — so presence
 every keyed section is named from its diff being non-empty. A steady-state delta on the decode
 fixture names five things, not thirteen.
 
+## Each delta merges into the frame BEFORE it, not into the baseline
+
+`decode_frame` builds the merged frame from `cache.dict.duplicate_shallow()` and then **replaces**
+`cache` — so frame N+1 starts from frame N, not from the full snapshot. Re-base that on the original
+baseline and delta 2 silently discards delta 1: no error, no symptom, the world just drifts. (The
+opposite failure is loud and therefore not the one to worry about: a cache that fails to advance
+`frame_seq` makes the next delta unapplicable, which fires `resync_needed` and gets a full snapshot
+every turn — slow, not wrong.)
+
+**Two caches advance, and they fail differently — which is why `decode_guard` needs two witnesses
+and one of them was only found by a mutation that failed to fail.** `SectionCaches` carries the
+keyed sections, and their base keys are rebuilt and republished on EVERY frame out of that cache, so
+they survive even a merge that re-bases the frame dictionary. Whole-section fields (`demographics`,
+`herds`, `sedentarization`, …) do not: each lands in the merged dict once, on the frame that carries
+it, and stays only because the next merge starts from that frame. So the chained fixture probes both
+— the keyed sections for a section cache that stops advancing, and `demographics` (carried by delta
+1, absent from delta 2) for the frame dictionary.
+
+**The delta path is guarded by a CHAIN, not a single frame** (`snapshot_delta_envelope.bin` +
+`snapshot_delta2_envelope.bin`, moving deliberately disjoint rows). One delta only exercises
+baseline → delta; the client takes delta → delta on every turn after the first, and that path went
+unguarded until it was added after the fact.
+
 **The dangerous direction is an UNDER-complete manifest** (a consumer skips a section that really
 moved and goes silently stale), which is why it is built by a forcing function rather than a
 hand-maintained list: `DeltaFrame` owns both the dictionary and the name vector, and

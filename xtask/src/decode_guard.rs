@@ -40,7 +40,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     crate::decode_fixture::write_fixture()?;
     crate::decode_fixture::write_headerless_fixture()?;
-    crate::decode_fixture::write_delta_fixture()?;
+    crate::decode_fixture::write_delta_fixtures()?;
 
     if build_native {
         crate::godot_build()?;

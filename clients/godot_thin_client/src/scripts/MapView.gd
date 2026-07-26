@@ -870,11 +870,26 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# version on a turn that moved neither only buys a redundant rebuild.
 	if dimensions_changed or SnapshotSections.any_changed(snapshot, MINIMAP_INPUT_SECTIONS):
 		_minimap.bump_data_version()
-	# Deliberately NOT gated, unlike the minimap beside it. `CachedMapRenderer._draw` paints
-	# `_tile_color`, which follows the ACTIVE OVERLAY channel — so with an overlay selected the
-	# cached map's colours move whenever that channel does, and a gate on terrain/fog would freeze
-	# them. Killing the cache is a flag write; the re-render it forces is bounded by the viewport,
-	# not the grid.
+	# Deliberately NOT gated, unlike the minimap beside it — and MEASURED, because "it is only a
+	# flag write" is true of this line and says nothing about what the flag costs.
+	#
+	# **In the shipped configuration this whole path is dead.** The cache is reached only from the
+	# `else` branch of `_draw`'s terrain block, i.e. when `_terrain.shader_active()` is FALSE; with
+	# the Approach-B blend shader on (the default) the base terrain is one GPU draw and
+	# `_render_map_cache` is unreachable. Instrumenting `CachedMapRenderer._draw` across a full
+	# live session produced ZERO calls. So gating this would buy exactly nothing by default.
+	#
+	# With the shader off it is NOT cheap: the same instrumentation, forcing the cached branch,
+	# measured **70-72 ms per cached render** on an 80x52 map. It does not fire every turn (the
+	# re-render is also gated on the pan buffer in `_draw`), so that is a per-render cost at an
+	# unmeasured cadence, not a per-turn one — but it is large enough that anyone turning terrain
+	# blending off should measure before assuming this line is free.
+	#
+	# The reason it stays ungated is correctness, not cost: `CachedMapRenderer._draw` paints
+	# `_tile_color`, which follows the ACTIVE OVERLAY channel, so with an overlay selected the
+	# cached map's colours move whenever that channel does and a gate on terrain/fog would freeze
+	# them. If it ever needs gating, key it on the active overlay channel — `active_overlay_key`
+	# empty means terrain/fog are the only inputs — never on terrain/fog alone.
 	_invalidate_map_cache()
 	profile.end(PROFILE_OVERLAYS, t_overlays)
 	var t_layers: int = profile.begin(PROFILE_LAYERS)
