@@ -19,14 +19,29 @@ PORT_BLOCK_STRIDE=10
 # Number of distinct auto-derived slots (DEFAULT_PORT_BASE .. +99*stride).
 PORT_SLOT_COUNT=100
 
+# The server is built RELEASE by default. A debug core_sim is ~15x slower per turn, which the
+# player feels directly: click-to-updated-map measured at ~1.9s debug vs ~0.1s release on an
+# 80x52 map. That penalty is almost entirely INVISIBLE in the turn profile -- the sim's own
+# `turn.completed` is only 161ms of it -- so it reads as "the game is just slow" rather than as a
+# build-flag choice, which is exactly how it went unnoticed while #386 optimised the other 6%.
+# `--debug` restores the unoptimised build for the two things it actually buys: integer-overflow
+# traps (release wraps SILENTLY, and this sim runs on fixed-point Scalar math) and
+# debug_assertions. See also the [profile.dev] block in the workspace Cargo.toml, which keeps
+# that path usable by optimising dependencies even in a debug build.
+SERVER_PROFILE_FLAG="--release"
+
 usage() {
   cat <<'EOF'
-Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-base N] [--help]
+Usage: scripts/run_stack.sh [--server-only|--client-only|--godot-only] [--port-base N] [--debug] [--help]
   --server-only  Start only the core simulation server.
   --client-only  Launch only the thin client (expects a running server).
   --godot-only   Launch a bare Godot editor wired to the sim ports.
   --port-base N  Base port for this run. The server binds N..N+3; the client
                  connects to the matching ports. Overrides auto-derivation.
+  --debug        Build the server WITHOUT optimisation. Measured cost: a turn
+                 goes from ~10ms to ~161ms, and click-to-updated-map from
+                 ~0.1s to ~1.9s. Worth it only for the overflow traps and
+                 debug_assertions a debug build adds -- never for normal play.
   -h, --help     Show this help text.
 
 Without any options both the server and the client are started.
@@ -62,6 +77,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port-base=*)
       PORT_BASE="${1#*=}"
+      ;;
+    --debug)
+      SERVER_PROFILE_FLAG=""
       ;;
     -h|--help)
       usage
@@ -215,12 +233,12 @@ cleanup() {
 
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == false && "$RUN_GODOT" != true ]]; then
   echo "[run_stack] Starting core simulation server..."
-  exec env RUST_LOG=info SIM_PORT_BASE="$PORT_BASE" cargo run -p core_sim --bin server
+  exec env RUST_LOG=info SIM_PORT_BASE="$PORT_BASE" cargo run $SERVER_PROFILE_FLAG -p core_sim --bin server
 fi
 
 if [[ "$RUN_SERVER" == true && "$RUN_CLIENT" == true ]]; then
   echo "[run_stack] Starting core simulation server..."
-  RUST_LOG=info SIM_PORT_BASE="$PORT_BASE" cargo run -p core_sim --bin server &
+  RUST_LOG=info SIM_PORT_BASE="$PORT_BASE" cargo run $SERVER_PROFILE_FLAG -p core_sim --bin server &
   SERVER_PID=$!
   trap cleanup EXIT INT TERM
 fi

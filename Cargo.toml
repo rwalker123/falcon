@@ -12,3 +12,16 @@ members = [
 ]
 
 resolver = "2"
+
+# Debug builds are still used for `cargo test` and for `run_stack.sh --debug`, and an entirely
+# unoptimised Bevy makes both painful — a debug turn measured ~15x a release one. Optimising
+# DEPENDENCIES only is the standard Bevy remedy: our own crates stay at a low opt-level so
+# incremental rebuilds and backtraces stay usable, while Bevy/serde/flatbuffers — which we never
+# step through and which dominate the runtime — are built fast. Overflow traps and
+# `debug_assertions`, the two things a debug build is actually FOR here, are unaffected by
+# opt-level and survive this.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
