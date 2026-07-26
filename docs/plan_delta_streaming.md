@@ -237,9 +237,41 @@ trait RationalistMystical baseline: 0.045142 -> 0.065870     (+0.021)
 ```
 
 That is the simulation doing work, not noise, and no diff can compress it. So the remaining
-`encode.flat_delta` ≈ 5.4 ms is now **dominated by culture**, and the open question is a design
-one, not an encoding one: does the client need per-layer, per-axis trait values every turn, when
-what it renders is a culture *raster*? That is worth its own issue rather than a guess here.
+`encode.flat_delta` ≈ 5.4 ms is now **dominated by culture**.
+
+### …and culture does not settle, ever — measured
+
+Traced one local layer over 40 turns (`max_step` = its largest per-turn trait movement,
+`max_gap_to_parent` = how far it sits from the parent it is chasing):
+
+| tick | 0 | 7 | 15 | 23 | 31 | 39 |
+|---|---|---|---|---|---|---|
+| `max_step` | 0.035 | 0.037 | 0.071 | 0.104 | 0.114 | 0.089 |
+| `max_gap_to_parent` | 0.061 | 0.104 | 0.111 | 0.154 | 0.186 | 0.168 |
+
+**Both grow.** `CultureLayer::resolve_against` is an exponential relaxation
+(`value += (target − value) × elasticity`), which converges geometrically *if the target holds
+still*. It does not: the step size rises by 3× over 30 turns and the layer ends up **further** from
+its parent than it started. A layer chasing a fixed target cannot do that — so the target is moving
+faster than elasticity can track, and the layers oscillate instead of settling.
+
+The driver is **not** the global layer, which was the obvious suspect and is wrong: traced over 40
+turns it is flat zero on every axis (`resonance.global` is zero — no influencer culture resonance
+at this stage). The movement enters at the regional layer, whose target is
+`global(0) + modifier + regional_resonance`, and `regional_resonance` is redistributed influencer
+resonance that changes as influencers rise and fall.
+
+**Two questions for design, in order:**
+
+1. **Should culture move this fast at all?** Trait values here have magnitude ~0.05–0.13 and are
+   moving up to **0.12 per turn** — a trait can invert in a couple of turns. Whatever culture is
+   meant to model, something that re-rolls every few turns is not a *culture*; it reads as a
+   tuning bug (elasticity, or the resonance magnitude) rather than intended slow drift. Fixing it
+   would also collapse the delta as a side effect — a settled culture diffs to nothing.
+2. **Does the client need per-layer, per-axis traits every turn** when what it renders is a culture
+   *raster*? 4201 layers × 15 axes × 3 values is the payload; the overlay is one number per tile.
+
+Neither is a delta-streaming decision, so neither is made here.
 
 ## 4. What this does NOT try to do
 
