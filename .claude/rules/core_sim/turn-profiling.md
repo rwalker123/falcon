@@ -50,8 +50,27 @@ about that tile changed. It is also why a bigger map is the thing that will brea
 
 **The client is no longer sent a complete world every turn** (#386,
 `docs/plan_delta_streaming.md`). A full flat snapshot is now encoded only for a world's first
-frame, for rollback, and in answer to a client `resync` — `StoredSnapshot::encode_flat()` produces
-one on demand rather than every ring entry paying for the few ever asked for.
+frame, for **rollback**, and in answer to a client **`resync`** — encoded on demand rather than every
+ring entry paying for the few ever asked for.
+
+**Both of those re-encode rather than broadcasting the ring entry's stored bytes, because a full
+frame must claim a FRESH publication sequence number** — `SnapshotHistory::publish_full_frame` is the
+one seam for it, and `StoredSnapshot::encode_flat()` (which returns *stored* bytes) is consequently
+test-only now. The counter is never rewound: it numbers publications, not ticks, and `reset_to_entry`
+rewinds the baselines but deliberately not the sequence. A frame carrying a stale number leaves the
+client baselined behind the server, so the next delta's `base_frame_seq` names a frame the client
+never applied and the client drops it.
+
+The stale numbers are easy to reach. Rollback's ring entry was stamped when that tick was
+*originally* published. A **recapture** refreshes `history.back().snapshot` but **not** its cached
+`encoded_snapshot_flat`, and an **auxiliary delta** (`update_axis_bias` and friends) claims a number
+without touching the ring at all — so `latest_entry()`'s bytes can lag by either route. On rollback
+that costs one wasted round trip, because resync heals it. **On resync it is worse: resync *is* the
+recovery path**, so a stale answer reopens the gap it was sent to close and the client cannot
+converge until some later publication refreshes the entry. Guarded by
+`core_sim/tests/delta_streaming.rs::{a_rollback_frame_is_the_base_the_next_delta_names,
+a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture}`, both reading `frameSeq` off the
+published envelope.
 
 `refresh_latest` (the mid-tick recapture after a world-mutating command) publishes a delta too, and
 shares `publish()` with the turn path. It deliberately does **not** commit the delta baseline, which

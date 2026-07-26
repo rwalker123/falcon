@@ -6,6 +6,7 @@
 //! are pinned rather than left to review.
 
 use core_sim::SnapshotHistory;
+use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_runtime::{
     CampaignProfileState, CultureLayerScope, CultureTensionKind, CultureTensionState, WorldDelta,
     WorldSnapshot,
@@ -251,6 +252,119 @@ fn a_later_recapture_delta_supersedes_an_earlier_one() {
     assert_eq!(
         second.header.power_count, 9,
         "…and the second command's change as well"
+    );
+}
+
+/// `SnapshotHeader.frameSeq` as the CLIENT reads it — decoded from the published bytes, because the
+/// number that matters is the one on the wire, not the one on the struct we happen to hold.
+fn frame_seq_on_the_wire(bytes: &[u8]) -> u64 {
+    let envelope = fb::root_as_envelope(bytes).expect("the rollback frame is a valid envelope");
+    assert_eq!(
+        envelope.payload_type(),
+        fb::SnapshotPayload::snapshot,
+        "a rollback re-baselines the client, so it must publish a FULL snapshot"
+    );
+    envelope
+        .payload_as_snapshot()
+        .expect("the envelope carries a snapshot")
+        .header()
+        .expect("every snapshot carries a header")
+        .frameSeq()
+}
+
+/// **A rollback frame claims a FRESH sequence number, so the next delta still applies.**
+///
+/// The publication counter is never rewound — it numbers publications, not ticks. So broadcasting a
+/// ring entry with the number stamped when that tick was *originally* published leaves the client
+/// baselined at an old number while the server's next delta names the current one as its base:
+/// `WorldCache::accepts` rejects it and the client burns a `resync` round trip recovering. Silent —
+/// it self-heals — which is why it is pinned.
+#[test]
+fn a_rollback_frame_is_the_base_the_next_delta_names() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
+    for tick in 0..3u64 {
+        world.header.tick = tick;
+        world.header.population_count = tick as u32;
+        history.update(world.clone());
+    }
+
+    let entry = history.entry(1).expect("a ring entry per tick");
+    let stamped_when_originally_published = entry.snapshot.header.frame_seq;
+    history.reset_to_entry(&entry);
+    let broadcast = history.publish_full_frame(&entry);
+    let broadcast_seq = frame_seq_on_the_wire(&broadcast);
+
+    assert!(
+        broadcast_seq > stamped_when_originally_published,
+        "the rollback frame must claim a fresh publication number ({broadcast_seq}), not reuse the \
+         one the ring entry was originally published under \
+         ({stamped_when_originally_published}) — the counter is monotonic per world and is never \
+         rewound"
+    );
+
+    // The next turn after the rollback.
+    world.header.tick = 2;
+    world.header.population_count = 99;
+    history.update(world.clone());
+    let delta = history.last_delta.as_ref().expect("a delta per turn");
+    assert_eq!(
+        delta.header.base_frame_seq, broadcast_seq,
+        "the next delta must name the rollback frame as its base — the client applied that frame, \
+         so any other base_frame_seq makes it drop this delta and ask for a resync"
+    );
+}
+
+/// **A resync answer claims a live sequence number too — and this one cannot self-heal.**
+///
+/// Resync is the *recovery* path: the client asks for it precisely because it could not apply a
+/// delta. If the answer carries a stale number the client baselines behind the server, the next
+/// delta is rejected, and it resyncs again — the mechanism meant to close a sequence gap opens one.
+///
+/// The window pinned here is a **mid-tick recapture**, which fires on every world-mutating command.
+/// A recapture claims a sequence number and refreshes `history.back().snapshot`, but **not** that
+/// entry's cached `encoded_snapshot_flat` — so the world's first ring entry still holds bytes
+/// stamped with the pre-recapture number, and republishing them as stored is exactly the bug. (An
+/// auxiliary delta — `update_axis_bias` and friends — opens the same window without touching the
+/// ring at all.)
+#[test]
+fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
+    world.header.tick = 0;
+    // The world's first publication — the only one whose ring entry caches encoded flat bytes.
+    history.update(world.clone());
+
+    // A world-mutating command lands mid-tick: a publication, but not a new ring entry.
+    world.header.population_count = 42;
+    history.refresh_latest(world.clone());
+
+    let entry = history.latest_entry().expect("a world has been published");
+    let stored_on_the_entry = entry.snapshot.header.frame_seq;
+    let resync = history.publish_full_frame(&entry);
+    let resync_seq = frame_seq_on_the_wire(&resync);
+
+    assert!(
+        resync_seq > stored_on_the_entry,
+        "a resync answer must claim a LIVE publication number ({resync_seq}), never republish one \
+         stored on the ring entry ({stored_on_the_entry}) — the client baselines on this frame"
+    );
+
+    // The next turn after the resync.
+    world.header.tick = 1;
+    world.header.population_count = 99;
+    history.update(world.clone());
+    let delta = history.last_delta.as_ref().expect("a delta per turn");
+    assert_eq!(
+        delta.header.base_frame_seq, resync_seq,
+        "the next delta must name the resync frame as its base — otherwise the client drops it and \
+         resyncs again, and the recovery path never converges"
     );
 }
 

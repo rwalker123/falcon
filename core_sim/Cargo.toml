@@ -48,6 +48,9 @@ bitflags = { version = "2.4", features = ["serde"] }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1.36"
+# Tests that assert on what the CLIENT receives decode the published bytes rather than the
+# in-process struct — see `tests/delta_streaming.rs`.
+shadow_scale_flatbuffers = { path = "../shadow_scale_flatbuffers" }
 
 [[bench]]
 name = "turn_bench"

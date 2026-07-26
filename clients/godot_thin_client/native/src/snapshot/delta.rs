@@ -134,8 +134,15 @@ impl DeltaAggregator {
     /// Patch the tile-derived channels at one changed tile.
     ///
     /// Graze and forage capacity ride `TileState` rather than a raster (an ungrazed turn then
-    /// costs zero delta bytes), so this is the only place a delta can move them. A tile outside
-    /// the seeded grid is ignored — see `RasterCache::index_of`.
+    /// costs zero delta bytes), so this is the only place a delta can move them.
+    ///
+    /// The grid stays exactly what [`Self::from_cache`] seeded — it is never grown here — so
+    /// `self.width` remains a valid stride into the capacity vectors cloned beside it. The
+    /// `x`/`y` and `idx` tests below are belt-and-braces rather than a live path: a differently
+    /// sized grid means the world was rebuilt, and `WorldCache::accepts` rejects a delta from a
+    /// different world epoch before this is reached. Were one to arrive anyway, its capacities
+    /// are dropped rather than written at a stride that no longer matches the buffers; the
+    /// temperature still lands in `tile_updates`, which is keyed by coordinate, not strided.
     pub(crate) fn update_tile(
         &mut self,
         x: u32,
@@ -144,8 +151,6 @@ impl DeltaAggregator {
         graze_capacity: f32,
         forage_capacity: f32,
     ) {
-        self.width = self.width.max(x + 1);
-        self.height = self.height.max(y + 1);
         self.tile_updates
             .insert((x, y), fixed64_to_f32(temperature));
         if x < self.width && y < self.height {

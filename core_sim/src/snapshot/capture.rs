@@ -130,13 +130,16 @@ impl StoredSnapshot {
         }
     }
 
-    /// The flat snapshot for this entry, encoding it if this turn did not.
-    ///
-    /// Rollback and the resync path need a full frame for an arbitrary ring entry, and under delta
-    /// streaming almost no entry carries one. Encoding on demand is right for both: they are rare,
-    /// and the alternative is paying for every entry to serve the few that are ever asked for —
-    /// exactly the dead work `.claude/rules/core_sim/turn-profiling.md` records being removed once
+    /// The flat snapshot for this entry, encoding it if this turn did not — under delta streaming
+    /// almost no entry carries one, and paying for every entry to serve the few ever asked for is
+    /// exactly the dead work `.claude/rules/core_sim/turn-profiling.md` records removing once
     /// already.
+    ///
+    /// **This is a read of stored bytes, not a publication, so no broadcast path may use it.** The
+    /// header here carries the sequence number this entry was published under, which goes stale the
+    /// moment anything else publishes. Rollback and `Command::Resync` — the two paths that used to
+    /// call it — go through [`SnapshotHistory::publish_full_frame`], which claims a live one. The
+    /// remaining callers are integration tests asserting on encoded content rather than on sequence.
     pub fn encode_flat(&self) -> Arc<Vec<u8>> {
         match self.encoded_snapshot_flat.as_ref() {
             Some(bytes) => Arc::clone(bytes),
@@ -966,6 +969,12 @@ impl SnapshotHistory {
         self.encoded_snapshot = Some(entry.encoded_snapshot.clone());
         self.encoded_delta = Some(entry.encoded_delta.clone());
         self.encoded_snapshot_flat = entry.encoded_snapshot_flat.clone();
+        // Defensive: a delta encoded against the baseline we just rewound past describes a
+        // transition that no longer happened, and it names a `base_frame_seq` the client can no
+        // longer be holding. No call site can reach it today — every `broadcast_latest` follows a
+        // `publish`, which overwrites this — but leaving a frame here that is only safe because of
+        // ordering elsewhere is a trap, and dropping it is free.
+        self.encoded_delta_flat = None;
 
         while let Some(back) = self.history.back() {
             if back.tick > entry.tick {
@@ -974,6 +983,49 @@ impl SnapshotHistory {
                 break;
             }
         }
+    }
+
+    /// Publish `entry` as a full flat frame, **claiming a fresh publication sequence number** for it
+    /// exactly as any other publication does.
+    ///
+    /// Two callers, and both re-baseline the client on a whole world: **rollback** (the world moved
+    /// backwards) and **`Command::Resync`** (the client could not apply a delta and asked for a
+    /// complete world instead).
+    ///
+    /// **Neither may reuse a number stored on the ring entry.** The counter is deliberately never
+    /// rewound — it numbers publications, not ticks, and replaying a number would make two different
+    /// frames indistinguishable to the client. A frame stamped with a *stale* number leaves the
+    /// client baselined behind the server: the next `next_publication` names the current number as
+    /// its base, `WorldCache::accepts` rejects that delta, and the client asks for a resync. Stamping
+    /// a live number makes the client's applied seq equal the server's current one, which is exactly
+    /// what the next delta's `base_frame_seq` will name.
+    ///
+    /// It matters most on the **resync** path, because resync is the *recovery* path: a resync answer
+    /// carrying a stale number opens the very sequence gap it was sent to close, and the client can
+    /// only heal once some later publication refreshes the ring entry. The entry's stored numbers go
+    /// stale in two ways — a mid-tick recapture refreshes `history.back().snapshot` but **not** its
+    /// cached `encoded_snapshot_flat`, and an auxiliary delta (`update_axis_bias` and friends) claims
+    /// a sequence number without touching the ring at all.
+    ///
+    /// `base_frame_seq` stays `0`: a full snapshot names no base, matching the baseline path.
+    ///
+    /// The stored `encoded_snapshot_flat`, if the entry had one, cannot be reused — its header
+    /// carries the old number — so this always re-encodes.
+    pub fn publish_full_frame(&mut self, entry: &StoredSnapshot) -> Arc<Vec<u8>> {
+        let (frame_seq, _base_frame_seq) = self.next_publication();
+        let mut snapshot = entry.snapshot.as_ref().clone();
+        snapshot.header.frame_seq = frame_seq;
+        snapshot.header.base_frame_seq = 0;
+        let encoded = {
+            let _s = crate::turn_profile::scope("encode.flat_snapshot");
+            Arc::new(encode_snapshot_flatbuffer(&snapshot))
+        };
+        // This IS the latest flat frame for the world now, and it is the only encoding of it that
+        // carries the live sequence number — so anything that later reaches for "the newest full
+        // frame" (`broadcast_latest`) sends this one rather than the entry's stale-seq bytes.
+        self.last_snapshot = Some(Arc::new(snapshot));
+        self.encoded_snapshot_flat = Some(encoded.clone());
+        encoded
     }
 
     pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<EncodedBuffers> {

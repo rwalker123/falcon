@@ -378,11 +378,15 @@ fn main() {
             // server never volunteers a frame to a connecting client (it might belong to a world
             // that client did not ask for), but answering a request cannot surprise anyone, and the
             // `worldEpoch` on the frame still lets the client reject a world it did not want.
+            //
+            // It republishes through `publish_full_frame` rather than encoding the ring entry as
+            // stored, because the answer must carry a LIVE sequence number: resync is the recovery
+            // path, so a stale number here reopens the sequence gap the client asked us to close.
             Command::Resync => {
-                let history = app.world.resource::<SnapshotHistory>();
+                let mut history = app.world.resource_mut::<SnapshotHistory>();
                 match history.latest_entry() {
                     Some(entry) => {
-                        let bytes = entry.encode_flat();
+                        let bytes = history.publish_full_frame(&entry);
                         flat_server.broadcast(bytes.as_ref());
                         info!(
                             target: "shadow_scale::server",
@@ -5715,10 +5719,14 @@ fn handle_rollback(
         let mut tick_res = app.world.resource_mut::<SimulationTick>();
         tick_res.0 = tick;
     }
-    {
+    // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand (under
+    // delta streaming a ring entry almost never carries one) and stamped with a FRESH publication
+    // sequence number, so the client's applied seq matches what the next delta names as its base.
+    let flat_frame = {
         let mut history = app.world.resource_mut::<SnapshotHistory>();
         history.reset_to_entry(&entry);
-    }
+        history.publish_full_frame(&entry)
+    };
 
     warn!(
         target: "shadow_scale::server",
@@ -5732,9 +5740,7 @@ fn handle_rollback(
     }
     {
         let server = snapshot_server_flat;
-        // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand,
-        // since under delta streaming a ring entry almost never carries one.
-        server.broadcast(entry.encode_flat().as_ref());
+        server.broadcast(flat_frame.as_ref());
     }
 }
 
