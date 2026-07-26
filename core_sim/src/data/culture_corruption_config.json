@@ -22,7 +22,8 @@
         "hard_threshold": 1.2,
         "soft_trigger_ticks": 1,
         "hard_trigger_ticks": 1
-      }
+      },
+      "resonance_response": 0.08
     },
     "drift_warning": {
       "severity_min": 0.0,

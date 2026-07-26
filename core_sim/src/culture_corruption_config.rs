@@ -101,6 +101,18 @@ pub struct CulturePropagationSettings {
     global: CultureScopePropagation,
     regional: CultureScopePropagation,
     local: CultureScopePropagation,
+    /// How fast culture responds to influencer resonance, as the per-turn rate of a low-pass
+    /// filter on the resonance vector (`smoothed += (raw - smoothed) * rate`).
+    ///
+    /// **This is the "culture is slow" dial, and it is a rate, not a scale.** Scaling the
+    /// resonance down would cap how far influencers can ever move a culture; smoothing caps only
+    /// how fast. Sustained pressure still reaches full magnitude — it takes roughly `1/rate` turns
+    /// to get there — while turn-to-turn churn in who is influential is damped away.
+    ///
+    /// Measured motivation (#386, `docs/plan_delta_streaming.md` §3.6): with the resonance applied
+    /// raw, a local layer's traits moved up to **0.12 per turn** against magnitudes of ~0.05-0.13,
+    /// so a trait could invert in a couple of turns and no layer ever settled.
+    resonance_response: f32,
 }
 
 impl CulturePropagationSettings {
@@ -114,6 +126,10 @@ impl CulturePropagationSettings {
 
     pub fn local(&self) -> &CultureScopePropagation {
         &self.local
+    }
+
+    pub fn resonance_response(&self) -> f32 {
+        self.resonance_response
     }
 }
 
@@ -141,9 +157,13 @@ impl Default for CulturePropagationSettings {
                 soft_trigger_ticks: 1,
                 hard_trigger_ticks: 1,
             },
+            resonance_response: DEFAULT_RESONANCE_RESPONSE,
         }
     }
 }
+
+/// Culture reaches a sustained influencer pressure over roughly `1 / 0.08` = ~12 turns.
+pub const DEFAULT_RESONANCE_RESPONSE: f32 = 0.08;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

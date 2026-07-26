@@ -28,10 +28,13 @@ const EXPECTED_STAGES: [&str; 11] = [
 ///
 /// **Every encode still on the turn path is listed** — this is "the live encodes", not an arbitrary
 /// subset, so an encode that survives a future pass belongs here and one that is genuinely retired
-/// comes out. `encode.flat_delta` is absent because it was removed as dead work: nothing ever read
-/// the stored flat delta (the turn path broadcasts the bincode delta and the flat *snapshot*, and
-/// the on-demand feed paths build their own), so it is built only there now — see
-/// `StoredSnapshot::new`.
+/// comes out.
+///
+/// **`encode.flat_snapshot` is absent, and `encode.flat_delta` replaced it** (#386). The client
+/// stream now carries a delta per turn; a full flat snapshot is encoded only for a world's first
+/// publication, for rollback, and on a `resync` request — none of which is a steady-state turn.
+/// This test failing with "encode.flat_snapshot vanished" is exactly the alarm working: it is the
+/// only thing that would have caught the turn path silently losing an encode.
 const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
     "snapshot.build",
     "snapshot.build.tiles",
@@ -43,7 +46,7 @@ const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
     "snapshot.history.diff",
     "encode.bincode_snapshot",
     "encode.bincode_delta",
-    "encode.flat_snapshot",
+    "encode.flat_delta",
 ];
 
 #[test]

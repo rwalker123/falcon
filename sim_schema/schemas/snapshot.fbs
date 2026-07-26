@@ -282,13 +282,25 @@ table CultureLayerState {
   owner:ulong;
   parent:uint;
   scope:CultureLayerScope;
-  traits:[CultureTraitEntry];
-  divergence:long;
-  softThreshold:long;
-  hardThreshold:long;
-  ticksAboveSoft:ushort;
-  ticksAboveHard:ushort;
-  lastUpdatedTick:ulong;
+  // RETIRED from the client stream (#386). `MapView` reads only this table's topology —
+  // id / owner / parent / scope — to walk the tree and resolve a tile's province. The 45 numbers
+  // below (15 axes x baseline/modifier/value, plus divergence and the thresholds) were read by
+  // nothing but the Inspector's Culture tab, and `lastUpdatedTick` by nothing at all.
+  //
+  // They were the largest single item on the wire: culture layers outnumber tiles (4201 vs 4160)
+  // and each of those numbers drifts ~0.0025/turn, so across 45 of them something crossed a
+  // hundredths boundary every turn and no quantisation could ever settle the layer. Dropping them
+  // took `encode.flat_delta` from 5.5 ms to 0.62 ms.
+  //
+  // Deprecated rather than deleted because slots are positional. The values still ride the bincode
+  // snapshot, which is what rollback restores from.
+  traits:[CultureTraitEntry] (deprecated);
+  divergence:long (deprecated);
+  softThreshold:long (deprecated);
+  hardThreshold:long (deprecated);
+  ticksAboveSoft:ushort (deprecated);
+  ticksAboveHard:ushort (deprecated);
+  lastUpdatedTick:ulong (deprecated);
 }
 
 table CultureTensionState {
@@ -384,7 +396,11 @@ table CrisisGaugeState {
   kind:CrisisMetricKind;
   raw:float;
   ema:float;
-  trend5t:float;
+  // Change in `raw` over the trend window, extrapolated to a PER-100-TICK rate so the number
+  // reads at two decimals like every other value on the wire (#386). Previously the raw
+  // per-window difference, which for a slow gauge was ~0.0002 — indistinguishable from zero at
+  // the precision anything downstream compares at. Informational only: no threshold reads it.
+  trendPer100t:float;
   warnThreshold:float;
   criticalThreshold:float;
   lastUpdatedTick:ulong;
@@ -418,7 +434,14 @@ table TileState {
   x:uint;
   y:uint;
   element:ubyte;
-  mass:long;
+  // RETIRED from the client stream (#386). `mass` drifts every turn on every tile — including
+  // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
+  // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
+  // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
+  // "Mass: %.1f". It survives on the BINCODE snapshot (`TileState.mass`), which rollback needs to
+  // rebuild the ECS `Tile` — the same split the herd/forage/graze registries already use.
+  // Deprecated rather than deleted because slots are positional.
+  mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
   terrainTags:ushort;
@@ -1619,6 +1642,15 @@ table SnapshotHeader {
   // for every snapshot within a given world; a client uses it to tell a freshly-generated world
   // from a stale one the server replays to reconnecting subscribers. Appended field.
   worldEpoch:uint = 0;
+  // Monotonic PUBLICATION counter, reset with worldEpoch. Counts frames, not ticks:
+  // recapture_and_broadcast publishes mid-tick on every world-mutating command, so several
+  // frames share a tick and tick-continuity cannot detect a gap. Appended field.
+  frameSeq:ulong = 0;
+  // Delta only: the frameSeq this delta applies to. A client applies a delta iff baseFrameSeq
+  // equals the frameSeq it last applied, and otherwise drops the frame and asks for a resync
+  // (docs/plan_delta_streaming.md §3.3). Unset (0) on a full snapshot, which is always
+  // applicable. Appended field.
+  baseFrameSeq:ulong = 0;
 }
 
 table KnownTechFragment {
@@ -1844,7 +1876,7 @@ table VoiceMediumState {
 }
 
 table CampaignSection {
-  campaignProfiles:[CampaignProfile]; // snapshot-only
+  campaignProfiles:[CampaignProfile];
   commandEvents:[CommandEventState];
   victory:VictoryState;
   pendingForks:[PendingForksState];

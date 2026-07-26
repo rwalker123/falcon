@@ -177,7 +177,7 @@
         "last_updated_tick": 127,
         "raw": 67.120003,
         "stale_ticks": 155,
-        "trend_5t": 41.490002,
+        "trend_per_100t": 28.139999,
         "warn_threshold": 56.970001
       },
       {
@@ -199,7 +199,7 @@
         "last_updated_tick": 144,
         "raw": 34.32,
         "stale_ticks": 200,
-        "trend_5t": 72.309998,
+        "trend_per_100t": 8.62,
         "warn_threshold": 50.380001
       }
     ],
@@ -208,64 +208,20 @@
   },
   "culture_layers": [
     {
-      "divergence": 0.000067,
-      "hard_threshold": 0.000106,
       "id": 94,
-      "last_updated_tick": 5,
       "owner": "0000000000000068",
       "owner_value": 104,
       "parent": 129,
       "scope": "Regional",
-      "scope_label": "Regional",
-      "soft_threshold": 0.000145,
-      "ticks_above_hard": 193,
-      "ticks_above_soft": 74,
-      "traits": [
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000171,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000169,
-          "value": 0.000115
-        },
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000146,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000012,
-          "value": 0.000016
-        }
-      ]
+      "scope_label": "Regional"
     },
     {
-      "divergence": 0.000166,
-      "hard_threshold": 0.000019,
       "id": 163,
-      "last_updated_tick": 174,
       "owner": "00000000000000BB",
       "owner_value": 187,
       "parent": 80,
       "scope": "Regional",
-      "scope_label": "Regional",
-      "soft_threshold": 0.00008,
-      "ticks_above_hard": 100,
-      "ticks_above_soft": 103,
-      "traits": [
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.00013,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000004,
-          "value": 0.000176
-        },
-        {
-          "axis": "OpenClosed",
-          "baseline": 0.000123,
-          "label": "Open ↔ Closed",
-          "modifier": 0.000057,
-          "value": 0.000051
-        }
-      ]
+      "scope_label": "Regional"
     }
   ],
   "culture_tensions": [
@@ -513,6 +469,8 @@
       "y": 1
     }
   ],
+  "frame_kind": "snapshot",
+  "frame_seq": 84,
   "generations": [
     {
       "bias_agency": 0.000034,
@@ -1825,7 +1783,6 @@
       "graze_biomass": 61.889999,
       "graze_capacity": 65.980003,
       "habitability": 0.000015,
-      "mass": 0.000187,
       "mountain_kind": 1,
       "mountain_relief": 9.83,
       "river_channel": 81,
@@ -1846,7 +1803,6 @@
       "graze_biomass": 81.050003,
       "graze_capacity": 101.480003,
       "habitability": 0.000094,
-      "mass": 0.000086,
       "mountain_kind": 1,
       "mountain_relief": 42.299999,
       "river_channel": 170,
@@ -1867,7 +1823,6 @@
       "graze_biomass": 8.22,
       "graze_capacity": 7.67,
       "habitability": 0.000069,
-      "mass": 0.000137,
       "mountain_kind": 1,
       "mountain_relief": 80.540001,
       "river_channel": 55,
@@ -1888,7 +1843,6 @@
       "graze_biomass": 95.989998,
       "graze_capacity": 93.050003,
       "habitability": 0.0001,
-      "mass": 0.000012,
       "mountain_kind": 1,
       "mountain_relief": 85.029999,
       "river_channel": 88,
@@ -1909,7 +1863,6 @@
       "graze_biomass": 110.269997,
       "graze_capacity": 54.68,
       "habitability": 0.000115,
-      "mass": 0.000119,
       "mountain_kind": 1,
       "mountain_relief": 15.94,
       "river_channel": 173,
@@ -1930,7 +1883,6 @@
       "graze_biomass": 44.48,
       "graze_capacity": 6.99,
       "habitability": 0.000178,
-      "mass": 0.00009,
       "mountain_kind": 1,
       "mountain_relief": 58.279999,
       "river_channel": 190,
@@ -1951,7 +1903,6 @@
       "graze_biomass": 110.989998,
       "graze_capacity": 12.02,
       "habitability": 0.000161,
-      "mass": 0.000085,
       "mountain_kind": 1,
       "mountain_relief": 53.02,
       "river_channel": 171,
@@ -1972,7 +1923,6 @@
       "graze_biomass": 16.450001,
       "graze_capacity": 109.639999,
       "habitability": 0.000008,
-      "mass": 0.000104,
       "mountain_kind": 1,
       "mountain_relief": 37.919998,
       "river_channel": 36,
@@ -1993,7 +1943,6 @@
       "graze_biomass": 5.46,
       "graze_capacity": 2.85,
       "habitability": 0.000087,
-      "mass": 0.000195,
       "mountain_kind": 1,
       "mountain_relief": 9.56,
       "river_channel": 113,
@@ -2014,7 +1963,6 @@
       "graze_biomass": 82.739998,
       "graze_capacity": 108.610001,
       "habitability": 0.000198,
-      "mass": 0.000134,
       "mountain_kind": 1,
       "mountain_relief": 4.27,
       "river_channel": 50,
@@ -2035,7 +1983,6 @@
       "graze_biomass": 59.52,
       "graze_capacity": 89.190002,
       "habitability": 0.00009,
-      "mass": 0.00017,
       "mountain_kind": 1,
       "mountain_relief": 14.48,
       "river_channel": 110,
@@ -2056,7 +2003,6 @@
       "graze_biomass": 87.830002,
       "graze_capacity": 54.779999,
       "habitability": 0.000187,
-      "mass": 0.000039,
       "mountain_kind": 1,
       "mountain_relief": 48.48,
       "river_channel": 197,

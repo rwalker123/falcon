@@ -63,7 +63,12 @@ pub(crate) fn serialize_knowledge_section_delta<'a>(
         .map(|telemetry| create_great_discovery_telemetry(builder, telemetry));
     let knowledge_ledger = create_knowledge_ledger(builder, &delta.knowledge_ledger);
     let removed_knowledge_ledger = builder.create_vector(&delta.removed_knowledge_ledger);
-    let knowledge_timeline = create_knowledge_timeline(builder, &delta.knowledge_timeline);
+    // Written only when the section changed, for the same reason as `cultureTensions`: an
+    // unconditional empty vector cannot be told apart from "the timeline just emptied".
+    let knowledge_timeline = delta
+        .knowledge_timeline
+        .as_ref()
+        .map(|events| create_knowledge_timeline(builder, events));
     let knowledge_metrics = delta
         .knowledge_metrics
         .as_ref()
@@ -81,7 +86,7 @@ pub(crate) fn serialize_knowledge_section_delta<'a>(
             greatDiscoveryProgress: Some(great_discovery_progress),
             greatDiscoveryTelemetry: great_discovery_telemetry,
             knowledgeLedger: Some(knowledge_ledger),
-            knowledgeTimeline: Some(knowledge_timeline),
+            knowledgeTimeline: knowledge_timeline,
             knowledgeMetrics: knowledge_metrics,
             discoveredSites: discovered_sites,
             discoveryProgress: Some(discovery_progress),

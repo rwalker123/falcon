@@ -88,6 +88,9 @@ fn build_snapshot_flatbuffer<'a>(
             wrapHorizontal: snapshot.header.wrap_horizontal,
             serverBuild: Some(server_build_fb),
             worldEpoch: snapshot.header.world_epoch,
+            frameSeq: snapshot.header.frame_seq,
+            // A full snapshot is applicable against any client state, so it names no base.
+            baseFrameSeq: 0,
         },
     );
 
@@ -161,6 +164,8 @@ fn build_delta_flatbuffer<'a>(
             wrapHorizontal: delta.header.wrap_horizontal,
             serverBuild: server_build_fb,
             worldEpoch: delta.header.world_epoch,
+            frameSeq: delta.header.frame_seq,
+            baseFrameSeq: delta.header.base_frame_seq,
         },
     );
 
@@ -248,4 +253,124 @@ pub(crate) fn create_float_raster<'a>(
             samples: Some(samples),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::culture::{CultureLayerScope, CultureTensionKind, CultureTensionState};
+    use crate::state::knowledge::{KnowledgeTimelineEventKind, KnowledgeTimelineEventState};
+
+    fn tension() -> CultureTensionState {
+        CultureTensionState {
+            layer_id: 1,
+            scope: CultureLayerScope::Global,
+            owner: 1,
+            severity: 1,
+            timer: 1,
+            kind: CultureTensionKind::DriftWarning,
+        }
+    }
+
+    fn timeline_event() -> KnowledgeTimelineEventState {
+        KnowledgeTimelineEventState {
+            tick: 1,
+            kind: KnowledgeTimelineEventKind::LeakProgress,
+            source_faction: 1,
+            delta_percent: 1,
+            note_handle: None,
+        }
+    }
+
+    /// **The whole-section fields must be ABSENT on the wire when unchanged.**
+    ///
+    /// `cultureTensions` and `knowledgeTimeline` carry no removal vector, so an unconditionally
+    /// written (possibly empty) vector makes "unchanged" and "the last row just went away"
+    /// byte-identical and the receiver has to guess. Asserted on the encoded envelope rather than
+    /// the `WorldDelta` struct because it is the *encoding* that has to preserve the distinction —
+    /// the `Option` is worth nothing if the codec flattens it back out.
+    #[test]
+    fn an_unchanged_whole_section_is_absent_from_the_encoded_delta() {
+        let bytes = encode_delta_flatbuffer(&WorldDelta::default());
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable delta envelope");
+        let delta = envelope.payload_as_delta().expect("a delta payload");
+
+        assert!(
+            delta
+                .culture()
+                .expect("a culture section")
+                .cultureTensions()
+                .is_none(),
+            "an unchanged tension roster must not be written at all"
+        );
+        assert!(
+            delta
+                .knowledge()
+                .expect("a knowledge section")
+                .knowledgeTimeline()
+                .is_none(),
+            "an unchanged knowledge timeline must not be written at all"
+        );
+    }
+
+    /// …and PRESENT, empty, when the section really did empty out — the case a receiver has to be
+    /// able to tell apart from the one above.
+    #[test]
+    fn an_emptied_whole_section_is_present_but_empty_in_the_encoded_delta() {
+        let emptied = WorldDelta {
+            culture_tensions: Some(Vec::new()),
+            knowledge_timeline: Some(Vec::new()),
+            ..Default::default()
+        };
+        let bytes = encode_delta_flatbuffer(&emptied);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable delta envelope");
+        let delta = envelope.payload_as_delta().expect("a delta payload");
+
+        let tensions = delta
+            .culture()
+            .expect("a culture section")
+            .cultureTensions()
+            .expect("an emptied tension roster must still be written");
+        assert_eq!(tensions.len(), 0);
+
+        let timeline = delta
+            .knowledge()
+            .expect("a knowledge section")
+            .knowledgeTimeline()
+            .expect("an emptied knowledge timeline must still be written");
+        assert_eq!(timeline.len(), 0);
+    }
+
+    /// A populated section rides through unchanged — the guard above must not be satisfiable by
+    /// simply never writing the vector.
+    #[test]
+    fn a_changed_whole_section_carries_its_rows_in_the_encoded_delta() {
+        let changed = WorldDelta {
+            culture_tensions: Some(vec![tension()]),
+            knowledge_timeline: Some(vec![timeline_event()]),
+            ..Default::default()
+        };
+        let bytes = encode_delta_flatbuffer(&changed);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable delta envelope");
+        let delta = envelope.payload_as_delta().expect("a delta payload");
+
+        assert_eq!(
+            delta
+                .culture()
+                .expect("a culture section")
+                .cultureTensions()
+                .expect("a changed tension roster is written")
+                .len(),
+            1
+        );
+        assert_eq!(
+            delta
+                .knowledge()
+                .expect("a knowledge section")
+                .knowledgeTimeline()
+                .expect("a changed knowledge timeline is written")
+                .len(),
+            1
+        );
+    }
 }

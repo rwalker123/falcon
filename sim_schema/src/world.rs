@@ -55,6 +55,16 @@ pub struct SnapshotHeader {
     /// snapshot server replays to reconnecting subscribers. Set by core_sim.
     #[serde(default)]
     pub world_epoch: u32,
+    /// Monotonic **publication** counter, reset with `world_epoch` (see `snapshot.fbs`). Counts
+    /// frames, not ticks — `recapture_and_broadcast` publishes mid-tick on every world-mutating
+    /// command, so several frames share a tick and tick-continuity cannot detect a gap. Set by
+    /// core_sim.
+    #[serde(default)]
+    pub frame_seq: u64,
+    /// Delta only: the [`Self::frame_seq`] this delta applies to. `0` on a full snapshot, which is
+    /// always applicable. See `docs/plan_delta_streaming.md` §3.3 for the client's contract.
+    #[serde(default)]
+    pub base_frame_seq: u64,
 }
 
 impl SnapshotHeader {
@@ -80,6 +90,8 @@ impl SnapshotHeader {
             wrap_horizontal: false,
             server_build: String::new(),
             world_epoch: 0,
+            frame_seq: 0,
+            base_frame_seq: 0,
         }
     }
 
@@ -228,10 +240,23 @@ pub struct WorldDelta {
     pub victory: Option<VictorySnapshotState>,
     pub capability_flags: Option<u32>,
     pub command_events: Option<Vec<CommandEventState>>,
+    /// The campaign profile roster. `None` means unchanged.
+    ///
+    /// This was absent from `WorldDelta` entirely until delta streaming — harmless while the
+    /// client only ever saw the field on a full snapshot, and a silent hole the moment deltas
+    /// became the steady-state carrier (`docs/plan_delta_streaming.md` §2.4). The FlatBuffers
+    /// slot always existed on the shared `CampaignSection`; only this side and the codec were
+    /// missing.
+    pub campaign_profiles: Option<Vec<CampaignProfileState>>,
     pub pending_forks: Option<Vec<PendingForksState>>,
     pub stance_axes: Option<Vec<StanceState>>,
     pub voice_medium: Option<Vec<VoiceMediumState>>,
-    pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
+    /// The knowledge timeline, sent as a whole section. `None` means unchanged.
+    ///
+    /// Not a diff list: it carries no `removed_*` counterpart and the capture path replaces it
+    /// wholesale, so `Some(vec![])` has to be able to say "the timeline is now empty" — see
+    /// [`WorldDelta::culture_tensions`] for the bug a bare `Vec` caused on the sibling field.
+    pub knowledge_timeline: Option<Vec<KnowledgeTimelineEventState>>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
     pub herds: Option<Vec<HerdTelemetryState>>,
@@ -269,7 +294,15 @@ pub struct WorldDelta {
     pub terrain: Option<TerrainOverlayState>,
     pub culture_layers: Vec<CultureLayerState>,
     pub removed_culture_layers: Vec<u32>,
-    pub culture_tensions: Vec<CultureTensionState>,
+    /// The culture-tension roster, sent as a whole section. `None` means unchanged.
+    ///
+    /// This is `Option` rather than a bare `Vec` because tensions have no `removed_culture_tensions`
+    /// counterpart, so the list is only ever replaced wholesale. While it was a bare `Vec`, "nothing
+    /// changed" and "the last tension just resolved" were the same bytes on the wire and the client
+    /// had to guess — reading it as a replacement blanked the tension list on every delta, reading it
+    /// as unchanged left a genuinely-emptied list stale until the next full snapshot. The codec now
+    /// writes the FlatBuffers vector only for `Some`, so absence carries the distinction.
+    pub culture_tensions: Option<Vec<CultureTensionState>>,
     pub discovery_progress: Vec<DiscoveryProgressEntry>,
 }
 

@@ -60,43 +60,45 @@ must run while hidden anyway.
 
 Three clauses, and the third is the one that bites:
 
-1. **Only a full snapshot is skippable.** A delta describes a change against state the panels
-   already hold, and nothing later reconstructs a dropped one — so a delta is applied in full,
-   hidden or not. The live path is the fast one because the client consumes the full-snapshot
-   stream (`.claude/rules/core_sim/ports.md` — the stream port is `snapshot_flat`).
+1. **EVERY frame is skippable — and that is a reversal, recorded here so the old reasoning is not
+   re-derived from first principles.** The rule used to be *only a full snapshot is skippable*,
+   because a delta described a change against state the panels already held and nothing later could
+   reconstruct a dropped one. **Delta streaming (#386) inverted the premise**: the native decoder
+   maintains a cached world and republishes it **whole** on every frame — base keys patched from
+   each delta's `*_updates` — so a merged delta frame is byte-equivalent to a full snapshot of the
+   same state and the NEXT frame reconstructs anything dropped. Self-containment, not payload kind,
+   is what the skip ever depended on; now both kinds have it.
 
-   **…but applying a delta does not discharge the catch-up.** `_hidden_snapshot_pending` means
-   *a full snapshot has arrived that the panels have not ingested*, so *only* the full-snapshot
-   path may set or clear it. The first version of this gate cleared it on every non-skipped
-   update, hidden deltas included, which broke the sequence **full-while-hidden →
-   delta-while-hidden → `I`**: the replay was declared complete and the panels opened holding
-   only what the delta carried — precisely the stale-when-opened failure clause 2 exists to
-   prevent. It is reachable live, not theoretical: `Main._snapshot_is_delta` routes the server's
-   between-turn on-demand feeds (`update_influencers` / `update_axis_bias` /
-   `update_command_events`) to `update_delta`. It self-heals on the next turn's full snapshot,
-   which is why neither review nor the first guard harness caught it — the harness fed no deltas.
-   `inspector_hidden_guard` case 5 now pins it, with roster sizes chosen so replay (5) and
-   no-replay (4) cannot coincide.
+   **The skip and the decoder's base-key patching are ONE contract.** If merged frames ever stop
+   being complete, this gate silently serves a stale panel. The completeness is pinned by
+   `decode_guard`'s section-cache assertions (`.claude/rules/client/native-extension.md`), and it is
+   already a client-wide invariant — `MapView.display_snapshot` reads `tiles` / `populations` /
+   `culture_layers` straight off the same merged frame every turn. `Main._apply_snapshot` is the
+   only live caller and hands the identical dict to `update_delta` and `update_snapshot`, so there
+   is no second, thinner producer to worry about. **A partial frame is still unsafe to cache and
+   replay — it is simply no longer producible**; if some path starts handing `update_delta` one
+   again, revert this skip with it rather than patching around it.
 
-   **Known residual, accepted — and it expires with #386.** The replay rebuilds panels from the
-   cached *full* snapshot, so a delta that arrived after it is overwritten and its sub-turn
-   changes are lost until the next full snapshot. Strictly better than the bug it replaced (which
-   lost the entire full snapshot), and today it self-heals within one turn because full snapshots
-   arrive every turn.
+   Measured: the hidden fan-out was 16–30 ms/turn once deltas became the steady-state carrier, ~60 %
+   of the client's `apply`. The old gate skipped only full snapshots, which by then arrived once per
+   world — so it had quietly stopped working.
 
-   **That last clause is the load-bearing one.** This whole gate assumes deltas are rare. Under
-   #386 (client consumes a delta stream) full snapshots become rare instead — connect, epoch
-   change, rollback — so the lossy window stretches to the gap between them, *and* "always apply
-   deltas in full" means a hidden Inspector resumes fanning out every turn, giving back most of
-   what the gate saves.
+   **…but applying a frame does not discharge the catch-up.** `_hidden_snapshot_pending` means
+   *a frame has arrived that the panels have not ingested*, so it is set whenever one is skipped and
+   cleared only when one is actually fanned out. The first version of this gate cleared it on every
+   non-skipped update, hidden deltas included, which broke the sequence **full-while-hidden →
+   delta-while-hidden → `I`**: the replay was declared complete and the panels opened holding only
+   what the delta carried — precisely the stale-when-opened failure clause 2 exists to prevent. It
+   self-heals on the next turn, which is why neither review nor the first guard harness caught it —
+   that harness fed no deltas. `inspector_hidden_guard` case 5 pins it, now with THREE distinct
+   roster sizes so "catch-up never ran" (3), "catch-up replayed the older frame" (5) and "correct"
+   (6) are all distinguishable.
 
-   **This is explicitly NOT a reason to hold up #386** — see the banner at the top of this file;
-   the Inspector is expendable and #386 says so in as many words. If the panel survives in
-   something like its current shape, both problems have the same answer, and it is the right design
-   under delta streaming anyway: **queue deltas while hidden and replay `cached full + queued
-   deltas in order` on show**, with a capped queue falling back to requesting a full snapshot.
-   Recorded as the eventual fix, not as a prerequisite. Either way, do not reason about this
-   section without checking whether #386 has landed.
+   **The residual loss this used to carry is gone.** While the replay rebuilt panels from the cached
+   *full* snapshot, a delta arriving after it was overwritten and its sub-turn changes lost until
+   the next full snapshot; the recorded eventual fix was to queue deltas while hidden and replay
+   `cached full + queued deltas in order`. Neither is needed: `_cached_snapshot` holds the newest
+   frame of either kind, and replaying one merged frame *is* the whole state.
 2. **Catch up on show.** `set_panel_visible(false→true)` replays the cached latest snapshot. The
    cache holds it **by reference** — deep-copying would cost exactly the work the gate saves, and
    the decoder builds a fresh tree per frame that no consumer mutates.

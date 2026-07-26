@@ -189,7 +189,7 @@ fn crisis_gauge_to_dict(gauge: fb::CrisisGaugeState<'_>) -> VarDictionary {
     let _ = dict.insert("label", crisis_metric_label(kind));
     let _ = dict.insert("raw", gauge.raw());
     let _ = dict.insert("ema", gauge.ema());
-    let _ = dict.insert("trend_5t", gauge.trend5t());
+    let _ = dict.insert("trend_per_100t", gauge.trendPer100t());
     let _ = dict.insert("warn_threshold", gauge.warnThreshold());
     let _ = dict.insert("critical_threshold", gauge.criticalThreshold());
     let _ = dict.insert("last_updated_tick", gauge.lastUpdatedTick() as i64);

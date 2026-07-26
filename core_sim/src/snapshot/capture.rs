@@ -90,7 +90,8 @@ pub struct StoredSnapshot {
     pub delta: Arc<WorldDelta>,
     pub encoded_snapshot: Arc<Vec<u8>>,
     pub encoded_delta: Arc<Vec<u8>>,
-    pub encoded_snapshot_flat: Arc<Vec<u8>>,
+    /// `None` on every turn but the world's first — see [`StoredSnapshot::encode_flat`].
+    pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
 }
 
 impl StoredSnapshot {
@@ -103,7 +104,7 @@ impl StoredSnapshot {
     ///
     /// The three encodings that remain are profiled separately so the log says which costs what
     /// (see [`crate::turn_profile`]).
-    fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>) -> Self {
+    fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>, flat_snapshot: bool) -> Self {
         let encoded_snapshot = {
             let _s = crate::turn_profile::scope("encode.bincode_snapshot");
             Arc::new(encode_snapshot(snapshot.as_ref()).expect("snapshot serialization failed"))
@@ -112,10 +113,13 @@ impl StoredSnapshot {
             let _s = crate::turn_profile::scope("encode.bincode_delta");
             Arc::new(encode_delta(delta.as_ref()).expect("delta serialization failed"))
         };
-        let encoded_snapshot_flat = {
+        // Only the world's FIRST publication pays for a flat snapshot; every later turn broadcasts
+        // the flat delta instead. This is the 44%-of-a-turn line item from #384, and it is now the
+        // baseline's cost rather than every turn's.
+        let encoded_snapshot_flat = flat_snapshot.then(|| {
             let _s = crate::turn_profile::scope("encode.flat_snapshot");
             Arc::new(encode_snapshot_flatbuffer(snapshot.as_ref()))
-        };
+        });
         Self {
             tick: snapshot.header.tick,
             snapshot,
@@ -125,6 +129,31 @@ impl StoredSnapshot {
             encoded_snapshot_flat,
         }
     }
+
+    /// The flat snapshot for this entry, encoding it if this turn did not — under delta streaming
+    /// almost no entry carries one, and paying for every entry to serve the few ever asked for is
+    /// exactly the dead work `.claude/rules/core_sim/turn-profiling.md` records removing once
+    /// already.
+    ///
+    /// **This is a read of stored bytes, not a publication, so no broadcast path may use it.** The
+    /// header here carries the sequence number this entry was published under, which goes stale the
+    /// moment anything else publishes. Rollback and `Command::Resync` — the two paths that used to
+    /// call it — go through [`SnapshotHistory::publish_full_frame`], which claims a live one. The
+    /// remaining callers are integration tests asserting on encoded content rather than on sequence.
+    pub fn encode_flat(&self) -> Arc<Vec<u8>> {
+        match self.encoded_snapshot_flat.as_ref() {
+            Some(bytes) => Arc::clone(bytes),
+            None => Arc::new(encode_snapshot_flatbuffer(self.snapshot.as_ref())),
+        }
+    }
+}
+
+/// Which kind of publication a `publish` call is: a resolved turn, or a mid-tick recapture after a
+/// world-mutating command. They differ only in whether the baseline is committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Publication {
+    Turn,
+    Recapture,
 }
 
 #[derive(Resource)]
@@ -135,6 +164,12 @@ pub struct SnapshotHistory {
     pub encoded_snapshot: Option<Arc<Vec<u8>>>,
     pub encoded_delta: Option<Arc<Vec<u8>>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
+    /// The flat DELTA broadcast on the client's socket every turn after the first.
+    pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
+    /// `frameSeq` of the last frame published for this world. Fresh per world, because a rebuild
+    /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
+    /// "first publication" simply mean `frame_seq == 0`.
+    frame_seq: u64,
     tiles: HashMap<u64, TileState>,
     logistics: HashMap<u64, LogisticsLinkState>,
     trade_links: HashMap<u64, TradeLinkState>,
@@ -180,6 +215,7 @@ pub struct SnapshotHistory {
     demographics: Vec<SchemaPopulationDemographicsState>,
     forage_patches: Vec<ForagePatchState>,
     intensification_knowledge: Vec<IntensificationKnowledgeState>,
+    campaign_profiles: Vec<CampaignProfileState>,
     command_events: Vec<CommandEventState>,
     pending_forks: Vec<PendingForksState>,
     stance_axes: Vec<StanceState>,
@@ -204,6 +240,8 @@ impl SnapshotHistory {
             encoded_snapshot: None,
             encoded_delta: None,
             encoded_snapshot_flat: None,
+            encoded_delta_flat: None,
+            frame_seq: 0,
             tiles: HashMap::new(),
             logistics: HashMap::new(),
             trade_links: HashMap::new(),
@@ -247,6 +285,7 @@ impl SnapshotHistory {
             demographics: Vec::new(),
             forage_patches: Vec::new(),
             intensification_knowledge: Vec::new(),
+            campaign_profiles: Vec::new(),
             command_events: Vec::new(),
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
@@ -285,7 +324,32 @@ impl SnapshotHistory {
             .cloned()
     }
 
+    /// Publish a resolved TURN: diff against the committed baseline, broadcast the delta, commit
+    /// the new baseline and push a rollback ring entry.
     pub fn update(&mut self, snapshot: WorldSnapshot) {
+        self.publish(snapshot, Publication::Turn);
+    }
+
+    /// Publish a mid-tick RECAPTURE — a world-mutating command changed the world between turns.
+    ///
+    /// Same diff, but it deliberately does **not** commit the baseline or push a ring entry (the
+    /// rollback ring stays one-entry-per-tick). That is what makes these deltas *cumulative*: each
+    /// one is `baseline(last turn) → now`, so each is a superset of the last, applying them in
+    /// order is idempotent, and missing an intermediate one is harmless. It also means the next
+    /// turn's delta still carries everything the command changed.
+    ///
+    /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
+    /// assigning labor to three sources and moving a band paid four full encodes, which is the
+    /// cost this arc removed from the turn path re-entering by the side door.
+    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
+        self.publish(snapshot, Publication::Recapture);
+        match (self.encoded_delta.clone(), self.encoded_delta_flat.clone()) {
+            (Some(bincode), Some(flat)) => Some((bincode, flat)),
+            _ => None,
+        }
+    }
+
+    fn publish(&mut self, snapshot: WorldSnapshot, kind: Publication) {
         // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
         // the `diff_new`/`diff_removed` comparisons against last turn's indices.
         let diff_scope = crate::turn_profile::scope("snapshot.history.diff");
@@ -350,9 +414,9 @@ impl SnapshotHistory {
 
         let culture_tensions_state = snapshot.culture_tensions.clone();
         let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
-            Vec::new()
+            None
         } else {
-            culture_tensions_state.clone()
+            Some(culture_tensions_state.clone())
         };
 
         let terrain_state = snapshot.terrain.clone();
@@ -495,9 +559,9 @@ impl SnapshotHistory {
         };
 
         let knowledge_timeline_delta = if self.knowledge_timeline == snapshot.knowledge_timeline {
-            Vec::new()
+            None
         } else {
-            snapshot.knowledge_timeline.clone()
+            Some(snapshot.knowledge_timeline.clone())
         };
 
         let crisis_telemetry_state = snapshot.crisis_telemetry.clone();
@@ -557,6 +621,12 @@ impl SnapshotHistory {
             } else {
                 Some(intensification_knowledge_state.clone())
             };
+        let campaign_profiles_state = snapshot.campaign_profiles.clone();
+        let campaign_profiles_delta = if self.campaign_profiles == campaign_profiles_state {
+            None
+        } else {
+            Some(campaign_profiles_state.clone())
+        };
         let command_events_state = snapshot.command_events.clone();
         let command_events_delta = if self.command_events == command_events_state {
             None
@@ -600,9 +670,17 @@ impl SnapshotHistory {
             Some(food_modules_state.clone())
         };
 
+        // Tiles and culture layers diff on PUBLISHED state, and hand back the baseline to store —
+        // which keeps the last *published* value for anything judged unchanged, so the hundredths
+        // comparison is a deadband that accumulates rather than a mask that freezes. See
+        // `diff_new_tiles`.
+        let (tiles_sent, tiles_index) = diff_new_tiles(&self.tiles, tiles_index);
+        let (culture_layers_sent, culture_layers_index) =
+            diff_new_culture_layers(&self.culture_layers, culture_layers_index);
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
-            tiles: diff_new(&self.tiles, &tiles_index),
+            tiles: tiles_sent,
             removed_tiles: diff_removed(&self.tiles, &tiles_index),
             logistics: diff_new(&self.logistics, &logistics_index),
             removed_logistics: diff_removed(&self.logistics, &logistics_index),
@@ -625,6 +703,7 @@ impl SnapshotHistory {
             knowledge_metrics: knowledge_metrics_delta.clone(),
             victory: victory_delta.clone(),
             capability_flags: capability_flags_delta,
+            campaign_profiles: campaign_profiles_delta.clone(),
             command_events: command_events_delta.clone(),
             pending_forks: pending_forks_delta.clone(),
             stance_axes: stance_axes_delta.clone(),
@@ -657,7 +736,7 @@ impl SnapshotHistory {
             corruption_raster: corruption_raster_delta.clone(),
             culture_raster: culture_raster_delta.clone(),
             military_raster: military_raster_delta.clone(),
-            culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
+            culture_layers: culture_layers_sent,
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
             discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
@@ -667,9 +746,41 @@ impl SnapshotHistory {
 
         drop(diff_scope);
 
+        // Claim this frame's place in the publication sequence. `base_frame_seq == 0` means no
+        // frame has been published for this world yet, so this turn is the BASELINE and must go
+        // out as a full snapshot — a first-turn delta is not equivalent to one, because a field
+        // that happens to equal its default compares unchanged and is never sent.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let first_publication = base_frame_seq == 0;
+        let mut snapshot = snapshot;
+        snapshot.header.frame_seq = frame_seq;
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let snapshot_arc = Arc::new(snapshot);
         let delta_arc = Arc::new(delta);
-        let stored = StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone());
+        let stored =
+            StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone(), first_publication);
+        let encoded_delta_flat = {
+            let _s = crate::turn_profile::scope("encode.flat_delta");
+            Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
+        };
+
+        if kind == Publication::Recapture {
+            // Re-baseline the ring's CURRENT entry so a rollback to this tick restores the
+            // post-command world, then stop: no baseline commit, no new ring entry.
+            self.last_snapshot = Some(snapshot_arc);
+            self.last_delta = Some(delta_arc);
+            self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
+            self.encoded_delta = Some(stored.encoded_delta.clone());
+            self.encoded_snapshot_flat = None;
+            self.encoded_delta_flat = Some(encoded_delta_flat);
+            if let Some(back) = self.history.back_mut() {
+                back.snapshot = stored.snapshot.clone();
+                back.encoded_snapshot = stored.encoded_snapshot.clone();
+            }
+            return;
+        }
 
         self.tiles = tiles_index;
         self.logistics = logistics_index;
@@ -714,6 +825,7 @@ impl SnapshotHistory {
         self.demographics = demographics_state;
         self.forage_patches = forage_patches_state;
         self.intensification_knowledge = intensification_knowledge_state;
+        self.campaign_profiles = campaign_profiles_state;
         self.command_events = command_events_state;
         self.pending_forks = pending_forks_state;
         self.stance_axes = stance_axes_state;
@@ -724,9 +836,24 @@ impl SnapshotHistory {
         self.last_delta = Some(delta_arc);
         self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
         self.encoded_delta = Some(stored.encoded_delta.clone());
-        self.encoded_snapshot_flat = Some(stored.encoded_snapshot_flat.clone());
+        // `None` on every turn but the world's first, which is what makes `broadcast_latest`'s
+        // "full frame if there is one, else the delta" a statement of the publication rule rather
+        // than a preference — and what stops a later turn re-broadcasting a stale full snapshot.
+        self.encoded_snapshot_flat = stored.encoded_snapshot_flat.clone();
+        self.encoded_delta_flat = Some(encoded_delta_flat);
         self.history.push_back(stored);
         self.prune();
+    }
+
+    /// Claim the next publication sequence, returning `(frame_seq, base_frame_seq)`.
+    ///
+    /// Counts **publications, not ticks**: `recapture_and_broadcast` publishes mid-tick on every
+    /// world-mutating command, so several frames share a tick and tick-continuity could not detect
+    /// a gap (`docs/plan_delta_streaming.md` §3.1).
+    fn next_publication(&mut self) -> (u64, u64) {
+        let base = self.frame_seq;
+        self.frame_seq = base + 1;
+        (self.frame_seq, base)
     }
 
     pub fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
@@ -798,6 +925,7 @@ impl SnapshotHistory {
         self.demographics = entry.snapshot.demographics.clone();
         self.forage_patches = entry.snapshot.forage_patches.clone();
         self.intensification_knowledge = entry.snapshot.intensification_knowledge.clone();
+        self.campaign_profiles = entry.snapshot.campaign_profiles.clone();
         self.command_events = entry.snapshot.command_events.clone();
         self.pending_forks = entry.snapshot.pending_forks.clone();
         self.stance_axes = entry.snapshot.stance_axes.clone();
@@ -840,7 +968,13 @@ impl SnapshotHistory {
         self.last_delta = Some(entry.delta.clone());
         self.encoded_snapshot = Some(entry.encoded_snapshot.clone());
         self.encoded_delta = Some(entry.encoded_delta.clone());
-        self.encoded_snapshot_flat = Some(entry.encoded_snapshot_flat.clone());
+        self.encoded_snapshot_flat = entry.encoded_snapshot_flat.clone();
+        // Defensive: a delta encoded against the baseline we just rewound past describes a
+        // transition that no longer happened, and it names a `base_frame_seq` the client can no
+        // longer be holding. No call site can reach it today — every `broadcast_latest` follows a
+        // `publish`, which overwrites this — but leaving a frame here that is only safe because of
+        // ordering elsewhere is a trap, and dropping it is free.
+        self.encoded_delta_flat = None;
 
         while let Some(back) = self.history.back() {
             if back.tick > entry.tick {
@@ -849,6 +983,49 @@ impl SnapshotHistory {
                 break;
             }
         }
+    }
+
+    /// Publish `entry` as a full flat frame, **claiming a fresh publication sequence number** for it
+    /// exactly as any other publication does.
+    ///
+    /// Two callers, and both re-baseline the client on a whole world: **rollback** (the world moved
+    /// backwards) and **`Command::Resync`** (the client could not apply a delta and asked for a
+    /// complete world instead).
+    ///
+    /// **Neither may reuse a number stored on the ring entry.** The counter is deliberately never
+    /// rewound — it numbers publications, not ticks, and replaying a number would make two different
+    /// frames indistinguishable to the client. A frame stamped with a *stale* number leaves the
+    /// client baselined behind the server: the next `next_publication` names the current number as
+    /// its base, `WorldCache::accepts` rejects that delta, and the client asks for a resync. Stamping
+    /// a live number makes the client's applied seq equal the server's current one, which is exactly
+    /// what the next delta's `base_frame_seq` will name.
+    ///
+    /// It matters most on the **resync** path, because resync is the *recovery* path: a resync answer
+    /// carrying a stale number opens the very sequence gap it was sent to close, and the client can
+    /// only heal once some later publication refreshes the ring entry. The entry's stored numbers go
+    /// stale in two ways — a mid-tick recapture refreshes `history.back().snapshot` but **not** its
+    /// cached `encoded_snapshot_flat`, and an auxiliary delta (`update_axis_bias` and friends) claims
+    /// a sequence number without touching the ring at all.
+    ///
+    /// `base_frame_seq` stays `0`: a full snapshot names no base, matching the baseline path.
+    ///
+    /// The stored `encoded_snapshot_flat`, if the entry had one, cannot be reused — its header
+    /// carries the old number — so this always re-encodes.
+    pub fn publish_full_frame(&mut self, entry: &StoredSnapshot) -> Arc<Vec<u8>> {
+        let (frame_seq, _base_frame_seq) = self.next_publication();
+        let mut snapshot = entry.snapshot.as_ref().clone();
+        snapshot.header.frame_seq = frame_seq;
+        snapshot.header.base_frame_seq = 0;
+        let encoded = {
+            let _s = crate::turn_profile::scope("encode.flat_snapshot");
+            Arc::new(encode_snapshot_flatbuffer(&snapshot))
+        };
+        // This IS the latest flat frame for the world now, and it is the only encoding of it that
+        // carries the live sequence number — so anything that later reaches for "the newest full
+        // frame" (`broadcast_latest`) sends this one rather than the entry's stale-seq bytes.
+        self.last_snapshot = Some(Arc::new(snapshot));
+        self.encoded_snapshot_flat = Some(encoded.clone());
+        encoded
     }
 
     pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<EncodedBuffers> {
@@ -886,6 +1063,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,
@@ -898,7 +1076,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -920,12 +1098,19 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("axis bias delta encoding failed"));
@@ -950,7 +1135,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc;
                 back.encoded_snapshot = encoded_snapshot;
-                back.encoded_snapshot_flat = encoded_snapshot_flat;
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat);
             }
         }
 
@@ -989,7 +1174,7 @@ impl SnapshotHistory {
         if let Some(back) = self.history.back_mut() {
             back.snapshot = snapshot_arc.clone();
             back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+            back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
         }
 
         Some((encoded_snapshot, encoded_snapshot_flat))
@@ -1007,24 +1192,6 @@ impl SnapshotHistory {
     /// — so the rollback ring stays one-entry-per-tick and the next turn's delta still carries these
     /// structural changes (a redundant but idempotent re-send on top of this full snapshot). Never
     /// advances the turn or the `TurnQueue`.
-    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
-        let snapshot_arc = Arc::new(snapshot);
-        let encoded_snapshot = Arc::new(
-            encode_snapshot(snapshot_arc.as_ref()).expect("recapture snapshot encoding failed"),
-        );
-        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot_arc.as_ref()));
-
-        self.last_snapshot = Some(snapshot_arc.clone());
-        self.encoded_snapshot = Some(encoded_snapshot.clone());
-        self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
-        if let Some(back) = self.history.back_mut() {
-            back.snapshot = snapshot_arc.clone();
-            back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
-        }
-
-        Some((encoded_snapshot, encoded_snapshot_flat))
-    }
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
@@ -1070,6 +1237,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,
@@ -1082,7 +1250,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -1104,12 +1272,19 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("influencer delta encoding failed"));
@@ -1135,7 +1310,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
                 back.encoded_snapshot = encoded_snapshot.clone();
-                back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
 
@@ -1184,6 +1359,7 @@ impl SnapshotHistory {
             knowledge_metrics: None,
             victory: None,
             capability_flags: None,
+            campaign_profiles: None,
             command_events: None,
             pending_forks: None,
             stance_axes: None,
@@ -1196,7 +1372,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -1218,12 +1394,19 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,
         };
 
+        // An on-demand feed frame is a PUBLICATION like any other, so it takes the next sequence
+        // number. Skipping it would leave the client's `base_frame_seq` check comparing against a
+        // frame it never saw and rejecting every subsequent turn delta.
+        let (frame_seq, base_frame_seq) = self.next_publication();
+        let mut delta = delta;
+        delta.header.frame_seq = frame_seq;
+        delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
         let encoded_delta =
             Arc::new(encode_delta(delta_arc.as_ref()).expect("corruption delta encoding failed"));
@@ -1248,7 +1431,7 @@ impl SnapshotHistory {
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
                 back.encoded_snapshot = encoded_snapshot.clone();
-                back.encoded_snapshot_flat = encoded_snapshot_flat.clone();
+                back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
 

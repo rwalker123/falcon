@@ -331,6 +331,15 @@ message SendHuntExpeditionCommand {
   optional string policy = 5; // sustain|surplus|deplete|eradicate; default sustain when omitted
 }
 
+// Ask the server to republish the world as a FULL snapshot.
+//
+// Client-initiated recovery for delta streaming: a client that cannot apply a delta (its
+// `baseFrameSeq` names a frame the client never applied, or it belongs to a different world) drops
+// the frame and asks for a baseline rather than merging into the wrong state. Carries no arguments
+// — the server always answers with the world it currently holds, and the client's `worldEpoch`
+// gate decides whether that is the world it wanted.
+message ResyncCommand {}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -407,5 +416,6 @@ message CommandEnvelope {
     NewGameCommand new_game = 43;
     // 43 is held by `new_game`, so `set_fog` takes 44 (24 and 30 are reserved, not free).
     SetFogEnabledCommand set_fog = 44;
+    ResyncCommand resync = 45;
   }
 }

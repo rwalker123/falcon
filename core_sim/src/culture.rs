@@ -7,7 +7,7 @@ use sim_runtime::{
 };
 
 use crate::{
-    culture_corruption_config::CulturePropagationSettings,
+    culture_corruption_config::{CulturePropagationSettings, DEFAULT_RESONANCE_RESPONSE},
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
@@ -332,11 +332,15 @@ pub(crate) struct CultureManagerSettings {
     global: ScopeSettings,
     regional: ScopeSettings,
     local: ScopeSettings,
+    /// Per-turn rate of the low-pass on influencer resonance — the "culture is slow" dial.
+    /// See `CulturePropagationSettings::resonance_response`.
+    resonance_response: Scalar,
 }
 
 impl Default for CultureManagerSettings {
     fn default() -> Self {
         Self {
+            resonance_response: scalar_from_f32(DEFAULT_RESONANCE_RESPONSE),
             global: ScopeSettings::default_for(CultureLayerScope::Global),
             regional: ScopeSettings::default_for(CultureLayerScope::Regional),
             local: ScopeSettings::default_for(CultureLayerScope::Local),
@@ -347,6 +351,7 @@ impl Default for CultureManagerSettings {
 impl CultureManagerSettings {
     fn from_propagation(config: &CulturePropagationSettings) -> Self {
         Self {
+            resonance_response: scalar_from_f32(config.resonance_response()),
             global: ScopeSettings::new(
                 config.global().elasticity(),
                 config.global().soft_threshold(),
@@ -498,6 +503,16 @@ pub struct CultureManager {
     locals: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
     settings: CultureManagerSettings,
+    /// Influencer resonance as culture actually feels it: the raw vector low-passed at
+    /// `settings.resonance_response`.
+    ///
+    /// **This is what stops culture re-rolling every few turns.** The raw resonance moves as
+    /// influencers rise and fall, and feeding it straight into each layer's target made the target
+    /// move faster than elasticity could track — layers oscillated and the gap to their parent
+    /// GREW over 40 turns rather than closing (`docs/plan_delta_streaming.md` §3.6). Smoothing the
+    /// driver fixes the cause; lowering elasticity would only have added lag, because in steady
+    /// state a chaser's step size equals its target's velocity no matter how slowly it chases.
+    smoothed_resonance: InfluencerCultureResonance,
 }
 
 impl CultureManager {
@@ -513,6 +528,7 @@ impl CultureManager {
             locals: HashMap::new(),
             tension_events: Vec::new(),
             settings,
+            smoothed_resonance: InfluencerCultureResonance::default(),
         }
     }
 
@@ -604,15 +620,46 @@ impl CultureManager {
         self.tension_events.clear();
         let mut pending_events = Vec::new();
 
+        // Culture responds to SUSTAINED influencer pressure, not to this turn's roster. Smoothing
+        // the driver is what makes culture slow; see `smoothed_resonance`.
+        let rate = self.settings.resonance_response;
+        let smooth = |current: &mut [Scalar; CULTURE_TRAIT_AXES],
+                      raw: &[Scalar; CULTURE_TRAIT_AXES]| {
+            for idx in 0..CULTURE_TRAIT_AXES {
+                current[idx] += (raw[idx] - current[idx]) * rate;
+            }
+        };
+        smooth(&mut self.smoothed_resonance.global, &resonance.global);
+        smooth(&mut self.smoothed_resonance.regional, &resonance.regional);
+        smooth(&mut self.smoothed_resonance.local, &resonance.local);
+        let resonance = &self.smoothed_resonance;
+
         let mut global_values = [Scalar::zero(); CULTURE_TRAIT_AXES];
         if let Some(global) = &mut self.global {
-            let baseline_values = *global.traits.values();
-            *global.traits.baseline_mut() = baseline_values;
+            // The global layer offsets from its FOUNDING trait vector, which is what `baseline`
+            // holds and why nothing overwrites it here.
+            //
+            // It used to read `baseline = own current value` and then set `value = baseline +
+            // resonance`, which is `value += resonance` every turn: a pure integrator with no
+            // decay. Measured, it ran the global culture from 0 to the ±2.5 clamp in ~40 turns on
+            // a default start, and since every regional layer chases global and every local layer
+            // chases its region, the whole culture tree was dragged along and never settled — the
+            // cause of both the runaway trait drift and 4201/4201 layers in every delta
+            // (`docs/plan_delta_streaming.md` §3.6).
+            //
+            // Offsetting from a fixed origin and RELAXING toward it makes the global layer behave
+            // like the other two scopes: a bounded offset from a stable reference, moving only as
+            // fast as the resonance does.
+            let origin = *global.traits.baseline();
+            let elasticity = global.elasticity;
             for idx in 0..CULTURE_TRAIT_AXES {
-                let target = (baseline_values[idx] + resonance.global[idx])
+                let target = (origin[idx] + resonance.global[idx])
                     .clamp(scalar_from_f32(-2.5), scalar_from_f32(2.5));
-                global.traits.update_value(idx, target);
-                global_values[idx] = target;
+                let current = global.traits.values()[idx];
+                global
+                    .traits
+                    .update_value(idx, current + (target - current) * elasticity);
+                global_values[idx] = global.traits.values()[idx];
             }
             global.divergence.magnitude = Scalar::zero();
             global.divergence.ticks_above_soft = 0;
@@ -1139,6 +1186,51 @@ mod tests {
                 .iter()
                 .any(|event| event.kind == CultureTensionKind::AssimilationPush),
             "assimilation push should emit when divergence resolves"
+        );
+    }
+}
+
+#[cfg(test)]
+mod global_layer_tests {
+    use super::*;
+
+    /// **The global layer must not integrate its resonance.** It used to compute
+    /// `target = own_current_value + resonance` and assign it, which is `value += resonance` every
+    /// turn — a pure accumulator with no decay. Measured on a default start it ran the global
+    /// culture from 0 to the ±2.5 clamp in ~40 turns, dragging every regional and local layer with
+    /// it (`docs/plan_delta_streaming.md` §3.6).
+    ///
+    /// The property that rules that out: under a CONSTANT resonance the global layer must settle
+    /// at a bounded offset, not walk away. Pinned rather than left to the tuning dials, because a
+    /// runaway is invisible for the first dozen turns and looks like "culture is evolving".
+    #[test]
+    fn a_constant_resonance_settles_the_global_layer_instead_of_accumulating() {
+        let mut manager = CultureManager::new();
+        manager.ensure_global();
+
+        let mut resonance = InfluencerCultureResonance::default();
+        resonance.global[0] = scalar_from_f32(0.05);
+
+        let mut last = 0.0f32;
+        for tick in 1..=200u64 {
+            manager.reconcile(&SimulationTick(tick), &resonance);
+            last = manager
+                .global
+                .as_ref()
+                .expect("global layer")
+                .traits
+                .values()[0]
+                .to_f32();
+        }
+
+        // Settles AT the offset the resonance describes, not somewhere far past it.
+        assert!(
+            (last - 0.05).abs() < 0.005,
+            "global culture should converge on origin+resonance (0.05), got {last}"
+        );
+        assert!(
+            last < 0.5,
+            "a 0.05 resonance must never accumulate into a large value — got {last}"
         );
     }
 }

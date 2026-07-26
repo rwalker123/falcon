@@ -27,6 +27,19 @@ pub(crate) fn campaign_label_to_dict(label: fb::CampaignLabel<'_>) -> VarDiction
     dict
 }
 
+/// The campaign profile roster as an array. Hoisted out of `snapshot_to_dict`, which had it
+/// inlined, once the delta path became a second consumer (`WorldDelta.campaign_profiles` — see
+/// `docs/plan_delta_streaming.md` §2.4).
+pub(crate) fn campaign_profiles_to_array(
+    profiles: flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<fb::CampaignProfile<'_>>>,
+) -> VarArray {
+    let mut arr = VarArray::new();
+    for profile in profiles {
+        arr.push(&campaign_profile_to_dict(profile).to_variant());
+    }
+    arr
+}
+
 pub(crate) fn campaign_profile_to_dict(profile: fb::CampaignProfile<'_>) -> VarDictionary {
     let mut dict = VarDictionary::new();
     if let Some(id) = profile.id() {

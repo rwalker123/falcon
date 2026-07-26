@@ -8,26 +8,23 @@
   "gauges": {
     "r0": {
       "warn": 0.9,
-      "critical": 1.2,
-      "escalation_delta": 0.08
+      "critical": 1.2
     },
     "grid_stress_pct": {
       "warn": 70.0,
-      "critical": 85.0,
-      "escalation_delta": 5.0
+      "critical": 85.0
     },
     "unauthorized_queue_pct": {
       "warn": 10.0,
-      "critical": 25.0,
-      "escalation_delta": 4.0
+      "critical": 25.0
     },
     "swarms_active": {
       "warn": 2.0,
       "critical": 5.0
     },
     "phage_density": {
-      "warn": 0.35,
-      "critical": 0.6
+      "warn": 35.0,
+      "critical": 60.0
     }
   },
   "extra": {

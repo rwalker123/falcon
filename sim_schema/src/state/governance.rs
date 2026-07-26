@@ -44,7 +44,8 @@ pub struct CrisisGaugeState {
     pub kind: CrisisMetricKind,
     pub raw: f32,
     pub ema: f32,
-    pub trend_5t: f32,
+    /// Change in `raw` extrapolated to a per-100-tick rate — see `snapshot.fbs`.
+    pub trend_per_100t: f32,
     pub warn_threshold: f32,
     pub critical_threshold: f32,
     pub last_updated_tick: u64,

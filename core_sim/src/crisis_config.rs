@@ -800,8 +800,12 @@ impl Default for CrisisTelemetryConfig {
                 map.insert(
                     "phage_density".to_string(),
                     CrisisTelemetryThreshold {
-                        warn: 0.35,
-                        critical: 0.6,
+                        // PERCENT, matching `CrisisMetricKind::wire_scale`. This is the THIRD copy
+                        // of these numbers (with the builtin fallback in `crisis.rs` and
+                        // `crisis_telemetry_config.json`) and the one unit tests resolve against —
+                        // all three state the same unit as the value, or the bands sit 100x off.
+                        warn: 35.0,
+                        critical: 60.0,
                         ..Default::default()
                     },
                 );
@@ -817,7 +821,6 @@ impl Default for CrisisTelemetryConfig {
 pub struct CrisisTelemetryThreshold {
     pub warn: f32,
     pub critical: f32,
-    pub escalation_delta: Option<f32>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

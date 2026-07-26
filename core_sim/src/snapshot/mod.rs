@@ -10,9 +10,9 @@ use bevy::{
 use log::warn;
 use sim_runtime::{
     encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, ClimateBandsState,
-    CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
-    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
+    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CampaignProfileState,
+    ClimateBandsState, CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem,
+    CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
@@ -168,6 +168,63 @@ where
             _ => Some(state.clone()),
         })
         .collect()
+}
+
+/// `diff_new` for tiles, comparing **published** state rather than exact equality, and returning
+/// the baseline to store alongside the tiles to send.
+///
+/// Tiles get their own diff because they are the only per-entity collection large enough for the
+/// comparison rule to matter: at 4160 entities on an 80x52 map, one field that drifts every turn
+/// costs the whole map every turn. See `TileState::same_published_state`.
+///
+/// **The returned baseline keeps the OLD value for any tile judged unchanged**, so the thing the
+/// comparison measures against is always the thing the client actually holds. That bounds the
+/// client's error at half a hundredth by construction, rather than leaving it to argument.
+///
+/// (Slow drift reaches the client either way, because the comparison rounds to an absolute grid
+/// rather than testing `|a - b| < eps` — a relative band would let sub-band steps accumulate
+/// unbounded error, which is why it is not one. See
+/// `TileState::drift_below_the_deadband_still_publishes_as_it_accumulates`.)
+fn diff_new_tiles(
+    previous: &HashMap<u64, TileState>,
+    current: HashMap<u64, TileState>,
+) -> (Vec<TileState>, HashMap<u64, TileState>) {
+    let mut send = Vec::new();
+    let mut baseline = HashMap::with_capacity(current.len());
+    for (id, state) in current {
+        match previous.get(&id) {
+            Some(prev) if prev.same_published_state(&state) => {
+                baseline.insert(id, prev.clone());
+            }
+            _ => {
+                send.push(state.clone());
+                baseline.insert(id, state);
+            }
+        }
+    }
+    (send, baseline)
+}
+
+/// `diff_new` for culture layers. Same reasoning and the same last-published baseline rule as
+/// [`diff_new_tiles`]; see `CultureLayerState::same_published_state`.
+fn diff_new_culture_layers(
+    previous: &HashMap<u32, CultureLayerState>,
+    current: HashMap<u32, CultureLayerState>,
+) -> (Vec<CultureLayerState>, HashMap<u32, CultureLayerState>) {
+    let mut send = Vec::new();
+    let mut baseline = HashMap::with_capacity(current.len());
+    for (id, state) in current {
+        match previous.get(&id) {
+            Some(prev) if prev.same_published_state(&state) => {
+                baseline.insert(id, prev.clone());
+            }
+            _ => {
+                send.push(state.clone());
+                baseline.insert(id, state);
+            }
+        }
+    }
+    (send, baseline)
 }
 
 fn diff_removed<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<K>

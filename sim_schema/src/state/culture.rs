@@ -82,6 +82,30 @@ pub struct CultureLayerState {
     pub last_updated_tick: u64,
 }
 
+impl CultureLayerState {
+    /// Does this layer look identical to `other` **as the client stream sees it**?
+    ///
+    /// The culture-layer twin of `TileState::same_published_state`, and it exists for the same
+    /// measured reason: culture layers outnumber tiles (4201 vs 4160 on an 80x52 map), so a field
+    /// that moves every turn costs more than the entire map does.
+    ///
+    /// **`last_updated_tick` is ignored.** It is a bookkeeping timestamp that advances every turn
+    /// by construction, so including it guarantees every layer rides every delta no matter how
+    /// still the culture is — and *nothing in the client reads it*. It is decoded into the client
+    /// dictionary (`dict/culture.rs`) and no GDScript consumes the key.
+    ///
+    /// Everything else compares at hundredths, per `WIRE_COMPARE_SCALE`.
+    pub fn same_published_state(&self, other: &Self) -> bool {
+        // Topology only — the client is sent nothing else (see `codec/culture.rs`). Comparing a
+        // field that is not published can only ever mark a layer dirty for a change no one
+        // receives, which is exactly what kept all 4201 layers in every delta.
+        self.id == other.id
+            && self.owner == other.owner
+            && self.parent == other.parent
+            && self.scope == other.scope
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CultureTensionState {
     pub layer_id: u32,

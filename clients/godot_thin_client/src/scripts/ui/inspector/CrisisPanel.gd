@@ -156,7 +156,7 @@ func _render_summary() -> void:
 			var band := String(gauge.get("band", "safe"))
 			var raw := float(gauge.get("raw", 0.0))
 			var ema := float(gauge.get("ema", 0.0))
-			var trend := float(gauge.get("trend_5t", 0.0))
+			var trend := float(gauge.get("trend_per_100t", 0.0))
 			var warn_threshold := float(gauge.get("warn_threshold", 0.0))
 			var crit_threshold := float(gauge.get("critical_threshold", 0.0))
 			var stale := int(gauge.get("stale_ticks", 0))

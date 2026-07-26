@@ -61,9 +61,9 @@ var _axis_bias: Dictionary = {}
 var _map_view: Node = null
 # Map-size + scenario state moved to MapPanel.
 var _panel_visible: bool = true
-## Newest FULL snapshot seen, and whether it arrived while the panel was hidden (so the panels have
-## not consumed it yet). Together they are the catch-up path that makes the hidden-panel skip in
-## `_apply_update` safe — see its header.
+## Newest frame seen of EITHER kind, and whether it arrived while the panel was hidden (so the
+## panels have not consumed it yet). Together they are the catch-up path that makes the hidden-panel
+## skip in `_apply_update` safe — see its header.
 var _cached_snapshot: Dictionary = {}
 var _hidden_snapshot_pending: bool = false
 var _seen_command_events: Dictionary = {}
@@ -205,10 +205,24 @@ func update_delta(delta: Dictionary) -> void:
 ## rendering a panel nobody can see. So while hidden this method stops after the prefix and the
 ## snapshot is stashed for `_catch_up_hidden_snapshot` to replay on show.
 ##
-## **Only a FULL snapshot may be skipped.** It is self-contained, so replaying the latest one
-## reconstructs every panel; the client consumes the full-snapshot stream, so that is the live path.
-## A DELTA describes a *change* against state the panels already hold and nothing later can
-## reconstruct a dropped one, so a delta is always applied in full, hidden or not.
+## **EVERY frame may now be skipped, and that is a reversal worth understanding.** The rule used to
+## be "only a FULL snapshot may be skipped", because a delta described a *change* against state the
+## panels already held and nothing later could reconstruct a dropped one. Delta streaming (#386)
+## inverted the premise: the native decoder maintains a cached world and republishes it **whole** on
+## every frame, so a merged delta frame is byte-equivalent to a full snapshot of the same state and
+## the NEXT frame reconstructs anything dropped. Self-containment, not payload kind, is what the
+## skip ever depended on — and now both kinds have it.
+##
+## That is why `_cached_snapshot` holds the newest frame of either kind. Replaying it through the
+## `full_snapshot` path is correct because the base keys it carries (`tiles`, `populations`,
+## `culture_layers`, …) are complete: the decoder patches them from each delta's `*_updates` rather
+## than leaving them at the baseline, which it did not always do (`docs/plan_delta_streaming.md`
+## §8.2). **If that ever regresses, this skip silently serves a stale panel** — the two are one
+## contract, so do not weaken one without the other.
+##
+## Measured: the hidden fan-out was 16–30 ms per turn once deltas became the steady-state carrier,
+## ~60 % of the client's `apply`. The old gate skipped only full snapshots, which by then arrived
+## once per world.
 ##
 ## **The prefix below runs hidden or not**, and the dividing line is not "cheap" but
 ## *reconstructible*: `_ingest_command_events` consumes a per-turn EVENT array and appends to a
@@ -216,11 +230,10 @@ func update_delta(delta: Dictionary) -> void:
 ## feed entries. Everything after the gate rebuilds panel state from snapshot keys and is therefore
 ## recoverable. Anything added to this method must be classified the same way before it is placed.
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
-	if full_snapshot:
-		# Held by REFERENCE, not deep-copied: the native decoder builds a fresh Dictionary tree per
-		# frame and no consumer mutates it in place (MapView duplicates the sub-dicts it keeps), so
-		# a copy would cost exactly the work this gate exists to avoid.
-		_cached_snapshot = data
+	# Held by REFERENCE, not deep-copied: the native decoder builds a fresh Dictionary tree per
+	# frame and no consumer mutates it in place (MapView duplicates the sub-dicts it keeps), so
+	# a copy would cost exactly the work this gate exists to avoid.
+	_cached_snapshot = data
 	if data.has("turn"):
 		_last_turn = int(data.get("turn", _last_turn))
 	if data.has("capability_flags"):
@@ -234,20 +247,13 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	# food_modules + tiles/tile_updates/tile_removed are consumed by TerrainPanel via the
 	# _tab_panels fan-out at the end of this method.
 
-	# `_hidden_snapshot_pending` means "a full snapshot has arrived that the panels have NOT
-	# ingested". Only the full-snapshot path may touch it — set it when one is skipped, clear it
-	# when one is actually fanned out. A DELTA is applied below either way, but applying a delta
-	# does NOT discharge that debt: the sequence full-while-hidden → delta-while-hidden → show
-	# would otherwise skip the catch-up replay and open the panels holding only what the delta
-	# carried (the exact stale-when-opened failure the replay exists to prevent, self-healing on
-	# the next turn's full snapshot and so nearly invisible). Deltas do reach a hidden Inspector
-	# on the live path: `Main._snapshot_is_delta` routes the server's between-turn on-demand
-	# feeds (`update_influencers` / `update_axis_bias` / `update_command_events`) to `update_delta`.
-	if full_snapshot:
-		if not _panel_visible:
-			_hidden_snapshot_pending = true
-			return
-		_hidden_snapshot_pending = false
+	# `_hidden_snapshot_pending` means "a frame has arrived that the panels have NOT ingested" —
+	# set it when one is skipped, clear it when one is actually fanned out. Both kinds set it now,
+	# because `_cached_snapshot` holds both and either one replays into a complete panel state.
+	if not _panel_visible:
+		_hidden_snapshot_pending = true
+		return
+	_hidden_snapshot_pending = false
 
 	if data.has("axis_bias"):
 		var axis_dict: Dictionary = data["axis_bias"]

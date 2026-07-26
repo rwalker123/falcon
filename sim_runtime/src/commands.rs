@@ -101,6 +101,9 @@ pub enum CommandPayload {
     SetFogEnabled {
         enabled: bool,
     },
+    /// Republish the world as a FULL snapshot. Client-initiated recovery for delta streaming —
+    /// see `ResyncCommand` in `command.proto`.
+    Resync,
     SpawnCrisis {
         faction_id: u32,
         archetype_id: String,
@@ -501,6 +504,7 @@ impl CommandEnvelope {
                     enabled: *enabled,
                 })
             }
+            CommandPayload::Resync => pb::command_envelope::Command::Resync(pb::ResyncCommand {}),
             CommandPayload::SpawnCrisis {
                 faction_id,
                 archetype_id,
@@ -883,6 +887,7 @@ impl CommandEnvelope {
             pb::command_envelope::Command::SetFog(cmd) => CommandPayload::SetFogEnabled {
                 enabled: cmd.enabled,
             },
+            pb::command_envelope::Command::Resync(_) => CommandPayload::Resync,
             pb::command_envelope::Command::SpawnCrisis(cmd) => CommandPayload::SpawnCrisis {
                 faction_id: cmd.faction,
                 archetype_id: cmd.archetype_id,

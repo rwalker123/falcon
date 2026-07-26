@@ -241,6 +241,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Write the current world map (terrain + seed) to a JSON file for inspection and tests.",
         usage: "export_map [path]",
     },
+    CommandVerbHelp {
+        verb: "resync",
+        aliases: &[],
+        summary: "Republish the world as a full snapshot (delta-streaming recovery).",
+        usage: "resync",
+    },
 ];
 
 use crate::{
@@ -1093,6 +1099,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 policy,
             })
         }
+        "resync" => Ok(CommandPayload::Resync),
         "export" | "export_map" => {
             // Remaining tokens (if any) form the destination path; join so
             // paths containing spaces survive whitespace tokenization.

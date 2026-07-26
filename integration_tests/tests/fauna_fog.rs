@@ -69,11 +69,14 @@ fn the_encoded_snapshot_publishes_only_herds_the_viewer_can_see() {
 
     let published = {
         let history = app.world.resource::<SnapshotHistory>();
+        // The FULL frame for this tick. Under delta streaming only a world's first publication
+        // carries an encoded flat snapshot, so ask the ring entry to produce one rather than
+        // reading a field that is `None` on most turns.
         let bytes = history
-            .encoded_snapshot_flat
-            .as_ref()
-            .expect("a turn was captured and encoded");
-        herd_ids_on_the_wire(bytes)
+            .latest_entry()
+            .expect("a turn was captured and encoded")
+            .encode_flat();
+        herd_ids_on_the_wire(bytes.as_ref())
     };
 
     let ledger = app.world.resource::<VisibilityLedger>();
@@ -139,15 +142,18 @@ fn the_encoded_snapshot_publishes_every_herd_when_the_server_disables_fog() {
 
     let published = {
         let history = app.world.resource::<SnapshotHistory>();
+        // The FULL frame for this tick. This is the world's SECOND publication, and under delta
+        // streaming only the first carries an encoded flat snapshot — so ask the ring entry to
+        // produce one rather than reading a field that is `None` on every turn but the baseline.
         let bytes = history
-            .encoded_snapshot_flat
-            .as_ref()
-            .expect("a turn was captured and encoded");
+            .latest_entry()
+            .expect("a turn was captured and encoded")
+            .encode_flat();
         assert!(
-            !fog_enabled_on_the_wire(bytes),
+            !fog_enabled_on_the_wire(bytes.as_ref()),
             "the switch is published so the client renders the state it is told"
         );
-        herd_ids_on_the_wire(bytes)
+        herd_ids_on_the_wire(bytes.as_ref())
     };
 
     let registry = app.world.resource::<HerdRegistry>();

@@ -247,6 +247,13 @@ fn main() {
             .map(|guard| guard.path().display().to_string())
             .unwrap_or_else(|| "unavailable".to_string()),
         log_stream_enabled,
+        // WHICH BUILD THIS IS, on the line every operator already reads. A debug server is ~15x
+        // slower per turn and the player feels it as ~1.9s of click-to-updated-map versus ~0.1s
+        // (docs/plan_delta_streaming.md §8.6) — but nothing in the running game SAYS so, which is
+        // how a whole optimisation arc got spent on the other 6% while an unoptimised build
+        // supplied the latency. `run_stack.sh` defaults to --release; this is the confirmation
+        // that it took, and the first thing to check when "the game feels slow" comes back.
+        build_profile = if cfg!(debug_assertions) { "debug" } else { "release" },
         "Shadow-Scale headless server ready (idle — send new_game to generate a world)"
     );
 
@@ -362,6 +369,38 @@ fn main() {
             }
             Command::ExportMap { path } => {
                 write_map_export(&app, path);
+            }
+            // Republish the world as a FULL frame. The client asks for this when it cannot apply a
+            // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
+            // rather than another delta — a delta is what it just failed to use.
+            //
+            // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
+            // server never volunteers a frame to a connecting client (it might belong to a world
+            // that client did not ask for), but answering a request cannot surprise anyone, and the
+            // `worldEpoch` on the frame still lets the client reject a world it did not want.
+            //
+            // It republishes through `publish_full_frame` rather than encoding the ring entry as
+            // stored, because the answer must carry a LIVE sequence number: resync is the recovery
+            // path, so a stale number here reopens the sequence gap the client asked us to close.
+            Command::Resync => {
+                let mut history = app.world.resource_mut::<SnapshotHistory>();
+                match history.latest_entry() {
+                    Some(entry) => {
+                        let bytes = history.publish_full_frame(&entry);
+                        flat_server.broadcast(bytes.as_ref());
+                        info!(
+                            target: "shadow_scale::server",
+                            tick = entry.tick,
+                            bytes = bytes.len(),
+                            "resync.published"
+                        );
+                    }
+                    None => {
+                        // No world yet (the server boots idle). Nothing to republish; the client's
+                        // `new_game` retry is what recovers this case.
+                        info!(target: "shadow_scale::server", "resync.no_world");
+                    }
+                }
             }
             Command::Heat { entity, delta } => {
                 apply_heat(&mut app, entity, delta);
@@ -794,6 +833,8 @@ enum Command {
     ExportMap {
         path: Option<String>,
     },
+    /// Republish the world as a FULL snapshot — delta-streaming recovery (see `ResyncCommand`).
+    Resync,
     /// Boot-idle new game: generate a world on demand (the server boots with none). `seed == 0`
     /// randomizes the map seed (mirrors `ResetMap`); an unknown `profile_id` is rejected. Field 43.
     NewGame {
@@ -4537,6 +4578,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::Resync => Some(Command::Resync),
         ProtoCommandPayload::NewGame {
             preset_id,
             width,
@@ -4947,19 +4989,12 @@ fn recapture_and_broadcast(
 ) {
     recapture_snapshot_in_place(&mut app.world);
 
+    // Publishes exactly what a turn publishes — the bincode delta and the flat delta — because
+    // `refresh_latest` now diffs against the uncommitted baseline rather than re-encoding a full
+    // world. `broadcast_latest` already states the rule ("full frame if there is one, else the
+    // delta"), so sharing it keeps the two publication paths from drifting apart.
     let history = app.world.resource::<SnapshotHistory>();
-    {
-        let server = snapshot_server_bin;
-        if let Some(bytes) = history.encoded_snapshot.as_ref() {
-            server.broadcast(bytes.as_ref());
-        }
-    }
-    {
-        let server = snapshot_server_flat;
-        if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(bytes.as_ref());
-        }
-    }
+    broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
 }
 
 fn handle_order_submission(
@@ -5051,14 +5086,6 @@ fn handle_axis_bias(
         {
             let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
-        }
-    }
-
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
         }
     }
 
@@ -5216,14 +5243,6 @@ fn broadcast_influencer_update(
             server.broadcast(flat.as_ref());
         }
     }
-
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
-        }
-    }
 }
 
 fn handle_influencer_command(
@@ -5315,14 +5334,6 @@ fn handle_inject_corruption(
         {
             let server = snapshot_server_flat;
             server.broadcast(flat.as_ref());
-        }
-    }
-
-    {
-        let server = snapshot_server_flat;
-        let history = app.world.resource::<SnapshotHistory>();
-        if let Some(snapshot_bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(snapshot_bytes.as_ref());
         }
     }
 
@@ -5708,10 +5719,14 @@ fn handle_rollback(
         let mut tick_res = app.world.resource_mut::<SimulationTick>();
         tick_res.0 = tick;
     }
-    {
+    // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand (under
+    // delta streaming a ring entry almost never carries one) and stamped with a FRESH publication
+    // sequence number, so the client's applied seq matches what the next delta names as its base.
+    let flat_frame = {
         let mut history = app.world.resource_mut::<SnapshotHistory>();
         history.reset_to_entry(&entry);
-    }
+        history.publish_full_frame(&entry)
+    };
 
     warn!(
         target: "shadow_scale::server",
@@ -5725,7 +5740,7 @@ fn handle_rollback(
     }
     {
         let server = snapshot_server_flat;
-        server.broadcast(entry.encoded_snapshot_flat.as_ref());
+        server.broadcast(flat_frame.as_ref());
     }
 }
 

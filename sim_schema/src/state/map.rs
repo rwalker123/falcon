@@ -1,5 +1,6 @@
 //! Map-section state: terrain, elevation, climate bands, rivers, and the raster carriers.
 
+use crate::state::{same_to_hundredths_f32, same_to_hundredths_fixed};
 use serde::{Deserialize, Serialize};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign};
 
@@ -485,4 +486,136 @@ pub struct TileState {
     /// `Tile::resource_terrain()`.
     #[serde(default)]
     pub underlying_terrain: TerrainType,
+}
+
+impl TileState {
+    /// Does this tile look identical to `other` **as the client stream sees it**?
+    ///
+    /// This — not `PartialEq` — is what decides whether a tile rides the next delta. It differs
+    /// from equality in exactly two ways, both measured rather than assumed
+    /// (`docs/plan_delta_streaming.md` §3.5):
+    ///
+    /// 1. **`mass` is ignored**, because it is not published to the client at all. It is a
+    ///    rollback-only field (`restore_world_from_snapshot` rebuilds the ECS `Tile` from it) that
+    ///    rides the bincode snapshot, and its FlatBuffers slot is deprecated. It drifted every turn
+    ///    on every tile — including open ocean — which by itself put all 4160 tiles of an 80x52 map
+    ///    into every delta. A field nobody receives must never be able to mark a tile dirty.
+    /// 2. **Floating-point and fixed-point fields compare at hundredths**, per
+    ///    [`WIRE_COMPARE_SCALE`].
+    ///
+    /// `PartialEq` is deliberately left exact: determinism tests and rollback compare whole
+    /// snapshots and must keep seeing every bit.
+    pub fn same_published_state(&self, other: &Self) -> bool {
+        self.entity == other.entity
+            && self.x == other.x
+            && self.y == other.y
+            && self.element == other.element
+            && self.terrain == other.terrain
+            && self.terrain_tags == other.terrain_tags
+            && self.culture_layer == other.culture_layer
+            && self.mountain_kind == other.mountain_kind
+            && self.river_edges == other.river_edges
+            && self.river_inflow == other.river_inflow
+            && self.river_channel == other.river_channel
+            && self.graze_ecology_phase == other.graze_ecology_phase
+            && self.underlying_terrain == other.underlying_terrain
+            && same_to_hundredths_fixed(self.temperature, other.temperature)
+            && same_to_hundredths_fixed(self.habitability, other.habitability)
+            && same_to_hundredths_f32(self.mountain_relief, other.mountain_relief)
+            && same_to_hundredths_f32(self.graze_biomass, other.graze_biomass)
+            && same_to_hundredths_f32(self.graze_capacity, other.graze_capacity)
+            && same_to_hundredths_f32(self.forage_capacity, other.forage_capacity)
+    }
+}
+
+#[cfg(test)]
+mod published_state_tests {
+    use super::*;
+
+    fn tile() -> TileState {
+        TileState {
+            entity: 1,
+            x: 0,
+            y: 0,
+            element: 0,
+            mass: 1_000_000,
+            temperature: 5_000_000,
+            terrain: TerrainType::DeepOcean,
+            terrain_tags: TerrainTags::default(),
+            culture_layer: 0,
+            mountain_kind: MountainKind::default(),
+            mountain_relief: 1.0,
+            habitability: 0,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: 0,
+            forage_capacity: 0.0,
+            underlying_terrain: TerrainType::DeepOcean,
+        }
+    }
+
+    /// `mass` is not published, so it must not be able to mark a tile dirty. This is the whole
+    /// finding of #386: it drifted every turn on every tile — including open ocean — and by itself
+    /// put all 4160 tiles of an 80x52 map into every delta.
+    #[test]
+    fn mass_alone_never_marks_a_tile_changed() {
+        let before = tile();
+        let mut after = before.clone();
+        after.mass += 29_736; // the measured per-turn drift on a lifeless ocean tile
+        assert!(before.same_published_state(&after));
+        assert_ne!(
+            before, after,
+            "PartialEq stays exact for rollback/determinism"
+        );
+    }
+
+    /// The comparison is a deadband at hundredths, not exact equality.
+    #[test]
+    fn sub_hundredth_movement_is_not_a_change() {
+        let before = tile();
+        let mut after = before.clone();
+        after.graze_biomass = 0.001;
+        after.temperature += 1_000; // 0.001 in fixed-point
+        assert!(before.same_published_state(&after));
+    }
+
+    /// …but a movement worth a hundredth IS a change, or the client would never be told.
+    #[test]
+    fn a_hundredth_of_movement_is_a_change() {
+        let before = tile();
+        let mut after = before.clone();
+        after.graze_biomass = 0.02;
+        assert!(!before.same_published_state(&after));
+    }
+
+    /// **Slow drift must still reach the client.** A field moving by less than a hundredth per
+    /// turn has to be published eventually, or the client freezes on a stale value while the sim
+    /// walks away from it.
+    ///
+    /// This holds because the comparison ROUNDS to an absolute grid rather than testing
+    /// `|a - b| < eps`. A relative epsilon band would be defeated by exactly this input — each
+    /// step under the band, the error unbounded. Rounding cannot be: the value crosses a grid line
+    /// on its own, so the error against what the client holds stays within half a hundredth
+    /// whatever the step size. Pinned because it is the property that makes the whole comparison
+    /// safe, and it is invisible until a value drifts.
+    #[test]
+    fn drift_below_the_deadband_still_publishes_as_it_accumulates() {
+        let published = tile();
+        let mut current = published.clone();
+        let mut fired = false;
+        for _ in 0..20 {
+            current.graze_biomass += 0.003;
+            if !published.same_published_state(&current) {
+                fired = true;
+                break;
+            }
+        }
+        assert!(
+            fired,
+            "sub-hundredth drift must publish once it is worth a hundredth"
+        );
+    }
 }

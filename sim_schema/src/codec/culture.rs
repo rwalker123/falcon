@@ -3,9 +3,9 @@
 use crate::codec::{create_scalar_raster, FbBuilder};
 use crate::state::culture::{
     CultureLayerScope, CultureLayerState, CultureTensionKind, CultureTensionState,
-    CultureTraitAxis, CultureTraitEntry, InfluenceLifecycle, InfluenceScopeKind,
-    InfluencerCultureResonanceEntry, InfluentialIndividualState, SentimentAxisTelemetry,
-    SentimentDriverCategory, SentimentTelemetryState,
+    CultureTraitAxis, InfluenceLifecycle, InfluenceScopeKind, InfluencerCultureResonanceEntry,
+    InfluentialIndividualState, SentimentAxisTelemetry, SentimentDriverCategory,
+    SentimentTelemetryState,
 };
 use crate::world::{WorldDelta, WorldSnapshot};
 use flatbuffers::{ForwardsUOffset, WIPOffset};
@@ -52,7 +52,12 @@ pub(crate) fn serialize_culture_section_delta<'a>(
 ) -> WIPOffset<fb::CultureSection<'a>> {
     let culture_layers = create_culture_layers(builder, &delta.culture_layers);
     let removed_culture_layers = builder.create_vector(&delta.removed_culture_layers);
-    let culture_tensions = create_culture_tensions(builder, &delta.culture_tensions);
+    // Written only when the section changed: an unconditional (possibly empty) vector would make
+    // "unchanged" and "now empty" identical on the wire. See `WorldDelta::culture_tensions`.
+    let culture_tensions = delta
+        .culture_tensions
+        .as_ref()
+        .map(|tensions| create_culture_tensions(builder, tensions));
     let culture_raster = delta
         .culture_raster
         .as_ref()
@@ -82,7 +87,7 @@ pub(crate) fn serialize_culture_section_delta<'a>(
         builder,
         &fb::CultureSectionArgs {
             cultureLayers: Some(culture_layers),
-            cultureTensions: Some(culture_tensions),
+            cultureTensions: culture_tensions,
             cultureRaster: culture_raster,
             influencers: Some(influencers),
             axisBias: axis_bias,
@@ -227,27 +232,6 @@ fn create_influencer_culture_resonance<'a>(
     builder.create_vector(&offsets)
 }
 
-fn create_culture_traits<'a>(
-    builder: &mut FbBuilder<'a>,
-    entries: &[CultureTraitEntry],
-) -> WIPOffset<flatbuffers::Vector<'a, ForwardsUOffset<fb::CultureTraitEntry<'a>>>> {
-    let offsets: Vec<_> = entries
-        .iter()
-        .map(|entry| {
-            fb::CultureTraitEntry::create(
-                builder,
-                &fb::CultureTraitEntryArgs {
-                    axis: to_fb_culture_trait_axis(entry.axis),
-                    baseline: entry.baseline,
-                    modifier: entry.modifier,
-                    value: entry.value,
-                },
-            )
-        })
-        .collect();
-    builder.create_vector(&offsets)
-}
-
 fn create_culture_layers<'a>(
     builder: &mut FbBuilder<'a>,
     layers: &[CultureLayerState],
@@ -255,7 +239,22 @@ fn create_culture_layers<'a>(
     let offsets: Vec<_> = layers
         .iter()
         .map(|layer| {
-            let traits_vec = create_culture_traits(builder, &layer.traits);
+            // ONLY the layer's topology goes to the client (#386).
+            //
+            // `MapView` reads exactly `id` / `owner` / `parent` / `scope`, and only to walk the
+            // tree and resolve a tile's province. It never reads a trait, a divergence or a
+            // threshold — the sole consumer of those was the Inspector's Culture tab, which is
+            // expendable scaffolding.
+            //
+            // Those 45 numbers per layer (15 axes x baseline/modifier/value) were the residual
+            // cost of delta streaming, and no amount of quantisation could fix it: each drifts
+            // ~0.0025/turn, so across 45 of them SOMETHING crosses a hundredths boundary
+            // essentially every turn and the layer is always "changed". Culture layers outnumber
+            // tiles (4201 vs 4160), so this was the largest single item on the wire.
+            // See `docs/plan_delta_streaming.md` §3.6.
+            //
+            // Topology changes only when the culture tree restructures, so a settled world now
+            // sends no culture at all.
             fb::CultureLayerState::create(
                 builder,
                 &fb::CultureLayerStateArgs {
@@ -263,13 +262,6 @@ fn create_culture_layers<'a>(
                     owner: layer.owner,
                     parent: layer.parent,
                     scope: to_fb_culture_layer_scope(layer.scope),
-                    traits: Some(traits_vec),
-                    divergence: layer.divergence,
-                    softThreshold: layer.soft_threshold,
-                    hardThreshold: layer.hard_threshold,
-                    ticksAboveSoft: layer.ticks_above_soft,
-                    ticksAboveHard: layer.ticks_above_hard,
-                    lastUpdatedTick: layer.last_updated_tick,
                 },
             )
         })

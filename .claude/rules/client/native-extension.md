@@ -29,12 +29,108 @@ server side, so the two ends of the wire have the same shape.
 | `snapshot/mod.rs` | The two top-level assemblers: `snapshot_dict` (rasters + sections → the client dict) and `snapshot_to_dict` (walks a `WorldSnapshot`) |
 | `snapshot/raster.rs` | `GridSize`, `OverlaySlices`, `TerrainSlices`, `OverlayChannelParams`, `packed_from_slice`, `insert_overlay_channel`, `normalize_overlay` |
 | `snapshot/delta.rs` | `DeltaAggregator` + `CrisisAnnotationRecord` — a delta carries only changed sections, so it accumulates them into full-snapshot shape and re-enters `snapshot_dict` |
+| `snapshot/cache.rs` | `WorldCache` — the world a delta is applied *to*: the last complete client dict, the pre-normalization `RasterCache` behind it, the `SectionCaches` (one complete array + identity index per diff-carried section, configured by the `KEYED_SECTIONS` registry), and the epoch/frame-sequence gate that says whether an incoming delta may be merged at all |
 | `dict/mod.rs` | ONLY the leaf helpers with consumers in two or more sections: `strings_to_variant_array`, `string_vector_to_packed`, the `u16/u32/u64_vector_to_packed_*` packers, `fixed64_to_f32` / `fixed64_to_f64` |
 | `dict/{map,economy,population,subsistence,knowledge,governance,culture,campaign}.rs` | The ~60 `*_to_dict` / `*_to_array` / `*_label` converters, one module per `snapshot.fbs` section |
 
 There is deliberately **no `dict/vision.rs`** — the vision section is only the
 fog/visibility/military rasters, which `snapshot/raster.rs` and the assemblers already
 own (`sim_schema` makes the same call: a `codec/vision.rs`, no `state/vision.rs`).
+
+## A merged delta frame must be an honest complete world
+
+The client renders from ONE dictionary shape whichever payload produced it, so a merged delta has to
+be indistinguishable from a full snapshot of the same state. Two things in `bridge/decoder.rs`
+enforce that, and the first is there because it once was not.
+
+**Every diff-carried section is PATCHED on every delta, never left standing.** A delta carries only
+the rows that changed, and `snapshot_dict` — the assembler the delta path re-enters — does not
+insert these keys at all; only `snapshot_to_dict` does. So the decoder published the changed rows
+under the `*_updates` key and the BASE key kept the baseline snapshot's array **for the life of the
+world**. Measured on `tiles`: `graze_biomass` summed over `tiles` was byte-identical across nine
+consecutive turns while `tile_updates` carried 400–600 moved tiles per turn. It was **nine sections,
+not one** — `Main`'s band alerts read `populations` (so food warnings, idle workers and
+predator-nearby were frozen — a player-visible gameplay bug), and `MapView` reads `populations`,
+`culture_layers` and `trade_links`.
+
+`SectionCache` fixes the whole class with one mechanism: an identity → slot index built when a full
+snapshot establishes the baseline, then per delta a shallow duplicate of the cached array (**pointer
+copies of the entry Variants — never a deep copy of a row dictionary**) and one slot write per
+changed row. The roster is the `KEYED_SECTIONS` registry in `snapshot/cache.rs`; a `SectionSpec`
+carries the base key, the `*_updates` and `*_removed` keys, the identity field(s) and any watch
+groups, so **a new diff-carried section is added there and at its one `merge_section` call site,
+nowhere else**. Identity is one field or two (`populations` by `entity`, `culture_layers` by `id`,
+`discovery_progress` by `(faction, discovery)`); removal ids differ in wire width (u16/u32/u64) and
+are normalised to `i64` for the index while `RemovedIds` still publishes each at its own width.
+Removals rebuild the index from scratch rather than repairing shifted slots — removals are
+structurally rare, and a shifted-index repair is wrong exactly once and then silently forever. The
+`*_updates` keys still ride the frame unchanged, because `TerrainPanel` and the inspector panels
+branch on them. `WorldDelta` also diffs `logistics` and `knowledge_ledger`; they are absent from the
+registry because the client decoder never converts either, so there is no base key to keep honest.
+
+**Two whole-section fields were never read on the delta path at all**, which is the same staleness
+reached a different way: `decode_delta_against` passed `None` for `food_modules` and
+`faction_inventory`, so a merged delta republished the BASELINE's food modules and stockpiles for
+the life of the world however many the server had since sent. The wire always carried them
+(`WorldDelta::food_modules` / `faction_inventory`, both `Option`, absent = unchanged). When adding a
+whole-section field, add it to BOTH `snapshot_to_dict` and `decode_delta_against`; the delta path
+having its own list of sections is exactly why one can be forgotten.
+
+**`culture_tensions` is NOT a keyed diff and must not be merged as one.** It is a whole-section
+replace: present (even EMPTY) means "this is the roster now", absent means unchanged. That
+distinction only became expressible when the field went `Option` on the wire — while it was a bare
+`Vec` the codec emitted an empty vector for *both* cases, and the decoder's unconditional insert
+blanked the baseline's tensions on the first delta, so `CulturePanel` showed none until the next
+full snapshot. Do not re-add a client-side emptiness gate: against an `Option` field it would
+swallow a genuinely-emptied roster instead.
+
+**Every delta frame carries `changed_sections`, a `PackedStringArray` of what moved.** It is
+**absent on a full snapshot, and absence means "everything changed"** — so a consumer that has never
+heard of the manifest keeps working, and the frame that rebuilds the world is never gated by it. A
+name is the dictionary KEY the frame carried the section under, so a consumer looks up the key it
+already reads — and for a keyed section that is the COMPLETE key (`populations`), never the sparse
+`*_updates` twin. The exceptions are the channels with no key of their own:
+`overlays.{terrain, elevation, moisture, visibility, culture, sentiment, corruption, military,
+logistics, crisis}` and `climate_bands`, which `DeltaAggregator` re-derives from cache and therefore
+publishes on every merged frame (presence cannot be the signal, so the name is pushed at the
+`apply_*` call site), plus `tiles.rivers` / `tiles.culture_layer` — `WatchGroup`s, derived by
+comparing each changed tile against the entry it replaced so a turn that only moved graze biomass
+costs no splatmap rebuild.
+
+**A name means "this MOVED", not "this was transmitted."** The delta codec emits most keyed
+sections' vectors unconditionally — empty when nothing changed — so presence is no signal at all;
+every keyed section is named from its diff being non-empty. A steady-state delta on the decode
+fixture names five things, not thirteen.
+
+## Each delta merges into the frame BEFORE it, not into the baseline
+
+`decode_frame` builds the merged frame from `cache.dict.duplicate_shallow()` and then **replaces**
+`cache` — so frame N+1 starts from frame N, not from the full snapshot. Re-base that on the original
+baseline and delta 2 silently discards delta 1: no error, no symptom, the world just drifts. (The
+opposite failure is loud and therefore not the one to worry about: a cache that fails to advance
+`frame_seq` makes the next delta unapplicable, which fires `resync_needed` and gets a full snapshot
+every turn — slow, not wrong.)
+
+**Two caches advance, and they fail differently — which is why `decode_guard` needs two witnesses
+and one of them was only found by a mutation that failed to fail.** `SectionCaches` carries the
+keyed sections, and their base keys are rebuilt and republished on EVERY frame out of that cache, so
+they survive even a merge that re-bases the frame dictionary. Whole-section fields (`demographics`,
+`herds`, `sedentarization`, …) do not: each lands in the merged dict once, on the frame that carries
+it, and stays only because the next merge starts from that frame. So the chained fixture probes both
+— the keyed sections for a section cache that stops advancing, and `demographics` (carried by delta
+1, absent from delta 2) for the frame dictionary.
+
+**The delta path is guarded by a CHAIN, not a single frame** (`snapshot_delta_envelope.bin` +
+`snapshot_delta2_envelope.bin`, moving deliberately disjoint rows). One delta only exercises
+baseline → delta; the client takes delta → delta on every turn after the first, and that path went
+unguarded until it was added after the fact.
+
+**The dangerous direction is an UNDER-complete manifest** (a consumer skips a section that really
+moved and goes silently stale), which is why it is built by a forcing function rather than a
+hand-maintained list: `DeltaFrame` owns both the dictionary and the name vector, and
+`insert_changed` is the only way to put a delta-carried section on the frame. `insert_always` is for
+what rides every frame and is therefore not a change: the three identity keys and the patched
+complete arrays.
 
 **The rule for a new snapshot field: its converter goes in its section's `dict/` module** —
 the section is whichever `.section()` accessor `snapshot_to_dict` reaches it through. Put a
