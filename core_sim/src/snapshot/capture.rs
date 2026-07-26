@@ -2021,8 +2021,10 @@ pub fn capture_snapshot(
     };
     drop(build_scope);
 
-    // `finalize` stamps the content hash, which clones the whole `WorldSnapshot` and bincode-encodes
-    // it just to produce a `u64` — its own label so that cost is visible rather than buried in build.
+    // `finalize` stamps the content hash. It takes `self` by value and zeroes `header.hash` in place
+    // — no deep clone (that lives only in the free-standing `hash_snapshot`, which `finalize`
+    // deliberately does not call) — but it still bincode-encodes the *whole* snapshot just to
+    // produce a `u64`. Its own label so that cost is visible rather than buried in build.
     let snapshot = {
         let _s = crate::turn_profile::scope("snapshot.finalize_hash");
         assembled.finalize()

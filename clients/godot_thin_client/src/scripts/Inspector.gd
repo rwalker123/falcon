@@ -159,7 +159,9 @@ func set_panel_visible(visible: bool) -> void:
 	if visible and not was_visible:
 		_catch_up_hidden_snapshot()
 
-## Replay the newest snapshot that arrived while the panel was hidden.
+## Replay the newest cached full snapshot if the panels have not ingested it — i.e. discharge
+## `_hidden_snapshot_pending`. Called on hide→show, and by `_render_static_sections` when a reset
+## empties the panels while they are already visible.
 ##
 ## Safe to re-run against a snapshot already partly consumed: every panel rebuilds its state from
 ## the snapshot's keys, and the one accumulator on this path (`_ingest_command_events`) dedupes on
@@ -232,10 +234,20 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	# food_modules + tiles/tile_updates/tile_removed are consumed by TerrainPanel via the
 	# _tab_panels fan-out at the end of this method.
 
-	if full_snapshot and not _panel_visible:
-		_hidden_snapshot_pending = true
-		return
-	_hidden_snapshot_pending = false
+	# `_hidden_snapshot_pending` means "a full snapshot has arrived that the panels have NOT
+	# ingested". Only the full-snapshot path may touch it — set it when one is skipped, clear it
+	# when one is actually fanned out. A DELTA is applied below either way, but applying a delta
+	# does NOT discharge that debt: the sequence full-while-hidden → delta-while-hidden → show
+	# would otherwise skip the catch-up replay and open the panels holding only what the delta
+	# carried (the exact stale-when-opened failure the replay exists to prevent, self-healing on
+	# the next turn's full snapshot and so nearly invisible). Deltas do reach a hidden Inspector
+	# on the live path: `Main._snapshot_is_delta` routes the server's between-turn on-demand
+	# feeds (`update_influencers` / `update_axis_bias` / `update_command_events`) to `update_delta`.
+	if full_snapshot:
+		if not _panel_visible:
+			_hidden_snapshot_pending = true
+			return
+		_hidden_snapshot_pending = false
 
 	if data.has("axis_bias"):
 		var axis_dict: Dictionary = data["axis_bias"]
@@ -314,9 +326,14 @@ func _render_static_sections() -> void:
 		map_panel.reset()
 	_panel_width = PANEL_WIDTH_DEFAULT
 	_update_command_controls_enabled()
-	# Every panel is now empty. If a snapshot has already been cached, mark it unconsumed so the
-	# next show replays it — otherwise a reset while hidden would strand the panels blank.
+	# Every panel is now empty, so a cached full snapshot is once again un-ingested (the invariant
+	# `_hidden_snapshot_pending` tracks) — mark it so, otherwise a reset while hidden would strand
+	# the panels blank. Visibility does not enter into the flag: when the panel IS visible there is
+	# no later show to trigger the replay, so discharge it right here instead of leaving the panels
+	# blank until the next full snapshot arrives.
 	_hidden_snapshot_pending = not _cached_snapshot.is_empty()
+	if _panel_visible:
+		_catch_up_hidden_snapshot()
 
 func apply_typography() -> void:
 	Typography.initialize()

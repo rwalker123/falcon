@@ -96,9 +96,10 @@ The server emits two events per turn: `turn.completed` (the existing headline `d
 **Nesting is flat and parents include their children.** There is no tree — every label is one
 slot, so `snapshot.build.tiles` is counted in `snapshot.build` *and* in `snapshot`. The dotted
 names carry the hierarchy. **The phases do not sum to the turn duration**, and reading them as a
-partition will double-count. A `label=1.23ms×2` suffix means the label was entered twice (the
-raster section is genuinely two non-contiguous blocks; `snapshot.build.rasters` is re-entered
-rather than leaving the second block unmeasured).
+partition will double-count. A `snapshot.build.rasters=3.10(x2)` suffix means the label was
+entered twice (the raster section is genuinely two non-contiguous blocks, re-entered rather than
+leaving the second one unmeasured). A label entered exactly once carries no suffix, and `(x0)`
+means the phase was still open when the profile was taken, so nothing was folded in.
 
 Entries order by when a label was first **opened**, not when its time was folded in — a scope
 closes before the stage enclosing it, so close-ordering would print children ahead of parents.

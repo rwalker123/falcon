@@ -26,9 +26,13 @@ const EXPECTED_STAGES: [&str; 11] = [
 
 /// The capture sub-phases, which live in `snapshot/capture.rs` rather than the schedule.
 ///
-/// There is no `encode.flat_delta`: the turn path broadcasts the bincode delta and the flat
-/// snapshot, so the flat delta is built only by the on-demand feed paths — see `StoredSnapshot::new`.
-const EXPECTED_CAPTURE_PHASES: [&str; 10] = [
+/// **Every encode still on the turn path is listed** — this is "the live encodes", not an arbitrary
+/// subset, so an encode that survives a future pass belongs here and one that is genuinely retired
+/// comes out. `encode.flat_delta` is absent because it was removed as dead work: nothing ever read
+/// the stored flat delta (the turn path broadcasts the bincode delta and the flat *snapshot*, and
+/// the on-demand feed paths build their own), so it is built only there now — see
+/// `StoredSnapshot::new`.
+const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
     "snapshot.build",
     "snapshot.build.tiles",
     "snapshot.build.sow_refusals",
@@ -38,6 +42,7 @@ const EXPECTED_CAPTURE_PHASES: [&str; 10] = [
     "snapshot.history",
     "snapshot.history.diff",
     "encode.bincode_snapshot",
+    "encode.bincode_delta",
     "encode.flat_snapshot",
 ];
 

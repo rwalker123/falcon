@@ -51,6 +51,25 @@ Three clauses, and the third is the one that bites:
    already hold, and nothing later reconstructs a dropped one — so a delta is applied in full,
    hidden or not. The live path is the fast one because the client consumes the full-snapshot
    stream (`.claude/rules/core_sim/ports.md` — the stream port is `snapshot_flat`).
+
+   **…but applying a delta does not discharge the catch-up.** `_hidden_snapshot_pending` means
+   *a full snapshot has arrived that the panels have not ingested*, so *only* the full-snapshot
+   path may set or clear it. The first version of this gate cleared it on every non-skipped
+   update, hidden deltas included, which broke the sequence **full-while-hidden →
+   delta-while-hidden → `I`**: the replay was declared complete and the panels opened holding
+   only what the delta carried — precisely the stale-when-opened failure clause 2 exists to
+   prevent. It is reachable live, not theoretical: `Main._snapshot_is_delta` routes the server's
+   between-turn on-demand feeds (`update_influencers` / `update_axis_bias` /
+   `update_command_events`) to `update_delta`. It self-heals on the next turn's full snapshot,
+   which is why neither review nor the first guard harness caught it — the harness fed no deltas.
+   `inspector_hidden_guard` case 5 now pins it, with roster sizes chosen so replay (5) and
+   no-replay (4) cannot coincide.
+
+   **Known residual, accepted:** the replay rebuilds panels from the cached *full* snapshot, so a
+   delta that arrived after it is overwritten and its sub-turn changes are lost until the next
+   full snapshot. Strictly better than the bug it replaced (which lost the entire full snapshot)
+   and it self-heals within one turn. Making it exact means queuing deltas received since the
+   cached full and re-applying them in order after the replay — deliberately out of scope.
 2. **Catch up on show.** `set_panel_visible(false→true)` replays the cached latest snapshot. The
    cache holds it **by reference** — deep-copying would cost exactly the work the gate saves, and
    the decoder builds a fresh tree per frame that no consumer mutates.
