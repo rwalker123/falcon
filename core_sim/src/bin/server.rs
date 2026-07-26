@@ -247,6 +247,13 @@ fn main() {
             .map(|guard| guard.path().display().to_string())
             .unwrap_or_else(|| "unavailable".to_string()),
         log_stream_enabled,
+        // WHICH BUILD THIS IS, on the line every operator already reads. A debug server is ~15x
+        // slower per turn and the player feels it as ~1.9s of click-to-updated-map versus ~0.1s
+        // (docs/plan_delta_streaming.md §8.6) — but nothing in the running game SAYS so, which is
+        // how a whole optimisation arc got spent on the other 6% while an unoptimised build
+        // supplied the latency. `run_stack.sh` defaults to --release; this is the confirmation
+        // that it took, and the first thing to check when "the game feels slow" comes back.
+        build_profile = if cfg!(debug_assertions) { "debug" } else { "release" },
         "Shadow-Scale headless server ready (idle — send new_game to generate a world)"
     );
 
