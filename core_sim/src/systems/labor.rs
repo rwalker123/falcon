@@ -1639,7 +1639,7 @@ pub fn advance_predator_raids(
     tick: Res<SimulationTick>,
     mut event_log: ResMut<CommandEventLog>,
     tiles: Query<&Tile>,
-    mut bands: Query<(Entity, &mut PopulationCohort, &LaborAllocation), With<ResidentBand>>,
+    mut bands: Query<(Entity, &mut PopulationCohort, &mut LaborAllocation), With<ResidentBand>>,
 ) {
     // Resolved once — none of these change within a turn (the hunt-danger adapter's discipline).
     let fauna = configs.fauna.get();
@@ -1647,12 +1647,16 @@ pub fn advance_predator_raids(
     let person = configs.creatures.get().person();
     let raid_radius = fauna.predators.raid_radius;
     let raid_exposure = fauna.predators.raid_exposure;
+    let raid_yield_forfeit_fraction = fauna.predators.raid_yield_forfeit_fraction;
     let width = sim_config.grid_size.x;
     let wrap = sim_config.map_topology.wrap_horizontal;
     let map_seed = sim_config.map_seed;
     let tick = tick.0;
 
-    for (entity, mut cohort, alloc) in bands.iter_mut() {
+    for (entity, mut cohort, mut alloc) in bands.iter_mut() {
+        // Reset the per-turn raid forfeit up front — this system is its only writer, so a band that
+        // is NOT raided this turn must read `0.0` rather than keep last turn's debit.
+        alloc.last_raid_forfeit = 0.0;
         let Ok(band_pos) = tiles.get(cohort.current_tile).map(|t| t.position) else {
             continue;
         };
@@ -1672,6 +1676,9 @@ pub fn advance_predator_raids(
         // Casualties from every raiding predator this turn are additive and order-independent, so they
         // accumulate into one cohort mutation at the end.
         let mut total_killed = 0.0f32;
+        // Feed lines are DEFERRED: a casualty-causing raid also forfeits food (a band-level debit
+        // computed after the loop), which is folded into the line's detail before it is pushed.
+        let mut raid_lines: Vec<CommandEventEntry> = Vec::new();
         for herd in &herds.herds {
             // Only a **carnivore** raids — the diet gate.
             let Some(def) = fauna.species_by_display(&herd.species) else {
@@ -1764,7 +1771,7 @@ pub fn advance_predator_raids(
                 // the internal herd id; the detail carries the fractional truth (`wounded` is inert this
                 // phase — recovery is a later slice, as in Phase 0).
                 let killed_r = killed_f.round() as u32;
-                event_log.push(CommandEventEntry::new(
+                raid_lines.push(CommandEventEntry::new(
                     tick,
                     CommandEventKind::PredatorRaid,
                     faction,
@@ -1775,6 +1782,27 @@ pub fn advance_predator_raids(
                     )),
                 ));
             }
+        }
+        // **Raids forfeit food** (Predators Phase 3): the band's people were defending or fleeing, not
+        // gathering, so a **casualty-causing** raid also costs a fraction of THIS turn's food income.
+        // `advance_labor_allocation` ran earlier this Population stage and already credited that income
+        // to the larder, so the forfeit is a real `LocalStore::take` debit, capped at what remains. An
+        // idle raided band (no income) loses only people. Recorded as the ACTUALLY-taken amount.
+        if total_killed > 0.0 {
+            let income: f32 = alloc.last_yields.iter().map(|y| y.actual).sum();
+            let forfeit = raid_yield_forfeit_fraction * income;
+            let taken = cohort.stores.take(FOOD, scalar_from_f32(forfeit)).to_f32();
+            alloc.last_raid_forfeit = taken;
+            // Fold the forfeit into the raid's feed detail (the wire's `raidForfeit` is the client's
+            // authoritative number; this is the human/debug line).
+            for line in &mut raid_lines {
+                if let Some(detail) = line.detail.as_mut() {
+                    detail.push_str(&format!(" forfeit={taken:.3}"));
+                }
+            }
+        }
+        for line in raid_lines {
+            event_log.push(line);
         }
         // One mutation per band — working-age only this phase.
         cohort.apply_combat_casualties(scalar_from_f32(total_killed));
@@ -1940,6 +1968,7 @@ mod labor_yield_tests {
                     last_morale_delta: scalar_zero(),
                     last_morale_cause: MoraleCause::None,
                     last_morale_contributions: Default::default(),
+                    last_fertility_factors: Default::default(),
                     discontent_fraction: scalar_zero(),
                     grievance: scalar_zero(),
                     last_emigrated: 0,

@@ -1786,6 +1786,15 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"morale_terrain": float(entry.get("morale_terrain", 0.0)),
 			"morale_climate": float(entry.get("morale_climate", 0.0)),
 			"morale_unrest": float(entry.get("morale_unrest", 0.0)),
+			# The three named fertility factors (docs/plan_population_growth_model.md) behind the
+			# band drawer's Growth row + its itemized breakdown. They combine by PRODUCT, neutral at
+			# 1.0 — but the DEFAULT here is 0.0, because all-zero is the sim's not-projected
+			# sentinel and BandFoodStatus.fertility_is_projected keys off a zero reserve. Defaulting
+			# them to the neutral 1.0 would fabricate a "normal growth" reading for a band that has
+			# published none.
+			"fertility_hunger": float(entry.get("fertility_hunger", 0.0)),
+			"fertility_reserve": float(entry.get("fertility_reserve", 0.0)),
+			"fertility_trend": float(entry.get("fertility_trend", 0.0)),
 			# Data-driven settlement stage (icon glyph + label). The icon becomes the band's
 			# map token; empty icon → neutral non-circular fallback marker (square; ownership is
 			# on the banner, no disc). Label surfaces in tooltip/roster.

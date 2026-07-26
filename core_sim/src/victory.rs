@@ -1,5 +1,5 @@
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -8,6 +8,7 @@ use bevy::prelude::{Res, ResMut, Resource};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
     crisis::CrisisMetricKind, metrics::SimulationMetrics, orders::FactionId, SimulationTick,
 };
@@ -86,6 +87,17 @@ impl VictoryConfigHandle {
 pub struct VictoryConfig {
     pub modes: Vec<VictoryModeDefinition>,
     pub continue_after_win: bool,
+}
+
+impl VictoryConfig {
+    /// The compiled-in copy of `data/victory_config.json` — the only config the boot loader is
+    /// allowed to substitute, and only when that file is absent entirely.
+    pub fn builtin() -> Arc<Self> {
+        Arc::new(
+            read_victory_config_from_str(BUILTIN_VICTORY_CONFIG)
+                .expect("builtin victory config should parse"),
+        )
+    }
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -173,35 +185,26 @@ pub enum VictoryConfigError {
     },
 }
 
-pub fn load_victory_config_from_env() -> Arc<VictoryConfig> {
-    let override_path = env::var("VICTORY_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/victory_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match read_victory_config_from_file(&path) {
-            Ok(config) => {
-                return Arc::new(config);
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::victory",
-                    path = %path.display(),
-                    error = %err,
-                    "victory_config.load_failed"
-                );
-            }
-        }
+impl ConfigLoadError for VictoryConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
     }
+}
 
-    let config = read_victory_config_from_str(BUILTIN_VICTORY_CONFIG)
-        .expect("builtin victory config should parse");
-    Arc::new(config)
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `VICTORY_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
+pub fn load_victory_config_from_env() -> Arc<VictoryConfig> {
+    let (config, _source) = load_config_from_env(
+        "VICTORY_CONFIG_PATH",
+        "victory_config",
+        "src/data/victory_config.json",
+        VictoryConfig::builtin,
+        read_victory_config_from_file,
+    );
+    config
 }
 
 fn read_victory_config_from_file(path: &Path) -> Result<VictoryConfig, VictoryConfigError> {

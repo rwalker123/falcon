@@ -107,7 +107,7 @@ paths:
   **`penFeedUpkeep`**, decoded as `food_income`/`food_consumption`/`pen_feed_upkeep`, flowed onto the
   MapView unit marker + guarded by `marker_field_guard`): for a **player** band with real flow,
   `_band_food_line` appends the **steady net per-turn rate** — `Food 15 (19 turns) · +0.76 /turn` —
-  where **net = `DetailFormat.band_net_food` = income − food_consumption − pen_feed_upkeep**, tinted green (≥0) /
+  where **net = `DetailFormat.band_net_food` = income − food_consumption − pen_feed_upkeep − raid_forfeit**, tinted green (≥0) /
   red (<0). **The income term is the fix:** `_band_food_income = Gathered + Hunted = Σ per-source
   `realized_yield`** (the honest long-run average of the lumpy take, client-summed from the same values
   as the breakdown rows), so the net **no longer swings turn-to-turn** the way the old lumpy
@@ -115,11 +115,17 @@ paths:
   breakdown rows rather than off any band-level wire total, so the net's income half can never disagree
   with the Gathered/Hunted rows beneath it. (A cohort-level `foodIncomeAverage` was added for exactly
   this and then **retired as redundant** — a separately-computed total is a second source of truth that
-  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has THREE terms, not two:**
+  can drift from the rows. Don't reintroduce it; the sum IS the contract.) **The ledger has FOUR terms, not two:**
   a band keeping a corral pays its penned herd's feed straight off the larder every turn (a confined
   herd cannot graze), and that debit is in *neither* of the other two. Omitting it made the row **lie** —
   a Red Deer pen overstated the surplus by ~1.74/turn against a band that eats ~1.2, and the larder then
-  drained with no explanation.
+  drained with no explanation. **The fourth term is `raid_forfeit`** (Predators Phase 3,
+  `PopulationCohortState.raidForfeit`): food a predator raided off the larder THIS turn, the raid twin of
+  pen feed — same larder, a different decision (guard the camp vs feed the herd). Like pen feed the client
+  **must not** re-derive it; unlike pen feed raids are **EPISODIC**, so this term is present only the turn a
+  raid lands and the forward FOOD OUTLOOK chart deliberately does NOT project it (a past loss is not a
+  steady drain). The full identity `larder_delta == income − consumption − pen_feed − raid_forfeit` is
+  pinned by `integration_tests/tests/raid_food_ledger.rs`.
   `penFeedUpkeep` is the food the sim **actually paid** this turn summed across every pen the band
   keeps; the client **must not** re-derive it by summing the herds' `penUpkeep` (the sim owns every
   yield number — see `core_sim/CLAUDE.md` → Pre-commit Yield Forecast; the identity
@@ -127,12 +133,15 @@ paths:
   The turns-to-empty stays only in the `(N turns)` figure; it is not
   repeated. The `Food` label is a **click-to-open disclosure** (a `▸/▾` caret) opening a
   **category breakdown** in a **POPOVER** — indented `▲ +X  Gathered` / `▲ +Y  Hunted` / `▼ −Z  Eaten
-  (people)` / `▼ −W  🐄 Pen feed (animals)` rows (Gathered/Hunted = Σ per-source `actual_yield`
-  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept —
-  **people and animals eat from the same larder but are DIFFERENT decisions**, so they are different
+  (people)` / `▼ −W  🐄 Pen feed (animals)` / `▼ −V  ⚔ Lost to raids` rows (Gathered/Hunted = Σ per-source `actual_yield`
+  by kind, Eaten = `food_consumption`, Pen feed = `pen_feed_upkeep`, shown only when a pen is kept;
+  **Lost to raids = `raid_forfeit`, shown only the turn a raid landed** (`DisclosureController.food_breakdown_lines` /
+  `DetailFormat.FOOD_LABEL_RAID_FORFEIT`, the crossed-swords glyph matching the `predator_raid` command-feed
+  alert) — **people, animals and raiders all draw the same larder but are DIFFERENT decisions**, so they are different
   rows), rendered through the **shared morale-breakdown path** in `DetailFormat.detail_bbcode` (income ▲
   green, debits ▼ amber). ui_preview: `band_pen_feed` (fed pen: net +2.99 = 5.88 − 1.15 − 1.74) /
-  `band_pen_starving` (part-paid feed, net −0.53 red). No flow → the bare `Food N (N turns)` line,
+  `band_pen_starving` (part-paid feed, net −0.53 red) / `predator_band_raided` (raided band: the
+  `⚔ Lost to raids −1.20` row + the crimson Warrior "⚠ Predator nearby" alert). No flow → the bare `Food N (N turns)` line,
   no net/disclosure.
   **THE BREAKDOWN OPENS IN A POPOVER, NEVER INLINE — and that is a correctness rule, not a style
   one.** Expanding it in place grew the vitals `RichTextLabel` (`fit_content = true`) by several
@@ -209,6 +218,49 @@ paths:
     Scout · Hunt` line (the real levers, NOT harvest), appended under the breakdown **only when
     morale is concerning** (a healthy band that manually expands its breakdown is not told to
     "recover"). `_split_detail_kv` skips lines beginning with `↑` so it renders as a dim sentence.
+  - **Growth row + itemized fertility breakdown** (`_band_growth_line` / `_fertility_breakdown_lines`;
+    snapshot `PopulationCohortState.fertilityHunger`/`fertilityReserve`/`fertilityTrend`, decoded in
+    `native/src/dict/population.rs cohort_scalars` as `fertility_hunger`/`fertility_reserve`/
+    `fertility_trend`, flowed onto the MapView unit marker + guarded by `marker_field_guard`). Growth
+    used to slow for reasons the player could not see itemized: they had the *inputs* (the larder, the
+    Food line) and the *effect* (the People bar), and nothing between them. This is the exact parallel
+    of the morale breakdown above — same click-to-open disclosure, same popover, same
+    `DisclosureController.register` path — for the birth path's three named factors
+    (`docs/plan_population_growth_model.md`).
+    - **`Growth: 188% of normal`** — the band's birth rate as a share of the base rate the sim would
+      otherwise apply, i.e. the PRODUCT `fertility_hunger × fertility_reserve × fertility_trend`
+      (`DetailFormat.band_fertility`). Tinted by `BandFoodStatus.hex_for_fertility` (config
+      `band_status_config.json` `fertility.{warn,critical}` = `0.75`/`0.40`), which grades ink → amber
+      → red like the **Output** row rather than the morale/food green palette: normal growth is normal,
+      not a "good", so the top bucket is neutral ink even at 188%. Unlike Output the row shows at
+      EVERY level, because it is what the disclosure hangs on and "why is growth slow?" has to be
+      findable in the good state too. **It can exceed 100%**, which is why the value spells its anchor
+      out rather than leaving a bare percentage to read as a cap.
+    - **The breakdown rows are MULTIPLIERS, not signed deltas** — `    ▼ ×0.60  short rations` /
+      `    ▲ ×1.05  larder reserve` / `    ▼ ×0.25  larder shrinking`. They reuse the morale
+      breakdown's indent + ▲/▼ sign glyph so `DetailFormat.detail_bbcode`'s shared indented-sub-line
+      branch tints them (no parallel styling path), but these factors combine by PRODUCT where the
+      morale contributions combine by SUM: three signed percentages that refuse to add up to the
+      headline would invite exactly the arithmetic they cannot support, whereas `0.60 × 1.05 × 0.25`
+      reads down to the `16%` above it. `hunger` is only ever ≤ 1 and `reserve` only ever ≥ 1, so each
+      of those labels states its one direction outright; `trend` is two-sided and forks on sign
+      (`larder growing` / `larder shrinking`) the way the morale row's culture/unrest does. Only
+      factors off the neutral 1.0 by more than `fertility.breakdown_epsilon` (`0.002`) list, so a
+      thriving band's disclosure names what is HELPING rather than showing no-op rows.
+    - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived, not
+      persisted, so a rehydrated cohort publishes all zeros; `BandFoodStatus.fertility_is_projected`
+      reads that off `fertility_reserve` (a computed reserve is `1 + bonus × ramp` ≥ 1 by
+      construction, while `hunger` and `trend` both legitimately reach 0) and the producer emits **no
+      Growth row and no disclosure at all** rather than a fabricated `0% of normal`. `MapView`
+      deliberately defaults the three marker keys to **`0.0`, not the neutral `1.0`**, for the same
+      reason — a neutral default would fabricate a "normal growth" reading for a band that published
+      none. The sim's own no-data rule (an unprojected `trend` scores neutral) then falls out on this
+      side for free: a neutral factor renders as nothing, never as a deficit.
+    - ui_preview: `band_growth_expanded` (188% neutral ink, disclosure naming the two helping factors,
+      `hunger` neutral so its row is omitted) / `band_growth_collapsed` (16% red under a WARN caret,
+      all three factors off neutral — the frame that proves the rows multiply out to the headline) /
+      `band_growth_unprojected` (a rehydrated band: NO Growth row). band_panel_preview:
+      `band_panel_morale_expanded_*` carries the collapsed Growth row in the dock host.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Deplete/Eradicate get `MORALE_HINT_PERSISTENT`
     appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.

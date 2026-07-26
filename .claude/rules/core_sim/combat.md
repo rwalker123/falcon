@@ -209,6 +209,18 @@ Warrior role), "Population & Demographics" (the `death_fraction`/bracket seam ca
   task):** the native reader + the view-ring render. Guard:
   `snapshot::tests::herd_snapshot_reports_prey_sense_radius_for_carnivores_only`.
 
+### Prey pursuit (Phase 2) — a wild carnivore steps toward its dinner
+
+**A wild carnivore now `pursue`s the nearest clearable prey** (the Phase-2 movement primitive) instead
+of roaming toward grass, so a pack **tracks a moving herd** rather than idling on empty ground. This is
+the deeper fix for the transient-zero-prey stranding that widening `prey_sense_radius` 3→4 only
+band-aided, and it makes raids dynamic (a pursuing pack closes on camps). The movement lives on the
+fauna side — it is the trophic transpose of `drift_to_owner`, reusing the shared prey rule
+(`attack_clears_defense` over `prey_index`, **not** `HerdDensityMap`) so a wolf chases only prey it can
+actually eat, out to the wider `predators.pursuit_radius` (default **8**, vs the feeding disk's 4). See
+`fauna.md` → "Herd movement is a rung primitive" (the `pursue` bullet) for the mechanism, ordering,
+one-turn prey-position lag, and config.
+
 ### Predator raids (Phase 1b) — the raid trigger + the Warrior goes live
 
 **A carnivore with `aggression > 0` within `predators.raid_radius` of a resident band raids its camp**,
@@ -251,6 +263,53 @@ Phase 0, inert until now) is the trigger; `diet` gates it to carnivores.
   contingent. Tests: `core_sim/tests/predator_raid.rs` (unguarded band bleeds + narrates; warriors cut
   losses; no raid from a herbivore or an out-of-range carnivore; aggression scales lethality;
   determinism) + the two `fauna_config` rejection tests.
+
+#### Phase 3 — raids forfeit food + the raid legibility pair on the wire
+
+**A casualty-causing raid now also forfeits food** (`docs/plan_predators.md` § "Phase 3"). The band's
+people were defending or fleeing, not gathering, so a raid that costs lives (`total_killed > 0`) also
+costs a fraction of **that turn's food income** — a real larder debit, capped at what the larder holds.
+
+- **In `advance_predator_raids`** the band query is now `&mut LaborAllocation`. Each band's
+  `allocation.last_raid_forfeit` is **reset to `0.0` at the top of its iteration** (this system is its
+  only writer, so a non-raided band reads `0`). After the raid loop, if casualties occurred:
+  `income = Σ alloc.last_yields[i].actual` (this turn's income — `advance_labor_allocation` ran earlier
+  in the Population stage and already credited it), `forfeit = predators.raid_yield_forfeit_fraction ×
+  income`, debited via `cohort.stores.take(FOOD, forfeit)` (whose **return** — the actually-taken
+  amount — is recorded in `last_raid_forfeit`, so a thin larder forfeits only what it held and an idle
+  band with `income == 0` forfeits nothing). The forfeit is folded into the `PredatorRaid` feed line's
+  detail (` forfeit=<f>`); the feed lines are **deferred** so the band-level forfeit can be appended
+  before they are pushed.
+- **`predators.raid_yield_forfeit_fraction`** (`fauna_config.json` `predators` block, default **0.25**,
+  a playtest dial) — `#[serde(default)]` on `PredatorConfig`; `FaunaConfig::validate` rejects
+  not-finite or outside `[0, 1]` (`validate_rejects_an_out_of_range_raid_yield_forfeit_fraction`).
+- **`LaborAllocation.last_raid_forfeit: f32`** is a **derived, per-turn, NOT-persisted** field treated
+  exactly like `last_pen_feed_upkeep` (excluded from the manual `PartialEq`, absent from serde/rollback
+  state, defaults `0.0`).
+- **Two new `PopulationCohortState` wire fields** (append-only, after `fodderStore`), captured in
+  `snapshot/population.rs`:
+  - **`raidRadius:uint`** — echo of `fauna.predators.raid_radius`, surfaced per-cohort exactly like
+    `workRange` (a global lever the client needs per-band to check whether a visible aggressive predator
+    is within exact raid range).
+  - **`raidForfeit:float`** — `last_raid_forfeit`, a negative food-ledger line, the raid twin of
+    `penFeedUpkeep`.
+- **The ledger identity gains a term** (see `campaign.md`): the forfeit is a real larder debit in
+  neither `foodIncome` nor `foodConsumption`, so
+  `larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit`, pinned through a real
+  raid turn by `integration_tests/tests/raid_food_ledger.rs`. **`raidForfeit` is a PAST-turn stochastic
+  debit, NOT a recurring cost** — it is deliberately **absent** from the `turnsOfFood` forward-runway
+  drain (`larder_runway_turns`), which drains only by `consumption + penFeedUpkeep`.
+- Tests: `core_sim/tests/predator_raid.rs` gains the working-band-forfeits / idle-band-forfeits-nothing /
+  forfeit-capped-at-larder cases; the config rejection rides `fauna_config.rs`'s unit tests.
+- **Client half — LANDED (this PR).** The native reader (`native/src/dict/population.rs`) decodes
+  `raidRadius`/`raidForfeit` into the cohort dict; `CommandFeedController`'s new extensible `KIND_STYLE`
+  table styles the threat/casualty feed events (`predator_raid` → ⚔ crimson, `hunt_danger` → ⚠ amber,
+  reusing the `HudStyle` palette so the accent matches the map-overlay hues); the Warrior card shows a
+  live **"⚠ Predator nearby — N on guard"** warning (a visible camp-threat predator within `raidRadius`
+  of the band); and the `raidForfeit` **"⚔ Lost to raids"** negative food-ledger line renders beside
+  `penFeedUpkeep`. ui_preview fixtures `predator_feed` / `predator_band_raided` pin both. **NOTE — Phase 4
+  (`docs/plan_predators.md`) replaces this client-side `raidRadius` proximity check with a
+  visibility-gated, server-computed per-band alert.**
 
 ---
 

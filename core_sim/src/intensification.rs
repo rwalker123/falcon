@@ -34,7 +34,7 @@
 
 use std::{
     collections::HashSet,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -44,6 +44,7 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
     components::FollowPolicy,
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
@@ -164,6 +165,13 @@ pub enum RungMovement {
     /// preference — see `fauna::advance_herd_roam`. A source with no owner, or an owner with no
     /// bands, simply roams.
     DriftToOwner,
+    /// **Steps toward the nearest prey it can eat** — the carnivore transpose of `drift_to_owner`,
+    /// over the same shared attractor path (`fauna::relocate_toward_resource`), with clearable prey
+    /// positions as the attractor tiles instead of owner camps. Resolved **diet-aware** in
+    /// `fauna::advance_herds` (a wild carnivore selects it) rather than assigned from a rung record:
+    /// the husbandry rungs are diet-orthogonal (`animal:wild` is one rung shared by a deer and a
+    /// wolf), so a carnivore's food-seeking movement can't be a husbandry-rung record today.
+    Pursue,
 }
 
 /// How a source at this rung feeds itself. A bounded coded primitive (§5) — **not read yet**
@@ -862,6 +870,14 @@ pub enum LadderConfigError {
     },
 }
 
+impl ConfigLoadError for LadderConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the intensification ladder.
 #[derive(Resource, Debug, Clone)]
 pub struct LadderConfigHandle(pub Arc<LadderConfig>);
@@ -906,58 +922,20 @@ impl LadderConfigMetadata {
     }
 }
 
-/// Load the ladder from environment (`INTENSIFICATION_LADDER_PATH`) or the default data path,
-/// falling back to the baked-in builtin.
+/// Load the ladder from environment (`INTENSIFICATION_LADDER_PATH`) or the default data path. The
+/// ladder is **validated** on load, and a broken invariant is as fatal as a parse error.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `INTENSIFICATION_LADDER_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_intensification_ladder_from_env() -> (Arc<LadderConfig>, LadderConfigMetadata) {
-    let override_path = env::var("INTENSIFICATION_LADDER_PATH")
-        .ok()
-        .map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/intensification_ladder.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match LadderConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "intensification_ladder.loaded=file"
-                );
-                return (Arc::new(config), LadderConfigMetadata::new(Some(path)));
-            }
-            // A *broken invariant* is louder than a missing file: the ladder parsed, so it looks
-            // fine, and silently falling back to the builtin would hide a ladder the operator
-            // believes is live (the `fauna_config.invalid_rejected` convention).
-            Err(err @ LadderConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "intensification_ladder.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "intensification_ladder.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = LadderConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "intensification_ladder.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "INTENSIFICATION_LADDER_PATH",
+        "intensification_ladder",
+        "src/data/intensification_ladder.json",
+        LadderConfig::builtin,
+        LadderConfig::from_file,
     );
-    (config, LadderConfigMetadata::new(None))
+    (config, LadderConfigMetadata::new(source))
 }
 
 #[cfg(test)]

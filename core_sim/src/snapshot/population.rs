@@ -227,6 +227,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) wellbeing: &'a crate::wellbeing_config::WellbeingConfig,
     pub(crate) supply_membership: &'a SupplyNetworkMembership,
     pub(crate) work_range: u32,
+    /// Echo of `fauna.predators.raid_radius` — surfaced per-cohort exactly like `work_range` (a global
+    /// lever the client needs per-band to check whether a visible aggressive predator is in raid range).
+    pub(crate) raid_radius: u32,
     pub(crate) scout_vantage_distance: u32,
     pub(crate) expedition_levers: &'a ExpeditionLevers,
     pub(crate) settlement_stage_config: &'a crate::settlement_stage_config::SettlementStageConfig,
@@ -251,6 +254,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         wellbeing,
         supply_membership,
         work_range,
+        raid_radius,
         scout_vantage_distance,
         expedition_levers,
         settlement_stage_config,
@@ -310,6 +314,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // the player watches the larder drain with no explanation. Derived, like `food_income`: `0.0` on a
     // rehydrated save until the next tick.
     let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
+    // The food this band forfeited to a predator raid this turn (the real `LocalStore::take` debit
+    // `advance_predator_raids` levied on a casualty-causing raid). Like `pen_feed_upkeep` it is in
+    // NEITHER food term — a negative ledger row the client draws separately — and, like it, is derived
+    // per-turn (`0.0` on a rehydrated save until the next tick).
+    let raid_forfeit = allocation.map(|a| a.last_raid_forfeit).unwrap_or(0.0);
     // The honest larder runway — turns until the larder empties, INCOME INCLUDED (the wire calls it
     // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
@@ -464,6 +473,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         food_income,
         food_consumption,
         pen_feed_upkeep,
+        raid_forfeit,
         // Pre-launch hunt-forecast levers (global config, echoed onto every cohort — the outfit UI
         // reads them off the selected resident band).
         hunt_per_worker_provisions: expedition_levers.hunt_per_worker_provisions,
@@ -488,6 +498,16 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
         // also rides the full `stores` list above, but a named scalar spares the client a key lookup.
         fodder_store: cohort.stores.get(FODDER).to_f32(),
+        // The three fertility factors this turn's births were actually resolved from — read off the
+        // cohort, never re-derived here: they are computed on the turn's *opening* brackets and
+        // *pre-meal* larder, so recomputing on the post-turn state would publish numbers that never
+        // drove a birth. All-zero on a rehydrated cohort (the not-projected sentinel).
+        fertility_hunger: cohort.last_fertility_factors.hunger.raw(),
+        fertility_reserve: cohort.last_fertility_factors.reserve.raw(),
+        fertility_trend: cohort.last_fertility_factors.trend.raw(),
+        // Predators Phase 3 — the raid legibility pair. `raid_radius` echoes the global lever
+        // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
+        raid_radius,
     }
 }
 
@@ -586,6 +606,7 @@ pub(crate) fn snapshot_demographics(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::FertilityFactors;
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
 
     /// Enough larder that the runway is decided by the flows, not by an empty cupboard.
@@ -621,6 +642,7 @@ mod tests {
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: scalar_zero(),
             grievance: scalar_zero(),
             last_emigrated: 0,
@@ -639,6 +661,15 @@ mod tests {
         allocation: Option<&LaborAllocation>,
         expedition: Option<&Expedition>,
     ) -> f32 {
+        captured(cohort, allocation, expedition).turns_of_food
+    }
+
+    /// Capture one cohort exactly as the snapshot does, and return the whole published state.
+    fn captured(
+        cohort: &PopulationCohort,
+        allocation: Option<&LaborAllocation>,
+        expedition: Option<&Expedition>,
+    ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),
             cohort,
@@ -654,6 +685,7 @@ mod tests {
             wellbeing: &crate::wellbeing_config::WellbeingConfig::builtin(),
             supply_membership: &SupplyNetworkMembership::default(),
             work_range: 0,
+            raid_radius: 0,
             scout_vantage_distance: 0,
             expedition_levers: &levers(),
             settlement_stage_config:
@@ -662,7 +694,6 @@ mod tests {
             hunt_reach: 0,
             expedition_delivery: None,
         })
-        .turns_of_food
     }
 
     /// The one-turn demand the runway divides by — the same helper the capture uses.
@@ -694,6 +725,45 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    /// The three fertility factors are published **verbatim from the cohort**, not re-derived at
+    /// capture: they were resolved on the turn's *opening* brackets and *pre-meal* larder, so any
+    /// recomputation here would publish numbers that never drove a birth. The cohort below carries a
+    /// larder and brackets that would recompute to a *different* set, which is exactly what makes
+    /// this a re-derivation guard rather than a restatement.
+    #[test]
+    fn the_capture_publishes_the_factors_that_actually_drove_the_births() {
+        let mut cohort = cohort(TEST_LARDER);
+        let factors = FertilityFactors {
+            hunger: scalar_from_f32(0.6),
+            reserve: scalar_from_f32(1.5),
+            trend: scalar_from_f32(0.25),
+        };
+        cohort.last_fertility_factors = factors;
+        let state = captured(&cohort, None, None);
+        assert_eq!(state.fertility_hunger, factors.hunger.raw());
+        assert_eq!(state.fertility_reserve, factors.reserve.raw());
+        assert_eq!(state.fertility_trend, factors.trend.raw());
+    }
+
+    /// **The no-data rule on the wire.** The factors are derived, not persisted, so a rehydrated
+    /// cohort has no reading yet — and it must publish the all-zero NOT-PROJECTED sentinel rather
+    /// than a fabricated one. `reserve == 0` is what makes it unambiguous: a computed `reserve` is
+    /// ≥ 1 by construction, while `hunger` and `trend` both legitimately reach 0. The client reads a
+    /// zero reserve as "no reading", never as a famine.
+    #[test]
+    fn a_rehydrated_cohort_publishes_the_not_projected_sentinel() {
+        let state = captured(&cohort(TEST_LARDER), None, None);
+        assert_eq!(
+            (
+                state.fertility_hunger,
+                state.fertility_reserve,
+                state.fertility_trend
+            ),
+            (0, 0, 0),
+            "a cohort that has not ticked must publish no reading, not a fabricated one"
+        );
     }
 
     /// **The compatibility guarantee.** An expedition has no labor income and keeps no pens, so the

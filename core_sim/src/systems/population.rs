@@ -1,4 +1,6 @@
 use super::*;
+use crate::components::FertilityFactors;
+use crate::demographics_config::{DemographicsBirths, DemographicsTrend};
 
 #[derive(Event, Debug, Clone)]
 pub struct MigrationKnowledgeEvent {
@@ -50,16 +52,132 @@ fn death_fraction(
     min(starvation + cold_fraction, scalar_one())
 }
 
+/// A band's per-turn food **flow**, as of last turn's resolution — the input to the `trend`
+/// fertility factor. Read off `LaborAllocation`, which resolves *after* `simulate_population`, so
+/// the values are one turn stale by construction. That is correct: fertility should respond to the
+/// trend a band has been living, not to a single turn's haul.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FoodFlow {
+    /// Σ per-source [`SourceYield::realized`] — the **steady**, forward-projected food/turn, not the
+    /// lumpy `actual`. A big-game hunt pays zero for six turns then spikes; fertility must not
+    /// sawtooth with whole-animal timing.
+    pub steady_income: Scalar,
+    /// What the band's pens ate (`LaborAllocation::last_pen_feed_upkeep`). Subtracting it is what
+    /// makes `net_flow` the negation of the same net drain the player-facing `turnsOfFood` runway
+    /// divides by, so the two readouts can never disagree about which way a band is heading.
+    pub pen_feed_upkeep: Scalar,
+}
+
+/// One turn of [`advance_demographics`]: the resolved bracket/larder state **plus the fertility
+/// factors that produced its births**. The factors are returned rather than recomputed at capture
+/// deliberately — they are resolved from the turn's *opening* brackets and *pre-meal* larder, so a
+/// re-derivation on the post-turn state would report numbers that never drove a birth.
+struct DemographicOutcome {
+    pub state: DemographicState,
+    pub fertility: FertilityFactors,
+}
+
+/// The **flow** fertility factor. `None` flow means *not projected* — a rehydrated cohort (whose
+/// `last_yields` is derived, not persisted) or a band with no `LaborAllocation` at all — and must
+/// read as **no data → neutral**, never as zero income. Reading empty telemetry as a famine would
+/// suppress births on every rollback; this is the same trap already documented for the arrivals
+/// schedule in `larder_runway_turns`.
+fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend) -> Scalar {
+    let Some(flow) = flow else {
+        return scalar_one();
+    };
+    if demand <= scalar_zero() {
+        return scalar_one();
+    }
+    let net_ratio = (flow.steady_income - demand - flow.pen_feed_upkeep) / demand;
+    // A saturation of 0 would divide by zero; treat it as "any excursion is already full scale".
+    let ramp = |excursion: Scalar, saturation: f32| {
+        let saturation = scalar_from_f32(saturation);
+        if saturation > scalar_zero() {
+            min(excursion / saturation, scalar_one())
+        } else {
+            scalar_one()
+        }
+    };
+    if net_ratio >= scalar_zero() {
+        scalar_one() + scalar_from_f32(cfg.surplus_gain) * ramp(net_ratio, cfg.surplus_saturation)
+    } else {
+        // `net_ratio` has NO lower bound — `pen_feed_upkeep` is subtracted too, so a band whose pens
+        // out-eat its income goes past -1. What caps the penalty is `ramp`'s own `min(.., 1)`, never a
+        // floor on income: do not remove that clamp. The `max(.., 0)` below is belt-and-braces against
+        // a config with `deficit_penalty > 1`.
+        max(
+            scalar_one()
+                - scalar_from_f32(cfg.deficit_penalty) * ramp(-net_ratio, cfg.deficit_saturation),
+            scalar_zero(),
+        )
+    }
+}
+
+/// Resolve the three fertility factors for a cohort's food position. Pure and shared by the birth
+/// path and its tests so the model has exactly one definition.
+fn fertility_factors(
+    demand: Scalar,
+    consumed: Scalar,
+    larder_after_meal: Scalar,
+    flow: Option<FoodFlow>,
+    births: &DemographicsBirths,
+) -> FertilityFactors {
+    let has_demand = demand > scalar_zero();
+    let hunger = if has_demand {
+        consumed / demand
+    } else {
+        scalar_one()
+    };
+    let reserve_turns = if has_demand {
+        larder_after_meal / demand
+    } else {
+        scalar_zero()
+    };
+    let saturation = scalar_from_f32(births.reserve.saturation_turns);
+    let reserve_ramp = if saturation > scalar_zero() {
+        min(reserve_turns / saturation, scalar_one())
+    } else {
+        scalar_one()
+    };
+    FertilityFactors {
+        hunger,
+        reserve: scalar_one() + scalar_from_f32(births.reserve.bonus) * reserve_ramp,
+        trend: trend_factor(flow, demand, &births.trend),
+    }
+}
+
+/// Read a band's food flow off last turn's labor telemetry, distinguishing **no data** from a
+/// genuine zero. `LaborAllocation::last_yields` is derived-not-persisted, so "empty" is ambiguous
+/// and the two readings are opposite:
+///
+/// - **no `LaborAllocation`**, or **assignments staffed but `last_yields` empty** (a rehydrated
+///   cohort, before the next `advance_labor_allocation`) → `None`, *not projected*. The trend factor
+///   stays neutral; reading this as zero income would suppress births on every rollback.
+/// - **`assignments` empty** → `Some` with zero income. An idle band really does produce nothing,
+///   and that emptiness is a fact about the band, not missing telemetry.
+fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
+    let labor = labor?;
+    if labor.last_yields.is_empty() && !labor.assignments.is_empty() {
+        return None;
+    }
+    Some(FoodFlow {
+        steady_income: scalar_from_f32(labor.last_yields.iter().map(|y| y.realized).sum::<f32>()),
+        pen_feed_upkeep: scalar_from_f32(labor.last_pen_feed_upkeep),
+    })
+}
+
 /// One turn of the demographic model for a single cohort (pure — no ECS): draw per-capita food
 /// from the local larder, then resolve scarcity/cold deaths, births, maturation, aging, and
 /// elder mortality. All bracket flows use the *opening* bracket values and are applied together,
 /// so a newborn does not mature the same turn. The total is clamped to the global cap.
 fn advance_demographics(
     state: DemographicState,
+    flow: Option<FoodFlow>,
     temp_diff: Scalar,
     max_cap: Scalar,
     demo: &DemographicsConfig,
-) -> DemographicState {
+) -> DemographicOutcome {
     let DemographicState {
         children: children0,
         working: working0,
@@ -77,17 +195,6 @@ fn advance_demographics(
         deficit / demand
     } else {
         scalar_zero()
-    };
-    let fed_ratio = if has_demand {
-        consumed / demand
-    } else {
-        scalar_one()
-    };
-    // Larder buffer beyond one turn's demand → fertility bonus.
-    let surplus_ratio = if has_demand {
-        min(remaining_food / demand, scalar_one())
-    } else {
-        scalar_one()
     };
 
     // 2. Deaths: starvation (scales with the food deficit, dependents more vulnerable, but never
@@ -126,14 +233,16 @@ fn advance_demographics(
             cold_fraction,
         );
 
-    // 3. Births → children, from the working (reproductive) bracket, gated by food + surplus.
+    // 3. Births → children, from the working (reproductive) bracket. Fertility is a product of three
+    // named factors — `hunger` (did we eat), `reserve` (is there a cushion), `trend` (is the cushion
+    // growing or shrinking) — so a band bleeding out no longer breeds at full speed right up to the
+    // cliff. See `docs/plan_population_growth_model.md` and `fertility_factors`.
     // Births are morale-INDEPENDENT (wellbeing model, `docs/plan_civ_wellbeing.md`): contentment
     // doesn't change procreation — low morale relocates people or drags output, it never suppresses
     // births or causes faction population loss.
     let births_cfg = &demo.births;
-    let fertility = scalar_from_f32(births_cfg.birth_rate)
-        * fed_ratio
-        * (scalar_one() + scalar_from_f32(births_cfg.surplus_bonus) * surplus_ratio);
+    let factors = fertility_factors(demand, consumed, remaining_food, flow, births_cfg);
+    let fertility = scalar_from_f32(births_cfg.birth_rate) * factors.multiplier();
     let births = working0 * fertility;
 
     // 4. Aging flows.
@@ -164,11 +273,14 @@ fn advance_demographics(
         elders *= scale;
     }
 
-    DemographicState {
-        children,
-        working,
-        elders,
-        food_store: remaining_food,
+    DemographicOutcome {
+        state: DemographicState {
+            children,
+            working,
+            elders,
+            food_store: remaining_food,
+        },
+        fertility: factors,
     }
 }
 
@@ -286,7 +398,9 @@ pub fn simulate_population(
     tiles: Query<&Tile>,
     // `With<ResidentBand>`: demographics run on real bands only — a detached expedition manages its
     // own larder/consumption in `advance_expeditions` and never grows/starves/migrates.
-    mut cohorts: Query<&mut PopulationCohort, With<ResidentBand>>,
+    // `Option<&LaborAllocation>` carries last turn's food-flow telemetry into the `trend` fertility
+    // factor (see `band_food_flow` for why it is an `Option` all the way down).
+    mut cohorts: Query<(&mut PopulationCohort, Option<&LaborAllocation>), With<ResidentBand>>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut telemetry: ResMut<TradeTelemetry>,
     mut trade_events: EventWriter<TradeDiffusionEvent>,
@@ -304,7 +418,7 @@ pub fn simulate_population(
         attrition_penalty_scale: population_cfg.attrition_penalty_scale(),
         hardness_penalty_scale: population_cfg.hardness_penalty_scale(),
     };
-    for mut cohort in cohorts.iter_mut() {
+    for (mut cohort, labor) in cohorts.iter_mut() {
         // Age the band every turn (before any early-out) so the migration gate below sees an
         // accurate settled duration even for cohorts whose home tile briefly can't be resolved.
         cohort.age_turns = cohort.age_turns.saturating_add(1);
@@ -355,19 +469,24 @@ pub fn simulate_population(
                 elders: cohort.elders,
                 food_store: food_before,
             },
+            band_food_flow(labor),
             temp_diff,
             max_cap_scalar,
             &demo,
         );
-        cohort.children = outcome.children;
-        cohort.working = outcome.working;
-        cohort.elders = outcome.elders;
-        cohort.stores.set(FOOD, outcome.food_store);
+        cohort.children = outcome.state.children;
+        cohort.working = outcome.state.working;
+        cohort.elders = outcome.state.elders;
+        cohort.stores.set(FOOD, outcome.state.food_store);
+        // The three factors behind this turn's births, parked for the snapshot exactly as
+        // `last_morale_contributions` is: the player sees the inputs (larder, Food /turn) and the
+        // effect (population), and this is the attribution between them.
+        cohort.last_fertility_factors = outcome.fertility;
         // The food the people ACTUALLY ate this turn = the larder drop across `advance_demographics`
         // (consumption is its only `food_store` debit). This is the ledger's consumption term — it
         // reconciles the larder exactly, unlike a `food_demand` re-derived at capture on the *post*
         // turn brackets (which the same turn's births would inflate). See `last_food_consumption`.
-        cohort.last_food_consumption = (food_before - outcome.food_store).to_f32();
+        cohort.last_food_consumption = (food_before - outcome.state.food_store).to_f32();
         cohort.sync_size();
 
         // A band's population only emigrates once it has settled for a while — this gates the
@@ -522,7 +641,7 @@ mod tile_morale_pressure_tests {
 
 #[cfg(test)]
 mod demographics_tests {
-    use super::{advance_demographics, death_fraction, DemographicState};
+    use super::{advance_demographics, death_fraction, DemographicState, FoodFlow};
     use crate::demographics_config::DemographicsConfig;
     use crate::scalar::{scalar_from_f32, scalar_from_u32, scalar_one, scalar_zero};
 
@@ -542,13 +661,66 @@ mod demographics_tests {
         (s.children + s.working + s.elders).to_f32()
     }
 
+    /// One turn with **no flow telemetry** — the neutral-trend path a rehydrated cohort takes.
     fn run(s: DemographicState, temp: f32) -> DemographicState {
+        run_with_flow(s, temp, None)
+    }
+
+    fn run_with_flow(s: DemographicState, temp: f32, flow: Option<FoodFlow>) -> DemographicState {
         advance_demographics(
             s,
+            flow,
             scalar_from_f32(temp),
             scalar_from_u32(NO_CAP),
             &DemographicsConfig::default(),
         )
+        .state
+    }
+
+    /// A **childless** working cohort (the 30-person opening band's adults: W 16.5 / E 4.5). With no
+    /// children there is no maturation out and no child deaths, so `children` after one turn **is**
+    /// exactly that turn's births — the cleanest way to read fertility, which is what every
+    /// factor test below is actually measuring.
+    fn breeders(larder_turns: f32) -> DemographicState {
+        state(0.0, 16.5, 4.5, larder_turns * BREEDER_DEMAND)
+    }
+
+    /// One turn's food demand for [`breeders`], derived from the same shared `food_demand` helper
+    /// the sim uses rather than re-implemented here — `DemographicsConfig::default()` now parses
+    /// the shipped `demographics_config.json` (issue #350), so deriving it from the config in hand
+    /// tracks a re-tune of `per_capita_draw` automatically and only the pinned literal below has to
+    /// move.
+    fn breeder_demand() -> f32 {
+        let cfg = DemographicsConfig::default();
+        let s = state(0.0, 16.5, 4.5, 0.0);
+        super::food_demand(s.children, s.working, s.elders, &cfg.consumption).to_f32()
+    }
+
+    /// = `0.16 × (16.5 + 4.5×0.8)` = `0.16 × 20.1`, pinned by `breeder_demand_matches` below.
+    const BREEDER_DEMAND: f32 = 3.216;
+
+    /// Births in one turn at the given steady income (no pens), off a childless cohort.
+    fn births_at_income(larder_turns: f32, income_turns: f32) -> f32 {
+        run_with_flow(
+            breeders(larder_turns),
+            MILD_TEMP,
+            Some(FoodFlow {
+                steady_income: scalar_from_f32(income_turns * BREEDER_DEMAND),
+                pen_feed_upkeep: scalar_zero(),
+            }),
+        )
+        .children
+        .to_f32()
+    }
+
+    /// Guards the `BREEDER_DEMAND` literal the larder/income helpers are expressed in multiples of.
+    #[test]
+    fn breeder_demand_matches() {
+        assert!(
+            (breeder_demand() - BREEDER_DEMAND).abs() < 1e-4,
+            "BREEDER_DEMAND is stale: {}",
+            breeder_demand()
+        );
     }
 
     /// A well-fed, temperate cohort grows and eats from its larder.
@@ -623,10 +795,12 @@ mod demographics_tests {
         let start = state(100.0, 100.0, 100.0, 10_000.0);
         let out = advance_demographics(
             start,
+            None,
             scalar_from_f32(MILD_TEMP),
             scalar_from_u32(50),
             &DemographicsConfig::default(),
-        );
+        )
+        .state;
         assert!(
             (total(&out) - 50.0).abs() < 1.0,
             "total should clamp to the cap of 50: {}",
@@ -663,12 +837,297 @@ mod demographics_tests {
         assert!((capped.to_f32() - 1.0).abs() < 1e-4);
     }
 
+    // ---- Fertility factors: stock, flow, and the gate (#286) ----
+
+    /// **The bug in #286.** A band with a fat larder but *zero income* used to breed at the full
+    /// maximum rate — `surplus_ratio` saturated at a two-turn buffer, so eighteen of its twenty
+    /// turns of runway were spent at peak fertility, accelerating into the cliff it was causing.
+    /// The `trend` factor now damps it to a quarter (`net_ratio = −1` → `1 − 0.75 = 0.25`).
+    #[test]
+    fn a_fat_larder_with_collapsed_income_no_longer_breeds_at_full_speed() {
+        // Same fat larder in both, so `reserve` is identical (saturated at 1.5) and only `trend`
+        // differs: 0.25 against 1.0.
+        let bleeding = births_at_income(20.0, 0.0);
+        let steady = births_at_income(20.0, 1.0);
+        assert!(
+            (bleeding / steady - 0.25).abs() < 1e-3,
+            "collapsed income should breed at ~25% of break-even: {bleeding} vs {steady}"
+        );
+    }
+
+    /// Damp, **not** stop: a band in total food collapse still bears children while its larder
+    /// lasts. Starvation mortality is the real consequence of a deficit — `trend.deficit_penalty`
+    /// is the lever that would make flow stop growth outright (set it to 1.0).
+    #[test]
+    fn negative_flow_damps_growth_without_stopping_it() {
+        let born = births_at_income(20.0, 0.0);
+        assert!(
+            born > 0.0,
+            "a band still eating from its larder must bear children: {born}"
+        );
+    }
+
+    /// Turning `deficit_penalty` up to 1.0 **does** stop growth outright — the damp-vs-stop call is
+    /// a config change, not a code change.
+    #[test]
+    fn deficit_penalty_of_one_stops_growth_outright() {
+        let mut cfg = DemographicsConfig::default();
+        cfg.births.trend.deficit_penalty = 1.0;
+        let out = advance_demographics(
+            breeders(20.0),
+            Some(FoodFlow {
+                steady_income: scalar_zero(),
+                pen_feed_upkeep: scalar_zero(),
+            }),
+            scalar_from_f32(MILD_TEMP),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        )
+        .state;
+        assert!(
+            out.children.to_f32().abs() < 1e-6,
+            "deficit_penalty=1.0 should zero births on a collapsed income: {}",
+            out.children.to_f32()
+        );
+    }
+
+    /// The `hunger` gate is the only factor that reaches zero, and it outranks everything: an empty
+    /// larder bears nobody even with income generous enough to peg `trend` at its 1.25 ceiling.
+    #[test]
+    fn an_empty_larder_bears_nobody_however_the_modifiers_read() {
+        let born = births_at_income(0.0, 3.0);
+        assert!(
+            born.abs() < 1e-6,
+            "no food eaten → no births regardless of the modifiers: {born}"
+        );
+    }
+
+    /// **The attribution must be honest.** The three factors are exported so the client can explain
+    /// slow growth, which is only worth anything if they *are* the explanation: their product times
+    /// `birth_rate` times the working bracket must reproduce the births the same call actually made.
+    /// A drifting breakdown that adds up to the wrong answer is worse than no breakdown, so this
+    /// pins the returned set against the observed outcome rather than against a re-derivation.
+    ///
+    /// Run on a **collapsed-income** band — the case the whole model exists for, and the one where
+    /// all three factors are simultaneously off their neutral values.
+    #[test]
+    fn the_returned_factors_multiply_out_to_the_births_they_explain() {
+        let cfg = DemographicsConfig::default();
+        let start = breeders(20.0);
+        let outcome = advance_demographics(
+            start,
+            Some(FoodFlow {
+                steady_income: scalar_zero(),
+                pen_feed_upkeep: scalar_zero(),
+            }),
+            scalar_from_f32(MILD_TEMP),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        );
+        // `breeders` is childless, so this turn's `children` IS the births (no maturation out, and a
+        // fed band takes no child deaths).
+        let births = outcome.state.children.to_f32();
+        let explained = (start.working
+            * scalar_from_f32(cfg.births.birth_rate)
+            * outcome.fertility.multiplier())
+        .to_f32();
+        assert!(
+            (births - explained).abs() < 1e-6,
+            "the exported factors must explain the births they came with: {births} vs {explained}"
+        );
+        // ...and it is a real three-factor product, not a coincidence of neutral values.
+        assert!(
+            outcome.fertility.trend < scalar_one() && outcome.fertility.reserve > scalar_one(),
+            "a collapsed-income band with a fat larder should read trend < 1 < reserve: {:?}",
+            outcome.fertility
+        );
+    }
+
+    /// The mirror bug: a band whose income exactly covers consumption is *fine*, and used to be
+    /// read as poor purely for not hoarding. It now scores a `trend` of 1.0 and out-breeds an
+    /// identically-provisioned band whose income has collapsed.
+    #[test]
+    fn a_self_sufficient_thin_larder_out_breeds_a_draining_one() {
+        let fed = births_at_income(1.5, 1.0);
+        let draining = births_at_income(1.5, 0.0);
+        assert!(
+            fed > draining,
+            "break-even income should out-breed collapsed income at the same larder: {fed} vs {draining}"
+        );
+    }
+
+    /// `trend` is two-sided: real surplus *raises* fertility above break-even, so provisioning well
+    /// is rewarded rather than merely not-punished. Income at 1.5× demand is `net_ratio = 0.5`,
+    /// exactly the shipped `surplus_saturation` → the full 1.25 bonus.
+    #[test]
+    fn surplus_income_breeds_faster_than_break_even() {
+        let surplus = births_at_income(20.0, 1.5);
+        let break_even = births_at_income(20.0, 1.0);
+        assert!(
+            (surplus / break_even - 1.25).abs() < 1e-3,
+            "net-positive food should raise fertility by the surplus gain: {surplus} vs {break_even}"
+        );
+    }
+
+    /// **No data is not a famine.** A rehydrated cohort has empty yield telemetry; reading that as
+    /// zero income would suppress births on every rollback. `None` must score a neutral `trend` —
+    /// *exactly* break-even, not merely "better than starving".
+    #[test]
+    fn missing_flow_telemetry_reads_neutral_not_starving() {
+        let no_data = run(breeders(20.0), MILD_TEMP).children.to_f32();
+        let zero_income = births_at_income(20.0, 0.0);
+        let break_even = births_at_income(20.0, 1.0);
+        assert!(
+            no_data > zero_income,
+            "unprojected flow must not be read as a deficit: {no_data} vs {zero_income}"
+        );
+        assert!(
+            (no_data - break_even).abs() < 1e-6,
+            "neutral trend should equal a break-even trend: {no_data} vs {break_even}"
+        );
+    }
+
+    /// Pen feed is a real drain on the same larder, so it counts against the flow exactly as it
+    /// does in the player-facing `turnsOfFood` runway — a band whose income is entirely eaten by
+    /// its animals is in deficit, not at break-even.
+    #[test]
+    fn pen_feed_upkeep_counts_against_the_flow() {
+        let with_pens = run_with_flow(
+            breeders(20.0),
+            MILD_TEMP,
+            Some(FoodFlow {
+                steady_income: scalar_from_f32(BREEDER_DEMAND),
+                pen_feed_upkeep: scalar_from_f32(BREEDER_DEMAND),
+            }),
+        )
+        .children
+        .to_f32();
+        let without = births_at_income(20.0, 1.0);
+        assert!(
+            with_pens < without,
+            "pen upkeep should push an otherwise break-even band into deficit: {with_pens} vs {without}"
+        );
+    }
+
+    /// The `reserve` saturation bar is a config lever, and `saturation_turns = 1.0` reproduces the
+    /// retired hardcoded behaviour exactly — a two-turn buffer reading as maximum surplus.
+    #[test]
+    fn reserve_saturation_turns_reproduces_the_old_curve_at_one() {
+        let mut cfg = DemographicsConfig::default();
+        cfg.births.reserve.saturation_turns = 1.0;
+        // Larder = 2 turns of demand: one eaten, one left → `reserve_turns == 1` → saturated.
+        let old_curve = advance_demographics(
+            breeders(2.0),
+            None,
+            scalar_from_f32(MILD_TEMP),
+            scalar_from_u32(NO_CAP),
+            &cfg,
+        )
+        .state
+        .children
+        .to_f32();
+        let fat = run(breeders(20.0), MILD_TEMP).children.to_f32();
+        assert!(
+            (old_curve - fat).abs() < 1e-6,
+            "at saturation_turns=1 a two-turn buffer should match a full larder: {old_curve} vs {fat}"
+        );
+        // ...and the shipped 10-turn bar is what makes those two differ.
+        let thin_now = run(breeders(2.0), MILD_TEMP).children.to_f32();
+        assert!(
+            thin_now < fat,
+            "at the shipped bar a two-turn buffer must NOT read as a full larder: {thin_now} vs {fat}"
+        );
+    }
+
     /// A childless cohort matures no one, but working-age still ages into elders.
     #[test]
     fn aging_moves_workers_into_elders() {
         let start = state(0.0, 100.0, 0.0, 10_000.0);
         let out = run(start, MILD_TEMP);
         assert!(out.elders.to_f32() > 0.0, "workers should age into elders");
+    }
+}
+
+/// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). `last_yields` is derived, not
+/// persisted, so "empty" alone cannot tell a rehydrated cohort from an idle one — and the two must
+/// read oppositely.
+#[cfg(test)]
+mod food_flow_tests {
+    use super::band_food_flow;
+    use crate::components::{LaborAllocation, LaborAssignment, LaborTarget, SourceYield};
+    use crate::FollowPolicy;
+    use bevy::math::UVec2;
+
+    fn forage_assignment() -> LaborAssignment {
+        LaborAssignment {
+            target: LaborTarget::Forage {
+                tile: UVec2::new(0, 0),
+                policy: FollowPolicy::Sustain,
+                species: None,
+            },
+            workers: 4,
+        }
+    }
+
+    /// A band with no labor component at all has no flow reading.
+    #[test]
+    fn no_labor_allocation_is_no_data() {
+        assert!(band_food_flow(None).is_none());
+    }
+
+    /// **A rehydrated cohort**: the assignments survived rollback, the derived telemetry did not.
+    /// This must read as *not projected*, or every rollback would suppress births.
+    #[test]
+    fn staffed_assignments_without_telemetry_are_no_data() {
+        let labor = LaborAllocation {
+            assignments: vec![forage_assignment()],
+            last_yields: Vec::new(),
+            last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
+        };
+        assert!(
+            band_food_flow(Some(&labor)).is_none(),
+            "rehydrated telemetry must not be read as zero income"
+        );
+    }
+
+    /// **A genuinely idle band**: no assignments means it really does produce nothing, so the same
+    /// empty `last_yields` is a fact rather than missing data.
+    #[test]
+    fn an_idle_band_reports_a_real_zero_income() {
+        let labor = LaborAllocation::default();
+        let flow = band_food_flow(Some(&labor)).expect("an idle band has a real zero flow");
+        assert_eq!(flow.steady_income.to_f32(), 0.0);
+    }
+
+    /// The steady income sums per-source `realized` — the forward-projected smooth value — and
+    /// never the lumpy `actual`, so fertility can't sawtooth with whole-animal hunt timing.
+    #[test]
+    fn steady_income_sums_realized_not_actual() {
+        let labor = LaborAllocation {
+            assignments: vec![forage_assignment(), forage_assignment()],
+            last_yields: vec![
+                SourceYield {
+                    actual: 12.0,
+                    realized: 2.0,
+                    ..SourceYield::ZERO
+                },
+                SourceYield {
+                    actual: 0.0,
+                    realized: 3.0,
+                    ..SourceYield::ZERO
+                },
+            ],
+            last_pen_feed_upkeep: 1.5,
+            last_raid_forfeit: 0.0,
+        };
+        let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
+        assert!(
+            (flow.steady_income.to_f32() - 5.0).abs() < 1e-4,
+            "should sum realized (2+3), not actual (12+0): {}",
+            flow.steady_income.to_f32()
+        );
+        assert!((flow.pen_feed_upkeep.to_f32() - 1.5).abs() < 1e-4);
     }
 }
 
@@ -774,6 +1233,7 @@ mod wellbeing_tests {
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: discontent_fraction(m, &cfg().discontent),
             grievance: scalar_zero(),
             last_emigrated: 0,

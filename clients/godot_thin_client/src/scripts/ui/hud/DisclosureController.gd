@@ -96,13 +96,25 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
         return false
     var key := DetailFormat.breakdown_key(kind, band)
     _breakdown_payloads[key] = lines
-    var concerning := DetailFormat.food_is_concerning(band) if kind == HudDisclosureVocab.BREAKDOWN_KIND_FOOD \
-        else DetailFormat.morale_is_concerning(band)
+    var concerning := _is_concerning(kind, band)
     _disclosure_state[row_label] = {"key": key, "open": _breakdown_popover_key == key, "concerning": concerning}
     # A live popover restates the numbers it was opened on, so a snapshot refreshes it in place.
     if _breakdown_popover_key == key:
         _refresh_popover_text()
     return true
+
+## Does this row have something worth reading right now? Each disclosure kind owns its own answer
+## (`DetailFormat.*_is_concerning`), and the verdict only ever tints the caret WARN — no popover ever
+## opens itself. A dispatch rather than a chain of ternaries because there are three kinds now and a
+## fourth would otherwise be a nested conditional nobody can read.
+func _is_concerning(kind: String, band: Dictionary) -> bool:
+    match kind:
+        HudDisclosureVocab.BREAKDOWN_KIND_FOOD:
+            return DetailFormat.food_is_concerning(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
+            return DetailFormat.growth_is_concerning(band)
+        _:
+            return DetailFormat.morale_is_concerning(band)
 
 ## The category breakdown sub-lines under Food, one indented row per present category, mirroring the
 ## morale breakdown: `    ▲ +0.48  Gathered` / `    ▲ +0.46  Hunted` / `    ▼ −0.68  Eaten (people)`
@@ -125,6 +137,12 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var pen_feed := DetailFormat.band_pen_feed(band)
     if pen_feed >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-pen_feed, DetailFormat.FOOD_LABEL_PEN_FEED))
+    # The raid debit (Predators Phase 3): food a predator took off the larder this turn. A FOURTH kind
+    # of row beside Pen feed — same larder, different decision (guard the camp vs feed the herd) — so it
+    # gets its own line, and only when a raid actually landed (0 → omitted, like Pen feed).
+    var raid_forfeit := DetailFormat.band_raid_forfeit(band)
+    if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
     return lines
 
 ## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure

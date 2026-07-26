@@ -1611,6 +1611,7 @@ pub fn capture_snapshot(
                 wellbeing: &wellbeing_config,
                 supply_membership: &supply_membership,
                 work_range: band_work_range,
+                raid_radius: fauna_config.predators.raid_radius,
                 scout_vantage_distance,
                 expedition_levers: &expedition_levers,
                 settlement_stage_config: &settlement_stage_config,
@@ -2261,6 +2262,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             last_morale_delta: scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: MoraleContributions::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: scalar_zero(),
             // Grievance is a multi-turn accumulator, so it IS persisted (like `age_turns`) — a
             // rollback must not silently wipe brewing unrest.

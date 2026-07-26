@@ -372,6 +372,15 @@ pub struct PopulationCohort {
     /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Derived each turn by
     /// `simulate_population`; not snapshot-persisted.
     pub last_morale_contributions: MoraleContributions,
+    /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
+    /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
+    /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
+    /// equivalent of `last_morale_contributions`: growth slows for named reasons, and this is what
+    /// lets the client itemize them instead of leaving the player with only the inputs (larder,
+    /// Food /turn) and the effect (population). Derived each turn by `simulate_population`; not
+    /// snapshot-persisted — a rehydrated cohort reads the all-zero **not-projected** default until
+    /// the next turn recomputes it (see `FertilityFactors`).
+    pub last_fertility_factors: FertilityFactors,
     /// Layer 2 — the share of the band that is unhappy this turn, `g(morale)` (working-weighted at
     /// the migration/grievance stage). `0` = content, `1` = fully discontented. Drives the
     /// productivity modifier stack and migration. Derived each turn; not snapshot-persisted.
@@ -459,6 +468,40 @@ pub struct MoraleContributions {
     pub climate: Scalar,
     /// crisis impacts + cultural sentiment bias (signed).
     pub unrest: Scalar,
+}
+
+/// The three named fertility factors behind a cohort's births this turn — the `birth_rate`
+/// multiplier `hunger × reserve × trend` (`docs/plan_population_growth_model.md`). It lives here
+/// beside [`MoraleContributions`] and for the same reason: growth, like morale, moves for named
+/// reasons, and a fixed allocation-free struct makes a future driver one more field rather than a
+/// rewrite of the birth path. Surfaced in the snapshot so the client can itemize *why* growth is
+/// slow.
+///
+/// **`Default` is all-zero, and that is the NOT-PROJECTED sentinel** — the same derived-not-
+/// persisted shape as `MoraleContributions`, so a rehydrated cohort reads it until the next tick.
+/// It is unambiguous because a *computed* set can never carry `reserve == 0`: `reserve` is
+/// `1 + bonus × ramp` with both terms ≥ 0, so it is ≥ 1 by construction. `hunger` and `trend` both
+/// legitimately reach 0 (an empty larder, a `deficit_penalty` of 1.0), so neither could serve.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct FertilityFactors {
+    /// **Gate** — did the band eat this turn (`consumed / demand`).
+    pub hunger: Scalar,
+    /// **Stock** — how deep is the larder.
+    pub reserve: Scalar,
+    /// **Flow** — is the larder growing or shrinking.
+    pub trend: Scalar,
+}
+
+impl FertilityFactors {
+    /// The `birth_rate` multiplier: the product of the three factors.
+    ///
+    /// Only `hunger` can reach 0 — it is the gate that makes an empty larder yield zero births.
+    /// `reserve` and `trend` are modifiers bracketing 1.0 (`[1, 1.5]` and `[0.25, 1.25]` at shipped
+    /// defaults), so neither can zero the product alone and the stack needs no floor lever; how far
+    /// a collapsed income may damp growth is `trend.deficit_penalty`'s job.
+    pub fn multiplier(&self) -> Scalar {
+        self.hunger * self.reserve * self.trend
+    }
 }
 
 impl MoraleContributions {
@@ -977,6 +1020,23 @@ pub struct LaborAllocation {
     /// rehydrated cohort reads `0.0` until the next tick), and **excluded from equality** below so it
     /// can never perturb the persisted-intent comparison.
     pub last_pen_feed_upkeep: f32,
+    /// **The food this band forfeited to a predator raid this turn** (Predators Phase 3) — the actual
+    /// `LocalStore::take` debit `advance_predator_raids` levies on a **casualty-causing** raid (the
+    /// band's people were defending or fleeing, not gathering, so they forfeit
+    /// `predators.raid_yield_forfeit_fraction` of that turn's food income, capped at the larder). `0.0`
+    /// on a band not raided this turn.
+    ///
+    /// Exported as `PopulationCohortState.raid_forfeit` — a negative food-ledger row, the raid twin of
+    /// `last_pen_feed_upkeep`. It is a **past** larder debit (a stochastic event), so it extends only the
+    /// reconciliation identity, NOT the forward runway drain:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// ```
+    ///
+    /// Same treatment as `last_pen_feed_upkeep`: rebuilt from scratch each turn, **derived, not
+    /// persisted**, and **excluded from equality** below.
+    pub last_raid_forfeit: f32,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of

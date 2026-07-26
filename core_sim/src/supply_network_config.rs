@@ -10,11 +10,12 @@
 //! override).
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
@@ -81,6 +82,14 @@ pub enum SupplyNetworkConfigError {
     Parse(#[from] serde_json::Error),
 }
 
+impl ConfigLoadError for SupplyNetworkConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the supply-network configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct SupplyNetworkConfigHandle(pub Arc<SupplyNetworkConfig>);
@@ -122,50 +131,18 @@ impl SupplyNetworkConfigMetadata {
 }
 
 /// Load supply-network config from environment (`SUPPLY_NETWORK_CONFIG_PATH`) or the default data
-/// path, falling back to the baked-in builtin.
+/// path. Only an absent *default* path falls back to the builtin; see
+/// [`crate::config_load::resolve_config`] for the rule and what it panics on.
 pub fn load_supply_network_config_from_env(
 ) -> (Arc<SupplyNetworkConfig>, SupplyNetworkConfigMetadata) {
-    let override_path = env::var("SUPPLY_NETWORK_CONFIG_PATH")
-        .ok()
-        .map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/supply_network_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match SupplyNetworkConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "supply_network_config.loaded=file"
-                );
-                return (
-                    Arc::new(config),
-                    SupplyNetworkConfigMetadata::new(Some(path)),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "supply_network_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = SupplyNetworkConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "supply_network_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "SUPPLY_NETWORK_CONFIG_PATH",
+        "supply_network_config",
+        "src/data/supply_network_config.json",
+        SupplyNetworkConfig::builtin,
+        SupplyNetworkConfig::from_file,
     );
-    (config, SupplyNetworkConfigMetadata::new(None))
+    (config, SupplyNetworkConfigMetadata::new(source))
 }
 
 #[cfg(test)]

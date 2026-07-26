@@ -1,5 +1,5 @@
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -8,6 +8,7 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::scalar::{scalar_from_f32, Scalar};
 
 pub const BUILTIN_TURN_PIPELINE_CONFIG: &str = include_str!("data/turn_pipeline_config.json");
@@ -70,6 +71,14 @@ pub enum TurnPipelineConfigError {
         #[source]
         source: io::Error,
     },
+}
+
+impl ConfigLoadError for TurnPipelineConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::ReadFailed { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -318,47 +327,17 @@ impl TurnPipelineConfigMetadata {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `TURN_PIPELINE_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_turn_pipeline_config_from_env() -> (Arc<TurnPipelineConfig>, TurnPipelineConfigMetadata)
 {
-    let override_path = env::var("TURN_PIPELINE_CONFIG_PATH")
-        .ok()
-        .map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/turn_pipeline_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match TurnPipelineConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "turn_pipeline_config.loaded=file"
-                );
-                return (
-                    Arc::new(config),
-                    TurnPipelineConfigMetadata::new(Some(path)),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "turn_pipeline_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = TurnPipelineConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "turn_pipeline_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "TURN_PIPELINE_CONFIG_PATH",
+        "turn_pipeline_config",
+        "src/data/turn_pipeline_config.json",
+        TurnPipelineConfig::builtin,
+        TurnPipelineConfig::from_file,
     );
-    (config, TurnPipelineConfigMetadata::new(None))
+    (config, TurnPipelineConfigMetadata::new(source))
 }

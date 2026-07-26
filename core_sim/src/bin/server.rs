@@ -5758,6 +5758,7 @@ mod tests {
                     last_morale_delta: core_sim::scalar_zero(),
                     last_morale_cause: Default::default(),
                     last_morale_contributions: Default::default(),
+                    last_fertility_factors: Default::default(),
                     discontent_fraction: core_sim::scalar_zero(),
                     grievance: core_sim::scalar_zero(),
                     last_emigrated: 0,

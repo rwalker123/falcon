@@ -29,9 +29,12 @@ what server-side work remains — do not touch `core_sim/` or the schema.
   the `apply_update`/`reset` tab-panel contract, capability gating, coordinator
   mediation patterns, and socket wiring. Read the relevant panel's row before
   editing it.
-- Root `CLAUDE.md` — DRY/SOLID and, specifically, the **UI Panel Sizing** rule:
-  reuse `src/scripts/ui/AutoSizingPanel.gd` for any panel that grows to fit
-  content; never reimplement bespoke height/scroll logic.
+- Root `CLAUDE.md` — the document-update flow and where rationale goes.
+- `.claude/rules/client/*.md` — the per-arc rationale, gated by `paths:` so the
+  ones covering the code you touch load on their own. **Panel sizing lives in
+  `panel-framework.md`**: never reimplement bespoke height/scroll logic, and pick
+  the helper by what the panel is (free-floating → `AutoSizingPanel`; dock card →
+  `PanelCard` + `DockScrollFit`) — the wrong one misbehaves silently.
 
 ## Ground rules
 
@@ -41,7 +44,9 @@ what server-side work remains — do not touch `core_sim/` or the schema.
 - **No magic numbers.** Named constants with meaning; no unexplained literals.
 - **Match the surrounding GDScript** — its signal naming, its typography and
   capability-gating idioms. Read a neighboring panel before adding one.
-- Reuse existing helpers (AutoSizingPanel, shared typography) over duplicating.
+- Reuse existing helpers (the sizing pair above, `HudStyle` for palette/chrome) over
+  duplicating. Set font sizes with `add_theme_font_size_override` — `Typography.gd` is
+  a no-op shim and styling through it fails silently.
 - If you consume a new snapshot/FlatBuffers field, confirm it already exists in
   the contract; if it doesn't, that's server-side work — flag it, don't invent it.
 - Update the panel roster table in the client `CLAUDE.md` when you add or

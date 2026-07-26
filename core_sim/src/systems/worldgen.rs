@@ -1,6 +1,11 @@
 use super::*;
 use crate::climate::{climate_band_for_temperature, ClimateBand};
 
+/// Seasonal weight a freshly stamped `FoodModuleTag` carries: full strength, unmodulated. The
+/// seasonal cycle is applied later by the food systems; worldgen only decides *which* module a tile
+/// belongs to, never how strong its season currently is.
+const INITIAL_SEASONAL_WEIGHT: f32 = 1.0;
+
 #[derive(Clone, Debug)]
 struct TilePrototype {
     position: UVec2,
@@ -409,7 +414,7 @@ pub fn spawn_initial_world(
             .or_else(|| classify_food_module(&tile_component));
         if let Some(module) = module {
             let site_kind = module.site_kind();
-            let seasonal_weight = 1.0;
+            let seasonal_weight = INITIAL_SEASONAL_WEIGHT;
             entity_commands.insert(FoodModuleTag::new(module, seasonal_weight, site_kind));
             module_candidates
                 .entry(module)
@@ -2319,6 +2324,113 @@ pub fn reconcile_coastal_shelf(
     }
 }
 
+/// Final food-module reconciliation — the last word on which food web a tile belongs to.
+///
+/// `spawn_initial_world` stamps `FoodModuleTag` exactly once, from `classify_food_module` on the
+/// terrain **as it stands at spawn time**. Every later Startup stage then repaints that terrain:
+/// `generate_hydrology` stamps `RiverDelta`/`Floodplain`/`FreshwaterMarsh`/`NavigableRiver` along
+/// its channels and mouths, `apply_tag_budget_solver` and `apply_biome_palette_clamp` swap biomes
+/// wholesale, and `reconcile_coastal_shelf` converts `DeepOcean` to `ContinentalShelf`. Nothing
+/// re-read the tag, so a tile could publish a module describing terrain it no longer had — and a
+/// tile whose *pre-hydrology* biome classified to `None` kept **no tag at all** after hydrology
+/// turned it into a river delta. `spawn_initial_forage` is gated on the tag, so those deltas — the
+/// richest human ground on the map — were seeded no `ForagePatch` and read "No forage" in the
+/// client (issue #330).
+///
+/// This pass closes that ordering gap: it re-runs `classify_food_module` — the *same* function and
+/// the *same* `tile.terrain`/`tile.terrain_tags` inputs as the initial stamp, so no new
+/// classification policy is introduced — over the FINAL terrain and brings each tile's tag into
+/// agreement (insert where a tag is now owed, retag in place where the module changed, remove where
+/// the tile now classifies to nothing). An in-place retag **keeps the tile's existing
+/// `seasonal_weight`**; only `module`/`kind` are authored by terrain. A tile whose module is already
+/// correct is left untouched, so this adds no change-detection churn.
+///
+/// **Chain position.** Registered immediately after `reconcile_coastal_shelf` — the last stage that
+/// touches terrain — and immediately before the three consumers of the tag: `place_wondrous_sites`
+/// (reads `Option<&FoodModuleTag>`), `spawn_initial_forage` (gated on it), and `spawn_initial_graze`.
+///
+/// **`FoodSiteRegistry` is reconciled, not re-curated.** The curated site list is built in
+/// `spawn_initial_world` from the same pre-hydrology classification and is published on the wire as
+/// `foodModules`, so a repainted tile would carry a wrong label there too. Existing entries are
+/// re-read against the final terrain (relabelled where the module moved, dropped where the tile now
+/// classifies to `None`), but **no entries are added**: *which* tiles are curated is a spatial
+/// bucket/quota decision made once during worldgen, and re-running that curation here would change
+/// the map's start-site geography, which is out of scope for a correctness pass.
+///
+/// Deterministic: pure row-major iteration over `TileRegistry.tiles` and the site vec's existing
+/// order — no `HashMap` iteration, no RNG. A pure function of the final terrain.
+pub fn reconcile_food_modules(
+    mut commands: Commands,
+    registry: Res<TileRegistry>,
+    mut food_sites: ResMut<FoodSiteRegistry>,
+    mut tiles: Query<(Entity, &Tile, Option<&mut FoodModuleTag>)>,
+) {
+    let mut inserted = 0usize;
+    let mut updated = 0usize;
+    let mut removed = 0usize;
+
+    for &entity in registry.tiles.iter() {
+        let Ok((entity, tile, tag)) = tiles.get_mut(entity) else {
+            continue;
+        };
+        let classified = classify_food_module(tile);
+        match (classified, tag) {
+            (Some(module), None) => {
+                commands.entity(entity).insert(FoodModuleTag::new(
+                    module,
+                    INITIAL_SEASONAL_WEIGHT,
+                    module.site_kind(),
+                ));
+                inserted += 1;
+            }
+            (Some(module), Some(mut tag)) => {
+                if tag.module != module || tag.kind != module.site_kind() {
+                    // Terrain authors module + kind; the seasonal weight is the tile's own state.
+                    tag.module = module;
+                    tag.kind = module.site_kind();
+                    updated += 1;
+                }
+            }
+            (None, Some(_)) => {
+                commands.entity(entity).remove::<FoodModuleTag>();
+                removed += 1;
+            }
+            (None, None) => {}
+        }
+    }
+
+    let mut sites_updated = 0usize;
+    let mut sites_dropped = 0usize;
+    let mut reconciled_sites: Vec<FoodSiteEntry> = Vec::with_capacity(food_sites.sites().len());
+    for entry in food_sites.iter() {
+        let classified = registry
+            .index(entry.position.x, entry.position.y)
+            .and_then(|entity| tiles.get(entity).ok())
+            .and_then(|(_, tile, _)| classify_food_module(tile));
+        match classified {
+            Some(module) => {
+                let mut reconciled = entry.clone();
+                if reconciled.module != module || reconciled.kind != module.site_kind() {
+                    reconciled.module = module;
+                    reconciled.kind = module.site_kind();
+                    sites_updated += 1;
+                }
+                reconciled_sites.push(reconciled);
+            }
+            None => sites_dropped += 1,
+        }
+    }
+    if sites_updated > 0 || sites_dropped > 0 {
+        food_sites.set_sites(reconciled_sites);
+    }
+
+    info!(
+        target: "shadow_scale::mapgen",
+        "mapgen.food_modules.reconciled inserted={} updated={} removed={} sites_updated={} sites_dropped={}",
+        inserted, updated, removed, sites_updated, sites_dropped
+    );
+}
+
 fn seeded_modifiers_for_position(position: UVec2) -> [Scalar; CULTURE_TRAIT_AXES] {
     let mut modifiers = [Scalar::zero(); CULTURE_TRAIT_AXES];
     let seed = position.x as i32 * 31 + position.y as i32 * 17;
@@ -2626,6 +2738,7 @@ fn spawn_population_entity(
         last_morale_delta: scalar_zero(),
         last_morale_cause: MoraleCause::None,
         last_morale_contributions: MoraleContributions::default(),
+        last_fertility_factors: Default::default(),
         discontent_fraction: scalar_zero(),
         grievance: scalar_zero(),
         last_emigrated: 0,

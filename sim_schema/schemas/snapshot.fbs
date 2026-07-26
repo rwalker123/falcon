@@ -681,6 +681,37 @@ table PopulationCohortState {
   // and it NEVER converts to provisions. Appended (append-only) after #165's expedition trio. Lets the
   // client show a band's hay reserve beside its food reserve.
   fodderStore:float = 0;
+  // The three named fertility factors behind this turn's births — the birth_rate multiplier
+  // fertility = birth_rate × hunger × reserve × trend (docs/plan_population_growth_model.md), the
+  // birth path's equivalent of the moraleSettling/Terrain/Climate/Unrest breakdown above. Fixed-point
+  // (FIXED_POINT_SCALE = 1e6), NEUTRAL AT 1e6 rather than at 0 — these are multiplicative factors,
+  // not signed contributions, so the client renders each as its deviation from 1.0.
+  //   - fertilityHunger  ∈ [0, 1]     did we eat this turn (consumed / demand). The GATE: the only
+  //                                   factor that reaches 0, so an empty larder bears nobody.
+  //   - fertilityReserve ∈ [1, 1.5]   is there a cushion (stock): 1 + bonus × ramp(reserve_turns).
+  //   - fertilityTrend   ∈ [0.25, 1.25] is the cushion growing or shrinking (flow), two-sided
+  //                                   around 1.0 off the same net drain turnsOfFood divides by.
+  // Derived per-turn, NOT persisted (like the morale contributions). A rehydrated cohort reads the
+  // all-zero default — and ZERO RESERVE IS THE NOT-PROJECTED SENTINEL, because a computed reserve is
+  // ≥ 1 by construction while hunger and trend both legitimately reach 0. The client must render a
+  // missing reading as "no data", never as a famine, and must not read a neutral trend as a deficit.
+  // Appended last (append-only schema discipline).
+  fertilityHunger:long = 0;
+  fertilityReserve:long = 0;
+  fertilityTrend:long = 0;
+  // Echo of `fauna.predators.raid_radius` — how close (odd-r hex distance) an aggressive carnivore
+  // must be to raid this band's camp. A global lever surfaced per-cohort (same idiom as workRange) so
+  // the client can check whether a visible aggressive predator is within EXACT raid range of the band.
+  // Append-only.
+  raidRadius:uint = 0;
+  // Food the band FORFEITED to predator raids this turn (Predators Phase 3) — a negative food-ledger
+  // line, the raid twin of penFeedUpkeep. A casualty-causing raid costs the band a fraction of that
+  // turn's food income (the people were defending/fleeing, not gathering), debited from the larder and
+  // capped at what it held. Extends the ledger identity to
+  //   larder_delta == foodIncome − foodConsumption − penFeedUpkeep − raidForfeit  (pinned by a sim test)
+  // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
+  // drain. Append-only.
+  raidForfeit:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

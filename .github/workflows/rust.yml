@@ -10,6 +10,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The hub CLAUDE.md files are generated: their "THIS IS A HUB FILE" banner and
+  # their routing blurb come from scripts/hub_{banner,blurb}_*.md, so an edit made
+  # in the hub alone is silently reverted by the next split_claude_md.sh run.
+  hub-docs-sync:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Hub banner/blurb still match their source files
+      run: scripts/split_claude_md.sh --check
+
   pr-build:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

@@ -8,7 +8,7 @@
 //! `from_json_str`, so a broken override is rejected at **error** level and the builtin used).
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -18,6 +18,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::combat::CombatTuning;
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_COMBAT_CONFIG: &str = include_str!("data/combat_config.json");
 
@@ -123,6 +124,14 @@ pub enum CombatConfigError {
     },
 }
 
+impl ConfigLoadError for CombatConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the combat configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct CombatConfigHandle(pub Arc<CombatConfig>);
@@ -167,54 +176,21 @@ impl CombatConfigMetadata {
     }
 }
 
-/// Load combat configuration from environment (`COMBAT_CONFIG_PATH`) or the default data path,
-/// falling back to the baked-in builtin. Every candidate is **validated** before it can reach the
-/// sim; a broken override is logged at **error** level and rejected in favour of the builtin.
+/// Load combat configuration from environment (`COMBAT_CONFIG_PATH`) or the default data path.
+/// The file is **validated** before it can reach the sim, and a broken invariant is as fatal as a
+/// parse error.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `COMBAT_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_combat_config_from_env() -> (Arc<CombatConfig>, CombatConfigMetadata) {
-    let override_path = env::var("COMBAT_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/combat_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match CombatConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "combat_config.loaded=file"
-                );
-                return (Arc::new(config), CombatConfigMetadata::new(Some(path)));
-            }
-            Err(err @ CombatConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "combat_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "combat_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = CombatConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "combat_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "COMBAT_CONFIG_PATH",
+        "combat_config",
+        "src/data/combat_config.json",
+        CombatConfig::builtin,
+        CombatConfig::from_file,
     );
-    (config, CombatConfigMetadata::new(None))
+    (config, CombatConfigMetadata::new(source))
 }
 
 #[cfg(test)]

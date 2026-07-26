@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -14,6 +14,7 @@ use sim_schema::{
 };
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::food::FoodModule;
 
 pub const BUILTIN_START_PROFILES: &str = include_str!("data/start_profiles.json");
@@ -218,6 +219,14 @@ pub enum KnowledgeTagCatalogError {
     },
 }
 
+impl ConfigLoadError for KnowledgeTagCatalogError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::ReadFailed { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// People in a starting band when a profile's unit omits `band_size`. The band is a
 /// labor pool (see `docs/plan_early_game_labor.md`): one food source sustainably feeds
 /// ~10, so a starting band is a small group whose working-age bracket is the labor pool,
@@ -362,6 +371,14 @@ pub enum StartProfilesError {
     DuplicateId(String),
 }
 
+impl ConfigLoadError for StartProfilesError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::ReadFailed { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct StartProfilesHandle(Arc<StartProfiles>);
 
@@ -390,41 +407,18 @@ impl StartProfilesMetadata {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `START_PROFILES_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_start_profiles_from_env() -> (Arc<StartProfiles>, StartProfilesMetadata) {
-    let override_path = env::var("START_PROFILES_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/start_profiles.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match StartProfiles::from_file(&path) {
-            Ok(profiles) => {
-                tracing::info!(
-                    target: "shadow_scale::campaign",
-                    path = %path.display(),
-                    profiles = profiles.len(),
-                    "start_profiles.loaded=file"
-                );
-                return (Arc::new(profiles), StartProfilesMetadata::new(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::campaign",
-                    path = %path.display(),
-                    error = %err,
-                    "start_profiles.load_failed"
-                );
-            }
-        }
-    }
-
-    let profiles = StartProfiles::builtin();
-    tracing::info!(target: "shadow_scale::campaign", "start_profiles.loaded=builtin");
-    (profiles, StartProfilesMetadata::new(None))
+    let (profiles, source) = load_config_from_env(
+        "START_PROFILES_PATH",
+        "start_profiles",
+        "src/data/start_profiles.json",
+        StartProfiles::builtin,
+        StartProfiles::from_file,
+    );
+    (profiles, StartProfilesMetadata::new(source))
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -455,52 +449,21 @@ impl StartProfileKnowledgeTagsMetadata {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `START_PROFILE_KNOWLEDGE_TAGS_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_start_profile_knowledge_tags_from_env() -> (
     Arc<StartProfileKnowledgeTags>,
     StartProfileKnowledgeTagsMetadata,
 ) {
-    let override_path = env::var("START_PROFILE_KNOWLEDGE_TAGS_PATH")
-        .ok()
-        .map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/data/start_profile_knowledge_tags.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match StartProfileKnowledgeTags::from_file(&path) {
-            Ok(tags) => {
-                tracing::info!(
-                    target: "shadow_scale::campaign",
-                    path = %path.display(),
-                    tags = tags.len(),
-                    "start_profile_knowledge_tags.loaded=file"
-                );
-                return (
-                    Arc::new(tags),
-                    StartProfileKnowledgeTagsMetadata::new(Some(path)),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::campaign",
-                    path = %path.display(),
-                    error = %err,
-                    "start_profile_knowledge_tags.load_failed"
-                );
-            }
-        }
-    }
-
-    let tags = StartProfileKnowledgeTags::builtin();
-    tracing::info!(
-        target: "shadow_scale::campaign",
-        "start_profile_knowledge_tags.loaded=builtin"
+    let (catalog, source) = load_config_from_env(
+        "START_PROFILE_KNOWLEDGE_TAGS_PATH",
+        "start_profile_knowledge_tags",
+        "src/data/start_profile_knowledge_tags.json",
+        StartProfileKnowledgeTags::builtin,
+        StartProfileKnowledgeTags::from_file,
     );
-    (tags, StartProfileKnowledgeTagsMetadata::new(None))
+    (catalog, StartProfileKnowledgeTagsMetadata::new(source))
 }
 
 #[derive(Clone, Debug, Default)]

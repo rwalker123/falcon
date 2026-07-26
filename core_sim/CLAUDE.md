@@ -1,6 +1,28 @@
 # core_sim - Simulation Engine
 
-Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in order: materials → logistics → population → power → tick increment → snapshot capture.
+<!-- HUB BANNER — source of truth: scripts/hub_banner_core_sim.md, emitted into
+     core_sim/CLAUDE.md right after the H1 by scripts/split_claude_md.sh.
+     Edit the source file; an edit made only in the hub is reverted by the next
+     re-run. Verify the two agree with: scripts/split_claude_md.sh --check -->
+
+> ## ⛔ THIS IS A HUB FILE — rationale does NOT go here
+>
+> Before adding a paragraph, section, callout, or config row **anywhere in this file**, ask:
+> **is this true of *all* `core_sim` work?**
+>
+> - **No** — it explains one arc's system, one config's keys, one bug's mechanism, one as-built
+>   note → it belongs in the **rule file that owns the arc** (`.claude/rules/core_sim/*.md`, routing
+>   table below). That is also what keeps two concurrent worktrees off the same file.
+> - **Yes** — a build command, an environment override, a boot-config row, a genuinely
+>   subsystem-wide invariant, or a **new row in the routing table** → here.
+>
+> This file loads into **every session in this repo**; a rule file loads only when you touch the
+> code it describes, so a hub paragraph is paid for by every session forever. **If the owning
+> rule's `paths:` already cover the code you changed, a hub copy is pure duplication** — the reader
+> who could break the invariant loads the rule anyway. Root `CLAUDE.md` → "The hub files are not
+> where rationale goes" has the long form.
+
+Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in `TurnStage` order (`src/lib.rs`): Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot.
 
 ## Quick Reference
 
@@ -17,6 +39,11 @@ cargo bench -p core_sim --bench turn_bench
 # Run server
 cargo run -p core_sim --bin server
 ```
+
+<!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_core_sim.md, appended into
+     core_sim/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
+     edit made only in the hub is reverted by the next re-run.
+     Verify the two agree with: scripts/split_claude_md.sh --check -->
 
 ## Where the rest of this document lives
 
@@ -50,15 +77,17 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `expeditions.md` | Wondrous sites, scouting & hunting expeditions | `sites.rs`, `expedition_config.rs` |
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
+| `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
+| `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
 names a *section heading*, not a file. Resolve it with
 `grep -rn '^#* The knowledge pattern' .claude/rules/core_sim/`. Directional words
 ("below"/"above") are only reliable *within* one file.
 
-**Adding to these docs.** Put per-arc rationale in the rule file that owns the
-arc — that is what keeps two concurrent worktrees off the same file. Only add
-here if it is true of all `core_sim` work.
+**Adding to these docs.** Per-arc rationale goes in the rule file that owns the
+arc; a new arc gets a **row above**, not a section here. See the hub banner at
+the top of this file for the test.
 
 ## Configuration Files
 
@@ -88,51 +117,17 @@ Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archety
 | Var | Effect |
 |-----|--------|
 | `SIM_CONFIG_PATH` | Load an alternate `simulation_config.json` instead of the baked-in default. |
-| `SIM_PORT_BASE` | Shift all four TCP listen ports to a fresh block so multiple checkouts/worktrees don't collide. The base maps to `snapshot=base+0`, `command=base+1`, `snapshot_flat=base+2`, `log=base+3`; `base=41000` reproduces the historical fixed ports (41000–41003). Applied in `load_simulation_config_from_env` (`resources.rs`) over whatever the config JSON specifies, preserving each bind's host. A non-numeric or out-of-range value (needs `1 ≤ base` and `base+3 ≤ 65535`) is warned and ignored rather than fatal. `scripts/run_stack.sh` derives a per-checkout base automatically and forwards the matching `STREAM_PORT`/`COMMAND_PORT`/`LOG_PORT` to the Godot client; `cargo xtask command …` still defaults to `127.0.0.1:41001`, so pass `--port <base+1>` when targeting a shifted server. **Setting this var also makes the base *explicit*, which disables the auto-bump** (see "Port block allocation" below). |
-| `SIM_PORTS_FILE` | Full path (not a directory) of the ports handshake file, overriding the per-user default below. Used by tests and by any launcher that wants the handshake somewhere specific. |
+| `SIM_PORT_BASE` | Shift all four TCP listen ports to a fresh block so multiple checkouts/worktrees don't collide (`snapshot=base+0`, `command=base+1`, `snapshot_flat=base+2`, `log=base+3`; `base=41000` is the historical block). `scripts/run_stack.sh` derives a per-checkout base automatically and forwards the matching `STREAM_PORT`/`COMMAND_PORT`/`LOG_PORT` to the Godot client; `cargo xtask command …` still defaults to `127.0.0.1:41001`, so pass `--port <base+1>` when targeting a shifted server. **Setting this var also makes the base *explicit*, which disables the auto-bump.** |
+| `SIM_PORTS_FILE` | Full path (not a directory) of the ports handshake file, overriding the per-user default. Used by tests and by any launcher that wants the handshake somewhere specific. |
 
-Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted per-row.
+Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted
+per-row. **A var naming a missing or broken file is a boot panic, never a silent fallback to the
+builtin** — if you are overriding a config, a typo in the path stops the server rather than quietly
+running different numbers.
 
-### Port block allocation & the ports handshake file
-
-The server binds **all four ports as one block, up front, all-or-nothing** (`port_alloc.rs`,
-`port_alloc::allocate`), and hands the already-bound `TcpListener`s to `start_snapshot_server` /
-`start_log_stream_server` / `spawn_command_listener`. Previously each subsystem bound its own socket
-and failed differently — the command listener **panicked** while snapshot/log streaming merely warned
-and disabled themselves, so a conflict on 41000 or 41002 left a *running* server that silently never
-streamed. **There is no longer any path where the server runs with a socket disabled because it was in
-use.**
-
-- **Allocation policy.** If `SIM_PORT_BASE` was set, the base is honoured **exactly** — a conflict is
-  fatal (exit code `2`, with an actionable message), never bumped, because `scripts/run_stack.sh` and
-  the per-worktree port assignment depend on an explicit base being deterministic. Otherwise the
-  server starts at the configured base (the config's `snapshot_bind` port, default 41000) and, on
-  `AddrInUse`, advances by `PORT_BLOCK_STRIDE` (**10**) for up to `PORT_SLOT_COUNT` (**100**) slots —
-  the same two constants `scripts/run_stack.sh` uses. Only `AddrInUse` bumps; any other IO error (e.g.
-  permission) surfaces immediately. Exhausting all 100 slots is fatal. A bump is logged at **WARN**
-  (`port_block.bumped`) and the `server ready` INFO line reports the *actual* bound ports plus
-  `port_base_bumped`.
-- **The ports handshake file** lets the client discover a bumped block. Path resolution, env-derived
-  so it needs no extra crate: `SIM_PORTS_FILE` verbatim if set; else Windows
-  `%LOCALAPPDATA%\ShadowScale\ports.json`, macOS `$HOME/Library/Application
-  Support/ShadowScale/ports.json`, Linux `$XDG_STATE_HOME/ShadowScale/ports.json` (falling back to
-  `$HOME/.local/state/…`). Deliberately **not** the temp dir, where AV heuristics are most aggressive;
-  parent dirs are created as needed. Contents (exact key names — a contract with the Godot client's
-  reader):
-
-  ```json
-  {"host":"127.0.0.1","snapshot":41000,"command":41001,"snapshot_flat":41002,"log":41003,"pid":1234}
-  ```
-
-  Written after the block is bound and before the main loop, overwriting unconditionally. **Failure to
-  write is never fatal** — it logs a warning and continues (only auto-discovery is lost). A
-  `PortsFileGuard` removes it when `main` returns; a file left behind by a crash or a **signal**
-  (SIGINT/SIGTERM skip `Drop`) is expected and tolerated — the client validates the file and falls back
-  to the default block, which is what the recorded `pid` is for. No liveness machinery lives here.
-- **Config hot-reload** re-applies the **resolved** base (the `ResolvedPortBase` resource in
-  `server.rs`), not the configured one, so a reload of an unchanged file after a bump keeps the live
-  binds and doesn't spuriously trip `socket_changed=restart_required`. Rebinding live sockets is out of
-  scope; the reloaded config describes the ports the server actually holds.
+**Port allocation, the handshake file, and how the client discovers a bumped block** are one
+two-sided contract — see `.claude/rules/core_sim/ports.md`, which loads on `port_alloc.rs`,
+`server.rs`, `ServerPortsFile.gd` and `run_stack.sh`.
 
 ---
 

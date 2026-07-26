@@ -1500,8 +1500,8 @@ fn log_herd_spawn(herd: &Herd) {
     );
 }
 
-/// Long-range migratory herds: a handful of cross-region walkers, one per
-/// `determine_herd_count`, species drawn from the config's migratory rows.
+/// Long-range migratory herds: a handful of cross-region walkers, as many as
+/// `abundance.migratory` budgets for the map size, species drawn from the config's migratory rows.
 ///
 /// **`host_biomes` is LIVE for migratory species** (it was previously ignored): a herd's loiter
 /// anchors sit on tiles suitable for its species (`module_at ∈ host_biomes`), drawn from a regional
@@ -1537,8 +1537,16 @@ fn spawn_migratory_herds(
             }
         }
     }
-    let herd_target = determine_herd_count(width, height);
-    for idx in 0..herd_target {
+    let herd_target = fauna.abundance.migratory.herds_for_map(width, height);
+    // `idx` is the *seated* herd count, not the attempt count: a `build_migratory_route` failure used
+    // to `continue` the `0..herd_target` loop, which consumed the slot and left the map one migratory
+    // herd short (measured: 1 map in 120). The budget names how many herds a map should HOLD, so a
+    // failure re-draws instead — bounded by `MIGRATORY_ROUTE_ATTEMPTS_PER_HERD` so a map that can seat
+    // none (no land, or every migratory row's route unbuildable) still terminates rather than spinning.
+    let mut idx = 0u32;
+    let mut attempts_left = herd_target.saturating_mul(MIGRATORY_ROUTE_ATTEMPTS_PER_HERD);
+    while idx < herd_target && attempts_left > 0 {
+        attempts_left -= 1;
         let (key, def) = migratory[rng.gen_range(0..migratory.len())];
         let steps = def.sample_route_len(rng);
         let suitable = suitable_tiles_for(def, &suitable_by_module);
@@ -1580,8 +1588,30 @@ fn spawn_migratory_herds(
         herd.refresh_ecology_phase(fauna);
         log_herd_spawn(&herd);
         herds.push(herd);
+        idx += 1;
+    }
+    if idx < herd_target {
+        // UNDER-FILL AND REPORT, never relax the budget — the same contract the tag solver's
+        // `mapgen.tag_solver.under_filled_climate_gated` states. Every migratory row's route was
+        // unbuildable often enough to exhaust the retries, which means the map genuinely cannot seat
+        // the budget (no land, or no host biome anywhere). Silence here is what made the retired
+        // slot-eating `continue` cost a herd per ~120 maps with nothing to read.
+        info!(
+            target: "shadow_scale::fauna",
+            shortfall = herd_target - idx,
+            target = herd_target,
+            seated = idx,
+            "fauna.migratory.under_filled"
+        );
     }
 }
+
+/// How many `build_migratory_route` attempts each migratory slot is allowed before the slot is given
+/// up (`spawn_migratory_herds`). A route failure re-draws rather than eating the slot, so this is the
+/// loop's termination bound: on a map where no migratory row can build a route (no land at all) the
+/// pass must still finish. Small — a failure is rare (1 map in 120 measured), so the retries are
+/// nearly free, and a slot that fails this many times in a row is genuinely unseatable.
+const MIGRATORY_ROUTE_ATTEMPTS_PER_HERD: u32 = 8;
 
 /// Short-range wild game (big + small): iterate land tiles, roll the per-biome
 /// abundance, then greedily place bounded, spaced-out groups from a shuffled pool
@@ -1956,11 +1986,12 @@ pub fn advance_herds(
             SmallRng::seed_from_u64(base_seed ^ HERD_MOVEMENT_SEED_SALT ^ hasher.finish());
         // Movement cadence levers for this species (fall back to a slow game default if unresolved).
         let def = fauna.species_by_display(&herd.species);
-        // **The movement primitive comes from the herd's RUNG, not from `is_domesticated()`** — the
-        // ladder's `behavior.movement` is config (§5), and this is the first place the engine reads
-        // it. §3's proximity spine falls out of the shipped records: wild `roam` → pastoral
-        // `drift_to_owner` → pen `fixed`.
-        match herd_rung(herd, &ladder).behavior.movement {
+        // **The movement primitive comes from the herd's RUNG (diet-adjusted), not from
+        // `is_domesticated()`** — the ladder's `behavior.movement` is config (§5), and this is the
+        // first place the engine reads it. §3's proximity spine falls out of the shipped records: wild
+        // `roam` → pastoral `drift_to_owner` → pen `fixed`; `movement_primitive` overlays the one
+        // diet-resolved case, a wild carnivore's `pursue`.
+        match movement_primitive(herd, def, &ladder) {
             // A `fixed` source does not roam — today's penned herd, pinned at `corralled_at` (Rung
             // 1c). It still grazes/regrows (ecology is independent of movement); only its wander is
             // skipped.
@@ -1968,7 +1999,7 @@ pub fn advance_herds(
             RungMovement::Roam => advance_herd_roam(
                 herd,
                 def,
-                None, // no drift: a wild herd roams its own full range
+                None, // no attractor: a wild herbivore roams its own full range
                 &tile_registry,
                 &tiles,
                 graze,
@@ -1985,6 +2016,41 @@ pub fn advance_herds(
                     herd,
                     def,
                     camps.map(|c| c.as_slice()),
+                    &tile_registry,
+                    &tiles,
+                    graze,
+                    &mut rng,
+                    width,
+                    height,
+                    wrap,
+                )
+            }
+            // `pursue`: a wild carnivore steps toward the nearest **clearable prey in pursuit range**.
+            // Prey come from the start-of-turn `prey_index` + the single `attack_clears_defense` rule
+            // (NOT the `HerdDensityMap`, which counts every herd — uneatable mammoths, other predators
+            // — a *second* prey definition). One prey rule shared with carnivore-`K` and predation, so
+            // a wolf chases only prey it can actually eat. Positions are start-of-turn (the same
+            // one-turn lag carnivore-`K` reads: a herbivore processed later this turn hasn't moved yet
+            // from the index's view — consistent and deterministic). No prey in range → `None` → plain
+            // graze-roam (re-acquire next turn), so a carnivore-free-of-prey map is byte-identical to
+            // today's roam. The target list is tie-broken downstream by `resource_step_order`, so its
+            // build order can't leak into the step.
+            RungMovement::Pursue => {
+                let pred_attack = def.map(|d| d.combat.attack).unwrap_or(0.0);
+                let pursuit_radius = fauna.predators.pursuit_radius;
+                let targets: Vec<UVec2> = prey_index
+                    .iter()
+                    .filter(|p| {
+                        attack_clears_defense(pred_attack, p.defense)
+                            && hex_distance_wrapped(herd.current_pos, p.pos, width, wrap)
+                                <= pursuit_radius
+                    })
+                    .map(|p| p.pos)
+                    .collect();
+                advance_herd_roam(
+                    herd,
+                    def,
+                    (!targets.is_empty()).then_some(targets.as_slice()),
                     &tile_registry,
                     &tiles,
                     graze,
@@ -2511,19 +2577,24 @@ pub fn advance_predation(
 /// species' cadence levers (`None` → a slow game default). Movement is ≤ 1 hex/turn and land-clamped;
 /// it never touches `biomass` (ecology stays independent — a loitering herd still grazes/regrows).
 ///
-/// **`drift`** carries the `drift_to_owner` primitive (§3): `Some(camps)` = this herd's rung says it
-/// drifts, and these are its owner's band tiles. It **composes with, and does not replace, the wild
-/// roam**: the drift only pre-empts the roam's own target on a turn it can genuinely get *closer* to a
-/// camp. Once the herd is as near as it can get — at the camp, or hemmed in — the turn falls through
-/// to the normal state machine, so a tamed herd grazes around its people instead of freezing on their
-/// tile. `None` (a wild herd, an unowned one, or an owner with no bands) is exactly today's roam.
+/// **`attractor`** carries the herd's resource-seeking primitive — the ONE attractor path both
+/// `drift_to_owner` (pastoral → owner camps) and `pursue` (wild carnivore → clearable prey tiles)
+/// ride: `Some(tiles)` = this herd's rung/diet says it steers toward the nearest of `tiles`. The two
+/// are mutually exclusive (a pastoral herbivore drifts, a wild carnivore pursues, a wild herbivore
+/// does neither), so the *same* block serves both — the only difference (which tiles, and any range
+/// gate) is built in `advance_herds`. It **composes with, and does not replace, the wild roam**: the
+/// pre-empt only takes a turn it can genuinely get *closer* to an attractor. Once the herd is as near
+/// as it can get — at the tile, or hemmed in — the turn falls through to the normal state machine, so
+/// a tamed herd grazes around its people (and a pack around its prey) instead of freezing on the tile.
+/// `None` (a wild herbivore, an unowned pastoral herd, or a carnivore with no prey in range) is
+/// exactly today's roam.
 // Args are the herd + its cadence levers + the grid/tile context needed to land-clamp a hex step;
 // bundling them adds noise without clarity (matches the other fauna spawn/movement helpers).
 #[allow(clippy::too_many_arguments)]
 fn advance_herd_roam(
     herd: &mut Herd,
     def: Option<&SpeciesDef>,
-    drift: Option<&[UVec2]>,
+    attractor: Option<&[UVec2]>,
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
@@ -2536,20 +2607,21 @@ fn advance_herd_roam(
     let loiter_radius = def.map(|d| d.loiter_radius).unwrap_or(2);
     herd.next_pos = None;
 
-    // **`drift_to_owner`** — the tamed rung's attractor is its owner's camp, not its wild route, so it
-    // is resolved *before* the roam state machine and takes the turn when it can close the distance.
-    // The species' own `dwell_turns` cadence still applies: taming an animal does not make it faster,
-    // it makes it *near*.
-    if let Some(camps) = drift.filter(|camps| !camps.is_empty()) {
+    // **The attractor pre-empt** — a herd whose rung/diet seeks a resource (a tamed herd its owner's
+    // camp, a wild carnivore its prey) steers toward the nearest attractor tile *before* the roam
+    // state machine, and takes the turn when it can close the distance. The species' own `dwell_turns`
+    // cadence still applies: taming an animal — and pursuing prey — makes it *near*, not *faster* (a
+    // wolf is not quicker than a deer).
+    if let Some(targets) = attractor.filter(|targets| !targets.is_empty()) {
         if herd.dwell_remaining > 0 {
             herd.dwell_remaining -= 1;
             return;
         }
-        if drift_step_toward_owner(herd, camps, registry, tiles, graze, width, height, wrap) {
+        if relocate_toward_resource(herd, targets, registry, tiles, graze, width, height, wrap) {
             herd.dwell_remaining = dwell_turns;
             return;
         }
-        // Already at the camp (or no acceptable step gets nearer) → fall through to the normal roam.
+        // Already at the target (or no acceptable step gets nearer) → fall through to the normal roam.
     }
 
     match herd.roam {
@@ -2756,29 +2828,31 @@ fn acceptable_steps(
     steps
 }
 
-/// **The `drift_to_owner` primitive** (`docs/plan_intensification_ladder.md` §3, dial 4): one step
-/// toward the owner's **nearest** camp. Returns whether the herd moved — `false` = it is already as
-/// near as it can get (standing in the camp, or no acceptable step closes the distance), and the
-/// caller falls through to the herd's normal roam, so a tamed herd grazes *around* its people rather
-/// than freezing on their tile.
+/// **The shared prey-/owner-seeking primitive** (`relocate_toward_resource`) — one step toward the
+/// **nearest** of `targets`. It is the mechanism the design calls the trophic transpose: `drift_to_owner`
+/// hands it its owner's camps, `pursue` hands it the clearable prey tiles, and the body is identical.
+/// Returns whether the herd moved — `false` = it is already as near as it can get (standing on a target,
+/// or no acceptable step closes the distance), and the caller falls through to the herd's normal roam,
+/// so a tamed herd grazes *around* its people (and a pack around its prey) rather than freezing on the
+/// tile.
 ///
 /// **It composes with the roam, it does not replace it.** The candidates are exactly
 /// [`acceptable_steps`] — the roam's own land + barren-avoidance filter — and the roam's fertility
 /// preference survives as the second sort key. What the primitive changes is only the herd's
-/// *attractor*: its owner's camp instead of its wild route anchor.
+/// *attractor*: the target set instead of its wild route anchor.
 ///
-/// **The order is TOTAL and hasher-independent**: `(camp distance ASC, graze capacity DESC, y ASC,
+/// **The order is TOTAL and hasher-independent**: `(target distance ASC, graze capacity DESC, y ASC,
 /// x ASC)`. The last two keys exist because the first two can genuinely tie (two neighbours the same
 /// distance out on the same biome) and a tie broken by anything incidental is a flake waiting to
-/// happen — the lesson of `GrazeRegistry::richest_patch`'s `HashMap`-order tie. `camp_distance` mins
-/// over the camps, so the camp list's order cannot leak in either.
+/// happen — the lesson of `GrazeRegistry::richest_patch`'s `HashMap`-order tie.
+/// [`nearest_target_distance`] mins over the targets, so the target list's order cannot leak in either.
 ///
-/// **There is no drift-strength lever, deliberately** — this is a preference *ordering*, not a
-/// weight: one step per turn toward the people, and nothing to tune.
+/// **There is no attractor-strength lever, deliberately** — this is a preference *ordering*, not a
+/// weight: one step per turn toward the resource, and nothing to tune.
 #[allow(clippy::too_many_arguments)]
-fn drift_step_toward_owner(
+fn relocate_toward_resource(
     herd: &mut Herd,
-    camps: &[UVec2],
+    targets: &[UVec2],
     registry: &TileRegistry,
     tiles: &Query<&Tile>,
     graze: &GrazeRegistry,
@@ -2786,9 +2860,9 @@ fn drift_step_toward_owner(
     height: u32,
     wrap: bool,
 ) -> bool {
-    let current = camp_distance(herd.current_pos, camps, width, wrap);
+    let current = nearest_target_distance(herd.current_pos, targets, width, wrap);
     if current == 0 {
-        // Standing on the camp tile: nothing to close, so the normal roam takes the turn.
+        // Standing on a target tile: nothing to close, so the normal roam takes the turn.
         return false;
     }
     let mut best: Option<(u32, f32, UVec2)> = None;
@@ -2801,14 +2875,14 @@ fn drift_step_toward_owner(
         height,
         wrap,
     ) {
-        let d = camp_distance(np, camps, width, wrap);
-        // Only a step that genuinely closes the distance is a drift; anything else is roaming, and
+        let d = nearest_target_distance(np, targets, width, wrap);
+        // Only a step that genuinely closes the distance counts; anything else is roaming, and
         // roaming is the fall-through's job.
         if d >= current {
             continue;
         }
         let candidate = (d, cap, np);
-        let better = best.is_none_or(|best| drift_order(candidate, best) == Ordering::Less);
+        let better = best.is_none_or(|best| resource_step_order(candidate, best) == Ordering::Less);
         if better {
             best = Some(candidate);
         }
@@ -2822,23 +2896,23 @@ fn drift_step_toward_owner(
     }
 }
 
-/// The drift's **total** candidate order: nearest the camp, then the richer pasture, then a
-/// deterministic `(y, x)` tie-break. See [`drift_step_toward_owner`] on why the last key is not
-/// optional.
-fn drift_order(a: (u32, f32, UVec2), b: (u32, f32, UVec2)) -> Ordering {
+/// The attractor step's **total** candidate order: nearest the target, then the richer pasture, then a
+/// deterministic `(y, x)` tie-break. Shared by drift and pursue. See [`relocate_toward_resource`] on
+/// why the last key is not optional.
+fn resource_step_order(a: (u32, f32, UVec2), b: (u32, f32, UVec2)) -> Ordering {
     a.0.cmp(&b.0)
         .then_with(|| b.1.total_cmp(&a.1))
         .then_with(|| a.2.y.cmp(&b.2.y))
         .then_with(|| a.2.x.cmp(&b.2.x))
 }
 
-/// Hex distance from `from` to the **nearest** of `camps` (wrap-aware). A `min` over the list, so the
-/// list's order cannot change the answer — the drift's determinism rests on this. An empty list never
-/// reaches here (the caller filters it into a plain roam).
-fn camp_distance(from: UVec2, camps: &[UVec2], width: u32, wrap: bool) -> u32 {
-    camps
+/// Hex distance from `from` to the **nearest** of `targets` (wrap-aware). A `min` over the list, so the
+/// list's order cannot change the answer — the primitive's determinism rests on this. An empty list
+/// never reaches here (the caller filters it into a plain roam).
+fn nearest_target_distance(from: UVec2, targets: &[UVec2], width: u32, wrap: bool) -> u32 {
+    targets
         .iter()
-        .map(|&camp| hex_distance_wrapped(from, camp, width, wrap))
+        .map(|&target| hex_distance_wrapped(from, target, width, wrap))
         .min()
         .unwrap_or(u32::MAX)
 }
@@ -2875,6 +2949,27 @@ pub(crate) fn herd_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> &'a RungDe
     } else {
         RungKey::AnimalWild
     })
+}
+
+/// **The movement primitive a herd actually runs** — the herd's rung movement ([`herd_rung`]),
+/// EXCEPT a **wild carnivore**, which [`RungMovement::Pursue`]s the nearest prey it can eat instead of
+/// roaming toward grass. Resolved **diet-aware here**, not from a rung record, because the husbandry
+/// rungs are diet-orthogonal: `animal:wild` is one rung shared by a deer and a wolf, so a carnivore's
+/// food-seeking movement cannot be a rung-record field today. Only a *wild* carnivore pursues — a
+/// future tamed wolf→dog would keep its rung's `drift_to_owner`; all shipped carnivores are
+/// `wild`-ceiling, so this is always `Pursue` for them. An unresolved/`None` `def` is not a carnivore,
+/// so it falls to its rung's movement.
+fn movement_primitive(
+    herd: &Herd,
+    def: Option<&SpeciesDef>,
+    ladder: &LadderConfig,
+) -> RungMovement {
+    // "Wild" = neither tamed nor penned — exactly `herd_rung`'s `animal:wild` branch.
+    let is_wild = !herd.is_corralled() && !herd.is_domesticated();
+    if is_wild && def.map(|d| d.diet) == Some(Diet::Carnivore) {
+        return RungMovement::Pursue;
+    }
+    herd_rung(herd, ladder).behavior.movement
 }
 
 /// A tile's graze **capacity** (the land's stable fertility, not its live biomass) — `0` where no
@@ -4881,12 +4976,6 @@ fn to_entry(herd: &Herd) -> HerdTelemetryEntry {
     }
 }
 
-fn determine_herd_count(width: u32, height: u32) -> u32 {
-    let area = width.saturating_mul(height).max(1);
-    let baseline = area / 3000;
-    baseline.clamp(2, 6)
-}
-
 /// Radius (hexes) of the neighbourhood `build_route` searches to pull a migratory anchor onto the
 /// most fertile nearby ground (Grazing 2b-i §4.1). Small — a local nudge that shifts the anchor onto
 /// grass without redrawing the spiral's shape.
@@ -5993,6 +6082,7 @@ mod tests {
                 last_morale_delta: scalar_zero(),
                 last_morale_cause: crate::components::MoraleCause::None,
                 last_morale_contributions: Default::default(),
+                last_fertility_factors: Default::default(),
                 discontent_fraction: scalar_zero(),
                 grievance: scalar_zero(),
                 last_emigrated: 0,

@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -19,6 +19,7 @@ use serde::Deserialize;
 use sim_runtime::TerrainType;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::fauna_config::EcologyConfig;
 
 pub const BUILTIN_LABOR_CONFIG: &str = include_str!("data/labor_config.json");
@@ -674,6 +675,14 @@ pub enum LaborConfigError {
     },
 }
 
+impl ConfigLoadError for LaborConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the labor configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct LaborConfigHandle(pub Arc<LaborConfig>);
@@ -718,55 +727,20 @@ impl LaborConfigMetadata {
     }
 }
 
-/// Load labor configuration from environment (`LABOR_CONFIG_PATH`) or the default data
-/// path, falling back to the baked-in builtin.
+/// Load labor configuration from environment (`LABOR_CONFIG_PATH`) or the default data path. The
+/// config is **validated** on load, and a broken invariant is as fatal as a parse error.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `LABOR_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_labor_config_from_env() -> (Arc<LaborConfig>, LaborConfigMetadata) {
-    let override_path = env::var("LABOR_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/labor_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match LaborConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "labor_config.loaded=file"
-                );
-                return (Arc::new(config), LaborConfigMetadata::new(Some(path)));
-            }
-            // A *broken invariant* is louder than a missing file: the config parsed, so it looks
-            // fine, and silently falling back to the builtin would hide a table the operator
-            // believes is live (the `fauna_config.invalid_rejected` convention).
-            Err(err @ LaborConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "labor_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "labor_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = LaborConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "labor_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "LABOR_CONFIG_PATH",
+        "labor_config",
+        "src/data/labor_config.json",
+        LaborConfig::builtin,
+        LaborConfig::from_file,
     );
-    (config, LaborConfigMetadata::new(None))
+    (config, LaborConfigMetadata::new(source))
 }
 
 #[cfg(test)]

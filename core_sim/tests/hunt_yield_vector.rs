@@ -162,6 +162,7 @@ fn spawn_hunters(
             PopulationCohort {
                 home: tile,
                 current_tile: tile,
+                last_fertility_factors: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 working: scalar_from_f32(workers as f32),
@@ -534,6 +535,7 @@ fn spawn_resident_hunters(
             PopulationCohort {
                 home: tile,
                 current_tile: tile,
+                last_fertility_factors: Default::default(),
                 size: 200,
                 children: scalar_zero(),
                 working: scalar_from_f32(workers as f32),
@@ -832,6 +834,7 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
     PopulationCohort {
         home: tile,
         current_tile: tile,
+        last_fertility_factors: Default::default(),
         size: workers,
         children: scalar_zero(),
         working: scalar_from_f32(workers as f32),

@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,6 +22,7 @@ use sim_runtime::TerrainType;
 use thiserror::Error;
 
 use crate::combat::CombatStats;
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
 
@@ -548,6 +549,9 @@ pub struct AbundanceConfig {
     pub per_biome: HashMap<String, f32>,
     pub max_total_game: usize,
     pub min_spacing: u32,
+    /// **How many migratory herds a map holds** — the long-route pass's own budget, separate from
+    /// `max_total_game` (see [`MigratoryAbundanceConfig`]).
+    pub migratory: MigratoryAbundanceConfig,
 }
 
 impl AbundanceConfig {
@@ -557,6 +561,69 @@ impl AbundanceConfig {
             .copied()
             .unwrap_or(0.0)
             .clamp(0.0, 1.0)
+    }
+}
+
+/// **The migratory herd budget** (issue #290) — `tiles_per_herd` sets the density, `min_herds` /
+/// `max_herds` clamp it. These were three bare literals inside `fauna::determine_herd_count`
+/// (`area / 3000`, clamped `[2, 6]`), which made the single number that decides whether a migratory
+/// species appears on a map untunable without a rebuild.
+///
+/// **It is a per-map budget shared by the WHOLE migratory roster, drawn with replacement** — so
+/// presence per species is `1 − ((n−1)/n)^herds` for `n` migratory rows, *not* linear in the herd
+/// count, and the marginal slot buys less each time:
+///
+/// | herds | presence per species (5 rows) |
+/// |---|---|
+/// | 2 | 36% |
+/// | 3 | 49% |
+/// | 5 | **67%** |
+/// | 8 | 83% |
+/// | 12 | 93% |
+///
+/// The shipped `tiles_per_herd: 800` puts the standard 80×52 map (area 4160) at **5** — one slot per
+/// migratory row, so each row's *expected* herd count is exactly 1 and two thirds of maps carry any
+/// given species. It replaces `3000`, under which the standard map computed **1** and was
+/// clamp-floored to 2: the density was inert at the shipped size and `min_herds` silently decided
+/// everything. Measured before/after in `core_sim/tests/fauna_migratory_representation.rs`.
+///
+/// **Raising this raises migratory BIOMASS steeply** — a migratory herd carries 4,000–12,000 biomass
+/// against a deer's 600–1,200 — so it is a food-economy dial, not just a variety dial. Playtest dial.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MigratoryAbundanceConfig {
+    /// Map tiles (full grid, water included) per migratory herd. Validated `> 0` — a `0` would divide
+    /// by zero and, before the clamp, is the one value with no sensible reading.
+    pub tiles_per_herd: u32,
+    /// Floor on the per-map count, so a small map still gets a migration to follow. Validated `>= 1`
+    /// (at `0` a small map has no migratory game at all, which no preset wants).
+    pub min_herds: u32,
+    /// Ceiling on the per-map count. Validated `>= min_herds` — an inverted clamp would make
+    /// `min_herds` unreachable and silently win, the exact failure this block exists to remove.
+    pub max_herds: u32,
+}
+
+impl Default for MigratoryAbundanceConfig {
+    /// Mirrors the shipped JSON, so a config that omits the block behaves like the shipped one rather
+    /// than deriving all-zeros (`AbundanceConfig` is `#[serde(default)]`, so an omitted block is
+    /// reachable) — a `tiles_per_herd: 0` is the divisor in [`Self::herds_for_map`].
+    fn default() -> Self {
+        Self {
+            tiles_per_herd: 800,
+            min_herds: 2,
+            max_herds: 12,
+        }
+    }
+}
+
+impl MigratoryAbundanceConfig {
+    /// How many migratory herds a `width × height` map holds — the density, clamped. `area` is the
+    /// full grid (water included), which is what the retired literal formula measured too, so the
+    /// promote is a pure re-parameterization of the same shape.
+    pub fn herds_for_map(&self, width: u32, height: u32) -> u32 {
+        let area = width.saturating_mul(height).max(1);
+        let density = area / self.tiles_per_herd.max(1);
+        density.clamp(self.min_herds, self.max_herds.max(self.min_herds))
     }
 }
 
@@ -588,6 +655,16 @@ pub struct PredatorConfig {
     /// zero prey most turns and snap `K→0`. A single clearly-named dial for the whole predator model
     /// (chosen as a global lever over a per-species `SpeciesDef` field). Validated `>= 1`.
     pub prey_sense_radius: u32,
+    /// **The pursue-acquisition radius** (Predators Phase 2, `docs/plan_predators.md`) — the odd-r hex
+    /// radius within which a **wild carnivore** acquires and steps toward the nearest prey it can eat
+    /// (`fauna::advance_herds`' `pursue` dispatch). Deliberately **wider** than the feeding
+    /// `prey_sense_radius` (shipped 4, code default 3): a pack *tracks* prey over a larger territory than the disk it *feeds*
+    /// from, and a wider acquisition range is the real fix for the transient-zero-prey stranding that
+    /// widening `prey_sense_radius` 3→4 only band-aided. Validated `>= 1` (a hard bound, so it stays a
+    /// free dial); conceptually it should be `>= prey_sense_radius`, but that intent is left to the
+    /// playtest rather than enforced. A playtest dial.
+    #[serde(default = "default_pursuit_radius")]
+    pub pursuit_radius: u32,
     /// **The raid trigger reach** (Predators Phase 1b, `docs/plan_predators.md`) — how close (odd-r hex
     /// distance) a carnivore must be to a band to raid its camp (`systems::advance_predator_raids`). Its
     /// **own** lever: a raid is the pack reaching the camp, distinct from — and deliberately **tighter
@@ -601,6 +678,13 @@ pub struct PredatorConfig {
     /// finite `> 0`. A playtest dial.
     #[serde(default = "default_raid_exposure")]
     pub raid_exposure: f32,
+    /// **The share of a band's food income a casualty-causing raid forfeits** (Predators Phase 3,
+    /// `docs/plan_predators.md`) — the band's people were defending or fleeing, not gathering, so a raid
+    /// that costs lives also costs a fraction of **that turn's** food income, debited from the larder
+    /// (capped at what it holds). `0.0` = a raid costs only people; `1.0` = it forfeits the whole turn's
+    /// income. Validated finite and in `[0, 1]`. A playtest dial.
+    #[serde(default = "default_raid_yield_forfeit_fraction")]
+    pub raid_yield_forfeit_fraction: f32,
 }
 
 impl Default for PredatorConfig {
@@ -610,8 +694,10 @@ impl Default for PredatorConfig {
             min_spacing: DEFAULT_PREDATOR_MIN_SPACING,
             predation_escapement_fraction: DEFAULT_PREDATION_ESCAPEMENT_FRACTION,
             prey_sense_radius: DEFAULT_PREY_SENSE_RADIUS,
+            pursuit_radius: default_pursuit_radius(),
             raid_radius: default_raid_radius(),
             raid_exposure: default_raid_exposure(),
+            raid_yield_forfeit_fraction: default_raid_yield_forfeit_fraction(),
         }
     }
 }
@@ -635,6 +721,11 @@ const DEFAULT_PREDATION_ESCAPEMENT_FRACTION: f32 = 0.15;
 /// Default prey-sensing disk radius (wider than a graze footprint). See
 /// [`PredatorConfig::prey_sense_radius`].
 const DEFAULT_PREY_SENSE_RADIUS: u32 = 3;
+/// Default pursue-acquisition radius (wider than the prey-sensing disk). See
+/// [`PredatorConfig::pursuit_radius`].
+fn default_pursuit_radius() -> u32 {
+    8
+}
 /// Default raid trigger reach (tighter than the prey-sensing disk). See
 /// [`PredatorConfig::raid_radius`].
 fn default_raid_radius() -> u32 {
@@ -644,6 +735,11 @@ fn default_raid_radius() -> u32 {
 /// [`PredatorConfig::raid_exposure`].
 fn default_raid_exposure() -> f32 {
     4.0
+}
+/// Default share of a band's food income a casualty-causing raid forfeits. See
+/// [`PredatorConfig::raid_yield_forfeit_fraction`].
+fn default_raid_yield_forfeit_fraction() -> f32 {
+    0.25
 }
 
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
@@ -1420,6 +1516,39 @@ impl FaunaConfig {
     /// their food situation strictly worse, with nothing in the UI to explain it. See
     /// [`DEFAULT_PEN_UPKEEP_PER_BIOMASS`].
     pub fn validate(&self) -> Result<(), FaunaConfigError> {
+        // --- The migratory herd budget (issue #290). All three are integer *counts*, so the checks
+        // are the degenerate readings rather than range bands: a `0` divide-by-zero density, a `0`
+        // floor that leaves a small map with no migration at all, and an inverted clamp — which is the
+        // specific failure this block exists to remove, since it would make `min_herds` unreachable
+        // and hand the decision back to a silent default.
+        let migratory = &self.abundance.migratory;
+        if migratory.tiles_per_herd == 0 {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.tiles_per_herd",
+                constraint: "be greater than 0 (it is a divisor — tiles per migratory herd)".into(),
+                value: migratory.tiles_per_herd.to_string(),
+            });
+        }
+        if migratory.min_herds == 0 {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.min_herds",
+                constraint:
+                    "be at least 1 (a map with no migratory herd has no migration to follow)".into(),
+                value: migratory.min_herds.to_string(),
+            });
+        }
+        if migratory.max_herds < migratory.min_herds {
+            return Err(FaunaConfigError::Invalid {
+                field: "abundance.migratory.max_herds",
+                constraint: format!(
+                    "be at least abundance.migratory.min_herds (= {}) — an inverted clamp makes the \
+                     floor unreachable",
+                    migratory.min_herds
+                ),
+                value: migratory.max_herds.to_string(),
+            });
+        }
+
         // --- Hunt: the biomass→provisions rate the WHOLE ladder is denominated in. At `0` every rung
         // (wild, pastoral, pen) pays nothing and the food economy silently stops.
         require_positive_finite(
@@ -1974,6 +2103,15 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.prey_sense_radius.to_string(),
         });
     }
+    if predators.pursuit_radius < 1 {
+        return Err(FaunaConfigError::Invalid {
+            field: "predators.pursuit_radius",
+            constraint: "be at least 1 (a 0-radius acquisition disk senses no prey, so a wild \
+                         carnivore can never pursue and just roams)"
+                .to_string(),
+            value: predators.pursuit_radius.to_string(),
+        });
+    }
     if predators.raid_radius < 1 {
         return Err(FaunaConfigError::Invalid {
             field: "predators.raid_radius",
@@ -1993,6 +2131,10 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.raid_exposure.to_string(),
         });
     }
+    require_in_unit_range(
+        "predators.raid_yield_forfeit_fraction",
+        predators.raid_yield_forfeit_fraction,
+    )?;
     // Every per-biome probability finite in `[0, 1]`, iterated in stable key order for a deterministic
     // error message (the `species` loop convention).
     let mut per_biome: Vec<(&String, &f32)> = predators.per_biome.iter().collect();
@@ -2147,6 +2289,14 @@ pub enum FaunaConfigError {
     },
 }
 
+impl ConfigLoadError for FaunaConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the fauna configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct FaunaConfigHandle(pub Arc<FaunaConfig>);
@@ -2191,59 +2341,26 @@ impl FaunaConfigMetadata {
     }
 }
 
-/// Load fauna configuration from environment (`FAUNA_CONFIG_PATH`) or the default
-/// data path, falling back to the baked-in builtin.
+/// Load fauna configuration from environment (`FAUNA_CONFIG_PATH`) or the default data path.
 ///
-/// Every candidate goes through [`FaunaConfig::from_json_str`], so it is **validated** before it can
-/// reach the sim: an override that would silently break the model (a pen that eats more than it
-/// yields, an inverted husbandry ladder, an unreachable knowledge gate, …) is rejected and logged at
-/// **error** level naming the broken invariant, and the known-good builtin is used instead.
+/// The file goes through [`FaunaConfig::from_json_str`], so it is **validated** before it can reach
+/// the sim: a config that would silently break the model (a pen that eats more than it yields, an
+/// inverted husbandry ladder, an unreachable knowledge gate, …) is refused, and a broken invariant
+/// is as fatal as a parse error — it looks live, which is exactly why it must not be swapped out
+/// quietly.
+///
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `FAUNA_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_fauna_config_from_env() -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
-    let override_path = env::var("FAUNA_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/fauna_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match FaunaConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "fauna_config.loaded=file"
-                );
-                return (Arc::new(config), FaunaConfigMetadata::new(Some(path)));
-            }
-            // A broken invariant is an operator error, not a missing file: the config that *was*
-            // found says something incoherent. Shout about it.
-            Err(err @ FaunaConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "fauna_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "fauna_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = FaunaConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "fauna_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "FAUNA_CONFIG_PATH",
+        "fauna_config",
+        "src/data/fauna_config.json",
+        FaunaConfig::builtin,
+        FaunaConfig::from_file,
     );
-    (config, FaunaConfigMetadata::new(None))
+    (config, FaunaConfigMetadata::new(source))
 }
 
 #[cfg(test)]
@@ -2660,6 +2777,69 @@ mod tests {
         assert_eq!(hy.apply(0.0, 1.0), YieldPair::default());
     }
 
+    /// `tiles_per_herd` is a **divisor** (`area / tiles_per_herd`), so a `0` is the one value with no
+    /// sensible reading at all.
+    #[test]
+    fn validate_rejects_a_zero_migratory_tiles_per_herd() {
+        let err = reject(|json| json["abundance"]["migratory"]["tiles_per_herd"] = (0).into());
+        assert_rejects_field(err, "abundance.migratory.tiles_per_herd");
+    }
+
+    /// A `0` floor lets a small map hold **no** migratory herd at all — no migration to follow, on a
+    /// map that still shows the biomes those species host.
+    #[test]
+    fn validate_rejects_a_zero_migratory_min_herds() {
+        let err = reject(|json| json["abundance"]["migratory"]["min_herds"] = (0).into());
+        assert_rejects_field(err, "abundance.migratory.min_herds");
+    }
+
+    /// **The load-bearing one for this block.** An inverted clamp makes `min_herds` unreachable and
+    /// hands the per-map count back to a silent ceiling — precisely the "one clamp quietly decides
+    /// everything" failure (issue #290) that promoting these literals into config exists to remove.
+    #[test]
+    fn validate_rejects_an_inverted_migratory_herd_clamp() {
+        let err = reject(|json| {
+            json["abundance"]["migratory"]["min_herds"] = (6).into();
+            json["abundance"]["migratory"]["max_herds"] = (5).into();
+        });
+        assert_rejects_field(err, "abundance.migratory.max_herds");
+    }
+
+    /// The shipped budget puts the standard 80×52 map at **5** migratory herds — one slot per migratory
+    /// row, so each row's *expected* count is 1 and presence per species is `1 − (4/5)^5 ≈ 67%`. Pinned
+    /// because it is the number issue #290 measured, and because the previous value's real defect was
+    /// that the density was **inert** at the shipped size (4160/3000 = 1, clamp-floored to 2) — a
+    /// regression here would be silent again.
+    #[test]
+    fn the_standard_map_budgets_one_migratory_slot_per_roster_row() {
+        let config = FaunaConfig::builtin();
+        let rows = config.migratory_species().len();
+        assert_eq!(rows, 5, "the shipped migratory roster is 5 rows");
+        assert_eq!(
+            config.abundance.migratory.herds_for_map(80, 52),
+            rows as u32,
+            "the standard map should budget one migratory slot per migratory row"
+        );
+    }
+
+    /// The clamps bind at both ends, and the density — not a clamp — decides the shipped size. The
+    /// retired `area/3000` formula failed exactly this: every real map sat on a clamp.
+    #[test]
+    fn the_migratory_budget_clamps_at_both_ends_but_scales_between_them() {
+        let migratory = &FaunaConfig::builtin().abundance.migratory;
+        // Tiny map → the floor binds.
+        assert_eq!(migratory.herds_for_map(10, 10), migratory.min_herds);
+        // Huge map → the ceiling binds.
+        assert_eq!(migratory.herds_for_map(256, 192), migratory.max_herds);
+        // Between them the density is the authority, and it is monotone in area.
+        assert!(
+            migratory.herds_for_map(80, 52) > migratory.min_herds
+                && migratory.herds_for_map(80, 52) < migratory.max_herds,
+            "the shipped map size must sit strictly inside the clamps, or the density is inert"
+        );
+        assert!(migratory.herds_for_map(120, 80) >= migratory.herds_for_map(80, 52));
+    }
+
     /// **The load-bearing one.** A pen whose feed costs more than its harvest yields is a trap: the
     /// player pays a 25-turn build + a permanent keeper to make their food situation strictly worse.
     #[test]
@@ -2810,11 +2990,31 @@ mod tests {
         assert_rejects_field(err, "predators.raid_radius");
     }
 
+    /// A `pursuit_radius` of 0 means a wild carnivore acquires no prey, so `pursue` degrades to a
+    /// plain roam — the transient-zero-prey stranding this dial exists to fix.
+    #[test]
+    fn validate_rejects_a_zero_pursuit_radius() {
+        let err = reject(|json| json["predators"]["pursuit_radius"] = (0).into());
+        assert_rejects_field(err, "predators.pursuit_radius");
+    }
+
     /// A non-positive `raid_exposure` leaves no defender-side populace, so a raid can kill nobody.
     #[test]
     fn validate_rejects_a_non_positive_raid_exposure() {
         let err = reject(|json| json["predators"]["raid_exposure"] = (0.0).into());
         assert_rejects_field(err, "predators.raid_exposure");
+    }
+
+    /// The raid yield-forfeit is a FRACTION of the band's food income (Predators Phase 3): a value
+    /// below 0 or above 1 is out of range (0 = a raid costs only people; 1 = the whole turn's income).
+    #[test]
+    fn validate_rejects_an_out_of_range_raid_yield_forfeit_fraction() {
+        for bad in [-0.01, 1.01] {
+            let err =
+                reject(|json| json["predators"]["raid_yield_forfeit_fraction"] = (bad).into());
+            assert_rejects_field(err, "predators.raid_yield_forfeit_fraction");
+        }
+        assert!(FaunaConfig::builtin().validate().is_ok());
     }
 
     #[test]

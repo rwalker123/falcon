@@ -20,6 +20,7 @@ pub mod climate;
 pub mod combat;
 mod combat_config;
 mod components;
+mod config_load;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -97,6 +98,7 @@ pub use components::{
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
     Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD, TRADE_GOODS,
 };
+pub use config_load::ConfigLoadError;
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,
@@ -150,8 +152,9 @@ pub use fauna::{
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
-    FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling, ShoreRequirement,
-    SizeClass, SpeciesDef, YieldPair, BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
+    FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling,
+    MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldPair,
+    BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
 pub use flora_config::{
     load_flora_config_from_env, CultivationCeiling, FloraConfig, FloraConfigHandle,
@@ -292,7 +295,10 @@ pub use systems::{
     output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
     TradeDiffusionEvent,
 };
-pub use systems::{apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf};
+pub use systems::{
+    apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf,
+    reconcile_food_modules,
+};
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
     BeatCatalogHandle, BeatCatalogMetadata, BeatChoice, BeatConfig, BeatConfigHandle,
@@ -631,6 +637,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_tag_budget_solver,
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
+                systems::reconcile_food_modules,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 spawn_initial_forage,
@@ -821,8 +828,13 @@ pub fn build_headless_app() -> App {
 
 /// Execute a single simulation turn.
 ///
-/// Each call processes the chained systems configured in [`build_headless_app`]
-/// (materials → logistics → population → power → tick increment → snapshot).
+/// Each call runs the [`TurnStage`] sets chained in [`build_headless_app`], in order:
+/// Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis →
+/// Telling → Finalize → Victory → Snapshot.
+///
+/// Individual systems are not stages: `simulate_materials` runs inside `Logistics`,
+/// `simulate_power` inside `Finalize`, and `advance_tick` inside `Snapshot`.
+///
 /// Callers are responsible for snapshot broadcasting and command handling.
 pub fn run_turn(app: &mut App) {
     app.update();

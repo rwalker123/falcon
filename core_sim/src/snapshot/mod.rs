@@ -644,6 +644,7 @@ mod tests {
             last_morale_delta: crate::scalar::scalar_zero(),
             last_morale_cause: MoraleCause::None,
             last_morale_contributions: Default::default(),
+            last_fertility_factors: Default::default(),
             discontent_fraction: crate::scalar::scalar_zero(),
             grievance: crate::scalar::scalar_zero(),
             last_emigrated: 0,
@@ -691,6 +692,7 @@ mod tests {
             wellbeing: &wellbeing,
             supply_membership: &membership,
             work_range: 0,
+            raid_radius: 0,
             scout_vantage_distance: 0,
             expedition_levers: &levers,
             settlement_stage_config: &stages,
@@ -753,6 +755,7 @@ mod tests {
                 },
             ],
             last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
         };
         let (mut cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),
@@ -810,6 +813,7 @@ mod tests {
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
         };
         let (cohort, allocation) = food_test_cohort(
             Scalar::from_f32(0.0),

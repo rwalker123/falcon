@@ -235,7 +235,16 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   same shape, different question — *who they are* vs *what they do* — and they must not read as the
   same chart twice. Scout + Warrior are **CARDS** now (bordered, name · hint · the same `−/+` stepper
   and `assign_labor` emit), not rows in a list — the fix for a standing role being indistinguishable
-  from a worked source. **The zone yields by HEIGHT TIER** (`_band_zone_tier`, measured against the
+  from a worked source. **The Warrior card carries a LIVE THREAT ALERT** (Predators Phase 3): when
+  `_band_predator_threat_present(band)` is true its static hint is replaced by the crimson
+  (`HudStyle.THREAT_ACCENT`) `HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT` — `⚠ Predator nearby — N on
+  guard`, N being the on-guard warrior count — so the guarding role is legible exactly when the threat
+  it answers is. **The danger is DERIVED CLIENT-SIDE, not a wire flag**: a herd counts as a menacing
+  predator when it is VISIBLE (`_band_labor.world_herds()` is already fog-filtered), has
+  `prey_sense_radius > 0`, has `attack × aggression > 0` (the same THREAT product the map overlay
+  draws), and sits within `raid_radius` (the sim's echoed `predators.raid_radius`, per cohort) odd-r
+  hex distance of the band tile — measured with the shared wrap-aware `SourceForecast.hex_distance_wrapped`,
+  never a hand-rolled distance. **The zone yields by HEIGHT TIER** (`_band_zone_tier`, measured against the
   zone box — never the dock edge): full chart + hinted cards at/above `BAND_ZONE_TALL_MIN_HEIGHT`, a
   compact chart above `BAND_ZONE_CHART_MIN_HEIGHT`, and below it **no chart and hint-less cards** (a
   360px T/B dock). A tier change re-renders the zones; anything else just re-pages the board — that

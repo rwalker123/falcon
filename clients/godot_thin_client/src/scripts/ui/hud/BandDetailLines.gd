@@ -159,6 +159,17 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         # the concerning recovery line) — `register` declines an empty payload.
         _disclosures.register(HudDisclosureVocab.DETAIL_ROW_MORALE, HudDisclosureVocab.BREAKDOWN_KIND_MORALE, unit_data,
             _morale_breakdown_lines(unit_data, terrain_label))
+        # Growth: the birth path's parallel of the morale cluster above — a headline row plus the
+        # SAME click-to-open disclosure, itemizing the three named fertility factors. The player
+        # could already see both the inputs (Food, larder) and the effect (the People bar); this is
+        # the attribution between them. Skipped entirely for a band the sim has published no reading
+        # for — a rehydrated cohort has no fertility yet, and inventing a 0% growth row for it would
+        # be the very "no data read as famine" mistake the sim guards against on its own side.
+        var growth_line := _band_growth_line(unit_data, context)
+        if growth_line != "":
+            lines.append(growth_line)
+            _disclosures.register(HudDisclosureVocab.DETAIL_ROW_GROWTH, HudDisclosureVocab.BREAKDOWN_KIND_GROWTH,
+                unit_data, _fertility_breakdown_lines(unit_data))
     var pos_array: Array = Array(unit_data.get("pos", []))
     if pos_array.size() == 2:
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
@@ -323,6 +334,52 @@ func _band_output_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> Stri
         return ""
     ctx.output = output
     return "Output: %d%%" % int(round(output * 100.0))
+
+## Selection-panel band growth row: "Growth: 23% of normal" — the band's birth rate as a share of the
+## base rate the sim would otherwise apply (`fertility_hunger × fertility_reserve × fertility_trend`,
+## neutral at 1.0). Unlike Output it is shown at EVERY level, including above normal: it is the row
+## the fertility disclosure hangs on, and a player asking "why is growth slow?" has to be able to
+## find it in the good state too — the same reasoning that keeps the morale contributions computing
+## when morale is fine. Stashes the multiplier on the render context so `DetailFormat.detail_bbcode`
+## tints it by the fertility buckets (ink → amber → red).
+##
+## Returns "" when the sim published no reading (a rehydrated cohort, whose factors are derived and
+## not persisted). No row, no disclosure — never a fabricated 0%.
+func _band_growth_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String:
+    if not BandFoodStatus.fertility_is_projected(unit_data):
+        return ""
+    var fertility := DetailFormat.band_fertility(unit_data)
+    ctx.fertility = fertility
+    return DetailFormat.GROWTH_ROW_FORMAT % int(round(fertility * 100.0))
+
+## Itemized fertility breakdown: the three named factors as indented sub-lines, each rendered as a
+## MULTIPLIER — `    ▼ ×0.60  short rations` — because they combine by product, so reading down the
+## list multiplies out to the Growth headline above (`DetailFormat.detail_bbcode` tints by the sign
+## glyph, the same path the morale breakdown uses). Only factors that actually moved off the neutral
+## 1.0 list, so a thriving band's disclosure shows what is *helping* rather than three no-op rows.
+##
+## A neutral `trend` — which is exactly what the sim publishes when a band's flow telemetry is not
+## projected — therefore renders as NOTHING, never as a deficit. That is the client half of the
+## sim's no-data rule.
+func _fertility_breakdown_lines(unit_data: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    if not BandFoodStatus.fertility_is_projected(unit_data):
+        return lines
+    var trend := float(unit_data.get("fertility_trend", BandFoodStatus.FERTILITY_NEUTRAL))
+    # (factor, label) in the model's own order: hunger (the gate) → reserve (stock) → trend (flow).
+    var factors := [
+        [float(unit_data.get("fertility_hunger", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_HUNGER],
+        [float(unit_data.get("fertility_reserve", BandFoodStatus.FERTILITY_NEUTRAL)), DetailFormat.FERTILITY_LABEL_RESERVE],
+        [trend, DetailFormat.FERTILITY_LABEL_TREND_GROWING if trend > BandFoodStatus.FERTILITY_NEUTRAL \
+            else DetailFormat.FERTILITY_LABEL_TREND_SHRINKING],
+    ]
+    var epsilon := BandFoodStatus.fertility_breakdown_epsilon()
+    for entry in factors:
+        var factor: float = entry[0]
+        if absf(factor - BandFoodStatus.FERTILITY_NEUTRAL) < epsilon:
+            continue
+        lines.append(DetailFormat.fertility_breakdown_row(factor, entry[1]))
+    return lines
 
 ## Itemized morale breakdown: the four signed Layer-1 contributions (their sum IS morale_delta) as
 ## indented sub-lines, each above the breakdown epsilon rendered as `    ▲ +1.0%  settling`
