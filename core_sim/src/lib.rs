@@ -70,6 +70,7 @@ mod systems;
 pub mod telling;
 mod terrain;
 mod turn_pipeline_config;
+pub mod turn_profile;
 mod victory;
 mod visibility;
 mod visibility_config;
@@ -626,6 +627,51 @@ pub fn build_headless_app() -> App {
                 TurnStage::Snapshot,
             )
                 .chain(),
+        )
+        // Per-stage profiler boundaries. Each marker is pinned between two neighbouring stage sets,
+        // so `enter_stage` closes the stage that just finished and opens the next one — an RAII
+        // guard cannot span two Bevy systems, which is why the boundaries are systems.
+        //
+        // Deliberately ungated: unlike the stages themselves these carry no capability `run_if`, so
+        // a stage whose systems are gated off records ~0 rather than disappearing from the profile.
+        // `begin_turn` is *not* called here — the server owns it, because order application and
+        // snapshot broadcast happen outside `app.update()` and belong to the same turn's profile.
+        .add_systems(
+            Update,
+            (
+                turn_profile::stage_marker("influence").before(TurnStage::Influence),
+                turn_profile::stage_marker("logistics")
+                    .after(TurnStage::Influence)
+                    .before(TurnStage::Logistics),
+                turn_profile::stage_marker("knowledge")
+                    .after(TurnStage::Logistics)
+                    .before(TurnStage::Knowledge),
+                turn_profile::stage_marker("great_discovery")
+                    .after(TurnStage::Knowledge)
+                    .before(TurnStage::GreatDiscovery),
+                turn_profile::stage_marker("population")
+                    .after(TurnStage::GreatDiscovery)
+                    .before(TurnStage::Population),
+                turn_profile::stage_marker("visibility")
+                    .after(TurnStage::Population)
+                    .before(TurnStage::Visibility),
+                turn_profile::stage_marker("crisis")
+                    .after(TurnStage::Visibility)
+                    .before(TurnStage::Crisis),
+                turn_profile::stage_marker("telling")
+                    .after(TurnStage::Crisis)
+                    .before(TurnStage::Telling),
+                turn_profile::stage_marker("finalize")
+                    .after(TurnStage::Telling)
+                    .before(TurnStage::Finalize),
+                turn_profile::stage_marker("victory")
+                    .after(TurnStage::Finalize)
+                    .before(TurnStage::Victory),
+                turn_profile::stage_marker("snapshot")
+                    .after(TurnStage::Victory)
+                    .before(TurnStage::Snapshot),
+                turn_profile::close_stages_system.after(TurnStage::Snapshot),
+            ),
         )
         .add_systems(
             Startup,

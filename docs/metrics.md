@@ -50,9 +50,16 @@ let subscriber = tracing_subscriber::fmt()
 tracing::subscriber::set_global_default(subscriber)?;
 ```
 
+## Per-phase turn timings
+
+Alongside `turn.completed`, the server emits a `turn.profile` event carrying a
+`phases` field: one flat `label=ms` string covering each `TurnStage` plus the
+snapshot build, hash, delta diff and each encode. Rationale, how to read it (the
+labels nest, and deliberately do **not** sum to the turn duration), and what the
+numbers say about where a turn's time goes live in
+`.claude/rules/core_sim/turn-profiling.md`.
+
 ## Future Work
 
-- Add per-phase timings (materials/logistics/etc.) by instrumenting the turn
-  systems.
 - Export Prometheus metrics alongside logs if needed.
 - Surface metrics through inspector UI overlays.
