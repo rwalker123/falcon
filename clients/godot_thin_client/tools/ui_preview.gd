@@ -2904,6 +2904,31 @@ func _ready() -> void:
 	_hud._drawercompose.close_compose_sheet()
 	_hud._compose.reset_forage_source()
 
+	# WORLD-BOUNDARY GUARD — `Hud.reset_world_state()`, the HUD half of the stale-world fix.
+	# A freshly generated world sends `intensification_knowledge: []`, which MERGES to nothing, so the
+	# previous game's "⚒ Your people know" strip survived into the new one; the Telling panel is
+	# deliberately never reset per snapshot, so its old beats stayed in the book. Seed BOTH the way a
+	# played-out world leaves them, then reset and assert they are gone. A PNG alone would not prove
+	# this — a hidden strip and a strip that was never seeded look identical — so the frame is captured
+	# for the eye and the two assertions carry the claim.
+	_hud._selection._selected_tile_info.clear()
+	_hud.clear_selection()
+	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+	_hud._telling.reset()
+	_hud.ingest_command_events(_telling_fixture_events())
+	await _settle()
+	_assert_hud("world-boundary guard seeds a knowledge strip to clear",
+		_hud._topbar.intensification_label.visible)
+	_assert_hud("world-boundary guard seeds a telling to clear",
+		not _hud._telling._entries.is_empty())
+	_hud.reset_world_state()
+	await _settle()
+	_assert_hud("world reset hides the knowledge strip (a new world knows nothing)",
+		not _hud._topbar.intensification_label.visible)
+	_assert_hud("world reset empties the Telling (a new world is a different story)",
+		_hud._telling._entries.is_empty())
+	await _save("world_reset")
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()

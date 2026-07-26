@@ -204,6 +204,8 @@ func _init(panel: PanelCard, scroll: ScrollContainer, label: RichTextLabel) -> v
 ## a player opening the client mid-session sees recent history. The panel is deliberately NOT reset on a
 ## full snapshot — the signature de-dup makes re-ingesting the ring harmless, and resetting would throw
 ## away everything that has already scrolled past the 32-entry ring.
+## THE ONE EXCEPTION IS A WORLD CHANGE (`HudLayer.reset_world_state`): a new world is not another
+## snapshot of the same story, it is a different story, so `reset()` is called there.
 func ingest_events(events_variant: Variant) -> void:
 	if _label == null or not (events_variant is Array):
 		return

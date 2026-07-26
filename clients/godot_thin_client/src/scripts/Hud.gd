@@ -850,6 +850,19 @@ func _refresh_campaign_label() -> void:
 ## telling that has already scrolled past the server's 32-entry ring.
 func reset_command_feed() -> void:
     _command_feed.reset()
+
+## WORLD BOUNDARY (`Main._reset_per_world_state`): the snapshot about to be applied describes a
+## DIFFERENT world, so every HUD cache keyed to the old one is dropped. Coordinator ONLY — each
+## module resets ITSELF; nothing but delegation belongs here.
+func reset_world_state() -> void:
+    _topbar.reset_world_state()
+    # The Telling is deliberately NOT reset per snapshot (see `TellingPanel.ingest_events`), and this
+    # is the one exception: a world CHANGE is not another snapshot of the same story, it is a
+    # different story, and the previous world's beats are not part of it.
+    _telling.reset()
+    # Targeting addresses a band/tile of the world being replaced. Cancelling through the normal path
+    # also clears MapView's reticle (via `targeting_changed`), so the two can't desync.
+    cancel_active_targeting()
 func show_tile_selection(tile_info: Dictionary) -> void:
     # A selection change invalidates the subject being composed (§15).
     close_compose_sheet()

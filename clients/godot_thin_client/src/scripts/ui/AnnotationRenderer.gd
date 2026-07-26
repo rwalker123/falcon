@@ -229,6 +229,22 @@ func set_targeting(info: Dictionary) -> void:
 func is_targeting_active() -> bool:
 	return bool(_targeting.get("active", false))
 
+## WORLD BOUNDARY (`MapView.reset_world_state`): drop the annotations that describe a world we are
+## about to stop showing. `_crisis_annotations` and `_routes` are refilled from every full snapshot,
+## but the trade pair is not — `update_trade_overlay` runs only when the snapshot CARRIES
+## `trade_links`, and `_selected_trade_entity` is pushed in from the Trade tab keyed by an entity id
+## the new world reuses.
+## `_targeting` is deliberately NOT cleared here: it MIRRORS the HUD's pending command, and
+## `HudLayer.reset_world_state` cancels that through the normal path, which pushes `{}` down to us.
+## Clearing it here as well would let the two desync (a banner with no reticle) if that ever changed.
+## `_terrain_highlight_id` and `_trade_overlay_enabled` also stay — a terrain id is stable across
+## worlds and the toggle is a view preference.
+func reset_world_state() -> void:
+	_trade_links_overlay = []
+	_selected_trade_entity = TRADE_NO_ENTITY
+	_crisis_annotations = []
+	_routes = []
+
 ## Advance the targeting pulse. Driven from MapView's `_process` and gated there on
 ## `is_targeting_active()`, so nothing ticks while no command is being targeted.
 func advance_targeting_time(delta: float) -> void:

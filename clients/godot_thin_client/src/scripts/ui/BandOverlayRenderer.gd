@@ -149,6 +149,15 @@ func _init(view: MapView) -> void:
 func set_labor_pending(pending: Dictionary) -> void:
 	_labor_pending = pending if pending is Dictionary else {}
 
+## WORLD BOUNDARY (`MapView.reset_world_state`): `_labor_pending` is pushed IN from the HUD and keyed
+## by BAND ENTITY, an id the new world reuses — so an old world's optimistic dashed-amber hexes would
+## reappear under a new world's band and only clear once that band's next real assignment reconciled.
+## The deferred label batch is drained every frame, but it is emptied here too so a reset arriving
+## mid-frame can't leave a queued label to paint over the new world.
+func reset_world_state() -> void:
+	_labor_pending = {}
+	_deferred_yield_labels.clear()
+
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
