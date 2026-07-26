@@ -410,8 +410,8 @@
       "biomass": 69.25,
       "carrying_capacity": 26.76,
       "ceiling_cultivate": 94.260002,
+      "ceiling_deplete": 57.099998,
       "ceiling_eradicate": 74.980003,
-      "ceiling_market": 71.400002,
       "ceiling_sow": 80.440002,
       "ceiling_surplus": 3.86,
       "ceiling_sustain": 61.040001,
@@ -463,8 +463,8 @@
       "biomass": 74.910004,
       "carrying_capacity": 41.889999,
       "ceiling_cultivate": 43.639999,
+      "ceiling_deplete": 76.529999,
       "ceiling_eradicate": 13.7,
-      "ceiling_market": 1.27,
       "ceiling_sow": 6.95,
       "ceiling_surplus": 78.580002,
       "ceiling_sustain": 22.9,
@@ -671,18 +671,26 @@
         "herds[0].hunt_policy_ceilings[0].policy": 13.71,
         "herds[0].hunt_policy_ceilings[1].policy": 37.509998
       },
+      "hunt_policy_trade_ceilings": {
+        "herds[0].hunt_policy_ceilings[0].policy": 94.089996,
+        "herds[0].hunt_policy_ceilings[1].policy": 63.439999
+      },
       "hunt_trip_estimates": {
         "herds[0].hunt_trip_estimates[0].policy:147": {
           "animals_taken": 76,
           "delivered_food": 29.25,
+          "delivered_trade": 61.939999,
           "delivers_food": true,
+          "delivers_trade": true,
           "turns_to_fill": 15,
           "wasted_food": 56.849998
         },
         "herds[0].hunt_trip_estimates[1].policy:72": {
           "animals_taken": 191,
           "delivered_food": 49.540001,
+          "delivered_trade": 97.989998,
           "delivers_food": true,
+          "delivers_trade": true,
           "turns_to_fill": 180,
           "wasted_food": 76.540001
         }
@@ -702,11 +710,13 @@
       "pen_pasture_fraction": 58.049999,
       "pen_radius": 8,
       "pen_upkeep": 13.16,
+      "per_worker_trade": 100.550003,
       "per_worker_yield": 30.27,
       "prey_sense_radius": 108,
       "route_length": 176,
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
+      "trade_per_animal": 89.330002,
       "x": 0,
       "y": 0
     },
@@ -733,18 +743,26 @@
         "herds[1].hunt_policy_ceilings[0].policy": 108.389999,
         "herds[1].hunt_policy_ceilings[1].policy": 96.169998
       },
+      "hunt_policy_trade_ceilings": {
+        "herds[1].hunt_policy_ceilings[0].policy": 88.599998,
+        "herds[1].hunt_policy_ceilings[1].policy": 78.330002
+      },
       "hunt_trip_estimates": {
         "herds[1].hunt_trip_estimates[0].policy:150": {
           "animals_taken": 65,
           "delivered_food": 6.45,
+          "delivered_trade": 57.189999,
           "delivers_food": true,
+          "delivers_trade": true,
           "turns_to_fill": 22,
           "wasted_food": 81.800003
         },
         "herds[1].hunt_trip_estimates[1].policy:73": {
           "animals_taken": 118,
           "delivered_food": 61.830002,
+          "delivered_trade": 71.190002,
           "delivers_food": true,
+          "delivers_trade": true,
           "turns_to_fill": 1,
           "wasted_food": 84.790001
         }
@@ -764,11 +782,13 @@
       "pen_pasture_fraction": 6.67,
       "pen_radius": 109,
       "pen_upkeep": 26.040001,
+      "per_worker_trade": 7.45,
       "per_worker_yield": 37.77,
       "prey_sense_radius": 23,
       "route_length": 161,
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",
+      "trade_per_animal": 4.15,
       "x": 1,
       "y": 1
     }
@@ -1377,10 +1397,12 @@
           "kind": "populations[0].labor_assignments[0].kind",
           "overdraws": true,
           "policy": "populations[0].labor_assignments[0].policy",
+          "realized_trade_yield": 22.299999,
           "realized_yield": 50.82,
           "sustainable_yield": 16.4,
           "target_x": 117,
           "target_y": 128,
+          "trade_yield": 19.889999,
           "wasted_yield": 8.95,
           "workers": 6,
           "workers_needed": 56
@@ -1392,10 +1414,12 @@
           "kind": "populations[0].labor_assignments[1].kind",
           "overdraws": true,
           "policy": "populations[0].labor_assignments[1].policy",
+          "realized_trade_yield": 22.049999,
           "realized_yield": 67.830002,
           "sustainable_yield": 35.830002,
           "target_x": 44,
           "target_y": 33,
+          "trade_yield": 51.599998,
           "wasted_yield": 32.889999,
           "workers": 1,
           "workers_needed": 77
@@ -1521,10 +1545,12 @@
           "kind": "populations[1].labor_assignments[0].kind",
           "overdraws": true,
           "policy": "populations[1].labor_assignments[0].policy",
+          "realized_trade_yield": 106.169998,
           "realized_yield": 31.379999,
           "sustainable_yield": 23.76,
           "target_x": 62,
           "target_y": 51,
+          "trade_yield": 45.68,
           "wasted_yield": 77.68,
           "workers": 195,
           "workers_needed": 163
@@ -1536,10 +1562,12 @@
           "kind": "populations[1].labor_assignments[1].kind",
           "overdraws": true,
           "policy": "populations[1].labor_assignments[1].policy",
+          "realized_trade_yield": 35.52,
           "realized_yield": 16.93,
           "sustainable_yield": 31.49,
           "target_x": 135,
           "target_y": 146,
+          "trade_yield": 81.550003,
           "wasted_yield": 58.150002,
           "workers": 120,
           "workers_needed": 78

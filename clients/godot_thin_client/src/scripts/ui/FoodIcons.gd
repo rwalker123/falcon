@@ -51,15 +51,22 @@ const HERD_SPECIES := {
 # INVESTMENT rungs — Cultivate is forage-only, Corral is hunt-only). ONE source of
 # truth, read by BOTH consumers: the Hud policy-picker buttons (`HudWidgets.build_policy_picker`) and the
 # map's worked-source yield labels (`BandOverlayRenderer._draw_yield_label`), so a policy always reads the
-# same on the panel and on the map. Sustain = take only the regrowth; Surplus = take more now,
-# accept a slow decline; Market = harvest for trade goods; Eradicate = strip it bare. Cultivate =
+# same on the panel and on the map. The four extractive rungs are ONE AXIS — how hard the take
+# presses on the source — so their glyphs read as a ladder: Sustain = take only the regrowth;
+# Surplus = take more now, accept a slow decline; Deplete = draw the source down hard, a fast
+# decline; Eradicate = strip it bare. Cultivate =
 # prepare the patch into a tended one (low yield while working, then a much higher tended yield);
 # Corral = build a pen for a domesticated herd (the same deal, animal side). The 🌱 seedling / 🐄 cow
 # read at picker size (🐄 is already the drawer's Domesticated/Corralled badge).
-# Market is ⇄ (exchange), NOT 🪙 (coin) / 💰 (money bag) / ⚖ (scales): the two pictographic emoji
+# Deplete is ⇊ (downwards paired arrows) — the PRESSURE it applies, doubled against Surplus's single
+# ⬆, so the two read as neighbouring rungs of one ladder rather than as opposites. It replaced ⇄
+# (exchange) with the `Market` → `Deplete` rename (docs/plan_hunt_yield_model.md §2): once every
+# harvesting policy sells the species' trade goods, an exchange arrow named the rung's PRODUCT, which
+# is exactly what stopped distinguishing it. It is NOT 🪙 (coin) / 💰 (money bag) / ⚖ (scales) either:
+# the two pictographic emoji
 # both render as a featureless grey ball at the sizes these glyphs are drawn (a ~13px HUD button, a
 # ~12px map yield label), and the scales render tiny and faint — the known glyph-legibility hazard.
-# What survives the downscale is bold line art (♻ ⬆ ⇄) plus the high-contrast 💀. All verified in
+# What survives the downscale is bold line art (♻ ⬆ ⇊) plus the high-contrast 💀. All verified in
 # the preview frames (band_panel_left / map_band_work).
 ## The Corral rung's key, named because a THIRD consumer now reads its glyph off this table by key:
 ## the turn orb's `starving_pen` attention row (an unfed pen is a corral problem, so it wears the
@@ -77,7 +84,7 @@ const POLICY_CORRAL := "corral"
 # (proximity: far → near → fixed, §3).
 #
 # BOTH ARE TEXT-PRESENTATION SYMBOLS, DELIBERATELY — and that is a sharper rule than "bold line art".
-# ♻ ⬆ ⇄ render BOLD because they inherit the label's font colour; an EMOJI carries its own colours
+# ♻ ⬆ ⇊ render BOLD because they inherit the label's font colour; an EMOJI carries its own colours
 # and cannot be tinted, so it renders at whatever contrast its art happens to have. 🐾 was tried for
 # `tame` and REJECTED on exactly that: at picker size it came out a faint washed-out tan against the
 # dark console — the weakest glyph in the row, next to a crisp white 💀 (see the first cut of
@@ -88,7 +95,7 @@ const POLICY_SOW := "sow"
 const POLICY_ICONS := {
 	"sustain": "♻",
 	"surplus": "⬆",
-	"market": "⇄",
+	"deplete": "⇊",
 	"eradicate": "💀",
 	"cultivate": "🌱",
 	POLICY_SOW: "▦",
@@ -99,6 +106,27 @@ const POLICY_ICONS := {
 ## Icon for a take policy ("" for an unknown/absent policy, so callers render bare text).
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
+
+# THE TRADE-GOODS GLYPH (issue #337) — the mark on every non-food component of a hunt/gather yield
+# ON THE TIGHT SURFACES, so a rate is never mistaken for food: the worked-row headlines, the work
+# zone's filter chips, the map's yield labels, the tooltips. NOT the policy picker, which is the one
+# surface with room to say the word (`SourceForecast.picker_products` → `0.96 food · 0.24 trade`):
+# its rung buttons already wear a policy glyph naming the RUNG, and an abstract arrow naming the
+# PRODUCT beside it at the same weight is two axes the eye cannot separate. Where a word does not
+# fit, the mark still beats nothing.
+# ONE glyph for the whole product: the sim models trade goods
+# as a SCALAR, and the client says so. There is deliberately NO per-species noun (pelt / ivory /
+# hide) — a named good per species is a flavor layer on top of the scalar
+# (docs/plan_hunt_yield_model.md, Deferred), and inventing one here would put words on the wire's
+# behalf that the sim cannot back.
+#
+# It is ⇄, the exchange arrow the `Market` → `Deplete` rename FREED (see the POLICY_ICONS note above):
+# that rename removed it from the policy ladder precisely BECAUSE it named the rung's PRODUCT rather
+# than its pressure — and the product is exactly what this labels. It obeys the same legibility rule
+# as the rest of this file: a text-presentation symbol in bold line art, so it inherits the label's
+# colour (tinting WARN-amber with an overdrawn row, greying out with a disabled button) instead of
+# carrying emoji colours of its own. 🪙 / 💰 / ⚖ were already measured and rejected at these sizes.
+const TRADE_GOODS_GLYPH := "⇄"
 
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row

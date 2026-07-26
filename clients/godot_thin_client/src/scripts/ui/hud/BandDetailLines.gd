@@ -222,7 +222,7 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 if tx >= 0 and ty >= 0:
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
-        # The launched take policy (Sustain/Surplus/Market/Eradicate).
+        # The launched take policy (Sustain/Surplus/Deplete/Eradicate).
         var policy := String(unit_data.get("expedition_hunt_policy", "")).strip_edges()
         if policy != "":
             lines.append("Policy: %s" % policy.capitalize())

@@ -40,7 +40,7 @@ const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 # EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
 # by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
-const LABOR_HUNT_POLICIES := ["sustain", "surplus", "market", "eradicate"]
+const LABOR_HUNT_POLICIES := ["sustain", "surplus", "deplete", "eradicate"]
 # The Sustain rung by name: the default compose policy, and the ceiling every unknown rung falls back
 # to in `forecast_inputs`.
 const LABOR_POLICY_SUSTAIN := "sustain"
@@ -98,6 +98,68 @@ const FOOD_FLOW_MIN := 0.001
 # wording in the tooltip so it reads as the ceiling it is (and the four rungs read as ASCENDING).
 const POLICY_CAP_FORMAT := "up to %s/turn"
 
+# ---- THE TWO PRODUCTS (issue #337) --------------------------------------------------------------
+# A hunt pays a VECTOR, not a food scalar: provisions AND trade goods, per the species' own hunt-yield
+# vector times the policy's intensity. THE ONE PRESENTATION RULE, applied everywhere below and by
+# every caller: **render a component only when it is non-zero.** A deer reads food and trade, food
+# leading; a wolf (`provisions == 0`) reads TRADE ONLY and never a "0 food" line; a forage patch reads
+# food only. A `0` printed as a number for a component the species does not produce is the
+# false-precision this whole arc exists to remove — it is not "more complete", it is wrong.
+#
+# Trade is stated GENERICALLY, with `FoodIcons.TRADE_GOODS_GLYPH` and the word "trade goods". The sim
+# models a scalar; naming it per species (pelts/ivory/hide) is a deferred flavor layer.
+const TRADE_COMPONENT_SEPARATOR := " · "
+# The joiner for the COMPACT (magnitude-only) pair. A plain space, not `·`, because the surfaces that
+# use it — the work-zone filter chips — already spend their `·` separating a count from its total, and
+# a second one would read as a third field rather than a second product.
+const COMPACT_COMPONENT_SEPARATOR := " "
+# The bare trade rate as it rides a button face / row suffix: `⇄ +0.35`. No "/turn" — it sits beside a
+# food term that already carries one, or under a tooltip that spells the unit out.
+const TRADE_COMPONENT_FORMAT := "%s %s"
+# The trade half of a rung's tooltip. Spelled with the generic noun so the tooltip, unlike the compact
+# face, can never be misread as a second food number.
+const POLICY_CAP_TRADE_FORMAT := "%s %s trade goods/turn"
+# The trade half of a worked row's tooltip, beside "Actual +0.31 /turn".
+const TRADE_TOOLTIP_FORMAT := "Trade goods %s %s/turn"
+
+# ---- THE PICKER FACE'S PRODUCT LINE -------------------------------------------------------------
+# THE PRODUCTS IN WORDS, for the policy picker's SECOND line: `0.96 food · 0.24 trade`. The picker is
+# the ONE surface that names its products rather than marking them, and the reason is that its two
+# glyph families were doing incompatible jobs side by side: the POLICY glyph (♻ ⬆ ⇊ 💀) says which
+# RUNG, `FoodIcons.TRADE_GOODS_GLYPH` says which PRODUCT, and adjacent in one line at one weight the
+# eye cannot tell which axis it is reading. Line 1 now names the rung (`HudFormat.policy_face`), so
+# line 2 names the product — and a WORD is the only mark trade goods can wear here anyway: emoji
+# cannot be tinted (🪙 / 💰 / ⚖ were measured and rejected in `FoodIcons`), and the remaining
+# text-presentation arrow is exactly the abstract mark that stopped reading.
+# NO `+` SIGN, deliberately: every rung is a gain, so a sign on a picker face carries no information.
+# It stays on the work rows and map labels, where a `+` genuinely contrasts against consumption.
+# The render-only-when-non-zero rule above still governs — a wolf's rung reads `2.70 trade` alone.
+const PICKER_FOOD_PRODUCT_FORMAT := "%s food"
+
+const PICKER_TRADE_PRODUCT_FORMAT := "%s trade"
+
+## The picker face's product line for a food/trade pair — `0.96 food · 0.24 trade`, `2.70 trade`
+## (inedible quarry), `0.15 food` (forage patch). Same food-leads order and same
+## render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without the
+## sign; when BOTH components are absent the food zero survives, because a rung whose ceiling is
+## honestly empty is a fact worth reading.
+static func picker_products(food: float, trade: float) -> String:
+    var parts: Array[String] = []
+    if has_component(food) or not has_component(trade):
+        parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(food))
+    if has_component(trade):
+        parts.append(PICKER_TRADE_PRODUCT_FORMAT % format_magnitude(trade))
+    return TRADE_COMPONENT_SEPARATOR.join(parts)
+
+# WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
+# component with a POSITIVE rate, provisions preferred so every edible species divides exactly as it
+# did before this arc, trade for an inedible one. Everything that would otherwise DIVIDE BY A
+# PER-ANIMAL QUANTUM (the kill rhythm, the carry-aware delivered take, the averaging window, the
+# whole-animal worker cap) picks its axis here — a wolf's `food_per_animal` is honestly 0, so a
+# food-only derivation divides by zero and silently produces nothing.
+const YIELD_AXIS_PROVISIONS := "provisions"
+const YIELD_AXIS_TRADE := "trade"
+
 # PRE-COMMIT YIELD FORECAST. The overstaffing note above is POST-HOC — it tells you a turn later that
 # workers were wasted. The forecast is the same truth shown WHILE COMPOSING: the sim exports, for the
 # forage patch and the herd alike, a `per_worker_yield` plus one take ceiling per policy (the patch as
@@ -110,10 +172,15 @@ const POLICY_CAP_FORMAT := "up to %s/turn"
 # impossible up front; the post-hoc note still covers a source whose biomass FELL after staffing.
 # max_useful is independent of the band's output multiplier — it scales both terms linearly.
 const FORECAST_PER_WORKER_KEY := "per_worker_yield"
+# The species-aware per-worker TRADE rate + one-animal trade quantum (issue #337). Herd-only: a forage
+# patch carries neither, so a plant forecast stays food-denominated and the axis resolves to provisions.
+const FORECAST_PER_WORKER_TRADE_KEY := "per_worker_trade"
+const FORECAST_FOOD_PER_ANIMAL_KEY := "food_per_animal"
+const FORECAST_TRADE_PER_ANIMAL_KEY := "trade_per_animal"
 const FORECAST_CEILING_KEYS := {
     "sustain": "ceiling_sustain",
     "surplus": "ceiling_surplus",
-    "market": "ceiling_market",
+    "deplete": "ceiling_deplete",
     "eradicate": "ceiling_eradicate",
     # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
     # same expected(workers, policy) math shows the cost of the investment while composing.
@@ -183,6 +250,10 @@ const PARTY_SIZE_BOUND_NOTE_FORMAT := "%d of %d useful — at the max party size
 # does ZERO arithmetic over either — a re-derived `carryCap / rate` closed form is wrong, and wrong by
 # a lot (on a FULL Rabbit Warren under Surplus only a LONE hunter fills at all). Look it up.
 const HERD_BAND_CEILINGS_KEY := "hunt_policy_ceilings"
+# The TRADE twin of that list (issue #337) — the same policy keys, the ceiling in trade goods/turn.
+# Two dicts rather than one dict of pairs because the decoder fills both in a single pass over the one
+# wire list, so they cannot drift, and every existing food-only reader stays untouched.
+const HERD_BAND_TRADE_CEILINGS_KEY := "hunt_policy_trade_ceilings"
 const HERD_TRIP_ESTIMATES_KEY := "hunt_trip_estimates"
 # `hunt_trip_estimates` is keyed "<policy><sep><party_workers>" — the sim's key format, mirrored by
 # `hunt_estimate_key` so the single-cell lookup and the whole-row scan can never disagree on it.
@@ -205,6 +276,9 @@ const HUNT_FORECAST_LONG_RAID_FORMAT := "delivers ≈%d %s over many turns"
 # The FOOD the delivered animals are worth, appended so the party-size tradeoff reads BOTH ways: a
 # bigger party takes more animals AND more food.
 const HUNT_FORECAST_FOOD_FORMAT := " · ~%d food"
+# Its TRADE twin (issue #337), appended AFTER the food term when the quarry pays both and standing
+# alone when it is inedible. The generic noun, never a per-species one — the sim ships a scalar.
+const HUNT_FORECAST_TRADE_FORMAT := " · %s ~%d trade goods"
 # A finite raid past the band's `expedition_viability_warn_turns` — it still delivers, just slowly. A
 # real tradeoff (told, then trusted), so the line stays WARN-amber and the button stays enabled.
 const HUNT_FORECAST_SLOW_SUFFIX := " — a slow raid"
@@ -221,9 +295,12 @@ const HUNT_FORECAST_LONG_TRAVEL_SUFFIX := " (+%d travel)"
 # standing surplus to raid and the party would return empty. NOT a "won't fill" verdict (the raid always
 # completes); the herd simply has nothing to give this policy right now.
 const HUNT_FORECAST_NO_SURPLUS_FORMAT := "%s is too lean to raid — its surplus is spent"
-# An Eradicate expedition is a DENIAL mission, not a failed raid: it delivers no food BY DESIGN (the sim
-# says so via `delivers_food`, the client never infers it from the policy string).
-const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, delivers no food"
+# A DENIAL mission is a raid with NO PAYLOAD IN EITHER CURRENCY, not a failed one. It is no longer
+# "Eradicate": since issue #337 `delivers_food` says the QUARRY IS INEDIBLE, Eradicate banks a
+# whole-stock windfall like every other rung, and an inedible quarry still pays pelts. The sim decides
+# this — `delivers_food == false AND delivers_trade == false` — and the client never infers it from the
+# policy string.
+const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd toward extinction, brings nothing home"
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
 # A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
@@ -243,8 +320,9 @@ const SEND_HUNT_LONG_RAID_BUTTON := "Send Anyway (long raid)"
 # reason names no alternative size.
 const SEND_HUNT_NO_SURPLUS_BUTTON := "Herd too lean to raid"
 const SEND_HUNT_NO_SURPLUS_REASON := "%s has no surplus above this policy's floor — the raid would return empty. Wait for the herd to rebuild, ease the policy, or hunt it locally."
-# Eradicate's button states the deal rather than implying failure — the mission IS the point.
-const SEND_HUNT_DENIAL_BUTTON := "Send (delivers no food)"
+# A denial raid's button states the deal rather than implying failure — the mission IS the point. It
+# is the quarry that decides this (pays neither product), not the rung: see HUNT_FORECAST_DENIAL_FORMAT.
+const SEND_HUNT_DENIAL_BUTTON := "Send (brings nothing home)"
 
 ## The bare magnitude of a food rate ("1.74"), for a readout that supplies its own sign in words
 ## ("− 1.74 feed"). One rounding rule for every food rate the HUD prints.
@@ -262,11 +340,70 @@ static func format_signed(value: float) -> String:
 static func format_yield(value: float) -> String:
     return format_signed(value) + YIELD_PER_TURN_SUFFIX
 
-## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the bare signed rate on the
-## button face, the "up to X/turn" wording in the tooltip. Shared by the hunt + forage takes helpers.
+## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the named-product line on
+## the button face's second row (`0.15 food`), the "up to X/turn" wording in the tooltip. The
+## FOOD-ONLY form, kept for the forage picker (the plant web projects no trade rate yet); a hunt rung
+## goes through `extractive_take_pair`.
 static func extractive_take(rate: float) -> Dictionary:
-    var signed := format_signed(rate)
-    return {"compact": signed, "full": POLICY_CAP_FORMAT % signed}
+    return {"compact": picker_products(rate, 0.0), "full": POLICY_CAP_FORMAT % format_signed(rate)}
+
+## The bare trade rate with its glyph — `⇄ +0.35`. The ONE way this client writes a trade number.
+static func format_trade(value: float) -> String:
+    return TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_signed(value)]
+
+## True when a rate is a real quantity rather than the absence of one. The gate every
+## render-only-when-non-zero decision goes through, so "is this component present?" is answered
+## identically for food and trade and by every surface.
+static func has_component(rate: float) -> bool:
+    return rate >= FOOD_FLOW_MIN
+
+## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn · ⇄ +0.12` (both),
+## `+0.31 /turn` (food only), `⇄ +0.12` (trade only — a wolf). One definition, so every surface that
+## states a source's per-turn products states them the same way and none of them can print a zero for
+## a component the species does not produce. Food leads. When BOTH are absent the food zero survives
+## ("+0.00 /turn"): a worked source that produced nothing this turn is a fact worth reading.
+static func yield_components(food: float, trade: float) -> String:
+    var parts: Array[String] = []
+    if has_component(food) or not has_component(trade):
+        parts.append(format_yield(food))
+    if has_component(trade):
+        parts.append(format_trade(trade))
+    return TRADE_COMPONENT_SEPARATOR.join(parts)
+
+## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
+## to repeat "/turn" — today the work zone's per-kind filter chips (`🦌 2 · 0.20 ⇄ 0.22`). Same
+## render-only-when-non-zero rule and same food-leads order, but BARE MAGNITUDES: a chip states a
+## count and that kind's total, and a `+` beside a count would read as a change rather than a level.
+## The point of the pair here is aggregate honesty — a hunt chip covering one deer and one wolf must
+## not report only the deer, and a chip whose whole set pays trade alone shows the trade total rather
+## than a `0.00` asserting its sources produce nothing.
+static func magnitude_components(food: float, trade: float) -> String:
+    var parts: Array[String] = []
+    if has_component(food) or not has_component(trade):
+        parts.append(format_magnitude(food))
+    if has_component(trade):
+        parts.append(TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
+    return COMPACT_COMPONENT_SEPARATOR.join(parts)
+
+## A `{compact, full}` metric pair for an EXTRACTIVE rung that pays BOTH products — the hunt picker's
+## button metric. Food leads; each component appears only when it is non-zero, so a wolf's four rungs
+## read as four ascending TRADE numbers (never four zeros) and a deer's read food-then-trade. When the
+## rung pays nothing at all the food zero is still printed: `0.00 food` is the honest reading of a
+## ceiling that exists and is empty, as opposed to a component the species never had. The compact half
+## is the face's product LINE (`picker_products`, named in words); the tooltip keeps the signed
+## "up to …" ceiling wording.
+static func extractive_take_pair(food: float, trade: float) -> Dictionary:
+    var show_food := has_component(food) or not has_component(trade)
+    var full_parts: Array[String] = []
+    if show_food:
+        full_parts.append(POLICY_CAP_FORMAT % format_signed(food))
+    if has_component(trade):
+        full_parts.append(POLICY_CAP_TRADE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade)])
+    return {
+        "compact": picker_products(food, trade),
+        "full": TRADE_COMPONENT_SEPARATOR.join(full_parts),
+    }
 
 ## The band's current tile (col,row), reading the raw cohort `current_x/y` (snapshot entries) or the
 ## MapView marker's `pos` fallback; (-1,-1) when unknown.
@@ -342,10 +479,49 @@ static func round_trip_travel_turns(band: Dictionary, herd: Dictionary,
 ## herd's renewable FLOW), or `HUNT_RATE_UNAVAILABLE` when the snapshot carries none. NEVER derived
 ## here — the ecology/MSY model that produces these numbers lives in the sim.
 static func hunt_policy_ceiling(herd: Dictionary, policy: String) -> float:
-    var ceilings_variant: Variant = herd.get(HERD_BAND_CEILINGS_KEY, {})
+    return _ceiling_from(herd, HERD_BAND_CEILINGS_KEY, policy)
+
+## The same ceiling in TRADE GOODS/turn (`hunt_policy_trade_ceilings`). `HUNT_RATE_UNAVAILABLE` when
+## the snapshot carries no trade row — which a caller must read as "unknown", never as "no trade".
+static func hunt_policy_trade_ceiling(herd: Dictionary, policy: String) -> float:
+    return _ceiling_from(herd, HERD_BAND_TRADE_CEILINGS_KEY, policy)
+
+static func _ceiling_from(herd: Dictionary, key: String, policy: String) -> float:
+    var ceilings_variant: Variant = herd.get(key, {})
     if not (ceilings_variant is Dictionary) or not (ceilings_variant as Dictionary).has(policy):
         return HUNT_RATE_UNAVAILABLE
     return float((ceilings_variant as Dictionary)[policy])
+
+## The component this HERD actually pays, from its per-worker vector (the sim's `ratio_axis()` rule:
+## the first component with a positive rate, provisions preferred). `per_worker_yield` /
+## `per_worker_trade` are the SPECIES-AWARE per-herd rates — never the cohort's species-blind
+## `hunt_per_worker_provisions`, which reports a positive food rate beside a wolf's zero food ceilings.
+static func herd_yield_axis(herd: Dictionary) -> String:
+    if has_component(float(herd.get(FORECAST_PER_WORKER_KEY, 0.0))):
+        return YIELD_AXIS_PROVISIONS
+    if has_component(float(herd.get(FORECAST_PER_WORKER_TRADE_KEY, 0.0))):
+        return YIELD_AXIS_TRADE
+    return YIELD_AXIS_PROVISIONS
+
+## The herd's per-worker rate, per-policy ceiling and one-animal quantum ON THE AXIS IT PAYS —
+## everything the carry/cadence arithmetic divides by, resolved once so no caller picks a component by
+## hand. `{axis, per_worker, ceiling, per_animal}`; `ceiling` is `HUNT_RATE_UNAVAILABLE` when the herd
+## carries no row for `policy`.
+static func herd_axis_rates(herd: Dictionary, policy: String) -> Dictionary:
+    var axis := herd_yield_axis(herd)
+    if axis == YIELD_AXIS_TRADE:
+        return {
+            "axis": axis,
+            "per_worker": float(herd.get(FORECAST_PER_WORKER_TRADE_KEY, 0.0)),
+            "ceiling": hunt_policy_trade_ceiling(herd, policy),
+            "per_animal": float(herd.get(FORECAST_TRADE_PER_ANIMAL_KEY, 0.0)),
+        }
+    return {
+        "axis": axis,
+        "per_worker": float(herd.get(FORECAST_PER_WORKER_KEY, 0.0)),
+        "ceiling": hunt_policy_ceiling(herd, policy),
+        "per_animal": float(herd.get(FORECAST_FOOD_PER_ANIMAL_KEY, 0.0)),
+    }
 
 ## PRE-COMMIT FORECAST (the compose-time counterpart to `source_yield_readout`'s post-hoc note).
 ## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
@@ -363,7 +539,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
     # forage patch share the empty prefix), and neither can the dict's shape:
     #   HERD  → the `hunt_policy_ceilings` LIST is the herd's ONLY wire representation (the old
     #           per-policy `ceilingSustain`/… scalars are deprecated schema slots), so every herd rung
-    #           — Sustain/Surplus/Market/Eradicate, Tame, Corral — resolves through it.
+    #           — Sustain/Surplus/Deplete/Eradicate, Tame, Corral — resolves through it.
     #   FORAGE→ a patch has no such list; its per-policy scalars are its only representation.
     # `hunt_policy_ceiling` returns HUNT_RATE_UNAVAILABLE (< 0) for a herd with no row, which falls
     # back to Sustain's row exactly as the old scalar lookup did, then clamps to 0. That 0 never
@@ -398,8 +574,26 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
     # (see `max_useful_workers`), so it must fire ONLY for an extractive hunt of a live herd — never a
     # forage patch (no food_per_animal), an investment rung (Tame/Corral collapse to 1), or a corralled
     # herd (managed `worker_tend` harvest, whose forecast already collapses every ceiling to per_worker).
-    var food_per_animal := float(src.get(prefix + "food_per_animal", 0.0))
-    var whole_animal: bool = food_per_animal > 0.0 and not investment \
+    var food_per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
+    # THE SECOND PRODUCT (issue #337). A herd carries a per-worker TRADE rate, a per-policy trade
+    # ceiling and a per-animal trade quantum beside the food ones; a forage patch carries none of the
+    # three, so its axis resolves to provisions and everything below is unchanged for plants.
+    # The AXIS is what the whole-animal arithmetic divides by: for an INEDIBLE species the food
+    # quantum is honestly 0, so deriving a cadence or a carry cap from food alone divides by zero and
+    # yields nothing at all. `known` accepts EITHER component — a wolf has real forecast data.
+    var per_worker_trade := float(src.get(prefix + FORECAST_PER_WORKER_TRADE_KEY, 0.0))
+    var trade_per_animal := float(src.get(prefix + FORECAST_TRADE_PER_ANIMAL_KEY, 0.0))
+    var ceiling_trade := 0.0
+    if kind == SOURCE_KIND_HERD:
+        ceiling_trade = hunt_policy_trade_ceiling(src, policy)
+        if ceiling_trade < 0.0:
+            ceiling_trade = hunt_policy_trade_ceiling(src, DEFAULT_HUNT_POLICY)
+        ceiling_trade = maxf(ceiling_trade, 0.0)
+    var trade_axis: bool = not has_component(per_worker) and has_component(per_worker_trade)
+    var axis_per_worker := per_worker_trade if trade_axis else per_worker
+    var axis_ceiling := ceiling_trade if trade_axis else ceiling
+    var axis_per_animal := trade_per_animal if trade_axis else food_per_animal
+    var whole_animal: bool = axis_per_animal > 0.0 and not investment \
         and not bool(src.get("corralled", false))
     return {
         "per_worker": per_worker,
@@ -409,8 +603,18 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         "feed_rung": feed_rung,
         "feed": feed,
         "food_per_animal": food_per_animal,
+        "per_worker_trade": per_worker_trade,
+        "ceiling_trade": ceiling_trade,
+        "trade_per_animal": trade_per_animal,
+        # The axis triple every divide-by-a-quantum consumer reads (`max_useful_workers` and the local
+        # preview), so no caller has to know which product this species pays.
+        "axis": YIELD_AXIS_TRADE if trade_axis else YIELD_AXIS_PROVISIONS,
+        "axis_per_worker": axis_per_worker,
+        "axis_ceiling": axis_ceiling,
+        "axis_per_animal": axis_per_animal,
         "whole_animal": whole_animal,
-        "known": per_worker >= FORECAST_MIN_PER_WORKER,
+        "known": per_worker >= FORECAST_MIN_PER_WORKER \
+            or per_worker_trade >= FORECAST_MIN_PER_WORKER,
     }
 
 ## Workers beyond this produce nothing at this source under the selected policy —
@@ -419,18 +623,23 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
-    var per_worker := float(forecast["per_worker"])
-    var ceiling := float(forecast["ceiling"])
+    # ON THE AXIS THE SPECIES PAYS (issue #337): a wolf's food per-worker and ceiling are both 0, so
+    # the food-denominated cap would read ceil(0/0) and cap the crew at nothing. The axis triple falls
+    # back to the food pair for every edible species and every forage patch, so this is a widening.
+    var per_worker := float(forecast.get("axis_per_worker", forecast.get("per_worker", 0.0)))
+    var ceiling := float(forecast.get("axis_ceiling", forecast.get("ceiling", 0.0)))
+    if per_worker < FORECAST_MIN_PER_WORKER:
+        return MAX_USEFUL_UNBOUNDED
     # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
     # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
     # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
     # bank holds just under one body when the turn's rate lands, so floor(ceiling / food_per_animal) + 1
     # whole animals drop, each worth food_per_animal — carry that peak, not the average flow.
-    var food_per_animal := float(forecast.get("food_per_animal", 0.0))
-    if bool(forecast.get("whole_animal", false)) and food_per_animal > 0.0:
-        var animals := floori(ceiling / food_per_animal) + HUNT_PEAK_DROP_BANK_BONUS
-        var peak_drop_food := float(animals) * food_per_animal
-        return ceili(peak_drop_food / per_worker)
+    var per_animal := float(forecast.get("axis_per_animal", forecast.get("food_per_animal", 0.0)))
+    if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
+        var animals := floori(ceiling / per_animal) + HUNT_PEAK_DROP_BANK_BONUS
+        var peak_drop := float(animals) * per_animal
+        return ceili(peak_drop / per_worker)
     return int(ceilf(ceiling / per_worker))
 
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
@@ -474,6 +683,8 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     var tooltip := ""
     # The honest per-turn rate the row headlines (and the caller derives the kill-rhythm from).
     var rate := 0.0
+    # Its trade twin — 0 for a source that pays no trade, which is exactly what suppresses the line.
+    var trade_rate := 0.0
     if bool(m.get("has_yield", false)):
         var actual := float(m.get("actual_yield", 0.0))
         var sustainable := float(m.get("sustainable_yield", 0.0))
@@ -481,7 +692,7 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
         # sim-answered `overdraws` flag (policy-driven: `!managed && policy.overdraws()`), NOT the
         # client-derived `actual > sustainable` — which false-positives on a hunt's kill turn (cashing a
         # banked whole animal spikes `actual` above the steady `sustainable` even under Sustain). Forage
-        # on Sustain reads clean; a Surplus/Market/Eradicate patch or an over-hunted herd trips ⚠.
+        # on Sustain reads clean; a Surplus/Deplete/Eradicate patch or an over-hunted herd trips ⚠.
         warn = bool(m.get("overdraws", false))
         var renewable := kind == LABOR_KIND_FORAGE and not warn
         tooltip = "Actual %s" % format_yield(actual)
@@ -502,7 +713,17 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             rate = float(m["realized_yield"])
         else:
             rate = sustainable if kind == LABOR_KIND_HUNT else actual
-        label_suffix = " %s" % format_yield(rate)
+        # THE SECOND PRODUCT (issue #337): the same steady/actual split in trade goods. Rendered ONLY
+        # when non-zero, so a deer row reads `+0.31 /turn · ⇄ +0.12`, a wolf row reads `⇄ +0.12`
+        # ALONE (never a "+0.00 /turn" that says its pelts are worth no meat), and a forage patch is
+        # unchanged. `realized_trade_yield` is 0 on every forage source by design — the plant web's
+        # trade PROJECTION is a sim-side gap — so forage falls back to the trade it actually earned.
+        trade_rate = float(m["realized_trade_yield"]) if m.has("realized_trade_yield") \
+            else float(m.get("trade_yield", 0.0))
+        if has_component(trade_rate):
+            tooltip += TRADE_COMPONENT_SEPARATOR + (TRADE_TOOLTIP_FORMAT % [
+                FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade_rate)])
+        label_suffix = " " + yield_components(rate, trade_rate)
     # Overstaffing: fewer workers were needed than are assigned, so the remainder produced nothing
     # here. `workers_needed == 0` means "unknown" (rehydrated) → no note.
     var note := ""
@@ -524,6 +745,9 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     return {
         "label_suffix": label_suffix, "warn": warn, "note": note,
         "muted_note": muted_note, "tooltip": tooltip, "rate": rate,
+        # The trade component, so a caller that renders its own sentence (the work inspector) states
+        # the same two products the row headline does instead of only the food one.
+        "trade_rate": trade_rate,
     }
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
@@ -620,17 +844,23 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: Strin
     if not estimates.has(key):
         return {"available": false}
     var estimate: Dictionary = estimates[key]
-    # A denial mission (eradicate) delivers no food BY DESIGN — never a payload, never a failure. This
-    # carve-out MUST come first: it takes animals (down to the 0 floor) but banks none as food.
-    if not bool(estimate.get("delivers_food", false)):
+    # A DENIAL mission carries nothing home at all. **`delivers_food == false` alone no longer means
+    # that** (issue #337): it was redefined to say the QUARRY IS INEDIBLE, and an inedible quarry still
+    # pays pelts — a wolf raid reads `delivers_food false, delivers_trade true` and is a real delivery,
+    # while Eradicate on a deer now banks a whole-stock windfall like every other rung. So the denial
+    # carve-out fires only when the species pays NEITHER product.
+    if not bool(estimate.get("delivers_food", false)) \
+            and not bool(estimate.get("delivers_trade", false)):
         return {"available": true, "denial": true, "empty": false}
-    # delivered_food == 0 = the herd is at/below the policy's floor: no standing surplus to raid, the
-    # party returns empty. The ONE non-viable case (the raid always completes; the herd has nothing).
+    # Nothing delivered in EITHER currency = the herd is at/below the policy's floor: no standing
+    # surplus to raid, the party returns empty. The ONE non-viable case (the raid always completes;
+    # the herd has nothing). Reading food alone here would call every wolf raid "too lean".
     # NOT `animals_taken == 0`: a party too small to carry a whole animal now KILLS one and hauls the
     # fraction its pack holds (mirroring the local hunt), so `animals_taken >= 1` whenever there's any
     # surplus — the delivered PAYLOAD (with waste) is the honest bind, not the whole-animal kill count.
     var delivered_food := float(estimate.get("delivered_food", 0.0))
-    if delivered_food <= 0.0:
+    var delivered_trade := float(estimate.get("delivered_trade", 0.0))
+    if delivered_food <= 0.0 and delivered_trade <= 0.0:
         return {"available": true, "denial": false, "empty": true}
     var animals := int(estimate.get("animals_taken", 0))
     # turns_to_fill == 0 = the raid ran the whole horizon still delivering (a long raid). A warn
@@ -653,8 +883,10 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: Strin
         "long_raid": long_raid, "slow": slow,
         # The delivered PAYLOAD in food — what the party actually LANDS (a partial for a small party),
         # straight from the sim's forward-simulated raid, NOT animals × food_per_animal (which counts the
-        # whole kill and overstates a partial). Guaranteed > 0 here (empty returned above otherwise).
-        "food": int(round(delivered_food)), "waste_pct": waste_pct,
+        # whole kill and overstates a partial). It may be 0 on an inedible quarry, whose whole payload
+        # rides `trade`; at least one of the two is > 0 here (empty returned above otherwise), and each
+        # is rendered only when it is.
+        "food": delivered_food, "trade": delivered_trade, "waste_pct": waste_pct,
     }
 
 ## Render a `hunt_trip_forecast` result as its one-line BBCode readout — the three states in their
@@ -665,7 +897,8 @@ static func hunt_trip_forecast(band: Dictionary, herd: Dictionary, policy: Strin
 static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -> String:
     if not bool(forecast.get("available", false)):
         return ""
-    # A denial mission (Eradicate) brings nothing home BY DESIGN — say what it does, amber, no payload.
+    # A denial mission brings nothing home BY DESIGN — say what it does, amber, no payload. It is the
+    # QUARRY that decides this (pays neither product), never the Eradicate rung, which delivers.
     if bool(forecast.get("denial", false)):
         return "[color=#%s]%s[/color]" % [
             HudStyle.WARN_HEX, HUNT_FORECAST_DENIAL_FORMAT % herd_name,
@@ -676,10 +909,12 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
             HudStyle.DANGER_HEX, HUNT_FORECAST_WARN_GLYPH,
             HUNT_FORECAST_NO_SURPLUS_FORMAT % herd_name,
         ]
-    # A real raid: headline the delivered PAYLOAD (the animal count over turns + the food it LANDS), then
-    # the waste. `food` is the sim's `delivered_food` (always set on a delivering forecast).
+    # A real raid: headline the delivered PAYLOAD (the animal count over turns + what it LANDS), then
+    # the waste. The payload is `delivered_food` and/or `delivered_trade`, each named only when the
+    # quarry actually pays it — so an Eradicate deer raid quotes its windfall and a wolf raid quotes
+    # pelts, neither of them a "~0 food".
     var animals := int(forecast.get("animals", 0))
-    var food: String = HUNT_FORECAST_FOOD_FORMAT % int(forecast["food"]) if forecast.has("food") else ""
+    var food := _raid_payload_suffix(forecast)
     # The waste % rides BELOW the food as its own WARN-amber segment (even on a cyan line — a high-waste
     # partial is informative, not a block). Empty when the raid carried its full kill home.
     var waste := ""
@@ -710,6 +945,18 @@ static func hunt_forecast_line_bbcode(forecast: Dictionary, herd_name: String) -
             HudStyle.WARN_HEX, HUNT_FORECAST_WARN_GLYPH, text, food, HUNT_FORECAST_SLOW_SUFFIX, waste,
         ]
     return "[color=#%s]%s%s[/color]%s" % [HudStyle.SIGNAL_HEX, text, food, waste]
+
+## The raid's delivered payload as a trailing " · ~20 food · ⇄ ~3 trade goods" — each component only
+## when the quarry pays it, food leading. "" when the forecast carries no payload at all.
+static func _raid_payload_suffix(forecast: Dictionary) -> String:
+    var suffix := ""
+    var food := float(forecast.get("food", 0.0))
+    if has_component(food):
+        suffix += HUNT_FORECAST_FOOD_FORMAT % int(round(food))
+    var trade := float(forecast.get("trade", 0.0))
+    if has_component(trade):
+        suffix += HUNT_FORECAST_TRADE_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, int(round(trade))]
+    return suffix
 
 ## The raid returns empty: the sim's estimate for THIS (policy, party size) says the herd has no surplus
 ## above the policy's floor (`animals_taken == 0`). The single definition of the blocked case — both
@@ -763,7 +1010,13 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: St
         var cell_variant: Variant = estimates.get(hunt_estimate_key(policy, workers), null)
         if not (cell_variant is Dictionary):
             continue
-        var delivered := float((cell_variant as Dictionary).get("delivered_food", 0.0))
+        # Scan the component this QUARRY pays (issue #337): an inedible species delivers 0 food at
+        # every party size, so a food-only scan finds no plateau at all and the party stepper loses
+        # its max-useful cap. Edibility is a species property, so this picks the same component in
+        # every cell of the row.
+        var cell := cell_variant as Dictionary
+        var delivered := float(cell.get("delivered_food", 0.0)) if bool(cell.get("delivers_food", false)) \
+            else float(cell.get("delivered_trade", 0.0))
         if delivered > prev_delivered:
             prev_delivered = delivered
             plateau = workers   # the payload is still rising — this size is useful
@@ -790,13 +1043,15 @@ static func expedition_useful_cap(band: Dictionary, herd: Dictionary, policy: St
 
 ## Each extractive policy's MAX obtainable food/turn — the raid twin of the local hunt's per-policy cap,
 ## so all three pickers (forage / local hunt / expedition) wear the same "up to X/turn" button metric and
-## the four read ASCENDING (Sustain < Surplus < Market < Eradicate; deeper floors free more surplus). The
+## the four read ASCENDING (Sustain < Surplus < Deplete < Eradicate; deeper floors free more surplus). The
 ## metric is WORKER-INDEPENDENT: the max over every party size of `delivered_food / trip_turns`, where
 ## `trip_turns = turns_to_fill + round-trip travel` (a far herd's best rate is correctly lower). A bigger
 ## party delivers more food in fewer turns, so the rate rises then plateaus — the max is the honest cap.
-## Eradicate is a DENIAL rung (`delivers_food == false`, `delivered_food == 0`): it never qualifies, so it
-## carries no rate and falls back to its name + skull glyph — its existing denial treatment. A table SCAN,
-## zero client arithmetic. Empty when the herd carries no estimates (older snapshot / non-huntable).
+## BOTH PRODUCTS ride the metric (issue #337): each component's best rate is scanned independently and
+## rendered only when non-zero, so an inedible quarry's four rungs read as four ascending TRADE rates
+## instead of four blanks. A rung that lands NOTHING in either currency — a true denial mission, which
+## is now a property of the QUARRY and not of the Eradicate rung — carries no rate and falls back to its
+## name + glyph. A table SCAN, zero client arithmetic. Empty when the herd carries no estimates.
 static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
         grid_width: int, wrap_horizontal: bool) -> Dictionary:
     var takes := {}
@@ -806,28 +1061,35 @@ static func expedition_policy_takes(band: Dictionary, herd: Dictionary,
     var estimates := estimates_variant as Dictionary
     var travel := round_trip_travel_turns(band, herd, grid_width, wrap_horizontal)
     for policy in LABOR_HUNT_POLICIES:
-        var best_rate := -1.0
+        var best_food := -1.0
+        var best_trade := -1.0
         for key in estimates:
             var parts := String(key).split(HUNT_ESTIMATE_KEY_SEPARATOR)
             if parts.size() != 2 or String(parts[0]) != String(policy):
                 continue
             var cell: Dictionary = estimates[key]
-            if not bool(cell.get("delivers_food", false)):
-                continue
-            var delivered := float(cell.get("delivered_food", 0.0))
             var trip_turns := int(cell.get("turns_to_fill", 0)) + travel
-            if delivered <= 0.0 or trip_turns <= 0:
+            if trip_turns <= 0:
                 continue
-            best_rate = maxf(best_rate, delivered / float(trip_turns))
-        if best_rate >= 0.0:
-            takes[String(policy)] = extractive_take(best_rate)
+            # Each component gates on its OWN delivers flag: `delivers_food == false` now means the
+            # quarry is inedible, so gating the whole row on it would blank a wolf's every rung.
+            if bool(cell.get("delivers_food", false)):
+                var delivered := float(cell.get("delivered_food", 0.0))
+                if delivered > 0.0:
+                    best_food = maxf(best_food, delivered / float(trip_turns))
+            if bool(cell.get("delivers_trade", false)):
+                var delivered_trade := float(cell.get("delivered_trade", 0.0))
+                if delivered_trade > 0.0:
+                    best_trade = maxf(best_trade, delivered_trade / float(trip_turns))
+        if best_food >= 0.0 or best_trade >= 0.0:
+            takes[String(policy)] = extractive_take_pair(maxf(best_food, 0.0), maxf(best_trade, 0.0))
     return takes
 
 ## Style the hunt-expedition send button from the live forecast. Two treatments, and the line between
 ## them is the point:
 ##   DELIVERING (viable / slow / long / denial) — the raid lands something (animals, or the denial it
 ##     promises). "primary" for a brisk raid; "armed" amber for a slow/long raid (`Send Anyway (≈54
-##     turns)` / `Send Anyway (long raid)`) or a denial (`Send (delivers no food)`) — ENABLED either
+##     turns)` / `Send Anyway (long raid)`) or a denial (`SEND_HUNT_DENIAL_BUTTON`) — ENABLED either
 ##     way: the player is told, then trusted.
 ##   NO SURPLUS (`animals_taken == 0`) — the raid returns empty, a mistake with no upside. DISABLED,
 ##     with the reason and the way out (party size can't fix it, so the reason names no alternative).
@@ -843,7 +1105,9 @@ static func style_send_hunt_button(button: Button, forecast: Dictionary, reason:
         HudStyle.apply_button(button, "ghost")
         return
     if bool(forecast.get("denial", false)):
-        # Eradicate: no food comes home, but that IS the mission — state the deal, don't cry failure.
+        # Nothing comes home in either currency, but that IS the mission — state the deal, don't cry
+        # failure. NOT keyed on the Eradicate rung: an Eradicate deer raid banks a windfall and lands here
+        # as a normal delivery.
         button.text = SEND_HUNT_DENIAL_BUTTON
         HudStyle.apply_button(button, "armed")
         return

@@ -79,7 +79,7 @@ Three rules ride the seam:
 - **Only stewardship teaches** (§4.2) — `FollowPolicy::teaches_knowledge`, defined against the
   `EXTRACTIVE` grouping: **Sustain** teaches (the one extractive rung that only takes the regrowth)
   and so do the investment verbs (`Cultivate`/`Tame`/`Corral` — managing *is* the practice);
-  **Surplus/Market/Eradicate teach nothing, at any rung** (they overdraw — slaughtering isn't
+  **Surplus/Deplete/Eradicate teach nothing, at any rung** (they overdraw — slaughtering isn't
   practice).
 - **You learn from a healthy source** — `eligible` is the `EcologyPhase::Thriving` gate both shipped
   earn sites already had, preserved unchanged.

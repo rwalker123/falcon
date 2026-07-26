@@ -58,7 +58,7 @@ const DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS: f32 = 80.0;
 /// Named-const defaults for the forage **policy axis** (Intensification §0-iii — "forage parity
 /// with hunting"). These mirror the fauna `follow`/`market`/`hunt` levers so a gather policy
 /// behaves like the matching hunt policy: **Surplus** overdraws the Sustain regrowth skim by
-/// `surplus_multiplier` (fauna `follow.surplus_multiplier`), **Market** takes a commercial share
+/// `surplus_multiplier` (fauna `follow.surplus_multiplier`), **Deplete** takes a hard share
 /// `market.take_fraction` of the patch and sells it at `trade_goods_multiplier`× the base
 /// `trade_goods_per_biomass` rate (fauna `market.*` + `hunt.trade_goods_per_biomass`), and
 /// **Eradicate** strips the patch by `eradicate.take_fraction` (fauna `hunt.take_fraction`).
@@ -191,14 +191,18 @@ impl Default for CultivationConfig {
     }
 }
 
-/// Forage **Market** policy tuning (Intensification §0-iii): a commercial gather that takes
+/// Forage **Deplete** policy tuning (Intensification §0-iii): a commercial gather that takes
 /// `take_fraction` of the patch's biomass each turn and sells it — the raw take yields
 /// `take × trade_goods_per_biomass × trade_goods_multiplier` trade goods (the plant mirror of
 /// fauna's `market` block + `hunt.trade_goods_per_biomass`).
+///
+/// **The struct and its `forage.market` key keep the old name.** The policy was renamed
+/// `Market` → `Deplete` (`docs/plan_hunt_yield_model.md` §2); this plant-web trade-rate block is
+/// renamed in a later plant-side pass, not with the policy.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ForageMarketConfig {
-    /// Fraction of the patch's remaining biomass a Market gather targets each turn (the ceiling
+    /// Fraction of the patch's remaining biomass a Deplete gather targets each turn (the ceiling
     /// before the throughput/biomass clamps).
     pub take_fraction: f32,
     /// Multiplier applied to the base trade-goods rate for gathered-for-sale goods.
@@ -288,7 +292,7 @@ pub struct ForageLaborConfig {
     /// **Surplus** policy multiplier on the Sustain (net-regrowth) ceiling (§0-iii). `> 1.0` so a
     /// Surplus gather overdraws a healthy patch — the plant mirror of `follow.surplus_multiplier`.
     pub surplus_multiplier: f32,
-    /// **Market** policy tuning (§0-iii): a commercial gather share + the gathered-goods trade-goods
+    /// **Deplete** policy tuning (§0-iii): a commercial gather share + the gathered-goods trade-goods
     /// conversion.
     pub market: ForageMarketConfig,
     /// **Eradicate** policy tuning (§0-iii): the aggressive strip-the-patch share.
@@ -414,7 +418,7 @@ pub struct LaborConfig {
     /// assignment's policy + worker count (the smooth policy RATE, not the lumpy kill-credit bank).
     /// It is a **pure function of state** — no history, no cold-start — so the assign-time seed and
     /// the resolved row compute the identical number (exact forecast == actual). A larger horizon
-    /// smooths a settled Sustain herd to flat ≈ MSY and lets a Surplus/Market projection see the
+    /// smooths a settled Sustain herd to flat ≈ MSY and lets a Surplus/Deplete projection see the
     /// herd's decline within the window. Its own lever, distinct from the expedition
     /// `forecast_horizon_turns` (a raid-length horizon, a different question). Validated `> 0`.
     pub yield_average_horizon_turns: u32,
@@ -760,8 +764,8 @@ mod tests {
         // patch recovers from it while Eradicate still bottoms the patch out in Collapsing.
         assert!(config.forage.reseed_floor_fraction > 0.0);
         assert!(config.forage.reseed_floor_fraction < config.forage.ecology.collapse_fraction);
-        // Forage policy axis (§0-iii): Surplus overdraws the Sustain skim, Market/Eradicate take a
-        // fractional commercial/strip share, Market sells at a boosted trade-goods rate.
+        // Forage policy axis (§0-iii): Surplus overdraws the Sustain skim, Deplete/Eradicate take a
+        // fractional commercial/strip share, Deplete sells at a boosted trade-goods rate.
         assert!(config.forage.surplus_multiplier > 1.0);
         assert!(config.forage.market.take_fraction > 0.0);
         assert!(config.forage.market.take_fraction < 1.0);

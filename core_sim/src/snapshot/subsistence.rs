@@ -1,4 +1,5 @@
 use super::*;
+use crate::fauna_config::HuntYield;
 
 /// Capture a live `Herd` into its authoritative snapshot mirror for rollback (the inverse is
 /// `fauna::HerdRegistry::update_from_states`). Movement/identity fields are mirrored directly; the
@@ -114,9 +115,12 @@ pub(crate) fn snapshot_sedentarization(
 /// the list rows and the scalar `ceiling*` fields below are literally the same numbers, so they cannot
 /// drift.
 ///
-/// Walks [`FollowPolicy::HUNT_POLICIES`] — the four extractive rungs **plus the two investment rungs
-/// `Tame` and `Corral`** (legitimate Hunt policies whose dipped yield is exactly what a player must see
-/// *before* committing to taming the herd or building the pen).
+/// Walks [`crate::fauna::hunt_policies_for`] — normally [`FollowPolicy::HUNT_POLICIES`], the four extractive
+/// rungs **plus the two investment rungs `Tame` and `Corral`** (legitimate Hunt policies whose dipped
+/// yield is exactly what a player must see *before* committing to taming the herd or building the
+/// pen). That helper is the **one seam** this export and the `assign_labor` validator share, so the
+/// picker the client draws and the picker the sim accepts cannot become two lists; today it prunes
+/// only the degenerate `yields_nothing` species (Eradicate alone).
 /// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
 /// forecast, `Corral` is automatically **phase-correct**: the `animal:pen` rung's
 /// `yield_fraction_while_building × MSY` dip
@@ -127,12 +131,16 @@ pub(crate) fn snapshot_sedentarization(
 /// `hunt_trip_forecast`), so the sim exports the *answer* instead — `hunt_trip_estimate_entries`.
 pub(crate) fn hunt_policy_ceiling_entries(
     forecast: &SourceYieldForecast,
+    hunt_yield: HuntYield,
 ) -> Vec<HuntPolicyCeilingState> {
-    FollowPolicy::HUNT_POLICIES
+    crate::fauna::hunt_policies_for(hunt_yield)
         .iter()
         .map(|&policy| HuntPolicyCeilingState {
             policy: policy.as_str().to_string(),
-            provisions_per_turn: forecast.ceiling_for(policy),
+            provisions_per_turn: forecast.ceiling_for(policy).provisions,
+            // **The row is a PAIR, not a food scalar** (#337): an inedible species reads `0` food
+            // here with a strictly positive trade rate, which a food-only row could not express.
+            trade_goods_per_turn: forecast.ceiling_for(policy).trade_goods,
         })
         .collect()
 }
@@ -160,7 +168,13 @@ pub(crate) fn hunt_trip_estimate_entries(
     // The four **extractive** rungs only. The investment policies (Cultivate/Corral) are place-bound
     // work a resident band does — `send_hunt_expedition` rejects them — so a trip estimate for one
     // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
-    for &policy in FollowPolicy::EXTRACTIVE.iter() {
+    // Intersected with the species' offered ladder (`crate::fauna::hunt_policies_for`, the shared picker
+    // seam), so a `yields_nothing` quarry estimates its one legal rung and no more.
+    let offered = crate::fauna::hunt_policies_for(fauna.hunt_yield_for(&herd.species));
+    for &policy in FollowPolicy::EXTRACTIVE
+        .iter()
+        .filter(|p| offered.contains(p))
+    {
         for party_workers in 1..=expedition.max_party_size {
             let forecast =
                 hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
@@ -170,8 +184,10 @@ pub(crate) fn hunt_trip_estimate_entries(
                 // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
                 delivers_food: forecast.delivers_food,
+                delivers_trade: forecast.delivers_trade,
                 animals_taken: forecast.animals_taken,
                 delivered_food: forecast.delivered_food,
+                delivered_trade: forecast.delivered_trade,
                 wasted_food: forecast.wasted_food,
             });
         }
@@ -304,10 +320,15 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 domestication: entry.domestication,
                 corralled: entry.corralled,
                 corral_progress: entry.corral_progress,
-                per_worker_yield: forecast.per_worker_yield,
+                per_worker_yield: forecast.per_worker_yield.provisions,
+                // **The per-herd, SPECIES-AWARE per-worker rate — this is the one a band preview
+                // clamps with**, not the cohort's species-blind `hunt_per_worker_provisions`. A wolf
+                // reads `0` food here and a positive trade rate, so the two components together are
+                // the honest throughput.
+                per_worker_trade: forecast.per_worker_yield.trade_goods,
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is the
                 // `corral` row of `hunt_policy_ceilings` below.
-                corral_yield: forecast.managed_yield,
+                corral_yield: forecast.managed_yield.provisions,
                 // The pen as a managed population: what it EATS, and whether its keeper is paying.
                 // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
                 // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
@@ -321,7 +342,9 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(PEN_FULLY_FED),
                 // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
                 hunt_policy_ceilings: herd
-                    .map(|_| hunt_policy_ceiling_entries(&forecast))
+                    .map(|herd| {
+                        hunt_policy_ceiling_entries(&forecast, fauna.hunt_yield_for(&herd.species))
+                    })
                     .unwrap_or_default(),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
@@ -369,7 +392,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // One animal's worth of yield in provisions (slice 8b) — the rhythm's numerator
                 // (`food_per_animal / sustainable_yield`), already converted the same way every other
                 // yield field is.
-                food_per_animal: forecast.body_mass_yield,
+                food_per_animal: forecast.body_mass_yield.provisions,
+                // The same quantum in trade goods — one animal's pelt. A wolf's `food_per_animal` is
+                // honestly `0`, so the client needs this to render its kill rhythm at all.
+                trade_per_animal: forecast.body_mass_yield.trade_goods,
                 // Herd staffing — the herders a MANAGED herd owes this turn to hold its tameness (0 for
                 // a wild/unmanaged herd, per `herd_herders_needed`), and how well it is staffed
                 // (`Herd::herded_fraction`, the labor system's per-turn write; `FULLY_HERDED` for a herd
@@ -386,7 +412,7 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // `→ +Y` beside its during-building dip. Sourced from the same `hunt_forecast` object
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
-                pastoral_yield: forecast.pastoral_yield,
+                pastoral_yield: forecast.pastoral_yield.provisions,
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
                 // the corral-tend branch wrote, so the client can render "fed by hay" beside the
                 // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.
@@ -489,21 +515,24 @@ pub(crate) fn snapshot_forage_patches(
                 biomass: patch.biomass,
                 carrying_capacity: patch.carrying_capacity,
                 ecology_phase: patch.ecology_phase.as_str().to_string(),
-                per_worker_yield: forecast.per_worker_yield,
-                ceiling_sustain: forecast.ceiling_sustain,
-                ceiling_surplus: forecast.ceiling_surplus,
-                ceiling_market: forecast.ceiling_market,
-                ceiling_eradicate: forecast.ceiling_eradicate,
+                // The plant web's forecast is food-only for now — its `trade_goods` component is
+                // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` (a known gap, #337), so these
+                // project the provisions component rather than shipping a false `0` trade line.
+                per_worker_yield: forecast.per_worker_yield.provisions,
+                ceiling_sustain: forecast.ceiling_sustain.provisions,
+                ceiling_surplus: forecast.ceiling_surplus.provisions,
+                ceiling_deplete: forecast.ceiling_deplete.provisions,
+                ceiling_eradicate: forecast.ceiling_eradicate.provisions,
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
-                ceiling_cultivate: forecast.ceiling_prepare,
-                tended_yield: forecast.managed_yield,
+                ceiling_cultivate: forecast.ceiling_prepare.provisions,
+                tended_yield: forecast.managed_yield.provisions,
                 // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
                 // Field may stand on ground that was never tended — and its own preparing/payoff
                 // pair. `field_provisions` is the same helper the labor arm pays a Field with, so the
                 // client's "then Y" is the number the sim will hand over.
                 field_progress: patch.field_progress,
                 is_field: patch.is_field(),
-                ceiling_sow: forecast.ceiling_sow,
+                ceiling_sow: forecast.ceiling_sow.provisions,
                 field_yield: field_provisions(patch, forage, flora, FORECAST_OUTPUT_MULTIPLIER),
                 // **Why this ground will not take seed** — resolved by the caller through the *same*
                 // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so

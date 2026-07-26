@@ -251,9 +251,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   is what `_on_zones_resized` distinguishes, and skipping it lands a tall-shell band zone in a short
   box where its host silently clips it.
 - **Zone `work` — THE PAGED BOARD** (`BandPanelController.build_work_zone` / `_fill_work_zone`). Header (`WORK` ·
-  n sources · total /turn · a `⋯` `MenuButton`) · filter CHIPS · the board · pager · inspector strip.
+  n sources · total /turn · the trade total when non-zero · a `⋯` `MenuButton`) · filter CHIPS · the
+  board · pager · inspector strip.
   **The chips ARE the summary and the filter** (All / 🌿 Foraging n · rate / 🦌 Hunting n · rate / ⚠ k,
-  the last hidden at k = 0), replacing collapsible group headers. Rows are ONE line at a fixed
+  the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip
+  rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products". Rows are ONE line at a fixed
   `WORK_ROW_HEIGHT`: severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · clipped
   label · rate · policy/⚠ marks · the existing `−/+`. **Capacity is derived ENTIRELY from
   `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
@@ -304,7 +306,7 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   (DANGER) inline links. The **"Next delivery" line** (`_expedition_next_delivery_line`, shared by the
   strip, the Occupants drawer, and the row tooltip) is ALWAYS shown for a hunt party once the field is on
   the wire (`has("expedition_projected_delivery")`): `Next delivery: ~N food in M turns` when projecting
-  (`↻` appended for a recurring/Market party), `~N food (raid underway)` when the ETA is unknown, and —
+  (`↻` appended for a recurring/Deplete party), `~N food (raid underway)` when the ETA is unknown, and —
   when the projection is `0` — a line that **disambiguates on the party's own TARGET, not the tile's
   herd**. A hunt party is bound to ONE specific herd (`expedition_target_herd`) chosen at launch, and a
   projected `0` over a **healthy** herd is structurally impossible (the sim proves it — the in-flight
@@ -361,6 +363,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   it drags the whole zone column out past its host, taking the section menu beside it off the edge.
   Hence `ZONE_POLICY_PICKER_COLUMNS` and `band_panel_preview`'s **recursive zone-bounds assertion**,
   which is the only thing that catches either.
+  **`ZONE_POLICY_PICKER_COLUMNS` (2) is deliberately BELOW the shared `POLICY_PICKER_COLUMNS` (3), so the
+  Band panel's launch picker reads 2 + 2 where every free-floating picker reads 3 + 1.** That
+  inconsistency is bought, not overlooked: at 3 the four two-line rungs need ~444px against the ~354px
+  the L/R dock's zone gives, and the measured frame comes back with `⇊ Deplete` cut in half, the Quarry
+  button clipped and the hint text sliced — plus two extra `_assert_zone_content_fits` failures. Closing
+  the gap needs a WIDER parties zone (or a narrower metric line), never a bigger number here.
   **CONTAINMENT IS NOT COMPLETENESS, and that distinction is a second assertion.** Content the box
   cannot hold gets CLIPPED, and clipped content still reports a rect *inside* its host — so the
   bounds assertion passes on a frame that is visibly sliced (the Food/Morale inline breakdown cut the
@@ -388,6 +396,12 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   bottom dock — 4 columns, column-major, `Page 1 / 2`, `1–28 of 34`) · `band_panel_inspector` (a row
   open, the board shrunk to 31 rows and a pager appearing to pay for it) · `band_panel_compose_hunt`
   (quarry → policy → party → forecast, with the real per-policy metrics and max-useful cap) ·
+  **`band_panel_compose_hunt_eradicate`** (the ONE surface that renders `SEND_HUNT_POLICY_HINTS`
+  verbatim, so it is the frame the EXPEDITION Eradicate hint is judged on: the rung's face reads the
+  ladder's top `💀 +6.50 ⇄ +0.81`, the hint describes the one-trip haul, the currency the SPECIES pays
+  (meat, ⇄ trade goods, or both — the raid banks the trade half too since #337) + the permanent end state, and
+  the raid line below it delivers `~52 food · ⇄ ~7 trade goods` under an ordinary primary Send — no
+  denial anywhere, #337) ·
   `band_panel_compose_hunt_no_quarry` (the empty state: `Choose…`, the hint, a disabled Send, nothing
   below) · `band_panel_compose_scout` (the same sheet under Scout — no quarry row, no policy picker). A
   BEHAVIOURAL assertion rides beside them: `_assert_quarry_eligibility` drives the real
@@ -466,3 +480,48 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   as `WIDE_SHELL_MIN_WIDTH + the live rail width`**: the reflow fires at those canvases too, so bracketing
   the raw window width against the bare threshold would bracket a test the panel no longer applies.
 
+
+
+---
+
+## Work rows and the two hunt products (issue #337)
+
+A board row's rate column is a single fixed width, so it shows the product the source actually PAYS:
+food when there is food (unchanged for every forage patch and edible quarry), else the trade rate with
+`FoodIcons.TRADE_GOODS_GLYPH` — `⇄+0.22` on a hunted wolf pack, never the `+0.00` that said the hunt
+was worth nothing. `_work_row_rate_text` is the one definition. The **inspector strip** has room for
+the pair and states both (`SourceForecast.yield_components`), which is where an edible quarry's trade
+shows.
+
+**The AGGREGATES carry a SIBLING trade total, never a folded-in one.** The header's food figure and
+each chip's food figure stay `actual_yield`-denominated — that is the sim's larder identity, and
+folding trade in would break the one invariant this arc preserved — but omitting trade entirely made
+the header *visibly* not add up: `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it,
+so the one source paying only trade read as contributing nothing. So the per-row rule is applied one
+level up: a second total beside the first, shown only when non-zero. The header reads `3 sources +0.35
+/turn ⇄ +0.22` (`WORK_TRADE_TOTAL_TOOLTIP` spells out that it is counted beside the food total, not in
+it) and a per-kind chip reads `🦌 2 · 0.20 ⇄ 0.22` — via `SourceForecast.magnitude_components`, the
+bare-magnitude twin of `yield_components` (a chip states levels, not deltas, so no `+`). A kind whose
+whole set pays trade alone drops the food term: `🦌 1 · ⇄ 0.22`, not a `0.00` denying that its sources
+produce anything. **A band with no trade-paying source renders exactly as it did before.**
+`_work_component_sum(models, key)` is the zone's ONE summing primitive, so head and chips add the same
+rows the same way.
+
+**"Sort by yield" is TWO TIERS, not a raw magnitude sort** (`_work_sorts_before`): food-paying sources
+first by their food figure descending, then trade-only sources by their trade figure descending.
+Sorting on food *alone* was the bug — it interleaved every trade-only source among the zero-food rows
+at the bottom of the board, off page one on a busy band, the same "an inedible quarry is worth
+nothing" reading the per-row work removed. But ranking them by raw displayed magnitude is a DIFFERENT
+error and must not be "fixed" back to it: a wolf's `0.22` trade above a patch's `0.15` food compares
+two quantities the sim publishes **no exchange rate** between, and under a control labelled *sort by
+yield* that asserts the wolf is the more productive source — a claim the game does not make and the
+player cannot check. Tiering asserts nothing about an exchange rate; it only orders attention. **Food
+leads not because it is worth more per unit** but because the larder is the live survival constraint
+the player decides against every turn, while trade is still economically thin (the design doc's own
+Deferred section). Revisit when trade acquires a sink, not before.
+
+Frames `band_panel_work_trade_rows` (mixed board — food row, food+trade row, trade-only row) /
+`band_panel_work_trade_inspector` / **`band_panel_work_trade_totals`** (the same band with the deer
+unassigned, so the sole hunt pays trade: `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` — the
+aggregate suppression path the mixed board cannot reach). The rule and the axis contract live in
+`labor-ui.md`.

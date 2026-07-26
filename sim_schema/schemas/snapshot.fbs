@@ -547,7 +547,7 @@ table PopulationCohortState {
   moraleClimate:long = 0;
   moraleUnrest:long = 0;
   // Band's live hunt sub-mode summary: the take policy of the largest Hunt assignment
-  // (sustain|surplus|market|eradicate); empty string when not hunting. Appended last (see
+  // (sustain|surplus|deplete|eradicate); empty string when not hunting. Appended last (see
   // append-only schema discipline). Client labels the cancel affordance from it.
   huntMode:string;
   // Early-Game Labor (slice 3a): the band's per-source labor allocation — one entry per staffed
@@ -597,7 +597,7 @@ table PopulationCohortState {
   // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
   // (append-only schema discipline — must follow every field shipped in earlier PRs).
   expeditionTargetHerd:string;
-  // Hunt mission only: the take policy (sustain|surplus|market|eradicate; mirrors huntMode). Empty
+  // Hunt mission only: the take policy (sustain|surplus|deplete|eradicate; mirrors huntMode). Empty
   // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
   // the client's per-policy behaviour label + policy picker default. Appended last.
   expeditionHuntPolicy:string;
@@ -622,11 +622,16 @@ table PopulationCohortState {
   //     simulated answer out of the target herd's `huntTripEstimates` (policy × partyWorkers →
   //     turnsToFill), then flags NOT VIABLE when turnsToFill > expeditionViabilityWarnTurns (or
   //     turnsToFill == 0 → "won't fill").
-  //   - `huntPerWorkerProvisions` × the BAND ceiling drives the resident-band local-hunt preview:
-  //     min(workers × huntPerWorkerProvisions, huntPolicyCeilings[policy].provisionsPerTurn)
-  //       × outputMultiplier
+  //   - `huntPerWorkerProvisions` is SPECIES-BLIND (issue #337) — a per-cohort echo of the GLOBAL
+  //     hunt.provisions_per_biomass. A cohort has no herd, so there is no species to resolve a
+  //     hunt-yield vector from, and a wolf (all-zero food ceilings) would be quoted a positive
+  //     per-hunter FOOD rate against them. DO NOT clamp a per-herd band preview with it: use the
+  //     herd's own species-aware HerdTelemetryState.perWorkerYield / perWorkerTrade —
+  //     min(workers × perWorkerYield, huntPolicyCeilings[policy].provisionsPerTurn) × outputMultiplier
+  //     and the same per component for trade. This field survives as the expedition OUTFIT lever
+  //     (rough carry arithmetic before a target is chosen).
   // Appended last (append-only schema discipline).
-  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput
+  huntPerWorkerProvisions:float = 0;    // one hunter's provisions/turn throughput (global rate)
   expeditionViabilityWarnTurns:uint = 0; // expedition_config.hunt.viability_warn_turns
   // The food this band ACTUALLY PAID for pen feed this turn (summed across every corral it keeps —
   // the real `LocalStore::take` debit, not the demanded amount; a band that could only part-pay
@@ -670,7 +675,7 @@ table PopulationCohortState {
   // a party whose delivery can't be projected. Append-only.
   expeditionEtaTurns:uint = 0;           // turns until the carried food reaches the home larder; 0 = unknown / n/a
   expeditionProjectedDelivery:float = 0; // food that delivery will contain (carried + still-to-take, pack-capped)
-  expeditionRecurring:bool = false;      // party relaunches for repeated trips after delivering (Market)
+  expeditionRecurring:bool = false;      // party relaunches for repeated trips after delivering (Deplete)
   // The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on the
   // same LocalStore as provisions: a hay Field harvests into it, a pen that knows Foddering draws it,
   // and it NEVER converts to provisions. Appended (append-only) after #165's expedition trio. Lets the
@@ -716,7 +721,7 @@ table LaborAssignment {
   targetX:uint = 0;  // Forage tile / Hunt herd position readout
   targetY:uint = 0;
   faunaId:string;    // Hunt target herd id
-  policy:string;     // Hunt take policy (sustain|surplus|market|eradicate)
+  policy:string;     // Hunt take policy (sustain|surplus|deplete|eradicate)
   // Per-source food-income breakdown (derived per-turn at capture, 0 on a rehydrated save before the
   // next tick). actualYield = provisions this source produced this turn; sustainableYield = what it
   // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). The
@@ -745,7 +750,7 @@ table LaborAssignment {
   // THE overhunting ⚠, answered by the sim rather than derived by the client from
   // actualYield > sustainableYield (which mis-fires on a hunt's lumpy per-turn take — see actualYield).
   // = SourceYield.overdraws: `!managed && policy.overdraws()` — false for Sustain and the investment
-  // rungs (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/
+  // rungs (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/
   // Eradicate. A row with no yield (Scout/Warrior, or a rehydrated SourceYield::ZERO) is false.
   // Derived per-turn at capture. Appended (append-only).
   overdraws:bool = false;
@@ -768,6 +773,24 @@ table LaborAssignment {
   // "no data", never as famine. Derived per-turn at capture, from the source's POST-take state so
   // slot 0 is the next delivery. Appended (append-only).
   arrivalSchedule:[float];
+  // The TRADE GOODS this source produced this turn — the twin of actualYield in the other currency
+  // (issue #337) — and its steady forward-projected twin. Every harvesting policy now sells the
+  // species' trade component, so these are non-zero on rungs that earned nothing before, and they are
+  // the ONLY thing a wolf hunt produces.
+  //
+  // NEITHER IS FOOD INCOME: `PopulationCohortState.foodIncome` stays Sum(actualYield) and must never
+  // include these, because that sum is one side of the pinned larder identity
+  //   larder_delta == foodIncome - foodConsumption - penFeedUpkeep
+  // and trade goods never touch the larder (they credit the faction stockpile). Render a trade line
+  // ONLY when the value is > 0, the rule flora's cash-crop line already uses.
+  //
+  // There is deliberately NO trade arrival schedule: `arrivalSchedule` answers "when does food land
+  // so my people eat", a question with a consumption clock; nothing consumes the trade stockpile per
+  // turn. `realizedTradeYield` is 0 on every FORAGE source — the plant web's trade PROJECTION is a
+  // known gap (#337 covered the animal web); the trade a gather actually earned IS reported in
+  // `tradeYield`. Appended last (append-only).
+  tradeYield:float = 0;
+  realizedTradeYield:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1020,7 +1043,7 @@ table ForagePatchState {
   perWorkerYield:float = 0;
   ceilingSustain:float = 0;
   ceilingSurplus:float = 0;
-  ceilingMarket:float = 0;
+  ceilingDeplete:float = 0;
   ceilingEradicate:float = 0;
   // --- The Cultivate investment rung (appended) ---
   // `ceilingCultivate` = food/turn WHILE the patch is being prepared under the Cultivate policy
@@ -1247,16 +1270,18 @@ table PopulationDemographicsState {
 // from biomass by the sim). Worker-INDEPENDENT: the policy's cap on the take at this herd's CURRENT
 // state, before any party-throughput cap, clamped to the herd's remaining biomass. `0` = no take is
 // possible under this policy (a collapsing sub-Allee herd yields nothing under Sustain/Surplus).
-// `policy` is free-form (`sustain|surplus|market|eradicate|corral`), like `species`, so a new policy
+// `policy` is free-form (`sustain|surplus|deplete|eradicate|corral`), like `species`, so a new policy
 // needs no schema change.
 //
 // THE ROWS ARE NOT ALL THE SAME KIND OF QUANTITY — which is exactly why nothing may divide by them:
 // Sustain is a per-turn FLOW (MSY), Surplus that flow × a multiplier, Corral a fraction of it (the
-// pen-building dip), while Market/Eradicate are shares of standing STOCK that shrink as the herd is
+// pen-building dip), while Deplete/Eradicate are shares of standing STOCK that shrink as the herd is
 // drawn down.
 //
 // Consumer: the resident-band local-hunt yield preview, for ONE turn at the herd's current state,
-//   min(workers × huntPerWorkerProvisions, provisionsPerTurn) × outputMultiplier
+//   min(workers × HerdTelemetryState.perWorkerYield, provisionsPerTurn) × outputMultiplier
+// (and the same per component against tradeGoodsPerTurn — NOT the species-blind cohort echo
+// `huntPerWorkerProvisions`, see its doc)
 // That single-turn arithmetic is legitimate; projecting it across turns is not.
 // A hunting EXPEDITION must not forecast a trip from this (or any) rate: `cap / rate` is wrong for
 // every policy, because the herd's state moves under the party. An expedition's trip length comes
@@ -1265,9 +1290,15 @@ table HuntPolicyCeiling {
   policy:string;
   // BAND / local-hunt ceiling in provisions/turn. Produced by projecting the herd's
   // `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — the per-policy
-  // biomass ceiling (`fauna::hunt_policy_ceiling`) converted by `fauna::hunt_provisions`, the same
-  // helpers the take path pays with (forecast == actual). Never re-derive it.
+  // biomass ceiling (`fauna::hunt_policy_ceiling`) converted by the species' own `HuntYield::apply`,
+  // the same helpers the take path pays with (forecast == actual, per component). Never re-derive it.
   provisionsPerTurn:float = 0;
+  // The SAME ceiling in TRADE GOODS/turn (appended last — field slots are positional). The row is a
+  // PAIR, not a food scalar (issue #337): every harvesting policy sells the species' trade component,
+  // and an INEDIBLE species (a wolf) reads provisionsPerTurn == 0 with this strictly positive — a
+  // food-only row could not express its yield at all. Render a trade line ONLY when this is > 0 (the
+  // rule flora's cash-crop line already uses), so a source with no trade shows no line, not a false 0.
+  tradeGoodsPerTurn:float = 0;
 }
 
 // The sim's PRE-LAUNCH HUNT-TRIP ESTIMATE for one (policy, party size) against one herd — the
@@ -1275,7 +1306,7 @@ table HuntPolicyCeiling {
 //
 // Produced by core_sim's `hunt_trip_forecast`, a bounded forward SIMULATION of the trip (herd
 // regrowth + the party's real take, turn by turn) rather than a closed-form `carryCap / rate`. The
-// division was wrong for Surplus/Market on a small herd, whose per-policy ceiling is a *stock*, not
+// division was wrong for Surplus/Deplete on a small herd, whose per-policy ceiling is a *stock*, not
 // a flow: the party strips the headroom in a turn or two, then crawls at the herd's regrowth trickle.
 // It read a 4-worker party on a full Rabbit Warren (K = 200) under Surplus as a ~5-turn trip; the
 // simulation says that party NEVER fills within the 60-turn horizon (only a 1-worker party — a
@@ -1283,14 +1314,17 @@ table HuntPolicyCeiling {
 //
 // Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
 table HuntTripEstimate {
-  policy:string;           // sustain|surplus|market|eradicate (free-form, like `species`)
+  policy:string;           // sustain|surplus|deplete|eradicate (free-form, like `species`)
   partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
   // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
   // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
   // the pack": a big party on a full herd leaves a partial pack once it strips the surplus, and that
   // is a successful short trip. 0 = never completed within forecast_horizon_turns.
   turnsToFill:uint = 0;
-  // false for eradicate (denial) — render "no food delivered", never an ETA.
+  // Does this trip bring home FOOD? REDEFINED (issue #337): a fact about the SPECIES, not the policy
+  // — false means the quarry is INEDIBLE (a wolf), so render "no food delivered" and never an ETA. It
+  // used to read false for `eradicate` on the premise that denial carries nothing home; an Eradicate
+  // raid now banks the whole-stock windfall like every other rung. See deliversTrade (appended last).
   deliversFood:bool = false;
   // Whole animals the raid KILLS over M turns (append-only) — a kill count, the client headlines "≈N
   // animals over M turns"; the delivered food total is `deliveredFood`, NOT `animalsTaken × foodPerAnimal`
@@ -1308,6 +1342,16 @@ table HuntTripEstimate {
   // Food killed but not hauled home over the raid (append-only). `wastedFood / (deliveredFood +
   // wastedFood)` is the waste fraction the client shows beside the delivered total.
   wastedFood:float = 0;
+  // Does this trip bring home TRADE GOODS? (appended last — field slots are positional, so a new
+  // field goes strictly after every shipped one.) The sibling of deliversFood: the other component of
+  // the species' hunt-yield vector (issue #337), so a wolf trip reads deliversFood=false,
+  // deliversTrade=true ("pelts, no meat") instead of being mistaken for a denial mission. The trade
+  // AMOUNT a raid delivers (`deliveredTrade`) is a later slice of the same arc.
+  deliversTrade:bool = false;
+  // Trade goods the party actually LANDS over the raid (appended last) — the twin of deliveredFood,
+  // projected through the SAME HuntYield::apply the take path pays with (issue #337). For a wolf raid
+  // this is the ONLY payload: deliveredFood is 0 and deliversFood is false.
+  deliveredTrade:float = 0;
 }
 
 table HerdTelemetryState {
@@ -1350,7 +1394,7 @@ table HerdTelemetryState {
   // lines would renumber every field appended after them.
   ceilingSustain:float = 0 (deprecated);
   ceilingSurplus:float = 0 (deprecated);
-  ceilingMarket:float = 0 (deprecated);
+  ceilingDeplete:float = 0 (deprecated);
   ceilingEradicate:float = 0 (deprecated);
   // --- The Corral investment rung (appended) --- the herd twin of `ForagePatchState`'s Cultivate
   // block. The food/turn WHILE the pen is being built under the Corral policy (= the
@@ -1507,6 +1551,20 @@ table HerdTelemetryState {
   // lag before ownership is set in the Population stage. 0 for a wild-ceiling species (mammoth/deer,
   // never tameable). For a herd already managed this equals `herdersNeeded`.
   herdersNeededIfManaged:uint = 0;
+  // --- The hunt-yield VECTOR's trade half (issue #337, appended last) --- the forecast is a PAIR
+  // per rung, and these are the two per-herd scalars' trade twins:
+  //   perWorkerTrade  = one hunter's trade-goods/turn throughput at THIS herd's species.
+  //   tradePerAnimal  = one whole animal's worth of trade goods.
+  // Read each beside its food sibling (`perWorkerYield` / `foodPerAnimal`) as one vector, and clamp
+  // a band preview PER COMPONENT: min(workers × perWorkerTrade, huntPolicyCeilings[p].tradeGoodsPerTurn).
+  //
+  // **`perWorkerTrade`/`perWorkerYield` are the rates a per-herd preview uses — NOT the cohort's
+  // `huntPerWorkerProvisions`**, which is a species-blind global echo (see its doc). An INEDIBLE
+  // species (a wolf) reads `perWorkerYield == 0` and `foodPerAnimal == 0` with both of these
+  // positive, so a client that renders a kill rhythm from food alone divides by zero; the animal
+  // COUNT is the same on either component, because a ratio is unit-free.
+  perWorkerTrade:float = 0;
+  tradePerAnimal:float = 0;
 }
 
 table CommandEventState {

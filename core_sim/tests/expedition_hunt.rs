@@ -2,7 +2,7 @@
 //!
 //! **A hunting expedition is a greedy RAID** (the playtest fix), distinct from a resident band's
 //! throttled kill-credit skim: the party grabs the herd's standing surplus above the policy's floor
-//! (Sustain `K/2`, Surplus `0.30·K`, Market `0.15·K`, Eradicate `0`) as fast as its throughput allows,
+//! (Sustain `K/2`, Surplus `0.30·K`, Deplete `0.15·K`, Eradicate `0`) as fast as its throughput allows,
 //! then comes home when the pack fills OR the surplus is spent — so more hunters take more animals in
 //! fewer-or-equal turns. The launch forecast (`hunt_trip_forecast`) is a bounded forward simulation of
 //! that raid, pinned here to a real party run (fix the forecast, never the sim). The band-path guards
@@ -17,7 +17,7 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, available_workers,
-    build_headless_app, hunt_credit_ceiling, hunt_policy_rate, hunt_provisions,
+    build_headless_app, herd_hunt_yield, hunt_credit_ceiling, hunt_policy_rate,
     hunt_source_yield_preview, hunt_take, hunt_trip_forecast, recapture_snapshot_in_place,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
     spawn_initial_world, BandTravel, CommandEventLog, CultureManager, DiscoveryProgressLedger,
@@ -244,6 +244,7 @@ fn spawn_hunt_party_of(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                carried_trade: 0.0,
             },
         ))
         .id()
@@ -448,7 +449,7 @@ fn fauna_msy(_fauna: &FaunaConfig, cap: f32, r: f32) -> f32 {
     r * cap / 4.0
 }
 
-/// **Surplus and Market raid deeper than Sustain.** The floors descend (0.50·K > 0.30·K > 0.15·K), so
+/// **Surplus and Deplete raid deeper than Sustain.** The floors descend (0.50·K > 0.30·K > 0.15·K), so
 /// a deeper policy leaves a leaner herd and its raid takes strictly more animals off a full herd.
 #[test]
 fn deeper_policies_raid_deeper() {
@@ -460,11 +461,13 @@ fn deeper_policies_raid_deeper() {
     let animals = |p| hunt_trip_forecast(4, &herd, p, &fauna, &labor, &cfg).animals_taken;
     let sustain = animals(FollowPolicy::Sustain);
     let surplus = animals(FollowPolicy::Surplus);
-    let market = animals(FollowPolicy::Market);
-    println!("[deeper] full boar: Sustain {sustain} < Surplus {surplus} < Market {market} animals");
+    let deplete = animals(FollowPolicy::Deplete);
+    println!(
+        "[deeper] full boar: Sustain {sustain} < Surplus {surplus} < Deplete {deplete} animals"
+    );
     assert!(
-        sustain < surplus && surplus < market,
-        "a deeper policy must raid strictly more animals: Sustain {sustain}, Surplus {surplus}, Market {market}"
+        sustain < surplus && surplus < deplete,
+        "a deeper policy must raid strictly more animals: Sustain {sustain}, Surplus {surplus}, Deplete {deplete}"
     );
 }
 
@@ -616,7 +619,7 @@ fn the_raid_forecast_matches_a_real_party_run() {
         for policy in [
             FollowPolicy::Sustain,
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
         ] {
             let mut app = spawn_world();
             let id = pinned_game_herd(&mut app, "big");
@@ -724,7 +727,7 @@ const DEPLETED_CAP_FRACTION: f32 = 0.2;
 /// Regrowth rate for the clamp-binding pass. The **shipped** `ecology.regrowth_rate` (0.05) is far
 /// too gentle for any policy ceiling to exceed a herd's remaining biomass (MSY ≤ 0.05 × biomass,
 /// Surplus ≤ 0.08 × biomass), so the biomass clamp is inert under today's levers — but it is a
-/// *config lever*, and a designer raising it (or `surplus_multiplier` / `market.take_fraction`) must
+/// *config lever*, and a designer raising it (or `surplus_multiplier` / `deplete_multiplier`) must
 /// not silently break the client's preview. At 2.0 the Surplus/Sustain ceiling on a
 /// `DEPLETED_CAP_FRACTION` herd is ~1.6×/~0.3× its biomass, so the exported ceiling's biomass clamp
 /// (and `hunt_take`'s) genuinely binds and the two must still agree.
@@ -811,14 +814,18 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
             // A ceiling row must never promise more than the herd is standing there holding.
             // **Inherent since slice 8** rather than a clamp someone has to remember: every ceiling is
             // `biomass − floor` with `floor >= 0`.
-            let live_biomass = app
-                .world
-                .resource::<HerdRegistry>()
-                .find(id)
-                .expect("herd present")
-                .biomass;
+            let (live_biomass, live_yield) = {
+                let herd = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(id)
+                    .expect("herd present")
+                    .clone();
+                let hy = herd_hunt_yield(&herd, &fauna);
+                (herd.biomass, hy)
+            };
             assert!(
-                ceiling <= hunt_provisions(live_biomass, &fauna, 1.0) + TAKE_ABS_EPSILON,
+                ceiling <= live_yield.apply(live_biomass, 1.0).provisions + TAKE_ABS_EPSILON,
                 "{case}: {id} {policy:?}: exported ceiling {ceiling} exceeds the herd's own biomass"
             );
 
@@ -859,7 +866,9 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &LadderConfig::builtin(),
                     f32::INFINITY,
                 );
-                let sim_rate = hunt_provisions(take.carried, &fauna, output_multiplier);
+                let sim_rate = herd_hunt_yield(&herd, &fauna)
+                    .apply(take.carried, output_multiplier)
+                    .provisions;
 
                 assert_provisions_eq(
                     preview,
@@ -928,7 +937,7 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     //
     // Slice 8 makes that unreachable **by construction**, and the reason is the same one that killed
     // both flows: **every rule on the axis is now a STOCK rule bounded by `B`** — Sustain is
-    // `B − K/2`, Surplus/Market are `fraction × B`, Eradicate is `take_from(B)` (itself `.min(B)`). No
+    // `B − K/2`, Surplus/Deplete are `fraction × B`, Eradicate is `take_from(B)` (itself `.min(B)`). No
     // `r`, however hot, can lift any of them above the biomass, because none of them reads `r` as a
     // rate at all.
     //
@@ -1232,17 +1241,17 @@ fn in_flight_delivery_forecast_matches_a_real_party_run() {
     );
 }
 
-/// The recurring flag on the wire: a **Market** party relaunches for repeated trips, so
+/// The recurring flag on the wire: a **Deplete** party relaunches for repeated trips, so
 /// `expeditionRecurring` must read `true` (Sustain reads `false`, pinned above). Guards the
 /// `FollowPolicy::expedition_recurring` seam end-to-end through the snapshot.
 #[test]
-fn a_market_party_reports_recurring_on_the_wire() {
+fn a_deplete_party_reports_recurring_on_the_wire() {
     let mut app = build_headless_app();
     app.update();
 
     let (id, herd_pos) = pin_frozen_full_big_herd(&mut app);
     let home = spawn_home_band(&mut app, herd_pos);
-    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Market);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Deplete);
 
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
@@ -1255,10 +1264,10 @@ fn a_market_party_reports_recurring_on_the_wire() {
         .populations
         .iter()
         .find(|p| p.entity == party.to_bits())
-        .expect("the market party is in the snapshot");
+        .expect("the deplete party is in the snapshot");
     assert!(
         pstate.expedition_recurring,
-        "a Market hunting party relaunches — expeditionRecurring must be true"
+        "a Deplete hunting party relaunches — expeditionRecurring must be true"
     );
 }
 

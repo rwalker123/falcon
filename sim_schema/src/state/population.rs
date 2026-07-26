@@ -78,7 +78,7 @@ pub struct LaborAssignmentState {
     /// client-derived `actual_yield > sustainable_yield` test, which mis-fires on a hunt's lumpy
     /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
     /// sustainable rate even under Sustain). False for Sustain and the investment rungs
-    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Market/Eradicate.
+    /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/Eradicate.
     /// A row with no yield (Scout/Warrior, or a rehydrated [`SourceYield::ZERO`]) is `false`. Derived
     /// per-turn at capture. Appended (append-only).
     #[serde(default)]
@@ -104,6 +104,24 @@ pub struct LaborAssignmentState {
     /// (append-only).
     #[serde(default)]
     pub arrival_schedule: Vec<f32>,
+    /// **Trade goods this source produced this turn** — the twin of [`Self::actual_yield`] in the
+    /// other currency (issue #337). Every harvesting policy now sells the species' trade component,
+    /// so this is non-zero on rungs that earned nothing before, and it is the ONLY thing a wolf hunt
+    /// produces. Render a trade line **only when `> 0`**.
+    ///
+    /// **NOT food income.** `PopulationCohortState::food_income` stays `Σ actual_yield`; folding this
+    /// in would break the pinned larder identity (trade goods credit the faction stockpile, never the
+    /// larder).
+    #[serde(default)]
+    pub trade_yield: f32,
+    /// **The steady forward-projected trade/turn** — the twin of [`Self::realized_yield`].
+    ///
+    /// `0.0` on every **forage** source: the plant web's trade *projection* is a known gap (#337
+    /// vectorised the animal web), while the trade a gather actually earned *is* reported in
+    /// [`Self::trade_yield`]. There is deliberately no trade *arrival schedule* — see
+    /// [`Self::arrival_schedule`].
+    #[serde(default)]
+    pub realized_trade_yield: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -145,7 +163,7 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub activity: String,
     /// The band's hunt/follow mode when pursuing fauna: `single` (one-shot hunt) or the follow
-    /// policy (`sustain | surplus | market | eradicate`). Empty string when the band isn't
+    /// policy (`sustain | surplus | deplete | eradicate`). Empty string when the band isn't
     /// pursuing fauna. Lets the client label a cancel button with the specific mode.
     #[serde(default)]
     pub hunt_mode: String,
@@ -189,7 +207,7 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id }`; also shown in the client hunt panel.
     #[serde(default)]
     pub expedition_target_herd: String,
-    /// Hunt mission only: take policy string (`sustain|surplus|market|eradicate`; mirrors
+    /// Hunt mission only: take policy string (`sustain|surplus|deplete|eradicate`; mirrors
     /// `hunt_mode`). Empty for scout/normal bands. Persisted so a rollback reconstructs
     /// `Hunt { fauna_id, policy }`; drives the client's per-policy label + policy-picker default.
     #[serde(default)]
@@ -220,6 +238,14 @@ pub struct PopulationCohortState {
     pub pending_reveal_x: Vec<u32>,
     #[serde(default)]
     pub pending_reveal_y: Vec<u32>,
+    /// Persistence-only: the fractional **trade goods the party is carrying home** — the pelt/hide
+    /// half of every kill's hunt yield, banked until the next drop-off/fold-back settles it into the
+    /// faction stockpile (`docs/plan_hunt_yield_model.md`, issue #337). Not on the FlatBuffers wire:
+    /// the client already reads the raid's *promised* trade off `HuntTripEstimate.deliveredTrade`,
+    /// and this is server state a rollback must not silently zero (the provisions half round-trips
+    /// for free in `stores`, so without this a rewind would drop the pelts and only the pelts).
+    #[serde(default)]
+    pub expedition_carried_trade: f32,
     /// Server-side hard cap on an expedition party (`expedition_config.json` `max_party_size`). A
     /// global config lever echoed per-cohort (same idiom as `work_range`) so the client outfit
     /// stepper pre-clamps to `min(idle_workers, this)`. Populated for every cohort.
@@ -309,11 +335,19 @@ pub struct PopulationCohortState {
     /// [`HuntTripEstimateState`](crate::state::subsistence::HuntTripEstimateState) table
     /// (policy × `party_workers` → `turns_to_fill`) and flags NOT VIABLE when `turns_to_fill >
     /// expedition_viability_warn_turns` (or `turns_to_fill == 0` → "won't fill"). An `eradicate`
-    /// party has `delivers_food == false`: render "no food delivered (denial)", never an ETA.
+    /// party has `delivers_food == false` (an INEDIBLE quarry since #337, not a denial policy):
+    /// render "no food delivered", never an ETA.
     ///
     /// One hunter's per-turn provisions throughput (`labor_config.hunt.per_worker_biomass_capacity ×
-    /// fauna_config.hunt.provisions_per_biomass`). With a herd's **band** ceiling this drives the
-    /// resident-band local-hunt yield preview.
+    /// fauna_config.hunt.provisions_per_biomass`).
+    ///
+    /// **SPECIES-BLIND — never use it for a per-herd preview** (#337). It is a per-cohort echo of the
+    /// GLOBAL `hunt.provisions_per_biomass`; the cohort has no herd, so there is no species to resolve
+    /// a hunt-yield vector from. A wolf's per-policy ceilings are all `0` food, and quoting a positive
+    /// per-hunter food rate against them is a contradiction. The per-herd, species-aware rates are
+    /// `HerdTelemetryState::per_worker_yield` / `per_worker_trade` — clamp a band preview with THOSE.
+    /// This survives as the expedition **outfit** lever (rough carry arithmetic before a target is
+    /// chosen); for a chosen target the sim exports the answer in `hunt_trip_estimates`.
     #[serde(default)]
     pub hunt_per_worker_provisions: f32,
     /// Turns-to-fill past which a trip is flagged NOT VIABLE
@@ -361,7 +395,7 @@ pub struct PopulationCohortState {
     /// scout, a normal band, or a party whose delivery can't be projected. Appended.
     #[serde(default)]
     pub expedition_projected_delivery: f32,
-    /// Whether the party relaunches for repeated trips after delivering (only `Market`). Appended.
+    /// Whether the party relaunches for repeated trips after delivering (only `Deplete`). Appended.
     #[serde(default)]
     pub expedition_recurring: bool,
     /// The band's FODDER larder — the hay it has stored (Flora Roster F3). A second commodity key on

@@ -429,7 +429,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
             .expect("expected short-range game")
     };
     // A big-bodied slow breeder started well ABOVE K/2, so a Sustain hunt walks it *down* toward the
-    // K/2 operating point over the run — a genuine draw-down the herd survives (Market would drive it
+    // K/2 operating point over the run — a genuine draw-down the herd survives (Deplete would drive it
     // extinct and lapse the assignment, which measures nothing about smoothness).
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -648,11 +648,12 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
     );
 }
 
-/// (§0-iii Market): a Market gather sells the take as trade goods (→ `FactionInventory`) and strips
+/// (§0-iii Deplete): a Deplete gather sells the take as trade goods (→ `FactionInventory`) and strips
 /// the patch harder than the Sustain skim; Sustain/Eradicate generate no trade goods.
 #[test]
-fn market_forage_sells_trade_goods_others_do_not() {
-    // Bump the trade-goods rate so a single Market gather on a small patch clears integer rounding.
+fn deplete_forage_sells_trade_goods_others_do_not() {
+    // Bump the trade-goods rate so a single Deplete gather on a small patch clears integer rounding.
+    // (`forage.market.*` keeps the old config name — see `ForageMarketConfig`.)
     let run = |policy: FollowPolicy| -> (i64, f32) {
         let mut app = spawn_world();
         app.world
@@ -684,19 +685,19 @@ fn market_forage_sells_trade_goods_others_do_not() {
         (trade, before - after)
     };
 
-    let (market_trade, market_take) = run(FollowPolicy::Market);
+    let (deplete_trade, deplete_take) = run(FollowPolicy::Deplete);
     let (sustain_trade, sustain_take) = run(FollowPolicy::Sustain);
     let (erad_trade, _) = run(FollowPolicy::Eradicate);
 
     assert!(
-        market_trade > 0,
-        "Market forage sells gathered goods as trade goods: {market_trade}"
+        deplete_trade > 0,
+        "Deplete forage sells gathered goods as trade goods: {deplete_trade}"
     );
     assert_eq!(sustain_trade, 0, "Sustain generates no trade goods");
     assert_eq!(erad_trade, 0, "Eradicate is denial, not commerce");
     assert!(
-        market_take > sustain_take,
-        "Market depletes the patch faster than the Sustain skim: {market_take} vs {sustain_take}"
+        deplete_take > sustain_take,
+        "Deplete depletes the patch faster than the Sustain skim: {deplete_take} vs {sustain_take}"
     );
 }
 
@@ -900,9 +901,11 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
     );
 
     let total: f32 = schedule.iter().sum();
-    let smooth = realized * horizon as f32;
+    let smooth = realized.provisions * horizon as f32;
     // One whole animal's provisions: the most that can still be sitting in the bank, undelivered.
-    let one_animal = core_sim::hunt_provisions(herd.body_mass, &fauna, 1.0);
+    let one_animal = core_sim::herd_hunt_yield(herd, &fauna)
+        .apply(herd.body_mass, 1.0)
+        .provisions;
     assert!(
         (total - smooth).abs() <= one_animal,
         "the schedule's total ({total}) must match the smooth average over the horizon ({smooth}) \

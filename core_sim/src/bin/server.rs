@@ -1862,7 +1862,7 @@ fn seed_source_yield(
 ///    (see `validate_tame`); and `Corral` needs **Penning** — *not* Herding, which gates `tame` alone —
 ///    plus an owned, **domesticated**, not-yet-penned herd of a `pen`-ceiling species.
 ///
-/// The extractive policies (Sustain/Surplus/Market/Eradicate) are always valid on either kind.
+/// The extractive policies (Sustain/Surplus/Deplete/Eradicate) are always valid on either kind.
 fn validate_labor_policy(
     app: &bevy::prelude::App,
     faction: FactionId,
@@ -1938,6 +1938,30 @@ fn validate_labor_policy(
                     "'{}' is not a hunting policy — it applies to forage patches.",
                     policy.as_str()
                 ));
+            }
+            // **The species' offered ladder** (`fauna::hunt_policies_for`) — the ONE seam this
+            // validator shares with the snapshot's exported `huntPolicyCeilings`, so the picker the
+            // client draws and the picker the sim accepts cannot drift into two lists. It prunes
+            // only the degenerate `yields_nothing` quarry (worth neither meat nor pelt), which
+            // offers `Eradicate` alone: every other rung would be a rate at which to collect
+            // nothing. A wolf keeps the full ladder and is paid in pelts.
+            {
+                let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                let species = app
+                    .world
+                    .resource::<HerdRegistry>()
+                    .find(fauna_id)
+                    .map(|herd| herd.species.clone());
+                if let Some(species) = species {
+                    let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
+                    if !offered.contains(policy) {
+                        return Err(format!(
+                            "The {} yields neither food nor trade goods — the only thing to do with \
+                             it is eradicate it.",
+                            species
+                        ));
+                    }
+                }
             }
             if matches!(policy, FollowPolicy::Tame) {
                 return validate_tame(app, faction, fauna_id);
@@ -2561,6 +2585,9 @@ fn handle_send_expedition(
                 phase: ExpeditionPhase::Outbound,
                 announced: false,
                 pending_reveal: Vec::new(),
+                // An outfitted party leaves with an empty trade pack — it earns its pelts in the
+                // field (`advance_expeditions`).
+                carried_trade: 0.0,
             },
             BandTravel { target },
         ))
@@ -2598,7 +2625,7 @@ fn handle_send_hunt_expedition(
 ) {
     // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
     // An explicit but unparseable token is rejected rather than silently defaulting: Sustain and
-    // Market are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
+    // Deplete are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
         // **Every** investment policy is place-bound work a *resident* band does — a detached party
@@ -2620,7 +2647,7 @@ fn handle_send_hunt_expedition(
                     faction,
                     format!(
                         "send_hunt_expedition: unusable take policy '{}' — valid options are \
-                         sustain, surplus, market, eradicate.",
+                         sustain, surplus, deplete, eradicate.",
                         token
                     ),
                 );
@@ -2692,7 +2719,7 @@ fn handle_send_hunt_expedition(
 
     // Launch-time viability forecast — a bounded forward SIMULATION of the trip (`hunt_trip_forecast`),
     // not a division. A Sustain party skims the herd's Maximum Sustainable Yield (a *flow*), and a
-    // Surplus/Market party eats *stock* headroom and then falls back to the regrowth trickle once it
+    // Surplus/Deplete party eats *stock* headroom and then falls back to the regrowth trickle once it
     // is gone, so filling a carry cap off a small herd can genuinely take dozens of turns. That is
     // ecologically true, not a bug; the player must be told at launch rather than silently trapped,
     // so the forecast rides the `ExpeditionSent` feed entry (it still launches either way).
@@ -2737,11 +2764,22 @@ fn handle_send_hunt_expedition(
     // non-viable case is "no surplus to take" — the herd is at/below the policy's floor and delivers
     // NO animals. Otherwise headline the payload the raid actually lands, including the round trip.
     let (viability_note, viability_detail) = match &forecast {
-        // A denial mission (Eradicate) brings nothing home — say what it does, no ETA.
+        // An INEDIBLE quarry brings no food home — say what it *does* bring, no food ETA. This arm
+        // used to fire for a denial *mission* (Eradicate); since #337 the policy is pure intensity
+        // and the species decides the product, so an Eradicate raid on a deer reports its windfall
+        // like any other rung, and only a wolf lands here.
         Some(f) if !f.delivers_food => (
-            " — denial mission: the party delivers NO food; it hunts the herd toward extinction"
-                .to_string(),
-            " eta_turns=none viability=denial".to_string(),
+            if f.delivers_trade {
+                " — no food from this quarry: the party brings back trade goods, not meat"
+                    .to_string()
+            } else {
+                " — this quarry yields nothing: the party delivers neither food nor trade goods"
+                    .to_string()
+            },
+            format!(
+                " eta_turns=none viability=inedible delivers_trade={}",
+                f.delivers_trade
+            ),
         ),
         // The herd has no surplus above the policy's floor — the honest non-viable case. "Too lean"
         // now means the raid lands NO food at all (a small party on a big animal still delivers a
@@ -2830,6 +2868,7 @@ fn handle_send_hunt_expedition(
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
                 pending_reveal: Vec::new(),
+                carried_trade: 0.0,
             },
             BandTravel { target: herd_pos },
         ))

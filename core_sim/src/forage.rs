@@ -24,8 +24,8 @@
 //! (Eradicate / f32 underflow / a restored `biomass = 0`) recovers rather than sticking at `0`. The
 //! Allee branch of `net_biomass_delta` (via `sustainable_yield`) still sizes the **Sustain** gather
 //! ceiling (so a collapsed patch yields no sustainable surplus). Foraging honors the full policy axis
-//! (Sustain/Surplus/Market/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
-//! policy flows through `advance_labor_allocation` into `forage_take`, and a Market gather sells its
+//! (Sustain/Surplus/Deplete/Eradicate — §0-iii, parity with hunting): the `LaborTarget::Forage`
+//! policy flows through `advance_labor_allocation` into `forage_take`, and a Deplete gather sells its
 //! take as trade goods.
 //!
 //! **Cultivation** (Phase 1a) is the plant mirror of `fauna.rs`'s corral — an *investment*, not a
@@ -67,7 +67,7 @@ use crate::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
-    fauna_config::EcologyConfig,
+    fauna_config::{EcologyConfig, YieldPair},
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
@@ -1228,7 +1228,7 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
 /// Maximum Sustainable Yield (`sustainable_yield`: regrowth at the most-productive biomass K/2, so a
 /// patch at carrying capacity still yields a positive skim and a collapsed patch yields nothing);
 /// **Surplus** = that × `surplus_multiplier` (overdraws a healthy
-/// patch → slow decline); **Market** = `market.take_fraction × biomass` (a commercial share → fast
+/// patch → slow decline); **Deplete** = `market.take_fraction × biomass` (a hard draw-down → fast
 /// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
 /// biomass` (strip the patch, no floor); **Cultivate** = the `plant:tended` rung's
 /// `yield_fraction_while_building × MSY` — the
@@ -1294,10 +1294,10 @@ pub(crate) fn forage_take(
 }
 
 /// The per-policy **biomass** ceiling on a gather at the patch's current stock — the single source of
-/// the Sustain/Surplus/Market/Eradicate/**Cultivate** rungs, shared by `forage_take` (the take path)
+/// the Sustain/Surplus/Deplete/Eradicate/**Cultivate** rungs, shared by `forage_take` (the take path)
 /// and `forage_forecast` (the pre-commit forecast). Sustain = Maximum Sustainable Yield (regrowth at
 /// K/2, so a full patch still yields and a collapsed one yields nothing), Surplus = that ×
-/// `surplus_multiplier`, Market = `market.take_fraction × biomass`, Eradicate =
+/// `surplus_multiplier`, Deplete = `market.take_fraction × biomass`, Eradicate =
 /// `eradicate.take_fraction × biomass`, **Cultivate** = the `plant:tended` rung's
 /// `yield_fraction_while_building ×` the *same* `sustainable_yield` MSY ceiling (the preparing dip —
 /// reusing the shared helper, never a second formula). Not yet clamped to biomass — callers do that
@@ -1321,7 +1321,10 @@ pub(crate) fn forage_policy_ceiling(
         FollowPolicy::Surplus => {
             sustainable_yield(biomass, carrying_capacity, ecology) * forage.surplus_multiplier
         }
-        FollowPolicy::Market => forage.market.take_fraction * biomass,
+        // `forage.market.*` keeps its old config name: the policy was renamed `Market` → `Deplete`
+        // (`docs/plan_hunt_yield_model.md` §2), but the plant web's trade-rate block is renamed in a
+        // later plant-side pass, not here.
+        FollowPolicy::Deplete => forage.market.take_fraction * biomass,
         FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
         // The two plant investment dips: a *fraction* of the MSY ceiling, so the preparing take is
         // sustainable and the patch stays healthy while the work goes on. Each read off its **own**
@@ -1359,7 +1362,7 @@ pub(crate) fn forage_per_worker_biomass(forage: &ForageLaborConfig, seasonal: f3
 
 /// Biomass → provisions for a gather take (× the caller's productivity multiplier) — the one
 /// conversion `forage_take` pays, shared with the forecast. The plant mirror of
-/// `fauna::hunt_provisions`.
+/// the animal web's `HuntYield::apply` (which retired the global `fauna::hunt_provisions`).
 pub(crate) fn forage_provisions(
     biomass_take: f32,
     provisions_per_biomass: f32,
@@ -1536,7 +1539,7 @@ fn projected_trade_per_biomass(patch: &ForagePatch, flora: &FloraConfig) -> f32 
 /// `trade_quality` = the committed crop's `trade_goods_per_biomass` relative to the **wild provisions
 /// baseline** — the same normalization [`patch_species_quality`] uses for the food account, so the
 /// field rung's one rate dial (`field_provisions_per_biomass`) prices all three accounts
-/// consistently. **No Market `trade_goods_multiplier` is applied**: that markup is a Market-*policy*
+/// consistently. **No `market.trade_goods_multiplier` is applied**: that markup is a `Deplete`-*policy*
 /// concept for wild commercial gathering; a managed Field harvest does not carry it.
 pub(crate) fn field_trade_goods(
     patch: &ForagePatch,
@@ -1588,7 +1591,30 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
 /// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
 /// harvest grain by the handful. The two food webs quantise differently because *their products
 /// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
-const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
+const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
+
+/// **The plant web's forecast trade component — a KNOWN GAP, not a claim that plants sell nothing**
+/// (`docs/plan_hunt_yield_model.md` §8, issue #337).
+///
+/// The `Deplete` gather really does sell its take (`labor_config`'s `forage.market.*`, credited by
+/// `advance_labor_allocation`), so a patch's honest trade forecast is **not** zero — the sim simply
+/// has not projected it yet, exactly as it did not before this arc. #337 vectorised the *animal* web;
+/// the plant web's trade forecast is its own arc.
+///
+/// It is safe to ship as `0.0` because of the client-side rule the animal side introduced: a trade
+/// line renders **only when `trade_goods > 0`** — flora's cash-crop rule — so a patch shows *no trade
+/// line* rather than a false "0 trade goods/turn". Do not let a reader treat this as "plants have no
+/// trade value".
+pub(crate) const PLANT_TRADE_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
+
+/// A plant source's provisions-only forecast component: the food number the plant web computes, with
+/// its trade component the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
+fn plant_food_only(provisions: f32) -> YieldPair {
+    YieldPair {
+        provisions,
+        trade_goods: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+    }
+}
 
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its
 /// `FoodModuleTag::seasonal_weight`). Mirrors `forage_take` exactly: same resolved ecology
@@ -1605,7 +1631,7 @@ const PLANTS_DO_NOT_QUANTISE: f32 = 0.0;
 ///   `ceil(production / per_worker)` rather than a hardcoded 1.
 /// - A **wild or tended** patch (rungs 1–2) is a wild stand either way, so it takes the full
 ///   policy-live path below — the *same* code, differing only in the ecology `patch_ecology` hands
-///   it. That is the whole rung-2 fix: a tended patch's Sustain/Surplus/Market/Eradicate are four
+///   it. That is the whole rung-2 fix: a tended patch's Sustain/Surplus/Deplete/Eradicate are four
 ///   different numbers again, and it can be over-farmed.
 pub(crate) fn forage_forecast(
     patch: &ForagePatch,
@@ -1621,8 +1647,13 @@ pub(crate) fn forage_forecast(
     // and be paid, exactly nothing).
     if patch.is_field() {
         return SourceYieldForecast::managed(
-            field_provisions(patch, forage, flora, output_multiplier),
-            managed_per_worker_yield(patch, forage, flora, output_multiplier),
+            plant_food_only(field_provisions(patch, forage, flora, output_multiplier)),
+            plant_food_only(managed_per_worker_yield(
+                patch,
+                forage,
+                flora,
+                output_multiplier,
+            )),
             // Plants never quantise — you harvest grain by the handful (slice 8; see
             // `SourceYieldForecast::body_mass_yield`). The whole-animal rule is animal-only because
             // *the products differ*, not by omission.
@@ -1634,7 +1665,7 @@ pub(crate) fn forage_forecast(
     // below is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, flora, forage);
     let ceiling = |policy| {
-        forage_provisions(
+        plant_food_only(forage_provisions(
             forage_policy_ceiling(
                 policy,
                 patch.biomass,
@@ -1646,18 +1677,18 @@ pub(crate) fn forage_forecast(
             .clamp(0.0, patch.biomass),
             rate,
             output_multiplier,
-        )
+        ))
     };
     SourceYieldForecast {
-        per_worker_yield: forage_provisions(
+        per_worker_yield: plant_food_only(forage_provisions(
             forage_per_worker_biomass(forage, seasonal),
             rate,
             output_multiplier,
-        ),
+        )),
         body_mass_yield: PLANTS_DO_NOT_QUANTISE,
         ceiling_sustain: ceiling(FollowPolicy::Sustain),
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
-        ceiling_market: ceiling(FollowPolicy::Market),
+        ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
         // The investment rungs: what the patch pays *while preparing* (Cultivate at rung 2, Sow at
         // rung 3 — each its own field, since the two dips are independently tunable), and what it
@@ -1680,7 +1711,7 @@ pub(crate) fn forage_forecast(
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
         // exported beside this one as the wire's `fieldYield` — two rungs, two payoff quotes, never
         // one field doing both jobs.)
-        managed_yield: tended_provisions(patch, forage, flora, output_multiplier),
+        managed_yield: plant_food_only(tended_provisions(patch, forage, flora, output_multiplier)),
         // `Tame` is hunt-only — a patch has no pastoral rung — so it advertises no Tame payoff (the
         // plant twin of `ceiling_tame: 0`).
         pastoral_yield: NO_PASTORAL_YIELD,
@@ -1931,6 +1962,10 @@ pub fn forage_source_yield_preview(
         workers,
         policy,
         realized,
+        // The plant web's steady TRADE projection is the same gap the forecast carries — see
+        // [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`]. The trade a Deplete gather *actually* earns is
+        // reported (the resolved row fills `SourceYield::trade`); only the projection is missing.
+        PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
         arrivals,
     )
 }
@@ -2140,7 +2175,7 @@ mod tests {
 
     /// The forage policy axis (§0-iii, parity with hunting): on an identical Thriving patch with
     /// ample workers (so the take is ceiling-bound, not throughput-bound), a heavier policy takes
-    /// more — `Sustain ≤ Surplus < Market < Eradicate` — and the heavier policies deplete the patch
+    /// more — `Sustain ≤ Surplus < Deplete < Eradicate` — and the heavier policies deplete the patch
     /// faster (biomass drops more in a single turn).
     #[test]
     fn policy_ceilings_order_take_and_depletion() {
@@ -2169,17 +2204,17 @@ mod tests {
 
         let (sustain_take, _) = take_under(FollowPolicy::Sustain);
         let (surplus_take, _) = take_under(FollowPolicy::Surplus);
-        let (market_take, _) = take_under(FollowPolicy::Market);
+        let (deplete_take, _) = take_under(FollowPolicy::Deplete);
         let (eradicate_take, _) = take_under(FollowPolicy::Eradicate);
 
-        // Sustain is the regrowth skim; Surplus overdraws it; Market/Eradicate strip a share.
+        // Sustain is the regrowth skim; Surplus overdraws it; Deplete/Eradicate strip a share.
         assert!(sustain_take <= surplus_take + 1e-4, "Sustain ≤ Surplus");
-        assert!(surplus_take < market_take, "Surplus < Market");
-        assert!(market_take < eradicate_take, "Market < Eradicate");
+        assert!(surplus_take < deplete_take, "Surplus < Deplete");
+        assert!(deplete_take < eradicate_take, "Deplete < Eradicate");
         // Heavier policies deplete the patch faster (more biomass removed this turn).
         assert!(
-            market_take > sustain_take,
-            "Market depletes faster than Sustain"
+            deplete_take > sustain_take,
+            "Deplete depletes faster than Sustain"
         );
         assert!(
             eradicate_take > sustain_take,

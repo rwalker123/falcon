@@ -742,6 +742,8 @@ mod tests {
             ],
             last_yields: vec![
                 SourceYield {
+                    trade: 0.0,
+                    realized_trade: 0.0,
                     actual: 2.5,
                     sustainable: 2.5,
                     wasted: 0.0,
@@ -753,6 +755,8 @@ mod tests {
                     arrivals: vec![2.5; 3],
                 },
                 SourceYield {
+                    trade: 0.0,
+                    realized_trade: 0.0,
                     actual: 0.5,
                     sustainable: 0.25,
                     wasted: 0.0,
@@ -848,12 +852,12 @@ mod tests {
         use crate::components::FollowPolicy;
         let target = LaborTarget::Forage {
             tile: UVec2::new(7, 9),
-            policy: FollowPolicy::Market,
+            policy: FollowPolicy::Deplete,
             species: None,
         };
         let assignment = LaborAssignment { target, workers: 6 };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
-        assert_eq!(state.policy, "market", "policy serialized");
+        assert_eq!(state.policy, "deplete", "policy serialized");
 
         let restored = labor_allocation_from_state(std::slice::from_ref(&state));
         assert_eq!(restored.assignments.len(), 1);

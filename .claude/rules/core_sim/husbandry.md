@@ -478,7 +478,9 @@ mechanic (the two are near-mechanical transposes).
 > is the shared depletable-ecology record** the forage-depletion slice (§0-ii) reuses for its
 > per-tile `ForageState`.
 
-Market hunting shipped as the `Market` follow policy; `SedentarizationScore` shipped (see
+Market hunting shipped as the third extractive rung, now named `FollowPolicy::Deplete`
+(`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its
+pressure); `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"
 below). Still deferred (`docs/plan_wildlife_hunting_overlay.md`): the `Camp` entity, and wiring the
 sedentarization hard prompt to an actual `found_settlement`. The tile-based `HuntGame` handler stays

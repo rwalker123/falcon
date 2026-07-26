@@ -105,6 +105,9 @@ const YIELD_LABEL_MIN_FONT := 11
 const YIELD_LABEL_MAX_FONT := 24
 const YIELD_LABEL_OFFSET_FACTOR := 0.78   # above the tile center, as a fraction of the hex radius
 const YIELD_LABEL_DECIMALS := 2
+# Below this a component is absent, not zero — the map twin of `SourceForecast.FOOD_FLOW_MIN`, and the
+# test that decides WHICH of a hunt's two products a one-slot label shows (issue #337).
+const YIELD_LABEL_COMPONENT_MIN := 0.001
 const YIELD_OVERHUNT_FLAG := "⚠"
 # Backing plate: bare drop-shadowed text washed out against light terrain (tan prairie/desert), so the
 # label sits on the SAME rounded dark pill chrome as the `×N`/`+N` count badges (`_draw_pill_plate`).
@@ -215,13 +218,15 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			_view._outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
 			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
 			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
-			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Market/Eradicate patch
+			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
 				var fcenter := _view._hex_center(tcol, trow, radius, origin)
 				var forage_overdraw := bool(entry.get("overdraws", false))
+				# The trade component rides along for the one-slot rule in `_draw_yield_label`; a
+				# forage patch normally pays food, so it changes nothing here.
 				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					String(entry.get("policy", "")))
+					String(entry.get("policy", "")), _entry_realized_trade(entry))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -247,7 +252,10 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				var overhunt := bool(entry.get("overdraws", false))
 				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
 					else float(entry.get("sustainable_yield", 0.0))
-				_queue_yield_label(hc, hunt_rate, overhunt, radius, String(entry.get("policy", "")))
+				# An INEDIBLE quarry's steady food rate is honestly 0 (issue #337), so the label falls
+				# through to its trade rate rather than announcing the pack is worth nothing.
+				_queue_yield_label(hc, hunt_rate, overhunt, radius, String(entry.get("policy", "")),
+					_entry_realized_trade(entry))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
 	#    the snapshot hasn't confirmed yet. Drawn last so it reads on top of the confirmed styles.
@@ -495,19 +503,28 @@ func _entry_realized_yield(entry: Dictionary) -> float:
 		return float(entry["realized_yield"])
 	return float(entry.get("actual_yield", 0.0))
 
+## Its TRADE twin (issue #337) — the steady `realized_trade_yield`, falling back to the turn's actual
+## `trade_yield`. 0 for a source that pays no trade, which is exactly what suppresses the component.
+func _entry_realized_trade(entry: Dictionary) -> float:
+	if entry.has("realized_trade_yield"):
+		return float(entry["realized_trade_yield"])
+	return float(entry.get("trade_yield", 0.0))
+
 ## DEFER a per-source yield label instead of drawing it inline. The label is an annotation OVER the
 ## map: drawn during the highlight pass it was painted over by every later layer (the dashed-amber
 ## pending overlays, the band→herd links, the hunted-herd rings, and the secondary herd/food glyphs —
 ## a deer glyph landing squarely on the number). Callers queue here; `flush_yield_labels` renders the
 ## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
 ## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
-func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
+func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "",
+		trade: float = 0.0) -> void:
 	_deferred_yield_labels.append({
 		"tile_center": tile_center,
 		"value": value,
 		"overhunt": overhunt,
 		"radius": radius,
 		"policy": policy,
+		"trade": trade,
 	})
 
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
@@ -515,15 +532,25 @@ func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radi
 func flush_yield_labels() -> void:
 	for label in _deferred_yield_labels:
 		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["policy"])
+			label["policy"], float(label.get("trade", 0.0)))
 	_deferred_yield_labels.clear()
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
 ## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
 ## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "") -> void:
+##
+## ONE COMPONENT ONLY, and deliberately so (issue #337): a hunt pays food AND trade goods, but a map
+## label sits on a hex a few pixels wide beside a policy glyph and a ⚠ — there is no room for a second
+## rate. It shows the one the species PAYS: food when there is food (every edible quarry and every
+## forage patch, so this is unchanged for them), else the trade rate marked with
+## `FoodIcons.TRADE_GOODS_GLYPH` so it can never be misread as food. A hunted wolf pack therefore reads
+## `⇄+0.12 ⇊` rather than the `+0.00` that said the pack was worth nothing.
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "",
+		trade: float = 0.0) -> void:
 	var text := _format_yield_signed(value)
+	if absf(value) < YIELD_LABEL_COMPONENT_MIN and trade >= YIELD_LABEL_COMPONENT_MIN:
+		text = FoodIcons.TRADE_GOODS_GLYPH + _format_yield_signed(trade)
 	var color := HudStyle.HEALTHY
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG

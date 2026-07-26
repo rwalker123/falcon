@@ -138,3 +138,13 @@ inversion is real; the fixture stages it deterministically for the harness.
 
 ---
 
+## The on-tile yield label carries ONE component (issue #337)
+
+A hunt pays food AND trade goods, but the label sits on a hex a few pixels wide beside a policy glyph
+and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
+shows the product the species PAYS: food when `realized_yield` is non-zero (every forage patch and
+edible quarry, so those frames are unchanged), else the assignment's `realized_trade_yield` marked
+with `FoodIcons.TRADE_GOODS_GLYPH`. A hunted wolf pack reads `⇄+0.22 ⇊` instead of `+0.00`.
+`YIELD_LABEL_COMPONENT_MIN` is the map twin of `SourceForecast.FOOD_FLOW_MIN` and is the test that
+decides which. Frame: `map_preview` `map_band_work` (the wolf label beside the deer's `+0.20`); the
+general render-only-when-non-zero rule lives in `labor-ui.md`.

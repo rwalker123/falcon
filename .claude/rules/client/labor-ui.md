@@ -64,7 +64,7 @@ paths:
     `native/src/lib.rs` beside `wasted_yield`). This **replaced** the old client-derived `actual >
     sustainable + ε` test on the confirmed rows, which **false-positived on a hunt's kill turn** — cashing a
     banked whole animal spikes `actual` above the steady `sustainable` even under Sustain, so the row wrongly
-    flashed ⚠. A Sustain source reads `… · renewable` (no flag); a Surplus/Market/Eradicate forage patch or
+    flashed ⚠. A Sustain source reads `… · renewable` (no flag); a Surplus/Deplete/Eradicate forage patch or
     an over-hunted herd trips the flag. A `tooltip_text` spells out actual-vs-sustainable. (The **compose
     previews** still derive it from the steady forecast via `_is_overdraw` — there is no assignment, hence no
     `overdraws` field, at compose time, and the forecast is not a lumpy `actual`.) **Each source row also flags overstaffing** — a
@@ -88,7 +88,7 @@ paths:
     waste suffix) and only its INVESTMENT rungs (Cultivate/Sow) keep `_forecast_yield_row`. Rendering
     both on a hunt was a merge artifact: the flat `per_worker_yield`/`ceiling_*` scalars and the
     `hunt_policy_ceilings` list are **two views of ONE sim hunt model** and agree numerically (verified:
-    both give +0.54 on a Market take — the redundancy was measured before it was removed, not assumed), so
+    both give +0.54 on a Deplete take — the redundancy was measured before it was removed, not assumed), so
     the second row added no information and **argued with the first** — a HEALTHY-green "Expected yield"
     directly above a WARN-amber "⚠ overdraws the herd" for the same number. (The two overlapping wire
     representations should be collapsed to one server-side; tracked separately.) Both the ⚠ and the note are rendered by `HudWidgets.build_worker_stepper` (`warn` / `note` params)
@@ -238,11 +238,16 @@ paths:
     ETA could only ever be a lie. The
     **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (the band's real payoffs:
     Sustain → the herd stays healthy AND, on a thriving herd, **builds husbandry toward livestock**;
-    Surplus → more food now, pushes settling; Market → sells the take as trade goods, "trade has little
-    effect yet" — deliberately not oversold; Eradicate → denial, no food/husbandry/trade). **These are
-    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm credits **food
-    only** — no husbandry accrual, no trade goods (a known v1 gap, tracked server-side) — so the
-    expedition set promises neither, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
+    Surplus → more food now, pushes settling; Deplete → draws the herd down hard, much more
+    food now and a fast decline it will not recover from while it lasts — deliberately not oversold;
+    Eradicate → **the last hunt**: the whole standing stock in one haul, the biggest payoff of any rung,
+    in whatever the species pays (meat, ⇄ trade goods, or both), no craft learned, and the herd gone for
+    good — denial is the END STATE, not a promise that the carcasses were thrown away (#337)). **These are
+    NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
+    products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
+    goods onto `Expedition::carried_trade` and into the faction stockpile at the drop-off/fold-back), but
+    accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
+    trade payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
     halves of that bargain: the ~25-turn half-yield build, the ladder's best payoff, and the fact that
     **penned animals can't graze, so you feed them from your larder every turn and an underfed herd
@@ -287,8 +292,9 @@ paths:
     see `SourceForecast.hunt_forecast_line_bbcode`'s `total > warn_turns`, so a distant herd is "slow" on travel
     alone) or a **long** raid (`turnsToFill == 0` — ran the whole horizon still
     delivering) is a real tradeoff, so it is WARN-amber `"armed"` + `Send Anyway (≈54 turns)` /
-    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission (Eradicate, `delivers_food ==
-    false`) likewise stays enabled (`Send (delivers no food)`). The ONE blocked case is **no surplus**
+    `Send Anyway (long raid)` and stays **enabled**. A **denial** mission — a quarry that pays NEITHER
+    product (`delivers_food == false` **and** `delivers_trade == false`; never the Eradicate rung, which
+    delivers) — likewise stays enabled (`SEND_HUNT_DENIAL_BUTTON`, "Send (brings nothing home)"). The ONE blocked case is **no surplus**
     (`SourceForecast.hunt_trip_no_surplus`: **`deliveredFood == 0`**) — the herd is at/below the policy's floor, so the raid
     would return empty at every party size: a mistake with no upside, so the button is **DISABLED**
     (`Herd too lean to raid`). This is `deliveredFood == 0`, **NOT `animalsTaken == 0`** — a small party on
@@ -341,7 +347,7 @@ paths:
     two branches read DIFFERENT herd fields**
     (see "Hunting expedition" below): the expedition line is a pure LOOKUP into the sim's
     forward-simulated `hunt_trip_estimates` (`HERD_TRIP_ESTIMATES_KEY`, zero client arithmetic — a
-    `carryCap / rate` division is WRONG for Surplus/Market), while the local line is carry arithmetic over
+    `carryCap / rate` division is WRONG for Surplus/Deplete), while the local line is carry arithmetic over
     the band's flow ceiling `hunt_policy_ceilings` (`HERD_BAND_CEILINGS_KEY`, via `_hunt_delivered_and_waste`
     / `SourceForecast.hunt_policy_ceiling`; `_hunt_take_rate` still backs the food-line fallback). The ecology/MSY model
     is NEVER re-derived client-side.
@@ -355,55 +361,102 @@ paths:
     warn line → amber "⚠ … — a slow raid" + "Send Anyway (≈54 turns)") / `herd_hunt_forecast_surplus`
     (the SAME Red Deer on Surplus: a deeper floor → more animals, brisk turns) /
     `herd_hunt_forecast_no_surplus` (collapsing Wild Fowl at its floor → animalsTaken 0 → red "too lean
-    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (denial → amber "Send (delivers no
-    food)", enabled), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
+    to raid" + disabled button) / `herd_hunt_forecast_eradicate` (a REAL delivery, not a denial —
+    `delivers ≈12 Red Deer over many turns · ~24 food · ⇄ ~6 trade goods — a slow raid` + amber "Send
+    Anyway (long raid)"), the RAID + max-useful set `herd_hunt_boar_raid` (the server's measured Wild Boar,
     1 hunter → "delivers ≈5 Wild Boar over ≈7 turns · ~20 food", ascending per-policy compact `≈N` picker
     buttons — glyph + metric, name-in-tooltip) / `herd_hunt_max_useful` (2 hunters → "delivers ≈8 … over ≈8 turns"; a 3rd raids no more, so
     the stepper caps at 2 with "max 2 workers useful here — more would be idle") /
     `herd_hunt_raid_travel` (the SAME boar 8 tiles from a band carrying a move rate → the client adds the
     round trip: "delivers ≈8 Wild Boar over ≈16 turns (8 hunting + 8 travel) · ~32 food", cap still 2) /
     `herd_hunt_no_surplus` (a herd stripped to its floor → 0 animals at every size → disabled "Herd too
-    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → denial, still enabled), and
+    lean to raid") / `herd_hunt_eradicate` (the boar on Eradicate → the whole-stock windfall in both products, ordinary
+    Send), and
     `herd_hunt_local_sustain` /
     `herd_hunt_local_overdraw` (local branch, animals-first: green `≈0.14 Red Deer/turn · renewable` vs
-    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`), and the carry-aware set
+    amber `⚠ ≈0.27 Red Deer/turn — overdraws the herd`) /
+    **`herd_hunt_local_eradicate`** (the frame the LOCAL Eradicate hint is judged on: the rung's picker face
+    reads the ladder's top take `💀 Eradicate / 2.40 food · 0.36 trade`, and the hint below describes the one-haul windfall +
+    the permanent end state — never "no food, no trade"), and the carry-aware set
     `herd_hunt_delivered_clean` / `herd_hunt_delivered_waste` / `herd_hunt_automax` /
     `herd_hunt_big_game_window` (see the animals-first preview + "up to X/turn" cap notes above).
   - **`%ForageAssignControls`** (Tile card, food-module tiles, `_build_forage_assign_controls`): the
-    band-picker, then a sustain/surplus/market/eradicate **policy picker** (`HudWidgets.build_policy_picker`,
+    band-picker, then a sustain/surplus/deplete/eradicate **policy picker** (`HudWidgets.build_policy_picker`,
     `_forage_assign_policy`, `LABOR_HUNT_POLICIES`, default `sustain`) — carrying the SAME ascending
-    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is ONE line:
-    `<glyph> <compact-metric>`, NO name** (`[♻ +0.96] [⬆ +1.92] [⇄ +2.88] [💀 +4.80] [🌱 →+1.20] [▦ Sow]`).
-    **The picker is a `GridContainer` `POLICY_PICKER_COLUMNS` (3) wide, each button `SIZE_EXPAND_FILL`**, so
-    the six-rung forage/local-hunt pickers wrap to **two rows of three** (equal-width, filling the panel
-    content width) instead of one over-wide row; the six wide two-line `♻ Sustain / up to +0.90/turn`
-    buttons used to overflow, and even the compacted six-in-a-row read too wide docked. A picker with
-    `≤ POLICY_PICKER_MAX_SINGLE_ROW` (4) rungs — the 4-rung expedition launch/compose picker — stays a
-    **single row** (`grid.columns = options.size()`): a 3+1 grid would strand a lone one-third-width button
-    on a second row, and 4 narrow rungs already fit one row. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
-    bare compact string rides the face, the verbose full string moves to the tooltip. Extractive rungs →
-    compact `+0.96` (just `SourceForecast.format_signed(ceiling)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
-    full `up to +0.96/turn` (`POLICY_CAP_FORMAT`). INVESTMENT rungs on BOTH pickers → compact `→+1.20`
-    (`POLICY_PAYOFF_COMPACT`), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
+    per-policy **COMPACT** button metric the local-hunt picker does. **Each button is TWO LINES, ONE PER
+    AXIS — the rung's glyph + NAME over its product line** (`[♻ Sustain / 0.96 food]
+    [⬆ Surplus / 1.92 food] [⇊ Deplete / 2.88 food] [💀 Eradicate / 4.80 food] [🌱 Cultivate / → 1.20 food]
+    [▦ Sow]`), a hunt rung carrying both products (`[⇊ Deplete / 2.70 food · 0.41 trade]`). **THE ONE-LINE
+    `<glyph> <metric>` FACE IT REPLACED WAS AN AXIS COLLISION** (playtest, issue #337 follow-up): the rung
+    glyph (`♻ ⬆ ⇊ 💀`) and the trade-goods glyph `⇄` sat adjacent in one line at one weight saying
+    different things — *which rung* vs *which product* — and dropping the rung NAME left `⬆` beside `⇊`
+    reading as good-vs-bad rather than as neighbouring rungs of one ladder. Naming the rung in text is
+    what defuses that, so `POLICY_ICONS` is UNCHANGED; the products move to words
+    (`SourceForecast.picker_products`) because trade goods have no tintable pictogram (see
+    `sprites-widgets.md`). **Line 2 renders one step SMALLER and one step quieter than line 1**
+    (`POLICY_PICKER_METRIC_FONT_SIZE` 13 against the default control size line 1 keeps by carrying NO
+    override, and `POLICY_PICKER_METRIC_ALPHA` 0.72): the name leads the glance and the numbers answer
+    it — at one size `0.32 food · 0.08 trade` competed with `♻ Sustain` instead of supporting it. **No `+`
+    sign on these numbers**: every rung
+    is a gain, so a sign carries no information here (it stays on the work rows and map labels, where it
+    contrasts against consumption), and the render-only-when-non-zero rule still governs — a wolf rung
+    reads `2.70 trade` alone, never `0.00 food · 2.70 trade`.
+    **TWO FONT SIZES CANNOT LIVE IN ONE `Button.text`, so a rung is a CELL, not a button**
+    (`HudWidgets._policy_rung_cell`): a zero-margin `MarginContainer` holding the `Button` (empty `text`,
+    but still the box, the click, the disabled state, the focus and the tooltip) with the two-Label stack
+    painted over it, inset by `POLICY_PICKER_PADDING_V` 4 / `POLICY_PICKER_PADDING_H` 6 and every overlay
+    control `MOUSE_FILTER_IGNORE` so the click reaches the button beneath. The MarginContainer is what
+    SIZES the cell — a `Button` is not a Container and would not grow to fit children, which is exactly why
+    it cannot be the parent — and it is the CELL that carries `SIZE_EXPAND_FILL` into the grid now.
+    **THE TINT IS ONE COLOUR, DERIVED TWICE, and that invariant is the whole reason the single-`Button.text`
+    face existed:** `HudStyle.button_font_color(variant, disabled)` is asked ONCE and line 2 is that same
+    colour at `POLICY_PICKER_METRIC_ALPHA`, so a selected, disabled — or any future warned — rung moves BOTH
+    lines by construction (the greyed `🐄 Corral` in `hunt_picker_ascending` is the frame). Never give line 2
+    a colour of its own. `modulate` was the other candidate and is worse here: it inherits to children but
+    multiplies the BOX too, so a disabled rung would be dimmed twice, once by the disabled stylebox's own
+    faded fill. That the theme's `font_color` reaches a Button's `text` and nothing else is why
+    `button_font_color` was split out of `apply_button` (which now feeds from it) — a hand-built face and a
+    themed one read one table.
+    **The rung Button carries its policy as `HudWidgets.POLICY_RUNG_META`**, the one stable handle on a
+    rung: `band_panel_preview._picker_rung_buttons` finds them by that meta and recurses past the cells,
+    because a face match on `btn.text` would now find an empty string and pass every assertion vacuously.
+    **The picker is a `GridContainer` of AT MOST `POLICY_PICKER_COLUMNS` (3)**, and 3 is a CEILING, not a
+    target: `grid.columns = clamp(explicit columns or options.size(), 1, 3)`. Six rungs read **3 + 3**, the
+    four extractive rungs read **3 + 1** with Eradicate alone on the second row, and a caller passing an
+    explicit `columns` is clamped DOWN, never up. Four abreast shipped first and read wrong: it made the
+    expedition launch picker a different creature from the local hunt beside it, and it set the widest
+    compose card's width off a row that never needed to be that wide (the deer picker's minimum width fell
+    **714 → 444px**, the wolf's 396 → 296, and the forage sheet 554 → **546** of its 560 cap — the wrap the
+    forage picker already had got SHORTER, since each row costs one 13px line instead of a 16px one). The
+    lone rung is **not** stretched across the row: a GridContainer gives it its COLUMN's width, so it sits
+    under the first cell above at exactly that cell's width, which reads deliberate rather than orphaned.
+    **`ZONE_POLICY_PICKER_COLUMNS` (2) is the one picker that does not follow** — see
+    `band-city-panel.md`; measured at 3 it overruns the L/R dock's ~354px zone by ~90px and the frame comes
+    back sliced. Each `*_policy_takes` helper emits a **`{compact, full}` pair** per policy: the
+    compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
+    compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
+    full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one
+    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.20 food`
+    (`POLICY_PAYOFF_COMPACT`; the payoff every ladder rung builds toward is a provisions rate, so the face
+    names food and the arrow is what keeps it from reading as a take today), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
     `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
     the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
     taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
-    (under the picker) explains the lock. **The name lives ONLY in the tooltip now** — every button's
-    `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g. `Sustain — up
-    to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate reasons below
-    that (so a hover names the rung AND explains any lock; enabled buttons carry the name+metric tooltip
-    too). A rung with **no** metric (older snapshot / metric-less gated rung, or the send-expedition launch
-    picker that passes no `takes`) falls back to the **name** on the face, so a button is never a lone
-    glyph. The selected policy's name still shows in the behaviour-hint line below the picker and in each
-    locked rung's gate-reason line — the name is never lost, just off the button face. The three pickers —
-    forage / local hunt / expedition — now wear an **identical** face + metric: `+X` (extractive, `up to
-    X/turn` via `POLICY_CAP_FORMAT` / `SourceForecast.extractive_take`) and `→+X` (investment, Cultivate/Sow AND
-    Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    (under the picker) explains the lock. **The tooltip carries the VERBOSE metric the face compacts** —
+    every button's `tooltip_text` leads with `<Name> — <full metric>` (`POLICY_TOOLTIP_NAME_FORMAT`, e.g.
+    `Sustain — up to +0.96/turn`, `Tame — builds toward +1.20/turn`), and a gated button appends its gate
+    reasons below that (so a hover tells you what the rung costs to unlock as well as what it pays). A rung
+    with **no** metric (the work inspector's picker, which passes no `takes`; a metric-less gated rung) is
+    **line 1 alone** — glyph + name — so a button is never a lone glyph and never a lone number. The three
+    pickers — forage / local hunt / expedition — wear an **identical** face: `<glyph> <Name>` over
+    `X food[ · Y trade]` (extractive, `up to X/turn` in the tooltip via `POLICY_CAP_FORMAT` /
+    `SourceForecast.extractive_take`) or over `→ X food` (investment, Cultivate/Sow AND Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
     is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
-    Surplus < Market. **Eradicate is denial** (`deliversFood == false`, never qualifies) → no rate, falls back
-    to its name + skull glyph. **Picking a policy AUTO-FILLS the
+    Surplus < Deplete. **Eradicate DELIVERS like every other rung** (#337) and carries its own rate; a rung
+    falls back to its name + skull glyph only when its cells land nothing at all (an inedible quarry, or a
+    `trip_turns` of 0). **Picking a policy AUTO-FILLS the
     foragers to that policy's max-useful cap** (`_forage_assign_autofill`, the forage twin of
     `_hunt_assign_autofill` — a one-shot set only by a policy CLICK, consumed on the next rebuild before the
     clamp; the manual `−/+` stepper never sets it). It carries a
@@ -527,7 +580,7 @@ paths:
       `FORECAST_CEILING_KEYS` entry (that dict is now the FORAGE PATCH's ceiling map and only that);
       `SourceForecast.forecast_inputs(src, kind, prefix, policy)` branches on the **caller-stated `kind`**
       (`SOURCE_KIND_HERD` / `SOURCE_KIND_FORAGE`) and resolves every herd policy —
-      Sustain/Surplus/Market/Eradicate, Tame, Corral — through `SourceForecast.hunt_policy_ceiling`, falling back to the
+      Sustain/Surplus/Deplete/Eradicate, Tame, Corral — through `SourceForecast.hunt_policy_ceiling`, falling back to the
       list's Sustain row for an unrecognized policy. **It must NEVER branch on the prefix**: a herd dict
       and a raw wire forage-patch dict both carry the forecast fields bare, so they share the ONE
       `BARE_FORECAST_PREFIX` and a prefix test cannot separate them. That is not merely a convention —
@@ -575,7 +628,7 @@ paths:
       (the herd's SOLE ceiling representation — the sim exports one row per
       `FollowPolicy::HUNT_POLICIES`, i.e. the four extractive rungs **plus `tame` and `corral`**, so
       the investment DIPS ride it too; the old per-policy scalars `ceilingSustain` / `ceilingSurplus` /
-      `ceilingMarket` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
+      `ceilingDeplete` / `ceilingEradicate` / `ceilingCorral` are retired `(deprecated)` schema slots and
       are no longer decoded) +
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
@@ -606,10 +659,10 @@ paths:
       divide by `body_mass` (BIOMASS): with `provisions_per_biomass 0.02` that reads ~50× too long. A herd
       whose `foodPerAnimal` is 0/unknown → no cadence drawn (the honest rate still shows). The **hunt policy
       picker** (`HudWidgets.build_policy_picker(…, takes)`, fed
-      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the bare compact `+X` on
-      the button face (full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
+      `_hunt_policy_takes` off `huntPolicyCeilings`) shows each rung's **CAP** as the product line on the
+      button face's second row (`2.70 food · 0.41 trade`; full `up to X/turn` — `POLICY_CAP_FORMAT` — in the tooltip; the shared const also
       used by the forage picker — the source's worker-independent ceiling, FOOD units, distinct from the
-      crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Market < Eradicate
+      crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Deplete < Eradicate
       reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
       (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
@@ -654,7 +707,7 @@ paths:
     `perWorkerYield` plus one take ceiling per policy — all food/turn at the source's **current
     biomass**, exported at `output_multiplier = 1.0` — enough to compute the take *while composing*.
     **The two source kinds carry the ceilings differently, and that asymmetry is load-bearing:** the
-    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingMarket` / `ceilingEradicate`,
+    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingDeplete` / `ceilingEradicate`,
     plus `ceilingCultivate` / `ceilingSow`) because it has no policy list; the HERD has ONLY the
     `huntPolicyCeilings` list (its identically-named scalars are deprecated slots — a new policy costs
     the herd no schema change).
@@ -669,7 +722,7 @@ paths:
     exports at 1.0), and a **worker-stepper cap** of
     `min(idle-worker cap, max_useful_workers(policy))` — the `+` goes dead at the cap and, when
     max-useful is the binding one, a `"max N worker(s) useful here — more would be idle"` note
-    explains why (a Market/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
+    explains why (a Deplete/Eradicate ceiling exceeds Sustain's, so switching policy moves the cap).
     **The LOCAL-hunt cap's usefulness ceiling is `max(take/prepare max-useful, herders_needed)`** —
     a managed (corralling/pastoral) herd needs `herders_needed` hands EVERY turn to HOLD the herd,
     but the take/prepare side alone ignores that (a Corral rung's prep forecast reports "1 worker
@@ -695,12 +748,12 @@ paths:
     keeps `_forecast_yield_row`'s dip→payoff deal (`Preparing: +X /turn → then +Y /turn`); an
     **EXTRACTIVE** rung renders `_local_forage_preview_bbcode` — the plant twin of
     `_local_hunt_preview_bbcode` — a bare rate + verdict (`+2.74 /turn · renewable`, or WARN-amber
-    `⚠ … — overdraws the patch` on Market/Eradicate via `_is_overdraw` against the Sustain-ceiling
+    `⚠ … — overdraws the patch` on Deplete/Eradicate via `_is_overdraw` against the Sustain-ceiling
     yield), through the SAME `HudWidgets.forecast_label` RichTextLabel at `ALLOC_SECTION_FONT_SIZE` the hunt line
     uses. This retires the old `"Expected yield:"` prefix for extractive forage (`FORECAST_LABEL_FORMAT`
     is gone and `_forecast_yield_row`'s non-investment `else` branch was unreachable and removed — its
     only two callers, hunt via `forecast_active` and forage via the `INVESTMENT_POLICIES` guard, both
-    gate on an investment rung) and fixes the gap where an Eradicate/Market forage rendered no overdraw
+    gate on an investment rung) and fixes the gap where an Eradicate/Deplete forage rendered no overdraw
     warning. Shared helpers `SourceForecast.forecast_inputs` / `SourceForecast.max_useful_workers` / `SourceForecast.expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` (investment-only now) serve both controls. **Guards:**
     `per_worker_yield == 0` (a dead-season tile) → no row,
@@ -720,3 +773,135 @@ paths:
   map (`MapView.herd_quick_hunt_requested` → `Main._on_map_herd_quick_hunt` → `Hud.quick_assign_hunters`)
   assigns the player band's idle workers to hunt that herd at Sustain — a no-op with a command-feed
   note when there are no idle workers (never silently nothing).
+
+---
+
+## A hunt pays TWO products — the render-only-when-non-zero rule (issue #337, `docs/plan_hunt_yield_model.md`)
+
+The sim's hunt yield is a **vector**: the species' own `HuntYield` (provisions **and** trade goods)
+times the policy's intensity. The client read only the food half, so an **inedible** species — a wolf,
+which pays pelts and no meat — rendered `+0.00` on every rung and looked like a source worth nothing.
+
+**THE ONE RULE, and it is applied at every surface: render a component only when it is non-zero.**
+
+| species | reads |
+|---|---|
+| deer (`provisions > 0`, `trade > 0`) | food **and** trade, **food leading** |
+| wolf (`provisions == 0`, `trade > 0`) | trade only — **never** a "0 food" line |
+| a forage patch (no trade projection yet) | food only — **never** a "0 trade" line |
+
+A `0` printed as a number for a component the species does not produce is the false precision this
+whole arc exists to remove; it is not "more complete", it is wrong. The one place a zero survives is a
+component the source genuinely HAS and did not pay this turn (a worked row's `+0.00 /turn`).
+
+**Trade is stated GENERICALLY** — `FoodIcons.TRADE_GOODS_GLYPH` (`⇄`) plus the words "trade goods". The
+sim models a **scalar**, so the client says so: there is deliberately **no per-species noun** (pelt /
+ivory / hide). A named good per species is a flavor layer on top of the scalar, explicitly deferred by
+the design doc, and inventing one here would put words on the wire's behalf the sim cannot back.
+
+### The shared layer (`SourceForecast`)
+
+- `has_component(rate)` — the single "is this component present?" gate (`>= FOOD_FLOW_MIN`), so food
+  and trade are judged identically everywhere.
+- `format_trade(v)` → `⇄ +0.35`; **`yield_components(food, trade)`** → `+0.31 /turn · ⇄ +0.12` — the ONE
+  joiner every per-turn readout goes through, so no two surfaces can word the pair differently.
+- **`magnitude_components(food, trade)`** → `0.20 ⇄ 0.22` — its COMPACT twin for a surface that
+  supplies its own framing and states levels rather than deltas (the work zone's filter chips). Same
+  rule, same food-leads order, bare magnitudes joined by `COMPACT_COMPONENT_SEPARATOR` (a space, since
+  those chips already spend their `·` separating a count from its total).
+- **`extractive_take_pair(food, trade)`** — the rung metric `{compact, full}` (the food-only
+  `extractive_take` survives for the forage picker, whose plant-side trade is not projected).
+- **`picker_products(food, trade)`** → `0.96 food · 0.24 trade` — the same rule and the same food-leads
+  order **in WORDS and without the sign**, for the ONE surface that has room to name its products: the
+  policy picker's two-line rung face (`compact` above is written in terms of it). The picker names
+  rather than marks because its line 1 already carries a glyph naming the RUNG, and two glyph families
+  in one line at one weight is the axis collision this treatment removed — see the picker notes above
+  and `sprites-widgets.md`.
+- `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
+  `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
+  the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
+  existing food-only reader is untouched.
+
+### THE AXIS — what a divide-by-a-quantum consumer must use
+
+`herd_yield_axis` / `herd_axis_rates` are the client mirror of the sim's `ratio_axis()`: the first
+component with a POSITIVE rate, **provisions preferred** so every edible species divides exactly as it
+did before this arc, trade for an inedible one. `forecast_inputs` returns the resolved triple
+(`axis_per_worker` / `axis_ceiling` / `axis_per_animal`) beside the raw per-component fields, and
+**everything that divides by a per-animal quantum reads the triple** — the kill rhythm, the
+carry-aware delivered take (`_hunt_delivered_and_waste`), the averaging window
+(`_hunt_avg_window_turns`), and the whole-animal worker cap in `max_useful_workers`. A wolf's
+`food_per_animal` is honestly `0`, so a food-only derivation divides by zero and silently produces
+nothing at all. The animals-per-turn line needs no currency word either way: **an animal count is a
+ratio, and a ratio is unit-free.**
+
+### NEVER clamp a per-herd preview with `huntPerWorkerProvisions`
+
+`PopulationCohortState.hunt_per_worker_provisions` is a **species-BLIND** per-cohort echo of the global
+`hunt.provisions_per_biomass` — the cohort has no herd in scope, so it cannot know the quarry is
+inedible, and quoting its positive food rate against a wolf's all-zero food ceilings is exactly what
+manufactures phantom food. The species-aware per-herd rates are `HerdTelemetryState.perWorkerYield` /
+**`perWorkerTrade`**, and the local-hunt preview clamps with THOSE, per component. (The cohort field
+survives as the expedition **outfit** lever, before a target is chosen.)
+
+### `deliversFood` WAS REDEFINED — re-read every branch that keys off it
+
+It no longer means "this is not a denial mission". It now means **the quarry is edible**. Consequences,
+all of them live in `hunt_trip_forecast` / `hunt_forecast_line_bbcode` / `expedition_policy_takes`:
+
+- **Eradicate DELIVERS.** It banks a whole-stock windfall like every other rung, and its raid line
+  quotes that payload instead of "denial mission, delivers no food".
+- A **denial** raid is now one that lands NOTHING IN EITHER CURRENCY (`delivers_food == false` **and**
+  `delivers_trade == false`) — a property of the QUARRY, never inferred from the policy string.
+- **"Too lean to raid"** tests `delivered_food <= 0 **and** delivered_trade <= 0`; reading food alone
+  would call every wolf raid empty.
+- `expedition_policy_takes` gates each component on its OWN `delivers_*` flag, and
+  `expedition_useful_cap` scans the plateau on the component the quarry pays (an inedible species
+  delivers 0 food at every party size, so a food-only scan finds no plateau and the party stepper
+  loses its cap).
+
+### The one-slot surfaces show the product the species PAYS
+
+Two readouts have a single narrow slot and cannot carry a pair — the **work-board row's** fixed-width
+rate column (`BandPanelController._work_row_rate_text`) and the **map's** on-tile yield label
+(`BandOverlayRenderer._draw_yield_label`). Both show food when there is food (so every forage patch
+and edible quarry is unchanged) and otherwise the trade rate marked with the glyph: `⇄+0.22`. The
+work **inspector strip** beside the row states both components in full, which is where a deer's trade
+shows.
+
+**`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
+`food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
+`band_has_food_flow`, and the arrivals schedule) still sum `actual_yield` alone — trade goods credit
+the faction stockpile and never the larder — so a trade-only hunt must not move the Food line. That is
+what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
+AGGREGATE is never "add trade to the food total".
+
+**But an aggregate that omits trade entirely is the same lie one level up.** The work zone's header
+read `3 sources +0.35 /turn` with a `⇄+0.22` wolf row directly beneath it — the arithmetic visibly did
+not add up, and the one source paying only trade read as contributing nothing to the band. So the
+render-only-when-non-zero rule applies to totals too, as a **SIBLING**: `3 sources +0.35 /turn ⇄
++0.22`, and `🦌 2 · 0.20 ⇄ 0.22` on the per-kind chips (`SourceForecast.magnitude_components`, the
+bare-magnitude twin of `yield_components` — a chip states levels, not deltas). A band with no
+trade-paying source renders exactly as before. Details in `band-city-panel.md`.
+
+**When you add an aggregate, ask which of the two it is** — a *larder* figure (food alone, by the
+identity above) or a *productivity* figure (both products, each when non-zero). Nothing else in the
+client currently sums or counts across sources: the parties header counts parties and workers, and the
+attention producers key off `idle_workers` / `turns_of_food` / pen status, never "this source yields
+no food", so a trade-only source is already productive to them. **Do not add a "produces nothing"
+empty-state that tests food alone.**
+
+**Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
+rungs read `0.90 / 1.35 / 1.95 / 2.70 trade`, no food line, no zeros, and the animals-first preview +
+averaging-window disclaimer still render off the TRADE quantum) · **`herd_hunt_both_products`** (the
+same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_hunt_pelts_raid`** (the wolf as an
+expedition target: `delivers ≈3 Grey Wolf over ≈9 turns · ⇄ ~4 trade goods`, primary Send — NOT a
+denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food · ⇄ ~5 trade goods`) ·
+`hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the
+forage control — food only, no "0 trade"). `band_panel_preview`:
+**`band_panel_work_trade_rows`** / **`band_panel_work_trade_inspector`** (a food row, a food+trade row
+and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 · Deplete · Working`) ·
+**`band_panel_work_trade_totals`** (the aggregates — the same band with the deer unassigned, so its
+sole hunt pays trade: header `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` with the food term
+suppressed).
+`map_preview`: `map_band_work` (the hunted wolf labels `⇄+0.22 ⇊` beside the deer's `+0.20`).

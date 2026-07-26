@@ -71,7 +71,7 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
   made concentration explicit, a growth boost double-counted competitor-removal, so tending now pays
   through **concentration + conversion** (a committed crop), not the curve. It is gathered by the
   **ordinary `forage_take` path**, exactly like rung 1: **policy-live**
-  (Sustain/Surplus/Market/Eradicate), **worker-capped**, and **drawn down** — so a tended patch **can
+  (Sustain/Surplus/Deplete/Eradicate), **worker-capped**, and **drawn down** — so a tended patch **can
   be over-farmed** and the overdraw ⚠ fires on it. This is the exact shape a **pastoral** herd already
   had; the plant web used to collapse a rung *earlier* than the animal web, and that asymmetry was the
   bug. **A committed crop still out-yields the same patch's wild Sustain** on good ground — the

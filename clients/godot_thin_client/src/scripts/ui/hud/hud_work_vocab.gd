@@ -14,15 +14,49 @@ const WORKER_STEPPER_VALUE_WIDTH := 32.0
 
 const WORKER_STEPPER_SEPARATION := 6
 
-# Policy-picker layout: the compacted glyph+metric buttons wrap 3 per row so the six-rung
-# forage/local-hunt pickers read as two tidy rows of three instead of one over-wide row. A picker
-# with at most POLICY_PICKER_MAX_SINGLE_ROW rungs (the 4-rung expedition launch/compose picker) stays
-# a single row instead — a 3+1 grid would strand a lone one-third-width button on a second row.
+# Policy-picker layout: the two-line rung buttons (name over product line) wrap at most 3 per row, so
+# the six-rung forage/local-hunt pickers read as two tidy rows of three and the four extractive rungs
+# read as 3 + 1 with Eradicate alone on the second row. THREE IS A CEILING, NOT A TARGET — a picker
+# with fewer rungs fills what it has, and a caller passing an explicit `columns` (a zone's narrower
+# budget) is clamped to it rather than overriding it upward, so the wrap SHAPE is the same wherever
+# the player meets these rungs. Four abreast was tried and read wrong: it made the expedition launch
+# picker a different creature from the local hunt beside it, and it set the widest compose card's
+# width off a row that never needed to be that wide.
 const POLICY_PICKER_COLUMNS := 3
 
-const POLICY_PICKER_MAX_SINGLE_ROW := 4
+# The inset between a rung's box and its two-line face, vertical and horizontal. Sized well under
+# `HudStyle._button_stylebox`'s authored 9/11 — that pair was sized to give ONE line of text vertical
+# presence and to keep a lone word off the border, and a two-line face already has both. The height is
+# not free: the FORAGE compose card is capped at `ComposeSheet.CARD_MAX_HEIGHT` and already spends most
+# of itself on the rung gates and the crop list, and the commit button below is what falls off the fold
+# when the picker grows (the `forage_crop_picker` guard in ui_preview asserts exactly that). The width
+# is not free either — the face's longest LINE sets the rung's width, so 22px of side chrome per button
+# is width the grid spends on nothing, and at the ZONE_POLICY_PICKER_COLUMNS budget (the Band panel's
+# PARTIES-zone launch picker, in a ~300px dock) the authored box pushed the picker 18px past its zone,
+# where the zone's `clip_contents` ate the end of every metric line. Trim the box, never the type.
+const POLICY_PICKER_PADDING_V := 4
 
-# Passed for `columns` to keep `HudWidgets.build_policy_picker`'s width-driven default — a caller that only wants
+const POLICY_PICKER_PADDING_H := 6
+
+# The gap between the two lines of a rung's face. One pixel: they are one utterance ("this rung, and
+# what it pays"), so they must read as a stacked pair rather than as two rows of a list.
+const POLICY_PICKER_FACE_SEPARATION := 1
+
+# The metric line's type, ONE STEP under the rung name's. The name LEADS and the numbers SUPPORT: at a
+# single size `0.32 food · 0.08 trade` competed with `♻ Sustain` for the same glance instead of
+# answering it. The name line carries no size override at all, so it stays exactly the size the
+# button's own `text` rendered at before the face became child Labels (Godot's default control font
+# size, this project shipping no replacement theme) — one less number to keep in step.
+const POLICY_PICKER_METRIC_FONT_SIZE := 13
+
+# …and one step QUIETER, as an alpha on whatever colour the rung's state gives line 1
+# (`HudStyle.button_font_color`), never a colour of its own. Deriving it is what keeps the two lines
+# tinting as a unit — the single property the one-`Button.text` face had and the reason it was written
+# that way: a selected, disabled, or (in future) warned rung moves BOTH lines by construction, because
+# there is only ever one source colour to move.
+const POLICY_PICKER_METRIC_ALPHA := 0.72
+
+# Passed for `columns` to keep `HudWidgets.build_policy_picker`'s option-count default — a caller that only wants
 # to set a LATER argument must still name this one, and a bare 0 there reads as "no columns".
 const POLICY_PICKER_AUTO_COLUMNS := 0
 
@@ -279,6 +313,12 @@ const WORK_SOURCES_FORMAT := "%d sources"
 
 const WORK_TOTAL_TOOLTIP := "Total food per turn from every worked source."
 
+# The TRADE total's tooltip (issue #337). It is a SIBLING of the food total, never part of it: trade
+# goods credit the faction stockpile and never the larder, so folding them into the food figure would
+# break the identity the Food line is denominated in. Shown only when a worked source actually pays
+# trade, so a band with none reads exactly as it did before the two-product model.
+const WORK_TRADE_TOTAL_TOOLTIP := "Total trade goods per turn from every worked source. Trade goods are stockpiled for exchange — they are not food, so they are counted beside the food total, not in it."
+
 const WORK_MENU_TOOLTIP := "Sort and bulk actions for worked sources."
 
 const WORK_MENU_SORT_YIELD := "Sort by yield"
@@ -347,6 +387,12 @@ const PAGER_RANGE_FORMAT := "%d–%d of %d"
 
 ## `cancel_order` scopes (the server grammar: `cancel_order <faction> [band] [all|work|roles]`).
 ## `work` clears Forage + Hunt only — standing roles, parties and an in-progress move survive.
-## A policy picker rendered INSIDE a zone wraps to this many columns — four rungs abreast do not fit
-## a 380px L/R dock, and a picker wider than its zone drags the whole zone column past its host.
+## A policy picker rendered INSIDE a zone wraps to this many columns, and it is the ONE picker that
+## does NOT take the shared `POLICY_PICKER_COLUMNS` (3): a zone is a FIXED-width box and a picker wider
+## than it drags the whole zone column past its host, where `clip_contents` slices it. MEASURED at 3:
+## the four two-line rungs need ~444px, the L/R dock's zone gives ~354, and the frame comes out with
+## `⇊ Deplete` cut in half, the Quarry button clipped and the hint text sliced — two extra
+## `_assert_zone_content_fits` failures in `band_panel_preview`. So the Band panel's launch picker reads
+## 2 + 2 while every free-floating picker reads 3 + 1; closing that gap needs a WIDER PARTIES ZONE (or a
+## narrower metric line), not a bigger number here.
 const ZONE_POLICY_PICKER_COLUMNS := 2

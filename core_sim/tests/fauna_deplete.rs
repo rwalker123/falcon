@@ -1,5 +1,5 @@
-//! Market hunting: the commercial `FollowPolicy::Market` takes `market_multiplier × MSY` (2.5×), the
-//! harshest of the four **ascending multiples of MSY** (Sustain ≤ 1× < Surplus 1.5× < Market 2.5× <
+//! Deplete hunting: `FollowPolicy::Deplete` takes `deplete_multiplier × MSY` (2.5×), the
+//! harshest of the four **ascending multiples of MSY** (Sustain ≤ 1× < Surplus 1.5× < Deplete 2.5× <
 //! Eradicate = everything) — constant catch this far above MSY has no equilibrium, so it drives a herd
 //! extinct. Also home to the axis's ordering invariant
 //! (`hunt_policy_takes_are_strictly_ordered_at_every_biomass`). Uses the source-centric labor
@@ -81,8 +81,8 @@ fn spawn_world() -> App {
 ///
 /// **This is the fix for a FALSE GREEN, and it is the whole reason this constant exists.** The map
 /// hands out the first two route-1 game herds, and they are **different species** — a Wild Fowl
-/// (`body_mass` 1) and a Rabbit Warren (`body_mass` 2). While ruling 4 made Surplus and Market the
-/// same take, `market_declines_faster_and_earns_more_trade_than_surplus` still passed — on **nothing
+/// (`body_mass` 1) and a Rabbit Warren (`body_mass` 2). While ruling 4 made Surplus and Deplete the
+/// same take, `deplete_declines_faster_and_earns_more_trade_than_surplus` still passed — on **nothing
 /// but the rounding slop between a 1-unit body and a 2-unit body** (600.54 vs 601.61, both pinned at
 /// the identical `0.15·K` floor). It was measuring `body_mass`, not policy. Seating both herds at one
 /// body mass means the **only** difference between the two rows is the policy, so the test fails when
@@ -217,37 +217,37 @@ fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
 }
 
 #[test]
-fn market_policy_string_round_trips() {
-    assert_eq!("market".parse::<FollowPolicy>(), Ok(FollowPolicy::Market));
-    assert_eq!(FollowPolicy::Market.as_str(), "market");
+fn deplete_policy_string_round_trips() {
+    assert_eq!("deplete".parse::<FollowPolicy>(), Ok(FollowPolicy::Deplete));
+    assert_eq!(FollowPolicy::Deplete.as_str(), "deplete");
 }
 
-/// **Market declines a herd faster than Surplus, both decline it while Sustain holds it steady — and
-/// Market out-earns Surplus on trade** (slice 8b — the multiplier model).
+/// **Deplete declines a herd faster than Surplus, both decline it while Sustain holds it steady — and
+/// Deplete out-earns Surplus on trade** (slice 8b — the multiplier model).
 ///
 /// Every extractive policy is now a constant catch that is a **multiple of MSY**: Surplus 1.5× and
-/// Market 2.5× both exceed the herd's max regrowth (1× MSY), so both decline it — Market faster.
+/// Deplete 2.5× both exceed the herd's max regrowth (1× MSY), so both decline it — Deplete faster.
 /// Sustain (≤ 1× MSY, escapement) holds a herd at `K/2`. Measured on the same species (so the take
 /// difference is policy, not `body_mass`), pinned `r` for determinism.
 #[test]
-fn market_and_surplus_decline_faster_than_sustain_holds() {
+fn deplete_and_surplus_decline_faster_than_sustain_holds() {
     /// Pinned only for determinism (the ambient per-species `r` is order-dependent in the shared
     /// binary); the multiples scale with MSY, so the ordering is `r`-independent.
     const PINNED_R: f32 = 0.05;
     let mut app = spawn_world();
-    let (market_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
+    let (deplete_herd, surplus_herd) = prime_two_stationary_herds(&mut app);
     // A third herd on Sustain, to show it holds while the other two decline.
     let sustain_herd = {
         let reg = app.world.resource::<HerdRegistry>();
         reg.herds
             .iter()
-            .find(|h| h.id.starts_with("game_") && h.id != market_herd && h.id != surplus_herd)
+            .find(|h| h.id.starts_with("game_") && h.id != deplete_herd && h.id != surplus_herd)
             .map(|h| h.id.clone())
             .expect("a third game herd")
     };
     {
         let mut registry = app.world.resource_mut::<HerdRegistry>();
-        for id in [&market_herd, &surplus_herd, &sustain_herd] {
+        for id in [&deplete_herd, &surplus_herd, &sustain_herd] {
             let h = registry.herds.iter_mut().find(|h| &h.id == id).unwrap();
             h.regrowth_rate = PINNED_R;
             h.carrying_capacity = 4000.0;
@@ -255,18 +255,19 @@ fn market_and_surplus_decline_faster_than_sustain_holds() {
             h.body_mass = COMPARISON_BODY_MASS;
         }
     }
-    spawn_hunter(&mut app, &market_herd, FollowPolicy::Market, FactionId(0));
+    spawn_hunter(&mut app, &deplete_herd, FollowPolicy::Deplete, FactionId(0));
     spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
     spawn_hunter(&mut app, &sustain_herd, FollowPolicy::Sustain, FactionId(2));
 
     run_turns(&mut app, 10);
 
-    let market = biomass_ratio(&app, &market_herd).expect("market herd still declining, not gone");
+    let deplete =
+        biomass_ratio(&app, &deplete_herd).expect("deplete herd still declining, not gone");
     let surplus = biomass_ratio(&app, &surplus_herd).expect("surplus herd still declining");
     let sustain = biomass_ratio(&app, &sustain_herd).expect("sustain herd held");
     assert!(
-        market < surplus,
-        "Market declines faster than Surplus: {market} vs {surplus}"
+        deplete < surplus,
+        "Deplete declines faster than Surplus: {deplete} vs {surplus}"
     );
     assert!(
         surplus < sustain,
@@ -278,23 +279,23 @@ fn market_and_surplus_decline_faster_than_sustain_holds() {
         "Sustain holds the herd at/above its K/2 operating point: {sustain}"
     );
     // Commercial harvest: bigger take + boosted trade rate → far more trade goods.
-    let market_trade = trade_goods(&app, FactionId(0));
+    let deplete_trade = trade_goods(&app, FactionId(0));
     let surplus_trade = trade_goods(&app, FactionId(1));
     assert!(
-        market_trade > surplus_trade,
-        "market should out-earn surplus on trade: market {market_trade} vs surplus {surplus_trade}"
+        deplete_trade > surplus_trade,
+        "deplete should out-earn surplus on trade: deplete {deplete_trade} vs surplus {surplus_trade}"
     );
 }
 
-/// **Sustained market hunting drives a herd EXTINCT** (slice 8b — extinction is real and on-map again).
+/// **Sustained deplete hunting drives a herd EXTINCT** (slice 8b — extinction is real and on-map again).
 ///
-/// Market takes `market_multiplier × MSY` (2.5×) every turn — constant catch 2.5× the herd's *maximum*
+/// Deplete takes `deplete_multiplier × MSY` (2.5×) every turn — constant catch 2.5× the herd's *maximum*
 /// regrowth, so there is no equilibrium: the herd declines past the Allee threshold into the
 /// depensation crash and despawns. This is the depletion mechanic the ordered-escapement cut had to
-/// defer (a floor Market never crossed could only *pin* a herd at the brink); multiples of MSY restore
+/// defer (a floor Deplete never crossed could only *pin* a herd at the brink); multiples of MSY restore
 /// it. A slow breeder makes the extinction unambiguous within the test's horizon.
 #[test]
-fn market_hunt_drives_collapse() {
+fn deplete_hunt_drives_collapse() {
     /// Below the ~0.25 collapse threshold — deer/megafauna, the commercially-hunted slow game a 2.5×
     /// cull cannot outrun. (A fast breeder is driven extinct too, just faster; slow makes the trace
     /// legible.)
@@ -306,12 +307,12 @@ fn market_hunt_drives_collapse() {
         let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
         h.regrowth_rate = SLOW_BREEDER_R;
     }
-    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
+    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
     run_turns(&mut app, 40);
 
     assert!(
         app.world.resource::<HerdRegistry>().find(&herd).is_none(),
-        "market hunting should drive the group extinct"
+        "deplete hunting should drive the group extinct"
     );
     // Once the herd is gone the assignment lapses.
     assert!(
@@ -320,12 +321,12 @@ fn market_hunt_drives_collapse() {
     );
 }
 
-/// Market hunting never tames a herd — only Sustain accrues husbandry.
+/// Deplete hunting never tames a herd — only Sustain accrues husbandry.
 #[test]
-fn market_hunt_does_not_domesticate() {
+fn deplete_hunt_does_not_domesticate() {
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    spawn_hunter(&mut app, &herd, FollowPolicy::Market, FactionId(0));
+    spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
     run_turns(&mut app, 4);
     let progress = app
         .world
@@ -335,17 +336,17 @@ fn market_hunt_does_not_domesticate() {
         .unwrap_or(0.0);
     assert_eq!(
         progress, 0.0,
-        "market hunting must not accrue domestication"
+        "deplete hunting must not accrue domestication"
     );
 }
 
-/// **THE ordering invariant the whole rework exists to guarantee: `Sustain ≤ Surplus ≤ Market ≤
+/// **THE ordering invariant the whole rework exists to guarantee: `Sustain ≤ Surplus ≤ Deplete ≤
 /// Eradicate` in per-turn take, at every biomass and for every species.**
 ///
 /// *"Each option must take more than the previous, or it looks strange to the player."* This is the
 /// property a single-point measurement hid and a proportional skim silently broke (a fixed `%` does not
 /// scale with MSY, so it inverts against Sustain on a fast breeder — measured in play: Wild Fowl `r`
-/// 0.35, Sustain 0.22 vs a 0.10·B Surplus 0.15). With Surplus/Market as **ascending multiples of the
+/// 0.35, Sustain 0.22 vs a 0.10·B Surplus 0.15). With Surplus/Deplete as **ascending multiples of the
 /// same MSY base** (1.5× / 2.5×) it holds by construction, and this test is the regression guard
 /// against anyone reintroducing a skim or reordering the multipliers.
 ///
@@ -365,7 +366,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
     let axis = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
     ];
 
@@ -378,7 +379,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             let biomass = CAP * frac;
             // The affordable TAKE this turn from an empty bank (credit 0): each policy's rate banked
             // and clamped to the standing stock (`hunt_credit_ceiling`). Ordering the *takes* is the
-            // guarantee — the raw rate is unclamped, so a small remnant's `2.5×MSY` Market rate can
+            // guarantee — the raw rate is unclamped, so a small remnant's `2.5×MSY` Deplete rate can
             // exceed its whole stock; the take cannot (it is `min(rate, biomass)`, `≤ Eradicate = B`).
             let takes: Vec<f32> = axis
                 .iter()
@@ -390,7 +391,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             for pair in takes.windows(2) {
                 assert!(
                     pair[0] <= pair[1] + 1e-3,
-                    "hunt takes must ascend Sustain≤Surplus≤Market≤Eradicate (r={r}, B={biomass}): \
+                    "hunt takes must ascend Sustain≤Surplus≤Deplete≤Eradicate (r={r}, B={biomass}): \
                      {takes:?}"
                 );
             }
@@ -543,7 +544,7 @@ fn the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game() {
         );
     }
     // Big-bodied (MSY < one body): waits, then kills exactly one — more often up the ladder.
-    for (policy, max_wait) in [(FollowPolicy::Sustain, 9u32), (FollowPolicy::Market, 5u32)] {
+    for (policy, max_wait) in [(FollowPolicy::Sustain, 9u32), (FollowPolicy::Deplete, 5u32)] {
         let mut app = spawn_world();
         let (herd, _o) = prime_two_stationary_herds(&mut app);
         const K: f32 = 12000.0;

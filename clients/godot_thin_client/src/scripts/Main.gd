@@ -593,7 +593,7 @@ func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
         return
-    # Optional trailing policy (sustain|surplus|market|eradicate); server defaults Sustain if omitted.
+    # Optional trailing policy (sustain|surplus|deplete|eradicate); server defaults Sustain if omitted.
     var policy := String(payload.get("policy", "")).strip_edges()
     var line := "send_hunt_expedition %d %d %d %s" % [faction, band_bits, party_workers, fauna_id]
     if policy != "":

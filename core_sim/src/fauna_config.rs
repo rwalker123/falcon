@@ -423,6 +423,15 @@ pub struct SpeciesDef {
     /// a `0` (or negative/non-finite) ratio would seat no packs at all, an incoherent predator.
     #[serde(default)]
     pub prey_ratio: f32,
+    /// **What a hunt of this species PAYS, per unit of biomass taken** (`docs/plan_hunt_yield_model.md`
+    /// §3) — the product half of *yield = product × intensity*. `#[serde(default)]` is both components
+    /// `None`, i.e. *"the `hunt.*` globals"*, so every species that omits the block is **byte-identical**
+    /// on food and trade. Resolved through the single seam [`FaunaConfig::hunt_yield_for`].
+    ///
+    /// Roster today: only `wolf` declares it (inedible, pelt-bearing). Validated per *present*
+    /// component: finite & `>= 0.0` — **zero is legal**, it is the whole point (see [`HuntYieldDef`]).
+    #[serde(default)]
+    pub hunt_yield: HuntYieldDef,
 }
 
 /// Default graze pause: one turn of grazing between hex steps (≈ half movement speed).
@@ -737,11 +746,11 @@ fn default_raid_yield_forfeit_fraction() -> f32 {
 /// geometry (band closes to `pursuit_radius` tiles).
 ///
 /// **The hunt policies are four ASCENDING MULTIPLES OF MSY** (slice 8b, `crate::fauna::hunt_policy_ceiling`):
-/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Market `market_multiplier ×`
+/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Deplete `deplete_multiplier ×`
 /// it, Eradicate everything. Ordering — and therefore *"each option takes more than the last"* — is
 /// guaranteed because all three are multiples of the same MSY base, validated
-/// `1 ≤ surplus_multiplier < market_multiplier`. Constant catch above MSY has no equilibrium, so
-/// Surplus declines a herd and Market drives it extinct — the depletion mechanic, on-map.
+/// `1 ≤ surplus_multiplier < deplete_multiplier`. Constant catch above MSY has no equilibrium, so
+/// Surplus declines a herd and Deplete drives it extinct — the depletion mechanic, on-map.
 ///
 /// **`take_fraction` / `min_take` / `take_from` stay RETIRED** — Eradicate takes the whole standing
 /// stock (clamped by carry + quantise), which is what "eradicate" means and needs no dial.
@@ -751,19 +760,19 @@ pub struct HuntConfig {
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
     /// **Surplus's take, as a multiple of MSY** — *"take extra to sell; the herd slowly declines."*
-    /// `> 1` (else it is not an overdraw) and `< market_multiplier` (else Surplus is not the gentler
+    /// `> 1` (else it is not an overdraw) and `< deplete_multiplier` (else Surplus is not the gentler
     /// policy); `FaunaConfig::validate` enforces both, because that ordering IS the panel-monotonicity
     /// the whole slice-8b revert exists to give. **Playtest dial** (ships 1.5).
     pub surplus_multiplier: f32,
-    /// **Market's take, as a multiple of MSY** — the commercial cull, `> surplus_multiplier`, which
+    /// **Deplete's take, as a multiple of MSY** — the hard draw-down, `> surplus_multiplier`, which
     /// drives a herd to extinction (constant catch this far above MSY never lets it refill). Ships 2.5.
-    pub market_multiplier: f32,
+    pub deplete_multiplier: f32,
     /// **The Surplus *expedition* raid's escapement floor, as a fraction of `K`.** A greedy hunting
     /// party (`systems::expeditions::hunt_expedition_floor`) grabs the herd's standing surplus down to
     /// a per-policy floor and comes home; the floors descend so a deeper policy leaves a leaner herd —
     /// Sustain `MSY_BIOMASS_FRACTION·K` (0.50), then Surplus `surplus_escapement_fraction·K` (0.30),
-    /// then Market `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
-    /// free dial, and `FaunaConfig::validate` pins it strictly between Market's and Sustain's.
+    /// then Deplete `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
+    /// free dial, and `FaunaConfig::validate` pins it strictly between Deplete's and Sustain's.
     /// **Expedition path ONLY** — a *resident band's* Surplus take is still the `surplus_multiplier ×
     /// MSY` rate above, untouched. Ships 0.30. **Playtest dial.**
     pub surplus_escapement_fraction: f32,
@@ -778,7 +787,7 @@ impl Default for HuntConfig {
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
             surplus_multiplier: DEFAULT_SURPLUS_MULTIPLIER,
-            market_multiplier: DEFAULT_MARKET_MULTIPLIER,
+            deplete_multiplier: DEFAULT_DEPLETE_MULTIPLIER,
             surplus_escapement_fraction: DEFAULT_SURPLUS_ESCAPEMENT_FRACTION,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
@@ -789,11 +798,197 @@ impl Default for HuntConfig {
 
 /// Surplus takes 1.5× MSY — a gentle overdraw the herd cannot quite refill.
 const DEFAULT_SURPLUS_MULTIPLIER: f32 = 1.5;
-/// Market takes 2.5× MSY — the commercial cull that drives a herd extinct.
-const DEFAULT_MARKET_MULTIPLIER: f32 = 2.5;
-/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Market's
+/// Deplete takes 2.5× MSY — the hard draw-down that grinds a herd to extinction.
+const DEFAULT_DEPLETE_MULTIPLIER: f32 = 2.5;
+/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Deplete's
 /// Allee floor (`ecology.collapse_fraction`). Expedition-only; see `HuntConfig::surplus_escapement_fraction`.
 const DEFAULT_SURPLUS_ESCAPEMENT_FRACTION: f32 = 0.30;
+
+/// **The per-species hunt-yield vector, as CONFIGURED** — *what* a hunt of this species yields, per
+/// unit of biomass taken (`docs/plan_hunt_yield_model.md`, issue #337). *How much* biomass is the
+/// **policy's** job ([`crate::fauna::hunt_policy_rate`]); the two axes are orthogonal, which is the
+/// whole point of the arc: yield is **product × intensity**, never one routed by the other.
+///
+/// Mirrors the flora roster's per-species vector (`FloraSpecies::yield`), so the two food webs stay
+/// the same shape.
+///
+/// Each component is `None` ⇒ *"use the global default"* ([`HuntConfig::provisions_per_biomass`] /
+/// [`HuntConfig::trade_goods_per_biomass`]), which is what keeps every species that omits the block
+/// byte-identical on its FOOD component. An explicit **`0.0` is a real, meaningful value** — it is
+/// how a wolf says *"you do not eat me"*. That distinction is why the fields are `Option`, not bare
+/// floats with a `0` sentinel.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HuntYieldDef {
+    pub provisions_per_biomass: Option<f32>,
+    pub trade_goods_per_biomass: Option<f32>,
+}
+
+/// **The per-species hunt-yield vector, RESOLVED** — the configured [`HuntYieldDef`] with its `None`
+/// components filled from the `hunt.*` globals. Produced by exactly one seam,
+/// [`FaunaConfig::hunt_yield_for`], so no call site re-derives the fallback.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HuntYield {
+    pub provisions_per_biomass: f32,
+    pub trade_goods_per_biomass: f32,
+}
+
+impl HuntYield {
+    /// **Is this species food?** `edible` and `tradeable` are **DERIVED, never stored** — one source
+    /// of truth (the vector), and the flags are a comparison against it. A stored `edible: bool`
+    /// beside a `provisions_per_biomass` is two statements of one fact that can drift.
+    pub fn edible(self) -> bool {
+        self.provisions_per_biomass > 0.0
+    }
+
+    /// **Is this species worth taking for trade?** See [`HuntYield::edible`] for why this is derived.
+    pub fn tradeable(self) -> bool {
+        self.trade_goods_per_biomass > 0.0
+    }
+
+    /// **The degenerate species: a pure pest, worth neither meat nor pelt.** No shipped species is
+    /// this today — the wolf trades even though it is inedible — but the picker rule
+    /// ([`crate::fauna::hunt_policies_for`]) is stated in terms of it so it derives correctly the day
+    /// one arrives, instead of being retro-fitted then.
+    pub fn yields_nothing(self) -> bool {
+        !self.edible() && !self.tradeable()
+    }
+
+    /// **THE conversion — one call that yields BOTH products.** Converting one product and forgetting
+    /// the other is the precise failure mode this arc risks across ~20 readout sites, so the two
+    /// components are never available separately from a take: you get the pair or nothing.
+    ///
+    /// `output_multiplier` is the acting band's productivity (a linear factor), applied to both
+    /// components exactly as the retired `hunt_provisions` applied it to food.
+    ///
+    /// **Do NOT invert this to count animals.** Whole-animal quantisation stays in *biomass* space —
+    /// see [`crate::fauna::quantise_animal_take`], which spells out why (`provisions_per_biomass ==
+    /// 0` makes `floor(food_ceiling / food_per_animal)` a `0/0`).
+    pub fn apply(self, biomass_take: f32, output_multiplier: f32) -> YieldPair {
+        YieldPair {
+            provisions: biomass_take * self.provisions_per_biomass * output_multiplier,
+            trade_goods: biomass_take * self.trade_goods_per_biomass * output_multiplier,
+        }
+    }
+}
+
+/// **What one take actually pays, in both currencies.** The return of [`HuntYield::apply`] — food
+/// (fully fractional, banked on the larder's `Scalar` grid) and trade goods (rounded to an integer
+/// faction stockpile by the caller).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct YieldPair {
+    pub provisions: f32,
+    pub trade_goods: f32,
+}
+
+/// **Which component of a [`YieldPair`] a RATIO is counted on.**
+///
+/// Every whole-animal count in the yield model is a *ratio* — `floor(ceiling / one animal)` — and a
+/// ratio is unit-free: taken on any component whose per-biomass rate is **positive**, it gives the
+/// same animal count, because that component is a positive linear image of biomass. Taken on a
+/// component whose rate is `0` it is a `0/0`. So a ratio never picks a component by convention; it
+/// asks [`YieldPair::ratio_axis`] which one is legal.
+///
+/// This is the operational form of `quantise_animal_take`'s warning: **never divide by a food number
+/// you have not established is positive.** A wolf counts its animals on `TradeGoods`; every edible
+/// species counts on `Provisions`, exactly as before this arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YieldAxis {
+    Provisions,
+    TradeGoods,
+}
+
+impl YieldPair {
+    /// A source that pays nothing in either currency.
+    pub const ZERO: Self = Self {
+        provisions: 0.0,
+        trade_goods: 0.0,
+    };
+
+    /// Both components scaled by the same factor — worker counts, output multipliers, and the
+    /// carried/killed share of a quantised take are all scalar, so they never touch the *mix*.
+    pub fn scale(self, factor: f32) -> Self {
+        Self {
+            provisions: self.provisions * factor,
+            trade_goods: self.trade_goods * factor,
+        }
+    }
+
+    /// Component-wise sum — accumulating a projection turn by turn. (Named `plus`, not `add`, so it
+    /// cannot be confused with `std::ops::Add::add`, which this type deliberately does not implement:
+    /// a yield pair is a pair of *rates in different currencies*, and blanket arithmetic on it invites
+    /// summing food into trade.)
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            provisions: self.provisions + other.provisions,
+            trade_goods: self.trade_goods + other.trade_goods,
+        }
+    }
+
+    /// Component-wise `min` — the continuous take's `min(collection, ceiling)`. Sound because both
+    /// operands are the same biomass put through the same rates, so the two components agree on
+    /// which side binds.
+    pub fn min(self, other: Self) -> Self {
+        Self {
+            provisions: self.provisions.min(other.provisions),
+            trade_goods: self.trade_goods.min(other.trade_goods),
+        }
+    }
+
+    /// Read one component.
+    pub fn component(self, axis: YieldAxis) -> f32 {
+        match axis {
+            YieldAxis::Provisions => self.provisions,
+            YieldAxis::TradeGoods => self.trade_goods,
+        }
+    }
+
+    /// **The axis a ratio against this pair may be counted on** — the first component with a
+    /// strictly positive value, preferring `Provisions` so every edible species keeps *exactly* the
+    /// arithmetic it had before this arc (bit-identical, not merely equivalent). `None` when the pair
+    /// is empty in both currencies: nothing to count, and nothing may divide by it.
+    pub fn ratio_axis(self) -> Option<YieldAxis> {
+        if self.provisions > 0.0 {
+            Some(YieldAxis::Provisions)
+        } else if self.trade_goods > 0.0 {
+            Some(YieldAxis::TradeGoods)
+        } else {
+            None
+        }
+    }
+
+    /// Does this pay nothing at all?
+    pub fn is_zero(self) -> bool {
+        self.ratio_axis().is_none()
+    }
+
+    /// **Rebuild a whole pair from a value measured on ONE axis**, using `self` as the reference mix:
+    /// the result reads exactly `value` on `axis` (bit-identical — no divide-then-multiply round
+    /// trip on the axis that was actually computed) and carries the other component at the same
+    /// proportion.
+    ///
+    /// This is how a quantised take crosses back from the single axis it was counted on: the animal
+    /// count is one number, and it values the same in every currency.
+    pub fn rescaled_to(self, axis: YieldAxis, value: f32) -> Self {
+        let reference = self.component(axis);
+        if reference <= 0.0 {
+            // Nothing to scale against — the caller already established a positive axis, so this is
+            // the degenerate "yields nothing" source.
+            return Self::ZERO;
+        }
+        let share = value / reference;
+        match axis {
+            YieldAxis::Provisions => Self {
+                provisions: value,
+                trade_goods: self.trade_goods * share,
+            },
+            YieldAxis::TradeGoods => Self {
+                provisions: self.provisions * share,
+                trade_goods: value,
+            },
+        }
+    }
+}
 
 /// Ecology tuning: per-turn **critical-depensation** biomass dynamics toward each
 /// species' carrying cap. Above the Allee threshold (`collapse_fraction * cap`) the
@@ -809,8 +1004,8 @@ pub struct EcologyConfig {
     pub regrowth_rate: f32,
     /// Allee threshold as a fraction of carrying capacity. Below `collapse_fraction *
     /// cap` the group collapses (depensation) instead of regrowing — the overhunting point of no
-    /// return that turns Surplus/Market's steady overdraw into an irreversible crash. (It **used** to
-    /// double as Market's escapement floor; slice 8b made the hunt policies multiples of MSY, so this
+    /// return that turns Surplus/Deplete's steady overdraw into an irreversible crash. (It **used** to
+    /// double as Deplete's escapement floor; slice 8b made the hunt policies multiples of MSY, so this
     /// is once again only the depensation threshold.)
     pub collapse_fraction: f32,
     /// Per-turn fractional decline of a collapsing (sub-threshold) group.
@@ -1128,30 +1323,16 @@ const DEFAULT_PEN_UPKEEP_PER_BIOMASS: f32 = 0.002;
 /// a remnant.
 const DEFAULT_PEN_STARVE_SHRINK_RATE: f32 = 0.10;
 
-/// Market-hunting tuning: the commercial Follow policy sells its take, yielding
-/// `trade_goods_multiplier`× the normal trade-goods rate. The heavy take drives the group past the
-/// Allee threshold into the depensation collapse (no separate depletion state — pure ecology reuse).
-///
-/// Market-hunting tuning: the commercial Follow policy sells its take at `trade_goods_multiplier`×
-/// the normal trade-goods rate.
-///
-/// **`take_fraction` stays RETIRED.** Market's *take* is `hunt.market_multiplier × MSY` (2.5× — the
-/// commercial cull that drives a herd extinct; see [`HuntConfig`] / [`crate::fauna::hunt_policy_ceiling`]).
-/// What distinguishes Market from Surplus is *how hard it takes*; what this block still owns is what
-/// Market does with the meat — `trade_goods_multiplier`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct MarketConfig {
-    pub trade_goods_multiplier: f32,
-}
-
-impl Default for MarketConfig {
-    fn default() -> Self {
-        Self {
-            trade_goods_multiplier: 4.0,
-        }
-    }
-}
+// **RETIRED: the `market` block and its `trade_goods_multiplier`** (`docs/plan_hunt_yield_model.md`
+// §3, issue #337). It paid the `Deplete` rung 4× the base trade rate, which **re-welds product to
+// policy** — exactly what this arc removes. `Deplete` already earns more trade than `Sustain`
+// because it *takes* 2.5× more biomass: that is the intensity ladder doing the work, and the
+// per-species [`HuntYieldDef`] is the only thing that decides what a take is worth.
+//
+// **A deliberate rebalance, not a no-op:** a `Deplete` hunt's trade-per-biomass drops 4×, while
+// `Sustain`/`Surplus`/`Eradicate` gain a trade component they never had.
+//
+// `take_fraction` stayed retired before this and is gone with the block.
 
 /// **The graze (pasture) layer** — the land's *animal-edible* vegetal stock (grass, browse, forbs),
 /// distinct from the human-edible `ForagePatch.biomass` (seeds/nuts/tubers) on food-module tiles.
@@ -1254,7 +1435,6 @@ pub struct FaunaConfig {
     pub follow: FollowConfig,
     pub immigration: ImmigrationConfig,
     pub husbandry: HusbandryConfig,
-    pub market: MarketConfig,
     /// The per-biome graze (pasture) layer — see [`GrazeConfig`].
     pub graze: GrazeConfig,
     /// The dedicated predator pass + prey-limited ecology tuning (Predators Phase 1a) —
@@ -1378,12 +1558,12 @@ impl FaunaConfig {
 
         // --- **THE HUNT POLICY ORDERING INVARIANT** (slice 8b, `crate::fauna::hunt_policy_ceiling`).
         //
-        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Market <
+        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Deplete <
         // Eradicate (everything). Ordering — *"each option takes more than the last"* — is guaranteed
-        // because Surplus/Market are multiples of the SAME base, so the only two dials that can break
-        // it are `surplus_multiplier` and `market_multiplier`. Each has a rejection test.
+        // because Surplus/Deplete are multiples of the SAME base, so the only two dials that can break
+        // it are `surplus_multiplier` and `deplete_multiplier`. Each has a rejection test.
         //   - `surplus_multiplier ≥ 1`: Surplus must out-take Sustain (whose ceiling is capped at MSY).
-        //   - `surplus_multiplier < market_multiplier`: Surplus must be the *gentler* extraction.
+        //   - `surplus_multiplier < deplete_multiplier`: Surplus must be the *gentler* extraction.
         require_greater_than(
             "hunt.surplus_multiplier",
             self.hunt.surplus_multiplier,
@@ -1391,23 +1571,23 @@ impl FaunaConfig {
             MAX_FRACTION,
         )?;
         require_greater_than(
-            "hunt.market_multiplier",
-            self.hunt.market_multiplier,
-            "hunt.surplus_multiplier (Market must out-take Surplus)",
+            "hunt.deplete_multiplier",
+            self.hunt.deplete_multiplier,
+            "hunt.surplus_multiplier (Deplete must out-take Surplus)",
             self.hunt.surplus_multiplier,
         )?;
 
         // --- **THE EXPEDITION RAID FLOOR ORDERING** (the greedy hunting raid,
         // `systems::expeditions::hunt_expedition_floor`). A hunting party grabs the herd's standing
         // surplus down to a per-policy floor: Sustain `MSY_BIOMASS_FRACTION·K` > Surplus
-        // `surplus_escapement_fraction·K` > Market `collapse_fraction·K` > Eradicate `0`. Only Surplus's
-        // floor is tunable, and it must sit STRICTLY between Market's and Sustain's — otherwise a deeper
-        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Market
+        // `surplus_escapement_fraction·K` > Deplete `collapse_fraction·K` > Eradicate `0`. Only Surplus's
+        // floor is tunable, and it must sit STRICTLY between Deplete's and Sustain's — otherwise a deeper
+        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Deplete
         // raid deeper"). Each bound has a rejection test.
         require_greater_than(
             "hunt.surplus_escapement_fraction",
             self.hunt.surplus_escapement_fraction,
-            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Market)",
+            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Deplete)",
             self.ecology.collapse_fraction,
         )?;
         if !self.hunt.surplus_escapement_fraction.is_finite()
@@ -1451,6 +1631,23 @@ impl FaunaConfig {
                 species_field("fodder_per_biomass"),
                 def.fodder_per_biomass,
             )?;
+            // **The hunt-yield vector** (`docs/plan_hunt_yield_model.md` §3). Only *present*
+            // components are bounded — an omitted one is the global, already bounded above — and the
+            // bound is `>= 0`, **not** `> 0`: a `0.0` is the meaningful "you do not eat me" (the wolf),
+            // which is exactly what the `Option` exists to distinguish from "unset". A negative or
+            // non-finite rate would pay a negative take or NaN the larder.
+            if let Some(provisions) = def.hunt_yield.provisions_per_biomass {
+                require_non_negative_finite(
+                    species_field("hunt_yield.provisions_per_biomass"),
+                    provisions,
+                )?;
+            }
+            if let Some(trade_goods) = def.hunt_yield.trade_goods_per_biomass {
+                require_non_negative_finite(
+                    species_field("hunt_yield.trade_goods_per_biomass"),
+                    trade_goods,
+                )?;
+            }
             if let Some(regrowth_rate) = def.regrowth_rate {
                 require_positive_finite(species_field("regrowth_rate"), regrowth_rate)?;
             }
@@ -1626,15 +1823,8 @@ impl FaunaConfig {
         // when the earn path became one rung-driven seam. Both bounds now hold for BOTH webs from a
         // single statement, instead of each web restating its own copy.)
 
-        // --- Follow / market / immigration (ported from the builtin-only unit assertions).
-        // --- Market's trade rate (its take is an escapement floor now — see the ecology block).
-
-        require_greater_than(
-            "market.trade_goods_multiplier",
-            self.market.trade_goods_multiplier,
-            "the base trade rate",
-            MAX_FRACTION,
-        )?;
+        // --- Follow / immigration (ported from the builtin-only unit assertions). The `market`
+        // block's trade multiplier is **retired** — see the `MarketConfig` gravestone above.
         require_in_unit_range(
             "immigration.chance_per_turn",
             self.immigration.chance_per_turn,
@@ -1699,6 +1889,34 @@ impl FaunaConfig {
     pub fn animals_per_herder_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
+    }
+
+    /// **The species' resolved hunt-yield vector** ([`SpeciesDef::hunt_yield`]) — *what* a take of this
+    /// species pays, per unit of biomass. **THE single seam**: no call site may read
+    /// `hunt.provisions_per_biomass` / `hunt.trade_goods_per_biomass` for a *take* directly, because the
+    /// `None ⇒ global` fallback must be stated exactly once (a second copy is how a wolf starts paying
+    /// meat on one path and pelts on another).
+    ///
+    /// Resolved **live** by display name, the [`FaunaConfig::taming_rate_for`] path, so a retune reaches
+    /// herds already on the map and it needs no snapshot field.
+    ///
+    /// An **unknown species key is a config bug, not a runtime case** — but a test fixture may legally
+    /// carry a synthetic species name, and the sibling resolvers all document that case as reading the
+    /// default. So an unresolvable name falls back to the globals (a release build still pays something
+    /// rather than silently zeroing a herd's yield) and is **not** a panic.
+    pub fn hunt_yield_for(&self, display: &str) -> HuntYield {
+        let configured = self
+            .species_by_display(display)
+            .map(|def| def.hunt_yield)
+            .unwrap_or_default();
+        HuntYield {
+            provisions_per_biomass: configured
+                .provisions_per_biomass
+                .unwrap_or(self.hunt.provisions_per_biomass),
+            trade_goods_per_biomass: configured
+                .trade_goods_per_biomass
+                .unwrap_or(self.hunt.trade_goods_per_biomass),
+        }
     }
 
     /// **The species' pastoral density gain** ([`SpeciesDef::pastoral_density`]), resolved by the
@@ -2014,7 +2232,7 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
 
 // NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
 // dials it was the only caller of. The hunt axis is four **ordered multiples of MSY** now
-// (`hunt.surplus_multiplier` / `market_multiplier`, both `> 1`, so *out* of the unit range), and an
+// (`hunt.surplus_multiplier` / `deplete_multiplier`, both `> 1`, so *out* of the unit range), and an
 // ordering is a stronger statement than a range: `require_greater_than` chains them so a multiplier
 // cannot be individually "in range" yet out of order. See `fauna::hunt_policy_ceiling`.
 
@@ -2350,7 +2568,7 @@ mod tests {
     /// **THE HUNT AXIS'S ORDERING INVARIANT, on the shipped multipliers** — *"each option takes more
     /// than the last."* Asserted as the multiplier ordering, where the guarantee lives: ascending
     /// multiples of the same MSY base ⇒ ascending takes at every biomass, for every species. (The
-    /// full take sweep across biomass × species is `fauna_market::hunt_policy_takes_are_strictly_
+    /// full take sweep across biomass × species is `fauna_deplete::hunt_policy_takes_are_strictly_
     /// ordered_at_every_biomass`.)
     #[test]
     fn the_shipped_hunt_multipliers_are_ordered() {
@@ -2361,10 +2579,10 @@ mod tests {
             hunt.surplus_multiplier
         );
         assert!(
-            hunt.surplus_multiplier < hunt.market_multiplier,
-            "Market must out-take Surplus: {} vs {}",
+            hunt.surplus_multiplier < hunt.deplete_multiplier,
+            "Deplete must out-take Surplus: {} vs {}",
             hunt.surplus_multiplier,
-            hunt.market_multiplier
+            hunt.deplete_multiplier
         );
     }
 
@@ -2379,19 +2597,19 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_a_market_multiplier_at_or_below_surplus() {
-        // Market must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
-        let err = reject(|json| json["hunt"]["market_multiplier"] = (1.5).into());
-        assert_rejects_field(err, "hunt.market_multiplier");
+    fn validate_rejects_a_deplete_multiplier_at_or_below_surplus() {
+        // Deplete must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
+        let err = reject(|json| json["hunt"]["deplete_multiplier"] = (1.5).into());
+        assert_rejects_field(err, "hunt.deplete_multiplier");
     }
 
     /// **The expedition raid floor ordering is REJECTED at both bounds** — the greedy raid
     /// (`systems::expeditions`) leaves a leaner herd for a deeper policy only if
     /// `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`.
     #[test]
-    fn validate_rejects_a_surplus_escapement_at_or_below_the_market_floor() {
-        // At/below Market's collapse floor, a Surplus raid would leave the *same or leaner* herd as
-        // Market — the ordering inverts.
+    fn validate_rejects_a_surplus_escapement_at_or_below_the_deplete_floor() {
+        // At/below Deplete's collapse floor, a Surplus raid would leave the *same or leaner* herd as
+        // Deplete — the ordering inverts.
         let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.15).into());
         assert_rejects_field(err, "hunt.surplus_escapement_fraction");
     }
@@ -2466,6 +2684,97 @@ mod tests {
             FaunaConfigError::Invalid { field, .. } => assert_eq!(field, expected),
             other => panic!("expected an Invalid error for {expected}, got {other:?}"),
         }
+    }
+
+    /// **The per-species hunt-yield vector is REJECTED per component** (`docs/plan_hunt_yield_model.md`
+    /// §3) — one rejection per component, in the `validate_rejects_a_deplete_multiplier_at_or_below_
+    /// surplus` style, because a negative or non-finite rate would pay a negative take or NaN the
+    /// larder and neither shows up as a compile error.
+    #[test]
+    fn validate_rejects_a_negative_species_hunt_yield_provisions() {
+        let err = reject(|json| {
+            json["species"]["deer"]["hunt_yield"] =
+                serde_json::json!({ "provisions_per_biomass": -0.01 })
+        });
+        assert_rejects_field(err, "species.deer.hunt_yield.provisions_per_biomass");
+    }
+
+    #[test]
+    fn validate_rejects_a_negative_species_hunt_yield_trade_goods() {
+        let err = reject(|json| {
+            json["species"]["deer"]["hunt_yield"] =
+                serde_json::json!({ "trade_goods_per_biomass": -0.01 })
+        });
+        assert_rejects_field(err, "species.deer.hunt_yield.trade_goods_per_biomass");
+    }
+
+    /// **ZERO IS LEGAL, and it is the whole point** — it is how a wolf says *"you do not eat me"*, and
+    /// the reason the components are `Option<f32>` rather than floats with a `0` sentinel. A
+    /// `> 0` bound here would make the inedible species unrepresentable.
+    #[test]
+    fn a_zero_hunt_yield_component_is_accepted_and_reads_as_inedible() {
+        let config = FaunaConfig::builtin();
+        assert!(config.validate().is_ok());
+        let wolf = config.hunt_yield_for("Grey Wolf Pack");
+        assert_eq!(wolf.provisions_per_biomass, 0.0);
+        assert!(!wolf.edible(), "a wolf is not food");
+        assert!(wolf.tradeable(), "a wolf is a pelt");
+        assert!(!wolf.yields_nothing());
+    }
+
+    /// **An omitted block falls back to the globals, on BOTH components** — the property that keeps
+    /// every species but the wolf byte-identical across this arc.
+    #[test]
+    fn an_omitted_hunt_yield_reads_the_globals() {
+        let config = FaunaConfig::builtin();
+        let deer = config.hunt_yield_for("Red Deer");
+        assert_eq!(
+            deer.provisions_per_biomass,
+            config.hunt.provisions_per_biomass
+        );
+        assert_eq!(
+            deer.trade_goods_per_biomass,
+            config.hunt.trade_goods_per_biomass
+        );
+        // An unresolvable name (a synthetic test fixture) reads the same globals rather than zeroing
+        // a herd's yield — the `taming_rate_for`/`animals_per_herder_for` contract.
+        assert_eq!(config.hunt_yield_for("No Such Beast"), deer);
+    }
+
+    /// **The wolf's `0.02` is ANCHORED, not arbitrary** — it is exactly what the retired commercial
+    /// rate paid (`hunt.trade_goods_per_biomass` 0.005 × the retired `market.trade_goods_multiplier`
+    /// 4.0), so one unit of wolf biomass is worth what one unit of commercially-hunted biomass was
+    /// worth before this arc. Pinned against the *live* base rate so a retune of the base is a
+    /// deliberate decision here rather than a silent drift.
+    #[test]
+    fn the_wolf_pelt_rate_is_the_retired_commercial_rate() {
+        /// The retired `market.trade_goods_multiplier` the anchor is derived from.
+        const RETIRED_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
+        let config = FaunaConfig::builtin();
+        let wolf = config.hunt_yield_for("Grey Wolf Pack");
+        assert!(
+            (wolf.trade_goods_per_biomass
+                - config.hunt.trade_goods_per_biomass * RETIRED_TRADE_GOODS_MULTIPLIER)
+                .abs()
+                < 1e-9,
+            "the wolf pelt rate must stay anchored to the retired commercial rate: {} vs {}",
+            wolf.trade_goods_per_biomass,
+            config.hunt.trade_goods_per_biomass * RETIRED_TRADE_GOODS_MULTIPLIER
+        );
+    }
+
+    /// **`apply` converts BOTH products in one call** — the property that makes it impossible to
+    /// convert the meat and forget the pelt across ~20 readout sites.
+    #[test]
+    fn apply_scales_both_components_by_the_take_and_the_output_multiplier() {
+        let hy = HuntYield {
+            provisions_per_biomass: 0.02,
+            trade_goods_per_biomass: 0.005,
+        };
+        let paid = hy.apply(100.0, 2.0);
+        assert!((paid.provisions - 4.0).abs() < 1e-6, "{paid:?}");
+        assert!((paid.trade_goods - 1.0).abs() < 1e-6, "{paid:?}");
+        assert_eq!(hy.apply(0.0, 1.0), YieldPair::default());
     }
 
     /// `tiles_per_herd` is a **divisor** (`area / tiles_per_herd`), so a `0` is the one value with no

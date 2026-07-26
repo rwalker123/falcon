@@ -262,7 +262,7 @@ paths:
       `band_growth_unprojected` (a rehydrated band: NO Growth row). band_panel_preview:
       `band_panel_morale_expanded_*` carries the collapsed Growth row in the dock host.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
-    persistent Hunt/Follow policy tooltips (Sustain/Surplus/Market/Eradicate get `MORALE_HINT_PERSISTENT`
+    persistent Hunt/Follow policy tooltips (Sustain/Surplus/Deplete/Eradicate get `MORALE_HINT_PERSISTENT`
     appended, "(+morale/turn)") advertise the positive levers; the one-shot Single policy does not.
 - **Tile-card Habitability** (snapshot `TileState.habitability`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `habitability` (raw Scalar/1e6; band-independent per-turn morale drain of the tile's

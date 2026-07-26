@@ -63,9 +63,7 @@ pub fn advance_labor_allocation(
     let combat_tuning = configs.combat.get().tuning();
     let person_profile = configs.creatures.get().person();
     let map_seed = sim_config.map_seed;
-    let hunt = &fauna.hunt;
     let husbandry = &fauna.husbandry;
-    let market = &fauna.market;
     let work_range = labor.band_work_range;
     let hunt_reach = labor.hunt_reach();
     // The forward-projection horizon for each source's steady `realized` yield: `realized` is the
@@ -310,7 +308,7 @@ pub fn advance_labor_allocation(
                     //
                     // Knowledge is all that is earned here — working a patch never *tames* it:
                     // cultivation is an explicit `Cultivate` policy with an investment cost (below).
-                    // The seam owns the §4.2 stewardship rule (Surplus/Market/Eradicate teach
+                    // The seam owns the §4.2 stewardship rule (Surplus/Deplete/Eradicate teach
                     // nothing); `eligible` carries the health gate — **you learn from a healthy
                     // source** — which is the shipped `Thriving` requirement, unchanged.
                     if let Some(knowledge) = patch_rung(patch, &ladder)
@@ -394,14 +392,14 @@ pub fn advance_labor_allocation(
                         // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
                         // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
                         // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
-                        // FactionInventory, exactly as the Market-forage arm's wild sale does.
+                        // FactionInventory, exactly as the Deplete-forage arm's wild sale does.
                         let trade_production =
                             field_trade_goods(patch, &labor.forage, &flora, mult_f);
                         let trade_collection = workers as f32
                             * managed_per_worker_trade(patch, &labor.forage, &flora, mult_f);
                         let trade_goods = (trade_production.min(trade_collection)).round() as i64;
                         if trade_goods > 0 {
-                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                         }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
@@ -421,6 +419,10 @@ pub fn advance_labor_allocation(
                         );
                         yields[idx] = SourceYield {
                             actual: paid,
+                            // A cash crop's harvest really does sell (Flora Roster F4) — the same
+                            // `min(production, collection)` the trade stockpile was credited with.
+                            trade: trade_production.min(trade_collection),
+                            realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                             // A managed harvest never draws the stock down, so it can never overdraw.
                             sustainable: paid,
                             // The forward-projected steady headline (computed pre-take above).
@@ -530,18 +532,22 @@ pub fn advance_labor_allocation(
                             *tile,
                         );
                     }
-                    // Market forage = gathered goods sold: convert the raw take to trade goods
-                    // (mirror of the Hunt-Market arm). Only Market sells — Sustain/Surplus/Eradicate
-                    // produce no trade goods (Eradicate is denial, not commerce).
-                    if matches!(policy, FollowPolicy::Market) {
+                    // Deplete forage = gathered goods sold: convert the raw take to trade goods
+                    // (mirror of the Hunt-Deplete arm). Only Deplete sells — Sustain/Surplus/Eradicate
+                    // produce no trade goods (Eradicate is denial, not commerce). The `forage.market.*`
+                    // config block keeps its old name pending the plant-side pass.
+                    let forage_trade = if matches!(policy, FollowPolicy::Deplete) {
                         let forage_market = &labor.forage.market;
-                        let trade_goods = (take
-                            * forage_market.trade_goods_per_biomass
+                        take * forage_market.trade_goods_per_biomass
                             * forage_market.trade_goods_multiplier
-                            * mult_f)
-                            .round() as i64;
+                            * mult_f
+                    } else {
+                        0.0
+                    };
+                    {
+                        let trade_goods = forage_trade.round() as i64;
                         if trade_goods > 0 {
-                            inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                         }
                     }
                     // Sustainable = one turn's MSY of the patch at its **pre-take** biomass, in
@@ -593,6 +599,14 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
+                        // **The other currency this gather produced.** Only a `Deplete` gather sells,
+                        // so this is `0` on the other rungs. Never summed into `food_income`
+                        // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
+                        trade: forage_trade,
+                        // The plant web's steady TRADE projection is #337's known gap — see
+                        // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`. The trade a gather
+                        // *actually* earned is reported above; only the projection is missing.
+                        realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                         sustainable,
                         // The forward-projected steady headline (computed pre-take above).
                         realized: forage_realized,
@@ -604,7 +618,7 @@ pub fn advance_labor_allocation(
                         ),
                         workers_needed,
                         // Plants stay flow-based (slice 8), so the wild/tended gather ⚠ is unchanged:
-                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Market/Eradicate
+                        // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Deplete/Eradicate
                         // draw the patch down.
                         overdraws: policy.overdraws(),
                     };
@@ -854,10 +868,21 @@ pub fn advance_labor_allocation(
                         let take =
                             fauna::quantise_animal_take(production, collection, herd.body_mass);
                         herd.biomass -= take.killed_biomass();
-                        let provisions =
-                            scalar_from_f32(hunt_provisions(take.carried, &fauna, mult_f));
+                        // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
+                        // this herd's own species vector, so a penned wolf yields pelts and no meat
+                        // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
+                        let pen_yield = herd_hunt_yield(herd, &fauna);
+                        let paid = pen_yield.apply(take.carried, mult_f);
+                        let provisions = scalar_from_f32(paid.provisions);
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
+                        }
+                        // Trade goods are a FACTION-level integer commodity, so — unlike FOOD — they
+                        // credit `FactionInventory`. Scaled off what was **carried home**, like the
+                        // food beside it.
+                        let pen_trade = paid.trade_goods.round() as i64;
+                        if pen_trade > 0 {
+                            inventory.add_stockpile(faction, TRADE_GOODS, pen_trade);
                         }
                         let tended = provisions.to_f32();
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
@@ -906,12 +931,15 @@ pub fn advance_labor_allocation(
                         );
                         yields[idx] = SourceYield {
                             actual: tended,
+                            // A penned wolf pays pelts; the pen changes the intensity, not the product.
+                            trade: paid.trade_goods,
+                            realized_trade: hunt_realized.trade_goods,
                             sustainable: tended,
                             // The forward-projected steady headline (computed pre-take above; a pen
                             // projects its managed yield, already smooth).
-                            realized: hunt_realized,
+                            realized: hunt_realized.provisions,
                             arrivals,
-                            wasted: hunt_provisions(take.wasted, &fauna, mult_f),
+                            wasted: pen_yield.apply(take.wasted, mult_f).provisions,
                             // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
                             // peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off the pen's
@@ -946,7 +974,13 @@ pub fn advance_labor_allocation(
                         &ladder,
                         f32::INFINITY,
                     );
-                    let provisions = scalar_from_f32(hunt_provisions(take.carried, &fauna, mult_f));
+                    // **THE take's yield: product × intensity** (`docs/plan_hunt_yield_model.md`).
+                    // `hunt_take` above decided HOW MUCH biomass came home (the policy's job); the
+                    // species' `HuntYield` decides WHAT that biomass is worth, in one call that
+                    // yields both products so neither can be converted without the other.
+                    let hunt_yield = herd_hunt_yield(herd, &fauna);
+                    let paid = hunt_yield.apply(take.carried, mult_f);
+                    let provisions = scalar_from_f32(paid.provisions);
                     // **Tame — the investment policy** (the animal twin of Cultivate, and the rung
                     // below Corral). The crew is gentling the herd, not hunting it: `hunt_take`
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
@@ -1042,22 +1076,21 @@ pub fn advance_labor_allocation(
                             }
                         }
                     }
-                    let trade_multiplier = if matches!(policy, FollowPolicy::Market) {
-                        market.trade_goods_multiplier
-                    } else {
-                        1.0
-                    };
+                    // **EVERY extractive rung sells, including Eradicate.** The retired 4×
+                    // `market.trade_goods_multiplier` on the Deplete rung re-welded product to
+                    // policy — the thing this arc removes. Deplete still out-earns Sustain on trade,
+                    // because it *takes* 2.5× more biomass: that is the intensity ladder doing the
+                    // work, not a per-rung bonus.
+                    //
                     // FOOD income is fully fractional; trade goods stay integer → FactionInventory.
-                    // Scaled off the meat actually **carried home**, not the animals killed: you
+                    // Both scale off the meat actually **carried home**, not the animals killed: you
                     // cannot trade a hide you left on the range.
-                    let trade_goods =
-                        (take.carried * hunt.trade_goods_per_biomass * trade_multiplier * mult_f)
-                            .round() as i64;
+                    let trade_goods = paid.trade_goods.round() as i64;
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
                     if trade_goods > 0 {
-                        inventory.add_stockpile(faction, "trade_goods", trade_goods);
+                        inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
                     }
                     // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
                     // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×
@@ -1070,12 +1103,16 @@ pub fn advance_labor_allocation(
                     // average ("this herd sustains ~0.78/turn"), and whether the take **overdraws** is
                     // answered by the policy's own floor (`overdraws` below) instead of by comparing
                     // the two. See `SourceYield`.
-                    let sustainable = sustainable_yield(
-                        biomass_before,
-                        herd_capacity(herd, &fauna),
-                        &herd_ecology(herd, &fauna),
-                    ) * hunt.provisions_per_biomass
-                        * mult_f;
+                    let sustainable = hunt_yield
+                        .apply(
+                            sustainable_yield(
+                                biomass_before,
+                                herd_capacity(herd, &fauna),
+                                &herd_ecology(herd, &fauna),
+                            ),
+                            mult_f,
+                        )
+                        .provisions;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the
                     // carried biomass by the per-hunter throughput (hunt has no seasonal factor,
                     // unlike forage). **Understaffing** (`wasted`): the meat the crew killed but could
@@ -1129,13 +1166,17 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
+                        // **The other currency this take produced.** Never summed into `food_income`
+                        // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
+                        trade: paid.trade_goods,
+                        realized_trade: hunt_realized.trade_goods,
                         sustainable,
-                        wasted: hunt_provisions(take.wasted, &fauna, mult_f),
+                        wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
                         workers_needed,
                         overdraws: policy.overdraws(),
                         // The forward-projected steady headline (computed pre-take above): rate-based,
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
-                        realized: hunt_realized,
+                        realized: hunt_realized.provisions,
                         arrivals,
                     };
                     // **Predators Phase 0 — the hunt turns dangerous** (`docs/plan_predators.md`).
@@ -1787,7 +1828,6 @@ mod labor_yield_tests {
         FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, SourceYield, Tile,
     };
-    use crate::fauna::hunt_provisions;
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
         SourceYieldForecast, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID,
@@ -2337,25 +2377,25 @@ mod labor_yield_tests {
         );
     }
 
-    /// A higher-take policy needs more workers on the **same** resource: Market/Eradicate draw a large
+    /// A higher-take policy needs more workers on the **same** resource: Deplete/Eradicate draw a large
     /// biomass fraction, so their inverted worker count exceeds Sustain's MSY skim on identical full
     /// patches.
     #[test]
-    fn market_and_eradicate_need_more_workers_than_sustain() {
+    fn deplete_and_eradicate_need_more_workers_than_sustain() {
         let sustain = forage_workers_needed(FollowPolicy::Sustain);
-        let market = forage_workers_needed(FollowPolicy::Market);
+        let deplete = forage_workers_needed(FollowPolicy::Deplete);
         let eradicate = forage_workers_needed(FollowPolicy::Eradicate);
         assert!(
-            market > sustain,
-            "market's larger take needs more workers: {market} vs {sustain}"
+            deplete > sustain,
+            "deplete's larger take needs more workers: {deplete} vs {sustain}"
         );
         assert!(
             eradicate > sustain,
             "eradicate's larger take needs more workers: {eradicate} vs {sustain}"
         );
         assert!(
-            eradicate >= market,
-            "eradicate's ceiling is ≥ market's: {eradicate} vs {market}"
+            eradicate >= deplete,
+            "eradicate's ceiling is ≥ deplete's: {eradicate} vs {deplete}"
         );
     }
 
@@ -2444,11 +2484,9 @@ mod labor_yield_tests {
             let world_labor = world.resource::<LaborConfigHandle>().get();
             let registry = world.resource::<HerdRegistry>();
             let herders = crate::fauna::herd_herders_needed(&registry.herds[0], &world_fauna);
-            let per_worker = hunt_provisions(
-                world_labor.hunt.per_worker_biomass_capacity,
-                &world_fauna,
-                1.0,
-            );
+            let per_worker = crate::fauna::herd_hunt_yield(&registry.herds[0], &world_fauna)
+                .apply(world_labor.hunt.per_worker_biomass_capacity, 1.0)
+                .provisions;
             (herders, (corral.actual / per_worker).ceil() as u32)
         };
         assert!(
@@ -2511,9 +2549,9 @@ mod labor_yield_tests {
                 1.0,
             );
             let haul = crate::fauna::hunt_haul_workers(
-                forecast.ceiling_for(FollowPolicy::Tame),
-                forecast.body_mass_yield,
-                forecast.per_worker_yield,
+                forecast.ceiling_for(FollowPolicy::Tame).provisions,
+                forecast.body_mass_yield.provisions,
+                forecast.per_worker_yield.provisions,
             );
             (haul, crate::fauna::herd_herders_needed(herd, &fauna))
         };
@@ -2652,20 +2690,20 @@ mod labor_yield_tests {
     /// `actual` cannot be compared to it turn by turn (a kill cashes a whole banked animal and spikes
     /// above MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized`
     /// IS comparable: a **Sustain** hunt projects `≈ sustainable` (stable at K/2), an overhunting
-    /// **Surplus/Market** hunt projects *above* it — and, because the projection simulates the herd
-    /// declining under the overdraw, **Market projects BELOW its naive `2.5×MSY` steady rate** (the
+    /// **Surplus/Deplete** hunt projects *above* it — and, because the projection simulates the herd
+    /// declining under the overdraw, **Deplete projects BELOW its naive `2.5×MSY` steady rate** (the
     /// stock runs out inside the horizon), the honest reading the instantaneous rate could not give.
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
         let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
         let surplus = slow_breeder_hunt_policy(FollowPolicy::Surplus);
-        let market = slow_breeder_hunt_policy(FollowPolicy::Market);
+        let deplete = slow_breeder_hunt_policy(FollowPolicy::Deplete);
 
         // `sustainable` is MSY, the same under every policy (it is the reference, not the take).
         assert!(
             (sustain.sustainable - surplus.sustainable).abs() < 1e-6
-                && (sustain.sustainable - market.sustainable).abs() < 1e-6,
-            "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {market:?}"
+                && (sustain.sustainable - deplete.sustainable).abs() < 1e-6,
+            "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {deplete:?}"
         );
         // Sustain projects ~its sustainable MSY (a Sustain hunt holds the herd at K/2 and does not
         // overdraw, so the whole horizon pays MSY).
@@ -2679,19 +2717,19 @@ mod labor_yield_tests {
             "Surplus projects above the sustainable MSY (the honest overhunt rate): {surplus:?}"
         );
         assert!(
-            market.realized > surplus.realized,
-            "Market projects deeper than Surplus: {market:?} {surplus:?}"
+            deplete.realized > surplus.realized,
+            "Deplete projects deeper than Surplus: {deplete:?} {surplus:?}"
         );
-        // The projection SEES THE DECLINE: Market drives the herd out within the horizon, so its
-        // average is strictly below the naive instantaneous `market_multiplier × MSY` steady rate — the
+        // The projection SEES THE DECLINE: Deplete drives the herd out within the horizon, so its
+        // average is strictly below the naive instantaneous `deplete_multiplier × MSY` steady rate — the
         // honest reading the old instantaneous rate could not produce. MSY = `sustainable` (both are
-        // `hunt_provisions(peak_regrowth)` above K/2), so the naive Market rate is `2.5 × sustainable`.
-        let naive_market_rate =
-            FaunaConfigHandle::default().get().hunt.market_multiplier * market.sustainable;
+        // `HuntYield::apply(peak_regrowth)` above K/2), so the naive Deplete rate is `2.5 × sustainable`.
+        let naive_deplete_rate =
+            FaunaConfigHandle::default().get().hunt.deplete_multiplier * deplete.sustainable;
         assert!(
-            market.realized > 0.0 && market.realized < naive_market_rate,
-            "Market projects below its naive {naive_market_rate} steady rate (sees the decline): \
-             {market:?}"
+            deplete.realized > 0.0 && deplete.realized < naive_deplete_rate,
+            "Deplete projects below its naive {naive_deplete_rate} steady rate (sees the decline): \
+             {deplete:?}"
         );
     }
 
@@ -2835,9 +2873,9 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
             );
-            let ceiling = forecast.ceiling_for(FollowPolicy::Sustain);
-            let food_per_animal = forecast.body_mass_yield;
-            let per_worker_yield = forecast.per_worker_yield;
+            let ceiling = forecast.ceiling_for(FollowPolicy::Sustain).provisions;
+            let food_per_animal = forecast.body_mass_yield.provisions;
+            let per_worker_yield = forecast.per_worker_yield.provisions;
             let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
                 / per_worker_yield)
                 .ceil()) as u32;
@@ -2888,7 +2926,7 @@ mod labor_yield_tests {
     const FORAGE_POLICIES: [FollowPolicy; 5] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
         FollowPolicy::Cultivate,
     ];
@@ -2897,7 +2935,7 @@ mod labor_yield_tests {
     const HUNT_POLICIES: [FollowPolicy; 5] = [
         FollowPolicy::Sustain,
         FollowPolicy::Surplus,
-        FollowPolicy::Market,
+        FollowPolicy::Deplete,
         FollowPolicy::Eradicate,
         FollowPolicy::Corral,
     ];
@@ -2906,12 +2944,13 @@ mod labor_yield_tests {
     /// shared helper — the *same* one the assign-time telemetry seed uses — so these tests pin the
     /// number the client shows, not a re-derivation of it.
     fn expected_yield(forecast: &SourceYieldForecast, workers: u32, policy: FollowPolicy) -> f32 {
-        forecast_expected_take(forecast, workers, policy)
+        forecast_expected_take(forecast, workers, policy).provisions
     }
 
     /// The client's worker-stepper cap.
     fn max_useful_workers(forecast: &SourceYieldForecast, policy: FollowPolicy) -> u32 {
-        (forecast.ceiling_for(policy) / forecast.per_worker_yield).ceil() as u32
+        (forecast.ceiling_for(policy).provisions / forecast.per_worker_yield.provisions).ceil()
+            as u32
     }
 
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
@@ -2972,8 +3011,8 @@ mod labor_yield_tests {
                 world.run_system_once(advance_labor_allocation);
                 let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
-                let labor_term = workers as f32 * forecast.per_worker_yield;
-                let ceiling = forecast.ceiling_for(policy);
+                let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
+                let ceiling = forecast.ceiling_for(policy).provisions;
                 if labor_term < ceiling {
                     saw_labor_bound = true;
                 } else {
@@ -3052,8 +3091,8 @@ mod labor_yield_tests {
                 world.run_system_once(advance_labor_allocation);
                 let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
-                let labor_term = workers as f32 * forecast.per_worker_yield;
-                let ceiling = forecast.ceiling_for(policy);
+                let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
+                let ceiling = forecast.ceiling_for(policy).provisions;
                 if labor_term < ceiling {
                     saw_labor_bound = true;
                 } else {
@@ -3138,15 +3177,15 @@ mod labor_yield_tests {
         // improvement is already built — quotes the one managed yield.
         for policy in FORAGE_POLICIES {
             assert_eq!(
-                patch_forecast.ceiling_for(policy),
-                patch_forecast.managed_yield,
+                patch_forecast.ceiling_for(policy).provisions,
+                patch_forecast.managed_yield.provisions,
                 "a Field is yours — no policy takes more or less of it ({policy:?})"
             );
         }
         for policy in HUNT_POLICIES {
             assert_eq!(
-                herd_forecast.ceiling_for(policy),
-                herd_forecast.managed_yield,
+                herd_forecast.ceiling_for(policy).provisions,
+                herd_forecast.managed_yield.provisions,
                 "a pen is yours — no policy takes more or less of it ({policy:?})"
             );
         }
@@ -3207,7 +3246,7 @@ mod labor_yield_tests {
             field_row.actual
         );
         assert!(
-            (field_row.actual - patch_forecast.managed_yield).abs() < FORECAST_EPSILON,
+            (field_row.actual - patch_forecast.managed_yield.provisions).abs() < FORECAST_EPSILON,
             "a fully-staffed Field collects everything it produces"
         );
         assert!(
@@ -3318,18 +3357,18 @@ mod labor_yield_tests {
     /// Measured on a **drawn-down** patch (a patch being farmed is below capacity), deliberately.
     /// **Since Flora Roster S2 the gain is neutral (`1.0`)**, so a tended patch reads the same curve as
     /// a wild one and the policies fall in their natural order: Sustain (MSY) < Surplus (`1.6 × MSY`) <
-    /// Market (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
-    /// past the flat Market skim; that swap is gone with the boost.)
+    /// Deplete (20% of biomass) < Eradicate (30%). (At the retired gain 2.0 the boosted Surplus rode
+    /// past the flat Deplete skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
         let extractive = [
             FollowPolicy::Sustain,
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
         ];
         // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
-        // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Market (see docstring).
+        // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Deplete (see docstring).
         const OPERATING_FRACTION: f32 = 0.8;
         let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
         for policy in extractive {
@@ -3385,7 +3424,7 @@ mod labor_yield_tests {
         }
         // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
         // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
-        // the leanest, then the boosted Surplus, then the flat Market skim, Eradicate the deepest.
+        // the leanest, then the boosted Surplus, then the flat Deplete skim, Eradicate the deepest.
         let take_of = |wanted: FollowPolicy| {
             takes
                 .iter()
@@ -3394,8 +3433,8 @@ mod labor_yield_tests {
                 .1
         };
         assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Market));
-        assert!(take_of(FollowPolicy::Market) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Deplete));
+        assert!(take_of(FollowPolicy::Deplete) < take_of(FollowPolicy::Eradicate));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -3747,7 +3786,10 @@ mod labor_yield_tests {
         // is strictly less than Sustain — the investment must visibly cost something.
         let one_animal = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
-            hunt_provisions(TEST_GAME_BODY_MASS, &fauna, 1.0)
+            let registry = world.resource::<HerdRegistry>();
+            crate::fauna::herd_hunt_yield(&registry.herds[0], &fauna)
+                .apply(TEST_GAME_BODY_MASS, 1.0)
+                .provisions
         };
         assert!(
             (preparing - fraction * sustain_yield).abs() <= one_animal + FORECAST_EPSILON,
@@ -3984,7 +4026,7 @@ mod labor_yield_tests {
     fn the_overdrawing_policies_teach_nothing_at_any_rung() {
         for policy in [
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
         ] {
             // Animal rung 1 (wild) and rung 2 (pastoral).

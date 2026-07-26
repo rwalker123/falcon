@@ -403,7 +403,7 @@ impl RungDef {
     ///
     /// Returns the discovery to credit, or `None` when:
     /// - the policy is **not stewardship** ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain and
-    ///   the investment verbs teach; Surplus/Market/Eradicate never do, at any rung), or
+    ///   the investment verbs teach; Surplus/Deplete/Eradicate never do, at any rung), or
     /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
     ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
     ///   sites already had, or
@@ -1100,7 +1100,7 @@ mod tests {
             for policy in [
                 FollowPolicy::Sustain,
                 FollowPolicy::Surplus,
-                FollowPolicy::Market,
+                FollowPolicy::Deplete,
                 FollowPolicy::Eradicate,
                 FollowPolicy::Cultivate,
                 FollowPolicy::Tame,
@@ -1146,7 +1146,7 @@ mod tests {
         for policy in [
             FollowPolicy::Sustain,
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
             FollowPolicy::Cultivate,
             FollowPolicy::Corral,
@@ -1364,7 +1364,7 @@ mod tests {
         // ...and under none of the overdrawing ones (§4.2).
         for policy in [
             FollowPolicy::Surplus,
-            FollowPolicy::Market,
+            FollowPolicy::Deplete,
             FollowPolicy::Eradicate,
         ] {
             assert_eq!(

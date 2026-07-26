@@ -291,7 +291,7 @@ message AssignLaborCommand {
   optional uint32 target_x = 5; // forage tile
   optional uint32 target_y = 6;
   optional string fauna_id = 7; // hunt target herd
-  optional string policy = 8;   // hunt take policy (sustain|surplus|market|eradicate)
+  optional string policy = 8;   // hunt take policy (sustain|surplus|deplete|eradicate)
   // Which named plant a forage Cultivate/Sow should commit the patch to (a flora_config.json
   // species key). Absent = "pick the tile's dominant legal plant". Appended (append-only).
   optional string species = 9;
@@ -328,7 +328,7 @@ message SendHuntExpeditionCommand {
   optional uint64 band_entity_bits = 2;
   uint32 party_workers = 3;
   string fauna_id = 4;
-  optional string policy = 5; // sustain|surplus|market|eradicate; default sustain when omitted
+  optional string policy = 5; // sustain|surplus|deplete|eradicate; default sustain when omitted
 }
 
 message ExportMapCommand {

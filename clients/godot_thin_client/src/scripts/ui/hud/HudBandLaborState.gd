@@ -26,8 +26,8 @@ const LABOR_KIND_HUNT := "hunt"
 # INVESTMENT rungs (hunt: tame/corral, forage: cultivate/sow). Canonical here (the labor readers below
 # re-seed a compose picker against them); `HudLayer` re-exports both via `const X = HudBandLaborState.X`.
 # `DEFAULT_HUNT_POLICY` aliases SourceForecast's — one source of truth, shared by both files.
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "tame", "corral"]
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "market", "eradicate", "cultivate", "sow"]
+const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "tame", "corral"]
+const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]
 const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
 
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
@@ -272,6 +272,13 @@ func reconcile_pending(turn: int) -> bool:
 		changed.emit(&"pending")
 	return dropped
 
+# Per-source rate keys whose ABSENCE is meaningful, so they are copied through only when the wire
+# assignment carried them (see the loop in `effective_worker_map`). `realized_yield` is the steady
+# food average; `trade_yield` / `realized_trade_yield` are its issue-#337 twins in the other product.
+const OPTIONAL_YIELD_KEYS: Array[String] = [
+	"realized_yield", "trade_yield", "realized_trade_yield",
+]
+
 ## Confirmed labor assignments overlaid with this band's pending assigns, keyed by source/role.
 ## Each value: {kind, workers, x, y, herd_id, policy, pending: bool, + per-source yield fields}.
 func effective_worker_map(band: Dictionary) -> Dictionary:
@@ -298,6 +305,15 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 			# tick strip. Empty = "not projected", which renders no strip (never a famine).
 			"arrival_schedule": as_schedule(a.get("arrival_schedule", null)),
 		}
+		# The PRESENCE-SENSITIVE rate keys, copied through only when the wire carried them:
+		# `source_yield_readout` distinguishes "absent" (fall back to the actual/sustainable split)
+		# from "present and 0", so a `get(..., 0.0)` default here would silently assert a zero.
+		# `realized_trade_yield` / `trade_yield` are the trade twins (issue #337) — a hunt on an
+		# INEDIBLE species pays only these, and dropping them here is what would leave a wolf row
+		# with nothing to headline.
+		for rate_key in OPTIONAL_YIELD_KEYS:
+			if (a as Dictionary).has(rate_key):
+				(merged[key] as Dictionary)[rate_key] = float((a as Dictionary)[rate_key])
 	var pend := pending_assigns_for(int(band.get("entity", -1)))
 	for key in pend:
 		var pd: Dictionary = pend[key]

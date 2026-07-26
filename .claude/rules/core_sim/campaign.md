@@ -303,14 +303,14 @@ the N-turn total, so projecting the smooth `hunt_policy_rate` gives the smooth a
 not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
 `sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
 (drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
-N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Market
-re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Market herd
+N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Deplete
+re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Deplete herd
 declines within the window and the average honestly reflects it). A **self-terminating** policy
-(Eradicate strips the herd in ~1 turn, Market drives it extinct) **breaks the loop early and divides by
+(Eradicate strips the herd in ~1 turn, Deplete drives it extinct) **breaks the loop early and divides by
 the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
 the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
 negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,
-`hunt_policy_rate`, `pen_yield_biomass`, `hunt_provisions`, `forage_take`, `herd_ecology`/`herd_capacity`)
+`hunt_policy_rate`, `pen_yield_biomass`, `HuntYield::apply`, `forage_take`, `herd_ecology`/`herd_capacity`)
 — no second copy of the ecology or take math. On the wire, `LaborAssignment.realizedYield` is appended
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
@@ -357,7 +357,7 @@ construction: `Σ arrivals ≈ realized × horizon`, to within the partial body 
   the schedule published on turn 0, then drives the **real** systems forward `horizon` turns and
   asserts the sim delivered on exactly the named turns in exactly the named amounts.
 - Reuses the shared take helpers verbatim (`regrow_biomass`, `hunt_policy_rate`,
-  `hunt_credit_ceiling`, `quantise_animal_take`, `pen_yield_biomass`, `hunt_provisions`,
+  `hunt_credit_ceiling`, `quantise_animal_take`, `pen_yield_biomass`, `HuntYield::apply`,
   `forage_take`, `herd_ecology`/`herd_capacity`) — **no second copy of the take math** — and simulates
   on a clone, never the live source. Unlike the `realized` projection it does **not** break on a
   zero take: there a zero means *spent* and would dilute an average; here it is a **wait** turn, which

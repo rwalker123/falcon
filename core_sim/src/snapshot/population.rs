@@ -76,6 +76,9 @@ pub(crate) fn labor_assignment_to_state(
         // rather than moved so the caller's telemetry row (which the band roll-ups below still read)
         // is untouched.
         arrival_schedule: yields.arrivals.clone(),
+        // The other currency, beside the food it never joins (issue #337).
+        trade_yield: yields.trade,
+        realized_trade_yield: yields.realized_trade,
         ..Default::default()
     };
     match &assignment.target {
@@ -342,6 +345,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
+        expedition_carried_trade,
     ) = match expedition {
         Some(exp) => (
             true,
@@ -353,6 +357,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
             exp.pending_reveal.iter().map(|p| p.y).collect(),
+            exp.carried_trade,
         ),
         None => (
             false,
@@ -364,6 +369,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             false,
             Vec::new(),
             Vec::new(),
+            0.0,
         ),
     };
     // Resolve the band's settlement stage from the data-driven config (interim input: head-count).
@@ -425,6 +431,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_announced,
         pending_reveal_x,
         pending_reveal_y,
+        expedition_carried_trade,
         max_expedition_party_size: expedition_levers.max_party_size,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
@@ -770,6 +777,7 @@ mod tests {
             phase: ExpeditionPhase::Outbound,
             announced: false,
             pending_reveal: Vec::new(),
+            carried_trade: 0.0,
         };
         let runway = captured_runway(&cohort, None, Some(&expedition));
         let historical = TEST_LARDER / demand_of(&cohort);

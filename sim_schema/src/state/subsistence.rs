@@ -15,12 +15,12 @@ pub struct SedentarizationState {
 /// **current** state, before any party-throughput cap, and clamped to the herd's remaining biomass —
 /// so it is a **true maximum take**. `0` = no take is possible under this policy (a collapsing
 /// sub-Allee herd yields nothing under Sustain/Surplus). `policy` is a free-form string
-/// (`sustain|surplus|market|eradicate|corral`, like `species`), so a new policy needs no schema
+/// (`sustain|surplus|deplete|eradicate|corral`, like `species`), so a new policy needs no schema
 /// change.
 ///
 /// **The rows are NOT all the same kind of quantity**, which is precisely why no one may divide by
 /// them: Sustain is a per-turn **flow** (MSY), Surplus that flow × a multiplier, Corral a *fraction*
-/// of it (the pen-building dip), while Market/Eradicate are shares of standing **stock** that shrink
+/// of it (the pen-building dip), while Deplete/Eradicate are shares of standing **stock** that shrink
 /// as the herd is drawn down.
 ///
 /// Consumer: the resident-band local-hunt yield preview —
@@ -39,10 +39,18 @@ pub struct HuntPolicyCeilingState {
     pub policy: String,
     /// BAND / local-hunt ceiling, in provisions/turn. Produced by projecting the herd's
     /// `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — i.e. the
-    /// per-policy biomass ceiling `fauna::hunt_policy_ceiling` converted by `fauna::hunt_provisions`,
+    /// per-policy biomass ceiling `fauna::hunt_policy_ceiling` converted by the species' own
+    /// `HuntYield::apply` (which retired the global `fauna::hunt_provisions`),
     /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
     #[serde(default)]
     pub provisions_per_turn: f32,
+    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row is a
+    /// [`crate::YieldPair`]-shaped pair, not a food scalar: every harvesting policy sells the species'
+    /// trade component, and an **inedible** species (a wolf) reads `provisions_per_turn == 0` with
+    /// this strictly positive — a food-only row could not express its yield at all. Render a trade
+    /// line **only when this is `> 0`**, the rule flora's cash-crop line already uses, so a source
+    /// with no trade shows no line rather than a false "0".
+    pub trade_goods_per_turn: f32,
 }
 
 /// The sim's **pre-launch hunt-trip estimate** for one (policy, party size) against one herd — the
@@ -50,7 +58,7 @@ pub struct HuntPolicyCeilingState {
 ///
 /// Produced by `core_sim::hunt_trip_forecast`, a **bounded forward simulation** of the trip (herd
 /// regrowth + the party's real take, turn by turn, on the sim's fixed-point grid) rather than a
-/// closed-form `carry_cap / rate`. That division was wrong for Surplus/Market on a small herd, whose
+/// closed-form `carry_cap / rate`. That division was wrong for Surplus/Deplete on a small herd, whose
 /// per-policy ceiling is a *stock*, not a flow: the party strips the headroom in a turn or two and
 /// then crawls at the regrowth trickle. It read a **4-worker party on a full Rabbit Warren (K = 200)
 /// under Surplus as a ~5-turn trip**; the simulation says that party **never fills** within the
@@ -60,7 +68,7 @@ pub struct HuntPolicyCeilingState {
 /// counted — and assumes the herd stays put.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HuntTripEstimateState {
-    /// Free-form take policy (`sustain|surplus|market|eradicate`), like `species` — a new policy
+    /// Free-form take policy (`sustain|surplus|deplete|eradicate`), like `species` — a new policy
     /// needs no schema change.
     pub policy: String,
     /// Party size, `1 ..= expedition_config.max_party_size`.
@@ -70,9 +78,16 @@ pub struct HuntTripEstimateState {
     /// to fill the pack": a big party on a full herd strips the surplus and leaves with a *partial*
     /// pack, a successful short trip. **`0` = never completed** within `forecast_horizon_turns`.
     pub turns_to_fill: u32,
-    /// Does this mission bring food home? `false` for `eradicate` (denial) — render "no food
-    /// delivered", never an ETA.
+    /// **Does this trip bring home FOOD?** REDEFINED (issue #337): a fact about the **species**, not
+    /// the policy — `false` means the quarry is *inedible* (a wolf), so render "no food delivered"
+    /// and never an ETA. It used to read `false` for `eradicate` on the premise that denial carries
+    /// nothing home; an Eradicate raid now banks the whole-stock windfall like every other rung.
     pub delivers_food: bool,
+    /// **Does this trip bring home TRADE GOODS?** (appended) The sibling of `delivers_food` — the
+    /// other component of the species' hunt-yield vector, so a wolf trip reads
+    /// `delivers_food = false, delivers_trade = true` ("pelts, no meat") instead of being mistaken
+    /// for a denial mission.
+    pub delivers_trade: bool,
     /// **Whole animals the raid KILLS** (append-only) — the kill count. A party too small to seat a
     /// whole animal now kills one and wastes the rest (mirroring the resident band), so this is a kill
     /// count, not a delivered count. Bounded by the standing surplus, so it plateaus with `party_workers`
@@ -86,6 +101,12 @@ pub struct HuntTripEstimateState {
     /// **Food killed but not hauled home over the raid** (append-only). `wasted_food / (delivered_food +
     /// wasted_food)` is the waste fraction the client shows beside the delivered total.
     pub wasted_food: f32,
+    /// **Trade goods the party actually LANDS over the raid** (appended, issue #337) — the twin of
+    /// [`Self::delivered_food`], projected through the same species vector the take path pays with.
+    /// For a **wolf** raid this is the only payload: `delivered_food == 0` and
+    /// `delivers_food == false`.
+    #[serde(default)]
+    pub delivered_trade: f32,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned
@@ -129,6 +150,14 @@ pub struct HerdTelemetryState {
     /// [`Self::hunt_policy_ceilings`].
     #[serde(default)]
     pub per_worker_yield: f32,
+    /// **The same per-worker rate in TRADE GOODS/turn** (appended, issue #337). Read this and
+    /// [`Self::per_worker_yield`] as one vector: a resident-band preview clamps
+    /// `min(workers × per-worker, ceiling)` **per component**. An inedible species (a wolf) reads
+    /// `per_worker_yield == 0` with this positive.
+    ///
+    /// **THIS is the rate a band preview uses, not `PopulationCohortState::hunt_per_worker_provisions`**
+    /// — that one is a species-blind global echo (see its doc).
+    pub per_worker_trade: f32,
     /// Food/turn the herd will pay **once penned** (the corral's managed harvest at its current
     /// biomass). With the `corral` row of [`Self::hunt_policy_ceilings`] (what the herd pays *while*
     /// the pen is being built), lets the client show "preparing X → then Y" pre-commit.
@@ -226,6 +255,11 @@ pub struct HerdTelemetryState {
     /// unknown.
     #[serde(default)]
     pub food_per_animal: f32,
+    /// **One animal's worth of TRADE GOODS** (appended, issue #337) — the twin of
+    /// [`Self::food_per_animal`], and the only quantum an *inedible* species has: a wolf's
+    /// `food_per_animal` is honestly `0`, so a client rendering a kill rhythm from food alone would
+    /// divide by zero. The animal COUNT is the same on either component (a ratio is unit-free).
+    pub trade_per_animal: f32,
     /// **How many herders this managed herd owes this turn** (`fauna::herd_herders_needed` =
     /// `ceil((biomass / body_mass) / animals_per_herder)`) to hold its tameness. `0` for a
     /// wild/unmanaged herd (nobody to staff). The client pairs it with [`Self::herded_fraction`] for an
@@ -323,6 +357,8 @@ impl Default for HerdTelemetryState {
             corralled: false,
             corral_progress: 0.0,
             per_worker_yield: 0.0,
+            per_worker_trade: 0.0,
+            trade_per_animal: 0.0,
             corral_yield: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
@@ -390,9 +426,9 @@ pub struct ForagePatchState {
     /// Food/turn ceiling under Surplus, biomass-clamped.
     #[serde(default)]
     pub ceiling_surplus: f32,
-    /// Food/turn ceiling under Market, biomass-clamped.
+    /// Food/turn ceiling under **Deplete**, biomass-clamped.
     #[serde(default)]
-    pub ceiling_market: f32,
+    pub ceiling_deplete: f32,
     /// Food/turn ceiling under Eradicate, biomass-clamped.
     #[serde(default)]
     pub ceiling_eradicate: f32,

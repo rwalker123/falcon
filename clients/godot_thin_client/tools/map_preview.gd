@@ -1672,6 +1672,12 @@ func _deer_herd() -> Dictionary:
 	# Well outside the work-range ring (Chebyshev distance 5 from the band).
 	return {"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": 13, "y": 6, "biomass": 800.0, "huntable": true}
 
+## The INEDIBLE quarry (issue #337) — a wolf pack whose hunt pays trade goods only, so its yield label
+## must fall through to the trade component instead of announcing a `+0.00` food rate.
+func _pelt_only_wolf_herd() -> Dictionary:
+	return {"id": "game_wolf_03", "label": "Grey Wolf (game_wolf_03)", "x": 11, "y": 4,
+		"biomass": 240.0, "huntable": true, "prey_sense_radius": 4}
+
 ## Two pens side by side: one FED, one STARVING. `corralled` + `pen_fed_fraction` < 1 is the sim's
 ## starving signal — the herd is losing biomass every turn, and the map must show WHICH pen.
 func _snapshot_pens() -> Dictionary:
@@ -1737,18 +1743,23 @@ func _snapshot_work() -> Dictionary:
 	# sim-answered `overdraws` bool (policy-driven, false for Sustain), NOT `actual > sustainable`.
 	# The DECOUPLING this proves: the SUSTAIN hunt has `actual 0.46 > sustainable 0.20` (a banked
 	# whole animal cashed on this kill turn) yet `overdraws=false` → NO ⚠ (label reads +0.20, clean),
-	# while the MARKET forage genuinely overdraws → `overdraws=true` → ⚠.
+	# while the DEPLETE forage genuinely overdraws → `overdraws=true` → ⚠.
 	var assignments := [
-		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / 🪙 market /
+		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / ⇊ deplete /
 		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
 		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "market", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "deplete", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
+		# THE INEDIBLE QUARRY's label (issue #337): a hunted wolf pack pays trade goods and NO food, so
+		# every food field here is honestly 0. A one-slot map label has no room for two rates, so it
+		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
+		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "policy": "deplete", "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
 	# frame: green R2 innermost, azure R4, red hunt R5 outermost (the deer sits on the hunt border).
-	return _base_snapshot(_band(assignments, 2, 4), [_deer_herd()])
+	return _base_snapshot(_band(assignments, 2, 4), [_deer_herd(), _pelt_only_wolf_herd()])
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
 ## its secondary glyph is drawn over that tile's yield label (the reported failure).

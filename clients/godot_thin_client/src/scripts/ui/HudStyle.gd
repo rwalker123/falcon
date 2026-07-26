@@ -36,6 +36,13 @@ const HUNT_DANGER_ACCENT := Color(0.93, 0.52, 0.13, 1.0) # #ed8521  danger orang
 ## is the selected/committing one" — a policy picker's chosen rung wears it and nothing else does —
 ## so a test that asks "which rung is lit?" has to read it back off the stylebox.
 const BUTTON_PRIMARY_BG := Color(0.086, 0.227, 0.204, 1.0)   # #163a34
+## The three button variants' resting TEXT colours, named because `apply_button` is no longer their
+## only consumer: a button whose face is built from CHILD LABELS (`HudWidgets.build_policy_picker`'s
+## two-line rung — two font sizes cannot live in one `Button.text`) cannot use the theme override at
+## all, since `font_color` reaches a Button's own `text` and nothing else. Such a face reads its tint
+## from `button_font_color` below, so a hand-built face can never drift from a themed one.
+const BUTTON_PRIMARY_TEXT := Color(0.847, 1.0, 0.973, 1.0)   # #d8fff8
+const BUTTON_ARMED_TEXT := Color(0.941, 0.765, 0.741, 1.0)   # #f0c3bd
 
 # ---- The Telling: voice-medium accents -------------------------------------
 # The narrator's voice AGES as the civilization crosses medium thresholds (oral -> painted ->
@@ -211,6 +218,22 @@ static func _button_stylebox(bg: Color, border: Color) -> StyleBoxFlat:
 	sb.content_margin_bottom = 9
 	return sb
 
+## THE ONE PLACE a button's text colour is decided, for BOTH kinds of face: the themed one
+## (`apply_button` feeds it straight into `font_color`) and the hand-built one (a stack of child
+## Labels, which the theme cannot reach — see `BUTTON_PRIMARY_TEXT`). A caller that builds its own
+## face asks here rather than repeating a colour, so a new state colour added below arrives on every
+## face at once instead of only on the themed half.
+static func button_font_color(variant: String = "ghost", disabled: bool = false) -> Color:
+	if disabled:
+		return INK_FAINT
+	match variant:
+		"primary":
+			return BUTTON_PRIMARY_TEXT
+		"armed":
+			return BUTTON_ARMED_TEXT
+		_:  # "ghost"
+			return INK
+
 ## Apply one of the button treatments: "primary" (the main action, cyan),
 ## "ghost" (secondary), or "armed" (an action awaiting cancellation).
 static func apply_button(button: Button, variant: String = "ghost") -> void:
@@ -220,26 +243,23 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	var bg_hover: Color
 	var border_normal: Color
 	var border_hover: Color
-	var text: Color
+	var text := button_font_color(variant)
 	match variant:
 		"primary":
 			bg_normal = BUTTON_PRIMARY_BG
 			bg_hover = Color(0.110, 0.275, 0.251, 1.0)    # #1c4640
 			border_normal = SIGNAL_DEEP
 			border_hover = SIGNAL
-			text = Color(0.847, 1.0, 0.973, 1.0)          # #d8fff8
 		"armed":
 			bg_normal = Color(0.165, 0.110, 0.102, 1.0)   # #2a1c1a
 			bg_hover = Color(0.200, 0.122, 0.114, 1.0)    # #331f1d
 			border_normal = Color(0.353, 0.227, 0.212, 1.0)  # #5a3a36
 			border_hover = DANGER
-			text = Color(0.941, 0.765, 0.741, 1.0)        # #f0c3bd
 		_:  # "ghost"
 			bg_normal = Color(0.075, 0.129, 0.122, 1.0)   # #13211f
 			bg_hover = Color(0.090, 0.188, 0.161, 1.0)    # #173029
 			border_normal = LINE
 			border_hover = SIGNAL_DEEP
-			text = INK
 
 	button.add_theme_stylebox_override("normal", _button_stylebox(bg_normal, border_normal))
 	button.add_theme_stylebox_override("hover", _button_stylebox(bg_hover, border_hover))
@@ -254,7 +274,7 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	button.add_theme_color_override("font_hover_color", INK)
 	button.add_theme_color_override("font_pressed_color", text)
 	button.add_theme_color_override("font_focus_color", INK)
-	button.add_theme_color_override("font_disabled_color", INK_FAINT)
+	button.add_theme_color_override("font_disabled_color", button_font_color(variant, true))
 
 # ---- inline link buttons ---------------------------------------------------
 # Padding around an inline link's text. Deliberately far tighter than the boxed

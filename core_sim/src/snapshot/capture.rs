@@ -2307,6 +2307,7 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             phase: ExpeditionPhase::from_wire(&cohort_state.expedition_phase),
             announced: cohort_state.expedition_announced,
             pending_reveal,
+            carried_trade: cohort_state.expedition_carried_trade,
         });
     }
 
