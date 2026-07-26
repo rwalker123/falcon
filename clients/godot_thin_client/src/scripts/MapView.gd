@@ -1503,6 +1503,41 @@ func set_labor_pending(pending: Dictionary) -> void:
 	_band_overlays.set_labor_pending(pending)
 	queue_redraw()
 
+## WORLD BOUNDARY (`Main._reset_per_world_state`): the snapshot about to be applied describes a
+## DIFFERENT world — a `new_game`, or a `map_size` rebuild, which regenerates in place with no scene
+## reload. Everything `display_snapshot` clears-and-refills per snapshot heals itself and is
+## deliberately absent here; what is listed below is the remainder, audited case by case:
+##
+##   • `herd_trails` — APPENDED per herd id and pruned only when an id is ABSENT from the snapshot,
+##     so a herd id the new world happens to reuse inherits the old world's path and its trail leaps
+##     across the map. This is the cache that made the bug visible.
+##   • `culture_layer_map` — MERGED by layer id, erased only on an explicit `culture_layer_removed`,
+##     so a layer id the new world reuses shows the old world's layer.
+##   • the selection triplet + `cycle_index` — entity ids / a herd id / a tile belonging to the old
+##     world. Left alone, `refresh_selection_payload` resolves them against the NEW world's arrays and
+##     hands the HUD a different subject under the same id. Cleared silently rather than through
+##     `selection_cleared`: `Main._apply_snapshot` ends in `_refresh_hud_selection`, which reads the
+##     cleared state and drops the HUD card the same frame.
+##   • the culture highlight and the labor-pending overlay — pushed IN from the Inspector and the HUD
+##     respectively, both keyed by ids the new world reuses.
+##   • the annotation family's world-keyed draw caches (`AnnotationRenderer.reset_world_state`).
+##
+## Not cleared, deliberately: `active_overlay_key`, the trade-overlay toggle, the terrain highlight id
+## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
+func reset_world_state() -> void:
+	herd_trails.clear()
+	culture_layer_map.clear()
+	selected_unit_id = -1
+	selected_herd_id = ""
+	selected_tile = Vector2i(-1, -1)
+	cycle_index = 0
+	highlighted_culture_layer_ids = PackedInt32Array()
+	highlighted_culture_layer_set.clear()
+	highlighted_culture_context = ""
+	_annotations.reset_world_state()
+	_band_overlays.reset_world_state()
+	queue_redraw()
+
 func _herd_by_id(herd_id: String) -> Dictionary:
 	if herd_id == "":
 		return {}

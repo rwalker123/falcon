@@ -123,6 +123,29 @@ func _init(
 	stockpile_list = stockpile_list_
 	_command_feed = command_feed
 
+## WORLD BOUNDARY (`Main._reset_per_world_state` → `HudLayer.reset_world_state`): drop every top-bar
+## cache that belongs to ONE world, then re-render each strip off the now-empty caches.
+##
+## THE RE-RENDER IS THE POINT, and `_intensification_knowledge` is why this method exists. A freshly
+## generated world sends `intensification_knowledge: []`, and `_ingest_intensification` MERGES — an
+## empty array writes nothing, so without this the strip kept showing the PREVIOUS game's
+## `Herding ✔`. `_knowledge_announced` rides along because a track re-learned in the new world
+## deserves its unlock nudge again, and `_stockpile_totals` because it is a previous-VALUE cache: a
+## delta column comparing the new world's stores against the old one's is meaningless.
+##
+## Sedentarization and demographics are rebuilt wholesale from each snapshot and so need no cache
+## clearing, but they are re-rendered empty here too: they only update when their key is PRESENT, so
+## a world change is the one moment stale values could otherwise persist unchallenged.
+func reset_world_state() -> void:
+	_intensification_knowledge.clear()
+	_knowledge_announced.clear()
+	_stockpile_totals.clear()
+	update_intensification([])
+	update_discoveries([])
+	update_stockpiles([])
+	update_sedentarization([])
+	update_demographics([])
+
 ## The LABEL-rendering half of HudLayer.update_overlay's fan-out: the turn readout + the metrics line.
 ## The turn-orb / band-labor side effects stay on HudLayer (they are not top-bar readouts).
 func render_overlay(turn: int, metrics: Dictionary) -> void:

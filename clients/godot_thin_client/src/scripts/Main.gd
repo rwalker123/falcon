@@ -20,12 +20,16 @@ var streaming_mode: bool = false
 var command_client: CommandClient
 var _warned_missing_map_view_method: bool = false
 var _camera_initialized: bool = false
-# Loading gate: hold the loading overlay until the NEW world's first FULL snapshot arrives. On a
-# reconnect the snapshot server replays its last cached frame (the OLD world), so we ignore any
-# frame whose world_epoch is <= the baseline captured at _ready and reveal only on the rebuild's
-# higher epoch. See _process's streaming block.
+# Loading gate: hold the loading overlay until a FULL snapshot for a world NEWER than the baseline
+# arrives. The server no longer replays a cached frame on connect, but a client that was ALREADY
+# connected when the rebuild started can still be handed a pre-rebuild broadcast, so the gate keeps
+# rejecting any frame whose world_epoch is <= the baseline captured at _ready and reveals only on the
+# rebuild's higher epoch. See _process's streaming block.
 var _world_revealed: bool = false
 var _reveal_baseline_epoch: int = 0
+# The world_epoch of the last FULL snapshot we applied. A change means the snapshot describes a
+# DIFFERENT world, which invalidates every per-world client cache — see _reset_per_world_state.
+var _world_epoch_applied: int = 0
 var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
@@ -42,6 +46,8 @@ var _new_game_command: Dictionary = {}
 var _new_game_sent: bool = false
 var _new_game_retry_accum: float = 0.0
 var _new_game_elapsed: float = 0.0
+# Time since the last ACCEPTED new_game with no world to show for it (see _tick_new_game_retry).
+var _new_game_answer_accum: float = 0.0
 
 # Dev-default world when Main.tscn is launched directly (no landing screen handoff): so a bare
 # `godot res://src/Main.tscn` still generates a playable map now that the server boots idle.
@@ -70,6 +76,14 @@ const STARTUP_ZOOM_FACTOR := 2.0
 # that doesn't yet parse the verb) can't spam the command log every frame.
 const NEW_GAME_RETRY_INTERVAL = 0.5
 const NEW_GAME_RETRY_DEADLINE = 5.0
+# How long a SENT new_game may go unanswered (no full snapshot for a newer world) before we send it
+# again. The two failure modes are NOT symmetric, and this constant is biased hard toward one of
+# them: interrupting a healthy generation costs the player a DIFFERENT world than the one already
+# being built (a `seed 0` re-roll) plus a second full worldgen, and it would happen on every large-map
+# start on a slow machine; waiting too long merely means a rare dropped first frame self-heals late.
+# So this is ~7x the MEASURED worst case rather than a snug fit — `new_game.begin`→`new_game.completed`
+# for the largest offered map (Huge, 128x80) is 4.4s in a DEBUG build, which is what the client runs.
+const NEW_GAME_ANSWER_TIMEOUT := 30.0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -109,7 +123,8 @@ func _ready() -> void:
     # Loading gate: capture the last-revealed world epoch (persisted across Main.tscn reloads by the
     # GameLaunch autoload) as the reveal baseline, show the loading overlay, and hold the blank
     # map/HUD behind it until a FULL snapshot with a higher epoch (the freshly generated world)
-    # arrives. The client ALWAYS streams — there is no mock playback fallback.
+    # arrives — so a pre-rebuild frame of the world we are replacing can never be shown. The client
+    # ALWAYS streams — there is no mock playback fallback.
     var launch_node: Node = get_node_or_null("/root/GameLaunch")
     if launch_node != null:
         _reveal_baseline_epoch = int(launch_node.get("last_world_epoch"))
@@ -304,6 +319,8 @@ func _build_new_game_command() -> void:
 ## Send the pending new_game command through the SAME transport MapPanel uses for map_size
 ## (inspector.send_runtime_command → command socket). Retried from _process until it lands, so a
 ## command socket still connecting at _ready doesn't drop the world-generation request.
+## `_new_game_command` is deliberately KEPT after a successful send — `_tick_new_game_retry`'s
+## answer timeout re-sends the very same line, and clearing it here would leave nothing to re-send.
 func _try_send_new_game() -> void:
     if _new_game_sent or _new_game_command.is_empty():
         return
@@ -313,10 +330,35 @@ func _try_send_new_game() -> void:
     if result is bool and result:
         _new_game_sent = true
 
-## Bounded retry for the new_game send (see NEW_GAME_RETRY_* constants): retries at an interval
-## until it lands, then gives up after the deadline so a permanent rejection doesn't log per-frame.
+## Retry the new_game request until it is ANSWERED, not merely SENT. Two phases, in order:
+##
+##   1. NOT YET SENT — retry the send every NEW_GAME_RETRY_INTERVAL and stop after
+##      NEW_GAME_RETRY_DEADLINE, so a permanent rejection (e.g. a sim_runtime that doesn't parse the
+##      verb) can't spam the command log every frame. Unchanged.
+##   2. SENT, STILL NO WORLD — the transport accepted the command but no full snapshot for a newer
+##      world ever came back. Accepting is not answering: the rebuild's broadcast can reach the
+##      snapshot server's channel BEFORE the accept thread has added our socket to its client list,
+##      and that first frame is then dropped with nothing else coming. After NEW_GAME_ANSWER_TIMEOUT
+##      we clear the sent latch so the send path re-fires.
+##
+## Phase 2 repeats INDEFINITELY (each round re-arms phase 1's own bounded burst) because a
+## permanently stuck loading screen is unrecoverable for the player, whereas a re-sent new_game just
+## builds another fresh world. The reveal gate below is what makes that safe — it holds until a world
+## newer than the baseline arrives, so a duplicate world cannot be shown half-applied.
 func _tick_new_game_retry(delta: float) -> void:
-    if _new_game_sent or _new_game_command.is_empty():
+    if _world_revealed:
+        # The request was answered; there is nothing left to chase.
+        return
+    if _new_game_command.is_empty():
+        return
+    if _new_game_sent:
+        _new_game_answer_accum += delta
+        if _new_game_answer_accum < NEW_GAME_ANSWER_TIMEOUT:
+            return
+        _new_game_answer_accum = 0.0
+        push_warning("new_game went unanswered for %.0fs (no world arrived); re-sending." % NEW_GAME_ANSWER_TIMEOUT)
+        _new_game_sent = false
+        _new_game_elapsed = 0.0
         return
     _new_game_elapsed += delta
     _new_game_retry_accum += delta
@@ -325,7 +367,7 @@ func _tick_new_game_retry(delta: float) -> void:
     _new_game_retry_accum = 0.0
     _try_send_new_game()
     if not _new_game_sent and _new_game_elapsed >= NEW_GAME_RETRY_DEADLINE:
-        _new_game_sent = true  # stop retrying; likely a permanent rejection
+        _new_game_sent = true  # stop retrying this burst; likely a permanent rejection
 
 ## Build the fullscreen loading overlay (a CanvasLayer above HUD/Inspector) shown from _ready and
 ## hidden on world reveal. Dark ground + a centered "Generating world…" label, styled on-brand with
@@ -358,6 +400,17 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     if snapshot.is_empty():
         return
     var is_delta := _snapshot_is_delta(snapshot)
+    # WORLD BOUNDARY. A full snapshot carrying a new `world_epoch` describes a DIFFERENT world — a
+    # `new_game`, or a `map_size` rebuild, which regenerates in place with no scene reload — and every
+    # client cache keyed to the old one is now a lie (a fresh world sends `intensification_knowledge:
+    # []`, which MERGES to nothing and leaves the previous game's "⚒ Your people know" strip standing).
+    # Reset FIRST, then apply: this same snapshot carries the new world's backfill (the command_events
+    # ring, the knowledge rows, the herd list), and resetting after the dispatch would wipe it.
+    if not is_delta and snapshot.has("world_epoch"):
+        var snapshot_epoch := int(snapshot["world_epoch"])
+        if snapshot_epoch != _world_epoch_applied:
+            _reset_per_world_state()
+            _world_epoch_applied = snapshot_epoch
     _sync_fog_of_war(snapshot, is_delta)
     _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics: Dictionary = {}
@@ -436,6 +489,18 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             script_host_manager.handle_delta(snapshot)
         else:
             script_host_manager.handle_snapshot(snapshot)
+
+## Drop every client-side cache that belongs to ONE world. The coordinator only decides WHEN — each
+## surface owns its own reset and is reached through the same silent `has_method` probe the rest of
+## Main uses, so a surface without one simply skips (it merges nothing worth clearing).
+func _reset_per_world_state() -> void:
+    _hud_invoke("reset_world_state")
+    if map_view != null and map_view.has_method("reset_world_state"):
+        map_view.call("reset_world_state")
+    # Both analytics lines print once per DISTINCT value, so a new world whose campaign label or
+    # victory winner happens to match the old one's would print nothing at all without this.
+    _campaign_label_signature = ""
+    _victory_analytics_signature = ""
 
 func _emit_victory_analytics(data: Dictionary) -> void:
     if data.is_empty():
@@ -936,13 +1001,15 @@ func _process(delta: float) -> void:
                 _try_reveal_world(streamed)
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
-## freshly generated world (reveal + apply) or the server's replayed pre-rebuild frame (ignore).
+## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).
 ##
-## The snapshot server replays its last cached frame to every reconnecting client, so on a restart
-## the OLD world (epoch == baseline) arrives first and must NOT be shown. We reveal only on a FULL
-## snapshot whose world_epoch EXCEEDS the baseline captured at _ready:
+## The gate holds the loading overlay until a FULL snapshot for a world NEWER than the baseline
+## arrives. The server no longer replays a cached frame to a reconnecting client, but a client that
+## was ALREADY connected when the rebuild began can still receive a broadcast of the world it is
+## replacing, and that frame must NOT be shown. So we reveal only on a FULL snapshot whose
+## world_epoch EXCEEDS the baseline captured at _ready:
 ##   - fresh boot: baseline 0 → reveal on epoch 1;
-##   - restart:    baseline N (persisted) → ignore the replayed epoch-N frame → reveal on N+1.
+##   - restart:    baseline N (persisted) → ignore any lingering epoch-N frame → reveal on N+1.
 ## A delta arriving before that full snapshot is ignored (it has no complete world to reveal).
 ## Defensive: a snapshot with no world_epoch key (pre-change server) reveals on the first full
 ## snapshot, so the client can never get stuck on a black loading screen.
@@ -953,7 +1020,7 @@ func _try_reveal_world(streamed: Dictionary) -> void:
     var has_epoch := streamed.has("world_epoch")
     var epoch := int(streamed.get("world_epoch", 0))
     if has_epoch and epoch <= _reveal_baseline_epoch:
-        # Stale replayed frame from the previous world — hold the loading overlay.
+        # A pre-rebuild frame of the previous world — hold the loading overlay.
         return
     _world_revealed = true
     _hide_loading_overlay()

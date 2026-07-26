@@ -9,18 +9,10 @@ use crate::snapshot::SnapshotHistory;
 
 pub struct SnapshotServer {
     sender: Sender<Vec<u8>>,
-    latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
 }
 
 impl SnapshotServer {
     pub fn broadcast(&self, bytes: &[u8]) {
-        {
-            let mut guard = self
-                .latest_frame
-                .lock()
-                .expect("latest snapshot frame mutex poisoned");
-            *guard = Some(bytes.to_vec());
-        }
         if let Err(err) = self.sender.send(bytes.to_vec()) {
             log::error!("Failed to queue snapshot delta: {}", err);
         }
@@ -32,6 +24,11 @@ impl SnapshotServer {
 /// The listener is bound up front by `port_alloc::allocate`, so binding can no
 /// longer fail here — a busy port is caught before the server starts rather
 /// than silently disabling broadcasting on a running server.
+///
+/// A newly accepted client is deliberately sent **nothing** until the next
+/// broadcast: any cached frame belongs to whatever world existed at accept time,
+/// which is not necessarily the world the connecting client asked for, and the
+/// client cannot tell the two apart — so the server must not offer the guess.
 pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
     let (sender, receiver) = unbounded::<Vec<u8>>();
     listener
@@ -39,12 +36,10 @@ pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
         .expect("set nonblocking failed");
     let clients: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
     let accept_clients = Arc::clone(&clients);
-    let latest_frame: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
-    let accept_latest = Arc::clone(&latest_frame);
 
     thread::spawn(move || loop {
         match listener.accept() {
-            Ok((mut stream, addr)) => {
+            Ok((stream, addr)) => {
                 log::info!("Snapshot client connected: {}", addr);
                 if let Err(err) = stream.set_nodelay(true) {
                     log::warn!("Failed to set TCP_NODELAY: {}", err);
@@ -55,20 +50,6 @@ pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
                         addr,
                         err
                     );
-                }
-                if let Some(frame) = accept_latest
-                    .lock()
-                    .expect("latest snapshot frame mutex poisoned")
-                    .clone()
-                {
-                    if let Err(err) = write_frame(&mut stream, &frame) {
-                        log::warn!(
-                            "Failed to send initial snapshot to client {}: {}",
-                            addr,
-                            err
-                        );
-                        continue;
-                    }
                 }
                 accept_clients
                     .lock()
@@ -89,10 +70,7 @@ pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
         }
     });
 
-    SnapshotServer {
-        sender,
-        latest_frame,
-    }
+    SnapshotServer { sender }
 }
 
 pub fn broadcast_latest(

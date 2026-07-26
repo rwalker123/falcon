@@ -147,6 +147,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `native-extension.md` | The GDExtension module map | `native/src/**` |
 | `scripting-capability.md` | The scripting capability model | `src/scripts/scripting/**` |
 | `../core_sim/ports.md` | Endpoint discovery, the ports handshake file (the server owns this contract) | `ServerPortsFile.gd`, `Main.gd`, `LogsPanel.gd` |
+| `../core_sim/world-handoff.md` | Which world a frame belongs to: the reveal gate, retry-until-answered, resetting per-world caches (spans both halves) | `Main.gd`, `Hud.gd`, `MapView.gd`, `TopBarReadouts.gd`, `TellingPanel.gd` |
 
 **Cross-reference convention.** A quoted phrase like `see "Map markers"` names a
 *section heading*, not a file. Resolve it with
