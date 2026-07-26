@@ -418,7 +418,14 @@ table TileState {
   x:uint;
   y:uint;
   element:ubyte;
-  mass:long;
+  // RETIRED from the client stream (#386). `mass` drifts every turn on every tile — including
+  // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
+  // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
+  // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
+  // "Mass: %.1f". It survives on the BINCODE snapshot (`TileState.mass`), which rollback needs to
+  // rebuild the ECS `Tile` — the same split the herd/forage/graze registries already use.
+  // Deprecated rather than deleted because slots are positional.
+  mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
   terrainTags:ushort;

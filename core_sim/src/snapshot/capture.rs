@@ -634,9 +634,17 @@ impl SnapshotHistory {
             Some(food_modules_state.clone())
         };
 
+        // Tiles and culture layers diff on PUBLISHED state, and hand back the baseline to store —
+        // which keeps the last *published* value for anything judged unchanged, so the hundredths
+        // comparison is a deadband that accumulates rather than a mask that freezes. See
+        // `diff_new_tiles`.
+        let (tiles_sent, tiles_index) = diff_new_tiles(&self.tiles, tiles_index);
+        let (culture_layers_sent, culture_layers_index) =
+            diff_new_culture_layers(&self.culture_layers, culture_layers_index);
+
         let delta = WorldDelta {
             header: snapshot.header.clone(),
-            tiles: diff_new(&self.tiles, &tiles_index),
+            tiles: tiles_sent,
             removed_tiles: diff_removed(&self.tiles, &tiles_index),
             logistics: diff_new(&self.logistics, &logistics_index),
             removed_logistics: diff_removed(&self.logistics, &logistics_index),
@@ -692,7 +700,7 @@ impl SnapshotHistory {
             corruption_raster: corruption_raster_delta.clone(),
             culture_raster: culture_raster_delta.clone(),
             military_raster: military_raster_delta.clone(),
-            culture_layers: diff_new(&self.culture_layers, &culture_layers_index),
+            culture_layers: culture_layers_sent,
             removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
             culture_tensions: delta_culture_tensions.clone(),
             discovery_progress: diff_new(&self.discovery_progress, &discovery_index),

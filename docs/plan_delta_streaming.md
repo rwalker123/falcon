@@ -182,6 +182,65 @@ one**. Any per-tile field that drifts every turn costs the full map every turn, 
 how good the delta encoder is. That belongs in the review checklist for every new `TileState`
 field.
 
+## 3.6 The comparison rule, and where two decimals is the wrong answer
+
+Acting on §3.5: the "did this change?" test for the two collections large enough to matter is now
+`same_published_state` rather than `PartialEq` — **ignore fields the client does not receive, and
+compare the rest at hundredths**. `PartialEq` stays exact, because rollback and the determinism
+tests compare whole snapshots and must keep seeing every bit.
+
+Measured effect, same setup: **tiles in a steady-state delta went 4160/4160 → ~600/4160.**
+
+### Two decimals is a grid, not a band — and that is what makes it safe
+
+The comparison **rounds to an absolute grid** (`(v * 100).round()`), it does not test
+`|a − b| < 0.005`. That distinction is the whole safety argument. A relative epsilon band is
+defeated by exactly the input this system produces: a value creeping by less than the band every
+turn is never "changed", and the client's error grows without bound. Rounding cannot do that —
+a creeping value crosses a grid line on its own, so the client is never more than half a hundredth
+behind, whatever the step size. Pinned by
+`drift_below_the_deadband_still_publishes_as_it_accumulates`.
+
+### Where hundredths would be WRONG
+
+Two decimals is right for everything the UI renders as a human-scale quantity. It is **wrong for
+any value whose meaningful range sits below 0.01**, where it does not coarsen the signal, it
+deletes it:
+
+- **Crisis telemetry gauges.** Live values from the same run: `PhageDensity raw=0.0031406`,
+  `ema=0.0030595`, `trend_5t=0.00022678`, against a `warn_threshold` of 0.35. Rounded to
+  hundredths every one of these is `0.00`, and the trend — a *difference* of two such numbers —
+  is identically zero forever. **Not quantised.**
+- **Any rate or per-turn increment** small enough to be an accumulator rather than a reading
+  (`regrowth_rate` 0.05, ecology `r ≈ 0.09`, knowledge progress increments). These are inputs to
+  running totals; rounding the increment biases the total.
+
+The rule of thumb that separates them: **quantise a READING, never an INCREMENT.** A reading is
+compared against a threshold or drawn on a ramp, and hundredths is finer than either. An increment
+is summed, and rounding it accumulates the error you just hid.
+
+I did not blanket-apply hundredths to the whole wire for that reason — it is applied to
+`TileState` and `CultureLayerState`, the two collections where the measurement showed it pays.
+
+### Culture layers: measured, and NOT a precision problem
+
+`CultureLayerState` got the same treatment (its `last_updated_tick` is a per-turn timestamp that
+guarantees every layer is "changed", and **nothing in the client reads it** — it is decoded in
+`dict/culture.rs` and no GDScript consumes the key). That did **not** move the number:
+**4201 of 4201 layers still ride every delta**, and there are more culture layers than tiles.
+
+Because the culture really is changing. Two consecutive states of one layer:
+
+```
+trait AsceticIndulgent   baseline: 0.040205 -> 0.058625      (+0.018)
+trait RationalistMystical baseline: 0.045142 -> 0.065870     (+0.021)
+```
+
+That is the simulation doing work, not noise, and no diff can compress it. So the remaining
+`encode.flat_delta` ≈ 5.4 ms is now **dominated by culture**, and the open question is a design
+one, not an encoding one: does the client need per-layer, per-axis trait values every turn, when
+what it renders is a culture *raster*? That is worth its own issue rather than a guess here.
+
 ## 4. What this does NOT try to do
 
 **Do not design this around the Inspector.** Standing decision (Ray, 2026-07-26): the Inspector is

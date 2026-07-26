@@ -508,13 +508,11 @@ func _format_representative_tiles(biome_id: int) -> Array[String]:
 		if not tags.is_empty():
 			tags_text = _join_strings_with_separator(tags, ", ")
 		var temperature: float = float(record.get("temperature", 0.0))
-		var mass: float = float(record.get("mass", 0.0))
-		result.append(" • %s | entity %d | tags: %s | temp %.1f | mass %.1f" % [
+		result.append(" • %s | entity %d | tags: %s | temp %.1f" % [
 			coords_text,
 			entity_id,
 			tags_text,
-			temperature,
-			mass
+			temperature
 		])
 	return result
 
@@ -654,7 +652,6 @@ Hover or select a tile to inspect biome tags and conditions."""
 	else:
 		lines.append("Food Module: none")
 	lines.append("Temperature: %.1f" % float(record.get("temperature", 0.0)))
-	lines.append("Mass: %.1f" % float(record.get("mass", 0.0)))
 	var height_text: String = _tile_height_text(int(record.get("x", -1)), int(record.get("y", -1)))
 	if height_text != "":
 		lines.append("Height: %s" % height_text)
@@ -898,7 +895,6 @@ func _store_tile(entry) -> void:
 		"y": coord.y,
 		"element": int(info.get("element", -1)),
 		"temperature": float(info.get("temperature", 0.0)),
-		"mass": float(info.get("mass", 0.0)),
 		"mountain_kind": mountain_kind,
 		"mountain_relief": mountain_relief,
 		"food_module": module_key,

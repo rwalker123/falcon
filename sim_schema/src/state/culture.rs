@@ -1,5 +1,6 @@
 //! Culture-section state: culture layers, influential individuals, and sentiment.
 
+use crate::state::same_to_hundredths_fixed;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -80,6 +81,48 @@ pub struct CultureLayerState {
     pub ticks_above_soft: u16,
     pub ticks_above_hard: u16,
     pub last_updated_tick: u64,
+}
+
+impl CultureTraitEntry {
+    /// Trait equality at the client stream's precision (hundredths).
+    fn same_published_state(&self, other: &Self) -> bool {
+        self.axis == other.axis
+            && same_to_hundredths_fixed(self.baseline, other.baseline)
+            && same_to_hundredths_fixed(self.modifier, other.modifier)
+            && same_to_hundredths_fixed(self.value, other.value)
+    }
+}
+
+impl CultureLayerState {
+    /// Does this layer look identical to `other` **as the client stream sees it**?
+    ///
+    /// The culture-layer twin of `TileState::same_published_state`, and it exists for the same
+    /// measured reason: culture layers outnumber tiles (4201 vs 4160 on an 80x52 map), so a field
+    /// that moves every turn costs more than the entire map does.
+    ///
+    /// **`last_updated_tick` is ignored.** It is a bookkeeping timestamp that advances every turn
+    /// by construction, so including it guarantees every layer rides every delta no matter how
+    /// still the culture is — and *nothing in the client reads it*. It is decoded into the client
+    /// dictionary (`dict/culture.rs`) and no GDScript consumes the key.
+    ///
+    /// Everything else compares at hundredths, per `WIRE_COMPARE_SCALE`.
+    pub fn same_published_state(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.owner == other.owner
+            && self.parent == other.parent
+            && self.scope == other.scope
+            && self.ticks_above_soft == other.ticks_above_soft
+            && self.ticks_above_hard == other.ticks_above_hard
+            && same_to_hundredths_fixed(self.divergence, other.divergence)
+            && same_to_hundredths_fixed(self.soft_threshold, other.soft_threshold)
+            && same_to_hundredths_fixed(self.hard_threshold, other.hard_threshold)
+            && self.traits.len() == other.traits.len()
+            && self
+                .traits
+                .iter()
+                .zip(other.traits.iter())
+                .all(|(a, b)| a.same_published_state(b))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

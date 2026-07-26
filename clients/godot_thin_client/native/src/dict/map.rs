@@ -91,7 +91,6 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     let _ = dict.insert("x", tile.x() as i64);
     let _ = dict.insert("y", tile.y() as i64);
     let _ = dict.insert("element", tile.element() as i64);
-    let _ = dict.insert("mass", fixed64_to_f64(tile.mass()));
     let _ = dict.insert("temperature", fixed64_to_f64(tile.temperature()));
     // Band-independent per-turn morale drain of living on this tile's terrain +
     // temperature (>=0; bigger = harsher). Bucketed into a Habitability rating in Hud.

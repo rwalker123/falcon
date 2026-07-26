@@ -112,7 +112,6 @@ fn create_tiles<'a>(
                     x: tile.x,
                     y: tile.y,
                     element: tile.element,
-                    mass: tile.mass,
                     temperature: tile.temperature,
                     terrain: to_fb_terrain_type(tile.terrain),
                     terrainTags: tile.terrain_tags.bits(),
