@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -10,6 +10,8 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use std::collections::HashMap;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_MAP_PRESETS: &str = include_str!("data/map_presets.json");
 
@@ -1039,6 +1041,14 @@ pub enum MapPresetsError {
     },
 }
 
+impl ConfigLoadError for MapPresetsError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct MapPresetsHandle(Arc<MapPresets>);
 
@@ -1067,39 +1077,16 @@ impl MapPresetsMetadata {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `MAP_PRESETS_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_map_presets_from_env() -> (Arc<MapPresets>, MapPresetsMetadata) {
-    let override_path = env::var("MAP_PRESETS_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/map_presets.json");
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match MapPresets::from_file(&path) {
-            Ok(presets) => {
-                tracing::info!(
-                    target: "shadow_scale::mapgen",
-                    path = %path.display(),
-                    "map_presets.loaded=file"
-                );
-                return (Arc::new(presets), MapPresetsMetadata::new(Some(path)));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::mapgen",
-                    path = %path.display(),
-                    error = %err,
-                    "map_presets.load_failed"
-                );
-            }
-        }
-    }
-
-    let presets = MapPresets::builtin();
-    tracing::info!(
-        target = "shadow_scale::mapgen",
-        "map_presets.loaded=builtin"
+    let (presets, source) = load_config_from_env(
+        "MAP_PRESETS_PATH",
+        "map_presets",
+        "src/data/map_presets.json",
+        MapPresets::builtin,
+        MapPresets::from_file,
     );
-    (presets, MapPresetsMetadata::new(None))
+    (presets, MapPresetsMetadata::new(source))
 }

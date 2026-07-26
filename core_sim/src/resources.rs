@@ -4,6 +4,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 use bevy::{math::UVec2, prelude::*};
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sim_runtime::{CorruptionLedger, CorruptionSubsystem, FloatRasterState};
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
     culture::CultureTensionRecord,
     orders::FactionId,
@@ -229,6 +231,14 @@ pub enum SimulationConfigError {
         #[source]
         source: io::Error,
     },
+}
+
+impl ConfigLoadError for SimulationConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::ReadFailed { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -627,51 +637,23 @@ pub fn apply_port_base_override(config: &mut SimulationConfig) {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `SIM_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigMetadata) {
-    let override_path = env::var("SIM_CONFIG_PATH").ok().map(PathBuf::from);
-
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/simulation_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match SimulationConfig::from_file(&path) {
-            Ok(mut config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "simulation_config.loaded=file"
-                );
-                apply_port_base_override(&mut config);
-                let random_seed = config.map_seed == 0;
-                return (
-                    config,
-                    SimulationConfigMetadata::new(Some(path), random_seed),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "simulation_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let mut config = SimulationConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "simulation_config.loaded=builtin"
+    let (loaded, source) = load_config_from_env(
+        "SIM_CONFIG_PATH",
+        "simulation_config",
+        "src/data/simulation_config.json",
+        || Arc::new(SimulationConfig::builtin()),
+        SimulationConfig::from_file,
     );
+    // The helper hands back an `Arc` so it can stay generic; this is the sole reference, so the
+    // unwrap is a move, not a copy.
+    let mut config = Arc::try_unwrap(loaded).unwrap_or_else(|shared| (*shared).clone());
     apply_port_base_override(&mut config);
     let random_seed = config.map_seed == 0;
-    (config, SimulationConfigMetadata::new(None, random_seed))
+    (config, SimulationConfigMetadata::new(source, random_seed))
 }
 
 /// Tracks total simulation ticks elapsed.

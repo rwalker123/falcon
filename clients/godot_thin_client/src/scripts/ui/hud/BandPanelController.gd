@@ -370,13 +370,51 @@ func _build_workforce_block(band: Dictionary, compact_cards: bool) -> VBoxContai
     cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     cards.add_theme_constant_override("separation", HudWorkVocab.ROLE_CARD_SEPARATION)
     cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_SCOUT, HudWorkVocab.SCOUT_ROLE_HINT, HudConst.LABOR_KIND_SCOUT, scout_eff, idle, compact_cards))
-    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, HudWorkVocab.WARRIOR_ROLE_HINT, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards))
+    # A visible predator within raid range turns the Warrior card's static hint into a live crimson
+    # alert naming the on-guard count — the guarding role is only legible when the threat it answers is.
+    var warrior_threat := _band_predator_threat_present(band)
+    var warrior_hint := HudWorkVocab.WARRIOR_ROLE_HINT
+    if warrior_threat:
+        warrior_hint = HudWorkVocab.WARRIOR_THREAT_ALERT_FORMAT % int(warrior_eff.get("workers", 0))
+    cards.add_child(_build_role_card(band, HudWorkVocab.ROLE_NAME_WARRIOR, warrior_hint, HudConst.LABOR_KIND_WARRIOR, warrior_eff, idle, compact_cards, warrior_threat))
     block.add_child(cards)
     return block
 
+## Predators Phase 3 — is a VISIBLE, camp-threatening predator within exact raid range of this band?
+## A predator is any herd with `prey_sense_radius > 0`; it MENACES the camp when `attack × aggression`
+## is positive (the same THREAT product the map overlay draws); and it can raid this band's larder when
+## its tile is within `raid_radius` (the sim's echoed `predators.raid_radius`, per cohort) hex-distance
+## of the band's tile. Herd telemetry is fog-filtered, so `world_herds()` already holds only VISIBLE
+## herds — exactly the predators the player can see and should be warned about. Uses the shared wrap-aware
+## `SourceForecast.hex_distance_wrapped` (never a hand-rolled distance) with the band's grid dims.
+func _band_predator_threat_present(band: Dictionary) -> bool:
+    var raid_radius := int(band.get("raid_radius", 0))
+    if raid_radius <= 0:
+        return false
+    var origin := SourceForecast.band_tile(band)
+    if origin.x < 0 or origin.y < 0:
+        return false
+    var grid_width := _band_labor.grid_width()
+    var wrap := _band_labor.wrap_horizontal()
+    for herd_variant in _band_labor.world_herds():
+        if not (herd_variant is Dictionary):
+            continue
+        var herd: Dictionary = herd_variant
+        if int(herd.get("prey_sense_radius", 0)) <= 0:
+            continue
+        if float(herd.get("attack", 0.0)) * float(herd.get("aggression", 0.0)) <= 0.0:
+            continue
+        var dist := SourceForecast.hex_distance_wrapped(
+            origin.x, origin.y, int(herd.get("x", -1)), int(herd.get("y", -1)), grid_width, wrap)
+        if dist >= 0 and dist <= raid_radius:
+            return true
+    return false
+
 ## One standing-role card: name · one-line hint · the SAME −/+ stepper (same `assign_labor` emit,
 ## same idle gating) the role rows used to carry.
-func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, compact: bool = false) -> PanelContainer:
+## `alert` (Predators Phase 3) tints the hint crimson — the Warrior card wears it when a predator is
+## within raid range, so the live "Predator nearby" warning reads as danger, not routine guidance.
+func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: String, effective: Dictionary, idle: int, compact: bool = false, alert: bool = false) -> PanelContainer:
     var workers := int(effective.get("workers", 0))
     var pending := bool(effective.get("pending", false))
     var card := PanelContainer.new()
@@ -394,6 +432,8 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     col.add_child(title)
     if not compact:
         var hint_label := HudWidgets.alloc_hint_label(hint)
+        if alert:
+            hint_label.add_theme_color_override("font_color", HudStyle.THREAT_ACCENT)
         hint_label.custom_minimum_size = Vector2(0.0, HudWorkVocab.ROLE_CARD_HINT_HEIGHT)
         col.add_child(hint_label)
     var stepper := HBoxContainer.new()

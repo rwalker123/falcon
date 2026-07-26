@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -22,6 +22,7 @@ use sim_runtime::TerrainType;
 use thiserror::Error;
 
 use crate::combat::CombatStats;
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_FAUNA_CONFIG: &str = include_str!("data/fauna_config.json");
 
@@ -668,6 +669,13 @@ pub struct PredatorConfig {
     /// finite `> 0`. A playtest dial.
     #[serde(default = "default_raid_exposure")]
     pub raid_exposure: f32,
+    /// **The share of a band's food income a casualty-causing raid forfeits** (Predators Phase 3,
+    /// `docs/plan_predators.md`) — the band's people were defending or fleeing, not gathering, so a raid
+    /// that costs lives also costs a fraction of **that turn's** food income, debited from the larder
+    /// (capped at what it holds). `0.0` = a raid costs only people; `1.0` = it forfeits the whole turn's
+    /// income. Validated finite and in `[0, 1]`. A playtest dial.
+    #[serde(default = "default_raid_yield_forfeit_fraction")]
+    pub raid_yield_forfeit_fraction: f32,
 }
 
 impl Default for PredatorConfig {
@@ -680,6 +688,7 @@ impl Default for PredatorConfig {
             pursuit_radius: default_pursuit_radius(),
             raid_radius: default_raid_radius(),
             raid_exposure: default_raid_exposure(),
+            raid_yield_forfeit_fraction: default_raid_yield_forfeit_fraction(),
         }
     }
 }
@@ -717,6 +726,11 @@ fn default_raid_radius() -> u32 {
 /// [`PredatorConfig::raid_exposure`].
 fn default_raid_exposure() -> f32 {
     4.0
+}
+/// Default share of a band's food income a casualty-causing raid forfeits. See
+/// [`PredatorConfig::raid_yield_forfeit_fraction`].
+fn default_raid_yield_forfeit_fraction() -> f32 {
+    0.25
 }
 
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
@@ -1899,6 +1913,10 @@ fn validate_predators(predators: &PredatorConfig) -> Result<(), FaunaConfigError
             value: predators.raid_exposure.to_string(),
         });
     }
+    require_in_unit_range(
+        "predators.raid_yield_forfeit_fraction",
+        predators.raid_yield_forfeit_fraction,
+    )?;
     // Every per-biome probability finite in `[0, 1]`, iterated in stable key order for a deterministic
     // error message (the `species` loop convention).
     let mut per_biome: Vec<(&String, &f32)> = predators.per_biome.iter().collect();
@@ -2053,6 +2071,14 @@ pub enum FaunaConfigError {
     },
 }
 
+impl ConfigLoadError for FaunaConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the fauna configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct FaunaConfigHandle(pub Arc<FaunaConfig>);
@@ -2097,59 +2123,26 @@ impl FaunaConfigMetadata {
     }
 }
 
-/// Load fauna configuration from environment (`FAUNA_CONFIG_PATH`) or the default
-/// data path, falling back to the baked-in builtin.
+/// Load fauna configuration from environment (`FAUNA_CONFIG_PATH`) or the default data path.
 ///
-/// Every candidate goes through [`FaunaConfig::from_json_str`], so it is **validated** before it can
-/// reach the sim: an override that would silently break the model (a pen that eats more than it
-/// yields, an inverted husbandry ladder, an unreachable knowledge gate, …) is rejected and logged at
-/// **error** level naming the broken invariant, and the known-good builtin is used instead.
+/// The file goes through [`FaunaConfig::from_json_str`], so it is **validated** before it can reach
+/// the sim: a config that would silently break the model (a pen that eats more than it yields, an
+/// inverted husbandry ladder, an unreachable knowledge gate, …) is refused, and a broken invariant
+/// is as fatal as a parse error — it looks live, which is exactly why it must not be swapped out
+/// quietly.
+///
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `FAUNA_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_fauna_config_from_env() -> (Arc<FaunaConfig>, FaunaConfigMetadata) {
-    let override_path = env::var("FAUNA_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/fauna_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match FaunaConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "fauna_config.loaded=file"
-                );
-                return (Arc::new(config), FaunaConfigMetadata::new(Some(path)));
-            }
-            // A broken invariant is an operator error, not a missing file: the config that *was*
-            // found says something incoherent. Shout about it.
-            Err(err @ FaunaConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "fauna_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "fauna_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = FaunaConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "fauna_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "FAUNA_CONFIG_PATH",
+        "fauna_config",
+        "src/data/fauna_config.json",
+        FaunaConfig::builtin,
+        FaunaConfig::from_file,
     );
-    (config, FaunaConfigMetadata::new(None))
+    (config, FaunaConfigMetadata::new(source))
 }
 
 #[cfg(test)]
@@ -2701,6 +2694,18 @@ mod tests {
     fn validate_rejects_a_non_positive_raid_exposure() {
         let err = reject(|json| json["predators"]["raid_exposure"] = (0.0).into());
         assert_rejects_field(err, "predators.raid_exposure");
+    }
+
+    /// The raid yield-forfeit is a FRACTION of the band's food income (Predators Phase 3): a value
+    /// below 0 or above 1 is out of range (0 = a raid costs only people; 1 = the whole turn's income).
+    #[test]
+    fn validate_rejects_an_out_of_range_raid_yield_forfeit_fraction() {
+        for bad in [-0.01, 1.01] {
+            let err =
+                reject(|json| json["predators"]["raid_yield_forfeit_fraction"] = (bad).into());
+            assert_rejects_field(err, "predators.raid_yield_forfeit_fraction");
+        }
+        assert!(FaunaConfig::builtin().validate().is_ok());
     }
 
     #[test]

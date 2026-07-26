@@ -18,7 +18,7 @@ paths:
 ## ECS Systems Reference
 
 ### Power Systems
-Fourth in turn chain. `PowerGridState` resource tracks per-node supply, demand, transmission loss, storage charge, stability score.
+Power is **not** a `TurnStage` of its own — `simulate_power` is registered in `TurnStage::Finalize`, chained ahead of `process_corruption` and `decay_fog_reveals`, under `run_if(capability_enabled(POWER | ALWAYS_ON))` (`lib.rs`). That gate is an `intersects` test — *any* listed bit passes — and `CapabilityFlags::default()` is `ALWAYS_ON`, so the chain runs by default whether or not `POWER` is set. It is not inert until power is enabled. `PowerGridState` resource tracks per-node supply, demand, transmission loss, storage charge, stability score.
 
 **Flow**: `collect_generation_orders` → `resolve_generation` → `route_energy` → `apply_storage_buffers` → `satisfy_demand` → `evaluate_instability` → `export_power_metrics`
 

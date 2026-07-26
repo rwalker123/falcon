@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -9,6 +9,7 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
     food::FoodModule,
     scalar::{scalar_from_f32, Scalar},
@@ -75,6 +76,14 @@ pub enum SnapshotOverlaysConfigError {
         #[source]
         source: io::Error,
     },
+}
+
+impl ConfigLoadError for SnapshotOverlaysConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -344,47 +353,17 @@ impl SnapshotOverlaysConfigMetadata {
     }
 }
 
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `SNAPSHOT_OVERLAYS_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_snapshot_overlays_config_from_env(
 ) -> (Arc<SnapshotOverlaysConfig>, SnapshotOverlaysConfigMetadata) {
-    let override_path = env::var("SNAPSHOT_OVERLAYS_CONFIG_PATH")
-        .ok()
-        .map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/snapshot_overlays_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match SnapshotOverlaysConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "snapshot_overlays_config.loaded=file"
-                );
-                return (
-                    Arc::new(config),
-                    SnapshotOverlaysConfigMetadata::new(Some(path)),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "snapshot_overlays_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = SnapshotOverlaysConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "snapshot_overlays_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "SNAPSHOT_OVERLAYS_CONFIG_PATH",
+        "snapshot_overlays_config",
+        "src/data/snapshot_overlays_config.json",
+        SnapshotOverlaysConfig::builtin,
+        SnapshotOverlaysConfig::from_file,
     );
-    (config, SnapshotOverlaysConfigMetadata::new(None))
+    (config, SnapshotOverlaysConfigMetadata::new(source))
 }

@@ -25,6 +25,13 @@ const SIGNAL_WASH   := Color(0.310, 0.878, 0.812, 0.14)
 const WARN          := Color(0.949, 0.694, 0.247, 1.0)   # #f2b13f  success / ETA
 const DANGER        := Color(0.910, 0.455, 0.416, 1.0)   # #e8746a
 const HEALTHY       := Color(0.463, 0.804, 0.502, 1.0)   # #76cd80  well-supplied / good
+# The two DANGER-overlay hues (Predators Phase 3), shared by the HUD alert surfaces so the command
+# feed's threat/casualty accents and the band panel's predator-nearby warning speak the SAME danger
+# language as the map's `threat` / `hunt_danger` washes. Values MIRROR MapView.THREAT_OVERLAY_COLOR /
+# HUNT_DANGER_OVERLAY_COLOR (the map layer keeps its own copies for the tile washes; these are the HUD
+# side of the same palette). Crimson = an unprovoked raid/casualty; amber = a hunt-cost caution.
+const THREAT_ACCENT := Color(0.85, 0.16, 0.16, 1.0)      # #d92929  threat red (raid / camp menace)
+const HUNT_DANGER_ACCENT := Color(0.93, 0.52, 0.13, 1.0) # #ed8521  danger orange (cost to hunt)
 ## The `primary` button variant's resting fill. Named because it is the ONLY marker of "this control
 ## is the selected/committing one" — a policy picker's chosen rung wears it and nothing else does —
 ## so a test that asks "which rung is lit?" has to read it back off the stylebox.

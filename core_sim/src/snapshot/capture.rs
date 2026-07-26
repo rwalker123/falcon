@@ -1605,6 +1605,7 @@ pub fn capture_snapshot(
                 wellbeing: &wellbeing_config,
                 supply_membership: &supply_membership,
                 work_range: band_work_range,
+                raid_radius: fauna_config.predators.raid_radius,
                 scout_vantage_distance,
                 expedition_levers: &expedition_levers,
                 settlement_stage_config: &settlement_stage_config,

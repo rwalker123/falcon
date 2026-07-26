@@ -36,6 +36,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
+| `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
 names a *section heading*, not a file. Resolve it with

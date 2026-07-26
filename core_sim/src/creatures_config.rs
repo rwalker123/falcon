@@ -10,7 +10,7 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,6 +20,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::combat::CombatStats;
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_CREATURES_CONFIG: &str = include_str!("data/creatures.json");
 
@@ -132,6 +133,14 @@ pub enum CreaturesConfigError {
     },
 }
 
+impl ConfigLoadError for CreaturesConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the creatures configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct CreaturesConfigHandle(pub Arc<CreaturesConfig>);
@@ -176,53 +185,21 @@ impl CreaturesConfigMetadata {
     }
 }
 
-/// Load creatures configuration from environment (`CREATURES_CONFIG_PATH`) or the default data path,
-/// falling back to the baked-in builtin. Every candidate is **validated**; a broken override is
-/// logged at **error** level and rejected in favour of the builtin.
+/// Load creatures configuration from environment (`CREATURES_CONFIG_PATH`) or the default data
+/// path. The file is **validated** before it can reach the sim, and a broken invariant is as fatal
+/// as a parse error.
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `CREATURES_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_creatures_config_from_env() -> (Arc<CreaturesConfig>, CreaturesConfigMetadata) {
-    let override_path = env::var("CREATURES_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/creatures.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match CreaturesConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "creatures_config.loaded=file"
-                );
-                return (Arc::new(config), CreaturesConfigMetadata::new(Some(path)));
-            }
-            Err(err @ CreaturesConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "creatures_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "creatures_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = CreaturesConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "creatures_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "CREATURES_CONFIG_PATH",
+        "creatures_config",
+        "src/data/creatures.json",
+        CreaturesConfig::builtin,
+        CreaturesConfig::from_file,
     );
-    (config, CreaturesConfigMetadata::new(None))
+    (config, CreaturesConfigMetadata::new(source))
 }
 
 #[cfg(test)]

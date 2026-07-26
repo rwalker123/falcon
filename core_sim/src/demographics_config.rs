@@ -6,9 +6,19 @@
 //! births, maturation, aging, and elder mortality from these rates. Mirrors the
 //! `sedentarization_config.rs` / `fauna_config.rs` loader (baked-in builtin + optional
 //! file/env override).
+//!
+//! **The JSON is the sole source of demographics tuning** (issue #350). There are no hand-written
+//! Rust defaults to drift out of sync with it: every field is required, unknown keys are rejected,
+//! and `DemographicsConfig::default()` parses [`BUILTIN_DEMOGRAPHICS_CONFIG`]. A missing or
+//! misspelled key is a loud parse error, not a silent fallback to a second set of numbers.
+//!
+//! The **loader** is strict to match, via the shared [`crate::config_load`] seam: a
+//! present-but-broken file, or a `DEMOGRAPHICS_CONFIG_PATH` that is missing or broken, is fatal at
+//! boot. Only an *absent default path* falls back to the builtin — otherwise the strict schema
+//! would merely move the silent substitution from one key out to the whole file.
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -17,32 +27,24 @@ use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config_load::{load_config_from_env, ConfigLoadError};
+
 pub const BUILTIN_DEMOGRAPHICS_CONFIG: &str = include_str!("data/demographics_config.json");
 
 /// Fractions (summing to ~1.0) that split a freshly spawned cohort's head-count into the three
 /// age brackets.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsDistribution {
     pub children: f32,
     pub working: f32,
     pub elders: f32,
 }
 
-impl Default for DemographicsDistribution {
-    fn default() -> Self {
-        Self {
-            children: 0.30,
-            working: 0.55,
-            elders: 0.15,
-        }
-    }
-}
-
 /// Per-turn food draw. `demand = per_capita_draw × (children·child_factor + working·working_factor
 /// + elders·elder_factor)`; the per-bracket factors let dependents eat less than a working adult.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsConsumption {
     pub per_capita_draw: f32,
     pub child_factor: f32,
@@ -50,34 +52,14 @@ pub struct DemographicsConsumption {
     pub elder_factor: f32,
 }
 
-impl Default for DemographicsConsumption {
-    fn default() -> Self {
-        Self {
-            per_capita_draw: 0.03,
-            child_factor: 0.6,
-            working_factor: 1.0,
-            elder_factor: 0.8,
-        }
-    }
-}
-
 /// Campaign-start seeding. Each freshly spawned band starts with `food_reserve_days` turns of
 /// its own food demand carried in its larder (food is band-local from day one — no faction pool)
 /// and a `well_fed_morale_bonus` for opening the game provisioned.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsStartup {
     pub food_reserve_days: f32,
     pub well_fed_morale_bonus: f32,
-}
-
-impl Default for DemographicsStartup {
-    fn default() -> Self {
-        Self {
-            food_reserve_days: 20.0,
-            well_fed_morale_bonus: 0.2,
-        }
-    }
 }
 
 /// The **stock** fertility factor: how deep is the larder. `reserve = 1 + bonus ×
@@ -85,8 +67,8 @@ impl Default for DemographicsStartup {
 /// measured in turns of demand. `saturation_turns = 1.0` reproduces the retired hardcoded
 /// behaviour (a two-turn buffer read as maximum surplus); the shipped 10.0 means a band must bank
 /// roughly a season to earn the full bonus. See `docs/plan_population_growth_model.md`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsReserve {
     /// Maximum fertility bonus from a full larder (the retired `births.surplus_bonus`).
     pub bonus: f32,
@@ -94,22 +76,13 @@ pub struct DemographicsReserve {
     pub saturation_turns: f32,
 }
 
-impl Default for DemographicsReserve {
-    fn default() -> Self {
-        Self {
-            bonus: 0.5,
-            saturation_turns: 10.0,
-        }
-    }
-}
-
 /// The **flow** fertility factor: is the larder growing or shrinking. Two-sided and centred at 1.0
 /// — net-positive food raises fertility, net-negative lowers it — driven by
 /// `net_ratio = (steady_income − demand − pen_feed_upkeep) / demand`, the negation of the same net
 /// drain the player-facing `turnsOfFood` runway divides by. See
 /// `docs/plan_population_growth_model.md`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsTrend {
     /// Maximum fertility bonus from net-positive food.
     pub surplus_gain: f32,
@@ -126,17 +99,6 @@ pub struct DemographicsTrend {
     pub deficit_saturation: f32,
 }
 
-impl Default for DemographicsTrend {
-    fn default() -> Self {
-        Self {
-            surplus_gain: 0.25,
-            surplus_saturation: 0.5,
-            deficit_penalty: 0.75,
-            deficit_saturation: 1.0,
-        }
-    }
-}
-
 /// Birth tuning. `births = birth_rate × working × hunger × reserve × trend`, added to children — a
 /// **product of named factors** mirroring `output_multiplier`'s modifier stack, so adding a future
 /// fertility driver is one entry rather than a rewrite of the birth path.
@@ -149,22 +111,12 @@ impl Default for DemographicsTrend {
 /// Births are **morale-independent** (Civilization Wellbeing model, `docs/plan_civ_wellbeing.md`):
 /// contentment doesn't change procreation — low morale relocates people or drags output, never
 /// suppresses births.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsBirths {
     pub birth_rate: f32,
     pub reserve: DemographicsReserve,
     pub trend: DemographicsTrend,
-}
-
-impl Default for DemographicsBirths {
-    fn default() -> Self {
-        Self {
-            birth_rate: 0.03,
-            reserve: DemographicsReserve::default(),
-            trend: DemographicsTrend::default(),
-        }
-    }
 }
 
 /// Starvation tuning. When food demand outruns the larder, each bracket loses
@@ -172,8 +124,8 @@ impl Default for DemographicsBirths {
 /// (dependents typically more vulnerable than working-age) — but never more than the deficit
 /// itself, so a 10% food shortfall impacts at most 10% of a bracket. Keep `starvation_mortality`
 /// well below 1 so shortfalls bleed the population down over several turns rather than in one.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsScarcity {
     pub starvation_mortality: f32,
     pub child_vulnerability: f32,
@@ -181,40 +133,19 @@ pub struct DemographicsScarcity {
     pub elder_vulnerability: f32,
 }
 
-impl Default for DemographicsScarcity {
-    fn default() -> Self {
-        Self {
-            starvation_mortality: 0.2,
-            child_vulnerability: 1.5,
-            working_vulnerability: 1.0,
-            elder_vulnerability: 1.5,
-        }
-    }
-}
-
 /// Cold-death tuning. Temperature deviation beyond `temp_tolerance` (°, absolute) kills
 /// `min(max_mortality, excess × mortality_scale)` of every bracket per turn.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsCold {
     pub temp_tolerance: f32,
     pub mortality_scale: f32,
     pub max_mortality: f32,
 }
 
-impl Default for DemographicsCold {
-    fn default() -> Self {
-        Self {
-            temp_tolerance: 12.0,
-            mortality_scale: 0.02,
-            max_mortality: 0.1,
-        }
-    }
-}
-
 /// Root demographic configuration.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DemographicsConfig {
     pub initial_distribution: DemographicsDistribution,
     pub consumption: DemographicsConsumption,
@@ -230,28 +161,23 @@ pub struct DemographicsConfig {
     pub cold: DemographicsCold,
 }
 
+/// The **only** `Default` in this module: it parses the builtin JSON, so `default()` and the
+/// shipped tuning are the same numbers by construction and cannot drift.
+///
+/// This is non-recursive **only because no struct here carries a container-level
+/// `#[serde(default)]`** — that attribute would make deserialization call back into this impl.
+/// Do not re-add it; every field is deliberately required (`deny_unknown_fields` on top), so a
+/// missing or unknown key fails loudly instead of falling back to a second set of numbers.
 impl Default for DemographicsConfig {
     fn default() -> Self {
-        Self {
-            initial_distribution: DemographicsDistribution::default(),
-            consumption: DemographicsConsumption::default(),
-            startup: DemographicsStartup::default(),
-            births: DemographicsBirths::default(),
-            maturation_rate: 0.05,
-            aging_rate: 0.025,
-            elder_mortality_rate: 0.06,
-            scarcity: DemographicsScarcity::default(),
-            cold: DemographicsCold::default(),
-        }
+        serde_json::from_str(BUILTIN_DEMOGRAPHICS_CONFIG)
+            .expect("builtin demographics config should parse")
     }
 }
 
 impl DemographicsConfig {
     pub fn builtin() -> Arc<Self> {
-        Arc::new(
-            serde_json::from_str(BUILTIN_DEMOGRAPHICS_CONFIG)
-                .expect("builtin demographics config should parse"),
-        )
+        Arc::new(Self::default())
     }
 
     pub fn from_json_str(json: &str) -> Result<Self, serde_json::Error> {
@@ -278,6 +204,18 @@ pub enum DemographicsConfigError {
     },
     #[error("failed to parse demographics config: {0}")]
     Parse(#[from] serde_json::Error),
+}
+
+impl ConfigLoadError for DemographicsConfigError {
+    /// The file simply **is not there**, as distinct from being unreadable (permissions, a
+    /// directory in the way) or invalid. This is the one distinction the loader's fallback rule
+    /// turns on — see [`crate::config_load::resolve_config`].
+    fn is_not_found(&self) -> bool {
+        match self {
+            Self::Read { source, .. } => source.kind() == io::ErrorKind::NotFound,
+            Self::Parse(_) => false,
+        }
+    }
 }
 
 /// Handle for accessing the demographic configuration.
@@ -320,49 +258,24 @@ impl DemographicsConfigMetadata {
     }
 }
 
-/// Load demographic config from environment (`DEMOGRAPHICS_CONFIG_PATH`) or the default data
-/// path, falling back to the baked-in builtin.
+/// Load demographic config from environment (`DEMOGRAPHICS_CONFIG_PATH`) or the default data path.
+///
+/// **Panics** when the named/default file exists but cannot be read or parsed, or when an explicit
+/// `DEMOGRAPHICS_CONFIG_PATH` names a file that is not there — see
+/// [`crate::config_load::resolve_config`] for why only an absent *default* path is benign. Without
+/// that, the strict schema (#350) would merely move the silent substitution one layer out: a
+/// fat-fingered key would stop being a silent serde default and start being a silent whole-file
+/// fallback.
 pub fn load_demographics_config_from_env() -> (Arc<DemographicsConfig>, DemographicsConfigMetadata)
 {
-    let override_path = env::var("DEMOGRAPHICS_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/demographics_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match DemographicsConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "demographics_config.loaded=file"
-                );
-                return (
-                    Arc::new(config),
-                    DemographicsConfigMetadata::new(Some(path)),
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "demographics_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = DemographicsConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "demographics_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "DEMOGRAPHICS_CONFIG_PATH",
+        "demographics_config",
+        "src/data/demographics_config.json",
+        DemographicsConfig::builtin,
+        DemographicsConfig::from_file,
     );
-    (config, DemographicsConfigMetadata::new(None))
+    (config, DemographicsConfigMetadata::new(source))
 }
 
 #[cfg(test)]
@@ -417,5 +330,57 @@ mod tests {
             births.trend.deficit_penalty
         );
         assert!(births.trend.surplus_gain >= 0.0);
+    }
+
+    /// The JSON is the sole source (#350): `default()` **is** the shipped tuning, so a test that
+    /// takes a `DemographicsConfig::default()` exercises the numbers the campaign runs on. The
+    /// comparison is deliberately **total** rather than a sample of fields — re-introducing a
+    /// hand-written `Default` anywhere in the tree fails here the moment any one of its literals
+    /// disagrees with the data file, which is precisely the drift this change removed.
+    #[test]
+    fn default_is_the_shipped_tuning() {
+        let shipped: DemographicsConfig =
+            serde_json::from_str(BUILTIN_DEMOGRAPHICS_CONFIG).expect("builtin should parse");
+        assert_eq!(
+            DemographicsConfig::default(),
+            shipped,
+            "default() must be the shipped JSON, field for field"
+        );
+    }
+
+    /// Parse the builtin into a `Value` so these tests describe a *shape* rule, not a tuning value —
+    /// splicing the shipped literal into a string edit would silently no-op after any re-tune.
+    fn builtin_value() -> serde_json::Value {
+        serde_json::from_str(BUILTIN_DEMOGRAPHICS_CONFIG).expect("builtin should parse")
+    }
+
+    /// A missing key is a **loud parse error**, not a silent fallback — that fallback is exactly how
+    /// the Rust and JSON `per_capita_draw` values drifted 5.3× apart.
+    #[test]
+    fn a_missing_key_is_rejected() {
+        let mut value = builtin_value();
+        value["consumption"]
+            .as_object_mut()
+            .expect("consumption is an object")
+            .remove("per_capita_draw")
+            .expect("builtin should carry per_capita_draw");
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "a config missing per_capita_draw must fail to parse"
+        );
+    }
+
+    /// So is a key no Rust field reads — a retired lever left behind would otherwise look live.
+    #[test]
+    fn an_unknown_key_is_rejected() {
+        let mut value = builtin_value();
+        value["consumption"]
+            .as_object_mut()
+            .expect("consumption is an object")
+            .insert("retired_lever".to_string(), serde_json::json!(1.0));
+        assert!(
+            DemographicsConfig::from_json_str(&value.to_string()).is_err(),
+            "a retired/misspelled key must fail to parse"
+        );
     }
 }

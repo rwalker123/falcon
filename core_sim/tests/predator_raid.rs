@@ -21,8 +21,8 @@ use core_sim::{
     LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle,
+    SnapshotOverlaysConfigHandle, SourceYield, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
 /// The shipped carnivore — `Grey Wolf Pack` (`attack 3`, `aggression 0.6`), so its raid attack is
@@ -182,6 +182,38 @@ fn working_of(app: &App, band: Entity) -> f32 {
         .unwrap()
         .working
         .to_f32()
+}
+
+/// Give a band **this turn's food income** and a larder to draw it from. `advance_labor_allocation`
+/// normally credits `last_yields[i].actual` to the larder earlier in the Population stage; these
+/// isolated raid tests fake both so the raid path has a real income to forfeit and a real larder to
+/// debit. One `Forage` yield row of `income`, and `larder` provisions in the store.
+fn seed_income_and_larder(app: &mut App, band: Entity, income: f32, larder: f32) {
+    {
+        let mut cohort = app.world.get_mut::<PopulationCohort>(band).unwrap();
+        cohort.stores.set(FOOD, scalar_from_f32(larder));
+    }
+    let mut alloc = app.world.get_mut::<LaborAllocation>(band).unwrap();
+    alloc.last_yields = vec![SourceYield {
+        actual: income,
+        ..SourceYield::ZERO
+    }];
+}
+
+fn larder_of(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<PopulationCohort>(band)
+        .unwrap()
+        .stores
+        .get(FOOD)
+        .to_f32()
+}
+
+fn raid_forfeit_of(app: &App, band: Entity) -> f32 {
+    app.world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .last_raid_forfeit
 }
 
 /// Whether at least one `predator_raid` feed line exists for faction 0.
@@ -356,6 +388,99 @@ fn aggression_scales_raid_lethality() {
         "a more aggressive carnivore must inflict strictly more casualties: mild {mild}, fierce {fierce}"
     );
 }
+
+/// **A casualty-causing raid on a WORKING band forfeits food** (Predators Phase 3). The band earned
+/// `income` this turn; the raid debits `raid_yield_forfeit_fraction` (0.25) of it from the larder and
+/// reports the actual take in `last_raid_forfeit`.
+#[test]
+fn a_raid_forfeits_a_fraction_of_a_working_bands_income() {
+    let (mut app, pos, tile) = arena();
+    seat(&mut app, "pred_wolf", WOLF, pos);
+    let band = resident_band(&mut app, tile, 30, 0);
+    // Ample larder so the whole forfeit is payable; a real income to forfeit a slice of.
+    let income = 40.0;
+    let larder = 500.0;
+    seed_income_and_larder(&mut app, band, income, larder);
+
+    let before = working_of(&app, band);
+    app.world.run_system_once(advance_predator_raids);
+
+    assert!(
+        working_of(&app, band) < before,
+        "the raid must cause casualties (the trigger for the forfeit)"
+    );
+    // Default `raid_yield_forfeit_fraction` is 0.25.
+    let expected = 0.25 * income;
+    let forfeit = raid_forfeit_of(&app, band);
+    assert!(
+        (forfeit - expected).abs() < 1e-3,
+        "a raid forfeits 0.25 × income: expected {expected}, got {forfeit}"
+    );
+    // The larder was actually debited by exactly that amount.
+    assert!(
+        (larder_of(&app, band) - (larder - expected)).abs() < 1e-3,
+        "the forfeit is a REAL larder debit"
+    );
+}
+
+/// **An IDLE raided band forfeits nothing** — it had no income to lose, so a raid costs it only people.
+#[test]
+fn an_idle_raided_band_forfeits_no_food() {
+    let (mut app, pos, tile) = arena();
+    seat(&mut app, "pred_wolf", WOLF, pos);
+    let band = resident_band(&mut app, tile, 30, 0);
+    // No income row at all, but a full larder — the forfeit must still be zero (0.25 × 0 = 0).
+    let larder = 500.0;
+    seed_income_and_larder(&mut app, band, 0.0, larder);
+
+    let before = working_of(&app, band);
+    app.world.run_system_once(advance_predator_raids);
+
+    assert!(
+        working_of(&app, band) < before,
+        "an idle band still loses PEOPLE to the raid"
+    );
+    assert_eq!(
+        raid_forfeit_of(&app, band),
+        0.0,
+        "a band with no income forfeits no food"
+    );
+    assert!(
+        (larder_of(&app, band) - larder).abs() < 1e-3,
+        "an idle band's larder is untouched by the raid"
+    );
+}
+
+/// **The forfeit is capped at the available larder** — it is a `LocalStore::take`, so it can never go
+/// negative even when `0.25 × income` exceeds what the band holds.
+#[test]
+fn the_forfeit_is_capped_at_the_larder() {
+    let (mut app, pos, tile) = arena();
+    seat(&mut app, "pred_wolf", WOLF, pos);
+    let band = resident_band(&mut app, tile, 30, 0);
+    // Big income (forfeit would be 0.25 × 100 = 25), but the larder holds only 2.
+    let income = 100.0;
+    let thin_larder = 2.0;
+    seed_income_and_larder(&mut app, band, income, thin_larder);
+
+    app.world.run_system_once(advance_predator_raids);
+
+    let forfeit = raid_forfeit_of(&app, band);
+    assert!(
+        (forfeit - thin_larder).abs() < 1e-3,
+        "the forfeit is capped at the larder: expected {thin_larder}, got {forfeit}"
+    );
+    assert!(
+        larder_of(&app, band) <= 1e-3,
+        "the larder is drained to (a floored) zero, never negative"
+    );
+}
+
+// The `raid_yield_forfeit_fraction` **config-rejection** (out of `[0, 1]`) is pinned next to its
+// sibling predator-config bounds in `fauna_config.rs`'s unit tests
+// (`validate_rejects_an_out_of_range_raid_yield_forfeit_fraction`), where the `reject` /
+// `assert_rejects_field` JSON harness lives — `FaunaConfig::builtin()` returns an `Arc`, so a bad
+// value can't be assigned onto it here.
 
 /// **Determinism.** Two identical raid setups leave bit-identical casualties (the resolver is pure and
 /// the seed is derived, not random).

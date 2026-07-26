@@ -571,6 +571,8 @@ case "$TARGET" in core_sim|client|both) ;; *)
   echo "usage: $0 [--check] [core_sim|client]" >&2; exit 2 ;;
 esac
 
+# --check writes nothing, so it runs BEFORE the write guard below and is never
+# blocked by it — the `hub-docs-sync` CI job depends on that.
 if [ $CHECK -eq 1 ]; then
   fail=0
   [ "$TARGET" = client ] || check_hub "$HUB_SRC_CORE_SIM" "$HUB_BLURB_CORE_SIM" "$HUB_BANNER_CORE_SIM" || fail=1
@@ -578,6 +580,41 @@ if [ $CHECK -eq 1 ]; then
   [ $fail -eq 0 ] || { echo "DRIFT: a hub was edited where the script owns the text; see above." >&2; exit 1; }
   echo "OK: every hub's banner and routing blurb still match their source files."
   exit 0
+fi
+
+# ------------------------------------------ post-split re-run guard (WRITE path)
+# The split landed in PR #343. Since then, edits go straight into the hubs and
+# the rule files, while the BLOB_* pins above are still the PRE-split originals
+# — so a write run does not "regenerate" anything, it REVERTS every edit made
+# since. Known casualties, both correctness fixes (issue #344): the `TurnStage`
+# ordering line in the core_sim hub body, and the "Fourth in turn chain" claim
+# about power in .claude/rules/core_sim/ecs-systems.md. Both sit in the pinned
+# blob in their wrong form, so a re-run reinstates the bugs.
+#
+# This does NOT overlap the banner/blurb machinery above. Those two regions are
+# script-owned, so a re-run restores them and `--check` already guards drift in
+# them. Everything else — the hub BODY (blob-derived) and every rule file, which
+# the header notes is deliberately NOT checked — has no such protection. That
+# gap is what this guard covers.
+#
+# Re-pin BLOB_* to a blob carrying the post-split edits FIRST, then re-run with
+# the override. This is the loud stop the header only described in prose.
+if [ "${SPLIT_CLAUDE_MD_ACK_REVERT:-}" != "1" ]; then
+  cat >&2 <<'MSG'
+REFUSING TO RUN: this would revert post-split edits.
+
+The BLOB_* pins in this script are the PRE-split CLAUDE.md files. Re-running
+overwrites each hub's body and every .claude/rules/**/*.md with the pre-split
+text, discarding all edits made since PR #343 — including the TurnStage
+ordering fixes from issue #344.
+
+  1. Re-pin BLOB_CORE_SIM / BLOB_CLIENT to blobs carrying the current text.
+  2. Re-run with:  SPLIT_CLAUDE_MD_ACK_REVERT=1 scripts/split_claude_md.sh
+
+To only VERIFY the hub banner/blurb (writes nothing, never blocked):
+  scripts/split_claude_md.sh --check
+MSG
+  exit 3
 fi
 
 case "$TARGET" in

@@ -20,6 +20,7 @@ pub mod climate;
 pub mod combat;
 mod combat_config;
 mod components;
+mod config_load;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -97,6 +98,7 @@ pub use components::{
     LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
     Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD,
 };
+pub use config_load::ConfigLoadError;
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,
@@ -820,8 +822,13 @@ pub fn build_headless_app() -> App {
 
 /// Execute a single simulation turn.
 ///
-/// Each call processes the chained systems configured in [`build_headless_app`]
-/// (materials → logistics → population → power → tick increment → snapshot).
+/// Each call runs the [`TurnStage`] sets chained in [`build_headless_app`], in order:
+/// Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis →
+/// Telling → Finalize → Victory → Snapshot.
+///
+/// Individual systems are not stages: `simulate_materials` runs inside `Logistics`,
+/// `simulate_power` inside `Finalize`, and `advance_tick` inside `Snapshot`.
+///
 /// Callers are responsible for snapshot broadcasting and command handling.
 pub fn run_turn(app: &mut App) {
     app.update();

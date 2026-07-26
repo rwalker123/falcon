@@ -686,17 +686,18 @@ mod demographics_tests {
     }
 
     /// One turn's food demand for [`breeders`], derived from the same shared `food_demand` helper
-    /// the sim uses rather than hardcoded — `DemographicsConfig::default()` and the shipped
-    /// `demographics_config.json` carry different `per_capita_draw` values, so a literal here would
-    /// silently describe the wrong config.
+    /// the sim uses rather than re-implemented here — `DemographicsConfig::default()` now parses
+    /// the shipped `demographics_config.json` (issue #350), so deriving it from the config in hand
+    /// tracks a re-tune of `per_capita_draw` automatically and only the pinned literal below has to
+    /// move.
     fn breeder_demand() -> f32 {
         let cfg = DemographicsConfig::default();
         let s = state(0.0, 16.5, 4.5, 0.0);
         super::food_demand(s.children, s.working, s.elders, &cfg.consumption).to_f32()
     }
 
-    /// = `0.03 × (16.5 + 4.5×0.8)`, pinned by `breeder_demand_matches` below.
-    const BREEDER_DEMAND: f32 = 0.603;
+    /// = `0.16 × (16.5 + 4.5×0.8)` = `0.16 × 20.1`, pinned by `breeder_demand_matches` below.
+    const BREEDER_DEMAND: f32 = 3.216;
 
     /// Births in one turn at the given steady income (no pens), off a childless cohort.
     fn births_at_income(larder_turns: f32, income_turns: f32) -> f32 {
@@ -1082,6 +1083,7 @@ mod food_flow_tests {
             assignments: vec![forage_assignment()],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
+            last_raid_forfeit: 0.0,
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
@@ -1117,6 +1119,7 @@ mod food_flow_tests {
                 },
             ],
             last_pen_feed_upkeep: 1.5,
+            last_raid_forfeit: 0.0,
         };
         let flow = band_food_flow(Some(&labor)).expect("projected telemetry is real data");
         assert!(

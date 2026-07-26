@@ -972,6 +972,23 @@ pub struct LaborAllocation {
     /// rehydrated cohort reads `0.0` until the next tick), and **excluded from equality** below so it
     /// can never perturb the persisted-intent comparison.
     pub last_pen_feed_upkeep: f32,
+    /// **The food this band forfeited to a predator raid this turn** (Predators Phase 3) — the actual
+    /// `LocalStore::take` debit `advance_predator_raids` levies on a **casualty-causing** raid (the
+    /// band's people were defending or fleeing, not gathering, so they forfeit
+    /// `predators.raid_yield_forfeit_fraction` of that turn's food income, capped at the larder). `0.0`
+    /// on a band not raided this turn.
+    ///
+    /// Exported as `PopulationCohortState.raid_forfeit` — a negative food-ledger row, the raid twin of
+    /// `last_pen_feed_upkeep`. It is a **past** larder debit (a stochastic event), so it extends only the
+    /// reconciliation identity, NOT the forward runway drain:
+    ///
+    /// ```text
+    /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
+    /// ```
+    ///
+    /// Same treatment as `last_pen_feed_upkeep`: rebuilt from scratch each turn, **derived, not
+    /// persisted**, and **excluded from equality** below.
+    pub last_raid_forfeit: f32,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of

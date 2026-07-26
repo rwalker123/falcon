@@ -11,7 +11,7 @@
 //! config that would silently disable expeditions (see that method for what is bounded and why).
 
 use std::{
-    env, fs, io,
+    fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -19,6 +19,8 @@ use std::{
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::config_load::{load_config_from_env, ConfigLoadError};
 
 pub const BUILTIN_EXPEDITION_CONFIG: &str = include_str!("data/expedition_config.json");
 
@@ -299,6 +301,14 @@ pub enum ExpeditionConfigError {
     },
 }
 
+impl ConfigLoadError for ExpeditionConfigError {
+    /// Only a genuinely absent file is a benign absence; every other variant is a file that is
+    /// there and wrong, which the boot loader refuses to paper over with the builtin.
+    fn is_not_found(&self) -> bool {
+        matches!(self, Self::Read { source, .. } if source.kind() == io::ErrorKind::NotFound)
+    }
+}
+
 /// Handle for accessing the expedition configuration.
 #[derive(Resource, Debug, Clone)]
 pub struct ExpeditionConfigHandle(pub Arc<ExpeditionConfig>);
@@ -344,61 +354,26 @@ impl ExpeditionConfigMetadata {
 }
 
 /// Load expedition configuration from environment (`EXPEDITION_CONFIG_PATH`) or the default data
-/// path, falling back to the baked-in builtin. Not wired into the `reload_config` hot-reload path
-/// (mirrors `sites_config.json` / `fauna_config.json`).
+/// path. Not wired into the `reload_config` hot-reload path (mirrors `sites_config.json` /
+/// `fauna_config.json`).
 ///
-/// Every candidate goes through [`ExpeditionConfig::from_json_str`], so it is **validated** before it
-/// can reach the sim: an override that would silently disable a feature (a `0` forecast horizon, a
-/// `0` carry cap, …) is rejected and logged at **error** level naming the broken invariant, and the
-/// known-good builtin is used instead. A bad override therefore fails loudly and can never take
-/// effect — it cannot quietly do something plausible.
+/// The file goes through [`ExpeditionConfig::from_json_str`], so it is **validated** before it can
+/// reach the sim: a config that would silently disable a feature (a `0` forecast horizon, a `0`
+/// carry cap, …) is refused, and a broken invariant is as fatal as a parse error — a bad config can
+/// never quietly do something plausible.
+///
+/// Only an absent *default* path falls back to the builtin; a present-but-broken file, or a
+/// `EXPEDITION_CONFIG_PATH` that names a missing or broken file, is a boot panic — see
+/// [`crate::config_load::resolve_config`].
 pub fn load_expedition_config_from_env() -> (Arc<ExpeditionConfig>, ExpeditionConfigMetadata) {
-    let override_path = env::var("EXPEDITION_CONFIG_PATH").ok().map(PathBuf::from);
-    let default_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/data/expedition_config.json");
-
-    let candidates: Vec<PathBuf> = match override_path {
-        Some(ref path) => vec![path.clone()],
-        None => vec![default_path.clone()],
-    };
-
-    for path in candidates {
-        match ExpeditionConfig::from_file(&path) {
-            Ok(config) => {
-                tracing::info!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    "expedition_config.loaded=file"
-                );
-                return (Arc::new(config), ExpeditionConfigMetadata::new(Some(path)));
-            }
-            // A broken invariant is an operator error, not a missing file: it means the config that
-            // *was* found says something incoherent. Shout about it.
-            Err(err @ ExpeditionConfigError::Invalid { .. }) => {
-                tracing::error!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "expedition_config.invalid_rejected"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    target: "shadow_scale::config",
-                    path = %path.display(),
-                    error = %err,
-                    "expedition_config.load_failed"
-                );
-            }
-        }
-    }
-
-    let config = ExpeditionConfig::builtin();
-    tracing::info!(
-        target: "shadow_scale::config",
-        "expedition_config.loaded=builtin"
+    let (config, source) = load_config_from_env(
+        "EXPEDITION_CONFIG_PATH",
+        "expedition_config",
+        "src/data/expedition_config.json",
+        ExpeditionConfig::builtin,
+        ExpeditionConfig::from_file,
     );
-    (config, ExpeditionConfigMetadata::new(None))
+    (config, ExpeditionConfigMetadata::new(source))
 }
 
 #[cfg(test)]

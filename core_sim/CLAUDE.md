@@ -22,7 +22,7 @@
 > who could break the invariant loads the rule anyway. Root `CLAUDE.md` → "The hub files are not
 > where rationale goes" has the long form.
 
-Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in order: materials → logistics → population → power → tick increment → snapshot capture.
+Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in `TurnStage` order (`src/lib.rs`): Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot.
 
 ## Quick Reference
 
@@ -78,6 +78,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
+| `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
 names a *section heading*, not a file. Resolve it with
@@ -119,7 +120,10 @@ Hot reload: `reload_config [path]` or `reload_config turn|overlay|crisis_archety
 | `SIM_PORT_BASE` | Shift all four TCP listen ports to a fresh block so multiple checkouts/worktrees don't collide (`snapshot=base+0`, `command=base+1`, `snapshot_flat=base+2`, `log=base+3`; `base=41000` is the historical block). `scripts/run_stack.sh` derives a per-checkout base automatically and forwards the matching `STREAM_PORT`/`COMMAND_PORT`/`LOG_PORT` to the Godot client; `cargo xtask command …` still defaults to `127.0.0.1:41001`, so pass `--port <base+1>` when targeting a shifted server. **Setting this var also makes the base *explicit*, which disables the auto-bump.** |
 | `SIM_PORTS_FILE` | Full path (not a directory) of the ports handshake file, overriding the per-user default. Used by tests and by any launcher that wants the handshake somewhere specific. |
 
-Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted per-row.
+Each `*_CONFIG_PATH` var in the tables above overrides its specific config file; those are noted
+per-row. **A var naming a missing or broken file is a boot panic, never a silent fallback to the
+builtin** — if you are overriding a config, a typo in the path stops the server rather than quietly
+running different numbers.
 
 **Port allocation, the handshake file, and how the client discovers a bumped block** are one
 two-sided contract — see `.claude/rules/core_sim/ports.md`, which loads on `port_alloc.rs`,

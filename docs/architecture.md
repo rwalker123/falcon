@@ -1,7 +1,7 @@
 # Shadow-Scale Prototype Architecture
 
 ## Overview
-- **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in the order materials → logistics → population → power → tick increment → snapshot capture.
+- **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in `TurnStage` order — Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot (`core_sim/src/lib.rs`; `core_sim/CLAUDE.md` is the doc-side authority).
 - **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. Commands flow over a single length-prefixed Protobuf `CommandEnvelope` socket (`SimulationConfig::command_bind`), while snapshots broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind` and logs on `SimulationConfig::log_bind`.
 - **Simulation Defaults**: `core_sim/src/data/simulation_config.json` seeds `SimulationConfig` with map dimensions, environmental tuning, trade/power/corruption multipliers, migration knobs, and the default TCP bind addresses/snapshot history depth. Designers can edit these baselines (grid size, mass bounds, leak curve, corruption penalties, networking ports) without touching Rust; the loader converts floats to fixed-point `Scalar` values on startup.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
