@@ -396,7 +396,11 @@ table CrisisGaugeState {
   kind:CrisisMetricKind;
   raw:float;
   ema:float;
-  trend5t:float;
+  // Change in `raw` over the trend window, extrapolated to a PER-100-TICK rate so the number
+  // reads at two decimals like every other value on the wire (#386). Previously the raw
+  // per-window difference, which for a slow gauge was ~0.0002 — indistinguishable from zero at
+  // the precision anything downstream compares at. Informational only: no threshold reads it.
+  trendPer100t:float;
   warnThreshold:float;
   criticalThreshold:float;
   lastUpdatedTick:ulong;

@@ -44,6 +44,35 @@ pub enum CrisisMetricKind {
     PhageDensity,
 }
 
+/// Ticks a reported trend is extrapolated over (`CrisisGaugeSnapshot::trend_per_100t`).
+const TREND_REPORT_TICKS: f32 = 100.0;
+
+/// Fraction → percent, for gauges whose natural value is a proportion.
+const FRACTION_TO_PERCENT: f32 = 100.0;
+
+impl CrisisMetricKind {
+    /// Multiplier applied at ingestion so every gauge reaches the wire on a scale where two
+    /// decimals is meaningful (#386).
+    ///
+    /// **The fix for a value too small to survive two decimals is to change its SCALE, not to
+    /// carry more digits.** `PhageDensity` is a proportion that reads ~0.003 against thresholds of
+    /// 0.35/0.6 — three leading zeros, and its trend an order of magnitude smaller again. As a
+    /// percentage it reads 0.31 against 35/60, which is legible and diffable. Note the config's
+    /// thresholds are stated in the SAME unit, so the two move together or the bands are wrong.
+    ///
+    /// The others are already on sane scales: `GridStressPct` / `UnauthorizedQueuePct` are percentages
+    /// by construction, `R0` is a reproduction number around 1, and `SwarmsActive` is a count.
+    const fn wire_scale(self) -> f32 {
+        match self {
+            CrisisMetricKind::PhageDensity => FRACTION_TO_PERCENT,
+            CrisisMetricKind::R0
+            | CrisisMetricKind::GridStressPct
+            | CrisisMetricKind::UnauthorizedQueuePct
+            | CrisisMetricKind::SwarmsActive => 1.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CrisisTrendSample {
     pub tick: u64,
@@ -64,7 +93,7 @@ pub struct CrisisGaugeSnapshot {
     pub kind: CrisisMetricKind,
     pub raw: f32,
     pub ema: f32,
-    pub trend_5t: f32,
+    pub trend_per_100t: f32,
     pub band: CrisisSeverityBand,
     pub last_updated_tick: u64,
     pub stale_ticks: u64,
@@ -79,7 +108,7 @@ impl Default for CrisisGaugeSnapshot {
             kind: CrisisMetricKind::R0,
             raw: 0.0,
             ema: 0.0,
-            trend_5t: 0.0,
+            trend_per_100t: 0.0,
             band: CrisisSeverityBand::Safe,
             last_updated_tick: 0,
             stale_ticks: 0,
@@ -183,7 +212,9 @@ impl CrisisTelemetry {
             ),
             phage_density: CrisisGauge::new(
                 CrisisMetricKind::PhageDensity,
-                thresholds("phage_density", 0.35, 0.6),
+                // PERCENT, matching `wire_scale` — the builtin fallback and the config file state
+                // the same unit as the value, or the bands sit 100x off the gauge.
+                thresholds("phage_density", 35.0, 60.0),
                 params,
             ),
             modifiers_active: 0,
@@ -239,6 +270,8 @@ impl CrisisTelemetry {
         }
     }
 
+    /// Ticks a reported trend is extrapolated over. Chosen so a slow gauge's movement is a number
+    /// with two significant digits rather than a string of leading zeros.
     pub fn record_metric(&mut self, tick: u64, kind: CrisisMetricKind, value: f32) {
         let transition = match kind {
             CrisisMetricKind::R0 => self.r0.update(tick, value),
@@ -299,7 +332,7 @@ impl CrisisTelemetry {
                 metric = ?gauge.kind,
                 raw = gauge.raw,
                 ema = gauge.ema,
-                trend_5t = gauge.trend_5t,
+                trend_per_100t = gauge.trend_per_100t,
                 warn_threshold = gauge.warn_threshold,
                 critical_threshold = gauge.critical_threshold,
                 band = ?gauge.band,
@@ -400,6 +433,12 @@ impl CrisisGauge {
         value: f32,
     ) -> Option<(CrisisMetricKind, CrisisSeverityBand, CrisisSeverityBand)> {
         let previous_band = self.last_band;
+        // Normalise the UNIT here, at the one point every ingestion path funnels through, so the
+        // EMA, the trend, the band classification and the wire can never disagree about scale.
+        // (`record_sample` is the live feed; `record_metric` is a second entry point — putting the
+        // conversion in either one alone leaves the other on the old scale, which is exactly the
+        // mistake this placement rules out.)
+        let value = value * self.kind.wire_scale();
         self.raw = value;
         self.ema = Some(match self.ema {
             Some(previous) => self.alpha.mul_add(value, (1.0 - self.alpha) * previous),
@@ -429,7 +468,12 @@ impl CrisisGauge {
             .map(|(_, value)| *value)
             .or_else(|| self.history.front().map(|(_, value)| *value))
             .unwrap_or(self.raw);
-        let trend = self.raw - baseline;
+        // Extrapolate the window difference to a PER-100-TICK rate. The raw difference over a
+        // 5-tick window is ~0.0002 for a slow gauge — a number that reads as zero at any precision
+        // the rest of the wire uses. Informational only: nothing classifies against the trend
+        // (`escalation_delta` is configured but has no consumer), so the rescale cannot move a
+        // warn/critical band. See `docs/plan_delta_streaming.md` §3.6.
+        let trend = (self.raw - baseline) * (TREND_REPORT_TICKS / self.trend_window.max(1) as f32);
         let band = self.classify(self.raw);
         let stale_ticks = current_tick.saturating_sub(self.last_updated_tick);
         let history = self
@@ -447,7 +491,7 @@ impl CrisisGauge {
             kind: self.kind,
             raw: self.raw,
             ema,
-            trend_5t: trend,
+            trend_per_100t: trend,
             band,
             last_updated_tick: self.last_updated_tick,
             stale_ticks,
@@ -1335,7 +1379,8 @@ mod tests {
         gauge.update(5, 50.0);
 
         let snapshot = gauge.snapshot(5);
-        assert!((snapshot.trend_5t - 40.0).abs() < f32::EPSILON);
+        // 40 over a 5-tick window extrapolates to 800 per 100 ticks.
+        assert!((snapshot.trend_per_100t - 800.0).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -26,8 +26,8 @@
       "critical": 5.0
     },
     "phage_density": {
-      "warn": 0.35,
-      "critical": 0.6
+      "warn": 35.0,
+      "critical": 60.0
     }
   },
   "extra": {

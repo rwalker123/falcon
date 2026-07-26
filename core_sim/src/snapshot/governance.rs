@@ -46,7 +46,7 @@ pub(crate) fn crisis_telemetry_state_from_metrics(
             kind: crisis_metric_kind_to_schema(gauge.kind),
             raw: gauge.raw,
             ema: gauge.ema,
-            trend_5t: gauge.trend_5t,
+            trend_per_100t: gauge.trend_per_100t,
             warn_threshold: gauge.warn_threshold,
             critical_threshold: gauge.critical_threshold,
             last_updated_tick: gauge.last_updated_tick,

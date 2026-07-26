@@ -197,7 +197,7 @@ fn create_crisis_gauges<'a>(
                     kind: to_fb_crisis_metric_kind(gauge.kind),
                     raw: gauge.raw,
                     ema: gauge.ema,
-                    trend5t: gauge.trend_5t,
+                    trendPer100t: gauge.trend_per_100t,
                     warnThreshold: gauge.warn_threshold,
                     criticalThreshold: gauge.critical_threshold,
                     lastUpdatedTick: gauge.last_updated_tick,

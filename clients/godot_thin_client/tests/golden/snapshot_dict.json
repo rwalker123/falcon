@@ -177,7 +177,7 @@
         "last_updated_tick": 127,
         "raw": 67.120003,
         "stale_ticks": 155,
-        "trend_5t": 41.490002,
+        "trend_per_100t": 28.139999,
         "warn_threshold": 56.970001
       },
       {
@@ -199,7 +199,7 @@
         "last_updated_tick": 144,
         "raw": 34.32,
         "stale_ticks": 200,
-        "trend_5t": 72.309998,
+        "trend_per_100t": 8.62,
         "warn_threshold": 50.380001
       }
     ],
