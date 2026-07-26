@@ -96,6 +96,10 @@ impl SnapshotHeader {
     }
 }
 
+fn default_fog_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
@@ -179,11 +183,17 @@ pub struct WorldSnapshot {
     pub logistics_raster: ScalarRasterState,
     pub sentiment_raster: ScalarRasterState,
     pub corruption_raster: ScalarRasterState,
-    pub fog_raster: ScalarRasterState,
     pub culture_raster: ScalarRasterState,
     pub military_raster: ScalarRasterState,
     #[serde(default)]
     pub visibility_raster: ScalarRasterState,
+    /// The server-owned fog-of-war master switch (`SimulationConfig::fog_enabled`), published so the
+    /// client renders the sim's decision rather than a local flag. Serde defaults it TRUE to match
+    /// the FlatBuffers field default; note the struct's *derived* `Default` still yields `false`, so
+    /// every constructor sets it explicitly (`capture.rs`, the `sim_runtime` placeholder snapshot,
+    /// the xtask fixture).
+    #[serde(default = "default_fog_enabled")]
+    pub fog_enabled: bool,
     pub axis_bias: AxisBiasState,
     pub sentiment: SentimentTelemetryState,
     pub generations: Vec<GenerationState>,
@@ -244,10 +254,13 @@ pub struct WorldDelta {
     pub logistics_raster: Option<ScalarRasterState>,
     pub sentiment_raster: Option<ScalarRasterState>,
     pub corruption_raster: Option<ScalarRasterState>,
-    pub fog_raster: Option<ScalarRasterState>,
     pub culture_raster: Option<ScalarRasterState>,
     pub military_raster: Option<ScalarRasterState>,
     pub visibility_raster: Option<ScalarRasterState>,
+    /// Carried on EVERY delta, not diffed: the FlatBuffers field defaults to `true` when absent, so
+    /// an omitted value would silently re-enable fog on the client one delta after it was turned off.
+    #[serde(default = "default_fog_enabled")]
+    pub fog_enabled: bool,
     pub generations: Vec<GenerationState>,
     pub removed_generations: Vec<u16>,
     pub corruption: Option<CorruptionLedger>,

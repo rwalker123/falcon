@@ -26,10 +26,10 @@ use core_sim::{
     scalar_zero, spawn_initial_forage, spawn_initial_world, tile_flora_composition,
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FogRevealLedger, FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
+    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
@@ -136,7 +136,6 @@ fn spawn_world_on(grid_size: UVec2, seed: u64) -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_forage);
     app
 }

@@ -18,7 +18,6 @@ Raster overlays streamed from `core_sim`:
 | `logistics` | Blue | Throughput flow |
 | `sentiment` | Red | Morale/agency composite |
 | `corruption` | Amber | Ledger intensity + risk weights |
-| `fog` | Slate | Inverted knowledge coverage |
 | `culture` | Violet | Divergence magnitude |
 | `military` | Green | Readiness scalar |
 | `terrain_tags` | Blended | Per-tag colors averaged |
@@ -28,6 +27,18 @@ Raster overlays streamed from `core_sim`:
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
 
 Legend rendering: min/avg/max values + channel description.
+
+**RETIRED: the `fog` channel ("Fog of Knowledge", slate, inverted knowledge coverage).** It was a
+selectable *data* overlay fed by `VisionSection.fogRaster`, and it had nothing to do with fog of war —
+two unrelated systems sharing a word, which is exactly why it went. **Fog of war is the only fog the
+client keeps**: the `visibility` channel (labelled "Fog of War"), `MapView._fow_*` /
+`_is_tile_visible` / `_unit_hidden_by_fog`, `heightfield_config.json`'s `"fog_of_war"` block, and the
+blend shader's `fog_color` uniform — none of which this retirement touched. A grep for "fog" in the
+client hits fog-of-war in almost every case; check which one you have before deleting anything. On the
+client side the removal was three lines (`MapView.FOG_COLOR`, its `OVERLAY_COLORS` row, and the dead
+`avg_fog` metric): the selector and legend are data-driven off the snapshot's `channel_order`, so
+dropping the native channel registration removed the entry from both with no OverlayPanel edit — the
+same property the derived-danger channels rely on, described below.
 
 **`hunt_danger` / `threat` — the two derived-danger overlays (Predators Phase 0).** STRENGTH ≠ DANGER:
 the wire carries four RAW components on `HerdTelemetryState` — `attack` / `defense` (open-ended, against

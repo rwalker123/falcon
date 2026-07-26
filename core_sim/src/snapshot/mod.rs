@@ -91,16 +91,15 @@ use crate::{
     resources::FoodSiteRegistry,
     resources::{
         CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-        DiscoveryProgressLedger, FactionInventory, FogRevealLedger, MoistureRaster,
-        SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,
-        WorldEpoch,
+        DiscoveryProgressLedger, FactionInventory, MoistureRaster, SentimentAxisBias,
+        SimulationConfig, SimulationTick, StartLocation, TileRegistry, WorldEpoch,
     },
     scalar::{scalar_zero, Scalar},
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
     sites_config::SitesConfigHandle,
     snapshot_overlays_config::{SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle},
-    start_profile::{snapshot_profiles, CampaignLabel, FogMode, StartProfilesHandle},
+    start_profile::{snapshot_profiles, CampaignLabel, StartProfilesHandle},
     supply::SupplyNetworkMembership,
     systems::{
         food_demand, hunt_per_worker_provisions, hunt_trip_forecast, tile_morale_pressure,
@@ -196,14 +195,12 @@ mod tests {
         power::PowerIncidentSeverity as GridIncidentSeverity,
         resources::{CorruptionTelemetry, DiscoveryProgressLedger},
         scalar::Scalar,
-        start_profile::StartProfileOverrides,
         PowerIncident,
     };
     use bevy::math::UVec2;
     use sim_runtime::{
         CorruptionEntry, CorruptionSubsystem, GreatDiscoveryProgressState, GreatDiscoveryState,
-        GreatDiscoveryTelemetryState, KnowledgeField, KnownTechFragment, TerrainTags, TerrainType,
-        TradeLinkKnowledge,
+        GreatDiscoveryTelemetryState, KnowledgeField, TerrainTags, TerrainType, TradeLinkKnowledge,
     };
 
     /// The viewer every herd-export fixture below captures for.
@@ -225,6 +222,7 @@ mod tests {
 
     /// The four wire-shape fixtures below differ only in their herd registry, so the plumbing is
     /// stated once. Grid is 64×64 (the fixtures' own `UVec2::new(64, 64)`), fully visible.
+    /// Fog of war ON — the default, and the state every fog fixture below is written against.
     fn export_herds(
         telemetry: &HerdTelemetry,
         registry: &HerdRegistry,
@@ -232,6 +230,21 @@ mod tests {
         labor: &LaborConfig,
         expedition: &ExpeditionConfig,
         visibility: &crate::visibility::VisibilityLedger,
+    ) -> Vec<HerdTelemetryState> {
+        export_herds_with_fog(
+            telemetry, registry, fauna, labor, expedition, visibility, true,
+        )
+    }
+
+    /// `export_herds` with the server-owned fog switch exposed, for the fog-disabled fixtures.
+    fn export_herds_with_fog(
+        telemetry: &HerdTelemetry,
+        registry: &HerdRegistry,
+        fauna: &FaunaConfig,
+        labor: &LaborConfig,
+        expedition: &ExpeditionConfig,
+        visibility: &crate::visibility::VisibilityLedger,
+        fog_enabled: bool,
     ) -> Vec<HerdTelemetryState> {
         herd_snapshot_entries(HerdSnapshotInputs {
             telemetry,
@@ -244,6 +257,7 @@ mod tests {
             wrap_horizontal: false,
             visibility,
             viewer: VIEWER,
+            fog_enabled,
         })
     }
 
@@ -478,7 +492,6 @@ mod tests {
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
-            fog_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             axis_bias: AxisBiasState::default(),
@@ -490,6 +503,7 @@ mod tests {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: ScalarRasterState::default(),
+            fog_enabled: true,
         }
         .finalize()
     }
@@ -545,7 +559,6 @@ mod tests {
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
-            fog_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             axis_bias: AxisBiasState::default(),
@@ -557,6 +570,7 @@ mod tests {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: ScalarRasterState::default(),
+            fog_enabled: true,
         }
         .finalize()
     }
@@ -607,7 +621,6 @@ mod tests {
             logistics_raster: ScalarRasterState::default(),
             sentiment_raster: ScalarRasterState::default(),
             corruption_raster: ScalarRasterState::default(),
-            fog_raster: ScalarRasterState::default(),
             culture_raster: ScalarRasterState::default(),
             military_raster: ScalarRasterState::default(),
             axis_bias: AxisBiasState::default(),
@@ -619,6 +632,7 @@ mod tests {
             culture_tensions: Vec::new(),
             discovery_progress: Vec::new(),
             visibility_raster: ScalarRasterState::default(),
+            fog_enabled: true,
         }
         .finalize()
     }
@@ -1242,154 +1256,6 @@ mod tests {
         assert!(raster.samples[0] > raster.samples[1]);
     }
 
-    #[test]
-    fn fog_raster_reflects_discovery_progress() {
-        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
-
-        let populations = vec![
-            PopulationCohortState {
-                entity: 200,
-                home: 1,
-                current_x: 0,
-                current_y: 0,
-                is_traveling: false,
-                size: 150,
-                children: 0,
-                working: 0,
-                elders: 0,
-                stores: Vec::new(),
-                age_turns: 0,
-                turns_of_food: 0.0,
-                activity: String::new(),
-                supply_network_id: 0,
-                morale_delta: 0,
-                morale_cause: 0,
-                morale: Scalar::from_f32(0.5).raw(),
-                generation: 0,
-                faction: 0,
-                knowledge_fragments: vec![KnownTechFragment {
-                    discovery_id: 1,
-                    progress: Scalar::from_f32(0.6).raw(),
-                    fidelity: Scalar::one().raw(),
-                }],
-                migration: None,
-                harvest_task: None,
-                scout_task: None,
-                accessible_stockpile: None,
-                ..Default::default()
-            },
-            PopulationCohortState {
-                entity: 201,
-                home: 2,
-                current_x: 0,
-                current_y: 0,
-                is_traveling: false,
-                size: 60,
-                children: 0,
-                working: 0,
-                elders: 0,
-                stores: Vec::new(),
-                age_turns: 0,
-                turns_of_food: 0.0,
-                activity: String::new(),
-                supply_network_id: 0,
-                morale_delta: 0,
-                morale_cause: 0,
-                morale: Scalar::from_f32(0.7).raw(),
-                generation: 0,
-                faction: 1,
-                knowledge_fragments: Vec::new(),
-                migration: None,
-                harvest_task: None,
-                scout_task: None,
-                accessible_stockpile: None,
-                ..Default::default()
-            },
-        ];
-
-        let mut discovery = DiscoveryProgressLedger::default();
-        discovery.add_progress(FactionId(0), 1, Scalar::from_f32(0.8));
-        discovery.add_progress(FactionId(0), 2, Scalar::from_f32(0.4));
-
-        let overlays_config = SnapshotOverlaysConfig::default();
-        let start_location = StartLocation::default();
-        let fog_reveals = FogRevealLedger::default();
-        let fog = fog_raster_from_discoveries(FogRasterInputs {
-            tiles: &tiles,
-            populations: &populations,
-            discovery: &discovery,
-            grid_size: UVec2::new(2, 1),
-            overlays: &overlays_config,
-            start_location: &start_location,
-            fog_reveals: &fog_reveals,
-            tick: 0,
-        });
-
-        assert_eq!(fog.width, 2);
-        assert_eq!(fog.height, 1);
-        assert!(fog.samples[0] < Scalar::one().raw());
-        assert_eq!(fog.samples[1], Scalar::one().raw());
-    }
-
-    #[test]
-    fn fog_raster_revealed_mode_clears_samples() {
-        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
-        let populations = Vec::new();
-        let discovery = DiscoveryProgressLedger::default();
-        let overlays_config = SnapshotOverlaysConfig::default();
-        let overrides = StartProfileOverrides {
-            fog_mode: Some(FogMode::Revealed),
-            ..Default::default()
-        };
-        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
-        let fog_reveals = FogRevealLedger::default();
-
-        let fog = fog_raster_from_discoveries(FogRasterInputs {
-            tiles: &tiles,
-            populations: &populations,
-            discovery: &discovery,
-            grid_size: UVec2::new(2, 1),
-            overlays: &overlays_config,
-            start_location: &start_location,
-            fog_reveals: &fog_reveals,
-            tick: 0,
-        });
-
-        assert!(fog
-            .samples
-            .iter()
-            .all(|sample| *sample == Scalar::zero().raw()));
-    }
-
-    #[test]
-    fn fog_raster_shroud_only_reveals_radius() {
-        let tiles = vec![tile(1, 0, 0), tile(2, 1, 0)];
-        let populations = Vec::new();
-        let discovery = DiscoveryProgressLedger::default();
-        let overlays_config = SnapshotOverlaysConfig::default();
-        let overrides = StartProfileOverrides {
-            fog_mode: Some(FogMode::Shroud),
-            survey_radius: Some(0),
-            ..Default::default()
-        };
-        let start_location = StartLocation::from_profile(Some(UVec2::new(0, 0)), &overrides);
-        let fog_reveals = FogRevealLedger::default();
-
-        let fog = fog_raster_from_discoveries(FogRasterInputs {
-            tiles: &tiles,
-            populations: &populations,
-            discovery: &discovery,
-            grid_size: UVec2::new(2, 1),
-            overlays: &overlays_config,
-            start_location: &start_location,
-            fog_reveals: &fog_reveals,
-            tick: 0,
-        });
-
-        assert_eq!(fog.samples[0], Scalar::zero().raw());
-        assert_eq!(fog.samples[1], Scalar::one().raw());
-    }
-
     fn demographics_cohort(
         faction: u32,
         size: u32,
@@ -1745,6 +1611,80 @@ mod tests {
         assert!(
             states.is_empty(),
             "an empty ledger hides every herd, matching the all-unexplored raster"
+        );
+    }
+
+    /// **The fog switch is the server's, and it reaches the payload.** Fog of war is one
+    /// server-owned setting (`SimulationConfig::fog_enabled`); with it off, the filter above stops
+    /// running and every herd crosses. This is the ONLY place the reveal can happen — a client-side
+    /// render flag cannot restore herds the sim already dropped from the wire.
+    #[test]
+    fn disabling_fog_exports_every_herd_including_unseen_unowned_ones() {
+        let mut registry = HerdRegistry::default();
+        registry.herds.push(herd_at("herd_seen", UVec2::new(4, 4)));
+        registry
+            .herds
+            .push(herd_at("herd_hidden", UVec2::new(40, 40)));
+
+        // The same ledger and the same registry as the leak test above: only the switch differs.
+        let ledger = ledger_seeing(64, &[UVec2::new(4, 4)]);
+        let telemetry = HerdTelemetry {
+            entries: registry.snapshot_entries(),
+        };
+        let export = |fog_enabled: bool| {
+            export_herds_with_fog(
+                &telemetry,
+                &registry,
+                &FaunaConfig::builtin(),
+                &LaborConfig::builtin(),
+                &ExpeditionConfig::builtin(),
+                &ledger,
+                fog_enabled,
+            )
+        };
+
+        assert_eq!(
+            export(true)
+                .iter()
+                .map(|h| h.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["herd_seen"],
+            "with fog ON the unseen, unowned herd is still withheld"
+        );
+        assert_eq!(
+            export(false)
+                .iter()
+                .map(|h| h.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["herd_seen", "herd_hidden"],
+            "with fog OFF the unseen, unowned herd crosses the wire"
+        );
+    }
+
+    /// The raster half of the same switch. It must agree with the herd list above by construction —
+    /// a client cannot be handed herds it is told are standing on black tiles. Note this holds even
+    /// with an EMPTY ledger, the state that otherwise fails closed to all-unexplored.
+    #[test]
+    fn disabling_fog_emits_an_all_active_visibility_raster() {
+        let grid = UVec2::new(8, 4);
+        let empty = crate::visibility::VisibilityLedger::default();
+
+        let dark = visibility_raster_from_ledger(&empty, VIEWER, grid, true);
+        assert!(
+            dark.samples.iter().all(|sample| *sample == 0),
+            "fog ON with no faction map is all-unexplored — the fail-closed state"
+        );
+
+        let revealed = visibility_raster_from_ledger(&empty, VIEWER, grid, false);
+        assert_eq!(revealed.width, grid.x);
+        assert_eq!(revealed.height, grid.y);
+        assert_eq!(revealed.samples.len(), (grid.x * grid.y) as usize);
+        assert!(
+            revealed
+                .samples
+                .iter()
+                .all(|sample| *sample == Scalar::SCALE),
+            "fog OFF paints every tile Active regardless of the ledger"
         );
     }
 

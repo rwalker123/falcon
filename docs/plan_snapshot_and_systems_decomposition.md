@@ -55,7 +55,7 @@ touch different tables and never collide on slot order.
 | `KnowledgeSection` | greatDiscoveryDefinitions, greatDiscoveries, greatDiscoveryProgress, greatDiscoveryTelemetry, knowledgeLedger, knowledgeTimeline, knowledgeMetrics, discoveredSites, discoveryProgress | removedKnowledgeLedger |
 | `GovernanceSection` | power, powerMetrics, corruption, corruptionRaster, crisisTelemetry, crisisOverlay | removedPower |
 | `CultureSection` | cultureLayers, cultureTensions, cultureRaster, influencers, axisBias, sentiment, sentimentRaster | removedInfluencers, removedCultureLayers |
-| `VisionSection` | fogRaster, visibilityRaster, militaryRaster | — |
+| `VisionSection` | visibilityRaster, militaryRaster (`fogRaster` is a retired `(deprecated)` slot) | — |
 | `CampaignSection` | campaignProfiles, commandEvents, victory | — |
 
 `header:SnapshotHeader` and `capabilityFlags:uint` stay at the root of both
@@ -456,9 +456,10 @@ follow-up PR:
 6. ~~**`#[allow(clippy::too_many_arguments)]`** on `fog_raster_from_discoveries`
    (`snapshot/vision.rs`) and `population_state` (`snapshot/population.rs`).
    Replace each with a parameter struct so the allow can be dropped, rather than
-   suppressing the lint.~~ **Done** (commit `8a55f06`) — both take a `*Inputs`
-   parameter struct (`FogRasterInputs` / `PopulationStateInputs`) and the allows
-   are gone.
+   suppressing the lint.~~ **Done** (commit `8a55f06`) — both took a `*Inputs`
+   parameter struct and the allows are gone. `fog_raster_from_discoveries` has
+   since been deleted outright with the Fog-of-Knowledge overlay; only
+   `PopulationStateInputs` survives.
 7. ~~**Per-capture `tracing::info!`** in `visibility_raster_from_ledger`
    (`snapshot/vision.rs`) fires once per snapshot capture (every tick). Downgrade
    to `debug!` or gate behind a flag.~~ **Done** (commit `8a55f06`) — now `debug!`.

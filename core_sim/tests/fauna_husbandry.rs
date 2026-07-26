@@ -12,14 +12,14 @@ use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, herd_ecology, quantise_animal_take,
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world,
     CommandEventEntry, CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger,
-    FactionId, FactionInventory, FaunaConfigHandle, FogRevealLedger, FollowPolicy, ForageRegistry,
-    GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+    FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey, SimulationConfig,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    PENNING_DISCOVERY_ID, RUNG_COMPLETE,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -71,7 +71,6 @@ fn spawn_world() -> App {
     app.world
         .insert_resource(core_sim::CreaturesConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.run_system_once(spawn_initial_herds);
     app
 }

@@ -421,10 +421,12 @@ pub mod knowledge {
                 logistics_raster: ScalarRasterState::default(),
                 sentiment_raster: ScalarRasterState::default(),
                 corruption_raster: ScalarRasterState::default(),
-                fog_raster: ScalarRasterState::default(),
                 culture_raster: ScalarRasterState::default(),
                 military_raster: ScalarRasterState::default(),
                 visibility_raster: ScalarRasterState::default(),
+                // The placeholder world the client shows before the first capture: fog ON, matching
+                // the schema default, so an empty world never reads as "fog disabled".
+                fog_enabled: true,
                 elevation_overlay: crate::ElevationOverlayState::default(),
                 climate_bands: crate::ClimateBandsState::default(),
                 start_marker: None,

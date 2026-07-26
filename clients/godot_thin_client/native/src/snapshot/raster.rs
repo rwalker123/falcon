@@ -44,6 +44,11 @@ pub(crate) fn insert_overlay_channel(
     order.push(&key_str);
 }
 
+/// What `fog_enabled` reads as when a payload carries no `VisionSection` at all. Mirrors the schema
+/// default (`fogEnabled:bool = true`): fog of war is ON unless the sim says otherwise, so a missing
+/// section can never be read as "the server disabled fog".
+pub(crate) const FOG_ENABLED_WHEN_ABSENT: bool = true;
+
 pub(crate) struct GridSize {
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -54,7 +59,6 @@ pub(crate) struct OverlaySlices<'a> {
     pub(crate) logistics: &'a [f32],
     pub(crate) sentiment: &'a [f32],
     pub(crate) corruption: &'a [f32],
-    pub(crate) fog: &'a [f32],
     pub(crate) culture: &'a [f32],
     pub(crate) military: &'a [f32],
     pub(crate) crisis: &'a [f32],
@@ -71,6 +75,11 @@ pub(crate) struct OverlaySlices<'a> {
     pub(crate) climate_bands: Option<[f32; 3]>,
     pub(crate) moisture: &'a [f32],
     pub(crate) visibility: &'a [f32],
+    /// The server-owned fog-of-war switch (`VisionSection.fogEnabled`), surfaced as the top-level
+    /// `fog_enabled` scalar. The client renders the state it is TOLD rather than holding its own
+    /// flag — with fog off the sim stops dropping unseen herds from the payload, which is something
+    /// no client-side toggle could reproduce. Same reasoning as `elevation_sea_level` riding here.
+    pub(crate) fog_enabled: bool,
     /// The GRAZE (pasture) layer's per-tile CAPACITY — how much pasture this tile's biome can
     /// carry, in graze-biomass units (`0` = this biome carries no pasture at all). Unlike every
     /// other slice here it is not a wire raster: graze rides `TileState`, so this is assembled

@@ -424,6 +424,14 @@ func _ready() -> void:
 	DirAccess.make_dir_absolute(OUT_DIR)
 	_map = MAP_VIEW.new()
 	add_child(_map)
+	# STATE THE FOG CONDITION, never inherit it. `MapView._fow_enabled` defaults to `true` (it fails
+	# CLOSED, so the live client cannot draw a revealed frame before the first snapshot's
+	# `fog_enabled` arrives), and the states below — through `map_band_pending` — used to render on
+	# whatever that default happened to be. When it was `false` they came out unfogged by accident;
+	# the day it flipped, all five silently rendered as blank fog with their subject gone. Any state
+	# that wants fog says so at its own site (the first is `map_sites_fogged`); this seats the
+	# baseline for every state before it.
+	_map.set_fow_enabled(false)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	# Warm-up: the FIRST captured state came back all-black — the window is still sizing on the opening

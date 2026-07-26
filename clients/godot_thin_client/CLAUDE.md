@@ -98,11 +98,11 @@ below; this is the HUD's.
 | Script | Purpose |
 |--------|---------|
 | `Main.gd` | Scene orchestration, streaming toggle. On boot sends the `new_game <preset> <w> <h> <seed> <profile>` command (built from the `GameLaunch` autoload handoff, or a dev default) since the server now boots idle and only generates a world on `new_game`. Owns the `$PauseLayer` ESC overlay: ESC opens/closes the pause `MenuShell`, but yields to MapView's targeting-cancel when `hud.is_targeting_active()` |
-| `ui/MenuShell.gd` (`ui/MenuShell.tscn`) | The ONE shared menu surface (DRY) for BOTH the landing screen and the ESC pause menu; `mode` ("landing"\|"pause") re-filters a single registry-driven nav and re-lays-out (full-bleed vs centered card over a scrim). Built in code, styled through `HudStyle`. New Game pane = preset picker (earthlike / polar_contrast) + map-size picker (from `MapSizes.OPTIONS`, Standard default) + seed field. Functional items emit `new_game_requested`/`resume_requested`/`abandon_requested`/`exit_requested`; Map Selection/Load/Save render inert placeholder panes. **The Options pane is live**: "Map pan speed" + "Zoom speed" sliders (ranges/step from the `ClientSettings` consts) that apply-live + persist immediately via `ClientSettings`, plus an enabled "Restore defaults" that resets both. It opens in BOTH landing and pause modes, so it works pre-run and in-run |
+| `ui/MenuShell.gd` (`ui/MenuShell.tscn`) | The ONE shared menu surface (DRY) for BOTH the landing screen and the ESC pause menu; `mode` ("landing"\|"pause") re-filters a single registry-driven nav and re-lays-out (full-bleed vs centered card over a scrim). Built in code, styled through `HudStyle`. New Game pane = preset picker (earthlike / polar_contrast) + map-size picker (from `MapSizes.OPTIONS`, Standard default) + seed field. Functional items emit `new_game_requested`/`resume_requested`/`abandon_requested`/`exit_requested`; Map Selection/Load/Save render inert placeholder panes. **The Options pane is live**: a "Fog of war" toggle row (`_make_toggle_row`) plus "Map pan speed" + "Zoom speed" sliders, all applying live + persisting immediately via `ClientSettings`, plus an enabled "Restore defaults". It opens in BOTH landing and pause modes, so it works pre-run and in-run. For the Options rows' boundary rules see `.claude/rules/client/fog-of-war.md` |
 | `ui/LandingScreen.gd` (`ui/LandingScreen.tscn`) | The boot main-scene (`project.godot` run/main_scene): a MenuShell in landing mode over a dark ground. `new_game_requested` stashes params in `GameLaunch.pending_new_game` and swaps to `Main.tscn`; `exit_requested` quits |
 | `MapSizes.gd` | Canonical 5-entry map-size list (`OPTIONS` + `DEFAULT_KEY`), shared by `MapPanel` and `MenuShell` (DRY) |
 | `GameLaunch.gd` (autoload) | Cross-scene handoff: `pending_new_game` dict set by LandingScreen, consumed + cleared by `Main._build_new_game_command` |
-| `ClientSettings.gd` (autoload) | The first general client-settings store — a `ConfigFile` wrapper over `user://client_settings.cfg` (`[map]` section) modelled on `BandCityPanel`'s `_load_prefs`/`_save_prefs`. Holds `pan_speed_multiplier` / `zoom_speed_multiplier` (defaults 1.0, each clamped to [0.25, 3.0]); the BASE unit speeds stay as consts in `MapView`, these SCALE them. Setters clamp → `_save` → emit `changed`; `restore_defaults` resets both; `config_path_override` (static) isolates the file for tests. **No `class_name`** (it would clash with the autoload name). Read LIVE by `MapView` (keyboard + trackpad pan, all zoom paths — wheel/pinch/Q·E/zoom-rail); written by the Options pane |
+| `ClientSettings.gd` (autoload) | The first general client-settings store — a `ConfigFile` wrapper over `user://client_settings.cfg` (`[map]` section) modelled on `BandCityPanel`'s `_load_prefs`/`_save_prefs`. Holds `pan_speed_multiplier` / `zoom_speed_multiplier` (defaults 1.0, each clamped to [0.25, 3.0]) — the BASE unit speeds stay as consts in `MapView`, these SCALE them — and `fog_of_war_enabled` (default `true`; the rules governing that key are in `.claude/rules/client/fog-of-war.md`). Setters clamp → `_save` → emit `changed`; `restore_defaults` resets all three; `config_path_override` (static) isolates the file for tests. **No `class_name`** (it would clash with the autoload name). Read LIVE by `MapView` (keyboard + trackpad pan, all zoom paths — wheel/pinch/Q·E/zoom-rail); written by the Options pane |
 
 <!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_client.md, appended into
      clients/godot_thin_client/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
@@ -137,6 +137,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers | `*.gdshader`, `TerrainRenderer.gd` |
 | `terrain-textures.md` | Atlas assets, `terrain_config.json`, loading, the 2D pipeline | `TerrainTextureManager.gd` |
 | `map-renderers.md` | `MapView`'s renderer decomposition and the 2D minimap | `MapView.gd`, `Minimap*.gd`, `*Renderer.gd` |
+| `fog-of-war.md` | Fog of war is server-owned: preference → command → snapshot → render | `MapView.gd`, `Main.gd`, `MenuShell.gd`, `ClientSettings.gd` |
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, trade links | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
@@ -216,7 +217,7 @@ shown build can never go stale.
 | Right/middle drag | Pan |
 | `C` | Fit map to view |
 | `H` | Toggle hex grid lines |
-| `F` | Toggle fog of war |
+| `F` | Toggle fog of war (server-owned — see `.claude/rules/client/fog-of-war.md`) |
 | `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
 | `L` | Show/hide the Terrain Types legend (**hidden by default**, persisted) |

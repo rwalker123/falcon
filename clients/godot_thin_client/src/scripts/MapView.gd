@@ -25,7 +25,6 @@ signal zoom_changed(zoom_factor: float)
 const LOGISTICS_COLOR := Color(0.15, 0.45, 1.0, 1.0)
 const SENTIMENT_COLOR := Color(1.0, 0.35, 0.25, 1.0)
 const CORRUPTION_COLOR := Color(0.92, 0.58, 0.18, 1.0)
-const FOG_COLOR := Color(0.6, 0.78, 0.95, 1.0)
 const CULTURE_COLOR := Color(0.72, 0.36, 0.88, 1.0)
 const MILITARY_COLOR := Color(0.36, 0.7, 0.43, 1.0)
 const CRISIS_COLOR := Color(0.92, 0.24, 0.46, 1.0)
@@ -322,7 +321,6 @@ const OVERLAY_COLORS := {
 	"logistics": LOGISTICS_COLOR,
 	"sentiment": SENTIMENT_COLOR,
 	"corruption": CORRUPTION_COLOR,
-	"fog": FOG_COLOR,
 	"culture": CULTURE_COLOR,
 	"military": MILITARY_COLOR,
 	"crisis": CRISIS_COLOR,
@@ -578,7 +576,11 @@ var selected_herd_id: String = ""
 var cycle_index: int = 0
 var biome_color_buffer: PackedColorArray = PackedColorArray()
 var _hovered_tile: Vector2i = Vector2i(-1, -1)
-var _fow_enabled: bool = false
+# Fails CLOSED: fog ON until a snapshot's `fog_enabled` says otherwise. `Main._ready` used to seat
+# this true before the first world rendered; that seat is gone now that the sim owns the flag, so the
+# DEFAULT has to carry it — a `false` default would draw one fully-revealed frame on load, which is
+# the leak this whole arc closed. Matches the server's `SimulationConfig.fog_enabled` default.
+var _fow_enabled: bool = true
 
 # FoW appearance, loaded from heightfield_config.json "fog_of_war" (see _load_fow_config).
 var _fow_mist_color: Color = DEFAULT_FOW_MIST_COLOR
@@ -982,7 +984,6 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		"avg_logistics": _average_overlay("logistics"),
 		"avg_sentiment": _average_overlay("sentiment"),
 		"avg_corruption": _average_overlay("corruption"),
-		"avg_fog": _average_overlay("fog"),
 		"avg_culture": _average_overlay("culture"),
 		"avg_military": _average_overlay("military"),
 		"avg_crisis": _average_overlay("crisis"),
@@ -1304,6 +1305,10 @@ func set_overlay_channel(key: String) -> void:
 	queue_redraw()
 	_emit_overlay_legend()
 
+## Seat the RENDER CACHE for fog of war. `_fow_enabled` is not an authority — the sim owns
+## `fog_enabled` and `Main._sync_fog_of_war` pushes it here off every snapshot (the early-out makes
+## that per-turn call free). This stays a plain public setter only because the OFFLINE harnesses
+## (`tools/map_preview.gd`, `tools/blend_probe.gd`) drive fog states with no server to ask.
 func set_fow_enabled(enabled: bool) -> void:
 	if _fow_enabled == enabled:
 		return

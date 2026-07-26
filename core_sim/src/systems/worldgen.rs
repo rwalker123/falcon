@@ -833,10 +833,7 @@ pub fn spawn_initial_world(
         );
     }
 
-    commands.insert_resource(StartLocation::from_profile(
-        Some(UVec2::new(start_x, start_y)),
-        &config.start_profile_overrides,
-    ));
+    commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
     commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
     // If we produced bands, use their restamped elevation field resource now
@@ -900,14 +897,6 @@ fn seed_cohort_demographics(
         cohort.stores.set(FOOD, demand * reserve_days);
         cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
     }
-}
-
-/// Drop expired fog-reveal pulses queued by scouting commands.
-pub fn decay_fog_reveals(mut reveals: ResMut<FogRevealLedger>, tick: Res<SimulationTick>) {
-    if reveals.is_empty() {
-        return;
-    }
-    reveals.prune_expired(tick.0);
 }
 
 fn apply_trade_goods_bonus(

@@ -359,7 +359,7 @@ depletion) lives in a new `advance_expeditions` system in the Population stage, 
 ## Cross-cutting touchpoints
 
 - **Visibility** (`visibility_systems.rs`): local scout posts forward-observer vantages (LOS from each); expeditions
-  and sites hook the reveal path (`FogRevealLedger` / `FactionVisibilityMap`).
+  and sites hook the reveal path (`FactionVisibilityMap`).
 - **Tiles / schema** (`sim_schema`): the per-tile site reference + the discovered-sites registry,
   wired through the snapshot like other tile fields; a new `sites_config.json` + loader.
 - **Worldgen** (`mapgen.rs`): emergent landmark placement (prominent ranges/lakes), riches from

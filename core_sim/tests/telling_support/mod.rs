@@ -19,9 +19,9 @@ use core_sim::{
     scalar_one, scalar_zero, sedentarization_tick, spawn_initial_herds, spawn_initial_world,
     telling_tick, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CommandEventEntry,
     CommandEventKind, CommandEventLog, CultureManager, DiscoveredSites, DiscoveryProgressLedger,
-    FactionId, FactionInventory, FactionRegistry, FaunaConfigHandle, FogRevealLedger,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
+    FactionId, FactionInventory, FactionRegistry, FaunaConfigHandle, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
     SedentarizationConfigHandle, SedentarizationScore, SimulationConfig, SimulationTick,
     SitesConfigHandle, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, FOOD, RUNG_COMPLETE,
@@ -65,7 +65,6 @@ pub fn spawn_world() -> App {
     app.world.insert_resource(HerdDensityMap::default());
     app.world.insert_resource(FaunaConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
-    app.world.insert_resource(FogRevealLedger::default());
     app.world.insert_resource(SedentarizationScore::default());
     app.world
         .insert_resource(SedentarizationConfigHandle::default());

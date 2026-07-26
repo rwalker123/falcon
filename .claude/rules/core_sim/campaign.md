@@ -36,7 +36,7 @@ paths:
   building, an unknown `preset_id` falls through to the worldgen default). `new_game` and `map_size`
   (ResetMap) share one world-build helper (`rebuild_world_from_config`). A `turn` sent **before** a
   world exists is rejected with a warning. See `server-dev`'s boot flow in `bin/server.rs`.
-- **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`, `survey_radius`, `fog_mode`
+- **Data**: `StartProfile` records with `starting_units`, `starting_knowledge_tags`, `inventory`
 - **Spawn**: Worldgen seeds the profile's `starting_units`, unlocks `ScoutArea`, `FollowHerd`. Each spawned band's head-count comes from its unit's `band_size` (config lever in `start_profiles.json`; falls back to `DEFAULT_STARTING_BAND_SIZE` = 30 in `start_profile.rs`) — no hardcoded size. `late_forager_tribe` ships a **single ~30-person band** (labor-pool scale per `docs/plan_early_game_labor.md`), not the retired four-band/900-person opening.
 - **Camps**: Transient settlement-likes with `PortableBuildings`, `CampStorage`, `DecayOnAbandon` (backlog — not yet built)
 - **Sedentarization**: implemented — see the dedicated section below.

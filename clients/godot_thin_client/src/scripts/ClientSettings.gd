@@ -8,11 +8,18 @@ extends Node
 ## Holds the map pan/zoom speed multipliers: BASE unit speeds live as consts in
 ## `MapView.gd`, and these multipliers scale them live at each input site. Written
 ## by the Options pane, read live by `MapView` (keyboard + trackpad pan, all zoom paths).
+##
+## Also holds the fog-of-war PREFERENCE. That one is NOT a render flag: fog of war is
+## SERVER-authoritative (the sim owns `fog_enabled` and gates both the herd list and the
+## visibility raster on it), so this is only what the player last ASKED for. `Main` turns a
+## change here into a `set_fog` command and renders from the snapshot's answer. Nothing may
+## write this key FROM a snapshot — that closes the loop into an echo.
 
 const CONFIG_PATH := "user://client_settings.cfg"
 const SECTION := "map"
 const PAN_KEY := "pan_speed_multiplier"
 const ZOOM_KEY := "zoom_speed_multiplier"
+const FOG_OF_WAR_KEY := "fog_of_war_enabled"
 
 const PAN_SPEED_MIN := 0.25
 const PAN_SPEED_MAX := 3.0
@@ -22,6 +29,9 @@ const ZOOM_SPEED_MIN := 0.25
 const ZOOM_SPEED_MAX := 3.0
 const ZOOM_SPEED_DEFAULT := 1.0
 
+## Fog of war ships ON: a new player should meet a map they have to explore.
+const FOG_OF_WAR_DEFAULT := true
+
 ## Slider granularity for the Options UI.
 const SPEED_STEP := 0.05
 
@@ -30,6 +40,7 @@ static var config_path_override := ""
 
 var pan_speed_multiplier: float = PAN_SPEED_DEFAULT
 var zoom_speed_multiplier: float = ZOOM_SPEED_DEFAULT
+var fog_of_war_enabled: bool = FOG_OF_WAR_DEFAULT
 
 signal changed
 
@@ -45,6 +56,7 @@ func _load() -> void:
 	zoom_speed_multiplier = clampf(
 		float(cfg.get_value(SECTION, ZOOM_KEY, ZOOM_SPEED_DEFAULT)),
 		ZOOM_SPEED_MIN, ZOOM_SPEED_MAX)
+	fog_of_war_enabled = bool(cfg.get_value(SECTION, FOG_OF_WAR_KEY, FOG_OF_WAR_DEFAULT))
 
 func set_pan_speed_multiplier(v: float) -> void:
 	pan_speed_multiplier = clampf(v, PAN_SPEED_MIN, PAN_SPEED_MAX)
@@ -56,9 +68,15 @@ func set_zoom_speed_multiplier(v: float) -> void:
 	_save()
 	changed.emit()
 
+func set_fog_of_war_enabled(v: bool) -> void:
+	fog_of_war_enabled = v
+	_save()
+	changed.emit()
+
 func restore_defaults() -> void:
 	pan_speed_multiplier = PAN_SPEED_DEFAULT
 	zoom_speed_multiplier = ZOOM_SPEED_DEFAULT
+	fog_of_war_enabled = FOG_OF_WAR_DEFAULT
 	_save()
 	changed.emit()
 
@@ -67,6 +85,7 @@ func _save() -> void:
 	cfg.load(_config_path())   # preserve any other sections; ignore load errors
 	cfg.set_value(SECTION, PAN_KEY, pan_speed_multiplier)
 	cfg.set_value(SECTION, ZOOM_KEY, zoom_speed_multiplier)
+	cfg.set_value(SECTION, FOG_OF_WAR_KEY, fog_of_war_enabled)
 	cfg.save(_config_path())
 
 ## The prefs file actually used — the scratch override when a harness set one, else the player's.

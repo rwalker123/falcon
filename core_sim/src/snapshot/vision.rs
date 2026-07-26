@@ -1,246 +1,5 @@
 use super::*;
 
-pub(crate) struct FogRasterInputs<'a> {
-    pub(crate) tiles: &'a [TileState],
-    pub(crate) populations: &'a [PopulationCohortState],
-    pub(crate) discovery: &'a DiscoveryProgressLedger,
-    pub(crate) grid_size: UVec2,
-    pub(crate) overlays: &'a SnapshotOverlaysConfig,
-    pub(crate) start_location: &'a StartLocation,
-    pub(crate) fog_reveals: &'a FogRevealLedger,
-    pub(crate) tick: u64,
-}
-
-pub(crate) fn fog_raster_from_discoveries(inputs: FogRasterInputs<'_>) -> ScalarRasterState {
-    let FogRasterInputs {
-        tiles,
-        populations,
-        discovery,
-        grid_size,
-        overlays,
-        start_location,
-        fog_reveals,
-        tick,
-    } = inputs;
-    let mut max_x = 0u32;
-    let mut max_y = 0u32;
-    for tile in tiles {
-        max_x = max_x.max(tile.x);
-        max_y = max_y.max(tile.y);
-    }
-
-    let width = grid_size.x.max(max_x.saturating_add(1)).max(1);
-    let height = grid_size.y.max(max_y.saturating_add(1)).max(1);
-    let total = (width as usize).saturating_mul(height as usize).max(1);
-
-    if matches!(start_location.fog_mode(), FogMode::Revealed) {
-        return ScalarRasterState {
-            width,
-            height,
-            samples: vec![Scalar::zero().raw(); total],
-        };
-    }
-
-    let mut samples = vec![Scalar::one().raw(); total];
-    let skip_coverage = matches!(start_location.fog_mode(), FogMode::Shroud);
-
-    if !skip_coverage {
-        let mut tile_indices = HashMap::with_capacity(tiles.len());
-        for tile in tiles {
-            if tile.x < width && tile.y < height {
-                let idx = (tile.y as usize) * (width as usize) + tile.x as usize;
-                tile_indices.insert(tile.entity, idx);
-            }
-        }
-
-        let mut tile_faction_sizes: HashMap<u64, HashMap<u32, u64>> = HashMap::new();
-        let mut tile_local_weighted: HashMap<u64, (i128, i128)> = HashMap::new();
-
-        for cohort in populations {
-            let size = u64::from(cohort.size);
-            if size > 0 {
-                let faction_map = tile_faction_sizes.entry(cohort.home).or_default();
-                *faction_map.entry(cohort.faction).or_insert(0) += size;
-            }
-
-            if size == 0 {
-                continue;
-            }
-
-            let fragments = &cohort.knowledge_fragments;
-            let fragment_average_raw = if fragments.is_empty() {
-                0i64
-            } else {
-                let mut total = Scalar::zero();
-                for fragment in fragments {
-                    total +=
-                        Scalar::from_raw(fragment.progress).clamp(Scalar::zero(), Scalar::one());
-                }
-                let count = fragments.len() as u32;
-                (total / Scalar::from_u32(count))
-                    .clamp(Scalar::zero(), Scalar::one())
-                    .raw()
-            };
-
-            let weight = i128::from(size);
-            let entry = tile_local_weighted.entry(cohort.home).or_insert((0, 0));
-            entry.0 = entry
-                .0
-                .saturating_add(i128::from(fragment_average_raw) * weight);
-            entry.1 = entry.1.saturating_add(weight);
-        }
-
-        let mut tile_local_average: HashMap<u64, Scalar> = HashMap::new();
-        for (tile_entity, (weighted_sum, total_weight)) in tile_local_weighted {
-            if total_weight <= 0 {
-                continue;
-            }
-            let mut average = weighted_sum / total_weight;
-            if average < 0 {
-                average = 0;
-            }
-            let scale = i128::from(Scalar::SCALE);
-            if average > scale {
-                average = scale;
-            }
-            tile_local_average.insert(tile_entity, Scalar::from_raw(average as i64));
-        }
-
-        let mut tile_controllers: HashMap<u64, u32> = HashMap::new();
-        for (tile_entity, faction_map) in &tile_faction_sizes {
-            let mut best: Option<(u32, u64)> = None;
-            for (&faction, &count) in faction_map.iter() {
-                best = match best {
-                    None => Some((faction, count)),
-                    Some((best_faction, best_count)) => {
-                        if count > best_count || (count == best_count && faction < best_faction) {
-                            Some((faction, count))
-                        } else {
-                            Some((best_faction, best_count))
-                        }
-                    }
-                };
-            }
-            if let Some((faction, _)) = best {
-                tile_controllers.insert(*tile_entity, faction);
-            }
-        }
-
-        let blend_weight = overlays.fog().global_local_blend();
-
-        for tile in tiles {
-            let Some(&idx) = tile_indices.get(&tile.entity) else {
-                continue;
-            };
-
-            let global_cov = tile_controllers.get(&tile.entity).and_then(|&faction| {
-                discovery
-                    .progress
-                    .get(&FactionId(faction))
-                    .and_then(|entries| {
-                        if entries.is_empty() {
-                            return None;
-                        }
-                        let mut total = Scalar::zero();
-                        let mut count = 0u32;
-                        for value in entries.values() {
-                            if value.raw() <= 0 {
-                                continue;
-                            }
-                            total += (*value).clamp(Scalar::zero(), Scalar::one());
-                            count = count.saturating_add(1);
-                        }
-                        if count == 0 {
-                            None
-                        } else {
-                            Some(
-                                (total / Scalar::from_u32(count))
-                                    .clamp(Scalar::zero(), Scalar::one()),
-                            )
-                        }
-                    })
-            });
-
-            let local_cov = tile_local_average.get(&tile.entity).copied();
-
-            let coverage = match (global_cov, local_cov) {
-                (Some(g), Some(l)) => ((g + l) * blend_weight).clamp(Scalar::zero(), Scalar::one()),
-                (Some(g), None) => g,
-                (None, Some(l)) => l,
-                (None, None) => Scalar::zero(),
-            };
-
-            let fog = (Scalar::one() - coverage).clamp(Scalar::zero(), Scalar::one());
-            samples[idx] = fog.raw();
-        }
-    }
-
-    apply_start_location_reveal(&mut samples, width, height, start_location);
-    apply_scout_reveals(&mut samples, width, height, fog_reveals, tick);
-
-    ScalarRasterState {
-        width,
-        height,
-        samples,
-    }
-}
-
-pub(crate) fn apply_start_location_reveal(
-    samples: &mut [i64],
-    width: u32,
-    height: u32,
-    start_location: &StartLocation,
-) {
-    let Some(center) = start_location.position() else {
-        return;
-    };
-    let radius = start_location.survey_radius().unwrap_or(0);
-    clear_circle(samples, width, height, center, radius);
-}
-
-pub(crate) fn apply_scout_reveals(
-    samples: &mut [i64],
-    width: u32,
-    height: u32,
-    fog_reveals: &FogRevealLedger,
-    tick: u64,
-) {
-    if fog_reveals.is_empty() {
-        return;
-    }
-    for reveal in fog_reveals.iter_active(tick) {
-        clear_circle(samples, width, height, reveal.center, reveal.radius);
-    }
-}
-
-pub(crate) fn clear_circle(
-    samples: &mut [i64],
-    width: u32,
-    height: u32,
-    center: UVec2,
-    radius: u32,
-) {
-    if samples.is_empty() {
-        return;
-    }
-    let width = width.max(1) as usize;
-    let height = height.max(1) as usize;
-    let radius_i32 = radius.min(i32::MAX as u32) as i32;
-    let radius_sq = radius_i32.pow(2);
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as i32 - center.x as i32;
-            let dy = y as i32 - center.y as i32;
-            if dx * dx + dy * dy <= radius_sq {
-                let idx = y * width + x;
-                if idx < samples.len() {
-                    samples[idx] = 0;
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn military_raster_from_state(
     tiles: &[TileState],
     populations: &[PopulationCohortState],
@@ -358,15 +117,30 @@ pub(crate) fn military_raster_from_state(
     }
 }
 
+/// The client's fog-of-war raster for one viewer. `fog_enabled` is `SimulationConfig::fog_enabled`,
+/// the server-owned master switch: with fog off every tile reads Active, matching the herd list,
+/// which `HerdSnapshotInputs::herd_is_visible` stops filtering in the same state.
 pub(crate) fn visibility_raster_from_ledger(
     ledger: &crate::visibility::VisibilityLedger,
     faction: FactionId,
     grid_size: UVec2,
+    fog_enabled: bool,
 ) -> ScalarRasterState {
     let width = grid_size.x;
     let height = grid_size.y;
     let total = (width * height) as usize;
     let mut samples = vec![0i64; total];
+
+    // Fog off: the whole map is Active before the ledger is even consulted, so a viewer with no
+    // faction map (fresh world, or the turn after a rollback clears it) still sees everything.
+    if !fog_enabled {
+        samples.fill(Scalar::SCALE);
+        return ScalarRasterState {
+            width,
+            height,
+            samples,
+        };
+    }
 
     let faction_map = ledger.get_faction(faction);
     tracing::debug!(

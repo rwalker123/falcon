@@ -35,10 +35,6 @@ pub struct CampaignProfileState {
     #[serde(default)]
     pub knowledge_tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub survey_radius: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fog_mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_food_module: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary_food_module: Option<String>,

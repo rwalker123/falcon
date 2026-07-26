@@ -372,7 +372,12 @@ fn blank_influencer() -> InfluentialIndividualState {
 ///
 /// If you append a repeated field and forget it here, [`assert_no_empty_arrays`] names its path.
 fn seed_snapshot() -> WorldSnapshot {
-    let mut s = WorldSnapshot::default();
+    // `WorldSnapshot`'s derived `Default` gives `false` for `fog_enabled` while the schema default is
+    // `true`, so state it explicitly rather than letting the fixture claim fog of war is off.
+    let mut s = WorldSnapshot {
+        fog_enabled: true,
+        ..Default::default()
+    };
 
     // Every field is `Option` + `skip_serializing_if`, so a `None` never reaches the JSON and
     // saturation cannot reach it — and `create_campaign_label` drops an all-`None` label outright,
@@ -397,7 +402,6 @@ fn seed_snapshot() -> WorldSnapshot {
         &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
-        &mut s.fog_raster,
         &mut s.culture_raster,
         &mut s.military_raster,
         &mut s.visibility_raster,
@@ -528,8 +532,6 @@ fn seed_snapshot() -> WorldSnapshot {
         }
         profile.inventory = rows();
         profile.knowledge_tags = vec![String::new(); ROWS];
-        profile.survey_radius = Some(0);
-        profile.fog_mode = Some(String::new());
         profile.primary_food_module = Some(String::new());
         profile.secondary_food_module = Some(String::new());
     }
@@ -706,7 +708,6 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
         &mut s.logistics_raster,
         &mut s.sentiment_raster,
         &mut s.corruption_raster,
-        &mut s.fog_raster,
         &mut s.culture_raster,
         &mut s.military_raster,
         &mut s.visibility_raster,

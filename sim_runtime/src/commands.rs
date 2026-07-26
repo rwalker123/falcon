@@ -98,6 +98,9 @@ pub enum CommandPayload {
     SetCrisisAutoSeed {
         enabled: bool,
     },
+    SetFogEnabled {
+        enabled: bool,
+    },
     SpawnCrisis {
         faction_id: u32,
         archetype_id: String,
@@ -493,6 +496,11 @@ impl CommandEnvelope {
                     enabled: *enabled,
                 })
             }
+            CommandPayload::SetFogEnabled { enabled } => {
+                pb::command_envelope::Command::SetFog(pb::SetFogEnabledCommand {
+                    enabled: *enabled,
+                })
+            }
             CommandPayload::SpawnCrisis {
                 faction_id,
                 archetype_id,
@@ -872,6 +880,9 @@ impl CommandEnvelope {
                     enabled: cmd.enabled,
                 }
             }
+            pb::command_envelope::Command::SetFog(cmd) => CommandPayload::SetFogEnabled {
+                enabled: cmd.enabled,
+            },
             pb::command_envelope::Command::SpawnCrisis(cmd) => CommandPayload::SpawnCrisis {
                 faction_id: cmd.faction,
                 archetype_id: cmd.archetype_id,

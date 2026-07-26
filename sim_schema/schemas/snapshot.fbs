@@ -940,8 +940,19 @@ table CampaignProfile {
   startingUnits:[CampaignStartingUnit];
   inventory:[CampaignInventoryEntry];
   knowledgeTags:[string];
-  surveyRadius:uint;
-  fogMode:string;
+  // RETIRED. Was the start profile's initial reveal radius around the start marker, which only ever
+  // fed the retired Fog-of-Knowledge overlay's reveal circle. A band's sight is now decided entirely
+  // by `calculate_visibility` (archetype `sight_ranges` in `visibility_config.json`, elevation, LoS,
+  // terrain, movement corridor, scout vantages), so no start-radius override survives. Kept as
+  // (deprecated) rather than deleted so the field id/slot stays reserved — a FlatBuffers vtable slot
+  // is positional, and a freed slot is how two concurrent branches collide on one id.
+  surveyRadius:uint (deprecated);
+  // RETIRED. Was the start profile's "Fog of Knowledge" mode (standard/revealed/shroud), which drove
+  // the separate `fogRaster` data overlay. Fog of war is the only fog the game keeps, and it is
+  // carried by `VisionSection.visibilityRaster`. Kept as (deprecated) rather than deleted so the
+  // field id/slot stays reserved — a FlatBuffers vtable slot is positional, and a freed slot is how
+  // two concurrent branches collide on one id.
+  fogMode:string (deprecated);
   primaryFoodModule:string;
   secondaryFoodModule:string;
 }
@@ -1693,9 +1704,19 @@ table CultureSection {
 }
 
 table VisionSection {
-  fogRaster:ScalarRaster;
+  // RETIRED. Was the "Fog of Knowledge" data overlay — a selectable heatmap of per-tile discovery
+  // progress, unrelated to fog of war. Fog of war is `visibilityRaster` below and is the only fog
+  // concept the game keeps. Kept as (deprecated) rather than deleted because this is the FIRST field
+  // of the table: a FlatBuffers vtable slot is positional, so removing the line would renumber
+  // `visibilityRaster` and `militaryRaster` and silently break the wire.
+  fogRaster:ScalarRaster (deprecated);
   visibilityRaster:ScalarRaster;
   militaryRaster:ScalarRaster;
+  // The server-owned fog-of-war master switch (`SimulationConfig::fog_enabled`), published so the
+  // client renders what the sim decided instead of holding its own flag — with fog off the sim stops
+  // filtering herds out of the payload, which no client-side toggle could undo. Appended last
+  // (append-only schema discipline). Defaults true: fog of war is on unless told otherwise.
+  fogEnabled:bool = true;
 }
 
 // --- The Telling: the fork tier's wire contract (append-only) ---------------------------------
