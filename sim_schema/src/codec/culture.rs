@@ -52,7 +52,12 @@ pub(crate) fn serialize_culture_section_delta<'a>(
 ) -> WIPOffset<fb::CultureSection<'a>> {
     let culture_layers = create_culture_layers(builder, &delta.culture_layers);
     let removed_culture_layers = builder.create_vector(&delta.removed_culture_layers);
-    let culture_tensions = create_culture_tensions(builder, &delta.culture_tensions);
+    // Written only when the section changed: an unconditional (possibly empty) vector would make
+    // "unchanged" and "now empty" identical on the wire. See `WorldDelta::culture_tensions`.
+    let culture_tensions = delta
+        .culture_tensions
+        .as_ref()
+        .map(|tensions| create_culture_tensions(builder, tensions));
     let culture_raster = delta
         .culture_raster
         .as_ref()
@@ -82,7 +87,7 @@ pub(crate) fn serialize_culture_section_delta<'a>(
         builder,
         &fb::CultureSectionArgs {
             cultureLayers: Some(culture_layers),
-            cultureTensions: Some(culture_tensions),
+            cultureTensions: culture_tensions,
             cultureRaster: culture_raster,
             influencers: Some(influencers),
             axisBias: axis_bias,

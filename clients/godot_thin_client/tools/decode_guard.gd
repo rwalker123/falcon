@@ -37,6 +37,12 @@ extends Node
 ## no `header`, asserting the decoder DROPS that frame rather than panicking or inventing defaults.
 ## See `_assert_headerless_frame_is_dropped`, including what it can and cannot see.
 ##
+## A **third** fixture is a DELTA against the first, decoded after it so the baseline is established.
+## It has no golden either, and deliberately so: a delta frame is mostly the merged baseline, so
+## recording it would double the golden's surface and make it churn twice on every unrelated schema
+## edit. Its properties are asserted directly instead — see `_assert_delta_merges_onto_the_baseline`,
+## which is the guard that would have caught `tiles` going stale on every delta.
+##
 ##   cargo xtask decode-guard                  # regenerate fixture, build native, diff
 ##   cargo xtask decode-guard --write-golden   # re-record instead of diffing
 ##   cargo xtask decode-guard --no-build       # skip the native rebuild, when you just built it
@@ -50,6 +56,46 @@ const GOLDEN_PATH := "res://tests/golden/snapshot_dict.json"
 ## A second, deliberately MALFORMED envelope: a `WorldSnapshot` with a real map section and no
 ## `header`. It has no golden — it is decoded for the assertion below, not for a diff.
 const HEADERLESS_FIXTURE_PATH := "res://tests/fixtures/snapshot_headerless_envelope.bin"
+
+## A DELTA envelope whose header names `FIXTURE_PATH`'s frame as its base. Decoded after the
+## baseline, never diffed — see `_assert_delta_merges_onto_the_baseline`.
+const DELTA_FIXTURE_PATH := "res://tests/fixtures/snapshot_delta_envelope.bin"
+
+## Frame identity, as `native/src/bridge/decoder.rs` publishes it.
+const FRAME_KIND_KEY := "frame_kind"
+const FRAME_KIND_DELTA := "delta"
+const FRAME_SEQ_KEY := "frame_seq"
+const BASE_FRAME_SEQ_KEY := "base_frame_seq"
+
+## The keyed (diff-carried) sections whose merge is asserted, mirroring `KEYED_SECTIONS` in
+## `native/src/snapshot/cache.rs`. Each rides the frame twice — as the COMPLETE array under `key`
+## (patched from the baseline) and as the delta's sparse changed rows under `updates` — and the two
+## must agree. `id` is the section's identity field; `probe` is any field the fixture's delta moves
+## on the rows it carries.
+##
+## Three of the ten, not all ten: these are the ones the delta fixture moves, and the ones with live
+## consumers reading the base key — `Main`'s band alerts (`populations`) and `MapView`'s per-tile
+## lookups, harvest sites and culture overlay. The machinery under all ten is the same
+## `SectionCache`, so a break in it fails here.
+const MERGED_SECTIONS := [
+	{"key": "tiles", "updates": "tile_updates", "id": "entity", "probe": "graze_biomass"},
+	{"key": "populations", "updates": "population_updates", "id": "entity", "probe": "size"},
+	{"key": "culture_layers", "updates": "culture_layer_updates", "id": "id", "probe": "parent"},
+]
+
+## The section whose staleness was MEASURED in the live client, named in the failure text so the
+## reader gets the story rather than just the mismatch.
+const TILES_KEY := "tiles"
+
+## The delta frame's change manifest, and the section the fixture's delta deliberately leaves
+## untouched — absence from the manifest is only meaningful if something IS absent from it.
+const CHANGED_SECTIONS_KEY := "changed_sections"
+const UNTOUCHED_SECTION := "forage_patches"
+
+## The two tile-derived splatmap concerns, which the decoder derives by comparing each changed tile
+## with the entry it replaced. The fixture moves them on exactly one of its changed tiles.
+const SECTION_TILES_RIVERS := "tiles.rivers"
+const SECTION_TILES_CULTURE_LAYER := "tiles.culture_layer"
 
 ## Decimals kept on every float. The decoder divides fixed-point by 1e6 and stores some values as
 ## `f32`, so the last bits are not stable enough to pin — but a dropped divide moves a value by
@@ -120,7 +166,12 @@ func _ready() -> void:
 		_die("decode_snapshot returned an EMPTY dictionary for a %d-byte envelope — the payload did not parse as a snapshot. Regenerate the fixture (cargo xtask decode-fixture) if the schema moved." % payload.size())
 		return
 
+	# Rendered BEFORE the delta is decoded: the merged frame shares its untouched values with this
+	# dictionary, so the golden is taken while the baseline is provably still the baseline.
 	var rendered := _canonical_json(decoded)
+
+	if not _assert_delta_merges_onto_the_baseline(decoder, decoded):
+		return
 
 	if _write_golden:
 		_write_text(GOLDEN_PATH, rendered)
@@ -177,6 +228,120 @@ func _assert_headerless_frame_is_dropped(decoder: Object) -> bool:
 
 	print("decode_guard: headerless snapshot correctly dropped (empty dictionary, %d bytes in)" % payload.size())
 	return true
+
+
+## Decodes the DELTA fixture against the just-decoded baseline and asserts the merged frame is an
+## honest complete world.
+##
+## **The section assertion is the reason this function exists.** A delta carries only the rows that
+## changed; the decoder published them under the `*_updates` key and left the base key standing, so
+## every consumer reading the base key was frozen at the baseline snapshot for the life of the
+## world. It was nine sections, not one. Measured on `tiles`: `graze_biomass` summed over `tiles`
+## was byte-identical for nine consecutive turns while `tile_updates` carried 400–600 moved tiles
+## per turn — and `Main`'s band alerts read `populations` the same way, so food warnings, idle
+## workers and predator-nearby were frozen too. Nothing caught it because nothing in this gate had
+## ever decoded a delta.
+##
+## Properties, each failing on its own terms:
+## 1. the frame identifies as a delta and names the baseline's frame as its base (if it did not, the
+##    decoder would have DROPPED it and every assertion below would be vacuous);
+## 2. for every section in `MERGED_SECTIONS`: each changed row carries the delta's value under the
+##    BASE key and not the baseline's, and the base key still holds the baseline's row COUNT — a
+##    delta patches the world, it never shrinks it;
+## 3. `changed_sections` is present, names every section that moved and the two splatmap concerns
+##    the fixture's one river/culture tile moved, and does not name a section this delta left alone.
+func _assert_delta_merges_onto_the_baseline(decoder: Object, baseline: Dictionary) -> bool:
+	if not FileAccess.file_exists(DELTA_FIXTURE_PATH):
+		_die("no delta fixture at %s — generate it with: cargo xtask decode-fixture" % DELTA_FIXTURE_PATH)
+		return false
+	var payload := FileAccess.get_file_as_bytes(DELTA_FIXTURE_PATH)
+	if payload.is_empty():
+		_die("delta fixture at %s is empty" % DELTA_FIXTURE_PATH)
+		return false
+
+	# Captured before the merge. A patched array holds NEW dictionaries at the changed slots and
+	# shares the untouched ones, so these references keep answering the pre-delta values.
+	var baseline_rows := {}
+	for section in MERGED_SECTIONS:
+		baseline_rows[section["key"]] = _rows_by_id(baseline.get(section["key"], []), section["id"])
+
+	var merged := _decode_or_die(decoder, payload, "the DELTA envelope")
+	if _died:
+		return false
+	if merged.is_empty():
+		_die("decode_snapshot returned an EMPTY dictionary for the %d-byte DELTA envelope — the frame was DROPPED. Its header must name the snapshot fixture's frame_seq (%s) as baseFrameSeq and carry the same worldEpoch; regenerate with cargo xtask decode-fixture." % [payload.size(), str(baseline.get(FRAME_SEQ_KEY))])
+		return false
+
+	if str(merged.get(FRAME_KIND_KEY, "")) != FRAME_KIND_DELTA:
+		_die("the merged frame reports %s=%s, not %s — the frame kind is read straight off Envelope::payload_type, so this means the fixture is not a delta envelope at all." % [FRAME_KIND_KEY, str(merged.get(FRAME_KIND_KEY)), FRAME_KIND_DELTA])
+		return false
+	if int(merged.get(BASE_FRAME_SEQ_KEY, -1)) != int(baseline.get(FRAME_SEQ_KEY, -2)):
+		_die("the delta's %s is %d but the baseline snapshot's %s is %d — a delta applied to a frame the client never held merges into the wrong state." % [BASE_FRAME_SEQ_KEY, int(merged.get(BASE_FRAME_SEQ_KEY, -1)), FRAME_SEQ_KEY, int(baseline.get(FRAME_SEQ_KEY, -2))])
+		return false
+
+	if not merged.has(CHANGED_SECTIONS_KEY):
+		_die("the delta frame carries no %s — the change manifest rides EVERY delta (its absence is reserved for a full snapshot, where it means 'everything changed')." % CHANGED_SECTIONS_KEY)
+		return false
+	var changed: PackedStringArray = merged.get(CHANGED_SECTIONS_KEY, PackedStringArray())
+
+	var probed := 0
+	for section in MERGED_SECTIONS:
+		var key: String = section["key"]
+		var id_key: String = section["id"]
+		var probe_key: String = section["probe"]
+		var baseline_by_id: Dictionary = baseline_rows[key]
+
+		var merged_array: Array = merged.get(key, [])
+		if merged_array.size() != baseline_by_id.size():
+			_die("the merged frame carries %d %s rows but the baseline carried %d — a delta patches a section, it never shrinks it." % [merged_array.size(), key, baseline_by_id.size()])
+			return false
+		var merged_by_id := _rows_by_id(merged_array, id_key)
+
+		var updates: Array = merged.get(section["updates"], [])
+		if updates.is_empty():
+			_die("the delta fixture changed NO %s rows (%s is empty), so the merge assertion for that section would pass vacuously — regenerate it with cargo xtask decode-fixture." % [key, section["updates"]])
+			return false
+		if not changed.has(key):
+			_die("%s does not name %s (%s) even though the delta changed %d of its rows — an UNDER-complete manifest makes consumers skip a section that really moved." % [CHANGED_SECTIONS_KEY, key, str(changed), updates.size()])
+			return false
+
+		for update in updates:
+			var row_id := int(update.get(id_key, -1))
+			if not merged_by_id.has(row_id):
+				_die("%s %s=%d was changed by the delta but is missing from the merged %s array — the patched section must contain every row the delta carried." % [key, id_key, row_id, key])
+				return false
+			var merged_value := float(merged_by_id[row_id].get(probe_key, 0.0))
+			var delta_value := float(update.get(probe_key, 0.0))
+			var baseline_value := float(baseline_by_id.get(row_id, {}).get(probe_key, 0.0))
+			if baseline_value == delta_value:
+				_die("the delta fixture's %s %s=%d carries the same %s as the baseline (%f), so 'the merged frame moved' cannot be observed — regenerate it with cargo xtask decode-fixture." % [key, id_key, row_id, probe_key, delta_value])
+				return false
+			if merged_value != delta_value:
+				_die("%s %s=%d reads %s=%f in the merged %s array but the delta carried %f (baseline was %f) — the merged world is STALE: the decoder published the sparse %s list without patching %s, so every consumer reading %s is frozen at the baseline snapshot." % [key, id_key, row_id, probe_key, merged_value, key, delta_value, baseline_value, section["updates"], key, key])
+				return false
+			probed += 1
+
+	for section_name in [SECTION_TILES_RIVERS, SECTION_TILES_CULTURE_LAYER]:
+		if not changed.has(section_name):
+			_die("%s does not name %s (%s) even though one of the delta's tiles moved that field — the terrain splatmaps would never be rebuilt, so a river or a culture border would appear only after the next full snapshot." % [CHANGED_SECTIONS_KEY, section_name, str(changed)])
+			return false
+	if changed.has(UNTOUCHED_SECTION):
+		_die("%s names %s, which this delta does not carry (%s) — a manifest that names everything says nothing, and consumers gain no work to skip." % [CHANGED_SECTIONS_KEY, UNTOUCHED_SECTION, str(changed)])
+		return false
+
+	print("decode_guard: delta merged onto the baseline (%d changed rows across %d sections, changed_sections=%s)" % [probed, MERGED_SECTIONS.size(), str(changed)])
+	return true
+
+
+## Index one section's rows by their identity field, so a merged row can be found by the id the
+## delta named it with rather than by position (a patched array need not preserve order).
+func _rows_by_id(rows: Variant, id_key: String) -> Dictionary:
+	var by_id := {}
+	if rows is Array:
+		for row in rows:
+			if row is Dictionary:
+				by_id[int(row.get(id_key, -1))] = row
+	return by_id
 
 
 ## Calls the REAL decoder and hands back its dictionary.

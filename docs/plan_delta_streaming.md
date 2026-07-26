@@ -303,9 +303,13 @@ its resonance — see the commit); it is a gameplay correctness fix, not the per
 legacy scaffolding, expendable, and slated for rework after this arc. #391's hidden-Inspector gate
 assumes deltas are rare; this inverts that. Both consequences — a hidden Inspector resuming its
 fan-out, and the show-time catch-up replaying a cached *full* snapshot while later deltas are lost
-— are **accepted**, not worked around. The eventual fix (queue deltas while hidden, replay
-`cached full + queued deltas`, capped, falling back to `resync`) is recorded in #386 and is not a
-prerequisite here. #390 is parked behind this for the same reason.
+— were **accepted**, not worked around. #390 is parked behind this for the same reason.
+
+> **Superseded on measurement — see §8.6.** Both consequences turned out to be one bug with a
+> six-line fix, not the queue-and-replay machinery sketched here, because a merged frame is
+> self-contained. Parking it would have left ~60% of the client's remaining per-turn cost on the
+> table. The paragraph above stands as the reasoning at the time; the Inspector still did not get
+> to *shape* this design, which is what the decision was actually protecting.
 
 ---
 
@@ -370,3 +374,218 @@ looks like a world where nothing happened. Every phase needs a guard that fails 
 - **No silent frame discard.** Pin that a poll delivering three frames applies three frames.
 - `cargo xtask decode-guard` after any schema change, per
   `.claude/rules/client/native-extension.md`.
+
+### As built
+
+| Guard | Where | Pins |
+|---|---|---|
+| Convergence, sequence numbering, recapture supersession | `core_sim/tests/delta_streaming.rs` | §7 items 1 and 3 |
+| Whole-section `None` vs `Some(vec![])` on the encoded envelope | `sim_schema/src/codec/mod.rs` | §8.4 |
+| A merged delta frame is an honest complete world | `tools/decode_guard.gd` + the delta fixture | §8.2 — the bug class |
+| Supersession, no dropped delta, gap → `resync` | `tools/stream_frame_guard.gd` | §7 items 2 and 4 |
+| A hidden Inspector skips both frame kinds and catches up on the newest | `tools/inspector_hidden_guard.gd` case 5 | §8.6 |
+
+**Every one of these was mutation-tested** — the defect reintroduced, the guard observed failing
+with a message that names the mechanism, the defect removed again. That is not ceremony here: three
+of the four bugs this arc produced were found by a *measurement*, not by a test, precisely because
+the tests that should have caught them had never been made to fail. `decode-guard` had no delta
+fixture at all while the delta path was carrying every turn.
+
+The one §7 item deliberately left unbuilt is a **chained** multi-delta fixture (frame N → N+1 → N+2).
+`stream_frame_guard` pins the supersession rule with one delta, which is what catches
+keep-only-the-newest; a second chained delta would additionally pin ordering across a batch of
+three. Worth adding when the fixture generator next needs touching, not worth a bespoke pass now.
+
+---
+
+## 8. MEASURED: the client half, and the bug the server half planted
+
+Phases 1 + the server payload work shipped and were measured against a live release server
+(80×52, `earthlike`, `late_forager_tribe`, steady state, `SHADOW_SCALE_CLIENT_PROFILE=1`).
+
+| | §5's estimate | measured after Phase 1 |
+|---|---|---|
+| `decode` / `decode.native` | ~80 ms | **0.36 ms** on a quiet delta, ~12 ms when a raster moves |
+| `display.layers.culture` | ~32 ms | **2.4 ms** |
+| `apply` | ~91 ms | **~44 ms** |
+| client total | ~171 ms | **~45 ms** |
+
+**Phase 2 was already paid for by Phase 1.** §5 assumed the ~80 ms decode had to be attacked with
+in-place sub-tree mutation and a manifest. It did not: the decode was ~80 ms *because the frame was
+a full world*. Once the frame is a delta, the conversion is proportional to the delta, and the
+`DeltaAggregator`'s re-entry into `snapshot_dict` — the thing §5 warned would "still pay the full
+~80 ms" — costs 0.36 ms because there is almost nothing in it. The manifest is still needed, but
+for §5's *other* reason (apply), not for decode.
+
+### 8.1 What a steady-state delta actually carries
+
+Instrumented in `decode_delta_against`, one line per frame:
+
+```
+tiles=508 herds=21 populations=1 influencers=3 cultureRaster sentimentRaster corruptionRaster militaryRaster
+tiles=642 herds=21 populations=1 influencers=3 demographics=1 command_events=5 cultureRaster …
+tiles=750 herds=21 populations=1 influencers=3 cultureRaster sentimentRaster corruptionRaster militaryRaster
+```
+
+**Absent from every steady-state delta**: `forage_patches`, `food_modules`, `discovered_sites`,
+`culture_layers`, `terrainOverlay`, `elevationOverlay`, `moistureRaster`, `visibilityRaster`. The
+client rebuilds all of them every turn anyway, because `display_snapshot` clears and refills from
+the merged dict unconditionally. That is where the remaining `apply` cost lives:
+
+| block | ms | reads | in a steady delta? |
+|---|---|---|---|
+| `display.sites.forage` | 10.0 | `forage_patches` | **absent** |
+| `display.shader` | 7.7 | terrain / visibility / elevation / river masks | **all absent** |
+| `display.tiles` | 6.9 | `tiles` (4160 rows) | ~600 changed |
+| `display.markers` | 4.8 | `units`, `herds` | present |
+| `display.layers.culture` | 2.4 | `culture_layers` | **absent** |
+| `display.overlays` | 0.95 | `overlays` (rasters) | present |
+
+### 8.2 The bug: every diff-list section freezes at the baseline
+
+`decode_delta_against` inserts `tile_updates`; `snapshot_dict` — the assembler the aggregator
+re-enters — does **not** insert `tiles`. Only `snapshot_to_dict`, on the full-snapshot path, does.
+So after the first frame `merged["tiles"]` is the baseline array and never moves again:
+
+```
+[TileProbe] turn=1 tiles=4160 grazesum=165813.449 updates=0
+[TileProbe] turn=5 tiles=4160 grazesum=165813.449 updates=533 updsum=55098.063
+[TileProbe] turn=9 tiles=4160 grazesum=165813.449 updates=605 updsum=62457.249
+```
+
+Byte-identical for nine turns while 400–600 tiles changed each turn. `TerrainPanel.gd` was
+unaffected because it already applies `tile_updates` incrementally, keyed by entity; that is the
+pattern the fix follows.
+
+**And `tiles` was one instance of nine.** The delta publishes every diff-list section under a
+`*_updates` key — `population_updates`, `culture_layer_updates`, `trade_link_updates`,
+`influencer_updates`, `power_updates`, `generation_updates`, `discovery_progress_updates` — while
+the client reads the *base* key, which the merge never writes. The worst of them is not tiles:
+
+```
+Main.gd:518   _hud_invoke("update_band_alerts", [snapshot["populations"]])
+```
+
+**Band alerts — food warnings, idle workers, predator-nearby — were frozen at the baseline**, along
+with the harvest-site and scout-site map overlays (`MapView.gd:919`, `:1834`), the culture-layer map
+(`:834`) and the trade overlay (`:1031`). The server confirms these are genuine diffs rather than
+whole-section emits (`capture.rs:686`, `populations: diff_new(…)` with `removed_populations:
+diff_removed(…)`), so the fix is merge-then-remove, keyed by each section's identity field.
+
+Fixing only `tiles` would have left eight instances of a bug class this very page had just
+documented. The decoder therefore gets **one generic keyed-section cache**, parameterised by
+identity key, with `tiles` as a configured instance rather than a bespoke type.
+
+**Why it shipped: `cargo xtask decode-guard` has no delta fixture.** The guard decodes a full
+snapshot and a headerless one — the entire delta path, which is now the path that runs every turn,
+had zero coverage. The fix adds a delta envelope to `decode_fixture.rs` and asserts the merged
+frame carries the delta's values, not the baseline's.
+
+**A guard that has never failed is not yet a guard.** Each assertion here was mutation-tested in
+both directions before being believed: delete the patch and confirm the failure message names the
+stale value; delete the fixture's river mutation and confirm the `tiles.rivers` name goes missing.
+Writing the guard *first* is what made the difference between finding this class of bug and
+documenting it.
+
+**The generalisable lesson, and it is the §3.5 lesson's twin:** §3.5 was *a field nobody reads
+costs the whole map every turn*. This one is **a field everybody reads, silently not arriving**.
+Both are invisible in a running client — the world simply looks calm — and both were found only by
+measuring the shipped representation rather than reasoning about the code. A cached-baseline
+decoder makes "absent means unchanged" load-bearing for correctness, not just for bandwidth: every
+key the merge does not write is a key asserting *nothing happened*, and it must be true.
+
+### 8.3 The change manifest
+
+A delta frame carries `changed_sections: PackedStringArray`. **Absent on a full snapshot, and
+absence means "everything changed"** — so a consumer that has never heard of the manifest keeps
+working, and a full snapshot is never gated.
+
+The dangerous direction is an **under-complete** manifest: a consumer skips a section that really
+did change and the world goes quietly stale, which is exactly §8.2's failure mode. So the manifest
+is not a hand-maintained list — the delta path inserts through a helper that names the key and
+writes it in one call, making it impossible to add a delta-carried key without naming it. The
+aggregator's raster channels are re-derived from cache and therefore always *present*, so presence
+cannot be their signal; they push an explicit name at each `apply_*` call site.
+
+Two derived names carry information no section key can: `tiles.rivers` and `tiles.culture_layer`,
+set by comparing each changed tile against the value it replaced. They are what let the client skip
+the terrain splatmap rebuild (`display.shader`, 7.7 ms) — a tile changing its graze biomass must not
+force six full-grid `PackedByteArray`s to be rebuilt, but a tile changing its river mask must.
+
+**A name means "this moved", not "this was transmitted".** The codec emits several diff vectors as
+always-present-but-empty, so naming them on presence would have had the manifest assert that eight
+sections changed every turn — true of the wire, useless to a consumer. Measured on the live stack, a
+steady-state delta names:
+
+```
+overlays.{sentiment,corruption,culture,military}, tiles, populations, influencers, power_nodes,
+victory, stance_axes, herds, sedentarization, axis_bias, sentiment, crisis_telemetry, power_metrics
+```
+
+and **never** names `forage_patches`, `food_modules`, `discovered_sites`, `culture_layers`,
+`trade_links`, `orders`, `overlays.{terrain,elevation,visibility,moisture}`, `tiles.rivers` or
+`tiles.culture_layer` — which is exactly the list of blocks the client can stop rebuilding.
+
+### 8.4 A third bug: `culture_tensions` cannot say "now empty"
+
+Found while generalising the section cache. `culture_tensions` is a **whole-section** field typed as
+a bare `Vec`, and `capture.rs` encodes "unchanged" as `Vec::new()`:
+
+```rust
+let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
+    Vec::new()          // "unchanged"
+} else { culture_tensions_state.clone() };
+```
+
+So "nothing changed" and "the last tension just resolved" are **the same bytes**, and the receiver
+must guess. Read it as *replace* and every delta blanked `CulturePanel`; read it as *unchanged* and a
+genuinely-emptied list stays stale until the next full snapshot. The decoder took the second reading
+as the lesser evil, and the representation was fixed at the source: `Option<Vec<_>>`, matching the
+idiom the rest of `WorldDelta` already uses.
+
+**`WorldDelta` has exactly two conventions and every field must pick one**: a *diff list* is
+`Vec<T>` **plus** a `removed_*` companion, where empty unambiguously means "no changes" because
+removals are explicit; a *whole section* is `Option<Vec<T>>`, where `None` is unchanged and
+`Some(vec![])` is now-empty. A bare `Vec` with no `removed_*` companion is neither, and is the shape
+to grep for when the next one of these surfaces.
+
+### 8.5 A fourth: two sections never decoded on the delta path at all
+
+`food_modules` and `faction_inventory` were passed as `None` by `decode_delta_against`, so the
+merged frame republished the baseline's food modules and **stockpiles** for the life of the world.
+Same staleness class as §8.2, reached from the opposite direction: not a diff left unpatched but a
+whole-section field never read. The HUD's stockpile line was frozen alongside the band alerts.
+
+Four bugs, one arc, all invisible in a running client. The through-line: **when a decoder starts
+caching, every key a consumer reads must be audited against every key the producer writes.** Before
+the cache, that audit was free — the frame was the whole world by construction.
+
+### 8.6 Result, and one parked decision revisited
+
+| | before the arc | after the server half | after the client half |
+|---|---|---|---|
+| `decode` | ~80 | 0.36 | 0.36 |
+| `display` | ~66 | 35.6 | **6.9** |
+| ├ `sites.forage` | 10 | 10.3 | **0.0** |
+| ├ `shader` | 7.5 | 7.9 | **0.0** |
+| ├ `tiles` | 7 | 7.1 | **1.2** |
+| ├ `layers.culture` | ~32 | 2.4 | **0.0** |
+| └ `markers` | 7 | 4.7 | 4.7 (not gated — `herds` moves every turn) |
+| `hud` | ~5 | 5.8 | 4.5 |
+| client total | **~171** | ~45 | **~13 + inspector** |
+
+**§4 parked the hidden Inspector; the measurement inverted the reasoning.** That decision accepted
+"a hidden Inspector resuming its fan-out" when it was ~20 ms of ~171 (12%). After the work above it
+is 16–30 ms of ~30 — **~60% of what the client still spends** — and it is spent rendering a panel
+that ships hidden.
+
+The fix §4 sketched was elaborate ("queue deltas while hidden, replay `cached full + queued deltas`,
+capped, falling back to `resync`"). It is no longer needed, because the same property that makes
+this arc work makes it unnecessary: **the skip only ever depended on self-containment, not on
+payload kind**, and every merged frame is now self-contained. So the gate simply widens to both
+kinds and `_cached_snapshot` holds the newest frame of either.
+
+That couples two things that must stay coupled: the hidden skip is safe **only** while the decoder
+keeps every base key patched (§8.2). If that regresses, the Inspector silently serves a stale panel
+on show — so the code comment says so, and `decode_guard`'s section assertions are what hold the
+other end.

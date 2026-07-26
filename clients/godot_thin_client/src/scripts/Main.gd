@@ -475,32 +475,45 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         profile.absorb(map_view.get("last_display_profile"), PROFILE_DISPLAY_PREFIX)
     var t_hud: int = profile.begin(PROFILE_HUD)
     _hud_profiling = profile.enabled
+    # Every call below pairs `snapshot.has(key)` with the change manifest, and needs BOTH.
+    #
+    # `has()` alone stopped being a change signal when the client began rendering from merged delta
+    # frames: the decoder patches its cached world and republishes it whole, so every key is now
+    # present on every frame and every one of these fired every turn. It is still the right OUTER
+    # guard — an absent key means the frame never carried the section at all, and for the ones whose
+    # comments call the guard load-bearing (`pending_forks`) absence must keep meaning "unchanged,
+    # do not clear". `SnapshotSections.changed` supplies what `has()` no longer can, and answers
+    # `true` for any frame with no manifest, so a full snapshot still fans out everything.
+    #
+    # `populations` and `herds` move on essentially every turn, so `update_band_alerts` (3.5-13 ms)
+    # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
+    # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
-    if snapshot.has("faction_inventory"):
+    if snapshot.has("faction_inventory") and SnapshotSections.changed(snapshot, "faction_inventory"):
         _hud_invoke("update_stockpiles", [snapshot["faction_inventory"]])
-    if snapshot.has("sedentarization"):
+    if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
         _hud_invoke("update_sedentarization", [snapshot["sedentarization"]])
-    if snapshot.has("demographics"):
+    if snapshot.has("demographics") and SnapshotSections.changed(snapshot, "demographics"):
         _hud_invoke("update_demographics", [snapshot["demographics"]])
-    if snapshot.has("intensification_knowledge"):
+    if snapshot.has("intensification_knowledge") and SnapshotSections.changed(snapshot, "intensification_knowledge"):
         _hud_invoke("update_intensification", [snapshot["intensification_knowledge"]])
-    if snapshot.has("discovered_sites"):
+    if snapshot.has("discovered_sites") and SnapshotSections.changed(snapshot, "discovered_sites"):
         _hud_invoke("update_discoveries", [snapshot["discovered_sites"]])
     if snapshot.has("grid"):
         _hud_invoke("set_grid_dimensions", [snapshot["grid"]])
-    if snapshot.has("food_modules"):
+    if snapshot.has("food_modules") and SnapshotSections.changed(snapshot, "food_modules"):
         # Forward MapView's ingested food sites (each stamped with terrain_id) rather than the raw wire
         # array, so the HUD Forage-row glyph resolves the SAME terrain-aware icon the map marker draws
         # (riverine_delta splits fish↔reeds by terrain — see FoodIcons). display_snapshot ran above.
         var food_sites: Variant = map_view.food_sites if map_view != null else snapshot["food_modules"]
         _hud_invoke("update_food_modules", [food_sites])
-    if snapshot.has("herds"):
+    if snapshot.has("herds") and SnapshotSections.changed(snapshot, "herds"):
         # The HUD needs the live herd positions (herds migrate) to jump the map to a hunted herd
         # from the band panel's Current-actions rows, and to name it. Same array MapView renders.
         _hud_invoke("update_herds", [snapshot["herds"]])
-    if snapshot.has("forage_patches"):
+    if snapshot.has("forage_patches") and SnapshotSections.changed(snapshot, "forage_patches"):
         # The HUD needs the forage patches to cap each Current-actions Forage row's worker stepper at
         # the patch's max-useful (the same forecast the compose control reads off tile_info). Same
         # array MapView ingests into `forage_patch_lookup`.
@@ -508,19 +521,19 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # The Telling (docs/plan_the_telling.md). The `has()` guard is LOAD-BEARING: a delta carries a
     # field only when it CHANGED, so absence means "unchanged", never "cleared" — clearing the
     # cached forks on absence would drop the end-turn gate every quiet turn.
-    if snapshot.has("pending_forks"):
+    if snapshot.has("pending_forks") and SnapshotSections.changed(snapshot, "pending_forks"):
         _hud_invoke("update_pending_forks", [snapshot["pending_forks"]])
-    if snapshot.has("stance_axes"):
+    if snapshot.has("stance_axes") and SnapshotSections.changed(snapshot, "stance_axes"):
         _hud_invoke("update_stance_axes", [snapshot["stance_axes"]])
-    if snapshot.has("voice_medium"):
+    if snapshot.has("voice_medium") and SnapshotSections.changed(snapshot, "voice_medium"):
         _hud_invoke("update_voice_medium", [snapshot["voice_medium"]])
-    if snapshot.has("populations"):
+    if snapshot.has("populations") and SnapshotSections.changed(snapshot, "populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
     if not is_delta:
         _hud_invoke("reset_command_feed")
-    if snapshot.has("command_events"):
+    if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
-    if snapshot.has("victory"):
+    if snapshot.has("victory") and SnapshotSections.changed(snapshot, "victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
             _hud_invoke("update_victory_state", [victory_variant])

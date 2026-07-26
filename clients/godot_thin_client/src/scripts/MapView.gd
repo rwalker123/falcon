@@ -642,6 +642,49 @@ const PROFILE_SHADER := "shader"       # the six full-grid splatmap rebuilds
 const PROFILE_MARKERS := "markers"     # province overlay + unit + herd markers
 const PROFILE_TAIL := "tail"           # trade overlay, layout/clamp/redraw, legend, minimap, metrics
 
+# ---------------------------------------------------------------------------
+# Change-manifest sections `display_snapshot` gates its blocks on
+# ---------------------------------------------------------------------------
+# Named constants rather than inline strings because these are a CONTRACT with the native decoder
+# (`native/src/snapshot/cache.rs`, `bridge/decoder.rs`), and a typo here reads as "this section
+# never changed" — a block that silently stops rebuilding, which is the exact failure this whole
+# arc has been chasing. `SnapshotSections.changed` answers `true` for any frame with no manifest, so
+# a full snapshot, a resync and a pre-manifest native build all still repaint everything.
+const SECTION_TILES := "tiles"
+## The tile fields the terrain SPLATMAPS are built from, reported apart from `tiles` by the decoder
+## so 600 tiles moving their graze biomass costs no texture rebuild.
+const SECTION_TILES_RIVERS := "tiles.rivers"
+const SECTION_CULTURE_LAYERS := "culture_layers"
+const SECTION_FOOD_MODULES := "food_modules"
+const SECTION_DISCOVERED_SITES := "discovered_sites"
+const SECTION_FORAGE_PATCHES := "forage_patches"
+const SECTION_POPULATIONS := "populations"
+const SECTION_TRADE_LINKS := "trade_links"
+const SECTION_OVERLAY_TERRAIN := "overlays.terrain"
+const SECTION_OVERLAY_VISIBILITY := "overlays.visibility"
+const SECTION_OVERLAY_ELEVATION := "overlays.elevation"
+
+## Everything `TerrainRenderer.rebuild_shader_maps` reads: the terrain id grid, the FoW visibility
+## raster, the elevation raster, and the per-tile river edge/inflow/channel + underlying-terrain
+## masks. Six full-grid `PackedByteArray`s (7.7 ms measured), so it must not ride on a tile moving
+## its biomass.
+## A plain `Array`, not a `PackedStringArray`: a constructor call is not a constant expression in
+## GDScript, so the packed form cannot be a `const` at all (it parses, then fails to compile).
+const SHADER_INPUT_SECTIONS := [
+	SECTION_OVERLAY_TERRAIN,
+	SECTION_OVERLAY_VISIBILITY,
+	SECTION_OVERLAY_ELEVATION,
+	SECTION_TILES_RIVERS,
+]
+
+## Everything `MinimapController._rebuild_image` reads: the terrain id grid and the visibility
+## raster (the FoW *toggle* it tracks itself). Verified against that function rather than assumed —
+## the minimap image is a full-grid pixel loop, and a stale one is a visibly frozen map.
+const MINIMAP_INPUT_SECTIONS := [
+	SECTION_OVERLAY_TERRAIN,
+	SECTION_OVERLAY_VISIBILITY,
+]
+
 ## Cost breakdown of the LAST `display_snapshot`, published for `Main` to fold into its per-turn
 ## `[TurnProfile]` line. Inert (records nothing) unless profiling is on.
 var last_display_profile: TurnProfile = null
@@ -813,13 +856,25 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	_wrap_horizontal = bool(grid.get("wrap_horizontal", false))
 
 	var overlays: Dictionary = snapshot.get("overlays", {})
+	# NEVER gated: the scalar raster channels (sentiment, corruption, culture, military) move on
+	# nearly every turn, and this is also where the sea level and climate cut points land.
 	_ingest_overlay_channels(overlays)
-	terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
-	_terrain.set_grid_terrain(terrain_overlay, grid_width, grid_height)
-	_update_biome_color_buffer()
-	# Increment minimap data version to trigger rebuild on terrain/visibility changes
-	_minimap.bump_data_version()
-	# Invalidate map cache when terrain data changes
+	# The TERRAIN grid is the opposite case — it moves only when the map is (re)generated, and it
+	# costs a full-grid PackedInt32Array conversion plus a biome-colour rebuild. `dimensions_changed`
+	# rides alongside because a resize must repaint whatever the manifest says.
+	if dimensions_changed or SnapshotSections.changed(snapshot, SECTION_OVERLAY_TERRAIN):
+		terrain_overlay = PackedInt32Array(overlays.get("terrain", []))
+		_terrain.set_grid_terrain(terrain_overlay, grid_width, grid_height)
+		_update_biome_color_buffer()
+	# The minimap image is a full-grid pixel loop over exactly terrain + visibility, so bumping the
+	# version on a turn that moved neither only buys a redundant rebuild.
+	if dimensions_changed or SnapshotSections.any_changed(snapshot, MINIMAP_INPUT_SECTIONS):
+		_minimap.bump_data_version()
+	# Deliberately NOT gated, unlike the minimap beside it. `CachedMapRenderer._draw` paints
+	# `_tile_color`, which follows the ACTIVE OVERLAY channel — so with an overlay selected the
+	# cached map's colours move whenever that channel does, and a gate on terrain/fog would freeze
+	# them. Killing the cache is a flag write; the re-render it forces is bounded by the viewport,
+	# not the grid.
 	_invalidate_map_cache()
 	profile.end(PROFILE_OVERLAYS, t_overlays)
 	var t_layers: int = profile.begin(PROFILE_LAYERS)
@@ -831,20 +886,25 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	terrain_tag_labels = tag_labels_raw if typeof(tag_labels_raw) == TYPE_DICTIONARY else {}
 	profile.end(PROFILE_LAYERS_TAGS, t_layers_tags)
 	var t_layers_culture: int = profile.begin(PROFILE_LAYERS_CULTURE)
-	var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
-	if culture_layers_variant is Array:
-		for layer_variant in culture_layers_variant:
-			if layer_variant is Dictionary:
-				var layer: Dictionary = layer_variant
-				var id: int = int(layer.get("id", -1))
-				if id >= 0:
-					culture_layer_map[id] = layer.duplicate(true)
-	var removed_layers_variant: Variant = snapshot.get("culture_layer_removed", null)
-	if removed_layers_variant is Array:
-		for raw_id in removed_layers_variant:
-			var id := int(raw_id)
-			if culture_layer_map.has(id):
-				culture_layer_map.erase(id)
+	# One gate for both halves: the decoder names `culture_layers` when the section's diff carried
+	# EITHER changed rows or removed ids (removals set the section's changed flag), so a frame that
+	# does not name it has neither to apply. Measured at 2.4 ms of `duplicate(true)` per turn on a
+	# section that moves once in a while.
+	if SnapshotSections.changed(snapshot, SECTION_CULTURE_LAYERS):
+		var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
+		if culture_layers_variant is Array:
+			for layer_variant in culture_layers_variant:
+				if layer_variant is Dictionary:
+					var layer: Dictionary = layer_variant
+					var id: int = int(layer.get("id", -1))
+					if id >= 0:
+						culture_layer_map[id] = layer.duplicate(true)
+		var removed_layers_variant: Variant = snapshot.get("culture_layer_removed", null)
+		if removed_layers_variant is Array:
+			for raw_id in removed_layers_variant:
+				var id := int(raw_id)
+				if culture_layer_map.has(id):
+					culture_layer_map.erase(id)
 	profile.end(PROFILE_LAYERS_CULTURE, t_layers_culture)
 	var t_layers_crisis: int = profile.begin(PROFILE_LAYERS_CRISIS)
 	_annotations.set_crisis_annotations(overlays.get("crisis_annotations", []))
@@ -854,30 +914,34 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	profile.end(PROFILE_LAYERS_ROUTES, t_layers_routes)
 	profile.end(PROFILE_LAYERS, t_layers)
 	var t_sites: int = profile.begin(PROFILE_SITES)
-	food_sites = []
-	food_site_lookup.clear()
-	harvest_sites.clear()
-	scout_sites.clear()
-	var food_variant: Variant = snapshot.get("food_modules", [])
-	if food_variant is Array:
+	# Four independent ingests, each now gated on the section IT reads and each clearing its own
+	# lookups inside that gate. **The clear and the refill must stay together**: these blocks get
+	# erasure for free by wiping the lookup first, so a gate that skipped the refill but not the
+	# clear would publish an empty world — food markers, forage sites and harvest targets all gone.
+	# They were also nested inside `if food_variant is Array`, which the file's own comment called
+	# an accidental coupling; gating them separately forces the untangle, because a block must never
+	# be gated on a key it does not read.
+	if SnapshotSections.changed(snapshot, SECTION_FOOD_MODULES):
 		var t_sites_food: int = profile.begin(PROFILE_SITES_FOOD)
-		for entry in food_variant:
-			if not (entry is Dictionary):
-				continue
-			var site: Dictionary = (entry as Dictionary).duplicate(true)
-			food_sites.append(site)
-			var x_site: int = int(site.get("x", -1))
-			var y_site: int = int(site.get("y", -1))
-			# Stamp the tile's terrain so both consumers (map marker + HUD Forage row) resolve the
-			# terrain-aware FoodIcons.for_site split from one source and can't disagree (riverine_delta
-			# splits fish↔reeds by terrain). Unconditional: for x<0 it's harmless (-1 → fish default).
-			site["terrain_id"] = _terrain_id_at(x_site, y_site)
-			if x_site >= 0 and y_site >= 0:
-				food_site_lookup[Vector2i(x_site, y_site)] = site
+		food_sites = []
+		food_site_lookup.clear()
+		var food_variant: Variant = snapshot.get("food_modules", [])
+		if food_variant is Array:
+			for entry in food_variant:
+				if not (entry is Dictionary):
+					continue
+				var site: Dictionary = (entry as Dictionary).duplicate(true)
+				food_sites.append(site)
+				var x_site: int = int(site.get("x", -1))
+				var y_site: int = int(site.get("y", -1))
+				# Stamp the tile's terrain so both consumers (map marker + HUD Forage row) resolve the
+				# terrain-aware FoodIcons.for_site split from one source and can't disagree (riverine_delta
+				# splits fish↔reeds by terrain). Unconditional: for x<0 it's harmless (-1 → fish default).
+				site["terrain_id"] = _terrain_id_at(x_site, y_site)
+				if x_site >= 0 and y_site >= 0:
+					food_site_lookup[Vector2i(x_site, y_site)] = site
 		profile.end(PROFILE_SITES_FOOD, t_sites_food)
-		# NOTE: the discovered-site and forage-patch ingests below are nested INSIDE the
-		# `food_modules is Array` branch. Harmless today (`get("food_modules", [])` always yields an
-		# Array, so the branch always runs) but the coupling is accidental — see the profile report.
+	if SnapshotSections.changed(snapshot, SECTION_DISCOVERED_SITES):
 		var t_sites_discovered: int = profile.begin(PROFILE_SITES_DISCOVERED)
 		discovered_sites = []
 		discovered_site_lookup.clear()
@@ -902,6 +966,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 					if wx >= 0 and wy >= 0:
 						discovered_site_lookup[Vector2i(wx, wy)] = wsite
 		profile.end(PROFILE_SITES_DISCOVERED, t_sites_discovered)
+	# The single biggest win in this function: 10.0 ms of `duplicate(true)` per turn on a section a
+	# steady-state delta never carries.
+	if SnapshotSections.changed(snapshot, SECTION_FORAGE_PATCHES):
 		var t_sites_forage: int = profile.begin(PROFILE_SITES_FORAGE)
 		forage_patch_lookup.clear()
 		var patch_variant: Variant = snapshot.get("forage_patches", [])
@@ -915,111 +982,103 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 				if px >= 0 and py >= 0:
 					forage_patch_lookup[Vector2i(px, py)] = patch
 		profile.end(PROFILE_SITES_FORAGE, t_sites_forage)
-	var t_sites_populations: int = profile.begin(PROFILE_SITES_POPULATIONS)
-	var population_variant: Variant = snapshot.get("populations", [])
-	if population_variant is Array:
-		for entry in population_variant:
-			if not (entry is Dictionary):
-				continue
-			var cohort: Dictionary = entry
-			var harvest_variant: Variant = cohort.get("harvest", {})
-			if harvest_variant is Dictionary:
-				var harvest: Dictionary = (harvest_variant as Dictionary).duplicate(true)
-				var hx := int(harvest.get("target_x", -1))
-				var hy := int(harvest.get("target_y", -1))
-				if hx >= 0 and hy >= 0:
-					var key := Vector2i(hx, hy)
-					harvest["module_label"] = _food_module_label(String(harvest.get("module", "")))
-					var existing: Array = harvest_sites.get(key, [])
-					existing.append(harvest)
-					harvest_sites[key] = existing
-			var scout_variant: Variant = cohort.get("scout", {})
-			if scout_variant is Dictionary:
-				var scout: Dictionary = (scout_variant as Dictionary).duplicate(true)
-				var sx := int(scout.get("target_x", -1))
-				var sy := int(scout.get("target_y", -1))
-				if sx >= 0 and sy >= 0:
-					var scout_key := Vector2i(sx, sy)
-					var scout_existing: Array = scout_sites.get(scout_key, [])
-					scout_existing.append(scout)
-					scout_sites[scout_key] = scout_existing
-	profile.end(PROFILE_SITES_POPULATIONS, t_sites_populations)
+	# `populations` is named on essentially every turn (a cohort's size or morale always moves), so
+	# this gate is not expected to skip. It is here for the same reason the others are: the two
+	# lookups it clears are ITS lookups, and leaving the clear outside the gate is how the next
+	# person accidentally wipes the harvest markers.
+	if SnapshotSections.changed(snapshot, SECTION_POPULATIONS):
+		var t_sites_populations: int = profile.begin(PROFILE_SITES_POPULATIONS)
+		harvest_sites.clear()
+		scout_sites.clear()
+		var population_variant: Variant = snapshot.get("populations", [])
+		if population_variant is Array:
+			for entry in population_variant:
+				if not (entry is Dictionary):
+					continue
+				var cohort: Dictionary = entry
+				var harvest_variant: Variant = cohort.get("harvest", {})
+				if harvest_variant is Dictionary:
+					var harvest: Dictionary = (harvest_variant as Dictionary).duplicate(true)
+					var hx := int(harvest.get("target_x", -1))
+					var hy := int(harvest.get("target_y", -1))
+					if hx >= 0 and hy >= 0:
+						var key := Vector2i(hx, hy)
+						harvest["module_label"] = _food_module_label(String(harvest.get("module", "")))
+						var existing: Array = harvest_sites.get(key, [])
+						existing.append(harvest)
+						harvest_sites[key] = existing
+				var scout_variant: Variant = cohort.get("scout", {})
+				if scout_variant is Dictionary:
+					var scout: Dictionary = (scout_variant as Dictionary).duplicate(true)
+					var sx := int(scout.get("target_x", -1))
+					var sy := int(scout.get("target_y", -1))
+					if sx >= 0 and sy >= 0:
+						var scout_key := Vector2i(sx, sy)
+						var scout_existing: Array = scout_sites.get(scout_key, [])
+						scout_existing.append(scout)
+						scout_sites[scout_key] = scout_existing
+		profile.end(PROFILE_SITES_POPULATIONS, t_sites_populations)
 	profile.end(PROFILE_SITES, t_sites)
 
 	var t_tiles: int = profile.begin(PROFILE_TILES)
-	tile_lookup.clear()
-	tile_habitability.clear()
-	tile_temperature.clear()
-	tile_graze.clear()
-	tile_forage.clear()
-	tile_river_edges.clear()
-	tile_river_inflow.clear()
-	tile_river_channel.clear()
-	tile_underlying_terrain.clear()
-	if grid_width > 0 and grid_height > 0:
-		var total: int = grid_width * grid_height
-		culture_layer_grid = PackedInt32Array()
-		culture_layer_grid.resize(total)
-		culture_layer_grid.fill(-1)
+	# Two paths into the SAME per-tile ingest (`_ingest_tile`), which is what keeps them from
+	# drifting: the full rebuild wipes the lookups and replays every row, the incremental one
+	# replays only the rows the delta carried.
+	#
+	# The incremental path needs all four of these to hold, and each rules out a real case:
+	# a manifest (so this is a delta from a decoder that publishes one, and `tile_updates` is the
+	# sparse list rather than the whole world), no resize (a grid resize invalidates
+	# `culture_layer_grid`'s indexing outright), lookups already built by a previous frame, and an
+	# actual sparse list to walk. Anything else — full snapshot, resync, first frame, new world —
+	# falls through to the full rebuild, which is the only thing that can establish the baseline.
+	var tile_updates_variant: Variant = snapshot.get("tile_updates", null)
+	var tiles_incremental: bool = (
+		not dimensions_changed
+		and SnapshotSections.has_manifest(snapshot)
+		and _tile_lookups_ready()
+		and tile_updates_variant is Array
+	)
+	if tiles_incremental:
+		# 6.9 ms of full-grid loop to learn about ~600 changed rows out of 4,160. Skipped entirely
+		# when the delta moved no tile at all.
+		if SnapshotSections.changed(snapshot, SECTION_TILES):
+			for entry in (tile_updates_variant as Array):
+				if entry is Dictionary:
+					_ingest_tile(entry)
 	else:
-		culture_layer_grid = PackedInt32Array()
-	var tile_entries_variant: Variant = snapshot.get("tiles", [])
-	if tile_entries_variant is Array:
-		for entry in tile_entries_variant:
-			if entry is Dictionary:
-				var tile_dict: Dictionary = entry
-				var entity_id: int = int(tile_dict.get("entity", -1))
-				if entity_id < 0:
-					continue
-				var x: int = int(tile_dict.get("x", 0))
-				var y: int = int(tile_dict.get("y", 0))
-				tile_lookup[entity_id] = Vector2i(x, y)
-				if tile_dict.has("habitability"):
-					tile_habitability[Vector2i(x, y)] = float(tile_dict["habitability"])
-				if tile_dict.has("temperature"):
-					tile_temperature[Vector2i(x, y)] = float(tile_dict["temperature"])
-				# Graze: only a tile whose biome actually carries pasture gets an entry (see
-				# `tile_graze`). A zero-capacity tile is a *dead* one, and the Tile card must
-				# print nothing there rather than "0 / 0".
-				var graze_capacity: float = float(tile_dict.get("graze_capacity", 0.0))
-				if graze_capacity > 0.0:
-					tile_graze[Vector2i(x, y)] = {
-						"biomass": float(tile_dict.get("graze_biomass", 0.0)),
-						"capacity": graze_capacity,
-						"phase": String(tile_dict.get("graze_ecology_phase", "")),
-					}
-				# Forage (human-food) potential — only tiles that carry any get an entry, so the
-				# barren zeros (deep ocean/glacier/lava) don't drag the legend's "poorest" to 0.
-				var forage_capacity: float = float(tile_dict.get("forage_capacity", 0.0))
-				if forage_capacity > 0.0:
-					tile_forage[Vector2i(x, y)] = forage_capacity
-				var river_mask: int = int(tile_dict.get("river_edges", 0))
-				if river_mask != 0:
-					tile_river_edges[Vector2i(x, y)] = river_mask
-				# Where a tributary hands over to a navigable trunk (nonzero on the trunk's FIRST hex only).
-				var inflow_mask: int = int(tile_dict.get("river_inflow", 0))
-				if inflow_mask != 0:
-					tile_river_inflow[Vector2i(x, y)] = inflow_mask
-				# Which SIDES a navigable hex's channel flows out through — the sim's word on the trunk's
-				# path, and the only thing that arms a trunk arm (see RIVER_CHANNEL_MASK).
-				var channel_mask: int = int(tile_dict.get("river_channel", 0))
-				if channel_mask != 0:
-					tile_river_channel[Vector2i(x, y)] = channel_mask
-				# The valley biome the river cut (== terrain on ordinary tiles). Only the shader's navigable
-				# pass reads it, but store every tile that carries it so the navigable_underlying_map fills.
-				if tile_dict.has("underlying_terrain"):
-					tile_underlying_terrain[Vector2i(x, y)] = int(tile_dict["underlying_terrain"])
-				if culture_layer_grid.size() > 0:
-					if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
-						var index: int = y * grid_width + x
-						if index >= 0 and index < culture_layer_grid.size():
-							culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+		tile_lookup.clear()
+		tile_habitability.clear()
+		tile_temperature.clear()
+		tile_graze.clear()
+		tile_forage.clear()
+		tile_river_edges.clear()
+		tile_river_inflow.clear()
+		tile_river_channel.clear()
+		tile_underlying_terrain.clear()
+		if grid_width > 0 and grid_height > 0:
+			var total: int = grid_width * grid_height
+			culture_layer_grid = PackedInt32Array()
+			culture_layer_grid.resize(total)
+			culture_layer_grid.fill(-1)
+		else:
+			culture_layer_grid = PackedInt32Array()
+		var tile_entries_variant: Variant = snapshot.get("tiles", [])
+		if tile_entries_variant is Array:
+			for entry in tile_entries_variant:
+				if entry is Dictionary:
+					_ingest_tile(entry)
 	profile.end(PROFILE_TILES, t_tiles)
 	# Rebuild the Approach-B blend-shader splatmaps (id-map + FoW vis-map + elev-map + river-map) from the
 	# new terrain/fog/elevation/river-edges. Runs AFTER the tile loop, not beside the terrain ingest above:
 	# the river-map is built from `tile_river_edges`, which only exists once the tiles have been read.
 	var t_shader: int = profile.begin(PROFILE_SHADER)
-	_terrain.rebuild_shader_maps()
+	# Six full-grid `PackedByteArray` rebuilds, 7.7 ms measured. Its inputs are terrain / fog /
+	# elevation / the river + underlying-terrain masks and NOTHING else — which is why the decoder
+	# reports `tiles.rivers` apart from `tiles`: 600 tiles moving their graze biomass must not force
+	# the splatmaps to be rebuilt, and before the manifest existed there was no way to tell the two
+	# apart.
+	if dimensions_changed or SnapshotSections.any_changed(snapshot, SHADER_INPUT_SECTIONS):
+		_terrain.rebuild_shader_maps()
 	profile.end(PROFILE_SHADER, t_shader)
 	var t_markers: int = profile.begin(PROFILE_MARKERS)
 	_install_province_overlay()
@@ -1028,7 +1087,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	profile.end(PROFILE_MARKERS, t_markers)
 
 	var t_tail: int = profile.begin(PROFILE_TAIL)
-	if snapshot.has("trade_links"):
+	# `has()` stays as the outer guard — an absent key means the frame never carried the section at
+	# all — with the manifest deciding whether the (now always-present) key actually moved.
+	if snapshot.has("trade_links") and SnapshotSections.changed(snapshot, SECTION_TRADE_LINKS):
 		var trade_variant: Variant = snapshot.get("trade_links")
 		if trade_variant is Array:
 			update_trade_overlay(trade_variant, _annotations.is_trade_overlay_enabled())
@@ -1061,6 +1122,99 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	}
 	profile.end(PROFILE_TAIL, t_tail)
 	return metrics
+
+## Are the per-tile lookups in a state the incremental path may patch rather than rebuild?
+##
+## `culture_layer_grid` is the honest witness: it is the one lookup sized to the grid, so a size
+## that no longer matches means either nothing has been ingested yet or the grid moved under us —
+## in both cases the sparse list cannot reconstruct what is missing.
+func _tile_lookups_ready() -> bool:
+	if grid_width <= 0 or grid_height <= 0:
+		return false
+	return culture_layer_grid.size() == grid_width * grid_height
+
+
+## Fold ONE tile row into the per-tile lookups.
+##
+## **Every conditional insert has an explicit `erase` on its else branch, and that is not
+## defensive — it is the whole difference between the two callers.** The full rebuild gets erasure
+## for free by clearing the lookups first, so a tile whose graze capacity fell to 0 simply never
+## gets re-added. The incremental path never clears, so without the `erase` a tile that LOST its
+## pasture (or its river, or its habitability reading) would keep answering with the value it had
+## the turn before, forever — stale entries accumulating silently, which is the same bug class as
+## the frozen `tiles` array this arc started from. After a clear, `erase` on an absent key is a
+## no-op, so the two paths produce byte-identical lookups from the same rows.
+##
+## A tile's `(x, y)` is fixed for the life of the world (the grid does not move; a resize forces the
+## full rebuild), so `tile_lookup`'s entity → cell entry can be overwritten in place without
+## orphaning the previous cell.
+func _ingest_tile(tile_dict: Dictionary) -> void:
+	var entity_id: int = int(tile_dict.get("entity", -1))
+	if entity_id < 0:
+		return
+	var x: int = int(tile_dict.get("x", 0))
+	var y: int = int(tile_dict.get("y", 0))
+	var cell := Vector2i(x, y)
+	tile_lookup[entity_id] = cell
+	if tile_dict.has("habitability"):
+		tile_habitability[cell] = float(tile_dict["habitability"])
+	else:
+		tile_habitability.erase(cell)
+	if tile_dict.has("temperature"):
+		tile_temperature[cell] = float(tile_dict["temperature"])
+	else:
+		tile_temperature.erase(cell)
+	# Graze: only a tile whose biome actually carries pasture gets an entry (see `tile_graze`). A
+	# zero-capacity tile is a *dead* one, and the Tile card must print nothing there rather than
+	# "0 / 0" — so a tile whose capacity fell to zero must lose its entry, not keep a stale one.
+	var graze_capacity: float = float(tile_dict.get("graze_capacity", 0.0))
+	if graze_capacity > 0.0:
+		tile_graze[cell] = {
+			"biomass": float(tile_dict.get("graze_biomass", 0.0)),
+			"capacity": graze_capacity,
+			"phase": String(tile_dict.get("graze_ecology_phase", "")),
+		}
+	else:
+		tile_graze.erase(cell)
+	# Forage (human-food) potential — only tiles that carry any get an entry, so the barren zeros
+	# (deep ocean/glacier/lava) don't drag the legend's "poorest" to 0.
+	var forage_capacity: float = float(tile_dict.get("forage_capacity", 0.0))
+	if forage_capacity > 0.0:
+		tile_forage[cell] = forage_capacity
+	else:
+		tile_forage.erase(cell)
+	var river_mask: int = int(tile_dict.get("river_edges", 0))
+	if river_mask != 0:
+		tile_river_edges[cell] = river_mask
+	else:
+		tile_river_edges.erase(cell)
+	# Where a tributary hands over to a navigable trunk (nonzero on the trunk's FIRST hex only).
+	var inflow_mask: int = int(tile_dict.get("river_inflow", 0))
+	if inflow_mask != 0:
+		tile_river_inflow[cell] = inflow_mask
+	else:
+		tile_river_inflow.erase(cell)
+	# Which SIDES a navigable hex's channel flows out through — the sim's word on the trunk's path,
+	# and the only thing that arms a trunk arm (see RIVER_CHANNEL_MASK).
+	var channel_mask: int = int(tile_dict.get("river_channel", 0))
+	if channel_mask != 0:
+		tile_river_channel[cell] = channel_mask
+	else:
+		tile_river_channel.erase(cell)
+	# The valley biome the river cut (== terrain on ordinary tiles). Only the shader's navigable pass
+	# reads it, but store every tile that carries it so the navigable_underlying_map fills.
+	if tile_dict.has("underlying_terrain"):
+		tile_underlying_terrain[cell] = int(tile_dict["underlying_terrain"])
+	else:
+		tile_underlying_terrain.erase(cell)
+	# Written per index rather than refilled: on the incremental path only the changed tiles' cells
+	# move, and the grid is re-created (and re-filled with -1) by the full path whenever it resizes.
+	if culture_layer_grid.size() > 0:
+		if x >= 0 and x < grid_width and y >= 0 and y < grid_height:
+			var index: int = y * grid_width + x
+			if index >= 0 and index < culture_layer_grid.size():
+				culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+
 
 func _ingest_overlay_channels(overlays: Variant) -> void:
 	var preserve_tag_overlay: bool = (active_overlay_key == "terrain_tags")

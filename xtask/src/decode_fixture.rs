@@ -49,14 +49,14 @@
 
 use flatbuffers::FlatBufferBuilder;
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
-use sim_schema::codec::encode_snapshot_flatbuffer;
+use sim_schema::codec::{encode_delta_flatbuffer, encode_snapshot_flatbuffer};
 use sim_schema::state::campaign::*;
 use sim_schema::state::culture::*;
 use sim_schema::state::economy::*;
 use sim_schema::state::governance::*;
 use sim_schema::state::map::*;
 use sim_schema::state::population::*;
-use sim_schema::world::WorldSnapshot;
+use sim_schema::world::{WorldDelta, WorldSnapshot};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -178,6 +178,153 @@ fn encode_headerless_envelope() -> Vec<u8> {
     );
     builder.finish(envelope, None);
     builder.finished_data().to_vec()
+}
+
+/// Where the DELTA envelope lands, beside the other two for the same standalone-run reason.
+pub fn delta_fixture_path() -> PathBuf {
+    Path::new("clients")
+        .join("godot_thin_client")
+        .join("tests")
+        .join("fixtures")
+        .join("snapshot_delta_envelope.bin")
+}
+
+/// Tiles the delta moves. A handful, not all of them: the guard asserts the merged frame keeps the
+/// **baseline's tile COUNT** while carrying the delta's values, and that assertion is only
+/// meaningful if most tiles are untouched.
+const DELTA_CHANGED_TILES: usize = 3;
+
+/// How far the delta moves each changed tile's graze/forage reading. Applied as an OFFSET from the
+/// baseline value rather than as an absolute, so the moved value cannot accidentally coincide with
+/// the saturated one the baseline carries — the guard's "this is not the baseline's value" check
+/// would then pass while proving nothing.
+const DELTA_BIOMASS_STEP: f32 = 100.0;
+
+/// The same idea for `temperature`, which rides the wire as fixed-point (1e6) — a whole 5 °C, so a
+/// dropped `fixed64_to_f64` divide is still visible in the guard's output.
+const DELTA_TEMPERATURE_STEP: i64 = 5_000_000;
+
+/// The ONE changed tile whose river and culture-layer fields also move.
+///
+/// The decoder derives `tiles.rivers` / `tiles.culture_layer` for the change manifest by comparing
+/// each changed tile against the entry it replaces, and this is what exercises that comparison in
+/// **both** directions: the other changed tiles move only their readings, so a comparison that
+/// answered "changed" for any moved tile would be indistinguishable from a correct one without a
+/// tile that moves a reading and nothing else.
+const DELTA_SPLATMAP_TILE: usize = DELTA_CHANGED_TILES - 1;
+
+/// One Minor-river class bit on direction 0 of the packed `river_edges` mask (2 bits per odd-r
+/// direction — see `tile_to_dict`). XORed in, so the mask provably differs whatever it was.
+const DELTA_RIVER_EDGE_BIT: u16 = 0b01;
+
+/// Rows the delta moves in the NON-tile keyed sections (`populations`, `culture_layers`).
+///
+/// One of the fixture's two rows per section, deliberately: it is what lets the guard check that
+/// the merged frame carries the moved row AND kept the untouched one, which a delta that restated
+/// every row could not show. Those two sections stand for the whole keyed-section family — they are
+/// the ones with live consumers reading the base key (`Main`'s band alerts, `MapView`'s harvest and
+/// culture overlays), so a regression there is player-visible.
+const DELTA_CHANGED_ROWS: usize = 1;
+
+/// How far the delta moves the probe field on those rows. An OFFSET from the baseline value, for
+/// the same reason as [`DELTA_BIOMASS_STEP`]: the moved value then cannot coincide with the
+/// saturated one, which would make the guard's "this is not the baseline's value" check vacuous.
+const DELTA_COUNT_STEP: u32 = 7;
+
+/// Writes a **DELTA** envelope built against the same synthetic world [`write_fixture`] emits.
+///
+/// The delta path had no fixture at all, and that is exactly why it shipped a world whose `tiles`
+/// array never moved after the baseline snapshot: the decoder inserted the sparse `tile_updates`
+/// list and left `tiles` standing, so every per-tile lookup in `MapView` was frozen for the life of
+/// the world. Nothing in `cargo xtask decode-guard` could see it, because nothing decoded a delta.
+///
+/// Deliberately **sparse** — it carries a header and a few tiles and nothing else. That is what
+/// lets the guard assert the change manifest does not name a section this delta left alone
+/// (`forage_patches`), which a saturated everything-present delta could never show.
+pub fn write_delta_fixture() -> Result<(), Box<dyn Error>> {
+    let delta = build_fixture_delta()?;
+    let bytes = encode_delta_flatbuffer(&delta);
+    let path = delta_fixture_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, &bytes)?;
+    println!(
+        "Wrote delta decode fixture to {} ({} bytes; {} tiles, {} populations, {} culture layers changed)",
+        path.display(),
+        bytes.len(),
+        delta.tiles.len(),
+        delta.populations.len(),
+        delta.culture_layers.len()
+    );
+    Ok(())
+}
+
+/// The delta the guard applies to [`build_fixture_snapshot`]'s world.
+///
+/// `..Default::default()` here is the opposite call from the exhaustive blanks above, and on
+/// purpose: a delta's meaning is *what it carries*, so leaving a section at its `None`/empty
+/// default is the fixture stating that the section did not change.
+pub fn build_fixture_delta() -> Result<WorldDelta, Box<dyn Error>> {
+    let snapshot = build_fixture_snapshot()?;
+
+    let mut header = snapshot.header.clone();
+    header.tick = snapshot.header.tick + 1;
+    // The gate the client applies before merging: same world, and a base it actually holds.
+    header.base_frame_seq = snapshot.header.frame_seq;
+    header.frame_seq = snapshot.header.frame_seq + 1;
+
+    let tiles = snapshot
+        .tiles
+        .iter()
+        .take(DELTA_CHANGED_TILES)
+        .enumerate()
+        .map(|(i, tile)| {
+            let mut moved = tile.clone();
+            moved.graze_biomass += DELTA_BIOMASS_STEP;
+            moved.forage_capacity += DELTA_BIOMASS_STEP;
+            moved.temperature += DELTA_TEMPERATURE_STEP;
+            if i == DELTA_SPLATMAP_TILE {
+                moved.river_edges ^= DELTA_RIVER_EDGE_BIT;
+                moved.culture_layer = moved.culture_layer.wrapping_add(1);
+            }
+            moved
+        })
+        .collect();
+
+    // The two non-tile keyed sections with live consumers reading the BASE key. `size` and
+    // `parent` are arbitrary probes — what matters is that each moves on exactly one row.
+    let populations = snapshot
+        .populations
+        .iter()
+        .take(DELTA_CHANGED_ROWS)
+        .map(|cohort| {
+            let mut moved = cohort.clone();
+            moved.size = moved.size.wrapping_add(DELTA_COUNT_STEP);
+            moved
+        })
+        .collect();
+    let culture_layers = snapshot
+        .culture_layers
+        .iter()
+        .take(DELTA_CHANGED_ROWS)
+        .map(|layer| {
+            let mut moved = layer.clone();
+            moved.parent = moved.parent.wrapping_add(DELTA_COUNT_STEP);
+            moved
+        })
+        .collect();
+
+    Ok(WorldDelta {
+        header,
+        tiles,
+        populations,
+        culture_layers,
+        // Carried on every delta rather than diffed (see `WorldDelta::fog_enabled`); the derived
+        // `Default` says `false`, which would silently flip the merged world's fog.
+        fog_enabled: snapshot.fog_enabled,
+        ..Default::default()
+    })
 }
 
 /// Seed → saturate → fix up. See the module docs for why it is done in that order.
@@ -570,11 +717,17 @@ fn seed_snapshot() -> WorldSnapshot {
 /// appended to the schema and not seeded in [`seed_snapshot`]. An empty array is invisible to the
 /// golden (the decoder emits an empty array either way), so it is exactly the gap that would let an
 /// appended repeated field ship untested; refusing to build is the point.
-/// Subtrees of `WorldSnapshot` that are **not on the FlatBuffers client stream**. Each is the sim's
-/// own rollback record, round-tripped through the bincode save but never serialized into the
-/// envelope (`sim_schema/src/codec`), so seeding it would grow the fixture without exercising a
-/// single line of the decoder. Named individually rather than skipped by heuristic: if one of these
-/// ever *does* get wired to the client, deleting its entry here is what turns the gate back on.
+/// Subtrees of `WorldSnapshot` the client decoder **never reads**, so seeding one would grow the
+/// fixture without exercising a single line of the decoder.
+///
+/// Two distinct reasons, and the distinction matters: the first four are the sim's own rollback
+/// records, round-tripped through the bincode save but never serialized into the envelope at all.
+/// `knowledge_ledger` and `knowledge_timeline` **are** encoded (`sim_schema/src/codec/knowledge.rs`
+/// writes both onto a delta) — they simply have no converter on the client side, so nothing in
+/// `native/src/dict/` would run. Being on the wire is not what earns a gate here; being decoded is.
+///
+/// Named individually rather than skipped by heuristic: if one of these ever *does* get wired to
+/// the client, deleting its entry here is what turns the gate back on.
 const OFF_WIRE_SUBTREES: [&str; 6] = [
     "herd_registry",
     "forage_registry",
@@ -754,6 +907,7 @@ fn apply_structural_fixups(s: &mut WorldSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// The half of the decode gate that runs **without Godot**, and therefore in CI.
     ///
@@ -798,6 +952,134 @@ mod tests {
             snapshot.map().is_some(),
             "the fixture must carry real content, so a dropped frame is distinguishable from an \
              empty one"
+        );
+    }
+
+    /// The delta fixture must stay **applicable** to the snapshot fixture and must actually MOVE
+    /// every row the guard probes — the half of the delta gate that reaches CI, where the
+    /// Godot-side merge assertions cannot.
+    ///
+    /// Both halves rot silently. A base sequence that stopped naming the snapshot's frame would
+    /// make the client drop the frame, and the guard would then be asserting against an empty
+    /// dictionary; tile values that stopped moving would let a decoder that ignores the delta's
+    /// tiles entirely — the bug this fixture exists for — pass.
+    #[test]
+    fn the_delta_fixture_applies_to_the_snapshot_and_moves_every_probed_row() {
+        let snapshot = build_fixture_snapshot().expect("snapshot fixture builds");
+        let delta = build_fixture_delta().expect("delta fixture builds");
+
+        assert_eq!(
+            delta.header.base_frame_seq, snapshot.header.frame_seq,
+            "the delta must name the snapshot's frame as its base, or the client drops it"
+        );
+        assert_eq!(
+            delta.header.world_epoch, snapshot.header.world_epoch,
+            "a delta from another world is never merged"
+        );
+        assert!(
+            delta.tiles.len() < snapshot.tiles.len(),
+            "the delta must be SPARSE ({} of {} tiles), or 'the merged frame kept the baseline's \
+             tile count' proves nothing",
+            delta.tiles.len(),
+            snapshot.tiles.len()
+        );
+        for moved in &delta.tiles {
+            let baseline = snapshot
+                .tiles
+                .iter()
+                .find(|tile| tile.entity == moved.entity)
+                .expect("every changed tile exists in the baseline");
+            assert_ne!(
+                baseline.graze_biomass, moved.graze_biomass,
+                "tile {} must carry a visibly different graze reading",
+                moved.entity
+            );
+            assert_ne!(
+                baseline.temperature, moved.temperature,
+                "tile {} must carry a visibly different temperature",
+                moved.entity
+            );
+        }
+
+        let splatmap_tile = &delta.tiles[DELTA_SPLATMAP_TILE];
+        let splatmap_baseline = snapshot
+            .tiles
+            .iter()
+            .find(|tile| tile.entity == splatmap_tile.entity)
+            .expect("the splatmap tile exists in the baseline");
+        assert_ne!(
+            splatmap_baseline.river_edges, splatmap_tile.river_edges,
+            "one changed tile must move `river_edges`, or `tiles.rivers` is never exercised"
+        );
+        assert_ne!(
+            splatmap_baseline.culture_layer, splatmap_tile.culture_layer,
+            "one changed tile must move `culture_layer`, or `tiles.culture_layer` is never exercised"
+        );
+        for (i, moved) in delta.tiles.iter().enumerate() {
+            if i == DELTA_SPLATMAP_TILE {
+                continue;
+            }
+            let baseline = snapshot
+                .tiles
+                .iter()
+                .find(|tile| tile.entity == moved.entity)
+                .expect("every changed tile exists in the baseline");
+            assert_eq!(
+                (baseline.river_edges, baseline.culture_layer),
+                (moved.river_edges, moved.culture_layer),
+                "tile {} must move ONLY its readings, so a comparison that flags every changed \
+                 tile is distinguishable from a correct one",
+                moved.entity
+            );
+        }
+
+        // The two non-tile keyed sections: one row moved, one row left alone, in both.
+        assert_eq!(delta.populations.len(), DELTA_CHANGED_ROWS);
+        assert_eq!(delta.culture_layers.len(), DELTA_CHANGED_ROWS);
+        assert!(
+            snapshot.populations.len() > DELTA_CHANGED_ROWS
+                && snapshot.culture_layers.len() > DELTA_CHANGED_ROWS,
+            "each section must keep an UNTOUCHED row, or 'the merged frame kept the baseline's \
+             count' proves nothing"
+        );
+        let baseline_cohort = snapshot
+            .populations
+            .iter()
+            .find(|cohort| cohort.entity == delta.populations[0].entity)
+            .expect("the changed cohort exists in the baseline");
+        assert_ne!(
+            baseline_cohort.size, delta.populations[0].size,
+            "the changed cohort must carry a visibly different size"
+        );
+        let baseline_layer = snapshot
+            .culture_layers
+            .iter()
+            .find(|layer| layer.id == delta.culture_layers[0].id)
+            .expect("the changed culture layer exists in the baseline");
+        assert_ne!(
+            baseline_layer.parent, delta.culture_layers[0].parent,
+            "the changed culture layer must carry a visibly different parent"
+        );
+        let layer_ids: HashSet<u32> = snapshot.culture_layers.iter().map(|l| l.id).collect();
+        assert_eq!(
+            layer_ids.len(),
+            snapshot.culture_layers.len(),
+            "the fixture's culture layers must have DISTINCT ids — the merge indexes by them, so a \
+             collision would silently patch the wrong row"
+        );
+
+        let bytes = encode_delta_flatbuffer(&delta);
+        let envelope =
+            fb::root_as_envelope(&bytes).expect("the delta envelope must verify as FlatBuffers");
+        assert_eq!(envelope.payload_type(), fb::SnapshotPayload::delta);
+        assert!(
+            envelope
+                .payload_as_delta()
+                .and_then(|d| d.subsistence())
+                .and_then(|s| s.foragePatches())
+                .is_none(),
+            "the delta must leave `forage_patches` ABSENT — the guard asserts the change manifest \
+             does not name it"
         );
     }
 

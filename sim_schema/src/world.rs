@@ -251,7 +251,12 @@ pub struct WorldDelta {
     pub pending_forks: Option<Vec<PendingForksState>>,
     pub stance_axes: Option<Vec<StanceState>>,
     pub voice_medium: Option<Vec<VoiceMediumState>>,
-    pub knowledge_timeline: Vec<KnowledgeTimelineEventState>,
+    /// The knowledge timeline, sent as a whole section. `None` means unchanged.
+    ///
+    /// Not a diff list: it carries no `removed_*` counterpart and the capture path replaces it
+    /// wholesale, so `Some(vec![])` has to be able to say "the timeline is now empty" — see
+    /// [`WorldDelta::culture_tensions`] for the bug a bare `Vec` caused on the sibling field.
+    pub knowledge_timeline: Option<Vec<KnowledgeTimelineEventState>>,
     pub crisis_telemetry: Option<CrisisTelemetryState>,
     pub crisis_overlay: Option<CrisisOverlayState>,
     pub herds: Option<Vec<HerdTelemetryState>>,
@@ -289,7 +294,15 @@ pub struct WorldDelta {
     pub terrain: Option<TerrainOverlayState>,
     pub culture_layers: Vec<CultureLayerState>,
     pub removed_culture_layers: Vec<u32>,
-    pub culture_tensions: Vec<CultureTensionState>,
+    /// The culture-tension roster, sent as a whole section. `None` means unchanged.
+    ///
+    /// This is `Option` rather than a bare `Vec` because tensions have no `removed_culture_tensions`
+    /// counterpart, so the list is only ever replaced wholesale. While it was a bare `Vec`, "nothing
+    /// changed" and "the last tension just resolved" were the same bytes on the wire and the client
+    /// had to guess — reading it as a replacement blanked the tension list on every delta, reading it
+    /// as unchanged left a genuinely-emptied list stale until the next full snapshot. The codec now
+    /// writes the FlatBuffers vector only for `Some`, so absence carries the distinction.
+    pub culture_tensions: Option<Vec<CultureTensionState>>,
     pub discovery_progress: Vec<DiscoveryProgressEntry>,
 }
 

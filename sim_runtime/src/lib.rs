@@ -310,7 +310,7 @@ pub mod knowledge {
     pub struct KnowledgeLedgerDeltaView<'a> {
         entries: &'a [KnowledgeLedgerEntryState],
         removed: &'a [u64],
-        timeline: &'a [KnowledgeTimelineEventState],
+        timeline: Option<&'a [KnowledgeTimelineEventState]>,
         metrics: Option<&'a KnowledgeMetricsState>,
     }
 
@@ -320,7 +320,7 @@ pub mod knowledge {
             Self {
                 entries: &delta.knowledge_ledger,
                 removed: &delta.removed_knowledge_ledger,
-                timeline: &delta.knowledge_timeline,
+                timeline: delta.knowledge_timeline.as_deref(),
                 metrics: delta.knowledge_metrics.as_ref(),
             }
         }
@@ -347,8 +347,9 @@ pub mod knowledge {
             self.metrics
         }
 
-        /// Timeline events emitted alongside the delta.
-        pub fn timeline(&self) -> &'a [KnowledgeTimelineEventState] {
+        /// Timeline events emitted alongside the delta, or `None` when the delta left the
+        /// timeline untouched. `Some(&[])` means the timeline itself is now empty.
+        pub fn timeline(&self) -> Option<&'a [KnowledgeTimelineEventState]> {
             self.timeline
         }
     }
@@ -527,13 +528,13 @@ pub mod knowledge {
                     countermeasures_active: 2,
                     common_knowledge_total: 1,
                 }),
-                knowledge_timeline: vec![KnowledgeTimelineEventState {
+                knowledge_timeline: Some(vec![KnowledgeTimelineEventState {
                     tick: 12,
                     kind: KnowledgeTimelineEventKind::LeakProgress,
                     source_faction: 3,
                     delta_percent: 5,
                     note_handle: Some("probe success".to_string()),
-                }],
+                }]),
                 ..WorldDelta::default()
             };
 
@@ -547,7 +548,8 @@ pub mod knowledge {
 
             let metrics = view.metrics().expect("metrics should be present");
             assert_eq!(metrics.leak_warnings, 5);
-            assert_eq!(view.timeline().len(), 1);
+            let timeline = view.timeline().expect("timeline should be carried");
+            assert_eq!(timeline.len(), 1);
         }
 
         #[test]

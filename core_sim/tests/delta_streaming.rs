@@ -6,7 +6,10 @@
 //! are pinned rather than left to review.
 
 use core_sim::SnapshotHistory;
-use sim_runtime::{CampaignProfileState, WorldDelta, WorldSnapshot};
+use sim_runtime::{
+    CampaignProfileState, CultureLayerScope, CultureTensionKind, CultureTensionState, WorldDelta,
+    WorldSnapshot,
+};
 
 /// Apply a delta to a snapshot the way the client's merge does: a section present on the delta
 /// replaces its counterpart, an absent one is left alone.
@@ -51,6 +54,12 @@ fn apply(base: &mut WorldSnapshot, delta: &WorldDelta) {
     }
     if let Some(v) = delta.terrain.as_ref() {
         base.terrain = v.clone();
+    }
+    if let Some(v) = delta.culture_tensions.as_ref() {
+        base.culture_tensions = v.clone();
+    }
+    if let Some(v) = delta.knowledge_timeline.as_ref() {
+        base.knowledge_timeline = v.clone();
     }
     if !delta.populations.is_empty() || !delta.removed_populations.is_empty() {
         base.populations
@@ -242,5 +251,81 @@ fn a_later_recapture_delta_supersedes_an_earlier_one() {
     assert_eq!(
         second.header.power_count, 9,
         "…and the second command's change as well"
+    );
+}
+
+/// A tension that stays put, so the "unchanged" and "emptied" cases differ only in the delta.
+fn guard_tension() -> CultureTensionState {
+    CultureTensionState {
+        layer_id: 1,
+        scope: CultureLayerScope::Global,
+        owner: 1,
+        severity: 1,
+        timer: 1,
+        kind: CultureTensionKind::DriftWarning,
+    }
+}
+
+/// **"Unchanged" and "now empty" must not be the same bytes.**
+///
+/// `culture_tensions` is a whole-section field with no `removed_culture_tensions` counterpart, so
+/// an empty `Vec` cannot say which of the two happened. While it was a bare `Vec`, the capture path
+/// encoded "unchanged" as `Vec::new()` and the receiver had to guess: read it as a replacement and
+/// every delta blanked the client's tension list, read it as unchanged and a genuinely-resolved
+/// last tension stayed on screen until the next full snapshot. `Option` is what makes the two
+/// distinguishable — `None` unchanged, `Some(vec![])` emptied.
+#[test]
+fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        culture_tensions: vec![guard_tension()],
+        ..Default::default()
+    };
+    world.header.tick = 0;
+    history.update(world.clone());
+
+    // A turn where nothing about tensions moved.
+    world.header.tick = 1;
+    world.header.population_count = 1;
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta
+            .as_ref()
+            .expect("a delta per turn")
+            .culture_tensions,
+        None,
+        "an unchanged tension roster must be ABSENT from the delta, so the client leaves its own \
+         list alone"
+    );
+
+    // The last tension resolves.
+    world.header.tick = 2;
+    world.culture_tensions.clear();
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta
+            .as_ref()
+            .expect("a delta per turn")
+            .culture_tensions,
+        Some(Vec::new()),
+        "an emptied tension roster must be PRESENT and empty — the client cannot clear a list it \
+         was never told about"
+    );
+
+    // And the merge the client performs actually drops it.
+    let mut reconstructed = WorldSnapshot {
+        culture_tensions: vec![guard_tension()],
+        ..Default::default()
+    };
+    apply(
+        &mut reconstructed,
+        history.last_delta.as_ref().expect("a delta per turn"),
+    );
+    assert!(
+        reconstructed.culture_tensions.is_empty(),
+        "applying the emptied-roster delta must clear the client's tensions"
     );
 }

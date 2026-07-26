@@ -411,9 +411,9 @@ impl SnapshotHistory {
 
         let culture_tensions_state = snapshot.culture_tensions.clone();
         let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
-            Vec::new()
+            None
         } else {
-            culture_tensions_state.clone()
+            Some(culture_tensions_state.clone())
         };
 
         let terrain_state = snapshot.terrain.clone();
@@ -556,9 +556,9 @@ impl SnapshotHistory {
         };
 
         let knowledge_timeline_delta = if self.knowledge_timeline == snapshot.knowledge_timeline {
-            Vec::new()
+            None
         } else {
-            snapshot.knowledge_timeline.clone()
+            Some(snapshot.knowledge_timeline.clone())
         };
 
         let crisis_telemetry_state = snapshot.crisis_telemetry.clone();
@@ -1024,7 +1024,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -1046,7 +1046,7 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,
@@ -1198,7 +1198,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -1220,7 +1220,7 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,
@@ -1320,7 +1320,7 @@ impl SnapshotHistory {
             demographics: None,
             forage_patches: None,
             intensification_knowledge: None,
-            knowledge_timeline: Vec::new(),
+            knowledge_timeline: None,
             crisis_telemetry: None,
             crisis_overlay: None,
             moisture_raster: None,
@@ -1342,7 +1342,7 @@ impl SnapshotHistory {
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
-            culture_tensions: Vec::new(),
+            culture_tensions: None,
             discovery_progress: Vec::new(),
             visibility_raster: None,
             fog_enabled: self.fog_enabled,

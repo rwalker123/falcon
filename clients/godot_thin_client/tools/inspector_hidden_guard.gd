@@ -18,10 +18,13 @@ extends Node
 ##      EVENT arrays, which no later snapshot carries. Skipping it while hidden would silently lose
 ##      command-feed history. (Break it by moving the visibility gate above that call.)
 ##
-##   3. A HIDDEN DELTA DOES NOT DISCHARGE THE CATCH-UP — a delta is applied in full while hidden
-##      (never skippable), but it does not mean the pending full snapshot has been ingested. Clear
-##      `_hidden_snapshot_pending` on the delta path and full→delta→show opens the panels holding
-##      only the delta's data. (Break it by clearing that flag outside `if full_snapshot:`.)
+##   3. A HIDDEN DELTA DOES NOT DISCHARGE THE CATCH-UP, AND THE CATCH-UP REPLAYS THE NEWEST FRAME —
+##      whichever kind that is. The original bug: clearing `_hidden_snapshot_pending` on the delta
+##      path made `_catch_up_hidden_snapshot` a no-op, so full→delta→show opened the panels holding
+##      only what the delta carried. That is still asserted. What changed is the reason it is a bug:
+##      it used to be "a delta is applied in full while hidden (never skippable)", and since delta
+##      streaming (#386) BOTH kinds are skippable — see `DELTA_WHILE_HIDDEN` for why, and for what
+##      replaces the old assertion.
 ##
 ## It also asserts the skip actually happens (4) — otherwise the guard would keep passing after the
 ## optimization was reverted — and that replaying a snapshot does not double-log its events (5).
@@ -59,11 +62,10 @@ const SNAPSHOT_WHILE_VISIBLE := {
 }
 ## Case 5 fixtures — a full snapshot skipped while hidden, then a DELTA while still hidden.
 ##
-## The two roster sizes are deliberately DIFFERENT so the assertion can fail. The delta is applied
-## in full (deltas are never skipped) and merges ONE influencer onto the roster the panels already
-## hold from `SNAPSHOT_WHILE_VISIBLE` (3 + 1 = 4); only replaying this full snapshot rebuilds the
-## roster wholesale to 5. So a delta that wrongly discharges `_hidden_snapshot_pending` — skipping
-## the catch-up — reads back 4, not 5.
+## **Three roster sizes, all deliberately DIFFERENT** — 3 before the pair arrives, 5 in the full
+## snapshot, 6 in the delta — because each wrong answer has to be distinguishable from the others.
+## Reading back 3 after the show means the catch-up never ran; 5 means it replayed the OLDER frame;
+## only 6 is the newest state.
 const SNAPSHOT_HIDDEN_BEFORE_DELTA := {
 	"turn": 4,
 	"influencers": [
@@ -75,11 +77,36 @@ const SNAPSHOT_HIDDEN_BEFORE_DELTA := {
 	],
 	"command_events": [{"tick": 4, "kind": "order", "label": "fourth", "detail": ""}],
 }
-## Shaped like the server's between-turn on-demand feeds (`update_influencers` /
-## `update_command_events`), which `Main._snapshot_is_delta` routes to `update_delta` — the live
-## path on which a delta reaches a hidden Inspector.
+## A **MERGED, COMPLETE** delta frame — the only kind the live client can now produce, and the
+## reason this fixture's shape changed.
+##
+## It carries the wholesale `influencers` roster (6) *and* the sparse `influencer_updates` key,
+## because a real merged frame carries both: the native decoder patches each base key from the
+## delta's `*_updates` list and republishes the whole world, then also publishes the sparse list the
+## panels' delta branch consumes (`native/src/snapshot/cache.rs`).
+##
+## **The history this replaces, so it cannot come back.** This fixture used to be a PARTIAL dict —
+## `influencer_updates` only, no `influencers` — shaped like the server's between-turn on-demand
+## feeds. Against that fixture the case asserted that a hidden delta was applied IN FULL (never
+## skipped), because a partial frame describes a change against state the panels already hold and
+## nothing later can reconstruct a dropped one. Delta streaming (#386) inverted that premise: the
+## decoder maintains a cached world, so every frame is self-contained and the NEXT one reconstructs
+## anything dropped. **Caching and replaying a partial frame is still unsafe — it is simply no
+## longer producible**, so if a code path ever starts handing `update_delta` a partial dict again,
+## the hidden skip in `Inspector._apply_update` must be reverted with it, not worked around here.
+##
+## `command_events` stays per-frame history (an accumulator, never reconstructible), so it is
+## ingested while hidden whatever else is skipped — that is what cases 2 and 5's event counts pin.
 const DELTA_WHILE_HIDDEN := {
 	"turn": 4,
+	"influencers": [
+		{"id": 1, "name": "A", "scope": "Global"},
+		{"id": 2, "name": "B", "scope": "Local"},
+		{"id": 3, "name": "C", "scope": "Regional"},
+		{"id": 4, "name": "D", "scope": "Global"},
+		{"id": 5, "name": "E", "scope": "Regional"},
+		{"id": 6, "name": "F", "scope": "Local"},
+	],
 	"influencer_updates": [{"id": 6, "name": "F", "scope": "Local"}],
 	"command_events": [{"tick": 4, "kind": "order", "label": "fifth", "detail": ""}],
 }
@@ -88,10 +115,15 @@ const DELTA_WHILE_HIDDEN := {
 const ROSTER_EMPTY := 0
 const ROSTER_AFTER_CATCH_UP := 2
 const ROSTER_WHILE_VISIBLE := 3
-## While hidden the delta alone is applied, onto the roster left by `SNAPSHOT_WHILE_VISIBLE`.
-const ROSTER_AFTER_HIDDEN_DELTA := 4
-## After the show, the replayed full snapshot must have rebuilt the roster wholesale.
-const ROSTER_AFTER_DELTA_CATCH_UP := 5
+## While hidden, BOTH the full snapshot and the delta are skipped, so the roster is still whatever
+## the last VISIBLE frame left. Stated as its own name (rather than reusing `ROSTER_WHILE_VISIBLE`
+## at the call site) because it asserts a different thing: not "the visible path works" but "neither
+## hidden frame reached the panels".
+const ROSTER_UNCHANGED_WHILE_HIDDEN := ROSTER_WHILE_VISIBLE
+## After the show, the catch-up must have replayed the NEWEST frame — the delta, not the full
+## snapshot before it. Distinct from both `ROSTER_UNCHANGED_WHILE_HIDDEN` (catch-up never ran) and
+## the full snapshot's 5 (catch-up replayed the older frame).
+const ROSTER_AFTER_DELTA_CATCH_UP := 6
 ## Distinct command events the coordinator must have logged at each checkpoint.
 const EVENTS_AFTER_FIRST_HIDDEN := 1
 const EVENTS_AFTER_CATCH_UP := 2
@@ -140,24 +172,27 @@ func _ready() -> void:
 	_expect_size(inspector._seen_command_events, EVENTS_AFTER_VISIBLE,
 		"a command event applied while visible was not ingested")
 
-	# --- Hidden, full THEN delta: the delta must not discharge the pending replay ----------------
-	# `_hidden_snapshot_pending` means "a full snapshot arrived that the panels have not ingested".
-	# A delta changes panel state but does not pay off that debt, and deltas do reach a hidden
-	# Inspector live (`Main._snapshot_is_delta` routes the server's between-turn on-demand feeds).
-	# Clearing the flag on the delta path made `_catch_up_hidden_snapshot` a no-op, so the panels
-	# opened holding only what the delta carried — stale, and self-healing on the next turn's full
-	# snapshot, which is why neither review nor the first version of this guard caught it.
+	# --- Hidden, full THEN delta: skip both, then catch up to the NEWEST -------------------------
+	# `_hidden_snapshot_pending` means "a frame has arrived that the panels have not ingested". The
+	# original bug was clearing it on the delta path: `_catch_up_hidden_snapshot` became a no-op and
+	# the panels opened holding only what the delta carried — stale, and self-healing on the next
+	# turn, which is why neither review nor the first version of this guard caught it.
+	#
+	# Since delta streaming both kinds are skipped and `_cached_snapshot` holds the newest of
+	# either, so the three assertions below pin three different things: that the delta was skipped
+	# too (the new one), that the catch-up still ran, and that it replayed the NEWEST frame rather
+	# than the older full snapshot. The last subsumes the original assertion.
 	inspector.set_panel_visible(false)
 	inspector.update_snapshot(SNAPSHOT_HIDDEN_BEFORE_DELTA.duplicate(true))
 	inspector.update_delta(DELTA_WHILE_HIDDEN.duplicate(true))
-	_expect_size(roster.get_influencers(), ROSTER_AFTER_HIDDEN_DELTA,
-		"a DELTA that arrived while hidden was not applied in full — deltas are never skippable, and nothing later reconstructs a dropped one")
+	_expect_size(roster.get_influencers(), ROSTER_UNCHANGED_WHILE_HIDDEN,
+		"the tab-panel fan-out RAN for a DELTA received while the Inspector was hidden — since delta streaming a merged delta frame is a complete world and is skippable exactly like a full snapshot, and that skip is ~60% of the client's per-turn apply cost")
 	_expect_size(inspector._seen_command_events, EVENTS_AFTER_HIDDEN_DELTA,
-		"a command event carried by a hidden full snapshot or delta was not ingested")
+		"a command event carried by a hidden full snapshot or delta was not ingested — that history is unrecoverable, so the accumulator must run whatever else is skipped")
 
 	inspector.set_panel_visible(true)
 	_expect_size(roster.get_influencers(), ROSTER_AFTER_DELTA_CATCH_UP,
-		"a delta received while hidden CANCELLED the catch-up replay of the full snapshot before it — the Inspector opened holding only the delta's data, which is the stale-when-opened failure the replay exists to prevent")
+		"showing the Inspector after a hidden full snapshot AND a hidden delta did not leave the panels holding the NEWEST frame — a roster of %d means the catch-up never ran (a hidden delta wrongly discharged `_hidden_snapshot_pending`), and one of %d means it replayed the older full snapshot instead of the delta after it (`_cached_snapshot` is not being written on the delta path)" % [ROSTER_UNCHANGED_WHILE_HIDDEN, SNAPSHOT_HIDDEN_BEFORE_DELTA["influencers"].size()])
 	_expect_size(inspector._seen_command_events, EVENTS_AFTER_HIDDEN_DELTA,
 		"the catch-up replay after a hidden delta double-logged (or dropped) command events")
 
