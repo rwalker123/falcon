@@ -11,6 +11,19 @@ paths:
 
 # Inspector panels
 
+> ## ⚠ The Inspector is legacy scaffolding and is expendable
+>
+> **Standing decision (Ray, 2026-07-26).** It dates from before the client had a real UX and was
+> the stand-in for seeing simulation state at all. Many of its tabs need redoing, and it is slated
+> for **rework after the performance arc lands** (#386 delta streaming, #392 multi-core, and their
+> sub-issues).
+>
+> **Breaking it in the meantime is acceptable.** Do not let this panel constrain, delay, or
+> complicate performance work, and do not invest in optimising code here — it is more likely to be
+> replaced than tuned (#390 is parked for exactly this reason). The contracts below describe how it
+> works *today* and are worth honouring for correctness while it lives; they are **not** a reason to
+> hold back a change elsewhere.
+
 ## Key scripts
 
 | Script | Purpose |
@@ -75,9 +88,15 @@ Three clauses, and the third is the one that bites:
    #386 (client consumes a delta stream) full snapshots become rare instead — connect, epoch
    change, rollback — so the lossy window stretches to the gap between them, *and* "always apply
    deltas in full" means a hidden Inspector resumes fanning out every turn, giving back most of
-   what the gate saves. Both are fixed the same way, which is the right design under delta
-   streaming anyway: **queue deltas while hidden and replay `cached full + queued deltas in order`
-   on show.** Do not reason about this section without checking whether #386 has landed.
+   what the gate saves.
+
+   **This is explicitly NOT a reason to hold up #386** — see the banner at the top of this file;
+   the Inspector is expendable and #386 says so in as many words. If the panel survives in
+   something like its current shape, both problems have the same answer, and it is the right design
+   under delta streaming anyway: **queue deltas while hidden and replay `cached full + queued
+   deltas in order` on show**, with a capped queue falling back to requesting a full snapshot.
+   Recorded as the eventual fix, not as a prerequisite. Either way, do not reason about this
+   section without checking whether #386 has landed.
 2. **Catch up on show.** `set_panel_visible(false→true)` replays the cached latest snapshot. The
    cache holds it **by reference** — deep-copying would cost exactly the work the gate saves, and
    the decoder builds a fresh tree per frame that no consumer mutates.
