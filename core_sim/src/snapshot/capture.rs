@@ -145,6 +145,14 @@ impl StoredSnapshot {
     }
 }
 
+/// Which kind of publication a `publish` call is: a resolved turn, or a mid-tick recapture after a
+/// world-mutating command. They differ only in whether the baseline is committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Publication {
+    Turn,
+    Recapture,
+}
+
 #[derive(Resource)]
 pub struct SnapshotHistory {
     capacity: usize,
@@ -313,7 +321,32 @@ impl SnapshotHistory {
             .cloned()
     }
 
+    /// Publish a resolved TURN: diff against the committed baseline, broadcast the delta, commit
+    /// the new baseline and push a rollback ring entry.
     pub fn update(&mut self, snapshot: WorldSnapshot) {
+        self.publish(snapshot, Publication::Turn);
+    }
+
+    /// Publish a mid-tick RECAPTURE — a world-mutating command changed the world between turns.
+    ///
+    /// Same diff, but it deliberately does **not** commit the baseline or push a ring entry (the
+    /// rollback ring stays one-entry-per-tick). That is what makes these deltas *cumulative*: each
+    /// one is `baseline(last turn) → now`, so each is a superset of the last, applying them in
+    /// order is idempotent, and missing an intermediate one is harmless. It also means the next
+    /// turn's delta still carries everything the command changed.
+    ///
+    /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
+    /// assigning labor to three sources and moving a band paid four full encodes, which is the
+    /// cost this arc removed from the turn path re-entering by the side door.
+    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
+        self.publish(snapshot, Publication::Recapture);
+        match (self.encoded_delta.clone(), self.encoded_delta_flat.clone()) {
+            (Some(bincode), Some(flat)) => Some((bincode, flat)),
+            _ => None,
+        }
+    }
+
+    fn publish(&mut self, snapshot: WorldSnapshot, kind: Publication) {
         // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
         // the `diff_new`/`diff_removed` comparisons against last turn's indices.
         let diff_scope = crate::turn_profile::scope("snapshot.history.diff");
@@ -730,6 +763,22 @@ impl SnapshotHistory {
             Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
         };
 
+        if kind == Publication::Recapture {
+            // Re-baseline the ring's CURRENT entry so a rollback to this tick restores the
+            // post-command world, then stop: no baseline commit, no new ring entry.
+            self.last_snapshot = Some(snapshot_arc);
+            self.last_delta = Some(delta_arc);
+            self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
+            self.encoded_delta = Some(stored.encoded_delta.clone());
+            self.encoded_snapshot_flat = None;
+            self.encoded_delta_flat = Some(encoded_delta_flat);
+            if let Some(back) = self.history.back_mut() {
+                back.snapshot = stored.snapshot.clone();
+                back.encoded_snapshot = stored.encoded_snapshot.clone();
+            }
+            return;
+        }
+
         self.tiles = tiles_index;
         self.logistics = logistics_index;
         self.trade_links = trade_index;
@@ -1091,31 +1140,6 @@ impl SnapshotHistory {
     /// — so the rollback ring stays one-entry-per-tick and the next turn's delta still carries these
     /// structural changes (a redundant but idempotent re-send on top of this full snapshot). Never
     /// advances the turn or the `TurnQueue`.
-    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
-        // A recapture is a publication, and it publishes a FULL frame: the world has moved since
-        // the last turn's delta (a command mutated it), and a full snapshot re-baselines the client
-        // without needing a diff against the uncommitted baseline. It therefore takes a sequence
-        // number and names no base, like every other full frame.
-        let (frame_seq, _base_frame_seq) = self.next_publication();
-        let mut snapshot = snapshot;
-        snapshot.header.frame_seq = frame_seq;
-        let snapshot_arc = Arc::new(snapshot);
-        let encoded_snapshot = Arc::new(
-            encode_snapshot(snapshot_arc.as_ref()).expect("recapture snapshot encoding failed"),
-        );
-        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot_arc.as_ref()));
-
-        self.last_snapshot = Some(snapshot_arc.clone());
-        self.encoded_snapshot = Some(encoded_snapshot.clone());
-        self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
-        if let Some(back) = self.history.back_mut() {
-            back.snapshot = snapshot_arc.clone();
-            back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
-        }
-
-        Some((encoded_snapshot, encoded_snapshot_flat))
-    }
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,

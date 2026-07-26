@@ -41,34 +41,54 @@ about that tile changed. It is also why a bigger map is the thing that will brea
 
 ## What the turn path actually broadcasts
 
-`broadcast_latest` (`network.rs`) sends exactly two things:
+`broadcast_latest` (`network.rs`) sends two things per publication:
 
 - the **bincode delta** on the legacy bincode socket, and
-- the **flat (FlatBuffers) snapshot** on the flat socket, which is the one the Godot client
-  connects to (`.claude/rules/core_sim/ports.md` — the stream port is `snapshot_flat`).
+- on the **flat socket** (the one the Godot client consumes — `.claude/rules/core_sim/ports.md`,
+  the stream port is `snapshot_flat`) the **flat delta**, except for a world's *first* publication,
+  which is the full flat snapshot the client baselines on.
 
-So **the client is sent a complete world every turn.** A full delta pipeline exists and is
-computed (`history.diff`), but the client does not consume it. Closing that gap is the single
-largest remaining win and is its own arc, not a local optimization.
+**The client is no longer sent a complete world every turn** (#386,
+`docs/plan_delta_streaming.md`). A full flat snapshot is now encoded only for a world's first
+frame, for rollback, and in answer to a client `resync` — `StoredSnapshot::encode_flat()` produces
+one on demand rather than every ring entry paying for the few ever asked for.
 
-> ### A stored flat *delta* is dead work — do not reintroduce one
+`refresh_latest` (the mid-tick recapture after a world-mutating command) publishes a delta too, and
+shares `publish()` with the turn path. It deliberately does **not** commit the delta baseline, which
+is what makes those deltas *cumulative*: each is `baseline(last turn) → now`, so each is a superset
+of the last and dropping an intermediate one is harmless.
+
+> ### The stored flat delta now has a reader — that is what changed
 >
-> `StoredSnapshot::new` used to call `encode_delta_flatbuffer` every turn and stash the result.
-> Nothing ever read it: the turn path broadcasts the bincode delta and the flat *snapshot*, and
-> the three on-demand feed paths (`update_axis_bias`, `update_influencers`,
-> `update_command_events`) each build a flat delta locally and **return** it for immediate
-> broadcast rather than reading the stored field. It cost **24% of every turn** — more than the
-> entire simulation — purely to be dropped.
+> This file used to record the stored flat delta as **dead work**: `StoredSnapshot::new` computed
+> `encode_delta_flatbuffer` every turn and nothing read it, costing 24% of a turn to be discarded.
+> The rule then was "if you find yourself adding a stored flat delta back, **wire a reader first**".
 >
-> `encode_delta_flatbuffer` still exists for those three on-demand paths. What was removed is
-> the per-turn call and the `encoded_delta_flat` field on `StoredSnapshot` / `SnapshotHistory`.
-> **If you find yourself adding a stored flat delta back, wire a reader first** — this is the
-> exact shape of thing that is invisible in behavior and expensive forever.
+> A reader was wired: `broadcast_latest` broadcasts it. The rule stands and is what made the
+> reintroduction legitimate rather than a regression — the cost is now paid *for* something.
+>
+> **`encode.flat_snapshot` is correspondingly absent from a steady-state turn's profile.**
+> `core_sim/tests/turn_profile_wiring.rs` pins that (`EXPECTED_CAPTURE_PHASES` lists
+> `encode.flat_delta`), and it is the alarm that would catch the turn path silently losing an
+> encode in either direction.
 
-The two bincode encodes that remain **are** live and must not be removed on the same reasoning:
-`encoded_delta` is what the bincode socket broadcasts, and `encoded_snapshot` is read by
-`recapture_and_broadcast` and by **rollback**, which needs a per-tick encoded snapshot for every
-entry in the ring. Rollback is why it is computed per turn rather than on demand.
+### Measured effect
+
+Same conditions as the table above (80×52, release, `late_forager_tribe` on `earthlike`):
+
+| | before | after |
+|---|---|---|
+| flat encode on the turn path | `encode.flat_snapshot` 7.3 ms | `encode.flat_delta` **0.62 ms** |
+| `snapshot` phase | 15.6 ms | **~9.7 ms** |
+
+Getting there took three payload fixes, not just the delta pipeline — the delta was initially
+*larger* than expected because every tile and every culture layer changed every turn. See
+`docs/plan_delta_streaming.md` §3.5–3.6; the short version is that **a field nobody reads, or one
+compared more precisely than anything renders it, costs the whole map every turn forever**.
+
+The two bincode encodes remain live: `encoded_delta` is what the bincode socket broadcasts, and
+`encoded_snapshot` is read by **rollback**, which needs a per-tick encoded snapshot for every entry
+in the ring. Rollback is why it is computed per turn rather than on demand.
 
 ## `finalize` hashes in place — it deliberately does not call `hash_snapshot`
 

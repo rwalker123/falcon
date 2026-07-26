@@ -53,6 +53,8 @@ var _new_game_retry_accum: float = 0.0
 var _new_game_elapsed: float = 0.0
 # Time since the last ACCEPTED new_game with no world to show for it (see _tick_new_game_retry).
 var _new_game_answer_accum: float = 0.0
+## Seconds since a `resync` was sent with no full snapshot applied yet; negative means none pending.
+var _resync_pending_accum: float = -1.0
 
 # Dev-default world when Main.tscn is launched directly (no landing screen handoff): so a bare
 # `godot res://src/Main.tscn` still generates a playable map now that the server boots idle.
@@ -111,6 +113,13 @@ const NEW_GAME_RETRY_DEADLINE = 5.0
 # So this is ~7x the MEASURED worst case rather than a snug fit — `new_game.begin`→`new_game.completed`
 # for the largest offered map (Huge, 128x80) is 4.4s in a DEBUG build, which is what the client runs.
 const NEW_GAME_ANSWER_TIMEOUT := 30.0
+## How long a SENT `resync` may go unanswered before we send it again.
+##
+## Retried until ANSWERED, not until sent — the same reasoning as NEW_GAME_ANSWER_TIMEOUT: a client
+## with no applicable baseline renders a frozen world and cannot recover on its own, while a
+## redundant `resync` costs the server one full encode. Much shorter than the new_game timeout
+## because nothing has to be generated — the server already holds the world and only re-encodes it.
+const RESYNC_ANSWER_TIMEOUT := 2.0
 const SNAPSHOT_DELTA_FIELDS := [
     "influencer_updates",
     "population_updates",
@@ -442,6 +451,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # []`, which MERGES to nothing and leaves the previous game's "⚒ Your people know" strip standing).
     # Reset FIRST, then apply: this same snapshot carries the new world's backfill (the command_events
     # ring, the knowledge rows, the herd list), and resetting after the dispatch would wipe it.
+    if not is_delta:
+        # A full frame is the answer a pending `resync` was waiting for, whoever caused it.
+        _resync_pending_accum = -1.0
     if not is_delta and snapshot.has("world_epoch"):
         var snapshot_epoch := int(snapshot["world_epoch"])
         if snapshot_epoch != _world_epoch_applied:
@@ -1075,6 +1087,7 @@ func _process(delta: float) -> void:
         command_client.ensure_connected()
     _tick_new_game_retry(delta)
     if streaming_mode:
+        _tick_resync(delta)
         # EVERY frame the poll returns is applied, in order. The loader already dropped the ones a
         # later full snapshot superseded; what is left are frames whose content exists nowhere else
         # (see `SnapshotLoader.poll_stream`).
@@ -1087,6 +1100,28 @@ func _process(delta: float) -> void:
                     _apply_snapshot(streamed)
                 else:
                     _try_reveal_world(streamed)
+
+## Ask the server to republish a full world when the decoder dropped a delta it could not apply,
+## and keep asking until one lands.
+##
+## The drop itself is correct and deliberate — merging a delta onto the wrong baseline produces a
+## world that is silently wrong rather than visibly broken (`docs/plan_delta_streaming.md` §3.3).
+## But dropping alone leaves the client frozen, so the request is the other half of that contract.
+func _tick_resync(delta: float) -> void:
+    if snapshot_loader == null:
+        return
+    if snapshot_loader.resync_needed:
+        snapshot_loader.resync_needed = false
+        if _resync_pending_accum < 0.0:
+            _send_runtime_command("resync", "resync requested (unapplicable delta)")
+            _resync_pending_accum = 0.0
+        return
+    if _resync_pending_accum < 0.0:
+        return
+    _resync_pending_accum += delta
+    if _resync_pending_accum >= RESYNC_ANSWER_TIMEOUT:
+        _resync_pending_accum = 0.0
+        _send_runtime_command("resync", "resync retry (still no baseline)")
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).

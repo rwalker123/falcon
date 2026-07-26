@@ -68,6 +68,13 @@ pub struct SnapshotDecoder {
     /// at all. `None` until the first full snapshot — a delta arriving before one is dropped,
     /// because there is nothing for it to be a delta *of*.
     cache: Option<WorldCache>,
+    /// Set when a delta was DROPPED because it could not be applied — its `baseFrameSeq` names a
+    /// frame this client never applied, or it belongs to a different world. Read and cleared by
+    /// `take_resync_needed`, which is what turns a dropped frame into a `resync` request.
+    ///
+    /// Deliberately NOT set for a malformed or headerless frame: that is corruption, and asking
+    /// the server to resend the world does not fix it.
+    resync_needed: bool,
     /// Microseconds the most recent `decode_snapshot`/`decode_delta` spent inside
     /// `snapshot_to_dict` — i.e. the whole FlatBuffers→`VarDictionary` conversion, which is the
     /// dominant term. Read from GDScript by `SnapshotLoader` for its `decode.native` phase, so the
@@ -98,6 +105,13 @@ impl SnapshotDecoder {
     #[func]
     pub fn decode_delta(&mut self, data: PackedByteArray) -> VarDictionary {
         self.decode_snapshot(data)
+    }
+
+    /// Has a delta been dropped since this was last asked? Clears on read, so each dropped frame
+    /// produces at most one request and the caller decides the retry cadence.
+    #[func]
+    pub fn take_resync_needed(&mut self) -> bool {
+        std::mem::replace(&mut self.resync_needed, false)
     }
 
     /// True once a full snapshot has established a baseline. `SnapshotLoader` reads it to tell
@@ -162,8 +176,14 @@ impl SnapshotDecoder {
                 // No baseline, wrong world, or a base we never applied: drop the frame. Merging it
                 // anyway is precisely how the client's world drifts from the server's without
                 // anything failing.
-                let cache = self.cache.as_ref()?;
+                let Some(cache) = self.cache.as_ref() else {
+                    // No baseline at all. The client has nothing to apply a delta to and must be
+                    // sent a full world before anything can render.
+                    self.resync_needed = true;
+                    return None;
+                };
                 if !cache.accepts(header.worldEpoch(), header.baseFrameSeq()) {
+                    self.resync_needed = true;
                     return None;
                 }
                 let (delta_dict, rasters) = decode_delta_against(delta, &cache.rasters)?;

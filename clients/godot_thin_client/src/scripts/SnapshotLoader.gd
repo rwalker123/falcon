@@ -10,6 +10,11 @@ const DECODER_TIMING_METHOD := "get_last_decode_usec"
 
 const USEC_PER_MSEC := 1000.0
 
+## Native getter reporting that a delta was dropped as unapplicable, so a full snapshot must be
+## requested. Probed with `has_method`, like `DECODER_TIMING_METHOD`, so a native extension built
+## before it existed degrades to "never needs a resync" rather than erroring.
+const DECODER_RESYNC_METHOD := "take_resync_needed"
+
 ## Key the decoder stamps with the envelope's payload discriminant, and the value meaning "delta".
 ## Mirrors `bridge/decoder.rs`'s `FRAME_KIND_KEY` / `FRAME_KIND_DELTA`.
 const FRAME_KIND_KEY := "frame_kind"
@@ -24,6 +29,11 @@ var _last_stream_status: int = StreamPeerTCP.STATUS_NONE
 var _warned_stream_error: bool = false
 var _warned_decoder_missing: bool = false
 var _decoder_reports_timing: bool = false
+var _decoder_reports_resync: bool = false
+
+## Set by `poll_stream` when the decoder dropped a delta it could not apply. `Main` reads it and
+## asks the server to republish a full world.
+var resync_needed: bool = false
 
 ## Decode cost of the LAST poll that produced a frame, for the per-turn profile line `Main` prints
 ## (see `TurnProfile`). Three numbers rather than one because the interesting finding may be the
@@ -134,6 +144,7 @@ func poll_stream(delta: float) -> Array[Dictionary]:
             if ClassDB.class_exists("SnapshotDecoder"):
                 decoder = ClassDB.instantiate("SnapshotDecoder")
                 _decoder_reports_timing = decoder != null and decoder.has_method(DECODER_TIMING_METHOD)
+                _decoder_reports_resync = decoder != null and decoder.has_method(DECODER_RESYNC_METHOD)
                 _warned_decoder_missing = false
             else:
                 if not _warned_decoder_missing:
@@ -146,6 +157,8 @@ func poll_stream(delta: float) -> Array[Dictionary]:
         decoded_frames += 1
         if _decoder_reports_timing:
             native_decode_usec += int(decoder.call(DECODER_TIMING_METHOD))
+        if _decoder_reports_resync and bool(decoder.call(DECODER_RESYNC_METHOD)):
+            resync_needed = true
         if snapshot_dict.is_empty():
             continue
         # A full snapshot restates the whole world, so every frame queued before it is now moot.

@@ -363,6 +363,34 @@ fn main() {
             Command::ExportMap { path } => {
                 write_map_export(&app, path);
             }
+            // Republish the world as a FULL frame. The client asks for this when it cannot apply a
+            // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
+            // rather than another delta — a delta is what it just failed to use.
+            //
+            // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
+            // server never volunteers a frame to a connecting client (it might belong to a world
+            // that client did not ask for), but answering a request cannot surprise anyone, and the
+            // `worldEpoch` on the frame still lets the client reject a world it did not want.
+            Command::Resync => {
+                let history = app.world.resource::<SnapshotHistory>();
+                match history.latest_entry() {
+                    Some(entry) => {
+                        let bytes = entry.encode_flat();
+                        flat_server.broadcast(bytes.as_ref());
+                        info!(
+                            target: "shadow_scale::server",
+                            tick = entry.tick,
+                            bytes = bytes.len(),
+                            "resync.published"
+                        );
+                    }
+                    None => {
+                        // No world yet (the server boots idle). Nothing to republish; the client's
+                        // `new_game` retry is what recovers this case.
+                        info!(target: "shadow_scale::server", "resync.no_world");
+                    }
+                }
+            }
             Command::Heat { entity, delta } => {
                 apply_heat(&mut app, entity, delta);
                 info!(
@@ -794,6 +822,8 @@ enum Command {
     ExportMap {
         path: Option<String>,
     },
+    /// Republish the world as a FULL snapshot — delta-streaming recovery (see `ResyncCommand`).
+    Resync,
     /// Boot-idle new game: generate a world on demand (the server boots with none). `seed == 0`
     /// randomizes the map seed (mirrors `ResetMap`); an unknown `profile_id` is rejected. Field 43.
     NewGame {
@@ -4537,6 +4567,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::Resync => Some(Command::Resync),
         ProtoCommandPayload::NewGame {
             preset_id,
             width,
@@ -4947,19 +4978,12 @@ fn recapture_and_broadcast(
 ) {
     recapture_snapshot_in_place(&mut app.world);
 
+    // Publishes exactly what a turn publishes — the bincode delta and the flat delta — because
+    // `refresh_latest` now diffs against the uncommitted baseline rather than re-encoding a full
+    // world. `broadcast_latest` already states the rule ("full frame if there is one, else the
+    // delta"), so sharing it keeps the two publication paths from drifting apart.
     let history = app.world.resource::<SnapshotHistory>();
-    {
-        let server = snapshot_server_bin;
-        if let Some(bytes) = history.encoded_snapshot.as_ref() {
-            server.broadcast(bytes.as_ref());
-        }
-    }
-    {
-        let server = snapshot_server_flat;
-        if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
-            server.broadcast(bytes.as_ref());
-        }
-    }
+    broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
 }
 
 fn handle_order_submission(
