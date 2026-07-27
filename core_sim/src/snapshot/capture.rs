@@ -1408,8 +1408,10 @@ impl TerrainTagGrid {
         }
     }
 
-    /// `None` for an off-map coord as well as for an empty cell — a neighbour walk runs off the edge
-    /// of a non-wrapping map, and that must read as "no tile", not panic.
+    /// `None` for an off-map coord as well as for an unwritten cell — a neighbour walk runs off the
+    /// edge of a non-wrapping map, and that must read as "no tile", not panic. A tile that simply
+    /// carries no tags is `Some(TerrainTags::empty())`, never `None`; that is the whole point of the
+    /// `Option`.
     fn get(&self, pos: UVec2) -> Option<sim_runtime::TerrainTags> {
         self.index(pos).and_then(|index| self.tags[index])
     }

@@ -71,7 +71,7 @@ per-tile and self-contained belongs in sweep 1.
 > are different readings, the same reason `seasonal_weights` stores only what it has.
 
 **Measured** (80×52, release, `late_forager_tribe` on `earthlike`, steady state, mean of 30 turns
-after 5 warm-ups):
+after 5 warm-ups, `map_seed` pinned):
 
 | | before | after |
 |---|---|---|
@@ -80,6 +80,15 @@ after 5 warm-ups):
 | `snapshot.build.patches` | — | **1.40** |
 | `snapshot.build` | 4.09 | **3.62** |
 | `snapshot` | 9.64 | **9.19** |
+
+> **Both columns predate #388, and the two aggregate rows have moved since.** On post-#388 `main`
+> the same measurement reads `snapshot.build` **3.41** and `snapshot` **7.83** — the whole-`snapshot`
+> drop is #388 retiring both bincode encodes, and a further ~0.17 ms came out of `build`'s
+> *unlabelled* remainder, which #398 also touched. The per-sweep rows are unaffected and reproduce
+> as published (`tiles` 0.24, `patches` 1.37). **Read the two sweep rows as this change's result;
+> read the aggregates as a same-baseline before/after that no longer matches current absolute
+> numbers.** This is the ordinary hazard of quoting an aggregate in a file two other arcs are also
+> optimizing — prefer the narrowest label that shows the effect.
 
 **The two labels became one.** `snapshot.build.sow_refusals` and `snapshot.build.flora` are now
 `snapshot.build.patches`, because one loop does both jobs and two labels would be a fiction. The
@@ -93,7 +102,10 @@ Two traps, both hit while measuring #387:
 
 - **`map_seed: 0` in the shipped `simulation_config.json` means "roll from entropy"**, so a
   before/after profile run against the default config measures **two different worlds**. Pin the
-  seed (a `SIM_CONFIG_PATH` copy) or the numbers are noise wearing a table.
+  seed (a `SIM_CONFIG_PATH` copy) or the numbers are noise wearing a table. **Rebuild that copy
+  from the current shipped file each time** rather than reusing an old one — a `SIM_CONFIG_PATH`
+  naming a file that is stale against the *schema* is a boot panic, not a silent fallback
+  (`config-loading.md`), and the keys do move: #388 renamed `snapshot_bind` → `port_base_bind`.
 - **`header.hash` is not reproducible run-to-run even on unchanged code** — the `influencers` list
   is nondeterministic, which is exactly why `integration_tests/tests/determinism.rs` clears it
   before hashing. To prove a capture refactor is output-neutral, diff the *structures* it touched
