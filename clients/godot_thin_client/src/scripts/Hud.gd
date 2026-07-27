@@ -697,13 +697,18 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## should commit the patch to. Empty (the default, and what every non-forage caller sends) means "pick
 ## the tile's dominant legal plant for me", the same absent-means-default convention `policy` has.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String, species: String = "") -> void:
-    var bits := int(band.get("entity", -1))
-    if bits < 0:
+    # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
+    # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
+    # rollback. `entity` is the CLIENT-LOCAL key the optimistic pending overlay is filed under (every
+    # `pending_assigns_for` reader looks a band up by `entity`), so it must not follow the command.
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    var entity := int(band.get("entity", -1))
+    if band_id == HudConst.NO_BAND_ID or entity < 0:
         return
     var clamped: int = max(0, workers)
     emit_signal("assign_labor_requested", {
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "band": bits,
+        "band_id": band_id,
         "kind": kind,
         "workers": clamped,
         "x": x,
@@ -712,7 +717,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "policy": policy,
         "species": species,
     })
-    _band_labor.record_pending_assign(bits, kind, clamped, x, y, herd_id, policy)
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, policy)
     _after_pending_change()
 
 # ---- Optimistic pending labor (slice 3b UX) --------------------------------

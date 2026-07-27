@@ -669,107 +669,132 @@ func _on_map_tile_selected(tile_info: Dictionary) -> void:
     _hud_invoke("show_tile_selection", [tile_info])
     _hud_invoke("notify_hex_selected", [tile_info])
 
-func _on_hud_cancel_order(band: Dictionary, scope: String) -> void:
-    var band_bits := int(band.get("entity", -1))
-    if band_bits < 0:
-        return
-    var faction := int(band.get("faction", PLAYER_FACTION_ID))
-    # `cancel_order <faction> <band> <scope>` — scope is `all` / `work` / `roles` (the server rejects
-    # anything else as a parse error). `work` clears Forage + Hunt only, leaving standing roles,
-    # parties and an in-progress move alone; the Work zone's bulk action sends that.
-    var line := "cancel_order %d %d %s" % [faction, band_bits, scope]
-    _send_runtime_command(line, "Clear labor assignments (%s) for band." % scope)
+# ---- Band-addressed command TEXT -----------------------------------------------------------------
+#
+# THE BAND HANDLE ON THE WIRE IS `band_id`, NEVER `entity`. `PopulationCohortState.bandId` is the
+# sim's durable band identity; ECS entity bits are allocation state a rollback renumbers, so a
+# command naming one resolved to nothing when replayed. The server's `resolve_starting_unit_entity`
+# now accepts `band_id` alone — and BOTH are `u64`, so sending the wrong one compiles, parses and
+# transmits perfectly while every band order silently no-ops. `tools/command_guard.gd` exists
+# because of that: it drives the real HUD emit path and hands these lines to the real server-side
+# parser (`sim_runtime::command_text`), asserting the number that comes back is the snapshot's
+# `band_id` and not its `entity`.
+#
+# The builders below are PURE statics for the same reason `escape_claimant` is — the emitted text is
+# a client→server contract that fails at RUNTIME rather than at build time, so it has to be
+# assertable without standing up the whole app scene. Each returns `{line, message}`, or an EMPTY
+# dictionary meaning "nothing to send" (an unresolvable band, a missing target). Keep them free of
+# node state; every grammar below is quoted from `sim_runtime/src/command_text.rs`'s `usage:`
+# strings, which are the authority.
 
-## Early-Game Labor (slice 3b): assign/unassign working-age workers to a source or a
-## band-wide role. workers==0 removes/zeroes the assignment; the server clamps totals
-## to available working-age. Payload built by the HUD allocation panel / assign controls.
-func _on_hud_assign_labor(payload: Dictionary) -> void:
-    var band_bits := int(payload.get("band", -1))
-    if band_bits < 0:
-        return
+## `cancel_order <faction_id> [band_id] [all|work|roles]` — scope is `all` / `work` / `roles` (the
+## server rejects anything else as a parse error). `work` clears Forage + Hunt only, leaving standing
+## roles, parties and an in-progress move alone; the Work zone's bulk action sends that.
+static func format_cancel_order(band: Dictionary, scope: String) -> Dictionary:
+    var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(band.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "cancel_order %d %d %s" % [faction, band_id, scope],
+        "message": "Clear labor assignments (%s) for band." % scope,
+    }
+
+## `assign_labor <faction_id> <band> forage <x> <y> [policy] [species] <workers>`
+##             | `hunt <herd_id> <policy> <workers>` | `scout <workers>` | `warrior <workers>`
+static func format_assign_labor(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var kind := String(payload.get("kind", "")).strip_edges().to_lower()
     var workers: int = max(0, int(payload.get("workers", 0)))
-    var line := ""
-    var message := ""
     match kind:
         "forage":
             var fx := int(payload.get("x", -1))
             var fy := int(payload.get("y", -1))
             if fx < 0 or fy < 0:
-                return
+                return {}
             var fpolicy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
             if fpolicy == "":
                 fpolicy = "sustain"
-            # The crop selection (Flora Roster S1) is the SECOND optional token and the worker count is
-            # always last: `forage <x> <y> [policy] [species] <workers>`. It can only ride a line that
-            # already carries a policy (policy comes first), which the client always sends; an empty
-            # species is simply omitted, and the sim then commits to the tile's dominant legal plant.
+            # The crop selection (Flora Roster S1) is the SECOND optional token and the worker count
+            # is always last: `forage <x> <y> [policy] [species] <workers>`. It can only ride a line
+            # that already carries a policy (policy comes first), which the client always sends; an
+            # empty species is simply omitted, and the sim then commits to the tile's dominant legal
+            # plant.
             var fspecies := String(payload.get("species", "")).strip_edges().to_lower()
+            var forage_line := ""
             if fspecies == "":
-                line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_bits, fx, fy, fpolicy, workers]
+                forage_line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_id, fx, fy, fpolicy, workers]
             else:
-                line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_bits, fx, fy, fpolicy, fspecies, workers]
-            message = "Assign %d forager%s to (%d, %d) (%s)." % [workers, "" if workers == 1 else "s", fx, fy, fpolicy]
+                forage_line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_id, fx, fy, fpolicy, fspecies, workers]
+            return {
+                "line": forage_line,
+                "message": "Assign %d forager%s to (%d, %d) (%s)." % [workers, "" if workers == 1 else "s", fx, fy, fpolicy],
+            }
         "hunt":
             var herd_id := String(payload.get("herd_id", "")).strip_edges()
             if herd_id == "":
-                return
+                return {}
             var policy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
             if policy == "":
                 policy = "sustain"
-            line = "assign_labor %d %d hunt %s %s %d" % [faction, band_bits, herd_id, policy, workers]
-            message = "Assign %d hunter%s to %s (%s)." % [workers, "" if workers == 1 else "s", herd_id, policy]
+            return {
+                "line": "assign_labor %d %d hunt %s %s %d" % [faction, band_id, herd_id, policy, workers],
+                "message": "Assign %d hunter%s to %s (%s)." % [workers, "" if workers == 1 else "s", herd_id, policy],
+            }
         "scout", "warrior":
-            line = "assign_labor %d %d %s %d" % [faction, band_bits, kind, workers]
-            message = "Assign %d worker%s to %s." % [workers, "" if workers == 1 else "s", kind]
-        _:
-            return
-    _send_runtime_command(line, message)
+            return {
+                "line": "assign_labor %d %d %s %d" % [faction, band_id, kind, workers],
+                "message": "Assign %d worker%s to %s." % [workers, "" if workers == 1 else "s", kind],
+            }
+    return {}
 
-## Early-Game Labor (slice 3b): relocate the band to a destination tile picked on the map.
-func _on_hud_move_band(payload: Dictionary) -> void:
-    var band_bits := int(payload.get("band", -1))
-    if band_bits < 0:
-        return
+## `move_band <faction_id> <band> <x> <y>`
+static func format_move_band(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
-        return
-    var line := "move_band %d %d %d %d" % [faction, band_bits, x, y]
-    _send_runtime_command(line, "Move band to (%d, %d)." % [x, y])
+        return {}
+    return {
+        "line": "move_band %d %d %d %d" % [faction, band_id, x, y],
+        "message": "Move band to (%d, %d)." % [x, y],
+    }
 
-## Scouting expedition (docs/plan_exploration_and_sites.md §2): outfit a party off a resident
-## band and send it to a target tile. The server draws the workers + provisions and spawns the
-## detached party (rejects an over-cap party with a feed message).
-func _on_hud_send_expedition(payload: Dictionary) -> void:
-    var band_bits := int(payload.get("band", -1))
-    if band_bits < 0:
-        return
+## `send_expedition <faction_id> <band_id> <party_workers> <x> <y>`
+static func format_send_expedition(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if party_workers <= 0 or x < 0 or y < 0:
-        return
-    var line := "send_expedition %d %d %d %d %d" % [faction, band_bits, party_workers, x, y]
-    _send_runtime_command(line, "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y])
+        return {}
+    return {
+        "line": "send_expedition %d %d %d %d %d" % [faction, band_id, party_workers, x, y],
+        "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
+    }
 
-## Hunting expedition (docs/plan_exploration_and_sites.md §2b): outfit a party off a resident band
-## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
-func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
-    var band_bits := int(payload.get("band", -1))
-    if band_bits < 0:
-        return
+## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]`
+## The trailing policy is optional; the server defaults Sustain when omitted.
+static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var party_workers := int(payload.get("party_workers", 0))
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
-        return
-    # Optional trailing policy (sustain|surplus|deplete|eradicate); server defaults Sustain if omitted.
+        return {}
     var policy := String(payload.get("policy", "")).strip_edges()
-    var line := "send_hunt_expedition %d %d %d %s" % [faction, band_bits, party_workers, fauna_id]
+    var line := "send_hunt_expedition %d %d %d %s" % [faction, band_id, party_workers, fauna_id]
     if policy != "":
         line += " %s" % policy
     # The COMMAND addresses the herd by its id; the FEED NOTE names the species. `game_deer_07` is a
@@ -779,28 +804,75 @@ func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
     var fauna_label := String(payload.get("fauna_label", "")).strip_edges()
     if fauna_label == "":
         fauna_label = fauna_id
-    _send_runtime_command(line, "Send hunting expedition (%d, %s) after %s." % [party_workers, policy if policy != "" else "sustain", fauna_label])
+    return {
+        "line": line,
+        "message": "Send hunting expedition (%d, %s) after %s." % [
+            party_workers, policy if policy != "" else "sustain", fauna_label],
+    }
 
-## Extend a built pen by one fenced ring (Grazing 2d-γ). `extend_pen <faction> <x> <y>` targets the
-## pen's anchor tile; the server works the ring off over ~25 turns (rejecting at max radius / unowned /
-## Herding-unknown with a feed message).
-func _on_hud_extend_pen(payload: Dictionary) -> void:
+## `recall_expedition <faction_id> <expedition_band_id>` — a detached party is a band, addressed by
+## the same durable id. Non-optional, unlike the `[band_id]` of `scout` / `cancel_order`.
+static func format_recall_expedition(payload: Dictionary) -> Dictionary:
+    var expedition_band_id := int(payload.get("expedition_band_id", HudConst.NO_BAND_ID))
+    if expedition_band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    return {
+        "line": "recall_expedition %d %d" % [faction, expedition_band_id],
+        "message": "Recall expedition.",
+    }
+
+## `extend_pen <faction> <x> <y>` targets the pen's ANCHOR TILE, so it names no band at all — it is
+## here for company, not because it carries a band handle.
+static func format_extend_pen(payload: Dictionary) -> Dictionary:
     var faction := int(payload.get("faction", PLAYER_FACTION_ID))
     var x := int(payload.get("x", -1))
     var y := int(payload.get("y", -1))
     if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "extend_pen %d %d %d" % [faction, x, y],
+        "message": "Extend pen at (%d, %d)." % [x, y],
+    }
+
+## Send whatever a `format_*` builder produced, or nothing at all when it declined.
+func _send_formatted_command(formatted: Dictionary) -> void:
+    if formatted.is_empty():
         return
-    var line := "extend_pen %d %d %d" % [faction, x, y]
-    _send_runtime_command(line, "Extend pen at (%d, %d)." % [x, y])
+    _send_runtime_command(String(formatted["line"]), String(formatted["message"]))
+
+func _on_hud_cancel_order(band: Dictionary, scope: String) -> void:
+    _send_formatted_command(format_cancel_order(band, scope))
+
+## Early-Game Labor (slice 3b): assign/unassign working-age workers to a source or a
+## band-wide role. workers==0 removes/zeroes the assignment; the server clamps totals
+## to available working-age. Payload built by the HUD allocation panel / assign controls.
+func _on_hud_assign_labor(payload: Dictionary) -> void:
+    _send_formatted_command(format_assign_labor(payload))
+
+## Early-Game Labor (slice 3b): relocate the band to a destination tile picked on the map.
+func _on_hud_move_band(payload: Dictionary) -> void:
+    _send_formatted_command(format_move_band(payload))
+
+## Scouting expedition (docs/plan_exploration_and_sites.md §2): outfit a party off a resident
+## band and send it to a target tile. The server draws the workers + provisions and spawns the
+## detached party (rejects an over-cap party with a feed message).
+func _on_hud_send_expedition(payload: Dictionary) -> void:
+    _send_formatted_command(format_send_expedition(payload))
+
+## Hunting expedition (docs/plan_exploration_and_sites.md §2b): outfit a party off a resident band
+## and send it to follow a herd. The 4th arg is a herd id string, not tile coords.
+func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
+    _send_formatted_command(format_send_hunt_expedition(payload))
+
+## Extend a built pen by one fenced ring (Grazing 2d-γ). The server works the ring off over ~25
+## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).
+func _on_hud_extend_pen(payload: Dictionary) -> void:
+    _send_formatted_command(format_extend_pen(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:
-    var expedition_bits := int(payload.get("expedition", -1))
-    if expedition_bits < 0:
-        return
-    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
-    var line := "recall_expedition %d %d" % [faction, expedition_bits]
-    _send_runtime_command(line, "Recall expedition.")
+    _send_formatted_command(format_recall_expedition(payload))
 
 func _on_hud_next_turn(steps: int) -> void:
     var clamped_steps: int = max(1, steps)

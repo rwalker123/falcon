@@ -30,7 +30,8 @@ const MAP_VIEW := preload("res://src/scripts/MapView.gd")
 # The marker's key set MUST stay a superset of this list; add a key here whenever the panel or a
 # selected-unit map draw starts reading a new marker field, and the guard will hold the marker to it.
 const PANEL_CONSUMED_KEYS := [
-	"entity",              # _emit_assign_labor bits, roster identity
+	"entity",              # CLIENT-LOCAL identity only: selection, roster lookup, the pending-labor key
+	"band_id",             # THE handle every band-addressed command names — see HudConst.NO_BAND_ID
 	"faction",             # _is_player_unit gating
 	"id",                  # Occupants-drawer "Unit:" label (the band panel names the band in its header)
 	"pos",                 # drawer "Position:" line
@@ -148,6 +149,10 @@ const FRACTIONAL_EPSILON := 0.0001
 # the fractional assertion can never quote different values.
 const FIXTURE_ENTRY := {
 	"entity": 9001,
+	# DELIBERATELY DIFFERENT FROM `entity`. Equal values would make this guard vacuous: the
+	# defect it exists to catch is a command carrying the entity where the band id belongs, and
+	# that reads identical when the two agree.
+	"band_id": 4201,
 	"faction": 0,
 	"current_x": 8,
 	"current_y": 6,
@@ -220,6 +225,7 @@ func _ready() -> void:
 		_fail("is_traveling did not round-trip to true (defaulted?)")
 	_expect_int(marker, "size", 30)
 	_expect_int(marker, "entity", 9001)
+	_expect_int(marker, "band_id", 4201)
 	_expect_int(marker, "faction", 0)
 	_expect_int(marker, "morale_cause", 1)
 	_expect_str(marker, "activity", "forage")

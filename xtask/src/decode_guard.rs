@@ -113,7 +113,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 /// The import is **skipped once the file exists**: it takes tens of seconds, this gate is run in a
 /// tight edit loop, and a stale-asset import is not this command's business (a changed `.gdextension`
 /// does not need re-importing — only the dylib it points at, which step 2 rebuilds).
-fn ensure_project_imported(client_dir: &Path) -> Result<(), Box<dyn Error>> {
+pub(crate) fn ensure_project_imported(client_dir: &Path) -> Result<(), Box<dyn Error>> {
     let extension_list = client_dir.join(".godot").join("extension_list.cfg");
     if extension_list.exists() {
         return Ok(());
