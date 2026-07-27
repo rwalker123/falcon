@@ -199,23 +199,36 @@ wrappers went with them (nothing called either); bincode survives there only *in
 `RETIRED_CAPTURE_PHASES` is what stops either coming back — a retired label reappearing in a
 steady-state profile fails that test.
 
-## `finalize` hashes in place — it deliberately does not call `hash_snapshot`
+## The per-frame content hash is gone — `WorldSnapshot::finalize` no longer exists
 
-`WorldSnapshot::finalize` takes `self` **by value**, so it zeroes `header.hash` on itself,
-serializes, and stamps the result back. The free-standing `hash_snapshot` takes `&self` and must
-therefore **clone the entire `WorldSnapshot`** just to zero one `u64` before serializing — a deep
-copy of every tile, raster, and registry, once per turn, discarded immediately. That clone was
-~45% of the hash cost.
+`finalize` bincode-serialized the **entire world** on every published frame to stamp
+`header.hash` — ~1.0 ms of an 80×52 frame. #393 deleted it, and the deletion is the point: **the
+value had no reader anywhere.**
 
-The two are **byte-equivalent by construction**: both hash the bincode encoding of the snapshot
-with `header.hash == 0`. `sim_schema/src/world.rs` pins this
-(`finalize_stamps_exactly_the_free_standing_hash`) because the optimization is otherwise
-invisible in behavior, and pins re-`finalize` idempotency because the on-demand feed paths
-finalize an already-stamped snapshot — dropping the explicit zeroing would silently hash the
-stale value in.
+That was established by tracing every consumer, not by assuming:
 
-`hash_snapshot` survives as a public function: `integration_tests/tests/determinism.rs` calls it
-directly on two normalized snapshots. That test does **not** depend on the per-turn stamping.
+| candidate reader | what it actually does |
+|---|---|
+| the Godot client | never touches `hash` — no hit in the native decoder or any `.gd` |
+| rollback / the ring | restores from the snapshot; never compares a hash |
+| `integration_tests/tests/determinism.rs` | **zeroes** `header.hash` on both snapshots and calls `hash_snapshot` itself |
+| `sim_schema/src/world.rs` tests | tested the stamping mechanism, i.e. themselves |
+
+So this is the same shape this file already records twice — the retired bincode socket (#388) and
+the stored flat delta — and the rule those established is what makes the deletion obvious rather
+than risky: **if you find yourself stamping a content hash again, wire a reader first.**
+
+**Retired outright, not relocated.** #393 moved publication off the turn thread, and it would have
+been easy to carry `finalize` along as `publish.finalize_hash`. Moving dead work still pays for it,
+so the label has no publisher twin, and `turn_profile_wiring.rs` asserts `snapshot.finalize_hash`
+appears on *neither* side.
+
+**What survives.** `hash_snapshot` stays public with exactly one caller, `determinism.rs`, and is
+now off every publication path — pinned by `world.rs`'s
+`hash_snapshot_is_deterministic_and_ignores_the_stored_hash`, which replaces the two `finalize`
+tests and covers the two properties that caller depends on. `SnapshotHeader::hash` and its
+`snapshot.fbs` slot also stay, always `0`: FlatBuffers slots are positional and this repo's merges
+are append-only, so retiring a wire slot is its own change, and an always-zero `u64` costs 8 bytes.
 
 ## Publication is not on the turn thread — and `turn.profile` no longer describes all of a turn
 
@@ -262,23 +275,27 @@ warm-ups — the standard recipe above:
 
 | | before | after |
 |---|---|---|
-| `run_turn`, publisher **idle** | 8.48 ms | **4.11 ms** |
-| `run_turn`, publisher **concurrently busy** | 8.48 ms | **7.11 ms** |
-| `snapshot.build` | 3.27 | 3.01 / 5.89 (idle / busy) |
-| publisher, per frame | — | `finalize_hash` 1.04 · `diff` 1.69 · `encode.flat_delta` 0.55 |
+| `run_turn`, publisher **idle** | 8.48 ms | **4.55 ms** |
+| `run_turn`, publisher **concurrently busy** | 8.48 ms | **5.98 ms** |
+| `snapshot.build` | 3.27 | 3.16 / 4.75 (idle / busy) |
+| publisher, per frame | — | `diff` 1.72 · `encode.flat_delta` 0.61 |
 
 **Read both rows: the gap between them is the finding.** The work genuinely left the turn thread —
-4.11 ms is what a turn now executes. But when turns resolve **back to back**, the publisher's ~3.3 ms
+4.55 ms is what a turn now executes. But when turns resolve **back to back**, the publisher's ~2.3 ms
 overlaps the *next* turn's capture and the two compete, and nearly all of that lands in
 `snapshot.build`'s allocation-heavy remainder while its labelled per-tile sweeps (`tiles`, `patches`,
 `rasters`) do not move at all. Interactive play is the idle row — a player's turns are seconds apart,
 so the publisher is long finished before the next capture starts. A batched `turn 100`, a benchmark,
 or an integration-test loop is the busy row.
 
+**Reproduce the idle row with `SnapshotHistory::shutdown()`**, not with a `sleep` between turns.
+Shutting the publisher down makes `update()` return immediately and is shipped API; a sleep lets the
+core idle down and distorts everything (see the warning below).
+
 **Do not read the busy row as a reason to shrink the queue or to drop frames.** The queue was never
 the constraint: `snapshot.handoff` stays at ~0.002 ms in every one of these runs, so no turn ever
-waited on it. The lever on the busy row is making the publisher's per-frame work smaller — the
-`finalize_hash` full-snapshot bincode encode is the largest single piece of it — not making the
+waited on it. The lever on the busy row is making the publisher's per-frame work smaller, which is
+what retiring the content hash (below) did to the largest single piece of it — not making the
 handoff tighter.
 
 > **Beware the profiler when measuring this.** Two traps cost real time here: a spin-loop "control"

@@ -48,21 +48,26 @@ const EXPECTED_CAPTURE_PHASES: [&str; 5] = [
 /// statement about where the work went rather than about what stopped happening. After #388 a steady
 /// turn produces exactly one encode, `publish.encode.flat_delta`: the flat socket is the only
 /// socket, and a delta is all it is sent.
-const PUBLISHER_PHASES: [&str; 3] = [
-    "publish.finalize_hash",
-    "publish.diff",
-    "publish.encode.flat_delta",
-];
+///
+/// There is deliberately **no `publish.finalize_hash`**: #393 retired the per-frame content hash
+/// outright rather than moving it here, because nothing ever read `header.hash` and relocating dead
+/// work still pays for it. Its old turn-side label is in [`RETIRED_CAPTURE_PHASES`] below, and a
+/// `publish.finalize_hash` appearing on this side would mean it came back by the side door.
+const PUBLISHER_PHASES: [&str; 2] = ["publish.diff", "publish.encode.flat_delta"];
 
 /// Labels that must NOT appear on a steady-state turn, and why each one left.
 ///
 /// Two different reasons, deliberately kept in one list because the assertion is the same: a turn
 /// that starts paying for any of them again has regressed.
 ///
-/// * **Relocated by #393** — `snapshot.finalize_hash`, `snapshot.history`, `snapshot.history.diff`
-///   and `encode.flat_delta` are still work the server does every turn, on the publisher thread and
-///   under `publish.*` names. Seeing an *old* name here means publication has crept back onto the
-///   turn thread, which is the whole regression this issue was about.
+/// * **Relocated by #393** — `snapshot.history`, `snapshot.history.diff` and `encode.flat_delta`
+///   are still work the server does every turn, on the publisher thread and under `publish.*`
+///   names. Seeing an *old* name here means publication has crept back onto the turn thread, which
+///   is the whole regression this issue was about.
+/// * **Retired outright by #393** — `snapshot.finalize_hash` has no publisher twin. It
+///   bincode-serialized the entire world every frame to stamp a `header.hash` that the client
+///   decoder, rollback and the determinism test all ignore. This label reappearing *anywhere* means
+///   a content hash is being computed per frame again, which needs a reader first.
 /// * **Retired encodes** — `encode.flat_snapshot` is still reachable but not per turn (a world's
 ///   first publication, rollback, `resync` — #386). The two **bincode** labels are gone for good:
 ///   #388 retired the bincode snapshot socket, and its frames were never decodable in the first

@@ -564,7 +564,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     fn snapshot_with_discoveries(
@@ -631,7 +630,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     fn snapshot_with_power_metrics(tick: u64, power_metrics: PowerTelemetryState) -> WorldSnapshot {
@@ -693,7 +691,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     /// Build a minimal content band for the food-flow snapshot test, with the given age brackets

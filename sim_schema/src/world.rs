@@ -1,7 +1,9 @@
 //! The flat world payloads (`WorldSnapshot` / `WorldDelta`), their header, and the
 //! JSON codecs plus the on-disk [`MapExport`]. Bincode appears only inside
-//! `finalize`/`hash_snapshot` as bytes to hash — there is no bincode codec and no
-//! bincode decode path.
+//! [`hash_snapshot`] as bytes to hash — there is no bincode codec and no bincode
+//! decode path. Since #393 that helper has exactly one caller
+//! (`integration_tests/tests/determinism.rs`) and is **off every publication path**:
+//! nothing hashes a snapshot per frame any more. See [`SnapshotHeader::hash`].
 
 use crate::state::campaign::{
     BeatLedgerState, CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState,
@@ -44,6 +46,21 @@ pub struct SnapshotHeader {
     pub population_count: u32,
     pub power_count: u32,
     pub influencer_count: u32,
+    /// **Always `0` — nothing stamps this, and nothing ever read it (#393).**
+    ///
+    /// It used to be a content hash written by `WorldSnapshot::finalize`, which bincode-serialized
+    /// the *entire world* every published frame (~1.0 ms on an 80×52 map) to produce it. Tracing the
+    /// consumers found none: the client's decoder never touches it, rollback never compares it, and
+    /// `integration_tests/tests/determinism.rs` — the one place a snapshot hash is genuinely
+    /// compared — **zeroes this field** and calls [`hash_snapshot`] itself. So the stamp was a whole
+    /// serialization of the world, per frame, for a value nobody consumed.
+    ///
+    /// The **field and its wire slot stay** deliberately. `snapshot.fbs`'s slots are positional and
+    /// this repo's FlatBuffers merges are append-only (root `CLAUDE.md`), so retiring a slot is its
+    /// own change with its own regeneration; leaving an always-zero `u64` on the wire costs 8 bytes.
+    ///
+    /// **Do not start stamping it again without wiring a reader first.** That is the standing rule
+    /// in `.claude/rules/core_sim/turn-profiling.md`, and this is the third time it has applied.
     pub hash: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub campaign_label: Option<CampaignLabel>,
@@ -308,28 +325,6 @@ pub struct WorldDelta {
     pub discovery_progress: Vec<DiscoveryProgressEntry>,
 }
 
-impl WorldSnapshot {
-    /// Stamp the content hash onto the header.
-    ///
-    /// **Deliberately does not call [`hash_snapshot`], and must not be "simplified" back into one.**
-    /// That helper takes `&WorldSnapshot`, so it has to deep-clone the entire world just to zero one
-    /// `u64` before serializing — ~8% of a turn on an 80×52 map. `finalize` already *owns* `self`,
-    /// so it can zero the header in place and hash the same bytes with no copy at all.
-    ///
-    /// The two are byte-for-byte equivalent by construction: both serialize the whole snapshot with
-    /// `header.hash == 0` and hash the resulting buffer with the same fixed-seed hasher. Zeroing
-    /// first also matters for re-finalizing an already-stamped snapshot (the on-demand feed paths
-    /// clone the previous snapshot and call `finalize` again) — the stale hash must not be hashed in.
-    pub fn finalize(mut self) -> Self {
-        self.header.hash = 0;
-        let encoded = bincode::serialize(&self).expect("snapshot serialization for hashing");
-        let mut hasher = RandomState::with_seeds(0, 0, 0, 0).build_hasher();
-        hasher.write(&encoded);
-        self.header.hash = hasher.finish();
-        self
-    }
-}
-
 pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {
     let mut clone = snapshot.clone();
     clone.header.hash = 0;
@@ -425,12 +420,14 @@ pub fn decode_map_export_json(data: &str) -> serde_json::Result<MapExport> {
 mod tests {
     use super::*;
 
-    /// `WorldSnapshot::finalize` hashes in place instead of deep-cloning through [`hash_snapshot`],
-    /// which is only sound while the two produce identical bytes. Pin that equivalence here: the
-    /// optimisation is invisible in behaviour, so nothing else would catch a divergence, and
-    /// `hash_snapshot` still has a direct caller (`integration_tests/tests/determinism.rs`).
+    /// `hash_snapshot` is the only content hash left, and its **only caller is
+    /// `integration_tests/tests/determinism.rs`** — the per-frame `WorldSnapshot::finalize` stamp was
+    /// retired in #393 because nothing read `header.hash` (see the type's doc comment). So pin the
+    /// two properties that caller depends on and nothing else exercises: it is deterministic across
+    /// calls, and it **ignores whatever `header.hash` already holds**, which is what lets the test
+    /// zero the field on two snapshots and compare the rest.
     #[test]
-    fn finalize_stamps_exactly_the_free_standing_hash() {
+    fn hash_snapshot_is_deterministic_and_ignores_the_stored_hash() {
         let mut snapshot = WorldSnapshot {
             fog_enabled: true,
             ..Default::default()
@@ -439,28 +436,22 @@ mod tests {
         snapshot.header.population_count = 3;
 
         let expected = hash_snapshot(&snapshot);
-        let finalized = snapshot.clone().finalize();
+        assert_ne!(expected, 0, "a real hash of real content");
+        assert_eq!(hash_snapshot(&snapshot), expected, "deterministic");
 
-        assert_eq!(finalized.header.hash, expected);
-        assert_ne!(
-            finalized.header.hash, 0,
-            "a real hash, not the zeroed field"
-        );
-    }
-
-    /// Re-finalizing an already-stamped snapshot must ignore the stale hash — the on-demand feed
-    /// paths clone the previous snapshot, mutate one field, and call `finalize` again, so hashing
-    /// the old value in would make the hash depend on its own history.
-    #[test]
-    fn finalize_is_idempotent_and_ignores_a_stale_hash() {
-        let snapshot = WorldSnapshot::default().finalize();
-        let first = snapshot.header.hash;
-
-        let refinalized = snapshot.clone().finalize();
-        assert_eq!(refinalized.header.hash, first);
-
-        let mut stale = snapshot;
+        let mut stale = snapshot.clone();
         stale.header.hash = u64::MAX;
-        assert_eq!(stale.finalize().header.hash, first);
+        assert_eq!(
+            hash_snapshot(&stale),
+            expected,
+            "the stored hash must not feed into the hash, or it would depend on its own history"
+        );
+
+        snapshot.header.tick = 8;
+        assert_ne!(
+            hash_snapshot(&snapshot),
+            expected,
+            "and it must actually depend on the content, or the equality above proves nothing"
+        );
     }
 }

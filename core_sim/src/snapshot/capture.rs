@@ -343,16 +343,10 @@ impl PublishState {
         snapshot: WorldSnapshot,
         kind: Publication,
     ) -> Option<Arc<Vec<u8>>> {
-        // `finalize` stamps the content hash. It takes `self` by value and zeroes `header.hash` in
-        // place — no deep clone (that lives only in the free-standing `hash_snapshot`, which
-        // `finalize` deliberately does not call) — but it still bincode-encodes the *whole*
-        // snapshot just to produce a `u64`. It runs here, on the publisher, rather than in
-        // `capture_snapshot`: the hash is a pure function of the captured world and the delta
-        // header is cloned from it, so hashing is publication's first act, not the capture's last.
-        let snapshot = {
-            let _s = crate::turn_profile::publish_scope("publish.finalize_hash");
-            snapshot.finalize()
-        };
+        // No content hash is stamped. `WorldSnapshot::finalize` used to run here and bincode-encode
+        // the whole world to produce `header.hash` — ~1.0 ms a frame for a value nothing read (see
+        // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
+        // because moving dead work still pays for it.
 
         // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
         // the `diff_new`/`diff_removed` comparisons against last turn's indices.
@@ -1126,7 +1120,6 @@ impl PublishState {
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.axis_bias = bias.clone();
-            let snapshot = snapshot.finalize();
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
@@ -1255,7 +1248,6 @@ impl PublishState {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.influencers = states.clone();
             snapshot.header.influencer_count = states.len() as u32;
-            let snapshot = snapshot.finalize();
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
@@ -1368,7 +1360,6 @@ impl PublishState {
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.corruption = ledger.clone();
-            let snapshot = snapshot.finalize();
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
