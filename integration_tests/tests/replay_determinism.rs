@@ -423,20 +423,12 @@ fn checkpoint_restore_is_lossless() {
 /// This is the property command-sourced rollback needs, and the stronger of the two oracles: it
 /// sees state that never reaches the wire but still steers the simulation.
 ///
-/// **It reports exactly one residue, and it is not a checkpoint problem.** `simulate_logistics`
-/// (`systems/trade.rs`) sorts its links with `sort_by_key(|(entity, _)| entity.to_bits())` and then
-/// moves mass along them in that order — `source.mass -= transfer; target.mass += delivered`, so a
-/// later link sees what an earlier one moved. Entity bits are stable *within one process run*,
-/// which is why that sort makes the forward simulation deterministic and why
-/// `deterministic_snapshots_match` has always passed. They are not stable across a restore, which
-/// renumbers every entity, so the transfer order changes and all 384 tiles land on a slightly
-/// different mass (`0.64%` of compared leaves, and nothing else).
-///
-/// The fix is to sort on a stable key — links have a natural one in their endpoint positions,
-/// which is what the checkpoint already keys them by. It is deliberately not done here because it
-/// changes the mass distribution of every existing world, and that belongs in its own change.
+/// The last thing it caught was not a checkpoint bug at all: `simulate_logistics` ordered its mass
+/// transfers by `Entity::to_bits()`, so a restore — which renumbers every entity — moved mass in a
+/// different order and every tile landed on a different value. Entity ids are stable within one
+/// process run, which is why the forward-determinism tests never saw it. That system now sorts on
+/// the links' endpoint positions, the same natural key this checkpoint stores them under.
 #[test]
-#[ignore = "simulate_logistics orders mass transfer by Entity::to_bits(); see the comment below"]
 fn checkpoint_replay_is_bit_exact() {
     let mut app = new_app();
     for _ in 0..CHECKPOINT_TICKS {

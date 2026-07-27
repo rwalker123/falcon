@@ -80,9 +80,39 @@ pub fn simulate_logistics(mut params: LogisticsSimParams) {
         * params.effects.logistics_multiplier
         * corruption_factor)
         .clamp(logistics_cfg.flow_gain_min(), logistics_cfg.flow_gain_max());
-    let mut links: Vec<_> = params.links.iter_mut().collect();
-    links.sort_by_key(|(entity, _)| entity.to_bits());
-    for (_, mut link) in links {
+    // Mass transfer is a CHAIN — `source.mass -= transfer; target.mass += delivered` — so a later
+    // link moves mass that an earlier one already moved, and the order is part of the result.
+    //
+    // It used to be `sort_by_key(|(entity, _)| entity.to_bits())`, which orders a physical process
+    // by **ECS allocation order**. That is arbitrary, and worse, it is not stable: entity ids are
+    // fixed within one process run (which is why the forward simulation was deterministic and
+    // `deterministic_snapshots_match` passed) but every one of them is renumbered by a checkpoint
+    // restore, so a replayed turn moved mass in a different order and every tile landed on a
+    // different value. Sorting on the endpoint positions — the same natural key the checkpoint
+    // stores links under — makes the order a property of the map instead of the allocator.
+    let mut order: Vec<(UVec2, UVec2, Entity)> = params
+        .links
+        .iter()
+        .map(|(entity, link)| {
+            let from = params
+                .tiles
+                .get(link.from)
+                .map(|tile| tile.position)
+                .unwrap_or_default();
+            let to = params
+                .tiles
+                .get(link.to)
+                .map(|tile| tile.position)
+                .unwrap_or_default();
+            (from, to, entity)
+        })
+        .collect();
+    order.sort_by_key(|(from, to, _)| (from.y, from.x, to.y, to.x));
+
+    for (_, _, entity) in order {
+        let Ok((_, mut link)) = params.links.get_mut(entity) else {
+            continue;
+        };
         let Ok([mut source, mut target]) = params.tiles.get_many_mut([link.from, link.to]) else {
             link.flow = scalar_zero();
             continue;
