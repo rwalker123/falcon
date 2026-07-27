@@ -37,9 +37,10 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandTravel, Expedition, ExpeditionMission,
-        FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
-        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
+        available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
+        ExpeditionMission, FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget,
+        LogisticsLink, PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink,
+        FODDER, FOOD,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -1004,6 +1005,8 @@ mod tests {
         };
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),
+            // This fixture asserts on the derived readouts, not on band identity.
+            band_id: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,

@@ -295,7 +295,7 @@ mission:
   party validation, validates `fauna_id` resolves to a live herd, draws **no** provisions, removes
   the workers, spawns a `Hunt`-mission party in `Hunting` phase heading for the herd. Feed
   `ExpeditionSent` (hunt flavor).
-- `recall_expedition <faction> <expedition_entity_bits>` — resolves the entity via
+- `recall_expedition <faction> <expedition_band_id>` — resolves the entity via
   `resolve_expedition_entity` (checks the `Expedition` component + faction), sets `phase = Returning`
   (works for both verbs). Feed `ExpeditionRecalled`.
 - **Retargeting a scout waypoint is just `move_band` on the expedition entity** — `handle_move_band`

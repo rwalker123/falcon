@@ -45,7 +45,10 @@ message ResetMapCommand {
 }
 
 message HeatCommand {
-  uint64 entity_bits = 1;
+  // Tile coordinates, not an ECS handle: a rollback rebuilds the world and renumbers every entity,
+  // so a command that named one would resolve to nothing when replayed from the log.
+  uint32 target_x = 3;
+  uint32 target_y = 4;
   sint64 delta = 2;
 }
 
@@ -172,14 +175,14 @@ message ScoutAreaCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  optional uint64 band_entity_bits = 4;
+  optional uint64 band_id = 4;
 }
 
 message FollowHerdCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
   optional string policy = 3;
-  optional uint64 band_entity_bits = 4;
+  optional uint64 band_id = 4;
 }
 
 message FoundSettlementCommand {
@@ -193,20 +196,20 @@ message ForageTileCommand {
   uint32 target_x = 2;
   uint32 target_y = 3;
   string module = 4;
-  optional uint64 band_entity_bits = 5;
+  optional uint64 band_id = 5;
 }
 
 message HuntGameCommand {
   uint32 faction_id = 1;
   uint32 target_x = 2;
   uint32 target_y = 3;
-  optional uint64 band_entity_bits = 4;
+  optional uint64 band_id = 4;
 }
 
 message HuntFaunaCommand {
   uint32 faction_id = 1;
   string herd_id = 2;
-  optional uint64 band_entity_bits = 3;
+  optional uint64 band_id = 3;
 }
 
 // The intensification ladder's animal rung-2 verb: set the Tame policy on the bands already hunting
@@ -274,7 +277,7 @@ message AnswerForkCommand {
 
 message CancelOrderCommand {
   uint32 faction_id = 1;
-  optional uint64 band_entity_bits = 2;
+  optional uint64 band_id = 2;
   // What the cancel clears: "all" (worked sources + standing roles + stop movement),
   // "work" (Forage/Hunt only, movement untouched), "roles" (Scout/Warrior only, movement
   // untouched). Absent == "all", the historical behaviour.
@@ -285,7 +288,7 @@ message CancelOrderCommand {
 // (idempotent; 0 unassigns; clamped to the band's free working-age headroom).
 message AssignLaborCommand {
   uint32 faction_id = 1;
-  optional uint64 band_entity_bits = 2;
+  optional uint64 band_id = 2;
   string role = 3;              // "forage" | "hunt" | "scout" | "warrior"
   uint32 workers = 4;
   optional uint32 target_x = 5; // forage tile
@@ -300,7 +303,7 @@ message AssignLaborCommand {
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.
 message MoveBandCommand {
   uint32 faction_id = 1;
-  optional uint64 band_entity_bits = 2;
+  optional uint64 band_id = 2;
   uint32 target_x = 3;
   uint32 target_y = 4;
 }
@@ -309,7 +312,7 @@ message MoveBandCommand {
 // send a detached traveling party toward the target tile.
 message SendExpeditionCommand {
   uint32 faction_id = 1;
-  optional uint64 band_entity_bits = 2;
+  optional uint64 band_id = 2;
   uint32 party_workers = 3;
   uint32 target_x = 4;
   uint32 target_y = 5;
@@ -318,14 +321,14 @@ message SendExpeditionCommand {
 // Order an in-flight expedition home (phase -> Returning; folds back on arrival).
 message RecallExpeditionCommand {
   uint32 faction_id = 1;
-  uint64 expedition_entity_bits = 2;
+  uint64 expedition_band_id = 2;
 }
 
 // Outfit and launch a hunting expedition: draw party_workers off the home band and send a detached
 // party to follow the herd fauna_id (lives off its kills — no provisions drawn).
 message SendHuntExpeditionCommand {
   uint32 faction_id = 1;
-  optional uint64 band_entity_bits = 2;
+  optional uint64 band_id = 2;
   uint32 party_workers = 3;
   string fauna_id = 4;
   optional string policy = 5; // sustain|surplus|deplete|eradicate; default sustain when omitted

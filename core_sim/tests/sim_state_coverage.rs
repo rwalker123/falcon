@@ -140,14 +140,10 @@ const WORLD_STATIC_RESOURCES: [&str; 16] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 10] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 9] = [
     (
         "Replaying",
         "a flag held only for the duration of one rollback; a checkpoint is never taken while set",
-    ),
-    (
-        "CheckpointHistory",
-        "the rollback ring itself: a checkpoint of checkpoints is not simulation state",
     ),
     (
         "SnapshotHistory",

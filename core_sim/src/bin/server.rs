@@ -22,7 +22,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
-use core_sim::sim_state::{record_checkpoint_now, restore_sim_state, CheckpointHistory, Replaying};
+use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
@@ -36,7 +36,7 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    AgentAssignment, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
+    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
     CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
@@ -224,6 +224,8 @@ fn main() {
     // ungenerated (and `ElevationField` uninserted, so the Snapshot stage must never run — see the
     // `world_active` gate below). A world is generated on demand by `new_game` (or `map_size`/ResetMap).
     let mut world_active = false;
+    // The rollback authority. Built on the first `new_game`; until then there is no world to log.
+    let mut command_log: Option<CommandLog> = None;
     // The monotonic world-build counter (lives outside the app, like `world_active`, because every
     // rebuild constructs a brand-new `App`). `rebuild_world_from_config` increments it and inserts a
     // `WorldEpoch` into each fresh app before its first capture; the idle boot app carries 0.
@@ -272,19 +274,10 @@ fn main() {
                     continue;
                 }
                 for _ in 0..turns {
-                    {
-                        let mut queue = app.world.resource_mut::<TurnQueue>();
-                        let awaiting = queue.awaiting();
-                        for faction in &awaiting {
-                            info!(
-                                target: "shadow_scale::server",
-                                %faction,
-                                "orders.auto_generated=end_turn"
-                            );
-                        }
-                        queue.force_submit_all(|_| FactionOrders::end_turn());
+                    resolve_turn_with_auto_orders(&mut app);
+                    if let Some(log) = command_log.as_mut() {
+                        log.push(LogEntry::Turn);
                     }
-                    resolve_ready_turn(&mut app);
                 }
             }
             Command::ResetMap { width, height } => {
@@ -341,6 +334,8 @@ fn main() {
                     |_| {},
                 );
                 world_active = true;
+                // A new world: nothing before this point is reachable.
+                command_log = Some(CommandLog::new(&app));
                 info!(
                     target: "shadow_scale::server",
                     width,
@@ -368,287 +363,30 @@ fn main() {
                     &snapshot_flat_server,
                 );
             }
-            Command::ExportMap { path } => {
-                write_map_export(&app, path);
-            }
-            // Republish the world as a FULL frame. The client asks for this when it cannot apply a
-            // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
-            // rather than another delta — a delta is what it just failed to use.
-            //
-            // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
-            // server never volunteers a frame to a connecting client (it might belong to a world
-            // that client did not ask for), but answering a request cannot surprise anyone, and the
-            // `worldEpoch` on the frame still lets the client reject a world it did not want.
-            //
-            // It republishes through `publish_full_frame` rather than encoding the ring entry as
-            // stored, because the answer must carry a LIVE sequence number: resync is the recovery
-            // path, so a stale number here reopens the sequence gap the client asked us to close.
-            Command::Resync => {
-                let mut history = app.world.resource_mut::<SnapshotHistory>();
-                match history.latest_entry() {
-                    Some(entry) => {
-                        let bytes = history.publish_full_frame(&entry);
-                        flat_server.broadcast(&bytes);
-                        info!(
-                            target: "shadow_scale::server",
-                            tick = entry.tick,
-                            bytes = bytes.len(),
-                            "resync.published"
-                        );
+            other => {
+                // Logged BEFORE it runs, and on the same uniform seam every command already passes
+                // through: a new command variant is logged whether or not anyone remembers it
+                // exists. `Rollback` is excluded because it is not part of the timeline — it moves
+                // through it, and logging it would make a rollback replay itself.
+                // A config reload is not replayable — a `SimState` carries no config by design, so
+                // replaying across one would run turns under whatever tuning is live rather than
+                // that tick's. It re-bases the origin instead of being logged.
+                let rebases_origin = matches!(other, Command::ReloadConfig { .. });
+                if let Some(log) = command_log.as_mut() {
+                    log_dispatched_command(log, &other);
+                }
+                if let Command::Rollback { tick } = other {
+                    if let Some(log) = command_log.as_mut() {
+                        handle_rollback(&mut app, tick, flat_server, log);
                     }
-                    None => {
-                        // No world yet (the server boots idle). Nothing to republish; the client's
-                        // `new_game` retry is what recovers this case.
-                        info!(target: "shadow_scale::server", "resync.no_world");
+                } else {
+                    apply_command(&mut app, other, flat_server);
+                    if rebases_origin {
+                        if let Some(log) = command_log.as_mut() {
+                            log.rebase(&app, "config_reload");
+                        }
                     }
                 }
-            }
-            Command::Heat { entity, delta } => {
-                apply_heat(&mut app, entity, delta);
-                info!(
-                    target: "shadow_scale::server",
-                    entity,
-                    delta,
-                    "command.applied=heat"
-                );
-            }
-            Command::Orders { faction, orders } => {
-                handle_order_submission(&mut app, faction, orders);
-            }
-            Command::Rollback { tick } => {
-                handle_rollback(&mut app, tick, flat_server);
-            }
-            Command::AxisBias { axis, value } => {
-                handle_axis_bias(&mut app, axis, value, flat_server);
-            }
-            Command::SupportInfluencer { id, magnitude } => {
-                handle_influencer_command(
-                    &mut app,
-                    id,
-                    magnitude,
-                    InfluencerAction::Support,
-                    flat_server,
-                );
-            }
-            Command::SuppressInfluencer { id, magnitude } => {
-                handle_influencer_command(
-                    &mut app,
-                    id,
-                    magnitude,
-                    InfluencerAction::Suppress,
-                    flat_server,
-                );
-            }
-            Command::SupportInfluencerChannel {
-                id,
-                channel,
-                magnitude,
-            } => {
-                handle_influencer_channel_support(&mut app, id, channel, magnitude, flat_server);
-            }
-            Command::SpawnInfluencer { scope, generation } => {
-                handle_influencer_spawn(&mut app, scope, generation, flat_server);
-            }
-            Command::InjectCorruption {
-                subsystem,
-                intensity,
-                exposure_timer,
-            } => {
-                handle_inject_corruption(
-                    &mut app,
-                    subsystem,
-                    intensity,
-                    exposure_timer,
-                    flat_server,
-                );
-            }
-            Command::UpdateEspionageGenerators { updates } => {
-                handle_update_espionage_generators(&mut app, updates);
-            }
-            Command::QueueEspionageMission { params } => {
-                handle_queue_espionage_mission(&mut app, params);
-            }
-            Command::UpdateEspionageQueueDefaults {
-                scheduled_tick_offset,
-                target_tier,
-            } => {
-                handle_update_queue_defaults(&mut app, scheduled_tick_offset, target_tier);
-            }
-            Command::UpdateCounterIntelPolicy { faction, policy } => {
-                handle_update_counter_intel_policy(&mut app, faction, policy);
-            }
-            Command::AdjustCounterIntelBudget {
-                faction,
-                reserve,
-                delta,
-            } => {
-                handle_adjust_counter_intel_budget(&mut app, faction, reserve, delta);
-            }
-            Command::ReloadConfig { kind, path } => {
-                handle_reload_config(&mut app, kind, path);
-            }
-            Command::SetCrisisAutoSeed { enabled } => {
-                {
-                    let mut config_res = app.world.resource_mut::<SimulationConfig>();
-                    config_res.crisis_auto_seed = enabled;
-                }
-                info!(
-                    target: "shadow_scale::server",
-                    enabled,
-                    "crisis.autoseed.updated"
-                );
-            }
-            Command::SetFogEnabled { enabled } => {
-                {
-                    let mut config_res = app.world.resource_mut::<SimulationConfig>();
-                    config_res.fog_enabled = enabled;
-                }
-                info!(
-                    target: "shadow_scale::server",
-                    enabled,
-                    "fog.of_war.updated"
-                );
-            }
-            Command::SpawnCrisis {
-                faction,
-                archetype_id,
-            } => {
-                let archetype = archetype_id.clone();
-                {
-                    let mut spawns = app.world.resource_mut::<PendingCrisisSpawns>();
-                    spawns.push(faction, archetype);
-                }
-                info!(
-                    target: "shadow_scale::server",
-                    faction = %faction.0,
-                    archetype = %archetype_id,
-                    "crisis.spawn.enqueued"
-                );
-            }
-            Command::SetStartProfile { profile_id } => {
-                handle_set_start_profile(&mut app, profile_id);
-            }
-            Command::AssignLabor {
-                faction,
-                band_entity_bits,
-                role,
-                workers,
-                target_x,
-                target_y,
-                fauna_id,
-                policy,
-                species,
-            } => {
-                handle_assign_labor(
-                    &mut app,
-                    faction,
-                    band_entity_bits,
-                    role,
-                    workers,
-                    target_x,
-                    target_y,
-                    fauna_id,
-                    policy,
-                    species,
-                );
-            }
-            Command::MoveBand {
-                faction,
-                band_entity_bits,
-                target_x,
-                target_y,
-            } => {
-                handle_move_band(&mut app, faction, band_entity_bits, target_x, target_y);
-            }
-            Command::SendExpedition {
-                faction,
-                band_entity_bits,
-                party_workers,
-                target_x,
-                target_y,
-            } => {
-                handle_send_expedition(
-                    &mut app,
-                    faction,
-                    band_entity_bits,
-                    party_workers,
-                    target_x,
-                    target_y,
-                );
-            }
-            Command::RecallExpedition {
-                faction,
-                expedition_entity_bits,
-            } => {
-                handle_recall_expedition(&mut app, faction, expedition_entity_bits);
-            }
-            Command::SendHuntExpedition {
-                faction,
-                band_entity_bits,
-                party_workers,
-                fauna_id,
-                policy,
-            } => {
-                handle_send_hunt_expedition(
-                    &mut app,
-                    faction,
-                    band_entity_bits,
-                    party_workers,
-                    fauna_id,
-                    policy,
-                );
-            }
-            Command::FoundSettlement {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_found_settlement(&mut app, faction, target_x, target_y);
-            }
-            Command::Tame { faction, herd_id } => {
-                handle_tame(&mut app, faction, herd_id);
-            }
-            Command::AnswerFork {
-                faction,
-                beat_id,
-                choice_id,
-            } => {
-                handle_answer_fork(&mut app, faction, beat_id, choice_id);
-            }
-            Command::Cultivate {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_cultivate(&mut app, faction, UVec2::new(target_x, target_y));
-            }
-            Command::Sow {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_sow(&mut app, faction, UVec2::new(target_x, target_y));
-            }
-            Command::Corral {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_corral(&mut app, faction, UVec2::new(target_x, target_y));
-            }
-            Command::ExtendPen {
-                faction,
-                target_x,
-                target_y,
-            } => {
-                handle_extend_pen(&mut app, faction, UVec2::new(target_x, target_y));
-            }
-            Command::CancelOrder {
-                faction,
-                band_entity_bits,
-                scope,
-            } => {
-                handle_cancel_order(&mut app, faction, band_entity_bits, scope);
             }
         }
 
@@ -663,7 +401,7 @@ fn main() {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Command {
     Turn(u32),
     ResetMap {
@@ -671,7 +409,8 @@ enum Command {
         height: u32,
     },
     Heat {
-        entity: u64,
+        target_x: u32,
+        target_y: u32,
         delta: i64,
     },
     Orders {
@@ -745,7 +484,7 @@ enum Command {
     },
     AssignLabor {
         faction: FactionId,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         role: String,
         workers: u32,
         target_x: Option<u32>,
@@ -758,24 +497,24 @@ enum Command {
     },
     MoveBand {
         faction: FactionId,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         target_x: u32,
         target_y: u32,
     },
     SendExpedition {
         faction: FactionId,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         party_workers: u32,
         target_x: u32,
         target_y: u32,
     },
     RecallExpedition {
         faction: FactionId,
-        expedition_entity_bits: u64,
+        expedition_band_id: u64,
     },
     SendHuntExpedition {
         faction: FactionId,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
         policy: Option<String>,
@@ -817,7 +556,7 @@ enum Command {
     },
     CancelOrder {
         faction: FactionId,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         /// What the cancel clears: everything (+ travel), the worked sources, or the standing roles.
         scope: CancelScope,
     },
@@ -2325,7 +2064,7 @@ fn validate_tame(
 fn handle_assign_labor(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     role: String,
     workers: u32,
     target_x: Option<u32>,
@@ -2403,9 +2142,7 @@ fn handle_assign_labor(
         }
     }
 
-    let Some(band) =
-        select_starting_band(app, faction, band_entity_bits, "assign_labor", event_kind)
-    else {
+    let Some(band) = select_starting_band(app, faction, band_id, "assign_labor", event_kind) else {
         return;
     };
 
@@ -2451,7 +2188,7 @@ fn handle_assign_labor(
 fn handle_move_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     target_x: u32,
     target_y: u32,
 ) {
@@ -2470,7 +2207,7 @@ fn handle_move_band(
     let Some(band) = select_starting_band(
         app,
         faction,
-        band_entity_bits,
+        band_id,
         "move_band",
         CommandEventKind::CancelOrder,
     ) else {
@@ -2509,7 +2246,7 @@ fn handle_move_band(
 fn handle_send_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     party_workers: u32,
     target_x: u32,
     target_y: u32,
@@ -2529,14 +2266,14 @@ fn handle_send_expedition(
     let Some(band) = select_starting_band(
         app,
         faction,
-        band_entity_bits,
+        band_id,
         "send_expedition",
         CommandEventKind::ExpeditionSent,
     ) else {
         return;
     };
     // `select_starting_band` only filters `With<ResidentBand>` on the None-bits fallback; an
-    // explicit `band_entity_bits` resolves on `StartingUnit` alone, which an expedition also carries
+    // explicit `band_id` resolves on `StartingUnit` alone, which an expedition also carries
     // (kept so `move_band` can retarget it). A party can only be outfitted *from* a resident band —
     // reject anything else so `send_expedition` can't spawn a party off another expedition.
     if app.world.get::<ResidentBand>(band.entity).is_none() {
@@ -2669,7 +2406,7 @@ fn handle_send_expedition(
 fn handle_send_hunt_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     party_workers: u32,
     fauna_id: String,
     policy: Option<String>,
@@ -2709,7 +2446,7 @@ fn handle_send_hunt_expedition(
     let Some(band) = select_starting_band(
         app,
         faction,
-        band_entity_bits,
+        band_id,
         "send_hunt_expedition",
         CommandEventKind::ExpeditionSent,
     ) else {
@@ -2954,16 +2691,16 @@ fn handle_send_hunt_expedition(
 
 /// Order an expedition home: set its phase to `Returning` (it chases the home band's live tile and
 /// folds its workers + leftover provisions back on arrival). Text form:
-/// `recall_expedition <faction> <expedition_entity_bits>`.
+/// `recall_expedition <faction> <expedition_band_id>`.
 fn handle_recall_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    expedition_entity_bits: u64,
+    expedition_band_id: u64,
 ) {
     let Some(entity) = resolve_expedition_entity(
         app,
         faction,
-        expedition_entity_bits,
+        expedition_band_id,
         "recall_expedition",
         CommandEventKind::ExpeditionRecalled,
     ) else {
@@ -3111,13 +2848,13 @@ fn cancel_scope_applied_message(scope: CancelScope, band_label: &str) -> String 
 fn handle_cancel_order(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     scope: CancelScope,
 ) {
     let Some(band) = select_starting_band(
         app,
         faction,
-        band_entity_bits,
+        band_id,
         "cancel_order",
         CommandEventKind::CancelOrder,
     ) else {
@@ -4295,8 +4032,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         ProtoCommandPayload::ResetMap { width, height } => {
             Some(Command::ResetMap { width, height })
         }
-        ProtoCommandPayload::Heat { entity_bits, delta } => Some(Command::Heat {
-            entity: entity_bits,
+        ProtoCommandPayload::Heat {
+            target_x,
+            target_y,
+            delta,
+        } => Some(Command::Heat {
+            target_x,
+            target_y,
             delta,
         }),
         ProtoCommandPayload::Orders {
@@ -4441,7 +4183,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         }
         ProtoCommandPayload::AssignLabor {
             faction_id,
-            band_entity_bits,
+            band_id,
             role,
             workers,
             target_x,
@@ -4451,7 +4193,7 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             species,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
-            band_entity_bits,
+            band_id,
             role,
             workers,
             target_x,
@@ -4462,44 +4204,44 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
-            band_entity_bits,
+            band_id,
             target_x,
             target_y,
         } => Some(Command::MoveBand {
             faction: FactionId(faction_id),
-            band_entity_bits,
+            band_id,
             target_x,
             target_y,
         }),
         ProtoCommandPayload::SendExpedition {
             faction_id,
-            band_entity_bits,
+            band_id,
             party_workers,
             target_x,
             target_y,
         } => Some(Command::SendExpedition {
             faction: FactionId(faction_id),
-            band_entity_bits,
+            band_id,
             party_workers,
             target_x,
             target_y,
         }),
         ProtoCommandPayload::RecallExpedition {
             faction_id,
-            expedition_entity_bits,
+            expedition_band_id,
         } => Some(Command::RecallExpedition {
             faction: FactionId(faction_id),
-            expedition_entity_bits,
+            expedition_band_id,
         }),
         ProtoCommandPayload::SendHuntExpedition {
             faction_id,
-            band_entity_bits,
+            band_id,
             party_workers,
             fauna_id,
             policy,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
-            band_entity_bits,
+            band_id,
             party_workers,
             fauna_id,
             policy,
@@ -4580,11 +4322,11 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
         }),
         ProtoCommandPayload::CancelOrder {
             faction_id,
-            band_entity_bits,
+            band_id,
             scope,
         } => Some(Command::CancelOrder {
             faction: FactionId(faction_id),
-            band_entity_bits,
+            band_id,
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
@@ -4622,20 +4364,34 @@ fn map_security_policy(kind: SecurityPolicyKind) -> Option<SecurityPolicy> {
         SecurityPolicyKind::Crisis => SecurityPolicy::Crisis,
     })
 }
-
-fn apply_heat(app: &mut bevy::prelude::App, entity_bits: u64, delta_raw: i64) {
-    let entity_result = std::panic::catch_unwind(|| bevy::prelude::Entity::from_bits(entity_bits));
-    let entity = match entity_result {
-        Ok(entity) => entity,
-        Err(_) => {
-            warn!("Invalid entity bits for heat command: {}", entity_bits);
-            return;
-        }
+/// Heat a tile, addressed by **position**.
+///
+/// It used to take raw `Entity` bits off the wire. A rollback rebuilds the world and renumbers every
+/// entity, so a logged `Heat` naming one would resolve to nothing when replayed — the same reason no
+/// `Entity` crosses any other persistence boundary in this arc.
+fn apply_heat(app: &mut bevy::prelude::App, position: UVec2, delta_raw: i64) {
+    let Some(entity) = app
+        .world
+        .resource::<TileRegistry>()
+        .index(position.x, position.y)
+    else {
+        warn!(
+            target: "shadow_scale::server",
+            x = position.x,
+            y = position.y,
+            "command.heat.rejected=no_such_tile"
+        );
+        return;
     };
     if let Some(mut tile) = app.world.get_mut::<Tile>(entity) {
         tile.temperature += Scalar::from_raw(delta_raw);
     } else {
-        warn!("Entity {} not found for heat command", entity_bits);
+        warn!(
+            target: "shadow_scale::server",
+            x = position.x,
+            y = position.y,
+            "command.heat.rejected=tile_missing"
+        );
     }
 }
 
@@ -4686,57 +4442,76 @@ fn ensure_land_tile(
     Some(tile_entity)
 }
 
+/// Resolve a [`BandId`] to the entity that holds it, gated on faction ownership.
+///
+/// **This replaces a raw-`Entity`-bits path; there is deliberately no fallback to it.** The wire
+/// used to carry `entity.to_bits()`, which made the client→server protocol traffic in ECS handles —
+/// and a handle is not an identity: a rollback rebuilds the world and renumbers every entity, so a
+/// logged command naming one resolved to nothing when replayed. `BandId` is the identity the sim
+/// already had. There are no shipped clients, so accepting both forms would be permanent complexity
+/// bought for nobody.
 fn resolve_starting_unit_entity(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    entity_bits: u64,
+    band_id: u64,
     command_label: &str,
     event_kind: CommandEventKind,
 ) -> Option<Entity> {
-    let Some(entity) = entity_from_bits(entity_bits) else {
-        warn!(
+    let wanted = BandId(band_id);
+    let found = {
+        let mut query = app.world.query::<(Entity, &BandId)>();
+        query
+            .iter(&app.world)
+            .find(|(_, id)| **id == wanted)
+            .map(|(entity, _)| entity)
+    };
+    let Some(entity) = found else {
+        // Loud, never a silent no-op — this now covers live commands as well as replayed ones.
+        tracing::error!(
             target: "shadow_scale::command",
             command = command_label,
             faction = %faction.0,
-            "command.starting_unit.rejected=invalid_entity_bits"
+            band_id,
+            "command.band.rejected=no_such_band"
         );
         emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("Unit id {} is invalid.", entity_bits),
+            format!("Band {band_id} does not exist in the simulation."),
         );
         return None;
     };
-    if !app.world.entities().contains(entity) {
-        warn!(
-            target: "shadow_scale::command",
-            command = command_label,
-            faction = %faction.0,
-            entity_bits,
-            "command.starting_unit.rejected=entity_not_found"
-        );
-        emit_command_failure(
-            app,
-            event_kind,
-            faction,
-            format!("Unit id {} does not exist in the simulation.", entity_bits),
-        );
-        return None;
-    }
     if app.world.get::<StartingUnit>(entity).is_none() {
         warn!(
             target: "shadow_scale::command",
             command = command_label,
             faction = %faction.0,
-            entity_bits,
-            "command.starting_unit.rejected=entity_not_starting_unit"
+            band_id,
+            "command.band.rejected=not_a_starting_unit"
         );
         emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("Unit id {} is not a controllable band.", entity_bits),
+            format!("Band {band_id} is not a commandable unit."),
+        );
+        return None;
+    }
+    let owner = app.world.get::<PopulationCohort>(entity).map(|c| c.faction);
+    if owner != Some(faction) {
+        warn!(
+            target: "shadow_scale::command",
+            command = command_label,
+            faction = %faction.0,
+            band_id,
+            "command.band.rejected=wrong_faction"
+        );
+        emit_command_failure(
+            app,
+            event_kind,
+            faction,
+            format!("Band {band_id} belongs to another faction."),
         );
         return None;
     }
@@ -4751,11 +4526,11 @@ struct SelectedBand {
 fn select_starting_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    band_entity_bits: Option<u64>,
+    band_id: Option<u64>,
     command_label: &str,
     event_kind: CommandEventKind,
 ) -> Option<SelectedBand> {
-    if let Some(bits) = band_entity_bits {
+    if let Some(bits) = band_id {
         let entity = resolve_starting_unit_entity(app, faction, bits, command_label, event_kind)?;
         return Some(SelectedBand {
             entity,
@@ -4984,6 +4759,381 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
     }
 }
 
+/// What a rollback replays: the origin world, and every event since.
+///
+/// **A checkpoint is a cache; this is the thing it caches.** The world at tick N is a pure function
+/// of `(origin) + (the ordered commands and turn boundaries since)`, so the log *is* the authority
+/// and a materialized world is only ever an optimisation over it. The previous design had the cache
+/// without the authority, which produced three defects in a row: a replay that skipped commands, a
+/// per-command checkpoint bolted on to paper over it, and a ring whose 16 slots an active player
+/// could evict in 16 ticks — silently cutting a 256-turn rollback window down to "the last few
+/// things you touched".
+///
+/// Rollback is undo/redo, and undo/redo is a log. A command is a few hundred bytes against a full
+/// world clone, and commands are human-paced.
+///
+/// **Bit-exact forward replay is the precondition**, and it is the thing this arc established and
+/// proved: `a_restored_world_simulates_forward_identically` and
+/// `checkpoint_restore_is_lossless` are what make replaying the log land on the world that happened
+/// rather than one that merely looks like it.
+struct CommandLog {
+    /// The world this log replays from, captured once when the world was created or re-based.
+    origin: std::sync::Arc<core_sim::sim_state::SimState>,
+    origin_tick: u64,
+    entries: Vec<LogEntry>,
+}
+
+/// One replayable event. A turn carries no data — `run_turn` is a pure function of the world.
+#[derive(Debug, Clone)]
+enum LogEntry {
+    Turn,
+    Command(Command),
+}
+
+impl CommandLog {
+    fn new(app: &bevy::prelude::App) -> Self {
+        Self {
+            origin: std::sync::Arc::new(core_sim::sim_state::capture_sim_state(&app.world)),
+            origin_tick: app.world.resource::<SimulationTick>().0,
+            entries: Vec::new(),
+        }
+    }
+
+    /// Re-base: this world is a new starting point and nothing before it is reachable.
+    ///
+    /// `new_game`, `reset_map` and **every config reload** land here. The reload is the interesting
+    /// one and it is the deliberate answer to a hole this arc flagged early: a `SimState` carries no
+    /// config *by design*, so replaying across a reload would run turns under whatever tuning is
+    /// live rather than the tuning of that tick. Re-basing is consistent with that decision and
+    /// needs no config serialization at all.
+    fn rebase(&mut self, app: &bevy::prelude::App, reason: &str) {
+        *self = Self::new(app);
+        warn!(
+            target: "shadow_scale::server",
+            reason,
+            origin_tick = self.origin_tick,
+            "rollback.origin_rebased -- rollback can no longer reach before this point"
+        );
+    }
+
+    fn push(&mut self, entry: LogEntry) {
+        self.entries.push(entry);
+    }
+
+    /// How many entries reproduce the world at `tick`, or `None` if it is out of reach.
+    ///
+    /// **"The world at tick N" means immediately after the Nth turn resolved** — before any command
+    /// issued while sitting at that tick. That has to be pinned down rather than left to fall out of
+    /// the loop: a command lands *between* turns, so "at tick N" is otherwise ambiguous about
+    /// whether the commands issued at N are in or out, and the two readings give different worlds.
+    fn prefix_len_for(&self, tick: u64) -> Option<usize> {
+        if tick < self.origin_tick {
+            return None;
+        }
+        let mut turns = self.origin_tick;
+        if turns == tick {
+            return Some(0);
+        }
+        for (index, entry) in self.entries.iter().enumerate() {
+            if matches!(entry, LogEntry::Turn) {
+                turns += 1;
+                if turns == tick {
+                    return Some(index + 1);
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Apply one **replayable** command.
+///
+/// Every arm here is a pure function of `(world, command)` plus publication — which is what lets a
+/// rollback re-apply them from the log and land on the world that actually happened.
+///
+/// The four commands that are *not* here stay in the dispatch loop because they are not replayable:
+/// `Turn` is a turn (the log records it as `LogEntry::Turn`, not as a command), and `ResetMap` /
+/// `NewGame` / a config reload **re-base the origin** — they replace the world or the tuning it runs
+/// under, so there is nothing before them to replay from. `ResetMap` additionally reassigns the
+/// `App` itself, which a `&mut App` parameter could not do; that the un-extractable arms are exactly
+/// the un-replayable ones is the cut falling out of the design rather than being imposed on it.
+/// Record a dispatched command in the log, unless it is one of the two that must not be.
+///
+/// **This is the one place the exclusion policy lives**, and the dispatch loop and the tests both go
+/// through it. They used to disagree: the loop applied the policy inline while the tests pushed
+/// `LogEntry::Command` by hand, so the tests exercised the replay mechanism while the wiring that
+/// feeds it in a running server was covered by nothing — delete the loop's push and every test still
+/// passed. That is the same shape as an oracle that issues no commands, one layer out.
+///
+/// `Rollback` is excluded because logging it would make a replay re-enter the rollback it is
+/// serving. A config reload is excluded because it is not replayable at all — a `SimState` carries
+/// no config by design, so replaying across one would run turns under whatever tuning is live rather
+/// than that tick's; it re-bases the origin instead.
+fn log_dispatched_command(log: &mut CommandLog, command: &Command) {
+    let rebases_origin_or_reenters = matches!(
+        command,
+        Command::ReloadConfig { .. } | Command::Rollback { .. }
+    );
+    if !rebases_origin_or_reenters {
+        log.push(LogEntry::Command(command.clone()));
+    }
+}
+
+fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &SnapshotServer) {
+    match command {
+        Command::ExportMap { path } => {
+            write_map_export(app, path);
+        }
+        // Republish the world as a FULL frame. The client asks for this when it cannot apply a
+        // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world
+        // rather than another delta — a delta is what it just failed to use.
+        //
+        // Client-INITIATED, which is what makes this safe against the world-handoff rule: the
+        // server never volunteers a frame to a connecting client (it might belong to a world
+        // that client did not ask for), but answering a request cannot surprise anyone, and the
+        // `worldEpoch` on the frame still lets the client reject a world it did not want.
+        //
+        // It republishes through `publish_full_frame` rather than encoding the ring entry as
+        // stored, because the answer must carry a LIVE sequence number: resync is the recovery
+        // path, so a stale number here reopens the sequence gap the client asked us to close.
+        Command::Resync => {
+            let mut history = app.world.resource_mut::<SnapshotHistory>();
+            match history.latest_entry() {
+                Some(entry) => {
+                    let bytes = history.publish_full_frame(&entry);
+                    flat_server.broadcast(&bytes);
+                    info!(
+                        target: "shadow_scale::server",
+                        tick = entry.tick,
+                        bytes = bytes.len(),
+                        "resync.published"
+                    );
+                }
+                None => {
+                    // No world yet (the server boots idle). Nothing to republish; the client's
+                    // `new_game` retry is what recovers this case.
+                    info!(target: "shadow_scale::server", "resync.no_world");
+                }
+            }
+        }
+        Command::Heat {
+            target_x,
+            target_y,
+            delta,
+        } => {
+            apply_heat(app, UVec2::new(target_x, target_y), delta);
+            info!(
+                target: "shadow_scale::server",
+                target_x,
+                target_y,
+                delta,
+                "command.applied=heat"
+            );
+        }
+        Command::Orders { faction, orders } => {
+            handle_order_submission(app, faction, orders);
+        }
+        Command::AxisBias { axis, value } => {
+            handle_axis_bias(app, axis, value, flat_server);
+        }
+        Command::SupportInfluencer { id, magnitude } => {
+            handle_influencer_command(app, id, magnitude, InfluencerAction::Support, flat_server);
+        }
+        Command::SuppressInfluencer { id, magnitude } => {
+            handle_influencer_command(app, id, magnitude, InfluencerAction::Suppress, flat_server);
+        }
+        Command::SupportInfluencerChannel {
+            id,
+            channel,
+            magnitude,
+        } => {
+            handle_influencer_channel_support(app, id, channel, magnitude, flat_server);
+        }
+        Command::SpawnInfluencer { scope, generation } => {
+            handle_influencer_spawn(app, scope, generation, flat_server);
+        }
+        Command::InjectCorruption {
+            subsystem,
+            intensity,
+            exposure_timer,
+        } => {
+            handle_inject_corruption(app, subsystem, intensity, exposure_timer, flat_server);
+        }
+        Command::UpdateEspionageGenerators { updates } => {
+            handle_update_espionage_generators(app, updates);
+        }
+        Command::QueueEspionageMission { params } => {
+            handle_queue_espionage_mission(app, params);
+        }
+        Command::UpdateEspionageQueueDefaults {
+            scheduled_tick_offset,
+            target_tier,
+        } => {
+            handle_update_queue_defaults(app, scheduled_tick_offset, target_tier);
+        }
+        Command::UpdateCounterIntelPolicy { faction, policy } => {
+            handle_update_counter_intel_policy(app, faction, policy);
+        }
+        Command::AdjustCounterIntelBudget {
+            faction,
+            reserve,
+            delta,
+        } => {
+            handle_adjust_counter_intel_budget(app, faction, reserve, delta);
+        }
+        Command::ReloadConfig { kind, path } => {
+            handle_reload_config(app, kind, path);
+        }
+        Command::SetCrisisAutoSeed { enabled } => {
+            {
+                let mut config_res = app.world.resource_mut::<SimulationConfig>();
+                config_res.crisis_auto_seed = enabled;
+            }
+            info!(
+                target: "shadow_scale::server",
+                enabled,
+                "crisis.autoseed.updated"
+            );
+        }
+        Command::SetFogEnabled { enabled } => {
+            {
+                let mut config_res = app.world.resource_mut::<SimulationConfig>();
+                config_res.fog_enabled = enabled;
+            }
+            info!(
+                target: "shadow_scale::server",
+                enabled,
+                "fog.of_war.updated"
+            );
+        }
+        Command::SpawnCrisis {
+            faction,
+            archetype_id,
+        } => {
+            let archetype = archetype_id.clone();
+            {
+                let mut spawns = app.world.resource_mut::<PendingCrisisSpawns>();
+                spawns.push(faction, archetype);
+            }
+            info!(
+                target: "shadow_scale::server",
+                faction = %faction.0,
+                archetype = %archetype_id,
+                "crisis.spawn.enqueued"
+            );
+        }
+        Command::SetStartProfile { profile_id } => {
+            handle_set_start_profile(app, profile_id);
+        }
+        Command::AssignLabor {
+            faction,
+            band_id,
+            role,
+            workers,
+            target_x,
+            target_y,
+            fauna_id,
+            policy,
+            species,
+        } => {
+            handle_assign_labor(
+                app, faction, band_id, role, workers, target_x, target_y, fauna_id, policy, species,
+            );
+        }
+        Command::MoveBand {
+            faction,
+            band_id,
+            target_x,
+            target_y,
+        } => {
+            handle_move_band(app, faction, band_id, target_x, target_y);
+        }
+        Command::SendExpedition {
+            faction,
+            band_id,
+            party_workers,
+            target_x,
+            target_y,
+        } => {
+            handle_send_expedition(app, faction, band_id, party_workers, target_x, target_y);
+        }
+        Command::RecallExpedition {
+            faction,
+            expedition_band_id,
+        } => {
+            handle_recall_expedition(app, faction, expedition_band_id);
+        }
+        Command::SendHuntExpedition {
+            faction,
+            band_id,
+            party_workers,
+            fauna_id,
+            policy,
+        } => {
+            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, policy);
+        }
+        Command::FoundSettlement {
+            faction,
+            target_x,
+            target_y,
+        } => {
+            handle_found_settlement(app, faction, target_x, target_y);
+        }
+        Command::Tame { faction, herd_id } => {
+            handle_tame(app, faction, herd_id);
+        }
+        Command::AnswerFork {
+            faction,
+            beat_id,
+            choice_id,
+        } => {
+            handle_answer_fork(app, faction, beat_id, choice_id);
+        }
+        Command::Cultivate {
+            faction,
+            target_x,
+            target_y,
+        } => {
+            handle_cultivate(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::Sow {
+            faction,
+            target_x,
+            target_y,
+        } => {
+            handle_sow(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::Corral {
+            faction,
+            target_x,
+            target_y,
+        } => {
+            handle_corral(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::ExtendPen {
+            faction,
+            target_x,
+            target_y,
+        } => {
+            handle_extend_pen(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::CancelOrder {
+            faction,
+            band_id,
+            scope,
+        } => {
+            handle_cancel_order(app, faction, band_id, scope);
+        }
+        // The four non-replayable commands never reach here; the dispatch loop handles them.
+        Command::Turn(_)
+        | Command::ResetMap { .. }
+        | Command::NewGame { .. }
+        | Command::Rollback { .. } => {
+            unreachable!("turn, world-rebuilding and rollback commands are handled in the loop")
+        }
+    }
+}
+
 /// Re-capture a fresh world snapshot (current ECS state, **including** the command-event feed) and
 /// broadcast it — WITHOUT advancing the turn or pushing a rollback ring entry. Runs after every
 /// dispatched command so a world-mutating command (expedition launch, `move_band`, `assign_labor`,
@@ -4993,18 +5143,6 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 /// genuinely non-mutating command is merely slightly wasteful (commands are human-issued, low
 /// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
 fn recapture_and_broadcast(app: &mut bevy::prelude::App) {
-    // **A checkpoint, because a command is not a turn.** Rollback replays turns forward from the
-    // nearest checkpoint, and `run_turn` can only reproduce turns — a command mutates the world
-    // *between* them, so a replay that crossed one would produce a world that never existed. Taking
-    // a checkpoint here means no unreproducible event can ever sit between a checkpoint and a
-    // rollback target, which makes replay-forward exact by construction instead of by assumption.
-    //
-    // On the same uniform seam as the recapture below, and for the same reason its comment gives:
-    // a hand-curated "which commands mutate" list is the fragile version, and commands are
-    // human-paced so checkpointing a non-mutating one is merely slightly wasteful. This also covers
-    // `reload_config`, which is not a turn either — a checkpoint carries no config, so a replay
-    // across a reload would run turns under whatever tuning is live rather than that tick's.
-    record_checkpoint_now(&mut app.world);
     // The recapture rides the same publisher queue as a turn does, so it publishes exactly what a
     // turn publishes — the flat delta, or the flat full frame when this world has one pending.
     // There is no second, serial path: `capture_snapshot` hands the world over and returns, here as
@@ -5601,6 +5739,29 @@ fn pick_best_agent_for_mission(
     best.map(|(handle, _)| handle)
 }
 
+/// Resolve one turn the way the `Turn` command does — auto-submitting for any faction still
+/// awaited, then resolving.
+///
+/// **Both the live path and replay go through here**, because a `LogEntry::Turn` has to reproduce
+/// what the turn actually did. `resolve_ready_turn` *skips* when `TurnQueue` is not ready, so a
+/// replay that omitted the auto-submit would silently resolve fewer turns than the original and
+/// land on the wrong tick.
+fn resolve_turn_with_auto_orders(app: &mut bevy::prelude::App) {
+    {
+        let mut queue = app.world.resource_mut::<TurnQueue>();
+        let awaiting = queue.awaiting();
+        for faction in &awaiting {
+            info!(
+                target: "shadow_scale::server",
+                %faction,
+                "orders.auto_generated=end_turn"
+            );
+        }
+        queue.force_submit_all(|_| FactionOrders::end_turn());
+    }
+    resolve_ready_turn(app);
+}
+
 fn resolve_ready_turn(app: &mut bevy::prelude::App) {
     let turn_start = std::time::Instant::now();
     // Open the turn's profile here rather than from a stage marker: order application and snapshot
@@ -5677,56 +5838,57 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 /// recapturing it, not fetched from a parallel archive. There is one history of worlds, so there is
 /// nothing for a second one to disagree with; `a_rollback_produces_the_world_that_tick_had` asserts
 /// the result end to end.
-fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat: &SnapshotServer) {
-    let nearest = app
-        .world
-        .resource::<CheckpointHistory>()
-        .nearest_at_or_before(tick);
-    let Some((checkpoint_tick, checkpoint)) = nearest else {
+fn handle_rollback(
+    app: &mut bevy::prelude::App,
+    tick: u64,
+    snapshot_server_flat: &SnapshotServer,
+    log: &mut CommandLog,
+) {
+    let Some(prefix) = log.prefix_len_for(tick) else {
         warn!(
             target: "shadow_scale::server",
             tick,
-            "rollback.failed=missing_checkpoint"
+            origin_tick = log.origin_tick,
+            "rollback.failed=tick_out_of_reach"
         );
         return;
     };
 
-    restore_sim_state(&mut app.world, checkpoint.as_ref());
-
-    // **Replay forward to the requested tick.** Checkpoints are sparse
-    // (`SimulationConfig::checkpoint_interval`), so the nearest one is usually *before* the target.
-    // Replaying is exact rather than approximate — `a_restored_world_simulates_forward_identically`
-    // is the proof —
-    // and the turns run with `Replaying` set so they neither publish frames the client already has
-    // nor push entries into the ring this rollback is rewinding.
-    if checkpoint_tick < tick {
-        app.world.resource_mut::<Replaying>().0 = true;
-        for _ in checkpoint_tick..tick {
-            run_turn(app);
+    // Restore the origin, then re-apply the timeline up to `tick`. `Replaying` suppresses both
+    // publication and logging: a rollback is ONE publication, and re-logging what it replays would
+    // make the log grow every time it was read.
+    restore_sim_state(&mut app.world, log.origin.as_ref());
+    // `TurnQueue` is server-side order intake and deliberately not checkpoint state, so restoring
+    // the origin leaves whatever the *discarded* future put in it. The log's `Orders` entries are
+    // what refill it, so it starts empty exactly as it was at the origin — without this a replayed
+    // turn can see orders that had not been submitted yet.
+    let factions = app.world.resource::<FactionRegistry>().factions.clone();
+    app.world.insert_resource(TurnQueue::new(factions));
+    app.world.resource_mut::<Replaying>().0 = true;
+    let entries: Vec<LogEntry> = log.entries[..prefix].to_vec();
+    for entry in entries {
+        match entry {
+            LogEntry::Turn => resolve_turn_with_auto_orders(app),
+            // The log stores the command it was given. Commands address bands by `BandId`, which
+            // a world rebuild does not renumber, so there is nothing to translate on the way out.
+            LogEntry::Command(command) => apply_command(app, command, snapshot_server_flat),
         }
-        app.world.resource_mut::<Replaying>().0 = false;
-        info!(
-            target: "shadow_scale::server",
-            tick,
-            from = checkpoint_tick,
-            replayed = tick - checkpoint_tick,
-            "rollback.replayed_forward"
-        );
     }
-    // Everything after `tick` is a future this rollback just discarded; leaving those checkpoints
-    // in the ring would let a later rollback jump *forward* into a world that no longer happened.
-    app.world
-        .resource_mut::<CheckpointHistory>()
-        .truncate_after(tick);
+    app.world.resource_mut::<Replaying>().0 = false;
 
-    // **The client's frame is DERIVED from the restored world, not fetched from a parallel
-    // archive.** Recapturing here is what let `SnapshotHistory`'s ring collapse to the latest
-    // entry: the stored snapshot at tick T carried no information the checkpoint at T did not,
-    // which `a_rollback_produces_the_world_that_tick_had` asserts directly. Deriving it also
-    // removes the failure mode where the two histories disagree — there is now only one history of
-    // worlds.
+    // The futures after this point did not happen.
+    log.entries.truncate(prefix);
+
+    info!(
+        target: "shadow_scale::server",
+        tick,
+        from = log.origin_tick,
+        replayed = prefix,
+        "rollback.replayed_from_origin"
+    );
+
+    // The client's frame is derived from the world just rebuilt, not fetched from an archive.
     recapture_snapshot_in_place(&mut app.world);
-
     let entry: Option<StoredSnapshot> = app.world.resource::<SnapshotHistory>().latest_entry();
     let Some(entry) = entry else {
         warn!(
@@ -5736,9 +5898,7 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
         );
         return;
     };
-    // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand (under
-    // delta streaming a ring entry almost never carries one) and stamped with a FRESH publication
-    // sequence number, so the client's applied seq matches what the next delta names as its base.
+
     let flat_frame = {
         let mut history = app.world.resource_mut::<SnapshotHistory>();
         history.reset_to_entry(&entry);
@@ -6160,33 +6320,24 @@ mod tests {
         snapshot
     }
 
-    /// **A rollback across a world-mutating command reproduces the world that tick had.**
+    /// **A rollback reaches an early tick however many commands have happened since.**
     ///
-    /// This is the case sparse checkpointing broke and no oracle could see. Every oracle in
-    /// `replay_determinism.rs` drives the world with `app.update()` and issues **zero commands** —
-    /// precisely the case where replay-forward is trivially correct, because every step between a
-    /// checkpoint and the target is a turn. A command mutates the world *between* turns, and
-    /// `run_turn` cannot reproduce it: with checkpoints at 16 and 32, a command at tick 20 and a
-    /// rollback to 25 would restore 16, replay forward without the command, and hand back a world
-    /// that never existed.
+    /// This guards a specific past failure, and it is written against the *reach* rather than the
+    /// mechanism on purpose. The checkpoint design bounded the rollback ring at
+    /// `history_turns / interval` = 16 slots, then added a second producer — one checkpoint per
+    /// command — into those same 16. An active player issuing commands across 16 ticks evicted the
+    /// entire history, and a 256-turn rollback window silently became "the last few things you
+    /// touched". No test caught it because the tests issued no commands.
     ///
-    /// It passes because a command takes a checkpoint of its own, so no unreproducible event can
-    /// sit between a checkpoint and a rollback target. It uses the real handler rather than a hand
-    /// mutation, because the seam being tested is the dispatch path, not the mutation.
+    /// A test written against the log's internals would pass again the moment someone reintroduced
+    /// a bound. This one asserts what was actually lost: that the early tick is still reachable, and
+    /// that rolling back to it reproduces it.
     #[test]
-    fn a_rollback_across_a_command_reproduces_the_world_that_tick_had() {
-        use core_sim::sim_state::CheckpointHistory;
+    fn a_rollback_still_reaches_an_early_tick_after_many_commands() {
+        const COMMANDS: usize = 40;
 
-        const INTERVAL: u64 = 8;
         let mut app = build_world_app();
-        app.world
-            .resource_mut::<SimulationConfig>()
-            .checkpoint_interval = INTERVAL;
-
-        // A band worldgen actually spawned, not a fixture: `spawn_working_band` gives its cohort a
-        // `home` that is a bare entity rather than a tile, and a checkpoint keys `home` by tile
-        // position — so that fixture's home moves across a restore and would fail this test for a
-        // reason that has nothing to do with commands.
+        let mut log = CommandLog::new(&app);
         let band = {
             let mut query = app
                 .world
@@ -6196,61 +6347,114 @@ mod tests {
                 .next()
                 .expect("worldgen spawned a resident band")
         };
-        for _ in 0..INTERVAL {
-            run_turn(&mut app);
-        }
 
-        // A real command, landing between turns and between checkpoints.
-        handle_assign_labor(
-            &mut app,
-            FactionId(0),
-            Some(band.to_bits()),
-            "scout".to_string(),
-            3,
-            None,
-            None,
-            None,
-            None,
-            None,
-        );
-        recapture_and_broadcast(&mut app);
-
-        // Advance to a tick that is NOT a checkpoint tick, and remember the world there.
-        run_turn(&mut app);
+        // An early tick, remembered.
+        resolve_turn_with_auto_orders(&mut app);
+        log.push(LogEntry::Turn);
         recapture_snapshot_in_place(&mut app.world);
-        let target_tick = app.world.resource::<SimulationTick>().0;
-        assert!(
-            !target_tick.is_multiple_of(INTERVAL),
-            "the target must not be a checkpoint tick of its own, or the replay path is untested"
-        );
+        let early_tick = app.world.resource::<SimulationTick>().0;
         let expected = normalize_for_compare(&app);
 
-        for _ in 0..INTERVAL {
-            run_turn(&mut app);
+        // A long, command-heavy timeline — far more commands than the old ring had slots.
+        for index in 0..COMMANDS {
+            let command = Command::AssignLabor {
+                faction: FactionId(0),
+                band_id: Some(band.to_bits()),
+                role: "scout".to_string(),
+                workers: (index % 4) as u32 + 1,
+                target_x: None,
+                target_y: None,
+                fauna_id: None,
+                policy: None,
+                species: None,
+            };
+            log_dispatched_command(&mut log, &command);
+            apply_command(&mut app, command, &loopback_snapshot_server());
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
         }
 
-        // Roll back the way the server does.
-        let (checkpoint_tick, state) = app
-            .world
-            .resource::<CheckpointHistory>()
-            .nearest_at_or_before(target_tick)
-            .expect("a checkpoint at or before the target");
-        restore_sim_state(&mut app.world, state.as_ref());
-        if checkpoint_tick < target_tick {
-            app.world.resource_mut::<Replaying>().0 = true;
-            for _ in checkpoint_tick..target_tick {
-                run_turn(&mut app);
-            }
-            app.world.resource_mut::<Replaying>().0 = false;
+        handle_rollback(&mut app, early_tick, &loopback_snapshot_server(), &mut log);
+
+        assert_eq!(
+            app.world.resource::<SimulationTick>().0,
+            early_tick,
+            "the early tick was no longer reachable after {COMMANDS} commands — the rollback window \
+             collapsed, which is the eviction defect this test exists for"
+        );
+        assert_eq!(
+            sim_runtime::hash_snapshot(&expected),
+            sim_runtime::hash_snapshot(&normalize_for_compare(&app)),
+            "the early tick was reachable but did not reproduce"
+        );
+    }
+
+    /// **A rollback across a world-mutating command reproduces the world that tick had.**
+    ///
+    /// This is *the* test of the rollback design, and the one whose absence let the previous one
+    /// ship broken. Every oracle in `replay_determinism.rs` drives the world with `app.update()` and
+    /// issues **zero commands** — precisely the case where replay is trivially correct, because
+    /// every step between the origin and the target is a turn. A command mutates the world *between*
+    /// turns, and `run_turn` cannot reproduce it.
+    ///
+    /// It passes because the log records the command as an entry of its own and replays it in order.
+    /// It uses the real handler through the real dispatch, because the seam being tested is the
+    /// logging seam, not the mutation.
+    #[test]
+    fn a_rollback_across_a_command_reproduces_the_world_that_tick_had() {
+        let mut app = build_world_app();
+        let mut log = CommandLog::new(&app);
+
+        let band = {
+            let mut query = app
+                .world
+                .query_filtered::<Entity, (With<PopulationCohort>, With<ResidentBand>)>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("worldgen spawned a resident band")
+        };
+
+        for _ in 0..4 {
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
         }
+
+        // A real command, landing between turns.
+        let command = Command::AssignLabor {
+            faction: FactionId(0),
+            band_id: Some(band.to_bits()),
+            role: "scout".to_string(),
+            workers: 3,
+            target_x: None,
+            target_y: None,
+            fauna_id: None,
+            policy: None,
+            species: None,
+        };
+        log_dispatched_command(&mut log, &command);
+        apply_command(&mut app, command, &loopback_snapshot_server());
+
+        resolve_turn_with_auto_orders(&mut app);
+        log.push(LogEntry::Turn);
+
         recapture_snapshot_in_place(&mut app.world);
+        let target_tick = app.world.resource::<SimulationTick>().0;
+        let expected = normalize_for_compare(&app);
+
+        for _ in 0..4 {
+            resolve_turn_with_auto_orders(&mut app);
+            log.push(LogEntry::Turn);
+        }
+
+        handle_rollback(&mut app, target_tick, &loopback_snapshot_server(), &mut log);
         let actual = normalize_for_compare(&app);
 
         assert_eq!(
             sim_runtime::hash_snapshot(&expected),
             sim_runtime::hash_snapshot(&actual),
             "the rolled-back world differs from the world tick {target_tick} originally had — the \
-             command issued before it was not reproduced by replay"
+             command issued before it was not reproduced by the replayed log"
         );
     }
 

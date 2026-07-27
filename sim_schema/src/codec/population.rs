@@ -278,6 +278,7 @@ fn create_populations<'a>(
             fb::PopulationCohortState::create(
                 builder,
                 &fb::PopulationCohortStateArgs {
+                    bandId: cohort.band_id,
                     entity: cohort.entity,
                     home: cohort.home,
                     currentX: cohort.current_x,

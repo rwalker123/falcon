@@ -149,24 +149,6 @@ pub struct SimulationConfig {
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
     pub log_bind: SocketAddr,
-    /// How many **turns** back a rollback can reach.
-    ///
-    /// Named for the window, not the ring: the number of *entries* is this divided by
-    /// [`Self::checkpoint_interval`], so raising the interval buys memory without shortening how
-    /// far back a player can roll. It was `snapshot_history_limit` while it bounded the publisher's
-    /// ring of `WorldSnapshot`s; that ring is one entry deep now and this governs
-    /// [`crate::sim_state::CheckpointHistory`] alone.
-    pub checkpoint_history_turns: usize,
-    /// Take a checkpoint every Nth turn. **This is the memory/latency dial for rollback.**
-    ///
-    /// A checkpoint is a full clone of the world — about 6 MB on an 80×52 map — so the ring costs
-    /// `checkpoint_history_turns / checkpoint_interval` of them. Raising the interval divides the
-    /// memory and multiplies the work a rollback does: restoring to a tick with no checkpoint means
-    /// restoring the nearest one at or before it and **replaying forward**, so the worst case is
-    /// `interval - 1` turns of simulation before the client sees its frame.
-    ///
-    /// `1` restores every tick directly and never replays.
-    pub checkpoint_interval: u64,
     pub crisis_auto_seed: bool,
     /// Fog of war master switch — the SINGLE authority for it, and deliberately server-owned. It
     /// gates both the herd display list (`herd_snapshot_entries`) and the visibility raster, so the
@@ -328,9 +310,6 @@ struct SimulationConfigData {
     snapshot_flat_bind: String,
     command_bind: String,
     log_bind: String,
-    checkpoint_history_turns: usize,
-    #[serde(default = "default_checkpoint_interval")]
-    checkpoint_interval: u64,
     #[serde(default)]
     crisis_auto_seed: bool,
     /// Defaulted through a function rather than `#[serde(default)]`, which would yield `false` for a
@@ -538,26 +517,10 @@ impl SimulationConfigData {
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,
             command_bind: parse_socket(self.command_bind, "command_bind")?,
             log_bind: parse_socket(self.log_bind, "log_bind")?,
-            checkpoint_history_turns: self.checkpoint_history_turns,
-            checkpoint_interval: self.checkpoint_interval.max(1),
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,
         })
     }
-}
-
-/// Every 16th turn: the knee of the measured curve.
-///
-/// On the standard recipe (80×52, release, 300 turns so the ring is full) the checkpoint ring
-/// measures 1.79 GB at interval 1, 0.51 GB at 4, 0.28 GB at 8, **0.18 GB at 16** and 0.11 GB at 32.
-/// A replayed turn costs 0.86 ms against a normal turn's 4.61 ms — the two systems replay gates off
-/// are the expensive ones — so the worst-case rollback replays `interval - 1` turns for **12.9 ms**
-/// at 16.
-///
-/// Past 16 the curve flattens: doubling to 32 saves a further 0.07 GB and costs another 13.8 ms.
-/// 16 removes 90% of the memory while keeping a rollback cheaper than the turns it undoes.
-fn default_checkpoint_interval() -> u64 {
-    16
 }
 
 fn default_fog_enabled() -> bool {
@@ -1306,26 +1269,6 @@ impl CommandEventLog {
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
-
-    /// The shipped `checkpoint_interval` parses, and is the value its tradeoff was measured for.
-    ///
-    /// Cheap on purpose. The oracles exercise the replay-forward path at a short interval because a
-    /// full run at 16 covers the same code more slowly; what they cannot notice is the *default*
-    /// silently moving, which changes the memory/latency point the rule file quotes without
-    /// changing any behaviour a test asserts.
-    #[test]
-    fn the_shipped_checkpoint_interval_is_the_one_that_was_measured() {
-        let config = SimulationConfig::builtin();
-        assert_eq!(
-            config.checkpoint_interval, 16,
-            "the default checkpoint interval moved; re-measure the memory/latency table in \
-             `.claude/rules/core_sim/checkpoints.md` before changing this"
-        );
-        assert!(
-            config.checkpoint_interval >= 1,
-            "an interval below 1 would checkpoint never"
-        );
-    }
 
     #[test]
     fn apply_port_base_overrides_ports_and_preserves_hosts() {

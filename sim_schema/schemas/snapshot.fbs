@@ -735,6 +735,15 @@ table PopulationCohortState {
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
   raidForfeit:float = 0;
+
+  // The band's durable identity, and the handle a client sends back in a command.
+  //
+  // APPENDED AT THE END OF THE TABLE — FlatBuffers slots are positional and this repo's merges are
+  // append-only (root CLAUDE.md), so a new field goes here and nowhere else.
+  //
+  // `entity` above is an ECS handle: it changes every time a rollback rebuilds the world, so it
+  // names a band only until the next one. `bandId` does not. Commands address bands by this.
+  bandId:ulong;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

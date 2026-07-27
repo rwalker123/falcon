@@ -24,23 +24,16 @@ lasted: the omission was invisible to every test that existed.
 
 **There is one history of worlds, and it holds `SimState`.**
 
-| ring | depth | holds | used for |
-|---|---|---|---|
-| `CheckpointHistory` | `checkpoint_history_turns / checkpoint_interval` | `SimState` | rebuilding the world |
-| `SnapshotHistory` | `PUBLICATION_RING_DEPTH` = **1** | the latest `WorldSnapshot` | export, resync, the live delta baseline |
+| holds | depth | used for |
+|---|---|---|
+| `CommandLog` | one origin `SimState` + every event since | rebuilding the world |
+| `SnapshotHistory` | `PUBLICATION_RING_DEPTH` = **1** | export, resync, the live delta baseline |
 
 It briefly was two rings of whole worlds — a checkpoint ring beside a 256-deep snapshot ring — and
 that is worth knowing because it is what got the snapshot ring measured for the first time: **1.68 GB
 resident at 80×52**, a cost it had always carried. The client view does not need archiving, because
-it is *derivable*: `handle_rollback` restores the checkpoint and **recaptures** the frame from the
-restored world, which `a_rollback_produces_the_world_that_tick_had` asserts directly. Deriving it
-also removes the failure mode where two histories disagree about the same tick — there is no second
-history to disagree.
-
-`CheckpointHistory` deliberately lives on the **turn thread**, not in the publisher's ring. A
-`SimState` is a full world clone and is never published; putting it in a `StoredSnapshot` would send
-the largest object in the system across the publisher channel every turn to a consumer that never
-reads it, re-adding the per-turn publisher cost that moving publication off the turn thread removed.
+it is *derivable*: `handle_rollback` rebuilds the world and **recaptures** the frame from it, so
+there is no second history to disagree with the first.
 
 ## The three construction rules
 
@@ -101,7 +94,7 @@ was already broken.
 ## A ring of 256 full worlds was the shape of the thing all along
 
 `SnapshotHistory` kept 256 full `WorldSnapshot`s from long before checkpoints existed. Nobody had
-put a number on it. When `CheckpointHistory` added a second ring of the same depth, the measurement
+put a number on it. When a checkpoint ring of the same depth was added beside it, the measurement
 that followed found **both**: 1.68 GB for the snapshot ring, 1.50 GB for the checkpoint ring, on an
 80×52 map at the standard recipe. The arc did not create the memory problem — it added a second one
 the same size and caused the first to be measured.
@@ -113,19 +106,20 @@ Measured RSS, release, 300 turns so the rings are full:
 | 40×26 | 0.48 GB | 0.92 GB | 0.46 GB |
 | 80×52 | 1.68 GB | 3.18 GB | **1.68 GB** |
 
-Both rings are **linear in tile count** (3.5× for 4× the tiles), so the exponent, not the current
-figure, is what governs. Measured on the shipped configuration: **0.18 GB at 80×52 and 0.61 GB at
-160×104** — 3.4× for 4× the tiles, the same slope.
+Both rings were **linear in tile count** (3.5× for 4× the tiles), which is the part that governed:
+the figure at any one map size mattered less than the fact that it multiplied with the map. The
+pre-fix figure at 160×104 is absent because it could not be run at all — two 256-deep rings of whole
+worlds at that size exceeded available memory, which says more about the old shape than a ratio
+would.
 
-The pre-fix figure at 160×104 is not in this table because it could not be run: two 256-deep rings
-of whole worlds at that size exceeded available memory, which is a more useful statement about the
-old shape than any ratio would have been.
+**Every number above describes designs that no longer exist**, and they are kept only for the lesson
+below. Sparse checkpointing brought the ring to 0.18 GB before the ring itself was deleted; neither
+figure describes what ships.
 
 The snapshot ring collapsed to a single entry because rollback was its only historical reader, and
-that read was redundant — recapturing the client frame from the restored world yields the same
-bytes, which `a_rollback_produces_the_world_that_tick_had` asserts. `checkpoint_history_turns` now
-governs `CheckpointHistory` alone: **one depth knob, one history of worlds.** Net resident memory is
-within 0.4% of where the arc started, with a checkpoint ring where a snapshot ring used to be.
+that read was redundant — recapturing the client frame from the restored world yields the same bytes.
+Both rings of whole worlds are now gone entirely: the log replaced the checkpoint ring, so what
+remains resident is one origin `SimState` plus a few hundred bytes per command.
 
 **The transferable part is not either figure.** It is that a per-turn ring of whole worlds is an
 easy thing to write and an invisible thing to pay for, and it went unmeasured for as long as it did
@@ -133,71 +127,95 @@ because nothing in the system reported a total. Estimating it structurally is no
 `size_of` does not see the `Vec` and `HashMap` heap that is most of an entry, and a structural
 estimate of this ring was wrong by 5× in the direction that mattered.
 
-## Checkpoints are sparse, and a rollback replays the gap
+## Rollback replays a command log; `SimState` is the save format
 
-`SimulationConfig::checkpoint_interval` sets how often `record_checkpoint` runs, and
-`checkpoint_history_turns` sets how far back a rollback can reach — a window in **turns**, so the
-number of entries is the one divided by the other and raising the interval buys memory without
-shortening the reach. A rollback restores the newest checkpoint **at or before** the target tick and
-replays forward to it, which is exact rather than approximate — that is what
-`a_restored_world_simulates_forward_identically` proves of a restored world, and what
-`rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick` proves end to end through the rollback
-path itself.
+**A checkpoint is a cache. The thing it caches is the log.** The world at tick N is a pure function
+of `(origin) + (the ordered commands and turn boundaries since)`, so the log is the authority and a
+materialized world is only ever an optimisation over it. `CommandLog` (`bin/server.rs`) holds an
+origin `SimState`, the tick it was captured at, and a `Vec<LogEntry>` of `Turn` and `Command`.
 
-Measured on the standard recipe, 300 turns so the ring is full:
+Building the cache without its authority produced three defects in a row, and they are worth keeping
+because they all have the same root: a replay that skipped commands entirely; a per-command
+checkpoint bolted on to paper over it; and a ring of `history_turns / interval` = 16 slots with two
+producers, where a player issuing commands across 16 ticks silently cut a 256-turn window down to
+"the last few things you touched". No test caught the last one because the tests issued no commands.
 
-| interval | ring RSS | entries | worst-case replay |
-|---|---|---|---|
-| 1 | 1.79 GB | 256 | 0 turns |
-| 4 | 0.51 GB | 64 | 3 turns — 2.6 ms |
-| 8 | 0.28 GB | 32 | 7 turns — 6.0 ms |
-| **16 (default)** | **0.18 GB** | **16** | **15 turns — 12.9 ms** |
-| 32 | 0.11 GB | 8 | 31 turns — 26.7 ms |
+`SimState` keeps its job unchanged — it is the **save-game format**, materialized when the origin is
+captured or re-based, never on a cadence.
 
-A replayed turn costs **0.86 ms** against a normal turn's **4.61 ms**, because the two systems replay
-gates off — `capture_snapshot` and `record_checkpoint` — are most of a turn's cost. So a rollback is
-cheaper than the turns it undoes at any interval on this table. 16 is the knee: 90% of the memory
-gone, and doubling again buys 0.07 GB for another 13.8 ms.
+**"The world at tick N" means immediately after the Nth turn resolved**, before any command issued
+while sitting at that tick. A command lands *between* turns, so the phrase is otherwise ambiguous and
+the two readings give different worlds.
 
-## Replay may only cross turns. Anything that is not a turn forces a checkpoint
+### Three things re-base the origin instead of being logged
 
-Replay-forward reproduces the original world **only if every step between the checkpoint and the
-target is a turn** — something `run_turn` can re-execute from world state alone. Two things are not
-turns, and both would otherwise be silently skipped:
+`new_game`, `reset_map`, and **any config reload**. Each captures a fresh `SimState` as the new
+origin and clears the log, saying so in the log line, because nothing before that point is reachable
+any more.
 
-- **World-mutating commands** mutate between turns. With checkpoints at 16 and 32, a player
-  assigning labor at tick 20 and rolling back to 25 would restore 16 and replay forward *without the
-  assignment*, producing a world that never existed.
-- **Config reloads** re-read JSON at runtime, and a checkpoint deliberately carries no config, so a
-  replay across one would run turns under whatever tuning is live rather than that tick's.
+Config reload is the deliberate answer to a hole this arc flagged early: a `SimState` carries no
+config **by design**, so replaying across a reload would run turns under whatever tuning is live
+rather than the tuning of that tick. Re-basing is consistent with that decision and needs no config
+serialization at all.
 
-Both are closed the same way: `recapture_and_broadcast` — the one seam **every** dispatched command
-already passes through — takes a checkpoint before it recaptures. `CheckpointHistory::record`
-replaces any checkpoint already at that tick, because the post-command state is what "the world at
-tick T" means once a command has landed there. So no unreproducible event can sit between a
-checkpoint and a rollback target, and replay-forward is exact **by construction rather than by
-assumption**.
+## No `Entity` crosses a persistence boundary — and the log is the second one
 
-It is cheap for the reason sparse checkpointing was worth doing at all: commands are **human-paced**,
-so these scale with player actions rather than with turns.
+`SimState` has obeyed this since it was built. The **wire** did not, and the log inherited it: a
+command carrying `band_entity_bits` names an entity that restoring the origin has renumbered, so a
+replayed command resolved to nothing and did nothing — silently.
 
-**Checkpointing is on the uniform seam, not a curated list of mutating commands.** That is the same
-judgment `recapture_and_broadcast` already made for the same reason — a hand-maintained "which
-commands mutate" list is a thing to forget, and re-checkpointing a genuinely non-mutating command is
-merely slightly wasteful.
+An `Entity` is an ECS allocation detail, stable only within one process run of one world. It survived
+on the wire this long because the client re-reads `entity` from every frame, so its handles refresh
+before anything observes the staleness. A log has no such healing: the handles inside it are frozen
+at capture time and the world underneath them is not.
 
-**This defect shipped, briefly, and the reason no oracle caught it is worth keeping.** All five
-oracles drive the world with `app.update()` and issue **zero commands** — exactly the case where
-replay-forward is trivially correct. A test that never exercises the thing that breaks an invariant
-cannot report the invariant broken, however thoroughly it exercises everything else.
-`a_rollback_across_a_command_reproduces_the_world_that_tick_had` (in `bin/server.rs`, where the
-command handlers live) is the one that would have.
+**So the commands themselves carry stable ids, and the log stores them unchanged.** Every
+entity-bearing field, audited rather than fixed one at a time:
 
-**What replay must not do**, and what `Replaying` exists to prevent: republish frames the client has
-already applied, and push entries into the ring the rollback is rewinding — a rollback that grew its
-own history could not terminate. `collect_metrics` and `advance_tick` share that stage and are
-deliberately **not** gated: the tick has to advance, and `SimulationMetrics` is checkpoint state the
-next turn reads.
+| command | was | now |
+|---|---|---|
+| `AssignLabor`, `MoveBand`, `SendExpedition`, `SendHuntExpedition`, `CancelOrder` | `band_entity_bits` | `band_id` (`BandId`) |
+| `RecallExpedition` | `expedition_entity_bits` | `expedition_band_id` |
+| `Heat` | `entity_bits` | `target_x` / `target_y`, via `TileRegistry` |
+
+Nothing had to be invented — every handle already had a stable id, which is what made this cheap.
+`PopulationCohortState.bandId` carries the id to the client so it has something to send back.
+
+The first attempt normalised **at the log boundary** instead: bits → `BandId` when logging, back
+when replaying. That works and is self-contained, but it is machinery whose only purpose is to
+compensate for the wire leaking a handle — fixing the leak deletes all of it, and with no deployed
+clients the protocol change is free now and dearer later. **Prefer fixing the boundary that leaks
+over translating at the boundary that suffers.**
+
+Where a `BandId` cannot be resolved it **fails loudly** at dispatch, which covers live commands as
+well as replayed ones. A silently-dropped command is the defect that started this rework and must not
+return as a silently-dropped replay.
+
+## Replay reproduces a turn only if everything the turn reads is either restored or replayed
+
+Two worked examples, both found by the oracle rather than by reading:
+
+- **A turn is not a pure function of `SimState`.** `resolve_ready_turn` reads `TurnQueue`, which is
+  server-side order intake and deliberately not checkpoint state — and it **skips entirely** when the
+  queue is not ready. A naive `LogEntry::Turn` therefore replayed fewer turns than happened and
+  landed on the wrong tick. One `resolve_turn_with_auto_orders` serves the live path and replay, so a
+  `Turn` entry reproduces what a turn actually did.
+- **The order queue is reset with the origin.** It is refilled by the log's own `Orders` entries, so
+  it must start empty; otherwise a replayed turn sees orders that had not been submitted yet.
+
+`Replaying` is what stops replay from publishing frames the client already applied, or appending to
+the log it is replaying. It is checked inside `recapture_snapshot_in_place` rather than at call
+sites, because `run_system_once` bypasses the schedule's run conditions.
+
+## Latency, and when checkpoints come back
+
+Replay cost grows with distance from the origin: a replayed turn is ~0.86 ms against a normal turn's
+~4.61 ms, so a thousand turns is under a second, and a rollback is a human-paced action. A command is
+a few hundred bytes against a full world clone, so log size is negligible beside what the ring cost.
+
+If that latency ever matters, checkpoints return **as a cache over an authoritative log** — which is
+safe in a way the ring-only design was not, because the log remains the thing that says what
+happened and a checkpoint is only ever an answer it agrees with.
 
 ## Reading this arc's numbers
 

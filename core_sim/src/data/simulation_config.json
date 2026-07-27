@@ -70,8 +70,6 @@
   "snapshot_flat_bind": "127.0.0.1:41002",
   "command_bind": "127.0.0.1:41001",
   "log_bind": "127.0.0.1:41003",
-  "checkpoint_history_turns": 256,
-  "checkpoint_interval": 16,
   "crisis_auto_seed": false,
   "fog_enabled": true
 }

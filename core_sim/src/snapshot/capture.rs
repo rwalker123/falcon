@@ -1648,6 +1648,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static LaborAllocation>,
         Option<&'static BandTravel>,
         Option<&'static Expedition>,
+        Option<&'static BandId>,
     ),
 >;
 
@@ -1994,7 +1995,7 @@ pub fn capture_snapshot(
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -2003,66 +2004,69 @@ pub fn capture_snapshot(
         .collect();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, allocation, travel, expedition)| {
-            let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
-            let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
-            // A band is "traveling" while a `move_band` order is still en route to its target.
-            let is_traveling = travel
-                .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
-                .unwrap_or(false);
-            // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
-            let travel_target = travel.map(|t| t.target);
-            // Local scout: scouts are now forward observers posting vantage points out from the
-            // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
-            // with no scouts), using the same helper the visibility pass applies, so the field
-            // stays coherent for the client.
-            let scout_workers = allocation
-                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                .unwrap_or(0);
-            let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
-            // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
-            // normal band). Reuses the raid forward-sim seeded with the party's current haul.
-            let expedition_delivery = expedition.and_then(|exp| {
-                let party_pos = current_pos?;
-                let home_pos = cohort_positions.get(&exp.home_band).copied();
-                crate::systems::expedition_delivery(
-                    exp,
-                    cohort.stores.get(FOOD).to_f32(),
-                    available_workers(cohort.working),
-                    party_pos,
-                    home_pos,
-                    &herd_registry,
-                    &fauna_config,
-                    &labor_config,
-                    &expedition_cfg,
-                    config.grid_size.x,
-                    config.map_topology.wrap_horizontal,
-                )
-            });
-            population_state(PopulationStateInputs {
-                entity,
-                cohort,
-                allocation,
-                expedition,
-                home_position: home_pos,
-                current_position: current_pos,
-                is_traveling,
-                stockpile_radius,
-                start_position,
-                inventory: &faction_inventory,
-                demographics: &demographics_config,
-                wellbeing: &wellbeing_config,
-                supply_membership: &supply_membership,
-                work_range: band_work_range,
-                raid_radius: fauna_config.predators.raid_radius,
-                scout_vantage_distance,
-                expedition_levers: &expedition_levers,
-                settlement_stage_config: &settlement_stage_config,
-                travel_target,
-                hunt_reach,
-                expedition_delivery,
-            })
-        })
+        .map(
+            |(entity, cohort, allocation, travel, expedition, band_id)| {
+                let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
+                let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+                // A band is "traveling" while a `move_band` order is still en route to its target.
+                let is_traveling = travel
+                    .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
+                    .unwrap_or(false);
+                // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
+                let travel_target = travel.map(|t| t.target);
+                // Local scout: scouts are now forward observers posting vantage points out from the
+                // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
+                // with no scouts), using the same helper the visibility pass applies, so the field
+                // stays coherent for the client.
+                let scout_workers = allocation
+                    .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                    .unwrap_or(0);
+                let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+                // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
+                // normal band). Reuses the raid forward-sim seeded with the party's current haul.
+                let expedition_delivery = expedition.and_then(|exp| {
+                    let party_pos = current_pos?;
+                    let home_pos = cohort_positions.get(&exp.home_band).copied();
+                    crate::systems::expedition_delivery(
+                        exp,
+                        cohort.stores.get(FOOD).to_f32(),
+                        available_workers(cohort.working),
+                        party_pos,
+                        home_pos,
+                        &herd_registry,
+                        &fauna_config,
+                        &labor_config,
+                        &expedition_cfg,
+                        config.grid_size.x,
+                        config.map_topology.wrap_horizontal,
+                    )
+                });
+                population_state(PopulationStateInputs {
+                    entity,
+                    band_id,
+                    cohort,
+                    allocation,
+                    expedition,
+                    home_position: home_pos,
+                    current_position: current_pos,
+                    is_traveling,
+                    stockpile_radius,
+                    start_position,
+                    inventory: &faction_inventory,
+                    demographics: &demographics_config,
+                    wellbeing: &wellbeing_config,
+                    supply_membership: &supply_membership,
+                    work_range: band_work_range,
+                    raid_radius: fauna_config.predators.raid_radius,
+                    scout_vantage_distance,
+                    expedition_levers: &expedition_levers,
+                    settlement_stage_config: &settlement_stage_config,
+                    travel_target,
+                    hunt_reach,
+                    expedition_delivery,
+                })
+            },
+        )
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
 

@@ -167,6 +167,9 @@ pub(crate) struct ExpeditionLevers {
 
 pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) entity: Entity,
+    /// The band's durable id, published so a client can address it in a command without sending
+    /// back an ECS handle that the next rollback renumbers.
+    pub(crate) band_id: Option<&'a BandId>,
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
@@ -194,6 +197,7 @@ pub(crate) struct PopulationStateInputs<'a> {
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
     let PopulationStateInputs {
         entity,
+        band_id,
         cohort,
         allocation,
         expedition,
@@ -349,6 +353,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     };
     PopulationCohortState {
         entity: entity.to_bits(),
+        band_id: band_id.map(|id| id.0).unwrap_or_default(),
         home: cohort.home.to_bits(),
         current_x: current_position.map(|p| p.x).unwrap_or(0),
         current_y: current_position.map(|p| p.y).unwrap_or(0),
@@ -628,6 +633,8 @@ mod tests {
     ) -> PopulationCohortState {
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),
+            // These fixtures assert on the derived readouts, not on band identity.
+            band_id: None,
             cohort,
             allocation,
             expedition,

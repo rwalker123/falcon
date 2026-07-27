@@ -325,7 +325,7 @@ verbs — a free-form `species` string means new species need no schema change).
 > heading suppression) and `integration_tests/tests/fauna_fog.rs`, which asserts on the **encoded
 > FlatBuffers bytes** the client actually receives, decoded through the client's own accessor chain.
 
-**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_entity_bits]`
+**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_id]`
 command (`handle_hunt_fauna`, `server.rs`; full plumbing in `command.proto` /
 `commands.rs` / `command_text.rs`) attaches a `FaunaPursuit` component (`components.rs`)
 to a band (auto-picked when no band id is given). Each turn `advance_fauna_pursuits`
@@ -338,7 +338,7 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 `hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
 
 **Follow (persistent, per policy)** — `follow_herd <faction> <herd_id> [policy]
-[band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
+[band_id]` attaches a `FaunaPursuit { mode: Follow { policy } }`
 (`FollowPolicy` ∈ Sustain | Surplus | Deplete | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component. The policy is a
@@ -608,7 +608,7 @@ in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_d
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
 staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
-worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_entity_bits]
+worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_id]
 [all|work|roles]`** clears the assignments its **scope** names — `all` (the default when the token is
 omitted, and the historical behaviour) clears every assignment **and** stops movement (fully idle),
 `work` unassigns only the worked Forage/Hunt sources, `roles` clears only the Scout/Warrior standing

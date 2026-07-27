@@ -35,7 +35,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "heat",
         aliases: &[],
         summary: "Adjust an entity's heat budget by the provided delta (default 100000).",
-        usage: "heat <entity_bits> [delta]",
+        usage: "heat <x> <y> [delta]",
     },
     CommandVerbHelp {
         verb: "order",
@@ -137,31 +137,31 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "scout",
         aliases: &[],
         summary: "Queue a scouting order targeting the specified tile.",
-        usage: "scout <faction_id> <x> <y> [band_entity_bits]",
+        usage: "scout <faction_id> <x> <y> [band_id]",
     },
     CommandVerbHelp {
         verb: "follow_herd",
         aliases: &[],
         summary: "Order a band to hunt a herd continuously, auto-hunting per policy each turn.",
-        usage: "follow_herd <faction_id> <herd_id> [policy] [band_entity_bits]",
+        usage: "follow_herd <faction_id> <herd_id> [policy] [band_id]",
     },
     CommandVerbHelp {
         verb: "forage",
         aliases: &[],
         summary: "Harvest food from a tile using the specified module key.",
-        usage: "forage <faction_id> <x> <y> <module_key> [band_entity_bits]",
+        usage: "forage <faction_id> <x> <y> <module_key> [band_id]",
     },
     CommandVerbHelp {
         verb: "hunt_game",
         aliases: &["hunt"],
         summary: "Hunt localized wild game at a tile.",
-        usage: "hunt_game <faction_id> <x> <y> [band_entity_bits]",
+        usage: "hunt_game <faction_id> <x> <y> [band_id]",
     },
     CommandVerbHelp {
         verb: "hunt_fauna",
         aliases: &[],
         summary: "Order a band to pursue and hunt a fauna group (herd) by id.",
-        usage: "hunt_fauna <faction_id> <herd_id> [band_entity_bits]",
+        usage: "hunt_fauna <faction_id> <herd_id> [band_id]",
     },
     CommandVerbHelp {
         verb: "tame",
@@ -203,7 +203,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "cancel_order",
         aliases: &[],
         summary: "Clear a band's labor assignments: scope 'work' unassigns worked sources (forage/hunt), 'roles' clears standing roles (scout/warrior), 'all' clears both and stops movement. Defaults to 'all'; the narrow scopes leave travel running. The two trailing tokens are optional and may be given in either order, but each may appear at most once — a repeated or extra token is rejected rather than guessed at.",
-        usage: "cancel_order <faction_id> [band_entity_bits] [all|work|roles]",
+        usage: "cancel_order <faction_id> [band_id] [all|work|roles]",
     },
     CommandVerbHelp {
         verb: "assign_labor",
@@ -221,19 +221,19 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "send_expedition",
         aliases: &[],
         summary: "Outfit a detached scouting party (workers + provisions) and send it to a target.",
-        usage: "send_expedition <faction_id> <band> <party_workers> <x> <y>",
+        usage: "send_expedition <faction_id> <band_id> <party_workers> <x> <y>",
     },
     CommandVerbHelp {
         verb: "recall_expedition",
         aliases: &[],
         summary: "Order an in-flight expedition home (folds workers + provisions back on arrival).",
-        usage: "recall_expedition <faction_id> <expedition_entity_bits>",
+        usage: "recall_expedition <faction_id> <expedition_band_id>",
     },
     CommandVerbHelp {
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]",
+        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -347,15 +347,17 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             })
         }
         "heat" => {
-            let entity_str = parts
+            let x_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("entity"))?;
+                .ok_or(CommandParseError::MissingArgument("x"))?;
+            let y_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("y"))?;
             let delta_str = parts.next().unwrap_or("100000");
-            let entity = parse_u64(entity_str, "heat entity")?;
-            let delta = parse_i64(delta_str, "heat delta")?;
             Ok(CommandPayload::Heat {
-                entity_bits: entity,
-                delta,
+                target_x: parse_u32(x_str, "heat x")?,
+                target_y: parse_u32(y_str, "heat y")?,
+                delta: parse_i64(delta_str, "heat delta")?,
             })
         }
         "order" => {
@@ -676,14 +678,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
             let band_bits = match parts.next() {
-                Some(raw) => Some(parse_u64(raw, "band_entity_bits")?),
+                Some(raw) => Some(parse_u64(raw, "band_id")?),
                 None => None,
             };
             Ok(CommandPayload::ScoutArea {
                 faction_id: parse_u32(faction_str, "scout faction")?,
                 target_x: parse_u32(x_str, "scout target_x")?,
                 target_y: parse_u32(y_str, "scout target_y")?,
-                band_entity_bits: band_bits,
+                band_id: band_bits,
             })
         }
         "follow_herd" => {
@@ -693,7 +695,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let herd_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-            // Optional `[policy] [band_entity_bits]`. When both trail, 3rd = policy,
+            // Optional `[policy] [band_id]`. When both trail, 3rd = policy,
             // 4th = band. A lone 3rd token that is purely numeric is taken as the
             // band id (policy omitted) so `follow_herd <f> <herd> <band>` works —
             // mirroring `hunt_fauna`'s numeric band arg; policy words are never numeric.
@@ -702,7 +704,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let (policy, band_bits) = match (third, fourth) {
                 (Some(p), Some(b)) => (
                     Some(p.to_string()),
-                    Some(parse_u64(b, "follow_herd band_entity_bits")?),
+                    Some(parse_u64(b, "follow_herd band_id")?),
                 ),
                 (Some(tok), None) => match tok.parse::<u64>() {
                     Ok(bits) => (None, Some(bits)),
@@ -714,7 +716,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "follow_herd faction")?,
                 herd_id: herd_id.to_string(),
                 policy,
-                band_entity_bits: band_bits,
+                band_id: band_bits,
             })
         }
         "found_settlement" => {
@@ -752,8 +754,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_x: parse_u32(x_str, "forage target_x")?,
                 target_y: parse_u32(y_str, "forage target_y")?,
                 module: module_key.to_ascii_lowercase(),
-                band_entity_bits: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "forage band_entity_bits")?),
+                band_id: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "forage band_id")?),
                     None => None,
                 },
             })
@@ -773,8 +775,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 faction_id: parse_u32(faction_str, "hunt_game faction")?,
                 target_x: parse_u32(x_str, "hunt_game target_x")?,
                 target_y: parse_u32(y_str, "hunt_game target_y")?,
-                band_entity_bits: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "hunt band_entity_bits")?),
+                band_id: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "hunt band_id")?),
                     None => None,
                 },
             })
@@ -790,8 +792,8 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             Ok(CommandPayload::HuntFauna {
                 faction_id: parse_u32(faction_str, "hunt_fauna faction")?,
                 herd_id: herd_id.to_string(),
-                band_entity_bits: match band_bits {
-                    Some(raw) => Some(parse_u64(raw, "hunt_fauna band_entity_bits")?),
+                band_id: match band_bits {
+                    Some(raw) => Some(parse_u64(raw, "hunt_fauna band_id")?),
                     None => None,
                 },
             })
@@ -899,14 +901,14 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             // of `42 43` the player meant would clear the wrong band's assignments. An unrecognised
             // word fails closed for the same reason: silently falling back to `all` would
             // mass-unassign a band whose player asked only for `work`.
-            let mut band_entity_bits = None;
+            let mut band_id = None;
             let mut scope = None;
             for token in parts.by_ref() {
                 if token.chars().all(|c| c.is_ascii_digit()) {
-                    if band_entity_bits.is_some() {
+                    if band_id.is_some() {
                         return Err(CommandParseError::UnexpectedToken(token.to_string()));
                     }
-                    band_entity_bits = Some(parse_u64(token, "cancel_order band_entity_bits")?);
+                    band_id = Some(parse_u64(token, "cancel_order band_id")?);
                 } else {
                     if scope.is_some() {
                         return Err(CommandParseError::UnexpectedToken(token.to_string()));
@@ -919,7 +921,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             }
             Ok(CommandPayload::CancelOrder {
                 faction_id: parse_u32(faction_str, "cancel_order faction")?,
-                band_entity_bits,
+                band_id,
                 scope: scope.unwrap_or(CancelScope::All),
             })
         }
@@ -929,13 +931,13 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
             let role = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("role"))?
                 .to_ascii_lowercase();
             let faction_id = parse_u32(faction_str, "assign_labor faction")?;
-            let band = parse_u64(band_str, "assign_labor band_entity_bits")?;
+            let band = parse_u64(band_str, "assign_labor band_id")?;
             let (workers, target_x, target_y, fauna_id, policy, species) = match role.as_str() {
                 "forage" => {
                     let x = parts
@@ -1004,7 +1006,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             };
             Ok(CommandPayload::AssignLabor {
                 faction_id,
-                band_entity_bits: Some(band),
+                band_id: Some(band),
                 role,
                 workers,
                 target_x,
@@ -1020,7 +1022,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
             let x_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("target_x"))?;
@@ -1029,7 +1031,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
             Ok(CommandPayload::MoveBand {
                 faction_id: parse_u32(faction_str, "move_band faction")?,
-                band_entity_bits: Some(parse_u64(band_str, "move_band band_entity_bits")?),
+                band_id: Some(parse_u64(band_str, "move_band band_id")?),
                 target_x: parse_u32(x_str, "move_band target_x")?,
                 target_y: parse_u32(y_str, "move_band target_y")?,
             })
@@ -1040,7 +1042,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
             let workers_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("party_workers"))?;
@@ -1052,7 +1054,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("target_y"))?;
             Ok(CommandPayload::SendExpedition {
                 faction_id: parse_u32(faction_str, "send_expedition faction")?,
-                band_entity_bits: Some(parse_u64(band_str, "send_expedition band_entity_bits")?),
+                band_id: Some(parse_u64(band_str, "send_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_expedition party_workers")?,
                 target_x: parse_u32(x_str, "send_expedition target_x")?,
                 target_y: parse_u32(y_str, "send_expedition target_y")?,
@@ -1064,12 +1066,12 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let expedition_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("expedition_entity_bits"))?;
+                .ok_or(CommandParseError::MissingArgument("expedition_band_id"))?;
             Ok(CommandPayload::RecallExpedition {
                 faction_id: parse_u32(faction_str, "recall_expedition faction")?,
-                expedition_entity_bits: parse_u64(
+                expedition_band_id: parse_u64(
                     expedition_str,
-                    "recall_expedition expedition_entity_bits",
+                    "recall_expedition expedition_band_id",
                 )?,
             })
         }
@@ -1079,7 +1081,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .ok_or(CommandParseError::MissingArgument("faction_id"))?;
             let band_str = parts
                 .next()
-                .ok_or(CommandParseError::MissingArgument("band_entity_bits"))?;
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
             let workers_str = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("party_workers"))?;
@@ -1090,10 +1092,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let policy = parts.next().map(|s| s.to_string());
             Ok(CommandPayload::SendHuntExpedition {
                 faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
-                band_entity_bits: Some(parse_u64(
-                    band_str,
-                    "send_hunt_expedition band_entity_bits",
-                )?),
+                band_id: Some(parse_u64(band_str, "send_hunt_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
                 fauna_id: fauna_id.to_string(),
                 policy,
@@ -1231,7 +1230,7 @@ mod tests {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
                 policy: None,
-                band_entity_bits: None,
+                band_id: None,
             }
         );
         // Policy word only.
@@ -1241,7 +1240,7 @@ mod tests {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
                 policy: Some("surplus".to_string()),
-                band_entity_bits: None,
+                band_id: None,
             }
         );
         // Lone numeric 3rd token = band id (policy omitted).
@@ -1251,7 +1250,7 @@ mod tests {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
                 policy: None,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
             }
         );
         // Both: policy then band.
@@ -1261,7 +1260,7 @@ mod tests {
                 faction_id: 0,
                 herd_id: "game_deer_07".to_string(),
                 policy: Some("eradicate".to_string()),
-                band_entity_bits: Some(904),
+                band_id: Some(904),
             }
         );
     }
@@ -1433,7 +1432,7 @@ mod tests {
             parse_command_line("assign_labor 0 904 forage 3 5 6").unwrap(),
             CommandPayload::AssignLabor {
                 faction_id: 0,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
                 role: "forage".to_string(),
                 workers: 6,
                 target_x: Some(3),
@@ -1453,7 +1452,7 @@ mod tests {
             parse_command_line("assign_labor 0 904 forage 3 5 cultivate wild_emmer 6").unwrap(),
             CommandPayload::AssignLabor {
                 faction_id: 0,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
                 role: "forage".to_string(),
                 workers: 6,
                 target_x: Some(3),
@@ -1478,7 +1477,7 @@ mod tests {
                 parse_command_line(&format!("assign_labor 0 904 forage 3 5 {policy} 6")).unwrap(),
                 CommandPayload::AssignLabor {
                     faction_id: 0,
-                    band_entity_bits: Some(904),
+                    band_id: Some(904),
                     role: "forage".to_string(),
                     workers: 6,
                     target_x: Some(3),
@@ -1500,7 +1499,7 @@ mod tests {
                     .unwrap(),
                 CommandPayload::AssignLabor {
                     faction_id: 0,
-                    band_entity_bits: Some(904),
+                    band_id: Some(904),
                     role: "hunt".to_string(),
                     workers: 4,
                     target_x: None,
@@ -1520,7 +1519,7 @@ mod tests {
             parse_command_line("assign_labor 0 904 scout 5").unwrap(),
             CommandPayload::AssignLabor {
                 faction_id: 0,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
                 role: "scout".to_string(),
                 workers: 5,
                 target_x: None,
@@ -1534,7 +1533,7 @@ mod tests {
             parse_command_line("assign_labor 0 904 warrior 2").unwrap(),
             CommandPayload::AssignLabor {
                 faction_id: 0,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
                 role: "warrior".to_string(),
                 workers: 2,
                 target_x: None,
@@ -1552,7 +1551,7 @@ mod tests {
             parse_command_line("move_band 0 904 12 7").unwrap(),
             CommandPayload::MoveBand {
                 faction_id: 0,
-                band_entity_bits: Some(904),
+                band_id: Some(904),
                 target_x: 12,
                 target_y: 7,
             }
@@ -1670,7 +1669,7 @@ mod tests {
             parse_command_line("cancel_order 1 42 work").unwrap(),
             CommandPayload::CancelOrder {
                 faction_id: 1,
-                band_entity_bits: Some(42),
+                band_id: Some(42),
                 scope: CancelScope::Work,
             }
         );
@@ -1679,7 +1678,7 @@ mod tests {
             parse_command_line("cancel_order 1 42").unwrap(),
             CommandPayload::CancelOrder {
                 faction_id: 1,
-                band_entity_bits: Some(42),
+                band_id: Some(42),
                 scope: CancelScope::All,
             }
         );
@@ -1688,7 +1687,7 @@ mod tests {
             parse_command_line("cancel_order 1 work").unwrap(),
             CommandPayload::CancelOrder {
                 faction_id: 1,
-                band_entity_bits: None,
+                band_id: None,
                 scope: CancelScope::Work,
             }
         );
@@ -1696,7 +1695,7 @@ mod tests {
             parse_command_line("cancel_order 1 42 ROLES").unwrap(),
             CommandPayload::CancelOrder {
                 faction_id: 1,
-                band_entity_bits: Some(42),
+                band_id: Some(42),
                 scope: CancelScope::Roles,
             }
         );
@@ -1705,7 +1704,7 @@ mod tests {
             parse_command_line("cancel_order 1 work 42").unwrap(),
             CommandPayload::CancelOrder {
                 faction_id: 1,
-                band_entity_bits: Some(42),
+                band_id: Some(42),
                 scope: CancelScope::Work,
             }
         );

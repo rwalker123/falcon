@@ -127,6 +127,12 @@ pub struct LaborAssignmentState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
+    /// The band's durable identity — the handle a client sends back in a command.
+    ///
+    /// `entity` beside it is an ECS handle and is renumbered by every rollback, so it names a band
+    /// only until the next one. Commands address bands by this.
+    #[serde(default)]
+    pub band_id: u64,
     pub home: u64,
     #[serde(default)]
     pub current_x: u32,
