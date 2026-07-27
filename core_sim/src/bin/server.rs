@@ -2721,28 +2721,44 @@ fn handle_recall_expedition(
     );
 }
 
-/// Resolve an entity-bits reference to a faction's own [`Expedition`] (mirrors
-/// [`resolve_starting_unit_entity`] but gates on the `Expedition` component + faction match rather
-/// than merely `StartingUnit`).
+/// Resolve a [`BandId`] to a faction's own [`Expedition`] (mirrors [`resolve_starting_unit_entity`]
+/// but gates on the `Expedition` component + faction match rather than merely `StartingUnit`).
+///
+/// **A detached party is a band and carries a `BandId` like any other** — both expedition spawns
+/// allocate one. This function resolved *entity bits* until the protocol cutover converted its
+/// sibling and missed it, which made `recall_expedition` silently no-op: the client sent a small
+/// counter value, `Entity::from_bits` read it as an index/generation pair, and the lookup either
+/// found nothing or found something unrelated. Nothing failed loudly, because every rejection path
+/// below is a `warn!` and a `return None`.
 fn resolve_expedition_entity(
     app: &mut bevy::prelude::App,
     faction: FactionId,
-    entity_bits: u64,
+    band_id: u64,
     command_label: &str,
     event_kind: CommandEventKind,
 ) -> Option<Entity> {
-    let Some(entity) = entity_from_bits(entity_bits) else {
-        warn!(
+    let entity_bits = band_id;
+    let wanted = BandId(band_id);
+    let found = {
+        let mut query = app.world.query::<(Entity, &BandId)>();
+        query
+            .iter(&app.world)
+            .find(|(_, id)| **id == wanted)
+            .map(|(entity, _)| entity)
+    };
+    let Some(entity) = found else {
+        tracing::error!(
             target: "shadow_scale::command",
             command = command_label,
             faction = %faction.0,
-            "command.expedition.rejected=invalid_entity_bits"
+            band_id,
+            "command.expedition.rejected=no_such_band"
         );
         emit_command_failure(
             app,
             event_kind,
             faction,
-            format!("Expedition id {} is invalid.", entity_bits),
+            format!("Expedition {} does not exist in the simulation.", band_id),
         );
         return None;
     };
@@ -4716,9 +4732,11 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
     }
 }
 
-fn entity_from_bits(bits: u64) -> Option<Entity> {
-    std::panic::catch_unwind(|| bevy::prelude::Entity::from_bits(bits)).ok()
-}
+// `entity_from_bits` lived here. It is deleted rather than left unused, and the deletion is the
+// guard: **no command may turn a wire value into an `Entity`.** Every band handle on the wire is a
+// `BandId` now, and the one function that could reinterpret a wire `u64` as an ECS index/generation
+// pair was the last place `recall_expedition` silently no-op'd from. Its absence is what stops that
+// coming back — a reintroduced caller has to reintroduce the function first, which is a visible act.
 
 fn log_tile_rejection(
     app: &mut bevy::prelude::App,
@@ -6318,6 +6336,58 @@ mod tests {
             layer.owner = 0;
         }
         snapshot
+    }
+
+    /// **A band handle on the wire resolves to the band it names — including an expedition's.**
+    ///
+    /// The protocol cutover converted `resolve_starting_unit_entity` to look up a `BandId` and
+    /// missed its twin, `resolve_expedition_entity`, which kept calling `Entity::from_bits` on the
+    /// incoming value. The client correctly sent a `BandId`; the server read a small counter as an
+    /// ECS index/generation pair, resolved nothing, and **returned silently** — `recall_expedition`
+    /// did nothing at all and the confirmation dialog reappeared every turn. A human found it.
+    ///
+    /// `command-guard` could not catch this: it proves the client *emits* the right handle, and the
+    /// client was already correct. The missing assertion was that the server *resolves* what it is
+    /// sent, which is what this test makes. Asserting the observable effect — the phase actually
+    /// flips to `Returning` — rather than that the resolver returns `Some`, because "resolved
+    /// something" was never the symptom.
+    #[test]
+    fn recalling_an_expedition_by_band_id_actually_recalls_it() {
+        let mut app = build_headless_app();
+        app.world
+            .insert_resource(CommandSenderResource(unbounded::<Command>().0));
+        let faction = FactionId(0);
+
+        // A detached party is a band and carries a `BandId` like any other — both real expedition
+        // spawns allocate one, which is exactly why addressing it by that id must work.
+        let expedition_entity = spawn_working_band(&mut app, faction, LaborTarget::Scout);
+        let band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
+        let home_band = app.world.spawn_empty().id();
+        app.world.entity_mut(expedition_entity).insert((
+            band_id,
+            Expedition {
+                home_band,
+                mission: ExpeditionMission::Scout,
+                phase: ExpeditionPhase::Outbound,
+                announced: false,
+                pending_reveal: Vec::new(),
+                carried_trade: 0.0,
+            },
+        ));
+
+        handle_recall_expedition(&mut app, faction, band_id.0);
+
+        let phase = app
+            .world
+            .get::<Expedition>(expedition_entity)
+            .expect("the expedition still exists")
+            .phase;
+        assert_eq!(
+            phase,
+            ExpeditionPhase::Returning,
+            "recall_expedition must resolve the BandId the client sends and flip the phase; \
+             reading it as entity bits resolves nothing and returns silently"
+        );
     }
 
     /// **A rollback reaches an early tick however many commands have happened since.**
