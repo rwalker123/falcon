@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::OnceLock;
+
 #[derive(SystemParam)]
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
@@ -224,6 +226,454 @@ pub(crate) struct PublishState {
     history: VecDeque<StoredSnapshot>,
 }
 
+/// How many threads the publisher's diff fan-out may use.
+///
+/// Deliberately a small fixed number rather than `num_cpus`. The publisher runs **concurrently with
+/// the next turn** by construction, so a pool as wide as the machine buys its own milliseconds by
+/// taking cores from the simulation it is racing — and the simulation is the half that has to keep
+/// scaling as systems are added. Today the sim is ~5% of a turn, so a greedy publisher costs nothing
+/// visible; sizing the pool now is what stops that from being discovered later, in a profile nobody
+/// takes.
+///
+/// Four covers the three map-sized sections (tiles, culture layers, power) plus a worker for the
+/// tail of small ones, which is where the work-stealing has something to steal.
+const DIFF_POOL_THREADS: usize = 4;
+
+/// The publisher's own rayon pool, built once per process.
+///
+/// Process-wide rather than per world: `cargo test` runs many worlds at once, each with its own
+/// publisher thread, and one bounded pool shared between them is the point — a pool *per* world
+/// would multiply the core budget by the number of worlds and defeat the bound.
+static DIFF_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+
+/// Run `work` on the publisher's bounded pool, falling back to the caller's thread if the pool could
+/// not be built. A pool that failed to construct is not a reason to stop publishing.
+fn in_diff_pool<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let pool = DIFF_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(DIFF_POOL_THREADS)
+            .thread_name(|index| format!("snapshot-diff-{index}"))
+            .build()
+            .map_err(|err| log::error!("snapshot diff pool unavailable, diffing serially: {err}"))
+            .ok()
+    });
+    match pool {
+        Some(pool) => pool.install(work),
+        None => work(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The snapshot's SECTIONS: one group of collections per subsystem, each diffed as a unit and
+// spawned as one task by `PublishState::publish`. A section is a `*Parts` output struct, an
+// optional `*Baselines` borrow bundle, and a `diff_*` function between them.
+//
+// The partition is SEMANTIC, not cost-balanced. A cost-balanced one has to be re-measured every
+// time a subsystem grows or a raster is added; a semantic one keeps its meaning as the weights
+// move, and the scheduler is what balances it — `rayon::scope` work-steals, so an unequal section
+// is absorbed rather than baked into the partition.
+//
+// ADDING A SNAPSHOT COLLECTION IS: a baseline field, a line in its section's `*Parts`, a line in
+// its section's `diff_*`, a line in the assembly. No new task, no re-balancing, no measurement.
+// That registration property is what this shape is for.
+//
+// Two rules hold for every section, and both are load-bearing:
+//
+// * A section reads and writes ONLY its own baselines. That is what makes the `&mut` borrows
+//   disjoint by construction and the tasks free of shared mutable state. A section needing another
+//   section's baseline would mean the partition is wrong, not that a lock is needed.
+// * NO `crate::turn_profile::publish_scope` inside a section. The publisher profiler's accumulator
+//   is thread-local, so a span opened on a pool worker folds into an accumulator nothing ever
+//   drains — the label would vanish from the frame's profile and leak into the next frame on that
+//   worker. The single `publish.diff` scope stays on the publisher thread, around the whole
+//   fan-out.
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct TileParts {
+    sent: Vec<TileState>,
+    removed: Vec<u64>,
+}
+
+/// The map's tiles: the largest single collection, one entry per hex.
+fn diff_tiles(
+    baseline: &mut HashMap<u64, TileState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> TileParts {
+    let (sent, removed) = diff_new_tiles(baseline, &snapshot.tiles, write);
+    TileParts { sent, removed }
+}
+
+#[derive(Debug, Default)]
+struct CultureParts {
+    sent: Vec<CultureLayerState>,
+    removed: Vec<u32>,
+    tensions: Option<Vec<CultureTensionState>>,
+}
+
+/// Culture: the per-tile layer grid (map-sized, on the published-state deadband) and the tension
+/// roster that rides with it.
+fn diff_culture(
+    layers: &mut HashMap<u32, CultureLayerState>,
+    tensions: &mut Vec<CultureTensionState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CultureParts {
+    let (sent, removed) = diff_new_culture_layers(layers, &snapshot.culture_layers, write);
+    CultureParts {
+        sent,
+        removed,
+        tensions: diff_whole(tensions, &snapshot.culture_tensions, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct PowerParts {
+    sent: Vec<PowerNodeState>,
+    removed: Vec<u64>,
+    metrics: Option<PowerTelemetryState>,
+}
+
+/// Power: one node per tile, so map-sized like the two above, plus the grid's telemetry block.
+fn diff_power(
+    nodes: &mut HashMap<u64, PowerNodeState>,
+    metrics: &mut PowerTelemetryState,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> PowerParts {
+    let (sent, removed) = diff_new(nodes, &snapshot.power, |state| state.entity, write);
+    PowerParts {
+        sent,
+        removed,
+        metrics: diff_whole(metrics, &snapshot.power_metrics, write),
+    }
+}
+
+/// Every whole-map raster and overlay. Each is one `Vec` the size of the map, so the comparison is
+/// cheap and the clone — taken only when it differs — is not.
+#[derive(Debug, Default)]
+struct RasterParts {
+    terrain: Option<TerrainOverlayState>,
+    moisture: Option<FloatRasterState>,
+    elevation: Option<ElevationOverlayState>,
+    climate_bands: Option<ClimateBandsState>,
+    logistics: Option<ScalarRasterState>,
+    sentiment: Option<ScalarRasterState>,
+    corruption: Option<ScalarRasterState>,
+    culture: Option<ScalarRasterState>,
+    military: Option<ScalarRasterState>,
+    visibility: Option<ScalarRasterState>,
+}
+
+/// The baselines the raster section owns, borrowed disjointly out of [`PublishState`].
+struct RasterBaselines<'a> {
+    terrain: &'a mut TerrainOverlayState,
+    moisture: &'a mut FloatRasterState,
+    elevation: &'a mut ElevationOverlayState,
+    climate_bands: &'a mut ClimateBandsState,
+    logistics: &'a mut ScalarRasterState,
+    sentiment: &'a mut ScalarRasterState,
+    corruption: &'a mut ScalarRasterState,
+    culture: &'a mut ScalarRasterState,
+    military: &'a mut ScalarRasterState,
+    visibility: &'a mut ScalarRasterState,
+}
+
+fn diff_rasters(
+    baseline: RasterBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> RasterParts {
+    RasterParts {
+        terrain: diff_whole(baseline.terrain, &snapshot.terrain, write),
+        moisture: diff_whole(baseline.moisture, &snapshot.moisture_raster, write),
+        elevation: diff_whole(baseline.elevation, &snapshot.elevation_overlay, write),
+        // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
+        climate_bands: diff_whole(baseline.climate_bands, &snapshot.climate_bands, write),
+        logistics: diff_whole(baseline.logistics, &snapshot.logistics_raster, write),
+        sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment_raster, write),
+        corruption: diff_whole(baseline.corruption, &snapshot.corruption_raster, write),
+        culture: diff_whole(baseline.culture, &snapshot.culture_raster, write),
+        military: diff_whole(baseline.military, &snapshot.military_raster, write),
+        visibility: diff_whole(baseline.visibility, &snapshot.visibility_raster, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct KnowledgeParts {
+    ledger: Vec<KnowledgeLedgerEntryState>,
+    removed_ledger: Vec<u64>,
+    metrics: Option<KnowledgeMetricsState>,
+    timeline: Option<Vec<KnowledgeTimelineEventState>>,
+    discovery_progress: Vec<DiscoveryProgressEntry>,
+    great_discoveries: Vec<GreatDiscoveryState>,
+    great_discovery_progress: Vec<GreatDiscoveryProgressState>,
+    great_discovery_definitions: Option<Vec<GreatDiscoveryDefinitionState>>,
+    great_discovery_telemetry: Option<GreatDiscoveryTelemetryState>,
+}
+
+/// The baselines the knowledge section owns.
+struct KnowledgeBaselines<'a> {
+    ledger: &'a mut HashMap<u64, KnowledgeLedgerEntryState>,
+    metrics: &'a mut KnowledgeMetricsState,
+    timeline: &'a mut Vec<KnowledgeTimelineEventState>,
+    discovery_progress: &'a mut HashMap<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: &'a mut HashMap<(u32, u16), GreatDiscoveryState>,
+    great_discovery_progress: &'a mut HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    great_discovery_definitions: &'a mut HashMap<u16, GreatDiscoveryDefinitionState>,
+    great_discovery_telemetry: &'a mut GreatDiscoveryTelemetryState,
+}
+
+/// Knowledge, espionage and great discoveries.
+///
+/// `discovery_progress`, `great_discoveries` and `great_discovery_progress` have no `removed_*`
+/// counterpart on the wire, so their removals are dropped after the baseline has been pruned — the
+/// entry leaves the baseline, the client simply is not told (it never was).
+fn diff_knowledge(
+    baseline: KnowledgeBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> KnowledgeParts {
+    let (ledger, removed_ledger) = diff_new(
+        baseline.ledger,
+        &snapshot.knowledge_ledger,
+        |entry| encode_ledger_key(FactionId(entry.owner_faction), entry.discovery_id),
+        write,
+    );
+    let (discovery_progress, _) = diff_new(
+        baseline.discovery_progress,
+        &snapshot.discovery_progress,
+        |entry| (entry.faction, entry.discovery),
+        write,
+    );
+    let (great_discoveries, _) = diff_new(
+        baseline.great_discoveries,
+        &snapshot.great_discoveries,
+        |state| (state.faction, state.id),
+        write,
+    );
+    let (great_discovery_progress, _) = diff_new(
+        baseline.great_discovery_progress,
+        &snapshot.great_discovery_progress,
+        |state| (state.faction, state.discovery),
+        write,
+    );
+    KnowledgeParts {
+        ledger,
+        removed_ledger,
+        metrics: diff_whole(baseline.metrics, &snapshot.knowledge_metrics, write),
+        timeline: diff_whole(baseline.timeline, &snapshot.knowledge_timeline, write),
+        discovery_progress,
+        great_discoveries,
+        great_discovery_progress,
+        great_discovery_definitions: diff_whole_indexed(
+            baseline.great_discovery_definitions,
+            &snapshot.great_discovery_definitions,
+            |state| state.id,
+            write,
+        ),
+        great_discovery_telemetry: diff_whole(
+            baseline.great_discovery_telemetry,
+            &snapshot.great_discovery_telemetry,
+            write,
+        ),
+    }
+}
+
+#[derive(Debug, Default)]
+struct CrisisParts {
+    telemetry: Option<CrisisTelemetryState>,
+    overlay: Option<CrisisOverlayState>,
+    victory: Option<VictorySnapshotState>,
+}
+
+/// Crisis and victory — the two whole-section telemetry blocks that decide how a campaign ends.
+fn diff_crisis(
+    telemetry: &mut CrisisTelemetryState,
+    overlay: &mut CrisisOverlayState,
+    victory: &mut VictorySnapshotState,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CrisisParts {
+    CrisisParts {
+        telemetry: diff_whole(telemetry, &snapshot.crisis_telemetry, write),
+        overlay: diff_whole(overlay, &snapshot.crisis_overlay, write),
+        victory: diff_whole(victory, &snapshot.victory, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct CampaignParts {
+    profiles: Option<Vec<CampaignProfileState>>,
+    command_events: Option<Vec<CommandEventState>>,
+    pending_forks: Option<Vec<PendingForksState>>,
+    stance_axes: Option<Vec<StanceState>>,
+    voice_medium: Option<Vec<VoiceMediumState>>,
+    faction_inventory: Option<Vec<SchemaFactionInventoryState>>,
+    sedentarization: Option<Vec<SchemaSedentarizationState>>,
+    discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
+    demographics: Option<Vec<SchemaPopulationDemographicsState>>,
+    intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    start_marker: Option<StartMarkerState>,
+}
+
+/// The baselines the campaign section owns.
+struct CampaignBaselines<'a> {
+    profiles: &'a mut Vec<CampaignProfileState>,
+    command_events: &'a mut Vec<CommandEventState>,
+    pending_forks: &'a mut Vec<PendingForksState>,
+    stance_axes: &'a mut Vec<StanceState>,
+    voice_medium: &'a mut Vec<VoiceMediumState>,
+    faction_inventory: &'a mut Vec<SchemaFactionInventoryState>,
+    sedentarization: &'a mut Vec<SchemaSedentarizationState>,
+    discovered_sites: &'a mut Vec<SchemaDiscoveredSitesState>,
+    demographics: &'a mut Vec<SchemaPopulationDemographicsState>,
+    intensification_knowledge: &'a mut Vec<IntensificationKnowledgeState>,
+    start_marker: &'a mut Option<StartMarkerState>,
+}
+
+/// Campaign and the Telling: the profile roster, the stance vector, the fork queue, and the
+/// per-faction readouts the campaign panels render.
+fn diff_campaign(
+    baseline: CampaignBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CampaignParts {
+    CampaignParts {
+        profiles: diff_whole(baseline.profiles, &snapshot.campaign_profiles, write),
+        command_events: diff_whole(baseline.command_events, &snapshot.command_events, write),
+        pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
+        stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
+        voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
+        faction_inventory: diff_whole(
+            baseline.faction_inventory,
+            &snapshot.faction_inventory,
+            write,
+        ),
+        sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
+        discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
+        demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
+        intensification_knowledge: diff_whole(
+            baseline.intensification_knowledge,
+            &snapshot.intensification_knowledge,
+            write,
+        ),
+        // `Option` on both sides, so the delta carries the INNER option: `None` here means
+        // unchanged, and a marker that was cleared arrives as `Some(None)` flattened to `None` —
+        // the same conflation this field has always had.
+        start_marker: diff_whole(baseline.start_marker, &snapshot.start_marker, write).flatten(),
+    }
+}
+
+#[derive(Debug, Default)]
+struct SubsistenceParts {
+    herds: Option<Vec<HerdTelemetryState>>,
+    forage_patches: Option<Vec<ForagePatchState>>,
+    food_modules: Option<Vec<FoodModuleState>>,
+}
+
+/// Fauna and flora: the herd roster, the forage patches, and the food-module map.
+fn diff_subsistence(
+    herds: &mut Vec<HerdTelemetryState>,
+    forage_patches: &mut Vec<ForagePatchState>,
+    food_modules: &mut Vec<FoodModuleState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> SubsistenceParts {
+    SubsistenceParts {
+        herds: diff_whole(herds, &snapshot.herds, write),
+        forage_patches: diff_whole(forage_patches, &snapshot.forage_patches, write),
+        food_modules: diff_whole(food_modules, &snapshot.food_modules, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct PeopleParts {
+    logistics: Vec<LogisticsLinkState>,
+    removed_logistics: Vec<u64>,
+    trade_links: Vec<TradeLinkState>,
+    removed_trade_links: Vec<u64>,
+    populations: Vec<PopulationCohortState>,
+    removed_populations: Vec<u64>,
+    generations: Vec<GenerationState>,
+    removed_generations: Vec<u16>,
+    influencers: Vec<InfluentialIndividualState>,
+    removed_influencers: Vec<u32>,
+    axis_bias: Option<AxisBiasState>,
+    sentiment: Option<SentimentTelemetryState>,
+    corruption: Option<CorruptionLedger>,
+    capability_flags: Option<u32>,
+}
+
+/// The baselines the people-and-network section owns.
+struct PeopleBaselines<'a> {
+    logistics: &'a mut HashMap<u64, LogisticsLinkState>,
+    trade_links: &'a mut HashMap<u64, TradeLinkState>,
+    populations: &'a mut HashMap<u64, PopulationCohortState>,
+    generations: &'a mut HashMap<u16, GenerationState>,
+    influencers: &'a mut HashMap<u32, InfluentialIndividualState>,
+    axis_bias: &'a mut AxisBiasState,
+    sentiment: &'a mut SentimentTelemetryState,
+    corruption: &'a mut CorruptionLedger,
+    capability_flags: &'a mut u32,
+}
+
+/// People and the networks between them: cohorts, generations, influencers, the logistics and trade
+/// graphs, and the faction-wide scalars that ride with them.
+fn diff_people(
+    baseline: PeopleBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> PeopleParts {
+    let (logistics, removed_logistics) = diff_new(
+        baseline.logistics,
+        &snapshot.logistics,
+        |state| state.entity,
+        write,
+    );
+    let (trade_links, removed_trade_links) = diff_new(
+        baseline.trade_links,
+        &snapshot.trade_links,
+        |state| state.entity,
+        write,
+    );
+    let (populations, removed_populations) = diff_new(
+        baseline.populations,
+        &snapshot.populations,
+        |state| state.entity,
+        write,
+    );
+    let (generations, removed_generations) = diff_new(
+        baseline.generations,
+        &snapshot.generations,
+        |state| state.id,
+        write,
+    );
+    let (influencers, removed_influencers) = diff_new(
+        baseline.influencers,
+        &snapshot.influencers,
+        |state| state.id,
+        write,
+    );
+    PeopleParts {
+        logistics,
+        removed_logistics,
+        trade_links,
+        removed_trade_links,
+        populations,
+        removed_populations,
+        generations,
+        removed_generations,
+        influencers,
+        removed_influencers,
+        axis_bias: diff_whole(baseline.axis_bias, &snapshot.axis_bias, write),
+        sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment, write),
+        corruption: diff_whole(baseline.corruption, &snapshot.corruption, write),
+        capability_flags: diff_whole(baseline.capability_flags, &snapshot.capability_flags, write),
+    }
+}
+
 impl PublishState {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -348,398 +798,252 @@ impl PublishState {
         // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
         // because moving dead work still pays for it.
 
-        // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
-        // the `diff_new`/`diff_removed` comparisons against last turn's indices.
+        // The baselines are mutated IN PLACE by the fan-out below, so the recapture path states its
+        // intent up front rather than by declining to store a returned map: a mid-tick recapture
+        // holds the baseline where the last resolved turn left it, which is what makes its deltas
+        // cumulative.
+        let write = match kind {
+            Publication::Turn => Baseline::Advance,
+            Publication::Recapture => Baseline::Hold,
+        };
+
+        // Destructure the baselines into disjoint `&mut` borrows, one bundle per section. This is
+        // what lets the sections run concurrently without a lock: each borrow names different fields
+        // of the same struct, so the compiler proves the disjointness the partition claims.
+        let PublishState {
+            tiles: tiles_baseline,
+            culture_layers: culture_layers_baseline,
+            culture_tensions: culture_tensions_baseline,
+            power: power_baseline,
+            power_metrics: power_metrics_baseline,
+            terrain_overlay,
+            moisture_raster,
+            elevation_overlay,
+            climate_bands,
+            logistics_raster,
+            sentiment_raster,
+            corruption_raster,
+            culture_raster,
+            military_raster,
+            visibility_raster,
+            knowledge_ledger,
+            knowledge_metrics,
+            knowledge_timeline,
+            discovery_progress,
+            great_discoveries,
+            great_discovery_progress,
+            great_discovery_definitions,
+            great_discovery_telemetry,
+            crisis_telemetry,
+            crisis_overlay,
+            victory,
+            campaign_profiles,
+            command_events,
+            pending_forks,
+            stance_axes,
+            voice_medium,
+            faction_inventory,
+            sedentarization,
+            discovered_sites,
+            demographics,
+            intensification_knowledge,
+            start_marker,
+            herds,
+            forage_patches,
+            food_modules,
+            logistics,
+            trade_links,
+            populations,
+            generations,
+            influencers,
+            axis_bias,
+            sentiment,
+            corruption,
+            capability_flags,
+            fog_enabled,
+            ..
+        } = &mut *self;
+
+        let mut tile_parts = TileParts::default();
+        let mut culture_parts = CultureParts::default();
+        let mut power_parts = PowerParts::default();
+        let mut raster_parts = RasterParts::default();
+        let mut knowledge_parts = KnowledgeParts::default();
+        let mut crisis_parts = CrisisParts::default();
+        let mut campaign_parts = CampaignParts::default();
+        let mut subsistence_parts = SubsistenceParts::default();
+        let mut people_parts = PeopleParts::default();
+
+        // The one scope over the whole fan-out, opened and closed on the publisher thread — see the
+        // section registry above for why no task may open one of its own.
         let diff_scope = crate::turn_profile::publish_scope("publish.diff");
-        let mut tiles_index = HashMap::with_capacity(snapshot.tiles.len());
-        for state in &snapshot.tiles {
-            tiles_index.insert(state.entity, state.clone());
+        let captured = &snapshot;
+        in_diff_pool(|| {
+            rayon::scope(|scope| {
+                scope.spawn(|_| tile_parts = diff_tiles(tiles_baseline, captured, write));
+                scope.spawn(|_| {
+                    culture_parts = diff_culture(
+                        culture_layers_baseline,
+                        culture_tensions_baseline,
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    power_parts =
+                        diff_power(power_baseline, power_metrics_baseline, captured, write)
+                });
+                scope.spawn(|_| {
+                    raster_parts = diff_rasters(
+                        RasterBaselines {
+                            terrain: terrain_overlay,
+                            moisture: moisture_raster,
+                            elevation: elevation_overlay,
+                            climate_bands,
+                            logistics: logistics_raster,
+                            sentiment: sentiment_raster,
+                            corruption: corruption_raster,
+                            culture: culture_raster,
+                            military: military_raster,
+                            visibility: visibility_raster,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    knowledge_parts = diff_knowledge(
+                        KnowledgeBaselines {
+                            ledger: knowledge_ledger,
+                            metrics: knowledge_metrics,
+                            timeline: knowledge_timeline,
+                            discovery_progress,
+                            great_discoveries,
+                            great_discovery_progress,
+                            great_discovery_definitions,
+                            great_discovery_telemetry,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    crisis_parts =
+                        diff_crisis(crisis_telemetry, crisis_overlay, victory, captured, write)
+                });
+                scope.spawn(|_| {
+                    campaign_parts = diff_campaign(
+                        CampaignBaselines {
+                            profiles: campaign_profiles,
+                            command_events,
+                            pending_forks,
+                            stance_axes,
+                            voice_medium,
+                            faction_inventory,
+                            sedentarization,
+                            discovered_sites,
+                            demographics,
+                            intensification_knowledge,
+                            start_marker,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    subsistence_parts =
+                        diff_subsistence(herds, forage_patches, food_modules, captured, write)
+                });
+                scope.spawn(|_| {
+                    people_parts = diff_people(
+                        PeopleBaselines {
+                            logistics,
+                            trade_links,
+                            populations,
+                            generations,
+                            influencers,
+                            axis_bias,
+                            sentiment,
+                            corruption,
+                            capability_flags,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+            });
+        });
+
+        // Carried on EVERY delta rather than diffed (the wire default is `true`, so an omitted value
+        // would silently re-enable fog one delta after it was turned off), but the baseline still
+        // tracks it for the auxiliary feed deltas.
+        if write == Baseline::Advance {
+            *fog_enabled = snapshot.fog_enabled;
         }
 
-        let mut logistics_index = HashMap::with_capacity(snapshot.logistics.len());
-        for state in &snapshot.logistics {
-            logistics_index.insert(state.entity, state.clone());
-        }
-
-        let mut trade_index = HashMap::with_capacity(snapshot.trade_links.len());
-        for state in &snapshot.trade_links {
-            trade_index.insert(state.entity, state.clone());
-        }
-
-        let mut populations_index = HashMap::with_capacity(snapshot.populations.len());
-        for state in &snapshot.populations {
-            populations_index.insert(state.entity, state.clone());
-        }
-
-        let mut power_index = HashMap::with_capacity(snapshot.power.len());
-        for state in &snapshot.power {
-            power_index.insert(state.entity, state.clone());
-        }
-
-        let mut generations_index = HashMap::with_capacity(snapshot.generations.len());
-        for state in &snapshot.generations {
-            generations_index.insert(state.id, state.clone());
-        }
-
-        let mut influencers_index = HashMap::with_capacity(snapshot.influencers.len());
-        for state in &snapshot.influencers {
-            influencers_index.insert(state.id, state.clone());
-        }
-
-        let mut culture_layers_index = HashMap::with_capacity(snapshot.culture_layers.len());
-        for state in &snapshot.culture_layers {
-            culture_layers_index.insert(state.id, state.clone());
-        }
-
-        let mut discovery_index = HashMap::with_capacity(snapshot.discovery_progress.len());
-        for entry in &snapshot.discovery_progress {
-            discovery_index.insert((entry.faction, entry.discovery), entry.clone());
-        }
-
-        let axis_bias_state = snapshot.axis_bias.clone();
-        let axis_bias_delta = if self.axis_bias == axis_bias_state {
-            None
-        } else {
-            Some(axis_bias_state.clone())
-        };
-
-        let sentiment_state = snapshot.sentiment.clone();
-        let sentiment_delta = if self.sentiment == sentiment_state {
-            None
-        } else {
-            Some(sentiment_state.clone())
-        };
-
-        let culture_tensions_state = snapshot.culture_tensions.clone();
-        let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
-            None
-        } else {
-            Some(culture_tensions_state.clone())
-        };
-
-        let terrain_state = snapshot.terrain.clone();
-        let terrain_delta = if self.terrain_overlay == terrain_state {
-            None
-        } else {
-            Some(terrain_state.clone())
-        };
-
-        let moisture_state = snapshot.moisture_raster.clone();
-        let moisture_delta = if self.moisture_raster == moisture_state {
-            None
-        } else {
-            Some(moisture_state.clone())
-        };
-
-        let elevation_state = snapshot.elevation_overlay.clone();
-        let elevation_delta = if self.elevation_overlay == elevation_state {
-            None
-        } else {
-            Some(elevation_state.clone())
-        };
-
-        // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
-        let climate_bands_state = snapshot.climate_bands;
-        let climate_bands_delta = if self.climate_bands == climate_bands_state {
-            None
-        } else {
-            Some(climate_bands_state)
-        };
-
-        let start_marker_state = snapshot.start_marker.clone();
-        let start_marker_delta = if self.start_marker == start_marker_state {
-            None
-        } else {
-            start_marker_state.clone()
-        };
-
-        let logistics_raster_state = snapshot.logistics_raster.clone();
-        let logistics_raster_delta = if self.logistics_raster == logistics_raster_state {
-            None
-        } else {
-            Some(logistics_raster_state.clone())
-        };
-
-        let sentiment_raster_state = snapshot.sentiment_raster.clone();
-        let sentiment_raster_delta = if self.sentiment_raster == sentiment_raster_state {
-            None
-        } else {
-            Some(sentiment_raster_state.clone())
-        };
-
-        let corruption_raster_state = snapshot.corruption_raster.clone();
-        let corruption_raster_delta = if self.corruption_raster == corruption_raster_state {
-            None
-        } else {
-            Some(corruption_raster_state.clone())
-        };
-
-        let fog_enabled_state = snapshot.fog_enabled;
-        let visibility_raster_state = snapshot.visibility_raster.clone();
-        let visibility_raster_delta = if self.visibility_raster == visibility_raster_state {
-            None
-        } else {
-            Some(visibility_raster_state.clone())
-        };
-
-        let culture_raster_state = snapshot.culture_raster.clone();
-        let culture_raster_delta = if self.culture_raster == culture_raster_state {
-            None
-        } else {
-            Some(culture_raster_state.clone())
-        };
-
-        let military_raster_state = snapshot.military_raster.clone();
-        let military_raster_delta = if self.military_raster == military_raster_state {
-            None
-        } else {
-            Some(military_raster_state.clone())
-        };
-
-        let mut great_discovery_definitions_index =
-            HashMap::with_capacity(snapshot.great_discovery_definitions.len());
-        for state in &snapshot.great_discovery_definitions {
-            great_discovery_definitions_index.insert(state.id, state.clone());
-        }
-        let great_discovery_definitions_delta =
-            if self.great_discovery_definitions == great_discovery_definitions_index {
-                None
-            } else {
-                Some(snapshot.great_discovery_definitions.clone())
-            };
-
-        let mut great_discoveries_index = HashMap::with_capacity(snapshot.great_discoveries.len());
-        for state in &snapshot.great_discoveries {
-            great_discoveries_index.insert((state.faction, state.id), state.clone());
-        }
-
-        let mut great_discovery_progress_index =
-            HashMap::with_capacity(snapshot.great_discovery_progress.len());
-        for state in &snapshot.great_discovery_progress {
-            great_discovery_progress_index.insert((state.faction, state.discovery), state.clone());
-        }
-
-        let great_discovery_telemetry_state = snapshot.great_discovery_telemetry.clone();
-        let great_discovery_telemetry_delta =
-            if self.great_discovery_telemetry == great_discovery_telemetry_state {
-                None
-            } else {
-                Some(great_discovery_telemetry_state.clone())
-            };
-
-        let power_metrics_state = snapshot.power_metrics.clone();
-        let power_metrics_delta = if self.power_metrics == power_metrics_state {
-            None
-        } else {
-            Some(power_metrics_state.clone())
-        };
-
-        let corruption_state = snapshot.corruption.clone();
-        let corruption_delta = if self.corruption == corruption_state {
-            None
-        } else {
-            Some(corruption_state.clone())
-        };
-
-        let mut knowledge_ledger_index = HashMap::with_capacity(snapshot.knowledge_ledger.len());
-        for entry in &snapshot.knowledge_ledger {
-            knowledge_ledger_index.insert(
-                encode_ledger_key(FactionId(entry.owner_faction), entry.discovery_id),
-                entry.clone(),
-            );
-        }
-
-        let knowledge_metrics_state = snapshot.knowledge_metrics.clone();
-        let knowledge_metrics_delta = if self.knowledge_metrics == knowledge_metrics_state {
-            None
-        } else {
-            Some(knowledge_metrics_state.clone())
-        };
-
-        let knowledge_timeline_delta = if self.knowledge_timeline == snapshot.knowledge_timeline {
-            None
-        } else {
-            Some(snapshot.knowledge_timeline.clone())
-        };
-
-        let crisis_telemetry_state = snapshot.crisis_telemetry.clone();
-        let crisis_telemetry_delta = if self.crisis_telemetry == crisis_telemetry_state {
-            None
-        } else {
-            Some(crisis_telemetry_state.clone())
-        };
-
-        let crisis_overlay_state = snapshot.crisis_overlay.clone();
-        let crisis_overlay_delta = if self.crisis_overlay == crisis_overlay_state {
-            None
-        } else {
-            Some(crisis_overlay_state.clone())
-        };
-
-        let victory_state = snapshot.victory.clone();
-        let victory_delta = if self.victory == victory_state {
-            None
-        } else {
-            Some(victory_state.clone())
-        };
-        let faction_inventory_state = snapshot.faction_inventory.clone();
-        let faction_inventory_delta = if self.faction_inventory == faction_inventory_state {
-            None
-        } else {
-            Some(faction_inventory_state.clone())
-        };
-        let sedentarization_state = snapshot.sedentarization.clone();
-        let sedentarization_delta = if self.sedentarization == sedentarization_state {
-            None
-        } else {
-            Some(sedentarization_state.clone())
-        };
-        let discovered_sites_state = snapshot.discovered_sites.clone();
-        let discovered_sites_delta = if self.discovered_sites == discovered_sites_state {
-            None
-        } else {
-            Some(discovered_sites_state.clone())
-        };
-        let demographics_state = snapshot.demographics.clone();
-        let demographics_delta = if self.demographics == demographics_state {
-            None
-        } else {
-            Some(demographics_state.clone())
-        };
-        let forage_patches_state = snapshot.forage_patches.clone();
-        let forage_patches_delta = if self.forage_patches == forage_patches_state {
-            None
-        } else {
-            Some(forage_patches_state.clone())
-        };
-        let intensification_knowledge_state = snapshot.intensification_knowledge.clone();
-        let intensification_knowledge_delta =
-            if self.intensification_knowledge == intensification_knowledge_state {
-                None
-            } else {
-                Some(intensification_knowledge_state.clone())
-            };
-        let campaign_profiles_state = snapshot.campaign_profiles.clone();
-        let campaign_profiles_delta = if self.campaign_profiles == campaign_profiles_state {
-            None
-        } else {
-            Some(campaign_profiles_state.clone())
-        };
-        let command_events_state = snapshot.command_events.clone();
-        let command_events_delta = if self.command_events == command_events_state {
-            None
-        } else {
-            Some(command_events_state.clone())
-        };
-        let pending_forks_state = snapshot.pending_forks.clone();
-        let pending_forks_delta = if self.pending_forks == pending_forks_state {
-            None
-        } else {
-            Some(pending_forks_state.clone())
-        };
-        let stance_axes_state = snapshot.stance_axes.clone();
-        let stance_axes_delta = if self.stance_axes == stance_axes_state {
-            None
-        } else {
-            Some(stance_axes_state.clone())
-        };
-        let voice_medium_state = snapshot.voice_medium.clone();
-        let voice_medium_delta = if self.voice_medium == voice_medium_state {
-            None
-        } else {
-            Some(voice_medium_state.clone())
-        };
-        let capability_flags_state = snapshot.capability_flags;
-        let capability_flags_delta = if self.capability_flags == capability_flags_state {
-            None
-        } else {
-            Some(capability_flags_state)
-        };
-        let herd_state = snapshot.herds.clone();
-        let herds_delta = if self.herds == herd_state {
-            None
-        } else {
-            Some(herd_state.clone())
-        };
-        let food_modules_state = snapshot.food_modules.clone();
-        let food_modules_delta = if self.food_modules == food_modules_state {
-            None
-        } else {
-            Some(food_modules_state.clone())
-        };
-
-        // Tiles and culture layers diff on PUBLISHED state, and hand back the baseline to store —
-        // which keeps the last *published* value for anything judged unchanged, so the hundredths
-        // comparison is a deadband that accumulates rather than a mask that freezes. See
-        // `diff_new_tiles`.
-        let (tiles_sent, tiles_index) = diff_new_tiles(&self.tiles, tiles_index);
-        let (culture_layers_sent, culture_layers_index) =
-            diff_new_culture_layers(&self.culture_layers, culture_layers_index);
-
+        // The wire layout is the `.fbs` schema's; the order here is grouped by section so the
+        // assembly reads as the inverse of the fan-out.
         let delta = WorldDelta {
             header: snapshot.header.clone(),
-            tiles: tiles_sent,
-            removed_tiles: diff_removed(&self.tiles, &tiles_index),
-            logistics: diff_new(&self.logistics, &logistics_index),
-            removed_logistics: diff_removed(&self.logistics, &logistics_index),
-            trade_links: diff_new(&self.trade_links, &trade_index),
-            removed_trade_links: diff_removed(&self.trade_links, &trade_index),
-            populations: diff_new(&self.populations, &populations_index),
-            removed_populations: diff_removed(&self.populations, &populations_index),
-            power: diff_new(&self.power, &power_index),
-            removed_power: diff_removed(&self.power, &power_index),
-            power_metrics: power_metrics_delta.clone(),
-            great_discovery_definitions: great_discovery_definitions_delta.clone(),
-            great_discoveries: diff_new(&self.great_discoveries, &great_discoveries_index),
-            great_discovery_progress: diff_new(
-                &self.great_discovery_progress,
-                &great_discovery_progress_index,
-            ),
-            great_discovery_telemetry: great_discovery_telemetry_delta.clone(),
-            knowledge_ledger: diff_new(&self.knowledge_ledger, &knowledge_ledger_index),
-            removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
-            knowledge_metrics: knowledge_metrics_delta.clone(),
-            victory: victory_delta.clone(),
-            capability_flags: capability_flags_delta,
-            campaign_profiles: campaign_profiles_delta.clone(),
-            command_events: command_events_delta.clone(),
-            pending_forks: pending_forks_delta.clone(),
-            stance_axes: stance_axes_delta.clone(),
-            voice_medium: voice_medium_delta.clone(),
-            faction_inventory: faction_inventory_delta.clone(),
-            sedentarization: sedentarization_delta.clone(),
-            discovered_sites: discovered_sites_delta.clone(),
-            demographics: demographics_delta.clone(),
-            forage_patches: forage_patches_delta.clone(),
-            intensification_knowledge: intensification_knowledge_delta.clone(),
-            herds: herds_delta.clone(),
-            food_modules: food_modules_delta.clone(),
-            knowledge_timeline: knowledge_timeline_delta.clone(),
-            crisis_telemetry: crisis_telemetry_delta.clone(),
-            crisis_overlay: crisis_overlay_delta.clone(),
-            moisture_raster: moisture_delta.clone(),
-            elevation_overlay: elevation_delta.clone(),
-            climate_bands: climate_bands_delta,
-            start_marker: start_marker_delta.clone(),
-            axis_bias: axis_bias_delta,
-            sentiment: sentiment_delta.clone(),
-            generations: diff_new(&self.generations, &generations_index),
-            removed_generations: diff_removed(&self.generations, &generations_index),
-            corruption: corruption_delta.clone(),
-            influencers: diff_new(&self.influencers, &influencers_index),
-            removed_influencers: diff_removed(&self.influencers, &influencers_index),
-            terrain: terrain_delta.clone(),
-            logistics_raster: logistics_raster_delta.clone(),
-            sentiment_raster: sentiment_raster_delta.clone(),
-            corruption_raster: corruption_raster_delta.clone(),
-            culture_raster: culture_raster_delta.clone(),
-            military_raster: military_raster_delta.clone(),
-            culture_layers: culture_layers_sent,
-            removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
-            culture_tensions: delta_culture_tensions.clone(),
-            discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
-            visibility_raster: visibility_raster_delta.clone(),
-            fog_enabled: fog_enabled_state,
+            tiles: tile_parts.sent,
+            removed_tiles: tile_parts.removed,
+            culture_layers: culture_parts.sent,
+            removed_culture_layers: culture_parts.removed,
+            culture_tensions: culture_parts.tensions,
+            power: power_parts.sent,
+            removed_power: power_parts.removed,
+            power_metrics: power_parts.metrics,
+            terrain: raster_parts.terrain,
+            moisture_raster: raster_parts.moisture,
+            elevation_overlay: raster_parts.elevation,
+            climate_bands: raster_parts.climate_bands,
+            logistics_raster: raster_parts.logistics,
+            sentiment_raster: raster_parts.sentiment,
+            corruption_raster: raster_parts.corruption,
+            culture_raster: raster_parts.culture,
+            military_raster: raster_parts.military,
+            visibility_raster: raster_parts.visibility,
+            knowledge_ledger: knowledge_parts.ledger,
+            removed_knowledge_ledger: knowledge_parts.removed_ledger,
+            knowledge_metrics: knowledge_parts.metrics,
+            knowledge_timeline: knowledge_parts.timeline,
+            discovery_progress: knowledge_parts.discovery_progress,
+            great_discoveries: knowledge_parts.great_discoveries,
+            great_discovery_progress: knowledge_parts.great_discovery_progress,
+            great_discovery_definitions: knowledge_parts.great_discovery_definitions,
+            great_discovery_telemetry: knowledge_parts.great_discovery_telemetry,
+            crisis_telemetry: crisis_parts.telemetry,
+            crisis_overlay: crisis_parts.overlay,
+            victory: crisis_parts.victory,
+            campaign_profiles: campaign_parts.profiles,
+            command_events: campaign_parts.command_events,
+            pending_forks: campaign_parts.pending_forks,
+            stance_axes: campaign_parts.stance_axes,
+            voice_medium: campaign_parts.voice_medium,
+            faction_inventory: campaign_parts.faction_inventory,
+            sedentarization: campaign_parts.sedentarization,
+            discovered_sites: campaign_parts.discovered_sites,
+            demographics: campaign_parts.demographics,
+            intensification_knowledge: campaign_parts.intensification_knowledge,
+            start_marker: campaign_parts.start_marker,
+            herds: subsistence_parts.herds,
+            forage_patches: subsistence_parts.forage_patches,
+            food_modules: subsistence_parts.food_modules,
+            logistics: people_parts.logistics,
+            removed_logistics: people_parts.removed_logistics,
+            trade_links: people_parts.trade_links,
+            removed_trade_links: people_parts.removed_trade_links,
+            populations: people_parts.populations,
+            removed_populations: people_parts.removed_populations,
+            generations: people_parts.generations,
+            removed_generations: people_parts.removed_generations,
+            influencers: people_parts.influencers,
+            removed_influencers: people_parts.removed_influencers,
+            axis_bias: people_parts.axis_bias,
+            sentiment: people_parts.sentiment,
+            corruption: people_parts.corruption,
+            capability_flags: people_parts.capability_flags,
+            fog_enabled: snapshot.fog_enabled,
         };
 
         drop(diff_scope);
@@ -777,56 +1081,8 @@ impl PublishState {
             return Some(encoded_delta_flat);
         }
 
-        self.tiles = tiles_index;
-        self.logistics = logistics_index;
-        self.trade_links = trade_index;
-        self.populations = populations_index;
-        self.power = power_index;
-        self.power_metrics = power_metrics_state;
-        self.great_discovery_definitions = great_discovery_definitions_index;
-        self.great_discoveries = great_discoveries_index;
-        self.great_discovery_progress = great_discovery_progress_index;
-        self.great_discovery_telemetry = great_discovery_telemetry_state;
-        self.knowledge_ledger = knowledge_ledger_index;
-        self.knowledge_metrics = knowledge_metrics_state;
-        self.knowledge_timeline = snapshot_arc.knowledge_timeline.clone();
-        self.crisis_telemetry = crisis_telemetry_state;
-        self.crisis_overlay = crisis_overlay_state;
-        self.generations = generations_index;
-        self.influencers = influencers_index;
-        self.culture_layers = culture_layers_index;
-        self.axis_bias = axis_bias_state;
-        self.sentiment = sentiment_state;
-        self.terrain_overlay = terrain_state;
-        self.elevation_overlay = elevation_state;
-        self.climate_bands = climate_bands_state;
-        self.start_marker = start_marker_state;
-        self.logistics_raster = logistics_raster_state;
-        self.sentiment_raster = sentiment_raster_state;
-        self.corruption_raster = corruption_raster_state;
-        self.visibility_raster = visibility_raster_state;
-        self.fog_enabled = fog_enabled_state;
-        self.culture_raster = culture_raster_state;
-        self.military_raster = military_raster_state;
-        self.moisture_raster = moisture_state;
-        self.corruption = corruption_state;
-        self.culture_tensions = culture_tensions_state;
-        self.discovery_progress = discovery_index;
-        self.victory = victory_state;
-        self.capability_flags = capability_flags_state;
-        self.faction_inventory = faction_inventory_state;
-        self.sedentarization = sedentarization_state;
-        self.discovered_sites = discovered_sites_state;
-        self.demographics = demographics_state;
-        self.forage_patches = forage_patches_state;
-        self.intensification_knowledge = intensification_knowledge_state;
-        self.campaign_profiles = campaign_profiles_state;
-        self.command_events = command_events_state;
-        self.pending_forks = pending_forks_state;
-        self.stance_axes = stance_axes_state;
-        self.voice_medium = voice_medium_state;
-        self.herds = herd_state;
-        self.food_modules = food_modules_state;
+        // Every baseline this frame advances was advanced in place by the fan-out above, under
+        // `Baseline::Advance`. What is left here is the publication bookkeeping.
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         // `None` on every turn but the world's first, which is what makes `broadcast_latest`'s
@@ -1148,17 +1404,18 @@ impl PublishState {
         &mut self,
         states: Vec<InfluentialIndividualState>,
     ) -> Option<Arc<Vec<u8>>> {
-        let mut index = HashMap::with_capacity(states.len());
-        for state in &states {
-            index.insert(state.id, state.clone());
-        }
-
-        if index == self.influencers {
+        // The influencer baseline IS advanced here — it is this frame's whole subject — while every
+        // other baseline is left alone, which is what the doc comment above means by not touching
+        // them. Nothing to publish when the roster did not move.
+        let (added, removed) = diff_new(
+            &mut self.influencers,
+            &states,
+            |state| state.id,
+            Baseline::Advance,
+        );
+        if added.is_empty() && removed.is_empty() {
             return None;
         }
-
-        let added = diff_new(&self.influencers, &index);
-        let removed = diff_removed(&self.influencers, &index);
 
         let mut header = self
             .last_snapshot
@@ -1219,8 +1476,8 @@ impl PublishState {
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
-            influencers: added.clone(),
-            removed_influencers: removed.clone(),
+            influencers: added,
+            removed_influencers: removed,
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
@@ -1257,8 +1514,6 @@ impl PublishState {
                 back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
-
-        self.influencers = index;
 
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();

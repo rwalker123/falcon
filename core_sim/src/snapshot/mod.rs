@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -158,86 +158,347 @@ const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 /// snapshot exports the un-scaled forecast and the client multiplies by the acting band's own.
 const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-fn diff_new<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<T>
+/// Whether a diff may advance the published baseline it walks.
+///
+/// The baselines are mutated **in place** (see [`diff_indexed`]), so "don't commit" has to be an
+/// argument: there is no longer a freshly-built map a caller could decline to store. A resolved
+/// turn advances; a mid-tick **recapture** holds, which is what keeps its deltas cumulative —
+/// each one is `baseline(last turn) → now`, so applying them in order is idempotent and losing an
+/// intermediate one is harmless (`PublishState::publish`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Baseline {
+    Advance,
+    Hold,
+}
+
+/// Diff one indexed collection against its published baseline, **touching only what changed**.
+///
+/// The baseline is the last *published* state keyed by `key`; `current` is the freshly captured
+/// collection. An entry the baseline already holds and `same` accepts is left **completely
+/// alone** — not cloned, not re-inserted, not even rewritten with the identical fresh value — so a
+/// steady-state turn costs one hash probe per entry and nothing else. That is the whole point:
+/// `tiles`, `power` and `culture_layers` are each one entry per tile, and the overwhelming majority
+/// of them are unchanged on any given turn.
+///
+/// **Leaving the old value in place is the deadband's requirement, not an optimization.** `same` is
+/// a rounded, rendering-precision comparison for tiles and culture layers, so the baseline has to
+/// keep the value the client actually holds or a slow drift would be re-measured against a moving
+/// target and never publish. Storing the *fresh* value for an entry judged unchanged is precisely
+/// the bug this shape makes unwritable — there is no store on that path at all. See
+/// `TileState::drift_below_the_deadband_still_publishes_as_it_accumulates`.
+///
+/// Removal is the rare case and is not allowed to cost anything on the common path: the walk counts
+/// how many baseline entries the capture still carries, and only when that count falls short of the
+/// baseline's size does [`diff_removed`] sweep for the keys that vanished.
+fn diff_indexed<K, T, Key, Same>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    same: Same,
+    write: Baseline,
+) -> (Vec<T>, Vec<K>)
 where
-    K: Eq + Hash,
-    T: Clone + PartialEq,
+    K: Eq + Hash + Copy,
+    T: Clone,
+    Key: Fn(&T) -> K,
+    Same: Fn(&T, &T) -> bool,
 {
-    current
-        .iter()
-        .filter_map(|(id, state)| match previous.get(id) {
-            Some(prev) if prev == state => None,
-            _ => Some(state.clone()),
-        })
+    let baseline_len = baseline.len();
+    let mut sent = Vec::new();
+    // How many entries of `current` the baseline already held. Counted before any insert, so a
+    // newly-appeared entry does not mask a removal.
+    let mut retained = 0usize;
+    for state in current {
+        let id = key(state);
+        let unchanged = match baseline.get(&id) {
+            Some(previous) => {
+                retained += 1;
+                same(previous, state)
+            }
+            None => false,
+        };
+        if unchanged {
+            continue;
+        }
+        sent.push(state.clone());
+        if write == Baseline::Advance {
+            baseline.insert(id, state.clone());
+        }
+    }
+
+    if retained == baseline_len {
+        return (sent, Vec::new());
+    }
+    let removed = diff_removed(baseline, current, &key);
+    if write == Baseline::Advance {
+        for id in &removed {
+            baseline.remove(id);
+        }
+    }
+    (sent, removed)
+}
+
+/// The rare second walk: which baseline keys the captured collection no longer carries.
+///
+/// Reached only when [`diff_indexed`]'s pass found fewer baseline hits than the baseline holds, i.e.
+/// when something really was removed. A steady turn never calls it.
+fn diff_removed<K, T, Key>(baseline: &HashMap<K, T>, current: &[T], key: Key) -> Vec<K>
+where
+    K: Eq + Hash + Copy,
+    Key: Fn(&T) -> K,
+{
+    let present: HashSet<K> = current.iter().map(&key).collect();
+    baseline
+        .keys()
+        .filter(|id| !present.contains(id))
+        .copied()
         .collect()
 }
 
-/// `diff_new` for tiles, comparing **published** state rather than exact equality, and returning
-/// the baseline to store alongside the tiles to send.
+/// [`diff_indexed`] on exact equality — the rule for every per-entity collection except tiles and
+/// culture layers.
+fn diff_new<K, T, Key>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    write: Baseline,
+) -> (Vec<T>, Vec<K>)
+where
+    K: Eq + Hash + Copy,
+    T: Clone + PartialEq,
+    Key: Fn(&T) -> K,
+{
+    diff_indexed(
+        baseline,
+        current,
+        key,
+        |previous, state| previous == state,
+        write,
+    )
+}
+
+/// [`diff_indexed`] for tiles, comparing **published** state rather than exact equality.
 ///
-/// Tiles get their own diff because they are the only per-entity collection large enough for the
-/// comparison rule to matter: at 4160 entities on an 80x52 map, one field that drifts every turn
-/// costs the whole map every turn. See `TileState::same_published_state`.
-///
-/// **The returned baseline keeps the OLD value for any tile judged unchanged**, so the thing the
-/// comparison measures against is always the thing the client actually holds. That bounds the
-/// client's error at half a hundredth by construction, rather than leaving it to argument.
+/// Tiles get their own comparison because they are the largest per-entity collection: at 4160
+/// entities on an 80x52 map, one field that drifts every turn costs the whole map every turn. See
+/// `TileState::same_published_state`.
 ///
 /// (Slow drift reaches the client either way, because the comparison rounds to an absolute grid
 /// rather than testing `|a - b| < eps` — a relative band would let sub-band steps accumulate
-/// unbounded error, which is why it is not one. See
-/// `TileState::drift_below_the_deadband_still_publishes_as_it_accumulates`.)
+/// unbounded error, which is why it is not one.)
 fn diff_new_tiles(
-    previous: &HashMap<u64, TileState>,
-    current: HashMap<u64, TileState>,
-) -> (Vec<TileState>, HashMap<u64, TileState>) {
-    let mut send = Vec::new();
-    let mut baseline = HashMap::with_capacity(current.len());
-    for (id, state) in current {
-        match previous.get(&id) {
-            Some(prev) if prev.same_published_state(&state) => {
-                baseline.insert(id, prev.clone());
-            }
-            _ => {
-                send.push(state.clone());
-                baseline.insert(id, state);
-            }
-        }
-    }
-    (send, baseline)
+    baseline: &mut HashMap<u64, TileState>,
+    current: &[TileState],
+    write: Baseline,
+) -> (Vec<TileState>, Vec<u64>) {
+    diff_indexed(
+        baseline,
+        current,
+        |state| state.entity,
+        TileState::same_published_state,
+        write,
+    )
 }
 
-/// `diff_new` for culture layers. Same reasoning and the same last-published baseline rule as
-/// [`diff_new_tiles`]; see `CultureLayerState::same_published_state`.
+/// [`diff_new_tiles`] for culture layers — same reasoning, same deadband rule; see
+/// `CultureLayerState::same_published_state`.
 fn diff_new_culture_layers(
-    previous: &HashMap<u32, CultureLayerState>,
-    current: HashMap<u32, CultureLayerState>,
-) -> (Vec<CultureLayerState>, HashMap<u32, CultureLayerState>) {
-    let mut send = Vec::new();
-    let mut baseline = HashMap::with_capacity(current.len());
-    for (id, state) in current {
-        match previous.get(&id) {
-            Some(prev) if prev.same_published_state(&state) => {
-                baseline.insert(id, prev.clone());
-            }
-            _ => {
-                send.push(state.clone());
-                baseline.insert(id, state);
-            }
-        }
-    }
-    (send, baseline)
+    baseline: &mut HashMap<u32, CultureLayerState>,
+    current: &[CultureLayerState],
+    write: Baseline,
+) -> (Vec<CultureLayerState>, Vec<u32>) {
+    diff_indexed(
+        baseline,
+        current,
+        |state| state.id,
+        CultureLayerState::same_published_state,
+        write,
+    )
 }
 
-fn diff_removed<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<K>
+/// Diff one **whole section** against its published baseline: `None` when nothing changed.
+///
+/// The clone happens only on the changed branch. It used to be unconditional and taken *before* the
+/// comparison (`let state = snapshot.x.clone(); if self.x == state {…}`), which cost a full copy of
+/// every raster, roster and telemetry block every turn to discover that most of them had not moved.
+///
+/// **An unchanged section is not rewritten either**, for the same reason the indexed diff leaves an
+/// unchanged entry alone: the baseline already equals the captured value, so the assignment is a
+/// copy that cannot change anything.
+fn diff_whole<T>(baseline: &mut T, current: &T, write: Baseline) -> Option<T>
+where
+    T: Clone + PartialEq,
+{
+    if *baseline == *current {
+        return None;
+    }
+    if write == Baseline::Advance {
+        *baseline = current.clone();
+    }
+    Some(current.clone())
+}
+
+/// A section that is **indexed for comparison but sent whole**: the baseline is a map (so other
+/// paths can look an entry up by id) while the wire carries the entire list or nothing.
+///
+/// `great_discovery_definitions` is the only one — a catalog that changes when a config is loaded
+/// and never during play, so the comparison is a probe per entry and the rebuild is unreachable in
+/// steady state.
+fn diff_whole_indexed<K, T, Key>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    write: Baseline,
+) -> Option<Vec<T>>
 where
     K: Eq + Hash + Copy,
+    T: Clone + PartialEq,
+    Key: Fn(&T) -> K,
 {
-    previous
-        .keys()
-        .filter(|id| !current.contains_key(id))
-        .copied()
-        .collect()
+    let unchanged = current.len() == baseline.len()
+        && current
+            .iter()
+            .all(|state| baseline.get(&key(state)).is_some_and(|held| held == state));
+    if unchanged {
+        return None;
+    }
+    if write == Baseline::Advance {
+        baseline.clear();
+        for state in current {
+            baseline.insert(key(state), state.clone());
+        }
+    }
+    Some(current.to_vec())
+}
+
+/// The O(changed) property of the indexed diffs, asserted on the baseline map itself.
+///
+/// A steady-state turn is almost entirely unchanged entries, so "an unchanged entry is not touched"
+/// is the property the whole publication budget now rests on — and it is invisible from the delta,
+/// which looks the same either way. These tests read the baseline instead.
+#[cfg(test)]
+mod indexed_diff_tests {
+    use super::*;
+    use sim_runtime::{MountainKind, TerrainTags, TerrainType};
+
+    /// Half a hundredth: below `same_published_state`'s rounding grid, so a tile carrying it is
+    /// judged UNCHANGED while still being `!=` — which is what makes "was the baseline rewritten?"
+    /// observable.
+    const SUB_DEADBAND_DRIFT: f32 = 0.004;
+
+    fn tile(entity: u64, relief: f32) -> TileState {
+        TileState {
+            entity,
+            x: 0,
+            y: 0,
+            element: 0,
+            mass: 0,
+            temperature: 0,
+            terrain: TerrainType::AlluvialPlain,
+            terrain_tags: TerrainTags::empty(),
+            culture_layer: 0,
+            mountain_kind: MountainKind::None,
+            mountain_relief: relief,
+            habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: 0,
+            forage_capacity: 0.0,
+            underlying_terrain: TerrainType::AlluvialPlain,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
+        }
+    }
+
+    /// **An unchanged entry is not rewritten** — not with the old value, and above all not with the
+    /// fresh one.
+    ///
+    /// Rewriting it with the fresh value would be the deadband bug: each turn's sub-hundredth step
+    /// would be measured against the previous turn's, so an accumulating drift would never cross the
+    /// grid and the client would hold a stale tile forever. The baseline keeping the last *published*
+    /// value is what bounds the client's error, and here that is demonstrated by the baseline still
+    /// carrying the ORIGINAL relief after a diff that judged the tile unchanged.
+    #[test]
+    fn an_unchanged_entry_leaves_the_baseline_holding_its_last_published_value() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 1.0 + SUB_DEADBAND_DRIFT)];
+        let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert!(sent.is_empty(), "a sub-deadband step publishes nothing");
+        assert!(removed.is_empty());
+        assert_eq!(
+            baseline[&1].mountain_relief, 1.0,
+            "the baseline must still hold the last PUBLISHED value — storing the fresh one would \
+             restart the deadband every turn and freeze an accumulating drift out of the delta"
+        );
+    }
+
+    /// The complement: a change past the grid is sent *and* advances the baseline, so the next
+    /// turn's comparison is against what the client now holds.
+    #[test]
+    fn a_changed_entry_is_sent_and_advances_the_baseline() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 2.0)];
+        let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert_eq!(sent.len(), 1);
+        assert_eq!(baseline[&1].mountain_relief, 2.0);
+    }
+
+    /// `Baseline::Hold` computes the same delta and advances nothing — the mid-tick recapture path,
+    /// which must leave the baseline where the last resolved turn left it or its cumulative deltas
+    /// stop being cumulative.
+    #[test]
+    fn holding_the_baseline_still_reports_the_change_but_does_not_commit_it() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 2.0)];
+        let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Hold);
+
+        assert_eq!(sent.len(), 1, "the delta is the same either way");
+        assert_eq!(
+            baseline[&1].mountain_relief, 1.0,
+            "a held baseline is unmoved, so the next diff re-reports the same change"
+        );
+    }
+
+    /// Removal is the rare path, and it still has to work: a key the capture no longer carries is
+    /// reported once and leaves the baseline.
+    #[test]
+    fn a_vanished_entry_is_reported_and_dropped_from_the_baseline() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+        baseline.insert(2, tile(2, 1.0));
+
+        let captured = vec![tile(1, 1.0)];
+        let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert!(sent.is_empty());
+        assert_eq!(removed, vec![2]);
+        assert!(!baseline.contains_key(&2));
+        assert_eq!(baseline.len(), 1);
+    }
+
+    /// A whole section that did not move is neither cloned nor written back.
+    #[test]
+    fn an_unchanged_whole_section_is_not_rewritten() {
+        let mut baseline = vec![1u8, 2, 3];
+        assert_eq!(
+            diff_whole(&mut baseline, &vec![1u8, 2, 3], Baseline::Advance),
+            None
+        );
+        assert_eq!(
+            diff_whole(&mut baseline, &vec![4u8], Baseline::Advance),
+            Some(vec![4u8])
+        );
+        assert_eq!(baseline, vec![4u8]);
+    }
 }
 
 #[cfg(test)]
