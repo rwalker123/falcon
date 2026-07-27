@@ -57,7 +57,7 @@ splits them**, because conflating the two is what makes the decode look like a p
 For scale: the server turn is ~10 ms measured in the same run (`turn.completed duration_ms`).
 
 **A steady-state turn no longer costs anything like the ~171 ms this table once recorded** — the
-gating work (#388), the incremental tile walk, and delta streaming took the per-turn path to roughly
+gating work (PR #396), the incremental tile walk, and delta streaming took the per-turn path to roughly
 `decode` 7.3 + `apply` 5–35. The 45 ms decode is a **full-snapshot** cost, which is reached on the
 first frame of a world, a `resync` and a `new_game` — all of them behind the loading overlay.
 
@@ -173,7 +173,7 @@ them and is unchanged at `display` ≈ 6.1 ms either way):
 
 So the win lands on exactly the frames that pay for the section — the first frame of a world, a
 resync, and any turn whose diff moves forage or culture — which is also why the ~42 ms in #389's
-title no longer reads off a steady-state turn: #388's gates had already taken those frames to zero.
+title no longer reads off a steady-state turn: PR #396's gates had already taken those frames to zero.
 
 The five ingests are named seams on `MapView` (`_ingest_culture_layers`, `_ingest_food_modules`,
 `_ingest_discovered_sites`, `_ingest_forage_patches`, `_ingest_population_sites`) so that
