@@ -194,14 +194,11 @@ fn canonical(snapshot: &WorldSnapshot) -> Value {
     let mut value = serde_json::to_value(&snapshot).expect("snapshot serializes");
 
     blank_fields(&mut value, "tiles", &["entity"]);
-    // `node_id` is handed out in spawn order, so it renumbers with the entities it rides on.
-    rekey_by_tile(
-        &mut value,
-        "power",
-        "entity",
-        &tile_coords,
-        &["entity", "node_id"],
-    );
+    // Only `entity` is blanked here. `node_id` is NOT — it is `PowerNodeId(y * width + x)`
+    // (`systems/worldgen.rs`), a linear index off the tile's position, so it is already a stable
+    // id and a restore that renumbers entities must still reproduce it exactly. Blanking it would
+    // hide a field the oracle exists to check.
+    rekey_by_tile(&mut value, "power", "entity", &tile_coords, &["entity"]);
     rekey_by_tile(
         &mut value,
         "logistics",
