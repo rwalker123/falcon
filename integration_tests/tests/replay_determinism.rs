@@ -77,44 +77,135 @@ fn restore_to(app: &mut bevy::prelude::App, checkpoint: &WorldSnapshot) {
 // Localizing differ
 // ---------------------------------------------------------------------------------------------
 
-/// Walk two serialized snapshots together and collect a `path: a != b` line per differing leaf.
+/// The result of walking two snapshots together: what was compared, what differed, and what could
+/// not be compared at all.
 ///
-/// A bare `assert_eq!` on `WorldSnapshot` is useless here — the payload is tens of thousands of
-/// leaves and the failure output would be two unreadable blobs. The whole point of this file is
-/// that a failure names *which field* drifted, because that list is the work item.
-fn collect_diffs(a: &Value, b: &Value, path: &str, out: &mut Vec<String>) {
-    match (a, b) {
-        (Value::Object(left), Value::Object(right)) => {
-            let mut keys: Vec<&String> = left.keys().collect();
-            keys.extend(right.keys().filter(|key| !left.contains_key(*key)));
-            for key in keys {
-                let null = Value::Null;
-                collect_diffs(
-                    left.get(key).unwrap_or(&null),
-                    right.get(key).unwrap_or(&null),
-                    &format!("{path}.{key}"),
-                    out,
-                );
-            }
-        }
-        (Value::Array(left), Value::Array(right)) => {
-            if left.len() != right.len() {
-                out.push(format!("{path}: LEN {} != {}", left.len(), right.len()));
-                return;
-            }
-            for (index, (x, y)) in left.iter().zip(right.iter()).enumerate() {
-                collect_diffs(x, y, &format!("{path}[{index}]"), out);
-            }
-        }
-        _ => {
-            if a != b {
-                out.push(format!(
+/// **A difference count on its own is unreadable, and was actively misleading here.** "12,204
+/// differing leaves" moves when correctness changes *and* when the set of comparable leaves
+/// changes, and one integer cannot tell those apart — a fix that re-aligns two collections can
+/// raise the count by making thousands of leaves comparable that previously were not. Every figure
+/// this file reports is therefore a fraction with the denominator shown.
+///
+/// [`Self::asymmetric`] is the other half of the same problem. A leaf on one side and not the other
+/// is not a difference, it is a *failure to compare*, and counting it as either would hide it. Those
+/// are the cases where "the number went down" can mean "we stopped looking", so they are reported
+/// separately and asserted on separately.
+#[derive(Default)]
+struct Comparison {
+    /// Index-stripped path -> (leaves compared, of which differing).
+    per_shape: BTreeMap<String, (usize, usize)>,
+    /// One example line per differing shape.
+    samples: BTreeMap<String, String>,
+    /// Structural mismatches that stopped a comparison happening at all.
+    asymmetric: Vec<String>,
+}
+
+impl Comparison {
+    fn leaf(&mut self, path: &str, left: &Value, right: &Value) {
+        let shape = shape_of(path);
+        let entry = self.per_shape.entry(shape.clone()).or_default();
+        entry.0 += 1;
+        if left != right {
+            entry.1 += 1;
+            self.samples.entry(shape).or_insert_with(|| {
+                format!(
                     "{path}: {} != {}",
-                    truncate(&a.to_string()),
-                    truncate(&b.to_string())
+                    truncate(&left.to_string()),
+                    truncate(&right.to_string())
+                )
+            });
+        }
+    }
+
+    fn compared(&self) -> usize {
+        self.per_shape.values().map(|(total, _)| total).sum()
+    }
+
+    fn differing(&self) -> usize {
+        self.per_shape.values().map(|(_, bad)| bad).sum()
+    }
+
+    fn is_identical(&self) -> bool {
+        self.differing() == 0 && self.asymmetric.is_empty()
+    }
+
+    fn render(&self) -> String {
+        let compared = self.compared();
+        let differing = self.differing();
+        let percent = if compared == 0 {
+            0.0
+        } else {
+            (differing as f64 / compared as f64) * 100.0
+        };
+        let mut out = format!(
+            "{differing} of {compared} compared leaves differ ({percent:.2}%); \
+             {} asymmetric (not compared)",
+            self.asymmetric.len()
+        );
+        for (shape, (total, bad)) in &self.per_shape {
+            if *bad == 0 {
+                continue;
+            }
+            let sample = self.samples.get(shape).map(String::as_str).unwrap_or("");
+            out.push_str(&format!("\n  [{bad:>5} / {total:>5}] {shape}  |  {sample}"));
+        }
+        if !self.asymmetric.is_empty() {
+            out.push_str("\n  NOT COMPARED (present on one side only, or a length mismatch):");
+            for line in &self.asymmetric {
+                out.push_str(&format!("\n    {line}"));
+            }
+        }
+        out
+    }
+}
+
+/// Walk two serialized snapshots together.
+///
+/// A bare `assert_eq!` on `WorldSnapshot` is useless — the payload is tens of thousands of leaves
+/// and the failure would be two unreadable blobs. A failure here names *which field* drifted and
+/// out of how many, because that list is the work item.
+fn compare(left: &Value, right: &Value, path: &str, out: &mut Comparison) {
+    match (left, right) {
+        (Value::Object(a), Value::Object(b)) => {
+            for key in a.keys() {
+                match b.get(key) {
+                    Some(other) => compare(&a[key], other, &format!("{path}.{key}"), out),
+                    None => out
+                        .asymmetric
+                        .push(format!("{path}.{key}: present on the left only")),
+                }
+            }
+            for key in b.keys().filter(|key| !a.contains_key(*key)) {
+                out.asymmetric
+                    .push(format!("{path}.{key}: present on the right only"));
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            // Compare the common prefix rather than bailing out. Stopping at a length mismatch
+            // discarded every element the two sides *do* share, which is most of the signal.
+            for (index, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+                compare(x, y, &format!("{path}[{index}]"), out);
+            }
+            if a.len() != b.len() {
+                let skipped = a.len().abs_diff(b.len());
+                out.asymmetric.push(format!(
+                    "{path}: length {} vs {} — {skipped} element(s) not compared",
+                    a.len(),
+                    b.len()
                 ));
             }
         }
+        // `Option::None` serializes to `null`. Against a value it is a structural mismatch, not a
+        // difference in a shared field, so it is surfaced rather than folded into the count.
+        (Value::Null, other) if !other.is_null() => out.asymmetric.push(format!(
+            "{path}: null on the left, {} on the right",
+            truncate(&other.to_string())
+        )),
+        (other, Value::Null) if !other.is_null() => out.asymmetric.push(format!(
+            "{path}: {} on the left, null on the right",
+            truncate(&other.to_string())
+        )),
+        _ => out.leaf(path, left, right),
     }
 }
 
@@ -126,10 +217,9 @@ fn truncate(value: &str) -> String {
     }
 }
 
-/// Collapse `foo[3].bar[7].baz` to `foo[].bar[].baz` so thousands of per-element diffs report as
-/// one row with a count and a sample, instead of thousands of lines.
-fn shape_of(line: &str) -> String {
-    let path = line.split(':').next().unwrap_or(line);
+/// Collapse `foo[3].bar[7].baz` to `foo[].bar[].baz` so per-element results aggregate into one row
+/// carrying a count, a denominator and a sample, instead of thousands of lines.
+fn shape_of(path: &str) -> String {
     let mut shape = String::new();
     let mut inside_index = false;
     for ch in path.chars() {
@@ -144,19 +234,6 @@ fn shape_of(line: &str) -> String {
         }
     }
     shape
-}
-
-fn render(diffs: &[String]) -> String {
-    let mut by_shape: BTreeMap<String, (usize, &String)> = BTreeMap::new();
-    for line in diffs {
-        let entry = by_shape.entry(shape_of(line)).or_insert((0, line));
-        entry.0 += 1;
-    }
-    by_shape
-        .iter()
-        .map(|(shape, (count, sample))| format!("  [{count:>5}] {shape}  |  {sample}"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -266,13 +343,17 @@ fn sort_populations(value: &mut Value) {
 }
 
 fn assert_snapshots_match(label: &str, expected: &WorldSnapshot, actual: &WorldSnapshot) {
-    let mut diffs = Vec::new();
-    collect_diffs(&canonical(expected), &canonical(actual), "", &mut diffs);
+    let mut comparison = Comparison::default();
+    compare(
+        &canonical(expected),
+        &canonical(actual),
+        "",
+        &mut comparison,
+    );
     assert!(
-        diffs.is_empty(),
-        "{label}: {} differing leaves (entity identity canonicalized)\n{}",
-        diffs.len(),
-        render(&diffs)
+        comparison.is_identical(),
+        "{label} (entity identity canonicalized): {}",
+        comparison.render()
     );
 }
 
