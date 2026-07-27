@@ -32,11 +32,13 @@ const EXPECTED_STAGES: [&str; 11] = [
 /// steady-state turn, `encode.flat_delta`: the flat socket is the only socket, and a delta is all it
 /// is sent. This test failing with "… vanished" is exactly the alarm working: it is the only thing
 /// that would have caught the turn path silently losing an encode.
-const EXPECTED_CAPTURE_PHASES: [&str; 9] = [
+///
+/// The `snapshot.build.*` entries are the capture's own passes. `sow_refusals` and `flora` were
+/// folded into the single `patches` sweep in #387 — a merged label, not a lost one.
+const EXPECTED_CAPTURE_PHASES: [&str; 8] = [
     "snapshot.build",
     "snapshot.build.tiles",
-    "snapshot.build.sow_refusals",
-    "snapshot.build.flora",
+    "snapshot.build.patches",
     "snapshot.build.rasters",
     "snapshot.finalize_hash",
     "snapshot.history",

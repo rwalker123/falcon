@@ -17,7 +17,7 @@
 //!
 //! There is no tree. Every label is one flat slot, so a nested scope's time is counted **both** in
 //! its own entry and in every enclosing stage/scope. `snapshot.build` therefore contains
-//! `snapshot.build.tiles`, `snapshot.build.flora`, and so on; the `snapshot` stage contains all of
+//! `snapshot.build.tiles`, `snapshot.build.patches`, and so on; the `snapshot` stage contains all of
 //! them plus `snapshot.finalize_hash`. The dotted label names carry the hierarchy — do not read
 //! the numbers as a disjoint partition that should sum to the turn duration.
 //!
