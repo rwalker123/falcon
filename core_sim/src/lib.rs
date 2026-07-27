@@ -83,6 +83,7 @@ use crate::map_preset::load_map_presets_from_env;
 use crate::start_profile::{
     load_start_profile_knowledge_tags_from_env, load_start_profiles_from_env,
 };
+use bevy::ecs::schedule::{LogLevel, ScheduleBuildSettings};
 use bevy::prelude::*;
 
 pub use combat::{
@@ -698,6 +699,8 @@ pub fn build_headless_app() -> App {
                 reconcile_culture_layers,
                 systems::process_culture_events,
             )
+                // Fully serial by data: every pair conflicts (the culture layers each writes).
+                // `.chain()` here is the honest encoding, not a leftover default.
                 .chain()
                 .in_set(TurnStage::Influence)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
@@ -705,20 +708,28 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
-                systems::simulate_materials,
-                systems::simulate_logistics,
-                advance_herds,
-                advance_herd_grazing,
-                advance_predation,
-                advance_forage_regrowth,
-                advance_graze_regrowth,
-                advance_cultivation,
-                repopulate_fauna,
-                advance_husbandry,
-                supply::balance_supply_networks,
-                systems::trade_knowledge_diffusion,
+                // The serial backbone. Each of these conflicts with the next on the registry it
+                // mutates — `HerdRegistry` down the fauna run, `FactionInventory` at the ends —
+                // so the executor could not overlap them even if they were left unordered.
+                (
+                    systems::simulate_materials,
+                    systems::simulate_logistics,
+                    advance_herds,
+                    advance_herd_grazing,
+                    advance_predation,
+                    repopulate_fauna,
+                    advance_husbandry,
+                )
+                    .chain(),
+                // The flora/pasture half touches `ForageRegistry`/`GrazeRegistry`, which the fauna
+                // backbone above does not, so it runs alongside it. Each declares the one edge it
+                // actually has rather than inheriting the whole chain.
+                advance_forage_regrowth.after(systems::simulate_logistics),
+                advance_cultivation.after(advance_forage_regrowth),
+                advance_graze_regrowth.after(advance_herd_grazing),
+                supply::balance_supply_networks.after(advance_herds),
+                systems::trade_knowledge_diffusion.after(repopulate_fauna),
             )
-                .chain()
                 .in_set(TurnStage::Logistics)
                 .run_if(capability_enabled(
                     CapabilityFlags::CONSTRUCTION
@@ -736,6 +747,9 @@ pub fn build_headless_app() -> App {
                 knowledge_ledger::process_espionage_events,
                 knowledge_ledger::knowledge_ledger_tick,
             )
+                // `refresh_counter_intel_budgets` is free of the last three, but it must precede
+                // `schedule_counter_intel_missions`, which precedes them — so the freedom is
+                // already implied and a chain costs nothing. Measured, not assumed.
                 .chain()
                 .in_set(TurnStage::Knowledge)
                 .run_if(capability_enabled(
@@ -745,15 +759,20 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
-                great_discovery::collect_observation_signals,
-                great_discovery::update_constellation_progress,
-                great_discovery::screen_great_discovery_candidates,
-                great_discovery::resolve_great_discovery,
-                great_discovery::propagate_diffusion_impacts,
-                great_discovery::export_great_discovery_metrics,
-                great_discovery::apply_capability_effects,
+                (
+                    great_discovery::collect_observation_signals,
+                    great_discovery::update_constellation_progress,
+                    great_discovery::screen_great_discovery_candidates,
+                    great_discovery::resolve_great_discovery,
+                    great_discovery::propagate_diffusion_impacts,
+                    great_discovery::export_great_discovery_metrics,
+                )
+                    .chain(),
+                // Writes `CapabilityFlags`, which nothing else in the stage reads — so it only
+                // needs the discovery that grants the capability, not the reporting tail.
+                great_discovery::apply_capability_effects
+                    .after(great_discovery::resolve_great_discovery),
             )
-                .chain()
                 .in_set(TurnStage::GreatDiscovery)
                 .run_if(capability_enabled(
                     CapabilityFlags::MEGAPROJECTS | CapabilityFlags::ALWAYS_ON,
@@ -762,28 +781,36 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
-                systems::simulate_population,
-                // Move first so the band's `current_tile` is current before labor reads its
-                // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
-                systems::advance_band_movement,
-                // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
-                // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after
-                // movement so it reads the party's fresh position, and before the Visibility stage's
-                // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
-                systems::advance_expeditions,
-                systems::advance_labor_allocation,
-                // Predator raids fire right after labor so warrior counts and band positions are
-                // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
-                // raids its camp, the band defended by its Warriors (the role's first live consumer).
-                systems::advance_predator_raids,
-                // Wellbeing migration runs after demographics + this turn's yield payouts so
-                // morale/discontent are current and productivity has already been applied at each
-                // yield site; it then relocates discontented people (population conserved).
-                systems::advance_population_migration,
-                sedentarization::sedentarization_tick,
-                systems::publish_trade_telemetry,
+                // This whole run is serial by data — every pair conflicts on `PopulationCohort`,
+                // and the two `Commands`-using systems (`advance_band_movement`,
+                // `advance_expeditions`) sit inside it, so the auto-inserted `apply_deferred`
+                // sync points between them are preserved exactly as before.
+                (
+                    systems::simulate_population,
+                    // Move first so the band's `current_tile` is current before labor reads its
+                    // in-range sources, then resolve per-worker Forage/Hunt/Scout yields.
+                    systems::advance_band_movement,
+                    // Expedition per-turn logic (observe into the pending-reveal buffer, comm-range
+                    // flush-to-Discovered, return-retarget, arrival/fold-back). Runs right after
+                    // movement so it reads the party's fresh position, and before the Visibility stage's
+                    // `discover_sites` picks up any site on the newly-flushed Discovered tiles.
+                    systems::advance_expeditions,
+                    systems::advance_labor_allocation,
+                    // Predator raids fire right after labor so warrior counts and band positions are
+                    // current: a carnivore with `aggression > 0` within `predators.raid_radius` of a band
+                    // raids its camp, the band defended by its Warriors (the role's first live consumer).
+                    systems::advance_predator_raids,
+                    // Wellbeing migration runs after demographics + this turn's yield payouts so
+                    // morale/discontent are current and productivity has already been applied at each
+                    // yield site; it then relocates discontented people (population conserved).
+                    systems::advance_population_migration,
+                    sedentarization::sedentarization_tick,
+                )
+                    .chain(),
+                // Pure telemetry: writes `TradeTelemetry`, which only `simulate_population`
+                // touches. It rides alongside the whole movement/labor run instead of tailing it.
+                systems::publish_trade_telemetry.after(systems::simulate_population),
             )
-                .chain()
                 .in_set(TurnStage::Population)
                 .run_if(capability_enabled(
                     CapabilityFlags::CONSTRUCTION
@@ -795,14 +822,20 @@ pub fn build_headless_app() -> App {
         .add_systems(
             Update,
             (
-                visibility_systems::clear_active_visibility,
-                visibility_systems::prune_sweep_tracker,
-                visibility_systems::calculate_visibility,
-                visibility_systems::apply_trade_route_visibility,
-                visibility_systems::apply_visibility_decay,
-                sites::discover_sites,
+                // Everything here funnels through `VisibilityLedger`, so it is a serial run.
+                (
+                    visibility_systems::clear_active_visibility,
+                    visibility_systems::calculate_visibility,
+                    visibility_systems::apply_trade_route_visibility,
+                    visibility_systems::apply_visibility_decay,
+                    sites::discover_sites,
+                )
+                    .chain(),
+                // Touches only `VisibilitySweepTracker`, so it overlaps the ledger clear rather
+                // than sitting between the two.
+                visibility_systems::prune_sweep_tracker
+                    .before(visibility_systems::calculate_visibility),
             )
-                .chain()
                 .in_set(TurnStage::Visibility)
                 .run_if(capability_enabled(CapabilityFlags::ALWAYS_ON)),
         )
@@ -813,6 +846,7 @@ pub fn build_headless_app() -> App {
         .add_systems(Update, telling::telling_tick.in_set(TurnStage::Telling))
         .add_systems(
             Update,
+            // Both write `CorruptionLedgers`; nothing to overlap.
             (systems::simulate_power, systems::process_corruption)
                 .chain()
                 .in_set(TurnStage::Finalize)
@@ -827,6 +861,8 @@ pub fn build_headless_app() -> App {
                 systems::advance_tick,
                 snapshot::capture_snapshot,
             )
+                // `SimulationTick` then `SimulationMetrics` — a genuine sequence, and the one
+                // stage where running out of order would publish the wrong tick.
                 .chain()
                 .in_set(TurnStage::Snapshot),
         );
@@ -863,6 +899,26 @@ pub fn build_headless_app() -> App {
             "great_discovery.catalog.loaded"
         );
     }
+
+    // Ambiguity = two systems with conflicting data access and no ordering edge between them.
+    // With the multi-threaded executor that is precisely the determinism hazard: the pair cannot
+    // run in parallel anyway (the executor serializes conflicting access), so leaving them
+    // unordered doesn't buy a core — it just lets the executor pick a winner, and
+    // `integration_tests/tests/determinism.rs` stops holding.
+    //
+    // Set to `Error`, the schedule build *panics* on such a pair. That is what makes de-chaining
+    // safe to do at all: dropping an edge that mattered fails loudly at startup instead of
+    // silently making a turn order-dependent. It is also what keeps the property — a system added
+    // later without declaring its real edges cannot boot.
+    //
+    // Scoped to `Update` (the turn schedule) on purpose: `Startup` runs once and its systems stay
+    // `.chain()`-ed, and bevy's own schedules are not ours to hold to this bar.
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_build_settings(ScheduleBuildSettings {
+            ambiguity_detection: LogLevel::Error,
+            ..default()
+        });
+    });
 
     app
 }

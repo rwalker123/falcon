@@ -13,6 +13,10 @@ headless = []
 
 [dependencies]
 bevy = { version = "0.13", default-features = false, features = [
+    # Without this, `bevy_ecs` compiles the single-threaded executor and the turn runs on one
+    # core no matter what the schedule says. It is half of a pair: the other half is not
+    # `.chain()`-ing systems that have no dependency on each other (see `build_headless_app`).
+    "multi-threaded",
     "bevy_asset",
     "bevy_audio",
     "bevy_core_pipeline",
