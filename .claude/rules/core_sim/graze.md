@@ -112,11 +112,11 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   explain: **zero must be stated, never defaulted**), every row finite and `>= 0`, **at least one row
   positive** (an all-zero table disables the whole layer while parsing perfectly), the graze ecology
   live and phase-ordered, and `reseed_floor_fraction < collapse_fraction`.
-- **Persistence** — `GrazeRegistry` round-trips through the rollback snapshot exactly like
-  `ForageRegistry`/`HerdRegistry`: a per-tile `GrazeState` (tile key + the shared
-  `sim_schema::EcologyState`) captured coord-sorted into `WorldSnapshot.graze_registry`, rebuilt on
-  restore via `GrazeRegistry::update_from_states`. Graze is **wild ground** — never owned, tended or
-  improved — so `EcologyState`'s `progress`/`owner` ride at their defaults.
+- **Persistence** — `GrazeRegistry` survives a rollback exactly like `ForageRegistry`/`HerdRegistry`:
+  the **checkpoint carries the registry whole** (`SimState::graze`). It reached that state by way of
+  a per-tile `GrazeState` mirror captured coord-sorted onto `WorldSnapshot.graze_registry`; that copy
+  was deleted once the checkpoint left it without a reader (`checkpoints.md`), and its map-sized
+  per-turn sort went with it. Graze is **wild ground** — never owned, tended or improved.
 - **Wire — on `TileState`, not a patch list.** `TileState.grazeBiomass:float` /
   `grazeCapacity:float` / `grazeEcologyPhase:ubyte` (`0` = none, `1` thriving, `2` stressed, `3`
   collapsing — the `moraleCause:ubyte` idiom; `none` is the default so "no pasture" can never be

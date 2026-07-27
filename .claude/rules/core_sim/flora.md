@@ -87,12 +87,12 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   a mutable property); the `assign_labor forage <x> <y> [policy] <workers>` command-text parse takes
   an optional policy token; `handle_assign_labor` builds it via `parse_follow_policy`; and the
   policy round-trips through the rollback snapshot (`LaborAssignmentState.policy`, no schema change).
-- **Persistence** — `ForageRegistry` round-trips through the rollback snapshot exactly like the
-  `HerdRegistry` (the §0-i pattern): a per-tile `ForageState` (= tile key + the shared
-  `sim_schema::EcologyState`) captured coord-sorted into `WorldSnapshot.forage_registry` and rebuilt
-  on restore via `ForageRegistry::update_from_states`. `progress`/`owner` on `EcologyState` now carry
-  **cultivation** (Phase 1a, below) — a mutate-then-restore rewinds it like biomass. Not wired to the
-  FlatBuffers client stream.
+- **Persistence** — `ForageRegistry` survives a rollback exactly like the `HerdRegistry`: the
+  **checkpoint carries the registry whole** (`SimState::forage`), including the `progress`/`owner`
+  fields that hold **cultivation** (Phase 1a, below), so a mutate-then-restore rewinds it like
+  biomass. It reached that state by way of a per-tile `ForageState` mirror captured coord-sorted
+  onto `WorldSnapshot.forage_registry`; that copy was deleted once the checkpoint left it without a
+  reader (`checkpoints.md`). Never wired to the FlatBuffers client stream.
 - **Companion client slice:** the sim side of the forage policy axis (§0-iii) is complete — the
   client `%ForageAssignControls` policy picker (mirroring `%HerdAssignControls`) that emits the
   policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology

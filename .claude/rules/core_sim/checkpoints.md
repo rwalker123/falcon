@@ -35,6 +35,40 @@ resident at 80×52**, a cost it had always carried. The client view does not nee
 it is *derivable*: `handle_rollback` rebuilds the world and **recaptures** the frame from it, so
 there is no second history to disagree with the first.
 
+### The client view carries no save state at all any more
+
+`WorldSnapshot` used to carry four collections that were simulation records rather than anything a
+player sees — `herd_registry`, `forage_registry`, `graze_registry` and `beat_ledger` — captured
+every turn so the old restore-from-the-client-view path had authoritative state the fog-filtered
+display telemetry had lost. Restore reads `SimState` now, which carries all four whole
+(`SimState::{herds, forage, graze, beat_ledger}`), so the copies on the snapshot had **no reader
+left**. They are deleted. The rule the `WorldSnapshot` doc comment now states — *every field is
+there because something downstream renders or exports it* — has no exceptions.
+
+Three things this is worth knowing for:
+
+- **The cost was per turn and map-sized.** `forage_registry` and `graze_registry` were collected
+  from their `HashMap`s and **sorted by `(y, x)`** so a rollback would see a deterministic order —
+  2113 and 1650 entries on the standard 80×52 `earthlike` world, each an allocating `*State` with
+  a `String` ecology phase. Interleaved A/B, 5 pairs, standard recipe (release, `map_seed` pinned,
+  mean of 30 frames after 5 warm-ups, publisher shut down): **`snapshot.build` 3.170 → 3.054 ms**
+  and **`run_turn` 4.660 → 4.501 ms**, distributions non-overlapping. Interleaving is not optional
+  here — sequential before/after batches on this machine drift by more than the effect.
+- **None of the four was ever on the wire**, so this was not a schema change: no `snapshot.fbs`
+  slot, no client work, and `cargo xtask decode-guard` passes against the **unchanged** golden.
+  `decode_fixture.rs`'s `OFF_WIRE_SUBTREES` gate is correspondingly back to meaning one thing —
+  *encoded but not decoded* — instead of two.
+- **The one reader was a test**, `integration_tests/tests/fauna_fog.rs`'s
+  `the_rollback_record_keeps_every_herd_the_display_list_hides`, which used
+  `snapshot.herd_registry.len()` as the unfiltered count that proves the published `herds` list is a
+  strict subset. It reads `capture_sim_state(&world).herds` instead, which makes the claim in its
+  own name literal rather than incidental.
+
+**`export_map` consequently exports the player's view, not ground truth.** The `MapExport` JSON
+wraps a `WorldSnapshot`, so its `snapshot.herds` is the fog-filtered display list and there is no
+longer an unfiltered roster beside it. Anything offline that wants every herd needs a checkpoint,
+not an export.
+
 ## The three construction rules
 
 **No `Entity` crosses a checkpoint.** Restoring despawns and respawns everything, so bevy hands back

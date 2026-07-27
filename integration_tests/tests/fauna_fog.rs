@@ -198,9 +198,14 @@ fn disabling_fog_survives_a_rollback() {
     );
 }
 
-/// **The sim record is NOT a view.** `WorldSnapshot.herd_registry` is the authoritative rollback
-/// state and `export_map`'s ground truth; filtering it would rewind fauna the player hadn't seen
-/// out of existence. Only the display list (`herds`) is fog-filtered.
+/// **The sim record is NOT a view.** The authoritative herd record is the `HerdRegistry` the
+/// checkpoint carries (`SimState::herds`); filtering *it* would rewind fauna the player hadn't seen
+/// out of existence. Only the published display list (`WorldSnapshot.herds`) is fog-filtered.
+///
+/// The count is read off `capture_sim_state` rather than off the snapshot: the snapshot used to
+/// carry an unfiltered `herd_registry` copy beside its filtered `herds`, and that copy was deleted
+/// because nothing but this assertion read it. The checkpoint is where sim state lives, so asking
+/// *it* makes the claim in this test's name literal.
 #[test]
 fn the_rollback_record_keeps_every_herd_the_display_list_hides() {
     common::ensure_test_config();
@@ -208,19 +213,22 @@ fn the_rollback_record_keeps_every_herd_the_display_list_hides() {
     app.update();
     app.update();
 
-    let history = app.world.resource::<SnapshotHistory>();
-    let snapshot = history.last_snapshot().expect("a turn was captured");
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .last_snapshot()
+        .expect("a turn was captured");
 
+    let checkpointed = capture_sim_state(&app.world).herds.entries().len();
     let live = app.world.resource::<HerdRegistry>().entries().len();
     assert_eq!(
-        snapshot.herd_registry.len(),
-        live,
+        checkpointed, live,
         "the authoritative herd record carries every live herd, fog or no fog"
     );
     assert!(
-        snapshot.herds.len() < snapshot.herd_registry.len(),
+        snapshot.herds.len() < checkpointed,
         "the display list is the filtered one (display {} vs record {})",
         snapshot.herds.len(),
-        snapshot.herd_registry.len()
+        checkpointed
     );
 }

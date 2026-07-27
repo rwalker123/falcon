@@ -239,7 +239,6 @@ mod tests {
     use super::*;
     use crate::fauna_config::FaunaConfig;
     use sim_runtime::TerrainType;
-    use sim_schema::EcologyState;
 
     fn test_graze_config() -> GrazeConfig {
         FaunaConfig::builtin().graze.clone()
@@ -346,31 +345,5 @@ mod tests {
         }
         assert!((patch.biomass - cap).abs() < 1e-3);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
-    }
-
-    #[test]
-    fn graze_state_roundtrip_is_identity() {
-        let original = GrazeState {
-            x: 9,
-            y: 2,
-            ecology: EcologyState {
-                biomass: 61.5,
-                carrying_capacity: 240.0,
-                ecology_phase: "stressed".to_string(),
-                // Graze is wild ground: never owned, never improved. The shared record's
-                // cultivation fields ride at their defaults and must round-trip as such.
-                progress: 0.0,
-                owner: None,
-            },
-        };
-
-        let registry = GrazeRegistry::from_states(std::slice::from_ref(&original));
-        assert_eq!(registry.len(), 1);
-        let patch = registry
-            .patch(UVec2::new(9, 2))
-            .expect("one patch restored");
-        assert_eq!(patch.ecology_phase, EcologyPhase::Stressed);
-        let restored = crate::snapshot::graze_state(patch);
-        assert_eq!(restored, original);
     }
 }

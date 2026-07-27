@@ -6,8 +6,13 @@
 //! (`forage::advance_cultivation`, `fauna::advance_husbandry`). They are deliberately **not**
 //! persisted in the rollback snapshot.
 //!
-//! The bug: the snapshot-restore constructors (`forage::forage_patch_from_state`,
-//! `fauna::herd_from_state`) reseed both flags `false`. On the very first Logistics pass after a
+//! The bug: the `*_from_state` constructors (`forage::forage_patch_from_state`,
+//! `fauna::herd_from_state`) reseed both flags `false`. **They are no longer on the restore path** —
+//! `restore_sim_state` clones the registries whole from the checkpoint, so nothing reconstructs a
+//! patch or herd from a `*State` record any more. This test still earns its place because it pins
+//! the *behaviour* (a worked source must survive a rollback without decaying), which is what a
+//! reader cares about and which no longer depends on how restore is implemented. On the very first
+//! Logistics pass after a
 //! restore — which runs *before* the Population labor arm can re-mark them — a tended patch / Field
 //! decays one tick (`is_managed()` flips false, the improvement lost even with a band working it
 //! every turn) and a corralled pen **escapes outright** (`corralled_at = None`, `pen_radius = 0`,

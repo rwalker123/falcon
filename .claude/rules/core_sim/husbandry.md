@@ -467,16 +467,16 @@ mechanic (the two are near-mechanical transposes).
 > arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
 > movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`/`corralled_at`),
 > **and** its depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
-> `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
-> embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
-> restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
-> convention. This closes a **latent bug**: only the lossy display `HerdTelemetry`
+> `domestication_progress`/`owner`) — survives a rollback because the **checkpoint carries the whole
+> registry** (`SimState::herds`). It reached that state by way of a serde `HerdState` mirror on
+> `WorldSnapshot.herd_registry`; the checkpoint arc made the mirror redundant and it was deleted
+> (`checkpoints.md`). This closes a **latent bug**: only the lossy display `HerdTelemetry`
 > (`WorldSnapshot.herds`) used to be captured, so herd biomass/position silently kept their
 > post-rollback values. Restore rebuilds the derived `HerdDensityMap` + `HerdTelemetry` (as
-> `advance_herds` does post-loop) so nothing is stale for a turn. `HerdState` is the sim side; the
-> FlatBuffers client stream is untouched (it keeps using the display telemetry). **`EcologyState`
-> is the shared depletable-ecology record** the forage-depletion slice (§0-ii) reuses for its
-> per-tile `ForageState`.
+> `advance_herds` does post-loop) so nothing is stale for a turn. The FlatBuffers client stream is
+> untouched (it keeps using the display telemetry). `HerdState` and the shared `EcologyState` it
+> embeds survive in `sim_schema` with the registry-side `HerdRegistry::{from_states,
+> update_from_states}` constructors, but nothing on a live path builds either any more.
 
 Market hunting shipped as the third extractive rung, now named `FollowPolicy::Deplete`
 (`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its

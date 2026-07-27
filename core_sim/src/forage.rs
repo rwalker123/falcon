@@ -1975,7 +1975,6 @@ mod tests {
     use super::*;
     use crate::labor_config::LaborConfig;
     use sim_runtime::TerrainType;
-    use sim_schema::EcologyState;
 
     /// The **shipped** forage config (the per-biome capacity table lives only in the JSON — the
     /// struct default is deliberately empty, so `ForageLaborConfig::default()` would read every
@@ -2401,39 +2400,6 @@ mod tests {
                 "flat MSY plateau at biomass = {frac}·K"
             );
         }
-    }
-
-    #[test]
-    fn forage_state_roundtrip_is_identity() {
-        // A ForageState with non-default ecology, **both** improvement meters AND a committed
-        // species, so biomass / cap / phase / cultivation / field / owner / commitment all
-        // round-trip (a rollback must rewind a half-sown Field, not lose the investment — and it
-        // must restore the crop that Field is, since the commitment decides both the patch's
-        // effective capacity and its conversion rate).
-        let original = ForageState {
-            x: 7,
-            y: 3,
-            field_progress: 0.4,
-            species: "wild_emmer".to_string(),
-            ecology: EcologyState {
-                biomass: 42.5,
-                carrying_capacity: 120.0,
-                ecology_phase: "stressed".to_string(),
-                progress: 0.6,
-                owner: Some(3),
-            },
-        };
-
-        let registry = ForageRegistry::from_states(std::slice::from_ref(&original));
-        let patch = registry
-            .patch(UVec2::new(7, 3))
-            .expect("one patch restored");
-        assert_eq!(patch.cultivation_progress, 0.6);
-        assert_eq!(patch.field_progress, 0.4);
-        assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
-        assert_eq!(patch.owner, Some(FactionId(3)));
-        let restored = crate::snapshot::forage_state(patch);
-        assert_eq!(restored, original);
     }
 
     #[test]

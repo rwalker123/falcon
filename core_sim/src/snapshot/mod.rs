@@ -14,16 +14,16 @@ use sim_runtime::{
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
-    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
+    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
-    FoodModuleState, ForagePatchState, ForageState, ForkChoiceState, GenerationState,
-    GlossEntryState, GrazeState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
-    HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState, InfluentialIndividualState,
-    IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
-    PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
+    FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, HuntPolicyCeilingState,
+    HuntTripEstimateState, InfluentialIndividualState, IntensificationKnowledgeState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingForkState, PendingForksState,
+    PendingMigrationState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
     SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
@@ -60,7 +60,7 @@ use crate::{
     forage::{
         commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
         field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
-        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
+        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForageRegistry,
         CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
@@ -502,6 +502,7 @@ mod tests {
     // Used only by the fixtures below. They lived at file scope while
     // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
     use crate::components::{ElementKind, LocalStore, MoraleCause};
+    use crate::forage::ForagePatch;
     use crate::power::PowerNodeId;
     use crate::{
         intensification::RUNG_COMPLETE,
@@ -574,104 +575,6 @@ mod tests {
             viewer: VIEWER,
             fog_enabled,
         })
-    }
-
-    #[test]
-    fn herd_state_roundtrip_is_identity() {
-        // A herd with every field non-default so movement + ecology + domestication all round-trip.
-        let original = HerdState {
-            id: "herd_test".to_string(),
-            label: "Test Herd (herd_test)".to_string(),
-            species: "Red Deer".to_string(),
-            size_class: "migratory".to_string(),
-            route: vec![(3, 4), (5, 6), (7, 2)],
-            step_index: 2,
-            current_pos: (5, 6),
-            dwell_remaining: 3,
-            body_mass: 800.0,
-            // Slice 8b: the kill-credit accumulator round-trips (a rollback rewinds progress toward
-            // the next kill rather than resetting the wait).
-            hunt_credit: 123.0,
-            roam: HerdRoamState {
-                mode: "loiter".to_string(),
-                loiter_turns_left: 9,
-            },
-            next_pos: Some((7, 2)),
-            // Rung 1c: a corralled (penned) herd round-trips its pen tile AND its pen-construction
-            // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
-            corralled_at: Some((5, 6)),
-            corral_progress: 1.0,
-            // Grazing 2d: the pen's fenced footprint radius + the in-flight extend meter/state round-trip.
-            pen_radius: 1,
-            pen_extend_progress: 0.5,
-            pen_extending: true,
-            // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
-            // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
-            fodder_per_biomass: 0.05,
-            // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
-            regrowth_rate: 0.04,
-            // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
-            husbandry_ceiling: "wild".to_string(),
-            // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
-            // rollback restores it rather than re-flickering for a turn.
-            herders_needed: 3,
-            // Slice 2: the under-herded edge-gate round-trips (persisted, unlike `pen_starving`).
-            under_herded: true,
-            ecology: EcologyState {
-                biomass: 4321.0,
-                carrying_capacity: 8000.0,
-                ecology_phase: "stressed".to_string(),
-                progress: 1.0,
-                owner: Some(1),
-            },
-        };
-
-        // HerdState -> Herd (restore side) -> HerdState (capture side) must be an identity.
-        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
-        let herd = registry.entries().first().expect("one herd restored");
-        assert!(herd.is_corralled(), "corralled_at restores the pen");
-        let restored = herd_state(herd);
-
-        assert_eq!(restored, original);
-    }
-
-    /// A **half-built** pen (the Corral investment mid-flight) must round-trip through the rollback
-    /// snapshot: a rollback rewinds the investment, it never silently loses it. The herd is still
-    /// mobile (`corralled_at` is `None`) until `corral_progress` reaches `1.0`.
-    #[test]
-    fn half_built_corral_progress_round_trips() {
-        const HALF_BUILT: f32 = 0.44;
-        let original = HerdState {
-            id: "herd_penning".to_string(),
-            size_class: "small".to_string(),
-            route: vec![(2, 2)],
-            current_pos: (2, 2),
-            roam: HerdRoamState {
-                mode: "graze_wander".to_string(),
-                loiter_turns_left: 0,
-            },
-            // Mid-build: the pen is not finished, so the herd is still mobile.
-            corralled_at: None,
-            corral_progress: HALF_BUILT,
-            // Set explicitly (like `size_class`): an empty default normalizes to "pen" and would break
-            // the round-trip identity.
-            husbandry_ceiling: "pen".to_string(),
-            ecology: EcologyState {
-                biomass: 60.0,
-                carrying_capacity: 100.0,
-                ecology_phase: "thriving".to_string(),
-                // Domesticated + owned — the gates the Corral policy requires to keep building.
-                progress: 1.0,
-                owner: Some(2),
-            },
-            ..Default::default()
-        };
-
-        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
-        let herd = registry.entries().first().expect("one herd restored");
-        assert!(!herd.is_corralled(), "a half-built pen is not yet a corral");
-        assert_eq!(herd.corral_progress, HALF_BUILT);
-        assert_eq!(herd_state(herd), original);
     }
 
     fn tile(entity: u64, x: u32, y: u32) -> TileState {
@@ -788,10 +691,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -854,10 +753,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -915,10 +810,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),

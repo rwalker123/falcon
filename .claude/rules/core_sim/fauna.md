@@ -298,11 +298,12 @@ verbs — a free-form `species` string means new species need no schema change).
 >   or the turn after a rollback clears the ledger) **every** herd is hidden — which is exactly what
 >   `visibility_raster_from_ledger` does in the same state (an all-unexplored, black raster). The two
 >   read the same ledger for the same faction, so they cannot disagree about a herd on dark ground.
-> - **Only the VIEW is filtered.** `WorldSnapshot.herd_registry` — the authoritative rollback record,
->   and `export_map`'s ground truth — carries every live herd. Restore rebuilds `HerdTelemetry` from
->   the registry (never from `snapshot.herds`), so rollback is untouched. **Consequence:** an
->   `export_map` JSON's `snapshot.herds` is now the *player's view*; read `snapshot.herd_registry`
->   for the full roster.
+> - **Only the VIEW is filtered.** The authoritative record is the `HerdRegistry` itself, which the
+>   **checkpoint** carries (`SimState::herds`) and which holds every live herd; restore rebuilds
+>   `HerdTelemetry` from it (never from `snapshot.herds`), so rollback is untouched. **Consequence:**
+>   an `export_map` JSON's `snapshot.herds` is the *player's view* and there is no unfiltered roster
+>   beside it — the snapshot's `herd_registry` copy was deleted once the checkpoint arc left it
+>   without a reader (`checkpoints.md` → "The client view carries no save state at all any more").
 > - **A hunted herd stays visible for free** — `calculate_visibility` reveals `worked_source_sight_range`
 >   around each worked Hunt herd's tile, so a herd your band is working is always `Active`.
 > - **Known gap:** a hunting **expedition**'s target herd is *not* revealed (an expedition is

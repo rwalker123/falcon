@@ -25,19 +25,19 @@ pub struct SnapshotContext<'w> {
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
     pub start_location: Res<'w, StartLocation>,
     pub herds: Res<'w, HerdTelemetry>,
-    /// Authoritative herd sim state, captured into the rollback snapshot (`herd_registry`) so a
-    /// rollback rewinds biomass / position / movement — the display `herds` telemetry alone is lossy.
+    /// Authoritative herd sim state — read to fill in what the lossy display `herds` telemetry
+    /// lacks (carrying capacity, the yield forecast). The registry itself is not published; the
+    /// checkpoint carries it (`SimState::herds`).
     pub herd_registry: Res<'w, HerdRegistry>,
-    /// Authoritative depletable-forage sim state, captured into the rollback snapshot
-    /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
-    /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
+    /// Authoritative depletable-forage sim state — read for the per-tile `forage_patches` readout
+    /// and the "is there a patch here?" tile flag. Not published; the checkpoint carries it.
     pub forage_registry: Res<'w, ForageRegistry>,
-    /// Authoritative graze/pasture sim state, captured into the rollback snapshot (`graze_registry`)
-    /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
-    /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
+    /// Authoritative graze/pasture sim state — read for the per-tile `TileState.graze_*` readout
+    /// (graze is on nearly every land tile, so a per-patch list would be the wrong shape — see
+    /// `graze.rs`). Not published as a registry; the checkpoint carries it.
     pub graze_registry: Res<'w, GrazeRegistry>,
-    /// The Telling's narrative memory, captured into the rollback snapshot (`beat_ledger`) so a
-    /// rollback past a beat lets that beat fire again — see `core_sim/src/telling/mod.rs`.
+    /// The Telling's narrative memory — read for the client-facing fork tier, stance and voice
+    /// readouts. The ledger itself is not published; the checkpoint carries it.
     pub beat_ledger: Res<'w, BeatLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
@@ -2327,8 +2327,8 @@ pub fn capture_snapshot(
         .collect();
     // The client's DISPLAY herd list, fog-filtered for the viewer faction — the same ledger and the
     // same faction `visibility_raster` below is rendered from, so the two can never disagree about
-    // whether a herd is on visible ground. The authoritative `herd_registry_states` below is
-    // deliberately UNFILTERED: it is sim state (rollback + `export_map` ground truth), not a view.
+    // whether a herd is on visible ground. The unfiltered sim record is the `HerdRegistry` itself,
+    // which the checkpoint carries; the snapshot is the view only.
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2342,24 +2342,6 @@ pub fn capture_snapshot(
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
     });
-    // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
-    // sorted deterministically by herd id like the generation states.
-    let mut herd_registry_states: Vec<HerdState> =
-        herd_registry.entries().iter().map(herd_state).collect();
-    herd_registry_states.sort_unstable_by(|a, b| a.id.cmp(&b.id));
-    // Authoritative depletable-forage state for rollback, sorted deterministically by tile coord
-    // (HashMap iteration order is unstable). Mirrors the herd-registry capture above.
-    let mut forage_registry_states: Vec<ForageState> =
-        forage_registry.patches.values().map(forage_state).collect();
-    forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
-    // Authoritative graze/pasture state for rollback, same coord-sorted shape as the forage registry.
-    // (The *client* readout is on `TileState`, captured above — this is the sim record only.)
-    let mut graze_registry_states: Vec<GrazeState> =
-        graze_registry.patches.values().map(graze_state).collect();
-    graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
-    // The Telling's narrative memory. Already deterministically ordered (BTree-backed), so it
-    // needs no sort of its own.
-    let beat_ledger_state = beat_ledger.to_state();
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
@@ -2404,10 +2386,6 @@ pub fn capture_snapshot(
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),
-        herd_registry: herd_registry_states,
-        forage_registry: forage_registry_states,
-        graze_registry: graze_registry_states,
-        beat_ledger: beat_ledger_state,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
