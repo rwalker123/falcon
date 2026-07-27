@@ -66,9 +66,8 @@ fn generate(width: u32, height: u32, seed: u64) -> WorldSnapshot {
     app.update();
     app.world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|s| (**s).clone())
+        .last_snapshot()
+        .map(|s| (*s).clone())
         .expect("snapshot after worldgen")
 }
 

@@ -20,7 +20,7 @@ use core_sim::port_alloc;
 
 use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
-use core_sim::network::{broadcast_latest, start_snapshot_server, SnapshotServer};
+use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
 use core_sim::turn_profile;
 use core_sim::{
@@ -43,10 +43,10 @@ use core_sim::{
     CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EcologyPhase, EspionageAgentHandle,
     EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
     EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster, LaborConfigHandle,
-    MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError, QueueMissionParams,
-    Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
+    FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry, FrameSink,
+    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
     SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
     StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
@@ -148,7 +148,9 @@ fn main() {
         warn!(target: "shadow_scale::server", "log_stream.start_failed");
     }
 
-    let snapshot_flat_server = start_snapshot_server(bound_ports.snapshot_flat);
+    // Shared, because the publisher thread of every world holds a handle to it as its
+    // `FrameSink` while the command loop keeps writing rollback / resync / feed frames to it.
+    let snapshot_flat_server = Arc::new(start_snapshot_server(bound_ports.snapshot_flat));
 
     let config_watch_path = app
         .world
@@ -259,7 +261,7 @@ fn main() {
     );
 
     while let Ok(command) = command_rx.recv() {
-        let flat_server = &snapshot_flat_server;
+        let flat_server: &SnapshotServer = &snapshot_flat_server;
         match command {
             Command::Turn(turns) => {
                 if !world_active {
@@ -282,7 +284,7 @@ fn main() {
                         }
                         queue.force_submit_all(|_| FactionOrders::end_turn());
                     }
-                    resolve_ready_turn(&mut app, flat_server);
+                    resolve_ready_turn(&mut app);
                 }
             }
             Command::ResetMap { width, height } => {
@@ -328,12 +330,13 @@ fn main() {
                     new_config.map_seed = 0;
                 }
 
+                retire_publisher(&mut app);
                 app = rebuild_world_from_config(
                     new_config,
                     seed_random_requested,
                     command_sender,
                     &watch_paths,
-                    flat_server,
+                    &snapshot_flat_server,
                     &mut world_epoch,
                     |_| {},
                 );
@@ -362,7 +365,7 @@ fn main() {
                     height,
                     seed,
                     profile_id,
-                    flat_server,
+                    &snapshot_flat_server,
                 );
             }
             Command::ExportMap { path } => {
@@ -385,7 +388,7 @@ fn main() {
                 match history.latest_entry() {
                     Some(entry) => {
                         let bytes = history.publish_full_frame(&entry);
-                        flat_server.broadcast(bytes.as_ref());
+                        flat_server.broadcast(&bytes);
                         info!(
                             target: "shadow_scale::server",
                             tick = entry.tick,
@@ -410,7 +413,7 @@ fn main() {
                 );
             }
             Command::Orders { faction, orders } => {
-                handle_order_submission(&mut app, faction, orders, flat_server);
+                handle_order_submission(&mut app, faction, orders);
             }
             Command::Rollback { tick } => {
                 handle_rollback(&mut app, tick, flat_server);
@@ -655,7 +658,7 @@ fn main() {
         // Gated on `world_active`: on the idle (pre-`new_game`) world there is no `ElevationField`,
         // so recapture would panic in the Snapshot stage.
         if world_active {
-            recapture_and_broadcast(&mut app, flat_server);
+            recapture_and_broadcast(&mut app);
         }
     }
 }
@@ -1264,7 +1267,7 @@ fn handle_reload_config(
 fn write_map_export(app: &bevy::prelude::App, requested_path: Option<String>) {
     let snapshot = {
         let history = app.world.resource::<SnapshotHistory>();
-        match history.last_snapshot.clone() {
+        match history.last_snapshot().clone() {
             Some(snapshot) => snapshot,
             None => {
                 warn!(
@@ -1383,6 +1386,19 @@ fn collect_watch_paths(app: &bevy::prelude::App) -> WatchPaths {
     }
 }
 
+/// Drain and finish the outgoing world's snapshot publisher before the next world's is started.
+///
+/// Both rebuild paths (`ResetMap`, `NewGame`) construct the new `App` — first turn and baseline
+/// frame included — *before* the old one is dropped, so without this the two publishers overlap and
+/// a previous-world frame can reach the socket after the new world's baseline. The client would
+/// survive it (a stale-epoch delta names a `base_frame_seq` it does not hold, so it is dropped), but
+/// "the previous world's frames arrive after the new world's" is the exact failure
+/// `.claude/rules/core_sim/world-handoff.md` exists to prevent, and it should not rest on the client
+/// noticing.
+fn retire_publisher(app: &mut bevy::prelude::App) {
+    app.world.resource_mut::<SnapshotHistory>().shutdown();
+}
+
 /// The shared world-build path used by BOTH `ResetMap` and `NewGame`: build a fresh headless app on
 /// `config`, re-attach the runtime resources and file watchers, run one Startup pass (worldgen), and
 /// broadcast the first snapshot. `configure` runs after the config/metadata/watchers are in place but
@@ -1394,7 +1410,7 @@ fn rebuild_world_from_config(
     seed_random: bool,
     command_sender: Sender<Command>,
     watch_paths: &WatchPaths,
-    snapshot_server_flat: &SnapshotServer,
+    snapshot_server_flat: &Arc<SnapshotServer>,
     world_epoch: &mut u32,
     configure: impl FnOnce(&mut bevy::prelude::App),
 ) -> bevy::prelude::App {
@@ -1464,15 +1480,19 @@ fn rebuild_world_from_config(
     *world_epoch += 1;
     new_app.insert_resource(WorldEpoch(*world_epoch));
 
+    // Attach the socket BEFORE the first capture, so this world's baseline frame is broadcast by
+    // the publisher like every frame after it. A world whose publisher has no sink still publishes
+    // — it simply has no audience — which is exactly the state the idle boot app and every test
+    // run in.
+    new_app
+        .world
+        .resource::<SnapshotHistory>()
+        .attach_sink(Arc::clone(snapshot_server_flat) as Arc<dyn FrameSink>);
+
     // Apply any caller-supplied configuration (e.g. the start profile) before Startup worldgen runs.
     configure(&mut new_app);
 
     run_turn(&mut new_app);
-
-    {
-        let history = new_app.world.resource::<SnapshotHistory>();
-        broadcast_latest(snapshot_server_flat, history);
-    }
 
     new_app
 }
@@ -1490,7 +1510,7 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
-    snapshot_server_flat: &SnapshotServer,
+    snapshot_server_flat: &Arc<SnapshotServer>,
 ) {
     if width == 0 || height == 0 {
         warn!(
@@ -1540,6 +1560,7 @@ fn handle_new_game(
         "new_game.begin"
     );
 
+    retire_publisher(app);
     *app = rebuild_world_from_config(
         new_config,
         seed == 0,
@@ -4967,23 +4988,18 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 /// broadcast + back ring entry in place instead of recording a new ring entry. Re-capturing on a
 /// genuinely non-mutating command is merely slightly wasteful (commands are human-issued, low
 /// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
-fn recapture_and_broadcast(app: &mut bevy::prelude::App, snapshot_server_flat: &SnapshotServer) {
+fn recapture_and_broadcast(app: &mut bevy::prelude::App) {
+    // The recapture rides the same publisher queue as a turn does, so it publishes exactly what a
+    // turn publishes — the flat delta, or the flat full frame when this world has one pending.
+    // There is no second, serial path: `capture_snapshot` hands the world over and returns, here as
+    // on the turn (#393).
     recapture_snapshot_in_place(&mut app.world);
-
-    // Publishes exactly what a turn publishes — the flat delta, or the flat full frame when this
-    // world has one pending — because `refresh_latest` now diffs against the uncommitted baseline
-    // rather than re-encoding a full world. Sharing `broadcast_latest`, which owns that rule
-    // ("full frame if there is one, else the delta"), keeps the two publication paths from
-    // drifting apart.
-    let history = app.world.resource::<SnapshotHistory>();
-    broadcast_latest(snapshot_server_flat, history);
 }
 
 fn handle_order_submission(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     orders: FactionOrders,
-    snapshot_server_flat: &SnapshotServer,
 ) {
     let order_count = orders.orders.len();
     let result = {
@@ -5006,7 +5022,7 @@ fn handle_order_submission(
                 order_count,
                 "orders.ready_to_resolve"
             );
-            resolve_ready_turn(app, snapshot_server_flat);
+            resolve_ready_turn(app);
         }
         Err(SubmitError::UnknownFaction(f)) => warn!(
             target: "shadow_scale::server",
@@ -5059,7 +5075,7 @@ fn handle_axis_bias(
     };
 
     if let Some(flat) = broadcast_payload {
-        snapshot_server_flat.broadcast(flat.as_ref());
+        snapshot_server_flat.broadcast(&flat);
     }
 
     info!(
@@ -5194,10 +5210,10 @@ fn broadcast_influencer_update(
     };
 
     if let Some(flat) = influencer_delta {
-        snapshot_server_flat.broadcast(flat.as_ref());
+        snapshot_server_flat.broadcast(&flat);
     }
     if let Some(flat) = bias_delta {
-        snapshot_server_flat.broadcast(flat.as_ref());
+        snapshot_server_flat.broadcast(&flat);
     }
 }
 
@@ -5281,7 +5297,7 @@ fn handle_inject_corruption(
     };
 
     if let Some(flat) = delta_payload {
-        snapshot_server_flat.broadcast(flat.as_ref());
+        snapshot_server_flat.broadcast(&flat);
     }
 
     info!(
@@ -5566,7 +5582,7 @@ fn pick_best_agent_for_mission(
     best.map(|(handle, _)| handle)
 }
 
-fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server_flat: &SnapshotServer) {
+fn resolve_ready_turn(app: &mut bevy::prelude::App) {
     let turn_start = std::time::Instant::now();
     // Open the turn's profile here rather than from a stage marker: order application and snapshot
     // broadcast happen outside `app.update()` and belong to the same turn's breakdown.
@@ -5595,11 +5611,9 @@ fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server_flat: &Snaps
         queue.advance_turn();
     }
 
-    {
-        let _s = turn_profile::scope("broadcast");
-        let history = app.world.resource::<SnapshotHistory>();
-        broadcast_latest(snapshot_server_flat, history);
-    }
+    // No broadcast step: `capture_snapshot` handed the world to the publisher inside `run_turn`,
+    // and the publisher hashes, diffs, encodes and writes it on its own thread (#393). The turn is
+    // over here whether or not that frame has reached the socket yet.
 
     let metrics = app.world.resource::<SimulationMetrics>();
     let duration_ms = turn_start.elapsed().as_secs_f64() * 1000.0;
@@ -5672,7 +5686,7 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    snapshot_server_flat.broadcast(flat_frame.as_ref());
+    snapshot_server_flat.broadcast(&flat_frame);
 }
 
 #[cfg(test)]
@@ -5745,9 +5759,9 @@ mod tests {
 
     /// A snapshot broadcaster bound to an ephemeral loopback port — enough to satisfy the
     /// world-build path's broadcast without a real client.
-    fn loopback_snapshot_server() -> SnapshotServer {
+    fn loopback_snapshot_server() -> Arc<SnapshotServer> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-        start_snapshot_server(listener)
+        Arc::new(start_snapshot_server(listener))
     }
 
     /// Boot-idle + `new_game`: the server boots with no world (Startup never ran), `new_game` builds
@@ -5836,8 +5850,7 @@ mod tests {
         assert_eq!(
             app.world
                 .resource::<SnapshotHistory>()
-                .last_snapshot
-                .as_ref()
+                .last_snapshot()
                 .expect("the built world captured a snapshot")
                 .header
                 .world_epoch,
@@ -5862,8 +5875,7 @@ mod tests {
         assert_eq!(
             app.world
                 .resource::<SnapshotHistory>()
-                .last_snapshot
-                .as_ref()
+                .last_snapshot()
                 .expect("the rebuilt world captured a snapshot")
                 .header
                 .world_epoch,
@@ -6431,7 +6443,7 @@ mod tests {
             let snapshot = app
                 .world
                 .resource::<SnapshotHistory>()
-                .last_snapshot
+                .last_snapshot()
                 .clone()
                 .expect("a snapshot was captured");
             let patch = snapshot
@@ -6487,7 +6499,7 @@ mod tests {
         let snapshot = app
             .world
             .resource::<SnapshotHistory>()
-            .last_snapshot
+            .last_snapshot()
             .clone()
             .expect("a snapshot was captured");
         let patch = snapshot

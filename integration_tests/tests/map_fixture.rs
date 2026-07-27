@@ -30,9 +30,8 @@ fn generate_fixture_world() -> (u64, String, WorldSnapshot) {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|snapshot| (**snapshot).clone())
+        .last_snapshot()
+        .map(|snapshot| (*snapshot).clone())
         .expect("snapshot available after worldgen");
     (seed, preset, snapshot)
 }

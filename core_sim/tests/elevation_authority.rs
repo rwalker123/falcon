@@ -88,9 +88,8 @@ fn census(preset_id: &str, seed: u64) -> FinalMapCensus {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|s| (**s).clone())
+        .last_snapshot()
+        .map(|s| (*s).clone())
         .expect("snapshot after worldgen");
     let overlay = &snapshot.elevation_overlay;
     let width = overlay.width as usize;
@@ -247,9 +246,8 @@ fn the_published_sea_level_lies_on_the_sample_quantization_lattice() {
         let snapshot = app
             .world
             .resource::<SnapshotHistory>()
-            .last_snapshot
-            .as_ref()
-            .map(|s| (**s).clone())
+            .last_snapshot()
+            .map(|s| (*s).clone())
             .expect("snapshot after worldgen");
         let sea_level = snapshot.elevation_overlay.sea_level;
 

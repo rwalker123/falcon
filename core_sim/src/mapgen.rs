@@ -4105,9 +4105,8 @@ mod tests {
         let snapshot = app
             .world
             .resource::<crate::SnapshotHistory>()
-            .last_snapshot
-            .as_ref()
-            .map(|s| (**s).clone())
+            .last_snapshot()
+            .map(|s| (*s).clone())
             .expect("snapshot after worldgen");
 
         GeneratedWorld {

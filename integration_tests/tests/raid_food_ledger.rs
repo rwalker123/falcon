@@ -118,7 +118,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
+        .last_snapshot()
         .clone()
         .expect("a snapshot was captured");
     let cohort = snapshot

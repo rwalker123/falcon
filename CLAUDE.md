@@ -124,6 +124,24 @@ human owns the merge. Violating the rules below has cost real work.
 - When modifying subsystem code, check whether the **rule file that owns the arc** needs
   updating — see "The hub files are not where rationale goes"
 
+### Every summary opens with an executive summary of ACTION ITEMS ONLY
+
+Lead with a short list of the things that still need a decision or a hand — nothing else. Then the
+detail, under its own heading, for whoever wants it.
+
+**Belongs in the executive summary:** a question only the human can answer; a defect found and left
+unfixed; work deliberately left out of scope; a result that came in materially under what the task
+promised. Each one labelled with what is being asked — *decide*, *review*, *nothing needed*.
+
+**Does NOT belong there:** what was fixed, corrections to a premise, measurements, design rationale,
+what was verified, things merely "flagged". Those are the report, not the ask. A reader must never
+have to work out whether a bullet is a completed thing, a broken thing, or a thought.
+
+The failure this exists to prevent is a summary where done work, open risks and incidental findings
+are interleaved at the same level, so the one item needing action is indistinguishable from the
+nine that do not. **If nothing needs action, say exactly that in one line** — an empty list is a
+useful answer, and padding it to look substantial defeats the purpose.
+
 ---
 
 ## Working from a Git Worktree

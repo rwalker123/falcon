@@ -446,7 +446,7 @@ pub fn build_fixture_snapshot() -> Result<WorldSnapshot, Box<dyn Error>> {
 
     let mut snapshot: WorldSnapshot = serde_json::from_value(value)?;
     apply_structural_fixups(&mut snapshot);
-    Ok(snapshot.finalize())
+    Ok(snapshot)
 }
 
 // ---------------------------------------------------------------------------

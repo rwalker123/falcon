@@ -128,6 +128,7 @@ mod governance;
 mod knowledge;
 mod map;
 mod population;
+mod publish;
 mod subsistence;
 mod vision;
 
@@ -139,6 +140,7 @@ pub(crate) use governance::*;
 pub(crate) use knowledge::*;
 pub(crate) use map::*;
 pub(crate) use population::*;
+pub use publish::*;
 pub(crate) use subsistence::*;
 pub(crate) use vision::*;
 
@@ -562,7 +564,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     fn snapshot_with_discoveries(
@@ -629,7 +630,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     fn snapshot_with_power_metrics(tick: u64, power_metrics: PowerTelemetryState) -> WorldSnapshot {
@@ -691,7 +691,6 @@ mod tests {
             visibility_raster: ScalarRasterState::default(),
             fog_enabled: true,
         }
-        .finalize()
     }
 
     /// Build a minimal content band for the food-flow snapshot test, with the given age brackets
@@ -1034,8 +1033,7 @@ mod tests {
         history.update(updated_snapshot);
 
         let delta = history
-            .last_delta
-            .as_ref()
+            .last_delta()
             .expect("delta captured after terrain change");
         let terrain_delta = delta
             .terrain
@@ -1048,10 +1046,7 @@ mod tests {
         assert_eq!(sample.terrain, updated_tile.terrain);
         assert_eq!(sample.tags, updated_tile.terrain_tags);
 
-        let latest_snapshot = history
-            .last_snapshot
-            .as_ref()
-            .expect("latest snapshot retained");
+        let latest_snapshot = history.last_snapshot().expect("latest snapshot retained");
         assert_eq!(latest_snapshot.terrain, updated_overlay);
     }
 
@@ -1087,8 +1082,7 @@ mod tests {
         history.update(updated_snapshot);
 
         let delta = history
-            .last_delta
-            .as_ref()
+            .last_delta()
             .expect("delta captured after power metrics change");
         let power_delta = delta
             .power_metrics
@@ -1105,10 +1099,7 @@ mod tests {
         );
         assert!((power_delta.surplus_margin - updated_metrics.surplus_margin).abs() < f32::EPSILON);
 
-        let latest_snapshot = history
-            .last_snapshot
-            .as_ref()
-            .expect("latest snapshot retained");
+        let latest_snapshot = history.last_snapshot().expect("latest snapshot retained");
         assert_eq!(latest_snapshot.power_metrics, updated_metrics);
     }
 
@@ -1155,18 +1146,14 @@ mod tests {
         history.update(updated);
 
         let delta = history
-            .last_delta
-            .as_ref()
+            .last_delta()
             .expect("delta captured after great discovery changes");
 
         assert_eq!(delta.great_discoveries, vec![discovery.clone()]);
         assert_eq!(delta.great_discovery_progress, vec![progress.clone()]);
         assert_eq!(delta.great_discovery_telemetry.as_ref(), Some(&telemetry));
 
-        let latest = history
-            .last_snapshot
-            .as_ref()
-            .expect("latest snapshot stored");
+        let latest = history.last_snapshot().expect("latest snapshot stored");
         assert_eq!(latest.great_discoveries, vec![discovery]);
         assert_eq!(latest.great_discovery_progress, vec![progress]);
         assert_eq!(latest.great_discovery_telemetry, telemetry);

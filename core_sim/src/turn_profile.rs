@@ -34,7 +34,24 @@
 //!
 //! A poisoned lock is recovered from rather than propagated ([`std::sync::PoisonError::into_inner`]):
 //! a profiler must never be the thing that takes the server down.
+//!
+//! # The publisher's accumulator IS thread-local, for the opposite reason
+//!
+//! Snapshot publication runs on a dedicated thread of its own ([`crate::snapshot::SnapshotHistory`],
+//! issue #393), so [`publish_scope`] records into a thread-local rather than the turn's global. Two
+//! reasons, and both would be bugs the other way round:
+//!
+//! * A publisher span folded into the global would land in **whatever turn's profile happens to be
+//!   open** — the publisher runs concurrently with the next turn by construction, so the
+//!   attribution would be a race, not a measurement.
+//! * `cargo test` runs many worlds in parallel, each with its own publisher thread. One shared
+//!   accumulator would interleave their frames into a single unreadable slot.
+//!
+//! Being thread-local means nothing off the publisher thread can *read* it, which is why a frame's
+//! breakdown is drained by the publisher itself ([`publish_take`]) and handed back through
+//! `SnapshotHistory::last_publish_profile` rather than fetched from the reader's side.
 
+use std::cell::RefCell;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -174,6 +191,45 @@ impl Drop for Scope {
         let elapsed = self.started.elapsed();
         state().record(self.label, elapsed);
     }
+}
+
+thread_local! {
+    /// The snapshot publisher thread's own accumulator — see the module header for why this one is
+    /// thread-local while the turn's is global.
+    static PUBLISH_PROFILE: RefCell<ProfileState> = const { RefCell::new(ProfileState::new()) };
+}
+
+/// Open an RAII timing scope on the **publisher** accumulator; folded into `label` on drop.
+///
+/// The twin of [`scope`], and the same binding rule applies (bind to a named local, never `_`).
+/// Recording from a thread that never calls [`publish_take`] would accumulate entries nobody
+/// drains, so this is for the publisher thread's own work and nothing else — the rare inline
+/// publication paths (rollback, `Resync`, the auxiliary feed deltas) deliberately carry no scope.
+pub fn publish_scope(label: &'static str) -> PublishScope {
+    PUBLISH_PROFILE.with(|profile| profile.borrow_mut().reserve(label));
+    PublishScope {
+        label,
+        started: Instant::now(),
+    }
+}
+
+/// RAII guard returned by [`publish_scope`].
+pub struct PublishScope {
+    label: &'static str,
+    started: Instant,
+}
+
+impl Drop for PublishScope {
+    fn drop(&mut self) {
+        let elapsed = self.started.elapsed();
+        PUBLISH_PROFILE.with(|profile| profile.borrow_mut().record(self.label, elapsed));
+    }
+}
+
+/// Drain this thread's publisher phases in open (chronological) order, leaving the accumulator
+/// empty and ready for the next frame. Called once per published frame by the publisher itself.
+pub fn publish_take() -> Vec<PhaseTiming> {
+    PUBLISH_PROFILE.with(|profile| std::mem::take(&mut profile.borrow_mut().entries))
 }
 
 /// Build a zero-param Bevy system that opens `label` as the current stage (closing the previous
