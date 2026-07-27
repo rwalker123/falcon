@@ -42,7 +42,7 @@ const SITE_TERRAIN_ID := 37
 var _failures: Array[String] = []
 
 func _ready() -> void:
-	var mv: Node = MAP_VIEW.new()
+	var mv: MapView = MAP_VIEW.new()
 	mv.grid_width = GRID_W
 	mv.grid_height = GRID_H
 	var terrain := PackedInt32Array()
