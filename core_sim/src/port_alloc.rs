@@ -1,12 +1,18 @@
-//! All-or-nothing allocation of the server's four-port block, plus the
-//! ports handshake file the client uses to discover a bumped block.
+//! All-or-nothing allocation of the server's port block, plus the ports
+//! handshake file the client uses to discover a bumped block.
 //!
-//! Historically each of the four listeners bound itself independently and
-//! failed differently: the command listener panicked, snapshot/log streaming
-//! merely warned and disabled themselves. A single busy port could therefore
-//! leave a *running* server with no snapshot stream at all. This module binds
-//! the whole block up front and hands the already-bound listeners to the
-//! subsystems, so the server either owns all four sockets or refuses to start.
+//! Historically each listener bound itself independently and failed
+//! differently: the command listener panicked, snapshot/log streaming merely
+//! warned and disabled themselves. A single busy port could therefore leave a
+//! *running* server with no snapshot stream at all. This module binds the whole
+//! block up front and hands the already-bound listeners to the subsystems, so
+//! the server either owns every socket in the block or refuses to start.
+//!
+//! **Three listeners over a four-slot block.** Slot 0 carried the retired
+//! bincode snapshot socket (#388) and is now reserved rather than reclaimed:
+//! `command`/`snapshot_flat`/`log` keep the exact numbers every client default,
+//! `run_stack.sh` export and published `ports.json` already names. The
+//! all-or-nothing property is unchanged — it just holds over three sockets.
 
 use std::env;
 use std::fs;
@@ -16,12 +22,10 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::resources::{
-    COMMAND_PORT_OFFSET, LOG_PORT_OFFSET, SNAPSHOT_FLAT_PORT_OFFSET, SNAPSHOT_PORT_OFFSET,
-};
+use crate::resources::{COMMAND_PORT_OFFSET, LOG_PORT_OFFSET, SNAPSHOT_FLAT_PORT_OFFSET};
 
 /// Auto-derived bases are spaced this far apart so each concurrent server gets
-/// its own contiguous block of four ports without overlapping its neighbours.
+/// its own contiguous block of four slots without overlapping its neighbours.
 /// Mirrors `PORT_BLOCK_STRIDE` in `scripts/run_stack.sh`.
 pub const PORT_BLOCK_STRIDE: u16 = 10;
 
@@ -39,25 +43,21 @@ const LINUX_STATE_FALLBACK: &str = ".local/state";
 /// Relative path under `$HOME` for the macOS per-user app-data root.
 const MACOS_APP_SUPPORT: &str = "Library/Application Support";
 
-/// The four listeners for one port block, already bound and owned.
+/// The listeners for one port block, already bound and owned. Slot 0 of the
+/// block is reserved and deliberately not bound — see the module docs.
 #[derive(Debug)]
 pub struct BoundPorts {
     /// Base port the block was bound at (may differ from the configured base
     /// if the block was auto-bumped).
     pub base: u16,
-    /// Host all four listeners are bound to.
+    /// Host every listener is bound to.
     pub host: IpAddr,
-    pub snapshot: TcpListener,
     pub command: TcpListener,
     pub snapshot_flat: TcpListener,
     pub log: TcpListener,
 }
 
 impl BoundPorts {
-    pub fn snapshot_port(&self) -> u16 {
-        self.base + SNAPSHOT_PORT_OFFSET
-    }
-
     pub fn command_port(&self) -> u16 {
         self.base + COMMAND_PORT_OFFSET
     }
@@ -71,7 +71,7 @@ impl BoundPorts {
     }
 }
 
-/// Binds all four ports of the block at `base`, all-or-nothing.
+/// Binds every used port of the block at `base`, all-or-nothing.
 ///
 /// On failure every listener bound so far is dropped before returning, so the
 /// partial block is released and the next slot can be tried cleanly.
@@ -86,7 +86,6 @@ pub fn bind_block(host: IpAddr, base: u16) -> io::Result<BoundPorts> {
     Ok(BoundPorts {
         base,
         host,
-        snapshot: bind_one(SNAPSHOT_PORT_OFFSET)?,
         command: bind_one(COMMAND_PORT_OFFSET)?,
         snapshot_flat: bind_one(SNAPSHOT_FLAT_PORT_OFFSET)?,
         log: bind_one(LOG_PORT_OFFSET)?,
@@ -129,7 +128,7 @@ pub fn allocate(host: IpAddr, base: u16, base_is_explicit: bool) -> io::Result<B
     Err(io::Error::new(
         io::ErrorKind::AddrInUse,
         format!(
-            "no free port block found on {host}: tried {PORT_SLOT_COUNT} blocks of 4 ports from \
+            "no free port block found on {host}: tried {PORT_SLOT_COUNT} 4-slot blocks from \
              {base} upwards in steps of {PORT_BLOCK_STRIDE}. Close other Shadow-Scale servers or \
              set SIM_PORT_BASE to a free base."
         ),
@@ -141,7 +140,6 @@ pub fn allocate(host: IpAddr, base: u16, base_is_explicit: bool) -> io::Result<B
 #[derive(Serialize)]
 struct PortsFile {
     host: String,
-    snapshot: u16,
     command: u16,
     snapshot_flat: u16,
     log: u16,
@@ -233,7 +231,6 @@ pub fn write_ports_file(bound: &BoundPorts) -> Option<PortsFileGuard> {
 pub fn write_ports_file_at(path: PathBuf, bound: &BoundPorts) -> Option<PortsFileGuard> {
     let payload = PortsFile {
         host: bound.host.to_string(),
-        snapshot: bound.snapshot_port(),
         command: bound.command_port(),
         snapshot_flat: bound.snapshot_flat_port(),
         log: bound.log_port(),
@@ -313,11 +310,10 @@ mod tests {
     }
 
     #[test]
-    fn bind_block_claims_all_four_ports() {
+    fn bind_block_claims_every_used_port() {
         let _serial = serialized();
         let base = free_base();
         let bound = bind_block(LOCALHOST, base).expect("block should bind");
-        assert_eq!(bound.snapshot_port(), base);
         assert_eq!(bound.command_port(), base + COMMAND_PORT_OFFSET);
         assert_eq!(bound.snapshot_flat_port(), base + SNAPSHOT_FLAT_PORT_OFFSET);
         assert_eq!(bound.log_port(), base + LOG_PORT_OFFSET);
@@ -365,7 +361,12 @@ mod tests {
         let raw = fs::read_to_string(guard.path()).expect("read ports file");
         let parsed: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
         assert_eq!(parsed["host"], "127.0.0.1");
-        assert_eq!(parsed["snapshot"], base);
+        assert_eq!(
+            parsed.get("snapshot"),
+            None,
+            "slot 0 is reserved (#388) — publishing a key for it would point a reader at an \
+             unbound port"
+        );
         assert_eq!(parsed["command"], base + COMMAND_PORT_OFFSET);
         assert_eq!(parsed["snapshot_flat"], base + SNAPSHOT_FLAT_PORT_OFFSET);
         assert_eq!(parsed["log"], base + LOG_PORT_OFFSET);

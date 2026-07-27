@@ -50,9 +50,10 @@ const KEY_HOST := "host"
 const KEY_COMMAND := "command"
 const KEY_LOG := "log"
 ## NOTE: the client's snapshot *stream* is the FlatBuffers socket, i.e.
-## "snapshot_flat" — NOT "snapshot", which is the legacy JSON snapshot socket.
-## Reading the wrong key yields a client that connects to a live socket and then
-## silently never renders.
+## "snapshot_flat". The server used to publish a second "snapshot" key for a
+## legacy bincode socket, and reading it yielded a client that connected to a
+## live socket and then silently never rendered; that socket was retired in #388
+## and the key is no longer published.
 const KEY_SNAPSHOT_FLAT := "snapshot_flat"
 
 ## Valid TCP port range for a server-bound listener (port 0 is "any", which the

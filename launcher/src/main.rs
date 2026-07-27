@@ -351,10 +351,11 @@ fn env_path(key: &str) -> Result<PathBuf, String> {
 /// `KEY_SNAPSHOT_FLAT` in
 /// `clients/godot_thin_client/src/scripts/ServerPortsFile.gd`.
 ///
-/// Note the stream port is `snapshot_flat`, **not** `snapshot`: `snapshot` is the
-/// legacy JSON socket, and a client pointed at it connects to a live socket and
-/// then silently never renders. Any change here must move in lockstep with that
-/// script.
+/// Note the stream port is `snapshot_flat`, and it is now the **only** snapshot
+/// port: the legacy bincode socket that published a `snapshot` key was retired
+/// in #388 and its slot (`base+0`) reserved, so that key no longer exists and
+/// requiring it here would hang the launcher forever. Any change here must move
+/// in lockstep with that script.
 const REQUIRED_PORTS_KEYS: [&str; 4] = ["host", "command", "log", "snapshot_flat"];
 
 /// Blocks until the server publishes a *complete* handshake file, it exits, or

@@ -455,7 +455,7 @@ Groundbreaking discoveries rarely remain siloed. Once ideas interact with trade,
   - `trade_leak_*`, `migration_fragment_scaling`, `migration_fidelity_floor`: knowledge diffusion curves for trade/migration flows.
   - `power_*` scalars: generation caps, efficiency, storage stability, bleed rates, and incident thresholds.
   - `corruption_*`: subsystem penalties applied as corruption ledgers accumulate.
-  - `snapshot_bind`, `snapshot_flat_bind`, `command_bind`, `log_bind`, `snapshot_history_limit`: networking endpoints and snapshot history depth for the headless server.
+  - `port_base_bind`, `snapshot_flat_bind`, `command_bind`, `log_bind`, `snapshot_history_limit`: networking endpoints and snapshot history depth for the headless server (`port_base_bind` names the block's base host/port; its own slot is reserved and unbound).
   - Use `reload_config [path]` (or omit the path to reuse the current file) to hot-load new values without restarting; the server also auto-reloads when the watched file changes on disk.
   - Set `SIM_CONFIG_PATH` to point at an alternate JSON; the server watches the active file and hot-reloads values on save (socket changes still require a manual restart).
 - Each faction now fields a data-driven agent roster (Veil Runner, Signal Threader, Warden’s Shield) with stealth and counter-intel proficiencies. These map one-to-one with the mission planners surfaced in `docs/architecture.md` §Espionage Mission Outline.  

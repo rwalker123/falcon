@@ -28,14 +28,11 @@ const EXPECTED_STAGES: [&str; 11] = [
 ///
 /// **Every encode still on the turn path is listed** — this is "the live encodes", not an arbitrary
 /// subset, so an encode that survives a future pass belongs here and one that is genuinely retired
-/// comes out.
-///
-/// **`encode.flat_snapshot` is absent, and `encode.flat_delta` replaced it** (#386). The client
-/// stream now carries a delta per turn; a full flat snapshot is encoded only for a world's first
-/// publication, for rollback, and on a `resync` request — none of which is a steady-state turn.
-/// This test failing with "encode.flat_snapshot vanished" is exactly the alarm working: it is the
-/// only thing that would have caught the turn path silently losing an encode.
-const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
+/// moves to [`RETIRED_CAPTURE_PHASES`] below. After #388 that leaves exactly **one** encode on a
+/// steady-state turn, `encode.flat_delta`: the flat socket is the only socket, and a delta is all it
+/// is sent. This test failing with "… vanished" is exactly the alarm working: it is the only thing
+/// that would have caught the turn path silently losing an encode.
+const EXPECTED_CAPTURE_PHASES: [&str; 9] = [
     "snapshot.build",
     "snapshot.build.tiles",
     "snapshot.build.sow_refusals",
@@ -44,9 +41,21 @@ const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
     "snapshot.finalize_hash",
     "snapshot.history",
     "snapshot.history.diff",
+    "encode.flat_delta",
+];
+
+/// Encodes that must NOT appear on a steady-state turn.
+///
+/// `encode.flat_snapshot` is still reachable, just not per turn — a world's first publication,
+/// rollback, and `resync` (#386). The two **bincode** labels are gone for good: #388 retired the
+/// bincode snapshot socket, and its frames were never decodable in the first place
+/// (`skip_serializing_if` in a non-self-describing format), so nothing consumes either encode.
+///
+/// A label reappearing here means a turn started paying for an encode nothing broadcasts.
+const RETIRED_CAPTURE_PHASES: [&str; 3] = [
+    "encode.flat_snapshot",
     "encode.bincode_snapshot",
     "encode.bincode_delta",
-    "encode.flat_delta",
 ];
 
 #[test]
@@ -79,6 +88,15 @@ fn a_resolved_turn_profiles_every_stage_in_order() {
         assert!(
             labels.contains(&expected),
             "capture sub-phase `{expected}` vanished from the profile (rendered: {})",
+            turn_profile::render(&phases)
+        );
+    }
+
+    for retired in RETIRED_CAPTURE_PHASES {
+        assert!(
+            !labels.contains(&retired),
+            "retired encode `{retired}` is back on the steady-state turn path — nothing reads it \
+             (rendered: {})",
             turn_profile::render(&phases)
         );
     }

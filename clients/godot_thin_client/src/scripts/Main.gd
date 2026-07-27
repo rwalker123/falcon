@@ -1254,8 +1254,9 @@ func _determine_stream_port() -> int:
         var parsed: int = int(env_port)
         if parsed > 0:
             return parsed
-    # The stream is the FlatBuffers snapshot socket ("snapshot_flat"), not the
-    # legacy JSON "snapshot" socket.
+    # The stream is the FlatBuffers snapshot socket ("snapshot_flat"). The
+    # "snapshot" key it used to be confused with is gone — that socket was
+    # retired in #388 and its port slot is now reserved and unbound.
     var discovered_port: int = ServerPortsFile.get_port(ServerPortsFile.KEY_SNAPSHOT_FLAT)
     if discovered_port > 0:
         return discovered_port
