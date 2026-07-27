@@ -90,7 +90,7 @@ use crate::{
     power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
     resources::FoodSiteRegistry,
     resources::{
-        CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+        BandIdAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
         DiscoveryProgressLedger, FactionInventory, MoistureRaster, SentimentAxisBias,
         SimulationConfig, SimulationTick, StartLocation, TileRegistry, WorldEpoch,
     },

@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use serde::Deserialize;
 
+use crate::resources::SimulationTick;
 use crate::{
     components::PopulationCohort,
     culture::{CultureTraitAxis, CULTURE_TRAIT_AXES},
@@ -579,7 +580,19 @@ impl InfluentialIndividual {
 
 #[derive(Resource)]
 pub struct InfluentialRoster {
-    rng: SmallRng,
+    /// Base seed for the per-spawn RNG. **Not a live RNG.**
+    ///
+    /// The roster used to own a `SmallRng` and draw from it in place, which made it the only
+    /// stateful RNG in the simulation and the only one a checkpoint could not carry — `SmallRng`
+    /// has no serialisable state and no way to ask it where it is. A restore therefore left the
+    /// generator wherever the *future* had pushed it, so the first influencer spawned after a
+    /// rollback was drawn from the wrong stream.
+    ///
+    /// It now follows the derived-seed pattern the rest of the sim already uses (`crisis.rs`,
+    /// `fauna.rs`, `telling/select.rs`, `great_discovery.rs`): each spawn builds a throwaway
+    /// generator from `(seed, tick, id)`, so the draw depends only on values the checkpoint holds
+    /// and replaying a tick reproduces it. There is no stream position to lose.
+    seed: u64,
     individuals: Vec<InfluentialIndividual>,
     next_id: InfluentialId,
     spawn_cooldown: u32,
@@ -598,7 +611,7 @@ impl InfluentialRoster {
         config: Arc<InfluencerBalanceConfig>,
     ) -> Self {
         let mut roster = Self {
-            rng: SmallRng::seed_from_u64(seed),
+            seed,
             individuals: Vec::new(),
             next_id: 1,
             spawn_cooldown: config.spawn_interval_min(),
@@ -614,6 +627,8 @@ impl InfluentialRoster {
     }
 
     fn bootstrap(&mut self, registry: &GenerationRegistry) {
+        // Construction happens before the first turn, so the bootstrap draws sit at tick 0.
+        const BOOTSTRAP_TICK: u64 = 0;
         let mut seeded = 0usize;
         for profile in registry.profiles().iter().take(3) {
             let _ = self.spawn_influencer(
@@ -621,11 +636,12 @@ impl InfluentialRoster {
                 Some(profile.id),
                 Some(profile.name.as_str()),
                 registry,
+                BOOTSTRAP_TICK,
             );
             seeded += 1;
         }
         while seeded < 3 {
-            let _ = self.spawn_influencer(None, None, None, registry);
+            let _ = self.spawn_influencer(None, None, None, registry, BOOTSTRAP_TICK);
             seeded += 1;
         }
         self.recompute_outputs();
@@ -636,6 +652,7 @@ impl InfluentialRoster {
         registry: &GenerationRegistry,
         manual_axes: [Scalar; 4],
         generation_shares: &HashMap<GenerationId, f32>,
+        tick: u64,
     ) {
         self.advance_influence();
         self.update_lifecycle(manual_axes, generation_shares, registry);
@@ -644,11 +661,11 @@ impl InfluentialRoster {
             self.spawn_cooldown -= 1;
         }
         if self.spawn_cooldown == 0 && self.individuals.len() < self.config.roster_cap() {
-            let _ = self.spawn_influencer(None, None, None, registry);
+            let _ = self.spawn_influencer(None, None, None, registry, tick);
         }
 
         self.recompute_outputs();
-        self.backfill_if_needed(registry);
+        self.backfill_if_needed(registry, tick);
     }
 
     fn advance_influence(&mut self) {
@@ -840,10 +857,10 @@ impl InfluentialRoster {
         }
     }
 
-    fn backfill_if_needed(&mut self, registry: &GenerationRegistry) {
+    fn backfill_if_needed(&mut self, registry: &GenerationRegistry, tick: u64) {
         while self.individuals.len() < 3 {
             let gen = registry.assign_for_index(self.individuals.len());
-            let _ = self.spawn_influencer(None, Some(gen), None, registry);
+            let _ = self.spawn_influencer(None, Some(gen), None, registry, tick);
         }
     }
 
@@ -853,6 +870,7 @@ impl InfluentialRoster {
         generation: Option<GenerationId>,
         label_hint: Option<&str>,
         registry: &GenerationRegistry,
+        tick: u64,
     ) -> Option<InfluentialId> {
         if self.individuals.len() >= self.config.roster_cap() {
             return None;
@@ -861,7 +879,12 @@ impl InfluentialRoster {
         let id = self.next_id;
         self.next_id += 1;
 
-        let scope = scope_override.unwrap_or_else(|| match self.rng.gen_range(0..100) {
+        // One throwaway generator per spawn, seeded from values the checkpoint holds. `id` is a
+        // `u32` and occupies the low half, so `(tick, id)` packs without collisions — two spawns in
+        // one tick differ, and the same id in two ticks differs.
+        let mut rng = SmallRng::seed_from_u64(self.seed ^ ((tick << 32) | id as u64));
+
+        let scope = scope_override.unwrap_or_else(|| match rng.gen_range(0..100) {
             0..=35 => InfluenceScopeKind::Local,
             36..=70 => InfluenceScopeKind::Regional,
             71..=90 => InfluenceScopeKind::Global,
@@ -874,7 +897,7 @@ impl InfluentialRoster {
                     Some(0)
                 } else {
                     Some(
-                        self.individuals[self.rng.gen_range(0..self.individuals.len())]
+                        self.individuals[rng.gen_range(0..self.individuals.len())]
                             .generation_scope
                             .unwrap_or(0),
                     )
@@ -883,45 +906,30 @@ impl InfluentialRoster {
             _ => None,
         };
 
-        let domains = select_domains(&mut self.rng);
+        let domains = select_domains(&mut rng);
         let domains_mask = influence_domain_mask(&domains);
 
-        let sentiment_weights = generate_sentiment_weights(&mut self.rng, &domains);
-        let logistics_weight = domain_weight(
-            &mut self.rng,
-            &domains,
-            InfluenceDomain::Logistics,
-            0.03,
-            0.06,
-        );
+        let sentiment_weights = generate_sentiment_weights(&mut rng, &domains);
+        let logistics_weight =
+            domain_weight(&mut rng, &domains, InfluenceDomain::Logistics, 0.03, 0.06);
         let morale_weight = domain_weight(
-            &mut self.rng,
+            &mut rng,
             &domains,
             InfluenceDomain::Humanitarian,
             0.02,
             0.05,
         );
-        let power_weight = domain_weight(
-            &mut self.rng,
-            &domains,
-            InfluenceDomain::Production,
-            0.03,
-            0.07,
-        ) + domain_weight(
-            &mut self.rng,
-            &domains,
-            InfluenceDomain::Discovery,
-            0.015,
-            0.04,
-        );
+        let power_weight =
+            domain_weight(&mut rng, &domains, InfluenceDomain::Production, 0.03, 0.07)
+                + domain_weight(&mut rng, &domains, InfluenceDomain::Discovery, 0.015, 0.04);
 
-        let baseline_growth = scalar_from_f32(self.rng.gen_range(0.01..0.04));
-        let influence = scalar_from_f32(self.rng.gen_range(0.2..0.6));
-        let notoriety = scalar_from_f32(self.rng.gen_range(0.1..0.35));
+        let baseline_growth = scalar_from_f32(rng.gen_range(0.01..0.04));
+        let influence = scalar_from_f32(rng.gen_range(0.2..0.6));
+        let notoriety = scalar_from_f32(rng.gen_range(0.1..0.35));
 
         let name = label_hint
             .map(|s| s.to_string())
-            .unwrap_or_else(|| generate_name(&mut self.rng, scope));
+            .unwrap_or_else(|| generate_name(&mut rng, scope));
 
         let mut audience_generations = Vec::new();
         if let Some(gen) = generation_scope {
@@ -942,7 +950,7 @@ impl InfluentialRoster {
                 // sort afterwards.
                 let mut selected = BTreeSet::new();
                 while selected.len() < sample_count {
-                    let idx = self.rng.gen_range(0..profiles.len());
+                    let idx = rng.gen_range(0..profiles.len());
                     selected.insert(profiles[idx].id);
                 }
                 audience_generations.extend(selected);
@@ -952,7 +960,7 @@ impl InfluentialRoster {
         let channel_weights = resolve_channel_weights(domains_mask);
         let channel_support = channel_weights
             .map(|weight| (weight * scalar_from_f32(0.3)).clamp(scalar_zero(), scalar_one()));
-        let culture_weights = generate_culture_resonance_weights(&mut self.rng, &domains);
+        let culture_weights = generate_culture_resonance_weights(&mut rng, &domains);
 
         let individual = InfluentialIndividual {
             id,
@@ -989,7 +997,7 @@ impl InfluentialRoster {
         let min = self.config.spawn_interval_min();
         let max = self.config.spawn_interval_max();
         self.spawn_cooldown = if min <= max {
-            self.rng.gen_range(min..=max)
+            rng.gen_range(min..=max)
         } else {
             min
         };
@@ -1002,8 +1010,9 @@ impl InfluentialRoster {
         scope: Option<InfluenceScopeKind>,
         generation: Option<GenerationId>,
         registry: &GenerationRegistry,
+        tick: u64,
     ) -> Option<InfluentialId> {
-        self.spawn_influencer(scope, generation, None, registry)
+        self.spawn_influencer(scope, generation, None, registry, tick)
     }
 
     pub fn apply_support(&mut self, id: InfluentialId, magnitude: Scalar) -> bool {
@@ -1567,6 +1576,7 @@ fn local_axis_to_schema(axis: CultureTraitAxis) -> SchemaCultureTraitAxis {
 
 pub fn tick_influencers(
     mut roster: ResMut<InfluentialRoster>,
+    tick: Res<SimulationTick>,
     registry: Res<GenerationRegistry>,
     cohorts: Query<&PopulationCohort>,
     mut impacts: ResMut<InfluencerImpacts>,
@@ -1592,7 +1602,7 @@ pub fn tick_influencers(
         }
     }
 
-    roster.tick(&registry, manual_axes, &generation_shares);
+    roster.tick(&registry, manual_axes, &generation_shares, tick.0);
 
     let sentiment = roster.sentiment_totals();
     let logistics = roster.logistics_total();

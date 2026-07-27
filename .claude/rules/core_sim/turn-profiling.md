@@ -107,10 +107,13 @@ Two traps, both hit while measuring #387:
   from the current shipped file each time** rather than reusing an old one — a `SIM_CONFIG_PATH`
   naming a file that is stale against the *schema* is a boot panic, not a silent fallback
   (`config-loading.md`), and the keys do move: #388 renamed `snapshot_bind` → `port_base_bind`.
-- **`header.hash` is not reproducible run-to-run even on unchanged code** — the `influencers` list
-  is nondeterministic, which is exactly why `integration_tests/tests/determinism.rs` clears it
-  before hashing. To prove a capture refactor is output-neutral, diff the *structures* it touched
-  (dump `forage_patches` + `tiles` coord-sorted across several turns), never the snapshot hash.
+- **A snapshot IS reproducible run-to-run now, so `hash_snapshot` is a valid before/after.** This
+  used to say the opposite — the `influencers` list was nondeterministic and
+  `integration_tests/tests/determinism.rs` cleared it before hashing. The cause was one line: the
+  roster drained a `HashSet` into the published `audience_generations`, so two runs emitted the same
+  ids in a different order. It is a `BTreeSet`, the mask is gone, and the test hashes the whole
+  payload. Three separate processes at 30 turns agree bit-for-bit. Diffing the *structures* a
+  refactor touched is still the better failure message; it is no longer the only thing that works.
 
 ## What the turn path actually broadcasts
 

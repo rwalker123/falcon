@@ -5135,9 +5135,12 @@ fn handle_influencer_spawn(
     snapshot_server_flat: &SnapshotServer,
 ) {
     let registry_snapshot = app.world.resource::<GenerationRegistry>().clone();
+    // The spawn's draw is derived from `(seed, tick, id)`, so the command needs the tick it lands
+    // on — a manual spawn is reproducible on replay exactly like an organic one.
+    let tick = app.world.resource::<SimulationTick>().0;
     let spawned = {
         let mut roster = app.world.resource_mut::<InfluentialRoster>();
-        roster.force_spawn(scope, generation, &registry_snapshot)
+        roster.force_spawn(scope, generation, &registry_snapshot, tick)
     };
 
     let Some(new_id) = spawned else {

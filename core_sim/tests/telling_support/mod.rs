@@ -84,6 +84,10 @@ pub fn spawn_world() -> App {
 /// Spawn a resident band of `size` people standing on a real map tile (so
 /// `biome.current_dominant` resolves).
 pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
+    let band_id = app
+        .world
+        .resource_mut::<core_sim::BandIdAllocator>()
+        .allocate();
     let tile = app
         .world
         .query::<(bevy::prelude::Entity, &core_sim::Tile)>()
@@ -116,6 +120,9 @@ pub fn spawn_band(app: &mut App, faction: FactionId, size: u32) {
             knowledge: Vec::new(),
             migration: None,
         },
+        // Every band carries a durable id (see `BandId`); a cohort without one is invisible to the
+        // band queries that require it, which is how this helper's omission surfaced.
+        band_id,
         ResidentBand,
     ));
 }

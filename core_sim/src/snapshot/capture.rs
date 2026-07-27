@@ -2681,6 +2681,12 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
     // band in a second pass (the home band may spawn after the expedition in the list).
     let mut cohort_entity_lookup: HashMap<u64, Entity> =
         HashMap::with_capacity(snapshot.populations.len());
+    // Taken out of the world and put back after the loop; `world.spawn` borrows the world, so the
+    // allocator cannot be held as a live `ResMut` across it.
+    let mut band_ids = world
+        .get_resource::<BandIdAllocator>()
+        .copied()
+        .unwrap_or_default();
     let mut deferred_expeditions: Vec<(Entity, &PopulationCohortState)> = Vec::new();
     for cohort_state in &snapshot.populations {
         let Some(&home_entity) = tile_entity_lookup.get(&cohort_state.home) else {
@@ -2733,6 +2739,14 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
         // Restore the labor allocation (rollback → exact per-source staffing). Every band carries
         // one; an empty vector rehydrates to a fully-idle band.
         spawned.insert(labor_allocation_from_state(&cohort_state.labor_assignments));
+        // Every band carries a `BandId`, and a band without one is invisible to the queries that
+        // require it (the Telling's faction rollup among them). `WorldSnapshot` is the client view
+        // and does not carry the id, so a *fresh* one is allocated here: the band exists and is
+        // addressable, but its identity is NOT preserved across this restore. That is a hole this
+        // path cannot close — closing it is what `SimState` is for — and allocating rather than
+        // leaving the component off keeps the failure to "ids renumbered" instead of the much
+        // quieter "half the bands vanished from a query".
+        spawned.insert(band_ids.allocate());
         let new_entity = spawned.id();
         cohort_entity_lookup.insert(cohort_state.entity, new_entity);
         if cohort_state.is_expedition {
@@ -2745,6 +2759,8 @@ pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) 
             spawned.insert(ResidentBand);
         }
     }
+
+    world.insert_resource(band_ids);
 
     // Second pass: re-attach `Expedition` to rolled-back in-flight parties, resolving `home_band`
     // from the OLD band's entity bits via the mapping above. A missing home band is logged and

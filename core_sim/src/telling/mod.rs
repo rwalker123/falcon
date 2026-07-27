@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use bevy::{ecs::system::SystemParam, prelude::*};
 use tracing::info;
 
+use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, ResidentBand, Tile},
     culture::CultureManager,
@@ -799,7 +800,7 @@ pub struct TellingSources<'w, 's> {
         'w,
         's,
         (
-            Entity,
+            &'static BandId,
             &'static PopulationCohort,
             Option<&'static LaborAllocation>,
         ),
@@ -874,8 +875,8 @@ pub fn telling_tick(
         .cohorts
         .iter()
         .filter(|(_, cohort, _)| cohort.faction == faction)
-        .map(|(entity, cohort, labor)| BandView {
-            entity,
+        .map(|(band, cohort, labor)| BandView {
+            band: *band,
             cohort,
             labor,
         })

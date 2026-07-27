@@ -440,9 +440,9 @@ pub fn spawn_initial_world(
         } else {
             fallback_region
         };
-        culture.attach_local(tile_entity, parent_region);
+        culture.attach_local(proto.position, parent_region);
         let modifiers = seeded_modifiers_for_position(proto.position);
-        culture.apply_initial_modifiers(tile_entity, modifiers);
+        culture.apply_initial_modifiers(proto.position, modifiers);
     }
 
     for y in 0..height {

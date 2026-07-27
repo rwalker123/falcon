@@ -10,8 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use bevy::prelude::Entity;
-
+use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, FOOD},
     culture::{CultureManager, CultureOwner, CultureTraitAxis},
@@ -153,9 +152,11 @@ pub struct SignalSources<'a> {
 
 /// One resident band, as the signal sampler and the noun resolvers see it.
 pub struct BandView<'a> {
-    /// The band entity — the key its local culture layer is filed under
-    /// (`CultureOwner::from_entity`), for the faction culture rollup.
-    pub entity: Entity,
+    /// The band's durable id — the key its local culture layer would be filed under
+    /// (`CultureOwner::from_band`), for the faction culture rollup. No band owns a layer yet
+    /// (issue #407), so the rollup falls through to the global layer; this names the band stably
+    /// rather than by an entity id that changed on every restore.
+    pub band: BandId,
     pub cohort: &'a PopulationCohort,
     pub labor: Option<&'a LaborAllocation>,
 }
@@ -212,7 +213,7 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, f64) {
     let band_weights: Vec<(CultureOwner, u32)> = sources
         .bands
         .iter()
-        .map(|band| (CultureOwner::from_entity(band.entity), band.cohort.size))
+        .map(|band| (CultureOwner::from_band(band.band), band.cohort.size))
         .collect();
     let faction_traits = sources.culture.faction_trait_average(&band_weights);
     for axis in CultureTraitAxis::ALL {
