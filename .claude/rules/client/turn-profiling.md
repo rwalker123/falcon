@@ -24,8 +24,8 @@ of `apply`, not a child. Everything else nests under `apply`.
 | `decode` / `decode.native` | ~80 | full FlatBuffers → Godot `Dictionary` tree, `snapshot_to_dict` |
 | `apply` | ~91 | `display` + `hud` + `inspector` + `selection` + `scripting` |
 | ├ `display` | ~66 | `MapView.display_snapshot` |
-| │  ├ `display.layers.culture` | ~32 | **the single largest sub-block** — `duplicate(true)` per culture layer |
-| │  ├ `display.sites.forage` | ~10 | same pattern: deep-copied forage patches |
+| │  ├ `display.layers.culture` | ~32 | **was the single largest sub-block** — `duplicate(true)` per culture layer; the copy is gone (see below) |
+| │  ├ `display.sites.forage` | ~10 | same pattern: deep-copied forage patches; also gone |
 | │  ├ `display.shader` | ~7.5 | six full-grid `PackedByteArray` splatmaps |
 | │  ├ `display.tiles` | ~7 | the full-grid GDScript per-tile loop |
 | │  └ `display.markers` | ~7 | unit + herd marker rebuild |
@@ -59,15 +59,69 @@ charge of both.
 - The native getter is probed with `has_method`, so a stale extension degrades to `0` rather than
   erroring.
 
-## Deep copies are the client's dominant cost
+## Snapshot sub-trees are HELD BY REFERENCE — and must never be written to
 
-`display.layers.culture` (~32 ms) and `display.sites.forage` (~10 ms) are both
-`duplicate(true)` loops over snapshot sub-trees — together ~25% of the client's per-turn cost.
+`display.layers.culture` (~32 ms) and `display.sites.forage` (~10 ms) were `duplicate(true)` loops
+over snapshot sub-trees — together ~25% of the client's per-turn cost (#389). Those copies are gone;
+`MapView` now holds the frame's row dictionaries.
 
-The decoder builds a **fresh** Dictionary tree per frame and nothing shared survives into the next
-one, so a deep copy of a sub-tree is only defensible if some consumer mutates it in place. Before
-adding another `duplicate(true)` on a snapshot-derived structure, establish that a consumer
-actually mutates it — the default should be to hold the reference.
+**A row belongs to the DECODER, not to the client, and it outlives the frame it arrived on.** The
+older reading here — "the decoder builds a fresh Dictionary tree per frame and nothing shared
+survives into the next one" — stopped being true when delta streaming landed. `SectionCache` merges
+a delta by shallow-duplicating the cached array and writing only the changed slots
+(`native/src/snapshot/cache.rs`: *pointer copies of the entry Variants — never a deep copy of a row
+dictionary*), and `decode_frame` republishes the merged dict as the next baseline. So an unchanged
+row is **literally the same `Dictionary` object frame after frame**, and a reference the client keeps
+is a reference into the decoder's world.
+
+That cuts both ways, and the two halves are why this is a rule rather than a preference:
+
+- **Holding is free, and it is the default.** A changed row arrives as a NEW dictionary in the
+  republished array, and every ingest is gated on its section being *named* in `changed_sections`, so
+  the ingest that would have re-copied is exactly the one that re-reads. A copy buys nothing.
+- **Writing into a held row edits the decoder's baseline**, and the edit survives into every later
+  delta that does not replace the row. Nothing errors; the decoder's world simply carries a key the
+  server never sent.
+
+**Two ingests must stamp a derived key, and they take a SHALLOW `duplicate()` first** —
+`_ingest_food_modules` (`terrain_id`, resolved off `terrain_overlay`) and `_ingest_population_sites`
+(`module_label`). Shallow is the right depth in both cases: the stamp is a top-level key, so nothing
+nested needs its own copy, and the nested values stay shared rather than re-allocated. That is the
+whole exception — **`duplicate(true)` on a snapshot sub-tree needs a consumer that mutates it
+nested-deep, and there is currently no such consumer.**
+
+The forage patch is the measured reason the deep copy hurt: ~25 scalars *plus* a nested
+`composition` array of per-species dictionaries (the flora roster), re-allocated for every patch on
+the map on every frame that carried the section. The HUD half of the same data
+(`HudBandLaborState.set_forage_patches` / `set_food_modules`, fed the same arrays by `Main`) has
+always held these rows by reference — `MapView` was the outlier.
+
+**Measured, live, 80×52, `earthlike` / seed 0 / `late_forager_tribe`, release server** — the frame
+that CARRIES the sections (the full snapshot; a steady-state delta is already gated out of all of
+them and is unchanged at `display` ≈ 6.1 ms either way):
+
+| Phase | before | after |
+|---|---|---|
+| `display` | 37.18 | **26.49** |
+| ├ `display.sites` | 9.33 | **0.86** |
+| │  └ `display.sites.forage` | 9.22 | **0.76** |
+| └ `display.layers.culture` | 2.50 | **1.03** |
+
+So the win lands on exactly the frames that pay for the section — the first frame of a world, a
+resync, and any turn whose diff moves forage or culture — which is also why the ~42 ms in #389's
+title no longer reads off a steady-state turn: #388's gates had already taken those frames to zero.
+
+The five ingests are named seams on `MapView` (`_ingest_culture_layers`, `_ingest_food_modules`,
+`_ingest_discovered_sites`, `_ingest_forage_patches`, `_ingest_population_sites`) so that
+`tools/snapshot_alias_guard.gd` can drive them headlessly with no tree and no rendering, the way
+`marker_field_guard` drives `_rebuild_unit_markers`. The gate and the profile span stay at the call
+site in `display_snapshot`; the clear and the refill stay together inside the helper.
+
+**`display.markers` and the selection payloads still deep-copy, and that was NOT examined here.**
+`_rebuild_unit_markers` / `_rebuild_herd_markers` and `refresh_selection_payload` build a *new*
+dictionary and copy sub-trees into it, and their output is handed to the HUD as `_selected_unit` and
+held across frames rather than merely read during the ingest — a different question from this one.
+Anyone taking it on owes the same proof: name the consumer that mutates, or hold the reference.
 
 ## An offline fixture will mislead you here
 
@@ -122,8 +176,9 @@ publishes an empty world. That is why gating `sites.food` / `sites.discovered` /
 forced the untangle of their accidental nesting inside `if food_variant is Array` — a block must
 never be gated on a key it does not read.
 
-Measured per-turn cost of what is now gated (80×52 live): `sites.forage` 10.0 ms on a section a
-steady-state delta never carries, `shader` 7.7 ms (its inputs are terrain / fog / elevation / the
+Measured per-turn cost of what is now gated (80×52 live, and *before* the deep copies came out —
+`sites.forage` and `layers.culture` are ~12× and ~2.4× cheaper now, see the section above):
+`sites.forage` 10.0 ms on a section a steady-state delta never carries, `shader` 7.7 ms (its inputs are terrain / fog / elevation / the
 river masks and nothing else — which is why the decoder reports `tiles.rivers` apart from `tiles`),
 `tiles` 6.9 ms, `layers.culture` 2.4 ms. **`markers` is deliberately NOT gated**: `herds` and
 `populations` are named on essentially every turn, so there is nothing to win, and unit markers are
