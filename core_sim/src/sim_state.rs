@@ -96,7 +96,13 @@ pub struct LinkRecord {
     pub from: UVec2,
     pub to: UVec2,
     pub link: LogisticsLink,
-    pub trade: TradeLink,
+    /// `None` when the link carries no [`TradeLink`].
+    ///
+    /// **Presence is state.** Worldgen spawns links bare, and `capture_snapshot`'s query asks for
+    /// `(&LogisticsLink, &TradeLink)` — so a link without one is invisible to the published
+    /// `logistics` section entirely. A restore that helpfully inserted a default `TradeLink` would
+    /// make 728 links appear on the wire that the original world never published.
+    pub trade: Option<TradeLink>,
 }
 
 /// An in-flight expedition, with its home band named by id rather than by entity.
@@ -115,7 +121,9 @@ pub struct BandRecord {
     pub cohort: PopulationCohort,
     pub home: UVec2,
     pub current: UVec2,
-    pub labor: LaborAllocation,
+    /// `None` when the band carries no [`LaborAllocation`]. Presence is state here too, for the
+    /// same reason as [`LinkRecord::trade`].
+    pub labor: Option<LaborAllocation>,
     pub resident: bool,
     pub starting_unit: Option<StartingUnit>,
     /// A pending `move_band` order. **Carried**, because a checkpoint is lossless: a band that was
@@ -172,6 +180,19 @@ pub struct SimState {
     pub trade_telemetry: TradeTelemetry,
     pub victory: VictoryState,
     pub visibility: VisibilityLedger,
+    /// Three resources the classification tables call *derived*, carried anyway.
+    ///
+    /// "Derived" is only safe if nothing **publishes** the value before the system that rebuilds it
+    /// next runs. These three fail that test: `capture_snapshot` reads `SimulationMetrics.crisis`
+    /// for the published crisis telemetry, `PowerGridState` for `power_metrics`, and
+    /// `HerdTelemetry` for the display herd list — all in the same turn, and all written by systems
+    /// that will not have run again by the time a restored world is next captured. `HerdTelemetry`
+    /// is the sharpest case: it is a mid-system snapshot of herd biomass, not a pure function of
+    /// `HerdRegistry`, so rebuilding it from the registry produces a *different* number rather than
+    /// a stale one.
+    pub metrics: crate::metrics::SimulationMetrics,
+    pub power_grid: crate::power::PowerGridState,
+    pub herd_telemetry: crate::fauna::HerdTelemetry,
 
     // --- resources whose config is deliberately left behind ---
     pub culture: CultureManagerCheckpoint,
@@ -221,7 +242,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 from,
                 to,
                 link: stored,
-                trade: entity.get::<TradeLink>().cloned().unwrap_or_default(),
+                trade: entity.get::<TradeLink>().cloned(),
             })
         })
         .collect();
@@ -266,7 +287,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 cohort: stored,
                 home,
                 current,
-                labor: entity.get::<LaborAllocation>().cloned().unwrap_or_default(),
+                labor: entity.get::<LaborAllocation>().cloned(),
                 resident: entity.contains::<ResidentBand>(),
                 starting_unit: entity.get::<StartingUnit>().cloned(),
                 travel: entity.get::<BandTravel>().copied(),
@@ -336,9 +357,237 @@ pub fn capture_sim_state(world: &World) -> SimState {
         trade_telemetry: world.resource::<TradeTelemetry>().clone(),
         victory: world.resource::<VictoryState>().clone(),
         visibility: world.resource::<VisibilityLedger>().clone(),
+        metrics: world
+            .resource::<crate::metrics::SimulationMetrics>()
+            .clone(),
+        power_grid: world.resource::<crate::power::PowerGridState>().clone(),
+        herd_telemetry: world.resource::<crate::fauna::HerdTelemetry>().clone(),
         culture: world.resource::<CultureManager>().checkpoint(),
         influencers: world.resource::<InfluentialRoster>().checkpoint(),
         knowledge: world.resource::<KnowledgeLedger>().checkpoint(),
         sweep_positions,
     }
+}
+
+/// Rebuild the world from a checkpoint.
+///
+/// ## Ordering
+///
+/// The passes below are ordered by *reference*, not by convenience, and the order is forced:
+///
+/// 1. tiles — everything else names a tile by position,
+/// 2. links and bands — both resolve tile positions to the entities pass 1 created,
+/// 3. expeditions and the visibility sweep — both name a **band** by [`BandId`], so they need the
+///    map pass 2 built,
+/// 4. resources, then the derived structures a system would otherwise rebuild a turn late.
+///
+/// There is no cycle: every reference points from a later pass to an earlier one. If a future
+/// record needs something from a pass after it, that is a design problem to solve at the record,
+/// not with a second resolution pass.
+pub fn restore_sim_state(world: &mut World, state: &SimState) {
+    // --- clear what the checkpoint owns -------------------------------------------------------
+    for entity in owned_entities(world) {
+        world.despawn(entity);
+    }
+
+    // --- pass 1: tiles ------------------------------------------------------------------------
+    let mut tile_entities: HashMap<UVec2, Entity> = HashMap::with_capacity(state.tiles.len());
+    for record in &state.tiles {
+        let mut entity = world.spawn(record.tile.clone());
+        if let Some(power) = &record.power {
+            entity.insert(power.clone());
+        }
+        if let Some(tag) = &record.food_module {
+            entity.insert(tag.clone());
+        }
+        if let Some(tag) = &record.site {
+            entity.insert(tag.clone());
+        }
+        tile_entities.insert(record.tile.position, entity.id());
+    }
+
+    // --- pass 2a: logistics links -------------------------------------------------------------
+    for record in &state.links {
+        let (Some(&from), Some(&to)) = (
+            tile_entities.get(&record.from),
+            tile_entities.get(&record.to),
+        ) else {
+            warn!(
+                target: "shadow_scale::sim_state",
+                from = ?record.from,
+                to = ?record.to,
+                "checkpoint.restore.link_endpoint_missing"
+            );
+            continue;
+        };
+        let mut link = record.link.clone();
+        link.from = from;
+        link.to = to;
+        let mut entity = world.spawn(link);
+        if let Some(trade) = &record.trade {
+            entity.insert(trade.clone());
+        }
+    }
+
+    // --- pass 2b: bands -----------------------------------------------------------------------
+    let mut band_entities: HashMap<BandId, Entity> = HashMap::with_capacity(state.bands.len());
+    for record in &state.bands {
+        let Some(&home) = tile_entities.get(&record.home) else {
+            warn!(
+                target: "shadow_scale::sim_state",
+                band = record.id.0,
+                "checkpoint.restore.band_home_missing"
+            );
+            continue;
+        };
+        let current = tile_entities.get(&record.current).copied().unwrap_or(home);
+        let mut cohort = record.cohort.clone();
+        cohort.home = home;
+        cohort.current_tile = current;
+
+        let mut entity = world.spawn((cohort, record.id));
+        if let Some(labor) = &record.labor {
+            entity.insert(labor.clone());
+        }
+        if record.resident {
+            entity.insert(ResidentBand);
+        }
+        if let Some(marker) = &record.starting_unit {
+            entity.insert(marker.clone());
+        }
+        if let Some(travel) = record.travel {
+            entity.insert(travel);
+        }
+        band_entities.insert(record.id, entity.id());
+    }
+
+    // --- pass 3a: expeditions -----------------------------------------------------------------
+    for record in &state.bands {
+        let (Some(expedition), Some(&entity)) = (&record.expedition, band_entities.get(&record.id))
+        else {
+            continue;
+        };
+        let Some(&home_band) = band_entities.get(&expedition.home_band) else {
+            warn!(
+                target: "shadow_scale::sim_state",
+                band = record.id.0,
+                home_band = expedition.home_band.0,
+                "checkpoint.restore.expedition_home_missing"
+            );
+            continue;
+        };
+        let mut restored = expedition.expedition.clone();
+        restored.home_band = home_band;
+        world.entity_mut(entity).insert(restored);
+    }
+
+    // --- pass 3b: settlements -----------------------------------------------------------------
+    for record in &state.settlements {
+        let mut entity = world.spawn(record.settlement.clone());
+        if let Some(town_center) = &record.town_center {
+            entity.insert(town_center.clone());
+        }
+    }
+
+    // --- pass 3c: the visibility corridor sweep -----------------------------------------------
+    let mut sweep = VisibilitySweepTracker::default();
+    for (band, position) in &state.sweep_positions {
+        if let Some(&entity) = band_entities.get(band) {
+            sweep.record(entity, *position);
+        }
+    }
+    world.insert_resource(sweep);
+
+    // --- pass 4a: the tile registry -----------------------------------------------------------
+    let grid_size = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .map(|config| config.grid_size)
+        .unwrap_or_default();
+    let registry_tiles: Vec<Entity> = state
+        .tiles
+        .iter()
+        .filter_map(|record| tile_entities.get(&record.tile.position).copied())
+        .collect();
+    world.insert_resource(crate::resources::TileRegistry {
+        tiles: registry_tiles,
+        width: grid_size.x,
+        height: grid_size.y,
+    });
+
+    // --- pass 4b: resources -------------------------------------------------------------------
+    world.insert_resource(state.tick);
+    world.insert_resource(state.band_ids);
+    world.insert_resource(state.active_crises.clone());
+    world.insert_resource(state.beat_ledger.clone());
+    world.insert_resource(state.capability_flags);
+    // Installing the checkpoint's copy IS the truncation: the log is append-only, so the captured
+    // copy is a prefix of the live one and everything appended after the checkpoint goes away.
+    world.insert_resource(state.command_events.clone());
+    world.insert_resource(state.corruption.clone());
+    world.insert_resource(state.corruption_telemetry.clone());
+    world.insert_resource(state.counter_intel.clone());
+    world.insert_resource(state.crisis_telemetry.clone());
+    world.insert_resource(state.discovered_sites.clone());
+    world.insert_resource(state.discovery_progress.clone());
+    world.insert_resource(state.espionage_missions.clone());
+    world.insert_resource(state.espionage_roster.clone());
+    world.insert_resource(state.faction_inventory.clone());
+    world.insert_resource(state.security_policies.clone());
+    world.insert_resource(state.forage.clone());
+    world.insert_resource(state.graze.clone());
+    world.insert_resource(state.great_discoveries.clone());
+    world.insert_resource(state.great_discovery_readiness.clone());
+    world.insert_resource(state.great_discovery_telemetry.clone());
+    world.insert_resource(state.herds.clone());
+    world.insert_resource(state.influencer_impacts.clone());
+    world.insert_resource(state.pending_crisis_seeds.clone());
+    world.insert_resource(state.pending_crisis_spawns.clone());
+    world.insert_resource(state.sedentarization.clone());
+    world.insert_resource(state.sentiment_bias.clone());
+    world.insert_resource(state.trade_telemetry.clone());
+    world.insert_resource(state.victory.clone());
+    // The fog ledger is restored, not wiped. Wiping it used to be the only way to stop a rollback
+    // leaking tiles discovered *after* the restore point, because `WorldSnapshot` did not carry the
+    // ledger — but it also destroyed everything discovered *before* the checkpoint, permanently,
+    // since fog memory is never re-derived. A checkpoint's ledger contains exactly what was known
+    // then, which prevents the leak properly.
+    world.insert_resource(state.visibility.clone());
+    world.insert_resource(state.metrics.clone());
+    world.insert_resource(state.power_grid.clone());
+    world.insert_resource(state.herd_telemetry.clone());
+
+    // --- pass 4c: resources whose config must NOT come from the checkpoint --------------------
+    // `restore_checkpoint` writes state and leaves the config field alone, so each of these keeps
+    // whatever config is live now. That is the whole reason these three are not plain clones.
+    world
+        .resource_mut::<CultureManager>()
+        .restore_checkpoint(&state.culture);
+    world
+        .resource_mut::<InfluentialRoster>()
+        .restore_checkpoint(&state.influencers);
+    world
+        .resource_mut::<KnowledgeLedger>()
+        .restore_checkpoint(&state.knowledge);
+
+    // --- pass 4d: derived structures a system would otherwise rebuild a turn late -------------
+    let herds = world.resource::<HerdRegistry>().clone();
+    if let Some(mut density) = world.get_resource_mut::<crate::fauna::HerdDensityMap>() {
+        density.rebuild(grid_size, &herds);
+    }
+    let effects = world.resource::<CultureManager>().compute_effects();
+    world.insert_resource(effects);
+}
+
+/// The entities a checkpoint owns, and therefore the ones a restore replaces.
+fn owned_entities(world: &mut World) -> Vec<Entity> {
+    let mut owned: Vec<Entity> = Vec::new();
+    let mut tiles = world.query_filtered::<Entity, With<Tile>>();
+    owned.extend(tiles.iter(world));
+    let mut links = world.query_filtered::<Entity, With<LogisticsLink>>();
+    owned.extend(links.iter(world));
+    let mut cohorts = world.query_filtered::<Entity, With<PopulationCohort>>();
+    owned.extend(cohorts.iter(world));
+    let mut settlements = world.query_filtered::<Entity, With<Settlement>>();
+    owned.extend(settlements.iter(world));
+    owned
 }

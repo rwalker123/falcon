@@ -24,9 +24,10 @@
 
 mod common;
 
+use core_sim::sim_state::{capture_sim_state, restore_sim_state, SimState};
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, restore_world_from_snapshot, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    build_headless_app, recapture_snapshot_in_place, SimulationConfig, SimulationConfigMetadata,
+    SnapshotHistory,
 };
 use serde_json::Value;
 use sim_schema::world::WorldSnapshot;
@@ -67,10 +68,14 @@ fn latest_snapshot(app: &bevy::prelude::App) -> WorldSnapshot {
         .expect("snapshot available")
 }
 
-fn restore_to(app: &mut bevy::prelude::App, checkpoint: &WorldSnapshot) {
-    restore_world_from_snapshot(&mut app.world, checkpoint);
-    let mut tick = app.world.resource_mut::<SimulationTick>();
-    tick.0 = checkpoint.header.tick;
+/// Take a checkpoint. Deliberately `SimState`, not `WorldSnapshot`: the snapshot is the client's
+/// view and restoring from it is the defect this arc removed.
+fn checkpoint(app: &bevy::prelude::App) -> SimState {
+    capture_sim_state(&app.world)
+}
+
+fn restore_to(app: &mut bevy::prelude::App, checkpoint: &SimState) {
+    restore_sim_state(&mut app.world, checkpoint);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -389,13 +394,13 @@ fn forward_determinism_is_bit_exact() {
 /// state, so restoring from it cannot recover what it never carried. Turn this on when the
 /// checkpoint becomes a dedicated full-world payload rather than the client's snapshot.
 #[test]
-#[ignore = "restore from WorldSnapshot is lossy; awaiting the dedicated full-world checkpoint"]
 fn checkpoint_restore_is_lossless() {
     let mut app = new_app();
     for _ in 0..CHECKPOINT_TICKS {
         app.update();
     }
-    let checkpoint = latest_snapshot(&app);
+    let state = checkpoint(&app);
+    let expected = latest_snapshot(&app);
 
     // March past the checkpoint first, so the world genuinely holds later state that the restore
     // has to undo. Restoring into an untouched world would pass without proving anything.
@@ -403,12 +408,12 @@ fn checkpoint_restore_is_lossless() {
         app.update();
     }
 
-    restore_to(&mut app, &checkpoint);
+    restore_to(&mut app, &state);
     recapture_snapshot_in_place(&mut app.world);
 
     assert_snapshots_match(
         "restoring a checkpoint did not reproduce it",
-        &checkpoint,
+        &expected,
         &latest_snapshot(&app),
     );
 }
@@ -416,16 +421,28 @@ fn checkpoint_restore_is_lossless() {
 /// A restored checkpoint marched forward reproduces the ticks that already happened.
 ///
 /// This is the property command-sourced rollback needs, and the stronger of the two oracles: it
-/// sees state that never reaches the wire but still steers the simulation. Ignored for the same
-/// reason as [`checkpoint_restore_is_lossless`], and it cannot pass before that one does.
+/// sees state that never reaches the wire but still steers the simulation.
+///
+/// **It reports exactly one residue, and it is not a checkpoint problem.** `simulate_logistics`
+/// (`systems/trade.rs`) sorts its links with `sort_by_key(|(entity, _)| entity.to_bits())` and then
+/// moves mass along them in that order — `source.mass -= transfer; target.mass += delivered`, so a
+/// later link sees what an earlier one moved. Entity bits are stable *within one process run*,
+/// which is why that sort makes the forward simulation deterministic and why
+/// `deterministic_snapshots_match` has always passed. They are not stable across a restore, which
+/// renumbers every entity, so the transfer order changes and all 384 tiles land on a slightly
+/// different mass (`0.64%` of compared leaves, and nothing else).
+///
+/// The fix is to sort on a stable key — links have a natural one in their endpoint positions,
+/// which is what the checkpoint already keys them by. It is deliberately not done here because it
+/// changes the mass distribution of every existing world, and that belongs in its own change.
 #[test]
-#[ignore = "replay diverges from unrestored sim state; awaiting the dedicated full-world checkpoint"]
+#[ignore = "simulate_logistics orders mass transfer by Entity::to_bits(); see the comment below"]
 fn checkpoint_replay_is_bit_exact() {
     let mut app = new_app();
     for _ in 0..CHECKPOINT_TICKS {
         app.update();
     }
-    let checkpoint = latest_snapshot(&app);
+    let state = checkpoint(&app);
 
     let mut baseline = Vec::with_capacity(REPLAY_TICKS);
     for _ in 0..REPLAY_TICKS {
@@ -433,7 +450,7 @@ fn checkpoint_replay_is_bit_exact() {
         baseline.push(latest_snapshot(&app));
     }
 
-    restore_to(&mut app, &checkpoint);
+    restore_to(&mut app, &state);
     // Compare every replayed tick, not just the last: the first divergence is the one worth
     // reading, and a later tick's report is that drift plus everything it has since fed.
     for (step, expected) in baseline.iter().enumerate() {

@@ -31,7 +31,7 @@ use std::collections::BTreeSet;
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 34] = [
+const SIM_STATE_RESOURCES: [&str; 37] = [
     "ActiveCrisisLedger",
     // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
     "BandIdAllocator",
@@ -77,6 +77,18 @@ const SIM_STATE_RESOURCES: [&str; 34] = [
     "VictoryState",
     // Permanent-memory fog: the ledger IS the record of what has ever been seen.
     "VisibilityLedger",
+    // The three below look derived and are not, because **"derived" is only safe if nothing
+    // publishes the value before the system that rebuilds it next runs.** `capture_snapshot` reads
+    // `SimulationMetrics.crisis` for the published crisis telemetry, `PowerGridState` for
+    // `power_metrics`, and `HerdTelemetry` for the display herd list — all in the same turn, all
+    // written by systems that will not have run again when a restored world is next captured.
+    // `HerdTelemetry` is the sharpest: it is a mid-system snapshot of herd biomass rather than a
+    // pure function of `HerdRegistry`, so rebuilding it from the registry yields a *different*
+    // number, not a stale one. The restore-fidelity oracle is what distinguished these from the
+    // genuinely derived four.
+    "SimulationMetrics",
+    "PowerGridState",
+    "HerdTelemetry",
     // Previous-turn positions, so `calculate_visibility` can sweep the corridor a band crossed.
     "VisibilitySweepTracker",
 ];
