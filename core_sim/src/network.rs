@@ -17,7 +17,7 @@ pub struct SnapshotServer {
 impl SnapshotServer {
     pub fn broadcast(&self, bytes: &Arc<Vec<u8>>) {
         if let Err(err) = self.sender.send(Arc::clone(bytes)) {
-            log::error!("Failed to queue snapshot delta: {}", err);
+            log::error!("Failed to queue snapshot frame: {}", err);
         }
     }
 }
