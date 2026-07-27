@@ -93,8 +93,7 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
 
     // The baseline the client would have applied.
     let mut reconstructed = history
-        .last_snapshot
-        .as_ref()
+        .last_snapshot()
         .expect("baseline captured")
         .as_ref()
         .clone();
@@ -113,16 +112,13 @@ fn a_baseline_plus_its_deltas_reconstructs_the_world() {
             }];
         }
         history.update(next);
-        let delta = history
-            .last_delta
-            .as_ref()
-            .expect("a delta per turn")
-            .clone();
+        let delta = history.last_delta().expect("a delta per turn").clone();
         apply(&mut reconstructed, &delta);
         reconstructed.header = delta.header.clone();
     }
 
-    let authoritative = history.last_snapshot.as_ref().expect("latest").as_ref();
+    let latest = history.last_snapshot().expect("latest");
+    let authoritative = latest.as_ref();
     assert_eq!(
         reconstructed.header.tick, authoritative.header.tick,
         "the reconstructed world must be at the same tick"
@@ -159,7 +155,7 @@ fn each_publication_claims_the_next_sequence_and_names_its_base() {
     for tick in 0..4u64 {
         world.header.tick = tick;
         history.update(world.clone());
-        let delta = history.last_delta.as_ref().expect("delta").clone();
+        let delta = history.last_delta().expect("delta").clone();
         assert_eq!(
             delta.header.base_frame_seq, expected_base,
             "a delta must name the frame it applies to"
@@ -187,20 +183,14 @@ fn a_recapture_advances_the_sequence_without_pushing_a_ring_entry() {
     history.update(world.clone());
 
     let after_turn = history.len();
-    let turn_seq = history
-        .last_delta
-        .as_ref()
-        .expect("turn delta")
-        .header
-        .frame_seq;
+    let turn_seq = history.last_delta().expect("turn delta").header.frame_seq;
 
     // A command mutated the world mid-tick.
     world.header.population_count = 42;
     history.refresh_latest(world.clone());
 
     let recapture_seq = history
-        .last_delta
-        .as_ref()
+        .last_delta()
         .expect("recapture delta")
         .header
         .frame_seq;
@@ -234,11 +224,11 @@ fn a_later_recapture_delta_supersedes_an_earlier_one() {
 
     world.header.population_count = 7;
     history.refresh_latest(world.clone());
-    let first = history.last_delta.as_ref().expect("first").clone();
+    let first = history.last_delta().expect("first").clone();
 
     world.header.power_count = 9;
     history.refresh_latest(world.clone());
-    let second = history.last_delta.as_ref().expect("second").clone();
+    let second = history.last_delta().expect("second").clone();
 
     assert_eq!(
         first.header.population_count, 7,
@@ -310,7 +300,7 @@ fn a_rollback_frame_is_the_base_the_next_delta_names() {
     world.header.tick = 2;
     world.header.population_count = 99;
     history.update(world.clone());
-    let delta = history.last_delta.as_ref().expect("a delta per turn");
+    let delta = history.last_delta().expect("a delta per turn");
     assert_eq!(
         delta.header.base_frame_seq, broadcast_seq,
         "the next delta must name the rollback frame as its base — the client applied that frame, \
@@ -360,7 +350,7 @@ fn a_resync_frame_is_the_base_the_next_delta_names_after_a_recapture() {
     world.header.tick = 1;
     world.header.population_count = 99;
     history.update(world.clone());
-    let delta = history.last_delta.as_ref().expect("a delta per turn");
+    let delta = history.last_delta().expect("a delta per turn");
     assert_eq!(
         delta.header.base_frame_seq, resync_seq,
         "the next delta must name the resync frame as its base — otherwise the client drops it and \
@@ -405,8 +395,7 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
     history.update(world.clone());
     assert_eq!(
         history
-            .last_delta
-            .as_ref()
+            .last_delta()
             .expect("a delta per turn")
             .culture_tensions,
         None,
@@ -420,8 +409,7 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
     history.update(world.clone());
     assert_eq!(
         history
-            .last_delta
-            .as_ref()
+            .last_delta()
             .expect("a delta per turn")
             .culture_tensions,
         Some(Vec::new()),
@@ -436,7 +424,7 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
     };
     apply(
         &mut reconstructed,
-        history.last_delta.as_ref().expect("a delta per turn"),
+        &history.last_delta().expect("a delta per turn"),
     );
     assert!(
         reconstructed.culture_tensions.is_empty(),

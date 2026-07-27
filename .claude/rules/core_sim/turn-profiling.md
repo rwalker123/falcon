@@ -2,6 +2,7 @@
 paths:
   - "core_sim/src/turn_profile.rs"
   - "core_sim/src/snapshot/capture.rs"
+  - "core_sim/src/snapshot/publish.rs"
   - "core_sim/src/network.rs"
   - "core_sim/tests/turn_profile_wiring.rs"
   - "sim_schema/src/world.rs"
@@ -113,10 +114,15 @@ Two traps, both hit while measuring #387:
 
 ## What the turn path actually broadcasts
 
-`broadcast_latest` (`network.rs`) sends **one** thing per publication: on the flat socket — the
-only snapshot socket, the one the Godot client consumes (`.claude/rules/core_sim/ports.md`) — the
-**flat delta**, except for a world's *first* publication, which is the full flat snapshot the
-client baselines on.
+Publication sends **one** thing per frame: on the flat socket — the only snapshot socket, the one the
+Godot client consumes (`.claude/rules/core_sim/ports.md`) — the **flat delta**, except for a world's
+*first* publication, which is the full flat snapshot the client baselines on.
+
+That rule now lives where the frame is produced: `PublishState::publish` **returns** the bytes to put
+on the wire. It used to be `network::broadcast_latest`, reading `encoded_snapshot_flat` /
+`encoded_delta_flat` back off the history after the fact and choosing between them — a rule stated in
+a different place from the code that decided which field was `Some`. One publisher owning both is
+what stops a later turn re-broadcasting a stale full snapshot.
 
 **The client is no longer sent a complete world every turn** (#386,
 `docs/plan_delta_streaming.md`). A full flat snapshot is now encoded only for a world's first
@@ -210,6 +216,77 @@ stale value in.
 
 `hash_snapshot` survives as a public function: `integration_tests/tests/determinism.rs` calls it
 directly on two normalized snapshots. That test does **not** depend on the per-turn stamping.
+
+## Publication is not on the turn thread — and `turn.profile` no longer describes all of a turn
+
+`capture_snapshot` walks the ECS world, assembles the `WorldSnapshot`, and hands it to a **publisher
+thread** (`snapshot/publish.rs`, #393). Hashing, diffing, encoding and the socket write happen there.
+The turn thread's last act is a move onto a bounded channel, and that is what `snapshot.handoff`
+measures — single-digit **microseconds** in steady state.
+
+**The seam was already there.** Everything after the capture reads only the assembled snapshot and
+publication's own state; nothing touches the world, and the simulation does not depend on any of it
+having finished. What #393 changed is who runs it, not what it does.
+
+### The label move, and the two lists that pin it
+
+| was, on `turn.profile` | is, on the publisher |
+|---|---|
+| `snapshot.finalize_hash` | `publish.finalize_hash` |
+| `snapshot.history.diff` | `publish.diff` |
+| `encode.flat_delta` | `publish.encode.flat_delta` |
+| `encode.flat_snapshot` (first frame) | `publish.encode.flat_snapshot` |
+| `snapshot.history`, `broadcast` | — (no longer a phase; the publisher owns both) |
+
+The old names moved into `turn_profile_wiring.rs`'s `RETIRED_CAPTURE_PHASES`, beside the genuinely
+retired bincode encodes, because the assertion wanted is the same: **a turn that pays for any of them
+again has regressed.** The complement, `PUBLISHER_PHASES`, asserts the same work is present on the
+publisher — absence-only would pass just as well if publication had quietly stopped happening.
+
+**A publisher scope is `turn_profile::publish_scope`, and its accumulator is thread-local** — the
+opposite choice from the turn's global, for two reasons that would both be bugs the other way. The
+publisher runs concurrently with the next turn by construction, so a span folded into the global
+would land in whatever profile happened to be open; and `cargo test` runs many worlds at once, each
+with its own publisher. Being thread-local means nobody else can read it, which is why the publisher
+drains its own breakdown per frame into `SnapshotHistory::last_publish_profile()`.
+
+**The rare inline paths deliberately carry no scope.** Rollback, `Resync` and the auxiliary feed
+deltas (`update_axis_bias` and friends) run on the *caller's* thread after draining the queue, so a
+`publish_scope` there would accumulate into a thread-local nothing drains. They are human-paced and
+already log their frame's tick and size.
+
+### Measured, and the honest shape of the win
+
+80×52, release, `late_forager_tribe` on `earthlike`, `map_seed` pinned, mean of 30 turns after 5
+warm-ups — the standard recipe above:
+
+| | before | after |
+|---|---|---|
+| `run_turn`, publisher **idle** | 8.48 ms | **4.11 ms** |
+| `run_turn`, publisher **concurrently busy** | 8.48 ms | **7.11 ms** |
+| `snapshot.build` | 3.27 | 3.01 / 5.89 (idle / busy) |
+| publisher, per frame | — | `finalize_hash` 1.04 · `diff` 1.69 · `encode.flat_delta` 0.55 |
+
+**Read both rows: the gap between them is the finding.** The work genuinely left the turn thread —
+4.11 ms is what a turn now executes. But when turns resolve **back to back**, the publisher's ~3.3 ms
+overlaps the *next* turn's capture and the two compete, and nearly all of that lands in
+`snapshot.build`'s allocation-heavy remainder while its labelled per-tile sweeps (`tiles`, `patches`,
+`rasters`) do not move at all. Interactive play is the idle row — a player's turns are seconds apart,
+so the publisher is long finished before the next capture starts. A batched `turn 100`, a benchmark,
+or an integration-test loop is the busy row.
+
+**Do not read the busy row as a reason to shrink the queue or to drop frames.** The queue was never
+the constraint: `snapshot.handoff` stays at ~0.002 ms in every one of these runs, so no turn ever
+waited on it. The lever on the busy row is making the publisher's per-frame work smaller — the
+`finalize_hash` full-snapshot bincode encode is the largest single piece of it — not making the
+handoff tighter.
+
+> **Beware the profiler when measuring this.** Two traps cost real time here: a spin-loop "control"
+> thread that calls `Instant::now()` in its inner loop contends on the macOS timebase and fabricates
+> ~2.5 ms of phantom slowdown in the *other* thread; and inserting a `sleep` between turns to
+> simulate interactive pacing lets the core idle down, which made **every** phase, on both threads,
+> ~2.3× slower. Compare back-to-back runs against back-to-back runs, and vary one thread's work with
+> a register-only, clock-free loop if you must vary it at all.
 
 ## Reading a `turn.profile` line
 

@@ -133,9 +133,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|s| (**s).clone())
+        .last_snapshot()
+        .map(|s| (*s).clone())
         .expect("a snapshot was captured");
 
     restore_world_from_snapshot(&mut app.world, &snapshot);

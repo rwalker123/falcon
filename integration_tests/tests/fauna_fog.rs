@@ -189,8 +189,7 @@ fn disabling_fog_survives_a_rollback() {
     let snapshot = {
         let history = app.world.resource::<SnapshotHistory>();
         history
-            .last_snapshot
-            .as_ref()
+            .last_snapshot()
             .expect("a turn was captured")
             .clone()
     };
@@ -215,7 +214,7 @@ fn the_rollback_record_keeps_every_herd_the_display_list_hides() {
     app.update();
 
     let history = app.world.resource::<SnapshotHistory>();
-    let snapshot = history.last_snapshot.as_ref().expect("a turn was captured");
+    let snapshot = history.last_snapshot().expect("a turn was captured");
 
     let live = app.world.resource::<HerdRegistry>().entries().len();
     assert_eq!(

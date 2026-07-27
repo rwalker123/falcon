@@ -5,17 +5,27 @@ use std::thread;
 
 use crossbeam_channel::{unbounded, Sender};
 
-use crate::snapshot::SnapshotHistory;
+use crate::snapshot::FrameSink;
 
 pub struct SnapshotServer {
-    sender: Sender<Vec<u8>>,
+    /// Frames ride as the `Arc` the encoder produced. They used to be copied into a fresh `Vec`
+    /// per broadcast — a whole frame memcpy'd on the turn thread for nothing, since the sender
+    /// already owned a shared, immutable buffer.
+    sender: Sender<Arc<Vec<u8>>>,
 }
 
 impl SnapshotServer {
-    pub fn broadcast(&self, bytes: &[u8]) {
-        if let Err(err) = self.sender.send(bytes.to_vec()) {
+    pub fn broadcast(&self, bytes: &Arc<Vec<u8>>) {
+        if let Err(err) = self.sender.send(Arc::clone(bytes)) {
             log::error!("Failed to queue snapshot delta: {}", err);
         }
+    }
+}
+
+/// The snapshot socket is where the publisher thread's frames go (`snapshot::publish`).
+impl FrameSink for SnapshotServer {
+    fn publish_frame(&self, frame: &Arc<Vec<u8>>) {
+        self.broadcast(frame);
     }
 }
 
@@ -30,7 +40,7 @@ impl SnapshotServer {
 /// which is not necessarily the world the connecting client asked for, and the
 /// client cannot tell the two apart — so the server must not offer the guess.
 pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
-    let (sender, receiver) = unbounded::<Vec<u8>>();
+    let (sender, receiver) = unbounded::<Arc<Vec<u8>>>();
     listener
         .set_nonblocking(true)
         .expect("set nonblocking failed");
@@ -71,21 +81,6 @@ pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
     });
 
     SnapshotServer { sender }
-}
-
-/// Publish the latest turn on the flat socket — the only snapshot socket (#388).
-///
-/// It **carries a full snapshot only for a world's first publication** — the baseline a client
-/// applies deltas to — and the flat delta for every turn after it. `encoded_snapshot_flat` is
-/// `Some` on exactly those frames (`SnapshotHistory::update`, and `refresh_latest` for a mid-tick
-/// recapture), so the branch below states the publication rule rather than choosing between
-/// options.
-pub fn broadcast_latest(flat_server: &SnapshotServer, history: &SnapshotHistory) {
-    if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
-        flat_server.broadcast(bytes.as_ref());
-    } else if let Some(bytes) = history.encoded_delta_flat.as_ref() {
-        flat_server.broadcast(bytes.as_ref());
-    }
 }
 
 fn write_frame(stream: &mut TcpStream, frame: &[u8]) -> io::Result<()> {

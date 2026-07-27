@@ -50,7 +50,7 @@ fn exported(app: &bevy::app::App) -> (f32, f32) {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
+        .last_snapshot()
         .clone()
         .expect("a snapshot was captured");
     let cohort = snapshot

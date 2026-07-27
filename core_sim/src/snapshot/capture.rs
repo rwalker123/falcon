@@ -105,7 +105,7 @@ impl StoredSnapshot {
         // the flat delta instead. This is the 44%-of-a-turn line item from #384, and it is now the
         // baseline's cost rather than every turn's.
         let encoded_snapshot_flat = flat_snapshot.then(|| {
-            let _s = crate::turn_profile::scope("encode.flat_snapshot");
+            let _s = crate::turn_profile::publish_scope("publish.encode.flat_snapshot");
             Arc::new(encode_snapshot_flatbuffer(snapshot.as_ref()))
         });
         Self {
@@ -137,19 +137,34 @@ impl StoredSnapshot {
 /// Which kind of publication a `publish` call is: a resolved turn, or a mid-tick recapture after a
 /// world-mutating command. They differ only in whether the baseline is committed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Publication {
+pub(crate) enum Publication {
     Turn,
     Recapture,
 }
 
-#[derive(Resource)]
-pub struct SnapshotHistory {
+/// Everything publication owns: the diff baselines, the rollback ring, and the publication
+/// sequence.
+///
+/// **This is not a Bevy resource and the turn thread never touches it.** It lives behind the mutex
+/// inside [`crate::snapshot::SnapshotHistory`], which is the ECS-facing handle, and is mutated
+/// almost exclusively by the publisher thread (#393). The exceptions are the rare, human-paced
+/// paths — rollback, `Resync`, the auxiliary feed deltas — which the handle runs inline *after*
+/// draining the publisher's queue, so they can never interleave with a frame in flight.
+pub(crate) struct PublishState {
     capacity: usize,
     pub last_snapshot: Option<Arc<WorldSnapshot>>,
     pub last_delta: Option<Arc<WorldDelta>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
     /// The flat DELTA broadcast on the client's socket every turn after the first.
     pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
+    /// Where a published frame goes. `None` until the server attaches its socket, which is the
+    /// normal state in tests and for the idle boot app — publication still happens, it simply has
+    /// no audience.
+    pub sink: Option<Arc<dyn FrameSink>>,
+    /// The last published frame's own phase breakdown, drained from the publisher thread's
+    /// accumulator (`turn_profile::publish_take`) and parked here because a thread-local cannot be
+    /// read from the side that wants it. Empty until the first frame.
+    pub last_publish_profile: Vec<crate::turn_profile::PhaseTiming>,
     /// `frameSeq` of the last frame published for this world. Fresh per world, because a rebuild
     /// constructs a brand-new `App` and therefore a brand-new history — which is also what makes
     /// "first publication" simply mean `frame_seq == 0`.
@@ -209,20 +224,16 @@ pub struct SnapshotHistory {
     history: VecDeque<StoredSnapshot>,
 }
 
-impl Default for SnapshotHistory {
-    fn default() -> Self {
-        Self::with_capacity(256)
-    }
-}
-
-impl SnapshotHistory {
-    pub fn with_capacity(capacity: usize) -> Self {
+impl PublishState {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
             last_snapshot: None,
             last_delta: None,
             encoded_snapshot_flat: None,
             encoded_delta_flat: None,
+            sink: None,
+            last_publish_profile: Vec::new(),
             frame_seq: 0,
             tiles: HashMap::new(),
             logistics: HashMap::new(),
@@ -278,43 +289,41 @@ impl SnapshotHistory {
         }
     }
 
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.capacity
     }
 
-    pub fn set_capacity(&mut self, capacity: usize) {
+    pub(crate) fn set_capacity(&mut self, capacity: usize) {
         self.capacity = capacity.max(1);
         self.prune();
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.history.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.history.is_empty()
     }
 
-    pub fn latest_entry(&self) -> Option<StoredSnapshot> {
+    pub(crate) fn latest_entry(&self) -> Option<StoredSnapshot> {
         self.history.back().cloned()
     }
 
-    pub fn entry(&self, tick: u64) -> Option<StoredSnapshot> {
+    pub(crate) fn entry(&self, tick: u64) -> Option<StoredSnapshot> {
         self.history
             .iter()
             .find(|entry| entry.tick == tick)
             .cloned()
     }
 
-    /// Publish a resolved TURN: diff against the committed baseline, broadcast the delta, commit
-    /// the new baseline and push a rollback ring entry.
-    pub fn update(&mut self, snapshot: WorldSnapshot) {
-        self.publish(snapshot, Publication::Turn);
-    }
-
-    /// Publish a mid-tick RECAPTURE — a world-mutating command changed the world between turns.
+    /// Hash, diff, encode and record one captured world, returning the frame to put on the wire.
     ///
-    /// Same diff, but it deliberately does **not** commit the baseline or push a ring entry (the
+    /// [`Publication::Turn`] is a resolved turn: diff against the committed baseline, commit the
+    /// new baseline, push a rollback ring entry.
+    ///
+    /// [`Publication::Recapture`] is a mid-tick re-capture after a world-mutating command. Same
+    /// diff, but it deliberately does **not** commit the baseline or push a ring entry (the
     /// rollback ring stays one-entry-per-tick). That is what makes these deltas *cumulative*: each
     /// one is `baseline(last turn) → now`, so each is a superset of the last, applying them in
     /// order is idempotent, and missing an intermediate one is harmless. It also means the next
@@ -322,18 +331,32 @@ impl SnapshotHistory {
     ///
     /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
     /// assigning labor to three sources and moving a band paid four full encodes, which is the
-    /// cost this arc removed from the turn path re-entering by the side door.
+    /// cost that arc removed from the turn path re-entering by the side door.
     ///
-    /// Returns the flat delta for the caller to broadcast.
-    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<Arc<Vec<u8>>> {
-        self.publish(snapshot, Publication::Recapture);
-        self.encoded_delta_flat.clone()
-    }
+    /// **The return value states the publication rule** — the full flat frame when this world has
+    /// one pending, otherwise the flat delta — in the one place that knows which was produced.
+    /// It used to live in `network::broadcast_latest`, reading the two fields back off this struct
+    /// after the fact; keeping it here is what stops a later turn re-broadcasting a stale full
+    /// snapshot.
+    pub(crate) fn publish(
+        &mut self,
+        snapshot: WorldSnapshot,
+        kind: Publication,
+    ) -> Option<Arc<Vec<u8>>> {
+        // `finalize` stamps the content hash. It takes `self` by value and zeroes `header.hash` in
+        // place — no deep clone (that lives only in the free-standing `hash_snapshot`, which
+        // `finalize` deliberately does not call) — but it still bincode-encodes the *whole*
+        // snapshot just to produce a `u64`. It runs here, on the publisher, rather than in
+        // `capture_snapshot`: the hash is a pure function of the captured world and the delta
+        // header is cloned from it, so hashing is publication's first act, not the capture's last.
+        let snapshot = {
+            let _s = crate::turn_profile::publish_scope("publish.finalize_hash");
+            snapshot.finalize()
+        };
 
-    fn publish(&mut self, snapshot: WorldSnapshot, kind: Publication) {
         // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
         // the `diff_new`/`diff_removed` comparisons against last turn's indices.
-        let diff_scope = crate::turn_profile::scope("snapshot.history.diff");
+        let diff_scope = crate::turn_profile::publish_scope("publish.diff");
         let mut tiles_index = HashMap::with_capacity(snapshot.tiles.len());
         for state in &snapshot.tiles {
             tiles_index.insert(state.entity, state.clone());
@@ -743,7 +766,7 @@ impl SnapshotHistory {
         let stored =
             StoredSnapshot::new(snapshot_arc.clone(), delta_arc.clone(), first_publication);
         let encoded_delta_flat = {
-            let _s = crate::turn_profile::scope("encode.flat_delta");
+            let _s = crate::turn_profile::publish_scope("publish.encode.flat_delta");
             Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()))
         };
 
@@ -753,11 +776,11 @@ impl SnapshotHistory {
             self.last_snapshot = Some(snapshot_arc);
             self.last_delta = Some(delta_arc);
             self.encoded_snapshot_flat = None;
-            self.encoded_delta_flat = Some(encoded_delta_flat);
+            self.encoded_delta_flat = Some(encoded_delta_flat.clone());
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = stored.snapshot.clone();
             }
-            return;
+            return Some(encoded_delta_flat);
         }
 
         self.tiles = tiles_index;
@@ -816,9 +839,16 @@ impl SnapshotHistory {
         // "full frame if there is one, else the delta" a statement of the publication rule rather
         // than a preference — and what stops a later turn re-broadcasting a stale full snapshot.
         self.encoded_snapshot_flat = stored.encoded_snapshot_flat.clone();
-        self.encoded_delta_flat = Some(encoded_delta_flat);
+        self.encoded_delta_flat = Some(encoded_delta_flat.clone());
         self.history.push_back(stored);
         self.prune();
+
+        // The publication rule: a world's first frame goes out whole, every later one as a delta.
+        Some(
+            self.encoded_snapshot_flat
+                .clone()
+                .unwrap_or(encoded_delta_flat),
+        )
     }
 
     /// Claim the next publication sequence, returning `(frame_seq, base_frame_seq)`.
@@ -832,7 +862,7 @@ impl SnapshotHistory {
         (self.frame_seq, base)
     }
 
-    pub fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
+    pub(crate) fn reset_to_entry(&mut self, entry: &StoredSnapshot) {
         self.tiles = entry
             .snapshot
             .tiles
@@ -985,15 +1015,16 @@ impl SnapshotHistory {
     ///
     /// The stored `encoded_snapshot_flat`, if the entry had one, cannot be reused — its header
     /// carries the old number — so this always re-encodes.
-    pub fn publish_full_frame(&mut self, entry: &StoredSnapshot) -> Arc<Vec<u8>> {
+    pub(crate) fn publish_full_frame(&mut self, entry: &StoredSnapshot) -> Arc<Vec<u8>> {
         let (frame_seq, _base_frame_seq) = self.next_publication();
         let mut snapshot = entry.snapshot.as_ref().clone();
         snapshot.header.frame_seq = frame_seq;
         snapshot.header.base_frame_seq = 0;
-        let encoded = {
-            let _s = crate::turn_profile::scope("encode.flat_snapshot");
-            Arc::new(encode_snapshot_flatbuffer(&snapshot))
-        };
+        // No profiling scope, deliberately: this runs INLINE on the caller's thread (rollback and
+        // `Resync` both hold the publisher's queue drained), and a `publish_scope` there would
+        // accumulate into a thread-local nothing ever drains. Both call sites already log the
+        // frame's size and tick.
+        let encoded = Arc::new(encode_snapshot_flatbuffer(&snapshot));
         // This IS the latest flat frame for the world now, and it is the only encoding of it that
         // carries the live sequence number — so anything that later reaches for "the newest full
         // frame" (`broadcast_latest`) sends this one rather than the entry's stale-seq bytes.
@@ -1002,7 +1033,7 @@ impl SnapshotHistory {
         encoded
     }
 
-    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
+    pub(crate) fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
         if self.axis_bias == bias {
             return None;
         }
@@ -1120,7 +1151,7 @@ impl SnapshotHistory {
     /// push a new ring entry or touch the delta baselines (`self.tiles`/`populations`/…), so the
     /// ring stays one-entry-per-tick and the next turn's delta re-sends the change harmlessly.
     /// Never advances the turn or the `TurnQueue`.
-    pub fn update_influencers(
+    pub(crate) fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
     ) -> Option<Arc<Vec<u8>>> {
@@ -1244,7 +1275,7 @@ impl SnapshotHistory {
         Some(encoded_delta_flat)
     }
 
-    pub fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<Arc<Vec<u8>>> {
+    pub(crate) fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<Arc<Vec<u8>>> {
         if self.corruption == ledger {
             return None;
         }
@@ -2161,24 +2192,20 @@ pub fn capture_snapshot(
     };
     drop(build_scope);
 
-    // `finalize` stamps the content hash. It takes `self` by value and zeroes `header.hash` in place
-    // — no deep clone (that lives only in the free-standing `hash_snapshot`, which `finalize`
-    // deliberately does not call) — but it still bincode-encodes the *whole* snapshot just to
-    // produce a `u64`. Its own label so that cost is visible rather than buried in build.
-    let snapshot = {
-        let _s = crate::turn_profile::scope("snapshot.finalize_hash");
-        assembled.finalize()
-    };
-
+    // **The turn thread's last act on this snapshot.** Hashing, diffing, encoding and the socket
+    // write are all pure functions of the world just assembled and of publication's own state, so
+    // they run on the publisher thread (#393) and turn latency stops depending on them. What is
+    // left here is a move onto a bounded channel.
+    //
     // Turn path: record a fresh ring entry (`update`). Post-command re-capture path
     // (`SnapshotCaptureMode::refresh_in_place`): refresh the latest broadcast + back ring entry in
     // place so a mid-turn command's world mutation reaches the client now, without pushing a ring
     // entry / advancing the turn.
-    let _history_scope = crate::turn_profile::scope("snapshot.history");
+    let _handoff_scope = crate::turn_profile::scope("snapshot.handoff");
     if capture_mode.refresh_in_place {
-        history.refresh_latest(snapshot);
+        history.refresh_latest(assembled);
     } else {
-        history.update(snapshot);
+        history.update(assembled);
     }
 }
 

@@ -29,9 +29,8 @@ fn generate(width: u32, height: u32, seed: u64) -> (WorldSnapshot, BiomePalette)
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|s| (**s).clone())
+        .last_snapshot()
+        .map(|s| (*s).clone())
         .expect("snapshot after worldgen");
     let palette = app
         .world

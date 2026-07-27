@@ -104,9 +104,8 @@ fn generate(seed: u64) -> GeneratedWorld {
     let snapshot = app
         .world
         .resource::<SnapshotHistory>()
-        .last_snapshot
-        .as_ref()
-        .map(|s| (**s).clone())
+        .last_snapshot()
+        .map(|s| (*s).clone())
         .expect("snapshot after worldgen");
     GeneratedWorld {
         graze: app.world.resource::<GrazeRegistry>().clone(),
