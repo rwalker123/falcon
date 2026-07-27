@@ -459,17 +459,17 @@ fn checkpoint_replay_is_bit_exact() {
     }
 }
 
-/// The two rings agree: the checkpoint filed under a tick rebuilds the world the snapshot filed
-/// under that same tick was published from.
+/// **A rollback to tick T produces the world T had, and the frame the client receives is derived
+/// from that world.**
 ///
-/// This is the assumption `handle_rollback` rests on. It restores the world from
-/// `CheckpointHistory` and re-baselines the client from `SnapshotHistory` — two different rings,
-/// read at one tick — so if `record_checkpoint` ever filed under a different tick than
-/// `capture_snapshot`, a rollback would silently show the client a world the simulation is not in.
-/// `checkpoint_restore_is_lossless` proves a checkpoint round-trips; this proves the ring hands
-/// back the right one.
+/// This is the whole guarantee, and it is stronger than the tick-agreement property it replaces.
+/// That earlier version asserted two parallel histories filed under matching ticks — which was the
+/// right assertion while `handle_rollback` read a stored snapshot to re-baseline the client. It no
+/// longer does: it recaptures the frame from the restored world, so there is one history of worlds
+/// and nothing left to disagree. What matters now is that the ring hands back the right checkpoint
+/// and that recapturing it reproduces the published view, which is what this checks end to end.
 #[test]
-fn the_rollback_ring_and_the_snapshot_ring_agree_tick_for_tick() {
+fn a_rollback_produces_the_world_that_tick_had() {
     use core_sim::sim_state::CheckpointHistory;
 
     let mut app = new_app();
@@ -493,7 +493,7 @@ fn the_rollback_ring_and_the_snapshot_ring_agree_tick_for_tick() {
     recapture_snapshot_in_place(&mut app.world);
 
     assert_snapshots_match(
-        "the checkpoint ring's entry did not rebuild the world its snapshot was published from",
+        "rolling back to a tick did not reproduce the world that tick had",
         &published,
         &latest_snapshot(&app),
     );

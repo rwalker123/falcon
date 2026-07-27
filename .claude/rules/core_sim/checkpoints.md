@@ -95,6 +95,36 @@ The change moved **no** world: worldgen spawns links in `(y, x)` order against s
 allocation, so the two orderings coincide until a renumber. The orders differ only in the case that
 was already broken.
 
+## A ring of 256 full worlds was the shape of the thing all along
+
+`SnapshotHistory` kept 256 full `WorldSnapshot`s from long before checkpoints existed. Nobody had
+put a number on it. When `CheckpointHistory` added a second ring of the same depth, the measurement
+that followed found **both**: 1.68 GB for the snapshot ring, 1.50 GB for the checkpoint ring, on an
+80×52 map at the standard recipe. The arc did not create the memory problem — it added a second one
+the same size and caused the first to be measured.
+
+Measured RSS, release, 300 turns so the rings are full:
+
+| grid | snapshot ring 256-deep | + checkpoint ring | after collapsing the snapshot ring |
+|---|---|---|---|
+| 40×26 | 0.48 GB | 0.92 GB | 0.46 GB |
+| 80×52 | 1.68 GB | 3.18 GB | **1.68 GB** |
+
+Both rings are **linear in tile count** (3.5× for 4× the tiles), so the exponent, not the current
+figure, is what governs: a 160×104 map is 4× the tiles again.
+
+The snapshot ring collapsed to a single entry because rollback was its only historical reader, and
+that read was redundant — recapturing the client frame from the restored world yields the same
+bytes, which `a_rollback_produces_the_world_that_tick_had` asserts. `snapshot_history_limit` now
+governs `CheckpointHistory` alone: **one depth knob, one history of worlds.** Net resident memory is
+within 0.4% of where the arc started, with a checkpoint ring where a snapshot ring used to be.
+
+**The transferable part is not either figure.** It is that a per-turn ring of whole worlds is an
+easy thing to write and an invisible thing to pay for, and it went unmeasured for as long as it did
+because nothing in the system reported a total. Estimating it structurally is not a substitute —
+`size_of` does not see the `Vec` and `HashMap` heap that is most of an entry, and a structural
+estimate of this ring was wrong by 5× in the direction that mattered.
+
 ## Reading this arc's numbers
 
 `integration_tests/tests/replay_determinism.rs` reports **differing leaves out of compared leaves**,

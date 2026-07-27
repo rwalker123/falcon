@@ -5679,26 +5679,30 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
         return;
     };
 
-    let entry: Option<StoredSnapshot> = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history.entry(tick)
-    };
-
-    let Some(entry) = entry else {
-        warn!(
-            target: "shadow_scale::server",
-            tick,
-            "rollback.failed=missing_snapshot"
-        );
-        return;
-    };
-
     restore_sim_state(&mut app.world, checkpoint.as_ref());
     // Everything after `tick` is a future this rollback just discarded; leaving those checkpoints
     // in the ring would let a later rollback jump *forward* into a world that no longer happened.
     app.world
         .resource_mut::<CheckpointHistory>()
         .truncate_after(tick);
+
+    // **The client's frame is DERIVED from the restored world, not fetched from a parallel
+    // archive.** Recapturing here is what let `SnapshotHistory`'s ring collapse to the latest
+    // entry: the stored snapshot at tick T carried no information the checkpoint at T did not,
+    // which `a_rollback_produces_the_world_that_tick_had` asserts directly. Deriving it also
+    // removes the failure mode where the two histories disagree — there is now only one history of
+    // worlds.
+    recapture_snapshot_in_place(&mut app.world);
+
+    let entry: Option<StoredSnapshot> = app.world.resource::<SnapshotHistory>().latest_entry();
+    let Some(entry) = entry else {
+        warn!(
+            target: "shadow_scale::server",
+            tick,
+            "rollback.failed=recapture_produced_no_frame"
+        );
+        return;
+    };
     // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand (under
     // delta streaming a ring entry almost never carries one) and stamped with a FRESH publication
     // sequence number, so the client's applied seq matches what the next delta names as its base.
