@@ -66,7 +66,7 @@ use crate::{
     },
     provinces::{ProvinceId, ProvinceMap},
     resources::{
-        ClimateConfig, CommandEventEntry, CommandEventKind, CommandEventLog,
+        BandIdAllocator, ClimateConfig, CommandEventEntry, CommandEventKind, CommandEventLog,
         CorruptionExposureRecord, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
         DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry, MoistureRaster,
         SentimentAxisBias, SimulationConfig, SimulationTick, StartLocation, TileRegistry,

@@ -31,8 +31,10 @@ use std::collections::BTreeSet;
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 33] = [
+const SIM_STATE_RESOURCES: [&str; 34] = [
     "ActiveCrisisLedger",
+    // The band-id counter. Restoring the bands without it re-issues a live id after a rollback.
+    "BandIdAllocator",
     "BeatLedger",
     "CapabilityFlags",
     // Append-only. A restore must TRUNCATE this to the checkpoint's length, not replace it —
@@ -227,8 +229,15 @@ const CONFIG_RESOURCES_CONT: [&str; 13] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 13] = [
+const SIM_STATE_COMPONENTS: [&str; 15] = [
     "Tile",
+    // A band's durable identity — the thing `Entity` could not be across a restore.
+    "BandId",
+    // Carried by the checkpoint. A checkpoint is lossless; "rollback cancels an in-flight move" is
+    // a gameplay rule, and it is applied as an explicit step in the rollback command path rather
+    // than by leaving the state out. Implemented as an omission it would not be a rule, it would be
+    // a hole with a comment on it.
+    "BandTravel",
     "PopulationCohort",
     "LaborAllocation",
     "Expedition",
@@ -247,13 +256,7 @@ const SIM_STATE_COMPONENTS: [&str; 13] = [
     "SiteTag",
 ];
 
-const NOT_SIM_STATE_COMPONENTS: [(&str, &str); 1] = [(
-    // Documented at its definition as deliberately non-persistent: "a rollback mid-move cancels
-    // the travel". That is a real decision, and it is also a divergence a bit-exact replay oracle
-    // will report — the two cannot both hold. Revisit when the oracles are switched on.
-    "BandTravel",
-    "documented non-persistent: a rollback mid-move cancels the travel",
-)];
+const NOT_SIM_STATE_COMPONENTS: [(&str, &str); 0] = [];
 
 fn leaf(type_path: &str) -> &str {
     type_path.rsplit("::").next().unwrap_or(type_path)
@@ -395,5 +398,57 @@ fn every_registered_component_is_classified() {
         stale.is_empty(),
         "these component names are classified here but no longer registered — delete them:\n  {}",
         stale.join("\n  ")
+    );
+}
+
+/// Every band carries a unique [`BandId`], and the allocator agrees with what it handed out.
+///
+/// The uniqueness half is the one that matters: a duplicate id is worse than the entity churn
+/// `BandId` replaces, because two bands that alias resolve to *each other* silently instead of
+/// failing to resolve at all.
+#[test]
+fn every_band_has_a_unique_durable_id() {
+    use core_sim::{BandId, BandIdAllocator, PopulationCohort};
+
+    let mut app = build_headless_app();
+    run_turn(&mut app);
+
+    let mut query = app.world.query::<(&PopulationCohort, Option<&BandId>)>();
+    let bands: Vec<(bool, Option<BandId>)> = query
+        .iter(&app.world)
+        .map(|(_, id)| (true, id.copied()))
+        .collect();
+    assert!(!bands.is_empty(), "worldgen produced no bands to check");
+
+    let missing = bands.iter().filter(|(_, id)| id.is_none()).count();
+    assert_eq!(
+        missing,
+        0,
+        "{missing} of {} cohorts have no `BandId` — every spawn site must attach one, or a \
+         checkpoint cannot name the band it is restoring",
+        bands.len()
+    );
+
+    let ids: Vec<u64> = bands
+        .iter()
+        .filter_map(|(_, id)| id.map(|id| id.0))
+        .collect();
+    let unique: BTreeSet<u64> = ids.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "duplicate `BandId` handed out: {ids:?}"
+    );
+    assert!(
+        !unique.contains(&0),
+        "`BandId(0)` is reserved for \"unset\""
+    );
+
+    // The allocator must be ahead of every id it issued, or the next band collides with a live one.
+    let next = app.world.resource::<BandIdAllocator>().peek();
+    let highest = unique.iter().copied().max().unwrap_or(0);
+    assert!(
+        next > highest,
+        "allocator is at {next} but band {highest} already exists — the next spawn would alias it"
     );
 }

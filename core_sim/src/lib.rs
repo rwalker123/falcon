@@ -95,10 +95,11 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
-    FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD, TRADE_GOODS,
+    available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
+    ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment,
+    LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
+    PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    FODDER, FOOD, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{
@@ -278,12 +279,13 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, port_base_override, CapabilityFlags,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
-    HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
+    apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
+    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
+    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
+    FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster,
+    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
+    TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
@@ -508,6 +510,7 @@ pub fn build_headless_app() -> App {
         // Default epoch (0) so `capture_snapshot` always finds the resource. The server overwrites
         // it with the live counter on every world (re)build; the idle boot app never captures.
         .insert_resource(WorldEpoch::default())
+        .insert_resource(BandIdAllocator::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(crisis_telemetry_resource)

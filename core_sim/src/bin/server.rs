@@ -35,8 +35,8 @@ use core_sim::{
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
-    restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment, CommandEventEntry,
-    CommandEventKind, CommandEventLog, CorruptionLedgers, CounterIntelBudgets,
+    restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment, BandIdAllocator,
+    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CounterIntelBudgets,
     CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
     CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
     CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
@@ -2621,10 +2621,13 @@ fn handle_send_expedition(
     expedition_cohort.grievance = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
+    // A detached party is a band in its own right, so it takes its own durable id.
+    let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
     let expedition_entity = app
         .world
         .spawn((
             expedition_cohort,
+            expedition_band_id,
             LaborAllocation::default(),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
@@ -2901,10 +2904,13 @@ fn handle_send_hunt_expedition(
     expedition_cohort.grievance = Scalar::from_i64(0);
     expedition_cohort.sync_size();
 
+    // A detached party is a band in its own right, so it takes its own durable id.
+    let expedition_band_id = app.world.resource_mut::<BandIdAllocator>().allocate();
     let expedition_entity = app
         .world
         .spawn((
             expedition_cohort,
+            expedition_band_id,
             LaborAllocation::default(),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {

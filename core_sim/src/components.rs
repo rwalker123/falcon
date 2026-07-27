@@ -622,6 +622,26 @@ impl StartingUnit {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
 
+/// A band's durable identity, stable across a checkpoint restore.
+///
+/// **`Entity` is not an identity.** Restoring a checkpoint despawns and respawns every cohort, and
+/// bevy hands back a fresh generation, so `Entity::to_bits()` names a different band before and
+/// after — which is why anything that stored one (an expedition's `home_band`, the visibility
+/// sweep tracker's previous positions) could not survive a rollback. Every other durable thing in
+/// the sim already has an id of its own — [`PowerNodeId`], `InfluentialId`, `GreatDiscoveryId` —
+/// and a band is the one that did not.
+///
+/// Bands are the only entity class with **no natural key**: tiles are `(x, y)`, logistics links are
+/// their endpoint pair, power nodes are `y * width + x`, but a band splits, merges, migrates and
+/// dies, and several can stand on one hex. So the id is explicit and allocated from
+/// [`crate::resources::BandIdAllocator`], which is itself checkpoint state — restoring the counter
+/// is what stops a replay from re-issuing an id that is already in use.
+///
+/// This is **identity only**. Bands carrying their own culture layer is issue #407 and is additive
+/// on top of this; nothing here anticipates it.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BandId(pub u64);
+
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
 #[derive(Debug, Clone, PartialEq, Eq)]
