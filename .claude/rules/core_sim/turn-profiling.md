@@ -117,8 +117,9 @@ and ~14 fields under `sim_schema::state::campaign` carry `#[serde(skip_serializi
 reader — `UnexpectedEof`, or, with bytes still to come, *silent garbage*. Those frames had never been
 readable by anything, which is why retiring the socket needed no deprecation: the delta encode
 (`encode.bincode_delta`, the rest of the 8% line above) went with it, `broadcast_latest` now writes
-one socket, and `base+0` is a reserved slot. `encode_snapshot` survives in `sim_schema` as the
-**hash** input (`finalize` hashes its bytes), not as a wire codec. `turn_profile_wiring.rs`'s
+one socket, and `base+0` is a reserved slot. `sim_schema`'s `encode_snapshot`/`encode_delta`
+wrappers went with them (nothing called either); bincode survives there only *inline* in
+`finalize`/`hash_snapshot`, as bytes to hash rather than a codec. `turn_profile_wiring.rs`'s
 `RETIRED_CAPTURE_PHASES` is what stops either coming back — a retired label reappearing in a
 steady-state profile fails that test.
 

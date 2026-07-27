@@ -1,5 +1,7 @@
 //! The flat world payloads (`WorldSnapshot` / `WorldDelta`), their header, and the
-//! bincode / JSON codecs plus the on-disk [`MapExport`].
+//! JSON codecs plus the on-disk [`MapExport`]. Bincode appears only inside
+//! `finalize`/`hash_snapshot` as bytes to hash — there is no bincode codec and no
+//! bincode decode path.
 
 use crate::state::campaign::{
     BeatLedgerState, CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState,
@@ -335,14 +337,6 @@ pub fn hash_snapshot(snapshot: &WorldSnapshot) -> u64 {
     let mut hasher = RandomState::with_seeds(0, 0, 0, 0).build_hasher();
     hasher.write(&encoded);
     hasher.finish()
-}
-
-pub fn encode_snapshot(snapshot: &WorldSnapshot) -> bincode::Result<Vec<u8>> {
-    bincode::serialize(snapshot)
-}
-
-pub fn encode_delta(delta: &WorldDelta) -> bincode::Result<Vec<u8>> {
-    bincode::serialize(delta)
 }
 
 pub fn encode_snapshot_json(snapshot: &WorldSnapshot) -> serde_json::Result<String> {

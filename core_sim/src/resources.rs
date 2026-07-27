@@ -580,15 +580,18 @@ pub const COMMAND_PORT_OFFSET: u16 = 1;
 pub const SNAPSHOT_FLAT_PORT_OFFSET: u16 = 2;
 pub const LOG_PORT_OFFSET: u16 = 3;
 
-/// Lowest accepted `SIM_PORT_BASE`. A base of 0 would set `port_base_bind` to
-/// port 0, asking the OS for an ephemeral port and breaking clients that expect
-/// the fixed block; `scripts/run_stack.sh` applies the same floor.
+/// Lowest accepted `SIM_PORT_BASE`. Slot 0 is never bound, so a base of 0 no
+/// longer means an ephemeral bind — it is rejected because the base is *stored*
+/// in `port_base_bind`'s port and re-read from there (`bin/server.rs`), and 0 is
+/// `SocketAddr`'s "let the OS choose" wildcard, indistinguishable from a base
+/// nobody configured. The block it would name (bound ports 1-3) is privileged
+/// anyway. `scripts/run_stack.sh` applies the same floor.
 const MIN_PORT_BASE: u16 = 1;
 
 /// Overrides each bind's port with `base + <offset>`, preserving the host.
 /// Returns false (and leaves `config` unchanged) if `base` is below
-/// `MIN_PORT_BASE` (0 → ephemeral port) or `base + LOG_PORT_OFFSET` would
-/// overflow u16.
+/// `MIN_PORT_BASE` (0 is the wildcard-port sentinel, not a block) or
+/// `base + LOG_PORT_OFFSET` would overflow u16.
 pub fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
     if base < MIN_PORT_BASE || base.checked_add(LOG_PORT_OFFSET).is_none() {
         return false;
@@ -1281,7 +1284,7 @@ mod tests {
             config.log_bind.port(),
         );
 
-        // base 0 would bind ephemeral port 0; rejected below MIN_PORT_BASE.
+        // base 0 is the wildcard-port sentinel, not a block; below MIN_PORT_BASE.
         assert!(!apply_port_base(&mut config, 0));
 
         assert_eq!(

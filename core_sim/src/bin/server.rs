@@ -4970,10 +4970,11 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 fn recapture_and_broadcast(app: &mut bevy::prelude::App, snapshot_server_flat: &SnapshotServer) {
     recapture_snapshot_in_place(&mut app.world);
 
-    // Publishes exactly what a turn publishes — the bincode delta and the flat delta — because
-    // `refresh_latest` now diffs against the uncommitted baseline rather than re-encoding a full
-    // world. `broadcast_latest` already states the rule ("full frame if there is one, else the
-    // delta"), so sharing it keeps the two publication paths from drifting apart.
+    // Publishes exactly what a turn publishes — the flat delta, or the flat full frame when this
+    // world has one pending — because `refresh_latest` now diffs against the uncommitted baseline
+    // rather than re-encoding a full world. Sharing `broadcast_latest`, which owns that rule
+    // ("full frame if there is one, else the delta"), keeps the two publication paths from
+    // drifting apart.
     let history = app.world.resource::<SnapshotHistory>();
     broadcast_latest(snapshot_server_flat, history);
 }
