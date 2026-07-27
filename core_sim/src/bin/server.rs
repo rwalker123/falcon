@@ -87,24 +87,27 @@ fn main() {
 
     let config = app.world.resource::<SimulationConfig>().clone();
 
-    // Bind the whole four-port block up front, all-or-nothing, before any
-    // subsystem starts. A busy port either bumps the block to the next free
-    // slot or aborts startup outright; the server never runs with a socket
-    // silently disabled.
-    let configured_base = config.snapshot_bind.port();
+    // Bind the whole port block up front, all-or-nothing, before any subsystem
+    // starts. A busy port either bumps the block to the next free slot or aborts
+    // startup outright; the server never runs with a socket silently disabled.
+    // Slot 0 of the block is reserved and never bound (#388) — the base is where
+    // the block starts, not a listener.
+    let configured_base = config.port_base_bind.port();
     let base_is_explicit = port_base_override().is_some();
-    let bound_ports =
-        match port_alloc::allocate(config.snapshot_bind.ip(), configured_base, base_is_explicit) {
-            Ok(bound) => bound,
-            Err(err) => {
-                eprintln!("Shadow-Scale server cannot start: {err}");
-                std::process::exit(PORT_ALLOC_EXIT_CODE);
-            }
-        };
+    let bound_ports = match port_alloc::allocate(
+        config.port_base_bind.ip(),
+        configured_base,
+        base_is_explicit,
+    ) {
+        Ok(bound) => bound,
+        Err(err) => {
+            eprintln!("Shadow-Scale server cannot start: {err}");
+            std::process::exit(PORT_ALLOC_EXIT_CODE);
+        }
+    };
     let port_base_bumped = bound_ports.base != configured_base;
     let resolved_base = bound_ports.base;
-    let (snapshot_port, command_port, snapshot_flat_port, log_port) = (
-        bound_ports.snapshot_port(),
+    let (command_port, snapshot_flat_port, log_port) = (
         bound_ports.command_port(),
         bound_ports.snapshot_flat_port(),
         bound_ports.log_port(),
@@ -145,7 +148,6 @@ fn main() {
         warn!(target: "shadow_scale::server", "log_stream.start_failed");
     }
 
-    let snapshot_server = start_snapshot_server(bound_ports.snapshot);
     let snapshot_flat_server = start_snapshot_server(bound_ports.snapshot_flat);
 
     let config_watch_path = app
@@ -225,7 +227,7 @@ fn main() {
     // `WorldEpoch` into each fresh app before its first capture; the idle boot app carries 0.
     let mut world_epoch: u32 = 0;
 
-    let bind_host = config.snapshot_bind.ip();
+    let bind_host = config.port_base_bind.ip();
     if port_base_bumped {
         warn!(
             target: "shadow_scale::server",
@@ -238,7 +240,6 @@ fn main() {
         host = %bind_host,
         port_base = resolved_base,
         command_port,
-        snapshot_port,
         snapshot_flat_port,
         log_port,
         port_base_bumped,
@@ -258,7 +259,6 @@ fn main() {
     );
 
     while let Ok(command) = command_rx.recv() {
-        let bin_server = &snapshot_server;
         let flat_server = &snapshot_flat_server;
         match command {
             Command::Turn(turns) => {
@@ -282,7 +282,7 @@ fn main() {
                         }
                         queue.force_submit_all(|_| FactionOrders::end_turn());
                     }
-                    resolve_ready_turn(&mut app, bin_server, flat_server);
+                    resolve_ready_turn(&mut app, flat_server);
                 }
             }
             Command::ResetMap { width, height } => {
@@ -333,7 +333,6 @@ fn main() {
                     seed_random_requested,
                     command_sender,
                     &watch_paths,
-                    bin_server,
                     flat_server,
                     &mut world_epoch,
                     |_| {},
@@ -363,7 +362,6 @@ fn main() {
                     height,
                     seed,
                     profile_id,
-                    bin_server,
                     flat_server,
                 );
             }
@@ -412,13 +410,13 @@ fn main() {
                 );
             }
             Command::Orders { faction, orders } => {
-                handle_order_submission(&mut app, faction, orders, bin_server, flat_server);
+                handle_order_submission(&mut app, faction, orders, flat_server);
             }
             Command::Rollback { tick } => {
-                handle_rollback(&mut app, tick, bin_server, flat_server);
+                handle_rollback(&mut app, tick, flat_server);
             }
             Command::AxisBias { axis, value } => {
-                handle_axis_bias(&mut app, axis, value, bin_server, flat_server);
+                handle_axis_bias(&mut app, axis, value, flat_server);
             }
             Command::SupportInfluencer { id, magnitude } => {
                 handle_influencer_command(
@@ -426,7 +424,6 @@ fn main() {
                     id,
                     magnitude,
                     InfluencerAction::Support,
-                    bin_server,
                     flat_server,
                 );
             }
@@ -436,7 +433,6 @@ fn main() {
                     id,
                     magnitude,
                     InfluencerAction::Suppress,
-                    bin_server,
                     flat_server,
                 );
             }
@@ -445,17 +441,10 @@ fn main() {
                 channel,
                 magnitude,
             } => {
-                handle_influencer_channel_support(
-                    &mut app,
-                    id,
-                    channel,
-                    magnitude,
-                    bin_server,
-                    flat_server,
-                );
+                handle_influencer_channel_support(&mut app, id, channel, magnitude, flat_server);
             }
             Command::SpawnInfluencer { scope, generation } => {
-                handle_influencer_spawn(&mut app, scope, generation, bin_server, flat_server);
+                handle_influencer_spawn(&mut app, scope, generation, flat_server);
             }
             Command::InjectCorruption {
                 subsystem,
@@ -467,7 +456,6 @@ fn main() {
                     subsystem,
                     intensity,
                     exposure_timer,
-                    bin_server,
                     flat_server,
                 );
             }
@@ -667,7 +655,7 @@ fn main() {
         // Gated on `world_active`: on the idle (pre-`new_game`) world there is no `ElevationField`,
         // so recapture would panic in the Snapshot stage.
         if world_active {
-            recapture_and_broadcast(&mut app, bin_server, flat_server);
+            recapture_and_broadcast(&mut app, flat_server);
         }
     }
 }
@@ -1406,7 +1394,6 @@ fn rebuild_world_from_config(
     seed_random: bool,
     command_sender: Sender<Command>,
     watch_paths: &WatchPaths,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
     world_epoch: &mut u32,
     configure: impl FnOnce(&mut bevy::prelude::App),
@@ -1484,7 +1471,7 @@ fn rebuild_world_from_config(
 
     {
         let history = new_app.world.resource::<SnapshotHistory>();
-        broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+        broadcast_latest(snapshot_server_flat, history);
     }
 
     new_app
@@ -1503,7 +1490,6 @@ fn handle_new_game(
     height: u32,
     seed: u64,
     profile_id: String,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     if width == 0 || height == 0 {
@@ -1559,7 +1545,6 @@ fn handle_new_game(
         seed == 0,
         command_sender,
         &watch_paths,
-        snapshot_server_bin,
         snapshot_server_flat,
         world_epoch,
         move |new_app| apply_start_profile(new_app, &profile),
@@ -3907,7 +3892,7 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
     }
 
     if new_config.command_bind != current_config.command_bind
-        || new_config.snapshot_bind != current_config.snapshot_bind
+        || new_config.port_base_bind != current_config.port_base_bind
         || new_config.snapshot_flat_bind != current_config.snapshot_flat_bind
         || new_config.log_bind != current_config.log_bind
     {
@@ -4982,26 +4967,22 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 /// broadcast + back ring entry in place instead of recording a new ring entry. Re-capturing on a
 /// genuinely non-mutating command is merely slightly wasteful (commands are human-issued, low
 /// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
-fn recapture_and_broadcast(
-    app: &mut bevy::prelude::App,
-    snapshot_server_bin: &SnapshotServer,
-    snapshot_server_flat: &SnapshotServer,
-) {
+fn recapture_and_broadcast(app: &mut bevy::prelude::App, snapshot_server_flat: &SnapshotServer) {
     recapture_snapshot_in_place(&mut app.world);
 
-    // Publishes exactly what a turn publishes — the bincode delta and the flat delta — because
-    // `refresh_latest` now diffs against the uncommitted baseline rather than re-encoding a full
-    // world. `broadcast_latest` already states the rule ("full frame if there is one, else the
-    // delta"), so sharing it keeps the two publication paths from drifting apart.
+    // Publishes exactly what a turn publishes — the flat delta, or the flat full frame when this
+    // world has one pending — because `refresh_latest` now diffs against the uncommitted baseline
+    // rather than re-encoding a full world. Sharing `broadcast_latest`, which owns that rule
+    // ("full frame if there is one, else the delta"), keeps the two publication paths from
+    // drifting apart.
     let history = app.world.resource::<SnapshotHistory>();
-    broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+    broadcast_latest(snapshot_server_flat, history);
 }
 
 fn handle_order_submission(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     orders: FactionOrders,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let order_count = orders.orders.len();
@@ -5025,7 +5006,7 @@ fn handle_order_submission(
                 order_count,
                 "orders.ready_to_resolve"
             );
-            resolve_ready_turn(app, snapshot_server_bin, snapshot_server_flat);
+            resolve_ready_turn(app, snapshot_server_flat);
         }
         Err(SubmitError::UnknownFaction(f)) => warn!(
             target: "shadow_scale::server",
@@ -5044,7 +5025,6 @@ fn handle_axis_bias(
     app: &mut bevy::prelude::App,
     axis: usize,
     value: f32,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     if axis >= 4 {
@@ -5078,15 +5058,8 @@ fn handle_axis_bias(
         history.update_axis_bias(bias_state)
     };
 
-    if let Some((binary, flat)) = broadcast_payload {
-        {
-            let server = snapshot_server_bin;
-            server.broadcast(binary.as_ref());
-        }
-        {
-            let server = snapshot_server_flat;
-            server.broadcast(flat.as_ref());
-        }
+    if let Some(flat) = broadcast_payload {
+        snapshot_server_flat.broadcast(flat.as_ref());
     }
 
     info!(
@@ -5102,7 +5075,6 @@ fn handle_influencer_channel_support(
     id: u32,
     channel: SupportChannel,
     magnitude: f32,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped = magnitude.clamp(0.1, 5.0);
@@ -5123,7 +5095,7 @@ fn handle_influencer_channel_support(
         return;
     }
 
-    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+    broadcast_influencer_update(app, snapshot_server_flat);
 
     info!(
         target: "shadow_scale::server",
@@ -5138,7 +5110,6 @@ fn handle_influencer_spawn(
     app: &mut bevy::prelude::App,
     scope: Option<InfluenceScopeKind>,
     generation: Option<GenerationId>,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let registry_snapshot = app.world.resource::<GenerationRegistry>().clone();
@@ -5157,7 +5128,7 @@ fn handle_influencer_spawn(
         return;
     };
 
-    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+    broadcast_influencer_update(app, snapshot_server_flat);
 
     let label = {
         let roster = app.world.resource::<InfluentialRoster>();
@@ -5181,7 +5152,6 @@ fn handle_influencer_spawn(
 
 fn broadcast_influencer_update(
     app: &mut bevy::prelude::App,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let (states, sentiment_totals, logistics_total, morale_total, power_total) = {
@@ -5223,25 +5193,11 @@ fn broadcast_influencer_update(
         (influencer_delta, bias_delta)
     };
 
-    if let Some((bin, flat)) = influencer_delta {
-        {
-            let server = snapshot_server_bin;
-            server.broadcast(bin.as_ref());
-        }
-        {
-            let server = snapshot_server_flat;
-            server.broadcast(flat.as_ref());
-        }
+    if let Some(flat) = influencer_delta {
+        snapshot_server_flat.broadcast(flat.as_ref());
     }
-    if let Some((bin, flat)) = bias_delta {
-        {
-            let server = snapshot_server_bin;
-            server.broadcast(bin.as_ref());
-        }
-        {
-            let server = snapshot_server_flat;
-            server.broadcast(flat.as_ref());
-        }
+    if let Some(flat) = bias_delta {
+        snapshot_server_flat.broadcast(flat.as_ref());
     }
 }
 
@@ -5250,7 +5206,6 @@ fn handle_influencer_command(
     id: u32,
     magnitude: f32,
     action: InfluencerAction,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped = magnitude.clamp(0.1, 5.0);
@@ -5274,7 +5229,7 @@ fn handle_influencer_command(
         return;
     }
 
-    broadcast_influencer_update(app, snapshot_server_bin, snapshot_server_flat);
+    broadcast_influencer_update(app, snapshot_server_flat);
 
     match action {
         InfluencerAction::Support => info!(
@@ -5297,7 +5252,6 @@ fn handle_inject_corruption(
     subsystem: CorruptionSubsystem,
     intensity: f32,
     exposure_timer: u16,
-    snapshot_server_bin: &SnapshotServer,
     snapshot_server_flat: &SnapshotServer,
 ) {
     let clamped_intensity = intensity.clamp(-5.0, 5.0);
@@ -5326,15 +5280,8 @@ fn handle_inject_corruption(
         history.update_corruption(ledger_clone)
     };
 
-    if let Some((binary, flat)) = delta_payload {
-        {
-            let server = snapshot_server_bin;
-            server.broadcast(binary.as_ref());
-        }
-        {
-            let server = snapshot_server_flat;
-            server.broadcast(flat.as_ref());
-        }
+    if let Some(flat) = delta_payload {
+        snapshot_server_flat.broadcast(flat.as_ref());
     }
 
     info!(
@@ -5619,11 +5566,7 @@ fn pick_best_agent_for_mission(
     best.map(|(handle, _)| handle)
 }
 
-fn resolve_ready_turn(
-    app: &mut bevy::prelude::App,
-    snapshot_server_bin: &SnapshotServer,
-    snapshot_server_flat: &SnapshotServer,
-) {
+fn resolve_ready_turn(app: &mut bevy::prelude::App, snapshot_server_flat: &SnapshotServer) {
     let turn_start = std::time::Instant::now();
     // Open the turn's profile here rather than from a stage marker: order application and snapshot
     // broadcast happen outside `app.update()` and belong to the same turn's breakdown.
@@ -5655,7 +5598,7 @@ fn resolve_ready_turn(
     {
         let _s = turn_profile::scope("broadcast");
         let history = app.world.resource::<SnapshotHistory>();
-        broadcast_latest(snapshot_server_bin, snapshot_server_flat, history);
+        broadcast_latest(snapshot_server_flat, history);
     }
 
     let metrics = app.world.resource::<SimulationMetrics>();
@@ -5694,12 +5637,7 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
     }
 }
 
-fn handle_rollback(
-    app: &mut bevy::prelude::App,
-    tick: u64,
-    snapshot_server_bin: &SnapshotServer,
-    snapshot_server_flat: &SnapshotServer,
-) {
+fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat: &SnapshotServer) {
     let entry: Option<StoredSnapshot> = {
         let history = app.world.resource::<SnapshotHistory>();
         history.entry(tick)
@@ -5734,14 +5672,7 @@ fn handle_rollback(
         "rollback.completed -- clients should reconnect to receive fresh state"
     );
 
-    {
-        let server = snapshot_server_bin;
-        server.broadcast(entry.encoded_snapshot.as_ref());
-    }
-    {
-        let server = snapshot_server_flat;
-        server.broadcast(flat_frame.as_ref());
-    }
+    snapshot_server_flat.broadcast(flat_frame.as_ref());
 }
 
 #[cfg(test)]
@@ -5832,7 +5763,6 @@ mod tests {
             "server boots idle — no world generated"
         );
 
-        let bin = loopback_snapshot_server();
         let flat = loopback_snapshot_server();
         let mut world_active = false;
         let mut world_epoch: u32 = 0;
@@ -5847,7 +5777,6 @@ mod tests {
             32,
             7,
             "no_such_profile".to_string(),
-            &bin,
             &flat,
         );
         assert!(!world_active, "an unknown profile must not build a world");
@@ -5870,7 +5799,6 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            &bin,
             &flat,
         );
         assert!(!world_active, "zero width must be rejected");
@@ -5890,7 +5818,6 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            &bin,
             &flat,
         );
         assert!(world_active, "a valid new_game activates the world");
@@ -5929,7 +5856,6 @@ mod tests {
             32,
             7,
             "late_forager_tribe".to_string(),
-            &bin,
             &flat,
         );
         assert_eq!(world_epoch, 2, "the next world build increments the epoch");

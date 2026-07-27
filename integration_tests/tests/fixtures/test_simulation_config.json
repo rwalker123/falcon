@@ -35,7 +35,7 @@
   "corruption_logistics_penalty": 0.35,
   "corruption_trade_penalty": 0.3,
   "corruption_military_penalty": 0.4,
-  "snapshot_bind": "127.0.0.1:41000",
+  "port_base_bind": "127.0.0.1:41000",
   "snapshot_flat_bind": "127.0.0.1:41002",
   "command_bind": "127.0.0.1:41001",
   "log_bind": "127.0.0.1:41003",

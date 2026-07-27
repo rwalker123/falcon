@@ -16,7 +16,9 @@ feels slow even though nothing is happening".
 ## The shape of a turn: the sim is not the cost
 
 Measured on an 80×52 grid, release build, `late_forager_tribe` on `earthlike`, steady state,
-with no meaningful unit activity:
+with no meaningful unit activity. **This is the #384 "before" baseline, kept because the
+*proportions* are the lesson** — both full-snapshot encodes in it have since left the turn path
+(`encode.flat_snapshot` in #386; **both** bincode encodes in #388, socket and all — see below):
 
 | Phase | ms | share |
 |---|---|---|
@@ -99,12 +101,10 @@ Two traps, both hit while measuring #387:
 
 ## What the turn path actually broadcasts
 
-`broadcast_latest` (`network.rs`) sends two things per publication:
-
-- the **bincode delta** on the legacy bincode socket, and
-- on the **flat socket** (the one the Godot client consumes — `.claude/rules/core_sim/ports.md`,
-  the stream port is `snapshot_flat`) the **flat delta**, except for a world's *first* publication,
-  which is the full flat snapshot the client baselines on.
+`broadcast_latest` (`network.rs`) sends **one** thing per publication: on the flat socket — the
+only snapshot socket, the one the Godot client consumes (`.claude/rules/core_sim/ports.md`) — the
+**flat delta**, except for a world's *first* publication, which is the full flat snapshot the
+client baselines on.
 
 **The client is no longer sent a complete world every turn** (#386,
 `docs/plan_delta_streaming.md`). A full flat snapshot is now encoded only for a world's first
@@ -144,10 +144,12 @@ of the last and dropping an intermediate one is harmless.
 > A reader was wired: `broadcast_latest` broadcasts it. The rule stands and is what made the
 > reintroduction legitimate rather than a regression — the cost is now paid *for* something.
 >
-> **`encode.flat_snapshot` is correspondingly absent from a steady-state turn's profile.**
-> `core_sim/tests/turn_profile_wiring.rs` pins that (`EXPECTED_CAPTURE_PHASES` lists
-> `encode.flat_delta`), and it is the alarm that would catch the turn path silently losing an
-> encode in either direction.
+> **`encode.flat_snapshot` is correspondingly absent from a steady-state turn's profile**, and
+> after #388 the flat delta is the *only* encode a steady turn pays for at all.
+> `core_sim/tests/turn_profile_wiring.rs` pins that from both sides — `EXPECTED_CAPTURE_PHASES`
+> lists `encode.flat_delta`, `RETIRED_CAPTURE_PHASES` asserts the full-snapshot encodes stay off
+> the turn — and it is the alarm that would catch the turn path silently losing, or regaining, an
+> encode.
 
 ### Measured effect
 
@@ -163,9 +165,21 @@ Getting there took three payload fixes, not just the delta pipeline — the delt
 `docs/plan_delta_streaming.md` §3.5–3.6; the short version is that **a field nobody reads, or one
 compared more precisely than anything renders it, costs the whole map every turn forever**.
 
-The two bincode encodes remain live: `encoded_delta` is what the bincode socket broadcasts, and
-`encoded_snapshot` is read by **rollback**, which needs a per-tick encoded snapshot for every entry
-in the ring. Rollback is why it is computed per turn rather than on demand.
+**Both bincode encodes are gone (#388), and with them the socket they fed.** The plan was to make
+the snapshot lazy the way the flat one already was — the ring holds the `Arc<WorldSnapshot>`, so
+retaining 256 encoded copies to serve the handful rollback ever asks for was this file's usual
+dead-work shape, worth **~0.91 ms of every turn**. Writing the round-trip test for it found the
+larger fact: **a `WorldSnapshot` cannot be bincode-decoded at all.** `SnapshotHeader::campaign_label`
+and ~14 fields under `sim_schema::state::campaign` carry `#[serde(skip_serializing_if =
+"Option::is_none")]`, and a field omitted from a **non-self-describing** format desynchronises the
+reader — `UnexpectedEof`, or, with bytes still to come, *silent garbage*. Those frames had never been
+readable by anything, which is why retiring the socket needed no deprecation: the delta encode
+(`encode.bincode_delta`, the rest of the 8% line above) went with it, `broadcast_latest` now writes
+one socket, and `base+0` is a reserved slot. `sim_schema`'s `encode_snapshot`/`encode_delta`
+wrappers went with them (nothing called either); bincode survives there only *inline* in
+`finalize`/`hash_snapshot`, as bytes to hash rather than a codec. `turn_profile_wiring.rs`'s
+`RETIRED_CAPTURE_PHASES` is what stops either coming back — a retired label reappearing in a
+steady-state profile fails that test.
 
 ## `finalize` hashes in place — it deliberately does not call `hash_snapshot`
 

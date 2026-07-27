@@ -139,7 +139,13 @@ pub struct SimulationConfig {
     pub corruption_logistics_penalty: Scalar,
     pub corruption_trade_penalty: Scalar,
     pub corruption_military_penalty: Scalar,
-    pub snapshot_bind: SocketAddr,
+    /// Host and **base port** of the server's port block. Slot 0 itself is
+    /// **reserved and never bound** — it carried the retired bincode snapshot
+    /// socket (#388) — so this field names where the block starts, not a
+    /// listener: the bound sockets are `command_bind` (+1), `snapshot_flat_bind`
+    /// (+2) and `log_bind` (+3). `port_alloc::allocate` reads the base from
+    /// here.
+    pub port_base_bind: SocketAddr,
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
     pub log_bind: SocketAddr,
@@ -301,7 +307,7 @@ struct SimulationConfigData {
     corruption_logistics_penalty: f32,
     corruption_trade_penalty: f32,
     corruption_military_penalty: f32,
-    snapshot_bind: String,
+    port_base_bind: String,
     snapshot_flat_bind: String,
     command_bind: String,
     log_bind: String,
@@ -509,7 +515,7 @@ impl SimulationConfigData {
             corruption_logistics_penalty: scalar_from_f32(self.corruption_logistics_penalty),
             corruption_trade_penalty: scalar_from_f32(self.corruption_trade_penalty),
             corruption_military_penalty: scalar_from_f32(self.corruption_military_penalty),
-            snapshot_bind: parse_socket(self.snapshot_bind, "snapshot_bind")?,
+            port_base_bind: parse_socket(self.port_base_bind, "port_base_bind")?,
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,
             command_bind: parse_socket(self.command_bind, "command_bind")?,
             log_bind: parse_socket(self.log_bind, "log_bind")?,
@@ -567,25 +573,30 @@ impl SimulationConfigMetadata {
 
 /// Port offsets from the `SIM_PORT_BASE` base for each listen socket, preserving
 /// the historical 41000-based layout (base = 41000 reproduces today's ports).
-pub const SNAPSHOT_PORT_OFFSET: u16 = 0;
+/// **Slot 0 has no constant because nothing binds it** — it held the retired
+/// bincode snapshot socket (#388) and stays reserved so these three keep the
+/// numbers every client default and `ports.json` already names.
 pub const COMMAND_PORT_OFFSET: u16 = 1;
 pub const SNAPSHOT_FLAT_PORT_OFFSET: u16 = 2;
 pub const LOG_PORT_OFFSET: u16 = 3;
 
-/// Lowest accepted `SIM_PORT_BASE`. A base of 0 would set `snapshot_bind` to
-/// port 0, asking the OS for an ephemeral port and breaking clients that expect
-/// the fixed block; `scripts/run_stack.sh` applies the same floor.
+/// Lowest accepted `SIM_PORT_BASE`. Slot 0 is never bound, so a base of 0 no
+/// longer means an ephemeral bind — it is rejected because the base is *stored*
+/// in `port_base_bind`'s port and re-read from there (`bin/server.rs`), and 0 is
+/// `SocketAddr`'s "let the OS choose" wildcard, indistinguishable from a base
+/// nobody configured. The block it would name (bound ports 1-3) is privileged
+/// anyway. `scripts/run_stack.sh` applies the same floor.
 const MIN_PORT_BASE: u16 = 1;
 
 /// Overrides each bind's port with `base + <offset>`, preserving the host.
 /// Returns false (and leaves `config` unchanged) if `base` is below
-/// `MIN_PORT_BASE` (0 → ephemeral port) or `base + LOG_PORT_OFFSET` would
-/// overflow u16.
+/// `MIN_PORT_BASE` (0 is the wildcard-port sentinel, not a block) or
+/// `base + LOG_PORT_OFFSET` would overflow u16.
 pub fn apply_port_base(config: &mut SimulationConfig, base: u16) -> bool {
     if base < MIN_PORT_BASE || base.checked_add(LOG_PORT_OFFSET).is_none() {
         return false;
     }
-    config.snapshot_bind.set_port(base + SNAPSHOT_PORT_OFFSET);
+    config.port_base_bind.set_port(base);
     config.command_bind.set_port(base + COMMAND_PORT_OFFSET);
     config
         .snapshot_flat_bind
@@ -626,7 +637,6 @@ pub fn apply_port_base_override(config: &mut SimulationConfig) {
         tracing::info!(
             target: "shadow_scale::config",
             base,
-            snapshot = config.snapshot_bind.port(),
             command = config.command_bind.port(),
             snapshot_flat = config.snapshot_flat_bind.port(),
             log = config.log_bind.port(),
@@ -1222,7 +1232,7 @@ mod tests {
         let base: u16 = 42000;
         assert!(apply_port_base(&mut config, base));
 
-        assert_eq!(config.snapshot_bind.port(), base + SNAPSHOT_PORT_OFFSET);
+        assert_eq!(config.port_base_bind.port(), base);
         assert_eq!(config.command_bind.port(), base + COMMAND_PORT_OFFSET);
         assert_eq!(
             config.snapshot_flat_bind.port(),
@@ -1231,7 +1241,7 @@ mod tests {
         assert_eq!(config.log_bind.port(), base + LOG_PORT_OFFSET);
 
         for bind in [
-            config.snapshot_bind,
+            config.port_base_bind,
             config.command_bind,
             config.snapshot_flat_bind,
             config.log_bind,
@@ -1244,7 +1254,7 @@ mod tests {
     fn apply_port_base_rejects_overflow_and_leaves_ports_unchanged() {
         let mut config = SimulationConfig::builtin();
         let before = (
-            config.snapshot_bind.port(),
+            config.port_base_bind.port(),
             config.command_bind.port(),
             config.snapshot_flat_bind.port(),
             config.log_bind.port(),
@@ -1255,7 +1265,7 @@ mod tests {
 
         assert_eq!(
             (
-                config.snapshot_bind.port(),
+                config.port_base_bind.port(),
                 config.command_bind.port(),
                 config.snapshot_flat_bind.port(),
                 config.log_bind.port(),
@@ -1268,18 +1278,18 @@ mod tests {
     fn apply_port_base_rejects_zero_and_leaves_ports_unchanged() {
         let mut config = SimulationConfig::builtin();
         let before = (
-            config.snapshot_bind.port(),
+            config.port_base_bind.port(),
             config.command_bind.port(),
             config.snapshot_flat_bind.port(),
             config.log_bind.port(),
         );
 
-        // base 0 would bind ephemeral port 0; rejected below MIN_PORT_BASE.
+        // base 0 is the wildcard-port sentinel, not a block; below MIN_PORT_BASE.
         assert!(!apply_port_base(&mut config, 0));
 
         assert_eq!(
             (
-                config.snapshot_bind.port(),
+                config.port_base_bind.port(),
                 config.command_bind.port(),
                 config.snapshot_flat_bind.port(),
                 config.log_bind.port(),

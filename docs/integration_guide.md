@@ -4,14 +4,10 @@ This guide describes how an external client can integrate with the Shadow-Scale
 prototype to visualize state or issue turn commands.
 
 ## Ports & Protocols
-- **Snapshot Stream (bincode)**: `tcp://127.0.0.1:41000` (configurable via `SimulationConfig::snapshot_bind`).
-  - Frames are `[u32 length][payload bytes]` encoded with `bincode` using the
-    structures from `sim_schema::src/lib.rs`. Runtime helpers such as axis bias transforms live in `sim_runtime`.
-  - Consumers should read 4-byte little-endian length, then deserialize into
-    `WorldDelta` (Rust).
 - **Snapshot Stream (FlatBuffers)**: `tcp://127.0.0.1:41002` (configurable via `SimulationConfig::snapshot_flat_bind`).
-  - Frames share the same length prefix but payloads are FlatBuffers envelopes matching `sim_schema/schemas/snapshot.fbs`.
-  - Non-Rust clients should prefer this stream to avoid pulling in `bincode` and serde dependencies.
+  - Frames are `[u32 length][payload bytes]`; payloads are FlatBuffers envelopes matching `sim_schema/schemas/snapshot.fbs`.
+  - Read the 4-byte little-endian length, then the envelope — a **full snapshot** for a world's first frame (and after a rollback or a `resync`), a **delta** every turn after it.
+  - **This is the only snapshot stream.** A second socket on `41000` used to carry the same world bincode-encoded; it was retired in #388 along with its port (base+0 is now reserved, not rebound), because nothing consumed it and its frames were not in fact decodable — `serde`'s `skip_serializing_if` omits fields that bincode, being non-self-describing, still expects on the way back in.
 - **Command Port**: `tcp://127.0.0.1:41001` (configurable via `SimulationConfig::command_bind`).
   - Frames follow the same `[u32 length][payload bytes]` pattern, but the payload is a Protobuf `CommandEnvelope` (`sim_runtime/proto/command.proto`).
   - Supported verbs map to the envelope's `oneof` cases (`turn`, `reset_map`, `heat`, `order`, `rollback`, `bias`, `support`, `suppress`, `support_channel`, `spawn_influencer`, `corruption`).
@@ -29,7 +25,7 @@ prototype to visualize state or issue turn commands.
 ## Client Workflow
 1. Build a `CommandEnvelope`, open a command connection, and send the `[length][payload]` frame.
 2. Connect to snapshot stream, consume deltas. Apply to your local model.
-3. Optionally, resubscribe after dropped connections; server supports multiple snapshot clients.
+3. Optionally, resubscribe after dropped connections; server supports multiple snapshot clients. A reconnecting client is sent nothing until the next publication — send `resync` to ask for a full frame.
 4. Subscribe to the log stream when you need structured tracing output (turn completion metrics, command acknowledgements) without parsing snapshots.
 
 ## Error Handling
