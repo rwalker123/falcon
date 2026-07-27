@@ -22,7 +22,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
-use core_sim::sim_state::{restore_sim_state, CheckpointHistory, Replaying};
+use core_sim::sim_state::{record_checkpoint_now, restore_sim_state, CheckpointHistory, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
@@ -3882,10 +3882,8 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         *config_res = new_config.clone();
     }
 
-    {
-        let mut history = app.world.resource_mut::<SnapshotHistory>();
-        history.set_capacity(new_config.snapshot_history_limit.max(1));
-    }
+    // The publication ring's depth is a constant now (`snapshot::PUBLICATION_RING_DEPTH`), so a
+    // config reload no longer resizes it; `checkpoint_history_turns` is read where it is used.
 
     let watch_path = app
         .world
@@ -4995,6 +4993,18 @@ fn describe_tile_rejection(reason: &str) -> &'static str {
 /// genuinely non-mutating command is merely slightly wasteful (commands are human-issued, low
 /// frequency) — the robust uniform path, no hand-curated "which commands mutate" list.
 fn recapture_and_broadcast(app: &mut bevy::prelude::App) {
+    // **A checkpoint, because a command is not a turn.** Rollback replays turns forward from the
+    // nearest checkpoint, and `run_turn` can only reproduce turns — a command mutates the world
+    // *between* them, so a replay that crossed one would produce a world that never existed. Taking
+    // a checkpoint here means no unreproducible event can ever sit between a checkpoint and a
+    // rollback target, which makes replay-forward exact by construction instead of by assumption.
+    //
+    // On the same uniform seam as the recapture below, and for the same reason its comment gives:
+    // a hand-curated "which commands mutate" list is the fragile version, and commands are
+    // human-paced so checkpointing a non-mutating one is merely slightly wasteful. This also covers
+    // `reload_config`, which is not a turn either — a checkpoint carries no config, so a replay
+    // across a reload would run turns under whatever tuning is live rather than that tick's.
+    record_checkpoint_now(&mut app.world);
     // The recapture rides the same publisher queue as a turn does, so it publishes exactly what a
     // turn publishes — the flat delta, or the flat full frame when this world has one pending.
     // There is no second, serial path: `capture_snapshot` hands the world over and returns, here as
@@ -5662,12 +5672,11 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 
 /// Roll the world back to `tick`.
 ///
-/// **Two rings, two jobs.** The world is rebuilt from [`CheckpointHistory`]'s `SimState`, which is
-/// the save state and carries everything a turn reads. The *client* is re-baselined from
-/// `SnapshotHistory`'s entry for the same tick, which is the view. They agree by construction —
-/// `checkpoint_restore_is_lossless` asserts that recapturing a restored world reproduces exactly
-/// the snapshot that was published at that tick — so publishing the stored view after restoring
-/// the stored state cannot show the client a world the simulation is not in.
+/// The world is rebuilt from [`CheckpointHistory`]'s `SimState` — the save state, which carries
+/// everything a turn reads — and the client's frame is then **derived from that restored world** by
+/// recapturing it, not fetched from a parallel archive. There is one history of worlds, so there is
+/// nothing for a second one to disagree with; `a_rollback_produces_the_world_that_tick_had` asserts
+/// the result end to end.
 fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat: &SnapshotServer) {
     let nearest = app
         .world
@@ -5686,7 +5695,8 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
 
     // **Replay forward to the requested tick.** Checkpoints are sparse
     // (`SimulationConfig::checkpoint_interval`), so the nearest one is usually *before* the target.
-    // Replaying is exact rather than approximate — `checkpoint_replay_is_bit_exact` is the proof —
+    // Replaying is exact rather than approximate — `a_restored_world_simulates_forward_identically`
+    // is the proof —
     // and the turns run with `Replaying` set so they neither publish frames the client already has
     // nor push entries into the ring this rollback is rewinding.
     if checkpoint_tick < tick {
@@ -6108,6 +6118,142 @@ mod tests {
     /// A **real world** — `build_headless_app` builds the app, `update` runs the Startup chain, so
     /// the map, its `Tile`s and its seeded forage patches all exist. `sow` needs them: its defining
     /// gate is a property of the *ground*.
+    /// The latest published world, with everything that is not simulation state normalized away.
+    ///
+    /// Two things legitimately differ between the frame published when a tick first happened and the
+    /// one recaptured after rolling back to it, and neither is the world:
+    ///
+    /// - **Publication bookkeeping.** `frame_seq` counts publications, not ticks.
+    /// - **Entity ids.** A restore despawns and respawns everything, so bevy hands back fresh
+    ///   generations. That is the whole reason the checkpoint keys on stable sim ids, and it is what
+    ///   `replay_determinism.rs` canonicalizes before comparing.
+    fn normalize_for_compare(app: &bevy::prelude::App) -> sim_schema::world::WorldSnapshot {
+        let mut snapshot = (*app
+            .world
+            .resource::<SnapshotHistory>()
+            .last_snapshot()
+            .expect("a snapshot was captured"))
+        .clone();
+        snapshot.header.frame_seq = 0;
+        snapshot.header.base_frame_seq = 0;
+        snapshot.header.world_epoch = 0;
+
+        snapshot.tiles.sort_by_key(|tile| (tile.y, tile.x));
+        for tile in snapshot.tiles.iter_mut() {
+            tile.entity = 0;
+        }
+        snapshot.power.sort_by_key(|node| node.node_id);
+        for node in snapshot.power.iter_mut() {
+            node.entity = 0;
+        }
+        snapshot
+            .populations
+            .sort_by_key(|cohort| (cohort.current_x, cohort.current_y, cohort.size));
+        for cohort in snapshot.populations.iter_mut() {
+            cohort.entity = 0;
+            cohort.home = 0;
+            cohort.home_band_entity = 0;
+        }
+        for layer in snapshot.culture_layers.iter_mut() {
+            layer.owner = 0;
+        }
+        snapshot
+    }
+
+    /// **A rollback across a world-mutating command reproduces the world that tick had.**
+    ///
+    /// This is the case sparse checkpointing broke and no oracle could see. Every oracle in
+    /// `replay_determinism.rs` drives the world with `app.update()` and issues **zero commands** —
+    /// precisely the case where replay-forward is trivially correct, because every step between a
+    /// checkpoint and the target is a turn. A command mutates the world *between* turns, and
+    /// `run_turn` cannot reproduce it: with checkpoints at 16 and 32, a command at tick 20 and a
+    /// rollback to 25 would restore 16, replay forward without the command, and hand back a world
+    /// that never existed.
+    ///
+    /// It passes because a command takes a checkpoint of its own, so no unreproducible event can
+    /// sit between a checkpoint and a rollback target. It uses the real handler rather than a hand
+    /// mutation, because the seam being tested is the dispatch path, not the mutation.
+    #[test]
+    fn a_rollback_across_a_command_reproduces_the_world_that_tick_had() {
+        use core_sim::sim_state::CheckpointHistory;
+
+        const INTERVAL: u64 = 8;
+        let mut app = build_world_app();
+        app.world
+            .resource_mut::<SimulationConfig>()
+            .checkpoint_interval = INTERVAL;
+
+        // A band worldgen actually spawned, not a fixture: `spawn_working_band` gives its cohort a
+        // `home` that is a bare entity rather than a tile, and a checkpoint keys `home` by tile
+        // position — so that fixture's home moves across a restore and would fail this test for a
+        // reason that has nothing to do with commands.
+        let band = {
+            let mut query = app
+                .world
+                .query_filtered::<Entity, (With<PopulationCohort>, With<ResidentBand>)>();
+            query
+                .iter(&app.world)
+                .next()
+                .expect("worldgen spawned a resident band")
+        };
+        for _ in 0..INTERVAL {
+            run_turn(&mut app);
+        }
+
+        // A real command, landing between turns and between checkpoints.
+        handle_assign_labor(
+            &mut app,
+            FactionId(0),
+            Some(band.to_bits()),
+            "scout".to_string(),
+            3,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        recapture_and_broadcast(&mut app);
+
+        // Advance to a tick that is NOT a checkpoint tick, and remember the world there.
+        run_turn(&mut app);
+        recapture_snapshot_in_place(&mut app.world);
+        let target_tick = app.world.resource::<SimulationTick>().0;
+        assert!(
+            !target_tick.is_multiple_of(INTERVAL),
+            "the target must not be a checkpoint tick of its own, or the replay path is untested"
+        );
+        let expected = normalize_for_compare(&app);
+
+        for _ in 0..INTERVAL {
+            run_turn(&mut app);
+        }
+
+        // Roll back the way the server does.
+        let (checkpoint_tick, state) = app
+            .world
+            .resource::<CheckpointHistory>()
+            .nearest_at_or_before(target_tick)
+            .expect("a checkpoint at or before the target");
+        restore_sim_state(&mut app.world, state.as_ref());
+        if checkpoint_tick < target_tick {
+            app.world.resource_mut::<Replaying>().0 = true;
+            for _ in checkpoint_tick..target_tick {
+                run_turn(&mut app);
+            }
+            app.world.resource_mut::<Replaying>().0 = false;
+        }
+        recapture_snapshot_in_place(&mut app.world);
+        let actual = normalize_for_compare(&app);
+
+        assert_eq!(
+            sim_runtime::hash_snapshot(&expected),
+            sim_runtime::hash_snapshot(&actual),
+            "the rolled-back world differs from the world tick {target_tick} originally had — the \
+             command issued before it was not reproduced by replay"
+        );
+    }
+
     fn build_world_app() -> bevy::prelude::App {
         let mut app = build_headless_app();
         app.world.resource_mut::<SimulationConfig>().map_seed = SOW_TEST_MAP_SEED;

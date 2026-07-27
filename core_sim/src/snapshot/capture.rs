@@ -1759,7 +1759,6 @@ pub fn capture_snapshot(
         capture_mode,
     } = ctx;
     let overlays_config = overlays.get();
-    history.set_capacity(PUBLICATION_RING_DEPTH);
 
     let population_cfg = pipeline_config.config().population();
     // Same place-based morale config the sim uses, so `habitability` matches the applied drain.
@@ -2457,7 +2456,7 @@ pub fn capture_snapshot(
 
 /// How many published frames the publisher keeps.
 ///
-/// **One.** This ring used to be `SimulationConfig::snapshot_history_limit` deep — 256 full
+/// **One.** This ring used to be `SimulationConfig::checkpoint_history_turns` deep — 256 full
 /// `WorldSnapshot`s, which measured at **1.68 GB** resident on an 80×52 map and had never been
 /// measured before the checkpoint arc put a number beside it. Its only historical reader was
 /// rollback, fetching the stored view at the target tick to re-baseline the client; rollback now
@@ -2466,9 +2465,10 @@ pub fn capture_snapshot(
 ///
 /// What remains needs only the latest entry: `latest_entry` for resync and `export_map`, and the
 /// delta baseline, which tracks the previous publication rather than the ring.
-/// `snapshot_history_limit` now governs [`crate::sim_state::CheckpointHistory`] alone — one depth
-/// knob, one history of worlds.
-const PUBLICATION_RING_DEPTH: usize = 1;
+/// `SimulationConfig::checkpoint_history_turns` now governs
+/// [`crate::sim_state::CheckpointHistory`] alone — one depth knob, one history of worlds. It is set
+/// once at construction (`build_headless_app`) rather than re-asserted every turn.
+pub(crate) const PUBLICATION_RING_DEPTH: usize = 1;
 
 /// Selects how [`capture_snapshot`] writes its result: the normal turn path records a fresh ring
 /// entry (`false`); the post-command re-capture path refreshes the latest broadcast snapshot in

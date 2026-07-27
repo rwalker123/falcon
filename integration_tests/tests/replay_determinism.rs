@@ -13,7 +13,8 @@
 //!
 //! - [`checkpoint_restore_is_lossless`] catches state that `capture_snapshot` **publishes** but
 //!   `restore_world_from_snapshot` does not put back.
-//! - [`checkpoint_replay_is_bit_exact`] catches state that merely **influences** what is published.
+//! - [`a_restored_world_simulates_forward_identically`] catches state that merely **influences**
+//!   what is published.
 //!   That is the more valuable half: a dozen mutable resources (`ActiveCrisisLedger`,
 //!   `PowerTopology`, `ObservationLedger`, the espionage set, …) have no representation in
 //!   `WorldSnapshot` at all, so the round-trip test above is blind to them while this one is not.
@@ -418,10 +419,21 @@ fn checkpoint_restore_is_lossless() {
     );
 }
 
-/// A restored checkpoint marched forward reproduces the ticks that already happened.
+/// **A restored world simulates forward identically** to the world it was restored from — tick for
+/// tick, from the tick it was restored at.
 ///
-/// This is the property command-sourced rollback needs, and the stronger of the two oracles: it
-/// sees state that never reaches the wire but still steers the simulation.
+/// It is the stronger of the two round-trip oracles: it sees state that never reaches the wire but
+/// still steers the simulation, which the restore-fidelity test above is blind to.
+///
+/// **It does not cover the rollback path's replay-forward.** It restores a checkpoint taken at the
+/// tick it starts marching from, so deleting the replay loop in `handle_rollback` changes nothing
+/// here — a survey confirmed it still passes with that loop removed. It was named
+/// `checkpoint_replay_is_bit_exact`, and that name is what made the sparse-checkpoint command
+/// defect easy to miss: the oracle trusted most had a blind spot exactly where the new risk was, and
+/// its name said otherwise. The tests that *do* cover replay-forward are
+/// [`rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick`] below, and
+/// `a_rollback_across_a_command_reproduces_the_world_that_tick_had` in `core_sim/src/bin/server.rs`,
+/// which is where the command handlers live.
 ///
 /// The last thing it caught was not a checkpoint bug at all: `simulate_logistics` ordered its mass
 /// transfers by `Entity::to_bits()`, so a restore — which renumbers every entity — moved mass in a
@@ -429,7 +441,7 @@ fn checkpoint_restore_is_lossless() {
 /// process run, which is why the forward-determinism tests never saw it. That system now sorts on
 /// the links' endpoint positions, the same natural key this checkpoint stores them under.
 #[test]
-fn checkpoint_replay_is_bit_exact() {
+fn a_restored_world_simulates_forward_identically() {
     let mut app = new_app();
     for _ in 0..CHECKPOINT_TICKS {
         app.update();
@@ -514,7 +526,8 @@ fn a_rollback_produces_the_world_that_tick_had() {
 /// means restoring the nearest checkpoint *before* it and replaying forward, and the world that
 /// comes out has to be the world that tick originally had, not merely a plausible one.
 ///
-/// Without this the replay-forward path is unguarded: `checkpoint_replay_is_bit_exact` proves a
+/// Without this the replay-forward path is unguarded: `a_restored_world_simulates_forward_identically`
+/// proves a
 /// replayed turn is exact, but only this proves the rollback path picks the right checkpoint and
 /// replays the right number of turns.
 #[test]

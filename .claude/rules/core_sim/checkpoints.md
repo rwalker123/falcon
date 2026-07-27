@@ -22,17 +22,20 @@ representation in `WorldSnapshot` at all — `ActiveCrisisLedger`, `PowerTopolog
 from the one it claimed to restore. **Nothing failed when they were omitted**, which is why it
 lasted: the omission was invisible to every test that existed.
 
-Two rings, two jobs, read at the same tick by `handle_rollback`:
+**There is one history of worlds, and it holds `SimState`.**
 
-| ring | holds | used for |
-|---|---|---|
-| `CheckpointHistory` | `SimState` per turn | rebuilding the world |
-| `SnapshotHistory` | `WorldSnapshot` per turn | re-baselining the client |
+| ring | depth | holds | used for |
+|---|---|---|---|
+| `CheckpointHistory` | `checkpoint_history_turns / checkpoint_interval` | `SimState` | rebuilding the world |
+| `SnapshotHistory` | `PUBLICATION_RING_DEPTH` = **1** | the latest `WorldSnapshot` | export, resync, the live delta baseline |
 
-They agree by construction, and two tests say so: `checkpoint_restore_is_lossless` proves
-recapturing a restored world reproduces the snapshot published at that tick, and
-`the_rollback_ring_and_the_snapshot_ring_agree_tick_for_tick` proves the rings file under matching
-ticks.
+It briefly was two rings of whole worlds — a checkpoint ring beside a 256-deep snapshot ring — and
+that is worth knowing because it is what got the snapshot ring measured for the first time: **1.68 GB
+resident at 80×52**, a cost it had always carried. The client view does not need archiving, because
+it is *derivable*: `handle_rollback` restores the checkpoint and **recaptures** the frame from the
+restored world, which `a_rollback_produces_the_world_that_tick_had` asserts directly. Deriving it
+also removes the failure mode where two histories disagree about the same tick — there is no second
+history to disagree.
 
 `CheckpointHistory` deliberately lives on the **turn thread**, not in the publisher's ring. A
 `SimState` is a full world clone and is never published; putting it in a `StoredSnapshot` would send
@@ -120,7 +123,7 @@ old shape than any ratio would have been.
 
 The snapshot ring collapsed to a single entry because rollback was its only historical reader, and
 that read was redundant — recapturing the client frame from the restored world yields the same
-bytes, which `a_rollback_produces_the_world_that_tick_had` asserts. `snapshot_history_limit` now
+bytes, which `a_rollback_produces_the_world_that_tick_had` asserts. `checkpoint_history_turns` now
 governs `CheckpointHistory` alone: **one depth knob, one history of worlds.** Net resident memory is
 within 0.4% of where the arc started, with a checkpoint ring where a snapshot ring used to be.
 
@@ -132,15 +135,14 @@ estimate of this ring was wrong by 5× in the direction that mattered.
 
 ## Checkpoints are sparse, and a rollback replays the gap
 
-`SimulationConfig::checkpoint_interval` sets how often `record_checkpoint` runs. A rollback restores
-the newest checkpoint **at or before** the target tick and replays forward to it, which is exact
-rather than approximate — that is what `checkpoint_replay_is_bit_exact` proves, and what
+`SimulationConfig::checkpoint_interval` sets how often `record_checkpoint` runs, and
+`checkpoint_history_turns` sets how far back a rollback can reach — a window in **turns**, so the
+number of entries is the one divided by the other and raising the interval buys memory without
+shortening the reach. A rollback restores the newest checkpoint **at or before** the target tick and
+replays forward to it, which is exact rather than approximate — that is what
+`a_restored_world_simulates_forward_identically` proves of a restored world, and what
 `rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick` proves end to end through the rollback
 path itself.
-
-The ring is bounded in **turns**, not entries: capacity is `snapshot_history_limit / interval`, so
-the window a rollback can reach is the same whatever the interval. Raising the interval buys memory,
-not a shorter history.
 
 Measured on the standard recipe, 300 turns so the ring is full:
 
@@ -156,6 +158,40 @@ A replayed turn costs **0.86 ms** against a normal turn's **4.61 ms**, because t
 gates off — `capture_snapshot` and `record_checkpoint` — are most of a turn's cost. So a rollback is
 cheaper than the turns it undoes at any interval on this table. 16 is the knee: 90% of the memory
 gone, and doubling again buys 0.07 GB for another 13.8 ms.
+
+## Replay may only cross turns. Anything that is not a turn forces a checkpoint
+
+Replay-forward reproduces the original world **only if every step between the checkpoint and the
+target is a turn** — something `run_turn` can re-execute from world state alone. Two things are not
+turns, and both would otherwise be silently skipped:
+
+- **World-mutating commands** mutate between turns. With checkpoints at 16 and 32, a player
+  assigning labor at tick 20 and rolling back to 25 would restore 16 and replay forward *without the
+  assignment*, producing a world that never existed.
+- **Config reloads** re-read JSON at runtime, and a checkpoint deliberately carries no config, so a
+  replay across one would run turns under whatever tuning is live rather than that tick's.
+
+Both are closed the same way: `recapture_and_broadcast` — the one seam **every** dispatched command
+already passes through — takes a checkpoint before it recaptures. `CheckpointHistory::record`
+replaces any checkpoint already at that tick, because the post-command state is what "the world at
+tick T" means once a command has landed there. So no unreproducible event can sit between a
+checkpoint and a rollback target, and replay-forward is exact **by construction rather than by
+assumption**.
+
+It is cheap for the reason sparse checkpointing was worth doing at all: commands are **human-paced**,
+so these scale with player actions rather than with turns.
+
+**Checkpointing is on the uniform seam, not a curated list of mutating commands.** That is the same
+judgment `recapture_and_broadcast` already made for the same reason — a hand-maintained "which
+commands mutate" list is a thing to forget, and re-checkpointing a genuinely non-mutating command is
+merely slightly wasteful.
+
+**This defect shipped, briefly, and the reason no oracle caught it is worth keeping.** All five
+oracles drive the world with `app.update()` and issue **zero commands** — exactly the case where
+replay-forward is trivially correct. A test that never exercises the thing that breaks an invariant
+cannot report the invariant broken, however thoroughly it exercises everything else.
+`a_rollback_across_a_command_reproduces_the_world_that_tick_had` (in `bin/server.rs`, where the
+command handlers live) is the one that would have.
 
 **What replay must not do**, and what `Replaying` exists to prevent: republish frames the client has
 already applied, and push entries into the ring the rollback is rewinding — a rollback that grew its

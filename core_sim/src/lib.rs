@@ -394,7 +394,9 @@ pub fn build_headless_app() -> App {
 
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
-    let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
+    // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
+    // `capture_snapshot` no longer has to re-assert every turn.
+    let snapshot_history = SnapshotHistory::with_capacity(snapshot::PUBLICATION_RING_DEPTH);
     let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
     let influencer_config = Arc::new(
         InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)

@@ -149,11 +149,18 @@ pub struct SimulationConfig {
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
     pub log_bind: SocketAddr,
-    pub snapshot_history_limit: usize,
+    /// How many **turns** back a rollback can reach.
+    ///
+    /// Named for the window, not the ring: the number of *entries* is this divided by
+    /// [`Self::checkpoint_interval`], so raising the interval buys memory without shortening how
+    /// far back a player can roll. It was `snapshot_history_limit` while it bounded the publisher's
+    /// ring of `WorldSnapshot`s; that ring is one entry deep now and this governs
+    /// [`crate::sim_state::CheckpointHistory`] alone.
+    pub checkpoint_history_turns: usize,
     /// Take a checkpoint every Nth turn. **This is the memory/latency dial for rollback.**
     ///
     /// A checkpoint is a full clone of the world — about 6 MB on an 80×52 map — so the ring costs
-    /// `snapshot_history_limit / checkpoint_interval` of them. Raising the interval divides the
+    /// `checkpoint_history_turns / checkpoint_interval` of them. Raising the interval divides the
     /// memory and multiplies the work a rollback does: restoring to a tick with no checkpoint means
     /// restoring the nearest one at or before it and **replaying forward**, so the worst case is
     /// `interval - 1` turns of simulation before the client sees its frame.
@@ -321,7 +328,7 @@ struct SimulationConfigData {
     snapshot_flat_bind: String,
     command_bind: String,
     log_bind: String,
-    snapshot_history_limit: usize,
+    checkpoint_history_turns: usize,
     #[serde(default = "default_checkpoint_interval")]
     checkpoint_interval: u64,
     #[serde(default)]
@@ -531,7 +538,7 @@ impl SimulationConfigData {
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,
             command_bind: parse_socket(self.command_bind, "command_bind")?,
             log_bind: parse_socket(self.log_bind, "log_bind")?,
-            snapshot_history_limit: self.snapshot_history_limit,
+            checkpoint_history_turns: self.checkpoint_history_turns,
             checkpoint_interval: self.checkpoint_interval.max(1),
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,

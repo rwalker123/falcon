@@ -259,10 +259,23 @@ pub fn capture_sim_state(world: &World) -> SimState {
         .filter_map(|entity| {
             let cohort = entity.get::<PopulationCohort>()?;
             let id = *entity.get::<BandId>()?;
-            let home = tile_positions
-                .get(&cohort.home)
-                .copied()
-                .unwrap_or_default();
+            // A band's `home` is always a tile in production — worldgen sets it, and an expedition
+            // clones it from the band it left. If it ever is not, the checkpoint would record
+            // `(0, 0)` and a rollback would put the band on a corner of the map with nothing said,
+            // which is the quietly-plausible-and-wrong failure this whole format exists to remove.
+            // Loud instead: a debug build stops, a release build says so and carries on.
+            let home = tile_positions.get(&cohort.home).copied().unwrap_or_else(|| {
+                log::error!(
+                    "checkpoint.capture.band_home_is_not_a_tile band={} — recording (0, 0)",
+                    id.0
+                );
+                debug_assert!(
+                    false,
+                    "band {} has a `home` that is not a tile; a checkpoint cannot key it by position",
+                    id.0
+                );
+                UVec2::ZERO
+            });
             let current = tile_positions
                 .get(&cohort.current_tile)
                 .copied()
@@ -601,9 +614,8 @@ fn owned_entities(world: &mut World) -> Vec<Entity> {
 /// per-turn publisher cost that moving publication off the turn thread removed. This ring stays on
 /// the turn thread, where both its writer and its only reader already are.
 ///
-/// **Bounded by `SimulationConfig::snapshot_history_limit`**, the same knob that bounds the
-/// snapshot ring, so the two stay the same depth and rollback to any tick the client can name finds
-/// both halves. One entry is a full world clone — every tile, band, link and registry — so at the
+/// **Bounded by `SimulationConfig::checkpoint_history_turns`**, a window measured in turns, so
+/// the reach of a rollback does not change when the interval does. One entry is a full world clone — every tile, band, link and registry — so at the
 /// default depth of 256 this is the largest resident allocation in the process, on the order of a
 /// megabyte per entry on an 80×52 map. Sparse checkpointing is what makes that cheap, and this
 /// ring's `record`-per-turn shape is deliberately the thing a scheduling change can thin out.
@@ -622,7 +634,14 @@ impl CheckpointHistory {
     }
 
     /// Record this turn's checkpoint.
+    /// Record a checkpoint, **replacing** any existing one at the same tick.
+    ///
+    /// Replacement is the point, not a convenience. A world-mutating command lands *between* turns
+    /// and records a checkpoint at the tick it landed on, which may already carry the turn-cadence
+    /// one taken before the command. The post-command state is what "the world at tick T" means
+    /// once a command has landed there, so the later record wins.
     pub fn record(&mut self, tick: u64, state: SimState) {
+        self.entries.retain(|(entry_tick, _)| *entry_tick != tick);
         self.entries.push_back((tick, std::sync::Arc::new(state)));
         self.trim();
     }
@@ -684,25 +703,60 @@ pub fn not_replaying(replaying: Option<Res<Replaying>>) -> bool {
     !replaying.is_some_and(|replaying| replaying.0)
 }
 
+/// Record a checkpoint **now**, whatever the interval says.
+///
+/// **This is what makes replay-forward sound.** Replaying a checkpoint forward reproduces the
+/// original world only if every step between the checkpoint and the target is a *turn* — a pure
+/// function of world state that `run_turn` can re-execute. Anything that is not a turn cannot be
+/// replayed, so it must not be left on the far side of a checkpoint:
+///
+/// > **Replay may only cross turns. Anything that is not a turn forces a checkpoint.**
+///
+/// Two things are not turns. **World-mutating commands** (`assign_labor`, `move_band`, `tame`,
+/// `sow`, …) mutate between turns, and a replay that skipped one would produce a world that never
+/// existed — a player assigning labor at tick 20, with checkpoints at 16 and 32, would roll back to
+/// 25 and get 16 replayed forward *without the assignment*. **Config reloads** re-read JSON at
+/// runtime, and a checkpoint deliberately carries no config, so a replay would run turns under
+/// whatever tuning is live rather than the tuning of that tick.
+///
+/// Both are closed by the same call, from the one seam every command already passes through. It is
+/// cheap for the reason sparse checkpointing was worth doing at all: commands are **human-paced**,
+/// so these scale with player actions rather than with turns.
+pub fn record_checkpoint_now(world: &mut World) {
+    let capacity = checkpoint_ring_capacity(world);
+    let tick = world.resource::<SimulationTick>().0;
+    let state = capture_sim_state(world);
+    let mut history = world.resource_mut::<CheckpointHistory>();
+    history.set_capacity(capacity);
+    history.record(tick, state);
+}
+
+/// Ring depth in entries: a fixed window of turns divided by how often a turn is checkpointed.
+fn checkpoint_ring_capacity(world: &World) -> usize {
+    let (turns, interval) = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .map(|config| (config.checkpoint_history_turns, config.checkpoint_interval))
+        .unwrap_or((1, 1));
+    (turns as u64 / interval.max(1)).max(1) as usize
+}
+
 /// Record this turn's checkpoint into [`CheckpointHistory`], every
 /// [`crate::resources::SimulationConfig::checkpoint_interval`] turns.
 ///
 /// Exclusive because [`capture_sim_state`] reads the whole world, which is also what keeps it a
 /// pure function of the world rather than of what ran before it.
 pub fn record_checkpoint(world: &mut World) {
-    let (capacity, interval) = world
+    let interval = world
         .get_resource::<crate::resources::SimulationConfig>()
-        .map(|config| (config.snapshot_history_limit, config.checkpoint_interval))
-        .unwrap_or((1, 1));
-    let interval = interval.max(1);
-    let tick = world.resource::<SimulationTick>().0;
-    if !tick.is_multiple_of(interval) {
+        .map(|config| config.checkpoint_interval)
+        .unwrap_or(1)
+        .max(1);
+    if !world
+        .resource::<SimulationTick>()
+        .0
+        .is_multiple_of(interval)
+    {
         return;
     }
-    let state = capture_sim_state(world);
-    let mut history = world.resource_mut::<CheckpointHistory>();
-    // The ring is bounded in TURNS, not entries, so the window a rollback can reach stays the same
-    // whatever the interval is — raising the interval buys memory, not a shorter history.
-    history.set_capacity((capacity as u64 / interval).max(1) as usize);
-    history.record(tick, state);
+    record_checkpoint_now(world);
 }
