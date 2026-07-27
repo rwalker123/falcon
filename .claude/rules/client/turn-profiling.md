@@ -117,12 +117,6 @@ The five ingests are named seams on `MapView` (`_ingest_culture_layers`, `_inges
 `marker_field_guard` drives `_rebuild_unit_markers`. The gate and the profile span stay at the call
 site in `display_snapshot`; the clear and the refill stay together inside the helper.
 
-**`display.markers` and the selection payloads still deep-copy, and that was NOT examined here.**
-`_rebuild_unit_markers` / `_rebuild_herd_markers` and `refresh_selection_payload` build a *new*
-dictionary and copy sub-trees into it, and their output is handed to the HUD as `_selected_unit` and
-held across frames rather than merely read during the ingest — a different question from this one.
-Anyone taking it on owes the same proof: name the consumer that mutates, or hold the reference.
-
 ## An offline fixture will mislead you here
 
 A probe against `tests/fixtures/snapshot_envelope.bin` predicted `display.tiles` and
