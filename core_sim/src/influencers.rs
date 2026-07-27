@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -931,7 +931,16 @@ impl InfluentialRoster {
             let profiles = registry.profiles();
             if !profiles.is_empty() {
                 let sample_count = profiles.len().min(2);
-                let mut selected = HashSet::new();
+                // A `BTreeSet`, and it must stay one. The draws below are reproducible — the RNG is
+                // seeded from a constant and the draw *sequence* is identical run to run — but a
+                // `HashSet`'s iteration order is randomized per instance by the default hasher, so
+                // draining one into this `Vec` published the same two generation ids in a different
+                // order every run. `audience_generations` goes straight onto the wire
+                // (`InfluentialIndividualState`), which is why `deterministic_snapshots_match` had to
+                // clear `snapshot.influencers` before hashing: this was the ONLY thing under that
+                // mask. Ordering is the container's job here so a future call site cannot forget to
+                // sort afterwards.
+                let mut selected = BTreeSet::new();
                 while selected.len() < sample_count {
                     let idx = self.rng.gen_range(0..profiles.len());
                     selected.insert(profiles[idx].id);

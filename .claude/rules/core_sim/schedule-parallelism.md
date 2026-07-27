@@ -37,7 +37,17 @@ provably behavior-preserving.
 systems that both use `Commands`, or one that spawns and one that reads the result, register as
 independent while their auto-inserted `apply_deferred` sync point depends on the edge between them.
 Only `advance_band_movement` and `advance_expeditions` take `Commands`, and both sit inside the
-`Population` chain. **A new `Commands`-using system needs its ordering reasoned about by hand.**
+`Population` chain. **A new `Commands`-using system needs its ordering reasoned about by hand** —
+and `commands_using_systems_are_the_reviewed_set` makes that happen, by pinning the set against
+`COMMANDS_SYSTEMS` so a third one fails the build instead of arriving unexamined. The test asks the
+built schedule (`System::has_deferred()`), not the source, so a system that picks up `Commands`
+through a nested `SystemParam` is caught too. `Startup` is out of scope for both the gate and the
+test: it is `.chain()`-ed wholesale, which is why `spawn_initial_world`, `reconcile_food_modules`
+and `place_wondrous_sites` take `Commands` without appearing in the set.
+
+The stake is larger than a lost core. A turn has to be a pure function of its start state for a
+snapshot to be replayable from a checkpoint, and an `apply_deferred` ordering that no edge declares
+is precisely the kind of dependency that makes it not one.
 
 Deferred buffers themselves are applied in **system-index order** (`apply_deferred` walks a
 `FixedBitSet` with `.ones()`), not completion order, so command application is deterministic under
@@ -104,8 +114,9 @@ its own pool.
 
 ## Guard
 
-`core_sim/tests/schedule_parallelism.rs` pins both halves: that the executor is `MultiThreaded`, and
-that named independent pairs are mutually unreachable in the flattened dependency graph. It
+`core_sim/tests/schedule_parallelism.rs` pins three things: that the executor is `MultiThreaded`,
+that the `Commands`-taking systems are the reviewed set (above), and that named independent pairs
+are mutually unreachable in the flattened dependency graph. It
 flattens the graph the way bevy does — a dependency edge may terminate on a **`SystemTypeSet`**
 rather than a system node, because `.after(some_system)` records its edge against that system's type
 set, so every leaf under each endpoint has to be expanded before reachability means anything. The
