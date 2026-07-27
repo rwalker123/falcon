@@ -36,6 +36,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `campaign.md` | Start flow, population & demographics, supply network, sedentarization, wellbeing, victory | `supply.rs`, `demographics_config.rs`, `sedentarization*.rs` |
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `turn-profiling.md` | Where a turn's time goes (the sim is ~5%, publishing is ~94%), the `turn.profile` event, which snapshot encodes are load-bearing | `turn_profile.rs`, `snapshot/capture.rs`, `network.rs`, `sim_schema/world.rs` |
+| `schedule-parallelism.md` | How systems are ordered (declare edges, don't chain), the ambiguity gate, which stages are serial by data, what the multi-threaded executor costs | `lib.rs`, `Cargo.toml`, `tests/schedule_parallelism.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
 | `world-handoff.md` | Which world a snapshot frame belongs to: no frame replay on connect, the reveal gate, retry-until-answered, per-world client caches (**spans both halves**) | `network.rs`, `Main.gd`, `GameLaunch.gd` |
 | `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
