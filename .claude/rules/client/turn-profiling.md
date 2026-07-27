@@ -11,31 +11,95 @@ paths:
 # Client turn profiling — where a snapshot's cost goes
 
 The client half of issue #384. The server's `turn.profile` covers the sim; this covers everything
-between a frame arriving on the socket and the HUD being current. **The client is the expensive
-half by an order of magnitude** — this rule exists so nobody optimizes the sim again on a hunch.
+between a frame arriving on the socket and the HUD being current. **The client is still the
+expensive half** — a steady-state turn costs it roughly 2–4× the sim's ~10 ms, and a full snapshot
+far more — so this rule exists so nobody optimizes the sim again on a hunch. (It was *ten* times
+when this file was written; the gating work, the incremental tile walk and delta streaming closed
+most of that gap. The ratio is a finding with a date on it, not a constant — re-measure before
+quoting it.)
+
+## `decode` IS A BATCH TOTAL — read the frame count before quoting the number
+
+The profile prints `decode=44.94(x6 discarded 0)`. **That is six frames' decode summed, not one
+frame's.** `SnapshotLoader.poll_stream` decodes every frame the transport delivered in that poll and
+publishes `last_poll_decode_msec` for the whole batch; `consume_poll_profile` then hands the batch
+cost to the FIRST frame applied and reports zero for the rest — which is why a `decode`-less profile
+line is normal and does not mean the frame was free.
+
+So the number to reason about is `decode ÷ x`, and reading the raw `decode` as per-frame overstates
+it by the batch size. Batches of 2–6 are easy to produce with a scripted driver (anything that
+bursts turns faster than the client polls), which makes this trap easy to walk into precisely when
+you are measuring rather than playing. **Whatever the batch size, the per-frame quotient is the
+stable quantity** — it held at 7.3–7.9 ms across `x2`, `x4` and `x6` in the run below, which is what
+makes it trustworthy.
 
 ## Measured shape of one applied snapshot (80×52, live stack)
 
 `decode` happens in `SnapshotLoader.poll_stream`, **before** `_apply_snapshot`, so it is a sibling
 of `apply`, not a child. Everything else nests under `apply`.
 
-| Phase | ms | note |
-|---|---|---|
-| `decode` / `decode.native` | ~80 | full FlatBuffers → Godot `Dictionary` tree, `snapshot_to_dict` |
-| `apply` | ~91 | `display` + `hud` + `inspector` + `selection` + `scripting` |
-| ├ `display` | ~66 | `MapView.display_snapshot` |
-| │  ├ `display.layers.culture` | ~32 | **was the single largest sub-block** — `duplicate(true)` per culture layer; the copy is gone (see below) |
-| │  ├ `display.sites.forage` | ~10 | same pattern: deep-copied forage patches; also gone |
-| │  ├ `display.shader` | ~7.5 | six full-grid `PackedByteArray` splatmaps |
-| │  ├ `display.tiles` | ~7 | the full-grid GDScript per-tile loop |
-| │  └ `display.markers` | ~7 | unit + herd marker rebuild |
-| ├ `inspector` | ~20 | **while hidden** — the un-skippable prefix; see below |
-| └ `hud` | ~5 | the ~18 `_hud_invoke` fan-out |
+**Measured live** — 80×52, `earthlike` / seed 0 / `late_forager_tribe`, release server, Godot 4.7,
+Apple M4 Pro. **The full snapshot and the steady-state delta are different animals and the table
+splits them**, because conflating the two is what makes the decode look like a per-turn freeze:
 
-For scale: the whole server turn is ~17 ms. **The client costs roughly ten times the sim.**
+| Phase | full snapshot | steady-state delta | note |
+|---|---|---|---|
+| `decode` / `decode.native` | **45.0** | **~7.3 / frame** | full: isolated `x1` poll forced by `resync`. Delta: 14.4–14.6 over `x2`, 29.1–31.6 over `x4`, 44.9 over `x6` — all ≈7.3–7.9 per frame |
+| `apply` | ~74 | **4.5 – 35** | `display` + `hud` + `inspector` + `selection` + `scripting` |
+| ├ `display` | 26.0 | ~6.4 | `MapView.display_snapshot`; the delta is gated out of the expensive sections |
+| │  ├ `display.shader` | 8.4 | ~0 | six full-grid `PackedByteArray` splatmaps; gated on the raster sections |
+| │  ├ `display.tiles` | 7.3 | ~1.5 | full-grid loop vs the incremental walk over changed rows |
+| │  ├ `display.markers` | 3.9 | ~3.9 | **deliberately not gated**, so it costs the same either way |
+| │  └ `display.layers.culture` | 0.85 | ~0 | once the single largest sub-block at ~32 ms; the `duplicate(true)` is gone (see below) |
+| ├ `inspector` | 34.0 | **13 – 34** | **the largest per-turn block now** — it overtook `display` once the gating work landed. `tools/inspector_hidden_guard.gd` is the harness that drives it |
+| └ `hud` | 13.8 | ~4.2 | the ~18 `_hud_invoke` fan-out; `hud.update_band_alerts` is nearly all of it |
+
+For scale: the server turn is ~10 ms measured in the same run (`turn.completed duration_ms`).
+
+**A steady-state turn no longer costs anything like the ~171 ms this table once recorded** — the
+gating work (#388), the incremental tile walk, and delta streaming took the per-turn path to roughly
+`decode` 7.3 + `apply` 5–35. The 45 ms decode is a **full-snapshot** cost, which is reached on the
+first frame of a world, a `resync` and a `new_game` — all of them behind the loading overlay.
 
 Two things this table is good for and one it is not. It is good for aiming an optimization and for
 noticing a regression. It is **not** a partition — see the nesting rule below.
+
+## Decoding off the main thread is CLOSED — gdext forbids it, and the cost is not where it would help
+
+Issue #395 proposed moving `snapshot_to_dict` to a worker thread on the reading that it is a pure
+`&[u8] -> Dictionary` conversion. It is, and it still cannot move. **Both halves of this are
+properties of godot-rust 0.5.4 as the extension is built** (`native/Cargo.toml`: `godot = "0.5"`,
+default features):
+
+- **Godot builtins are `!Send`.** `Dictionary`, `Array`, `Variant` and `PackedByteArray` all wrap
+  `Opaque<N>`, which carries `PhantomData<*const u8>` for the express purpose of killing both auto
+  traits (`godot-ffi-0.5.4/src/opaque.rs:25-28`). A decoded `Dictionary` cannot cross a channel —
+  that is a compile error, not a lint. `GString`/`StringName` are the only builtins with an
+  `unsafe impl Send`.
+- **A main-thread guard panics, in release.** `ensure_main_thread`
+  (`godot-ffi-0.5.4/src/binding/single_threaded.rs:125-146`) backs every `builtin_fn!`/
+  `interface_fn!` call and panics with *"attempted to access binding from different thread than main
+  thread; this is UB"*. Safeguards default to level 1 in **release** builds
+  (`godot-bindings-0.5.4/src/lib.rs:289-312`), so this is not a debug-only assertion. Even
+  `Dictionary::new()` trips it. A GDScript `Thread` calling `decode_snapshot` therefore panics
+  during argument unmarshalling.
+
+**`experimental-threads` is not the escape hatch.** It adds no `Send`/`Sync` impl anywhere; it
+replaces `ensure_main_thread()` with an empty body (`multi_threaded.rs:90`). It removes the
+assertion that would have caught the unsoundness rather than removing the unsoundness, on a Variant
+refcounting model gdext's own docs call *"high risk of unsoundness at the moment"*
+(`godot-0.5.4/src/lib.rs:151-155`).
+
+**Nor would the two-phase split pay**, which is the part worth internalising: doing the FlatBuffers
+reading on a worker and building the `Dictionary` on the main thread moves almost nothing, because
+the Dictionary build *is* the cost. FlatBuffers access is zero-copy pointer arithmetic; `tile_to_dict`
+does **19 `insert` calls per tile**, so the tiles section alone is ~79,000 main-thread-gated FFI
+calls on a full snapshot. The lever that would actually work is emitting bulk per-tile numerics as
+columnar `Packed*Array`s (one FFI call per column instead of 19 per row) — a wire-shape change, not
+a threading one.
+
+So: if the decode cost ever needs attacking again, attack the **Variant count**, not the thread it
+runs on.
 
 ## The `TurnProfile` contract
 
@@ -137,6 +201,19 @@ STREAM_PORT=<base+2> COMMAND_PORT=<base+1> LOG_PORT=<base+3> \
 
 going straight to `Main.tscn` to skip the landing screen, then `cargo xtask command --port <base+1> turn N`
 and grep `[TurnProfile]`. Note `--port` must **precede** the verb.
+
+**In a fresh worktree, import the project once first** —
+`godot --path clients/godot_thin_client --headless --import`. Without it there is no `.godot/`
+cache, so the **`class_name` global registry is empty** and `Main.gd` dies on a wall of
+`Could not find type "TurnProfile" / "MenuShell" / "SnapshotSections"` parse errors. The client
+still opens a window and connects, so the failure looks like "the profile flag isn't working"
+rather than "the project was never imported".
+
+**To isolate a FULL snapshot's cost, force one with `resync`** rather than reading the first frame
+of the world. The first poll of a new world typically batches the full snapshot with a delta behind
+it (`x2`), so its `decode` is a sum of two different animals; a `resync` sent once the world has
+settled lands the full snapshot in its own `x1` poll, which is where the 45.0 ms above comes from.
+Space repeated resyncs by several seconds or they batch again.
 
 ## Skipping what did not change: the `changed_sections` manifest
 
