@@ -1462,6 +1462,47 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
     ),
 >;
 
+/// Every tile's terrain tags, indexed by grid position rather than hashed — the fresh-water rule
+/// (`forage::tile_is_fresh_watered`) reads a tile's SIX neighbours, so this is ~6 lookups per patch
+/// tile and a `HashMap` probe per neighbour was most of what the refusal sweep cost.
+///
+/// The cell stays `Option<TerrainTags>`: "no tile there" and "a tile carrying no tags" are different
+/// readings, and this capture does not conflate absent with zero (the `seasonal_weights` convention).
+struct TerrainTagGrid {
+    width: u32,
+    tags: Vec<Option<sim_runtime::TerrainTags>>,
+}
+
+impl TerrainTagGrid {
+    /// Sized from the world's own `grid_size`, so it is exactly one cell per tile the query can yield.
+    fn new(grid_size: UVec2) -> Self {
+        Self {
+            width: grid_size.x,
+            tags: vec![None; (grid_size.x as usize) * (grid_size.y as usize)],
+        }
+    }
+
+    fn index(&self, pos: UVec2) -> Option<usize> {
+        if pos.x >= self.width {
+            return None;
+        }
+        let index = (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+        (index < self.tags.len()).then_some(index)
+    }
+
+    fn set(&mut self, pos: UVec2, tags: sim_runtime::TerrainTags) {
+        if let Some(index) = self.index(pos) {
+            self.tags[index] = Some(tags);
+        }
+    }
+
+    /// `None` for an off-map coord as well as for an empty cell — a neighbour walk runs off the edge
+    /// of a non-wrapping map, and that must read as "no tile", not panic.
+    fn get(&self, pos: UVec2) -> Option<sim_runtime::TerrainTags> {
+        self.index(pos).and_then(|index| self.tags[index])
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
 pub fn capture_snapshot(
     ctx: SnapshotContext,
@@ -1555,13 +1596,16 @@ pub fn capture_snapshot(
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
     let mut seasonal_weights: HashMap<UVec2, f32> = HashMap::new();
-    // Per-tile terrain tags, keyed by coord — what the fresh-water half of the `plant:field` rung's
+    // Per-tile terrain tags, grid-indexed — what the fresh-water half of the `plant:field` rung's
     // site rule reads about a tile's NEIGHBOURS (`forage::tile_is_fresh_watered`). Collected in this
-    // pass so the refusal sweep below is one more read of the same query rather than a second walk of
-    // the world.
-    let mut tile_tags: HashMap<UVec2, sim_runtime::TerrainTags> = HashMap::new();
+    // pass so the patch sweep below reads a finished grid rather than walking the world again.
+    let mut tile_tags = TerrainTagGrid::new(config.grid_size);
+    // The patch tiles, picked out of the one full sweep — the subset BOTH readouts below are about,
+    // so `forage_registry.patch()` is asked once per tile instead of once per readout. Borrowing out
+    // of `tiles.iter()` is sound here: the query is read-only and outlives every use of this vec.
+    let mut patch_tiles: Vec<&Tile> = Vec::new();
     {
-        // Sweep 1 of 3 over the full tile query.
+        // Sweep 1 of 2 — the ONLY walk of the full tile query.
         let _s = crate::turn_profile::scope("snapshot.build.tiles");
         for (entity, tile, food_module) in tiles.iter() {
             tile_states.push(tile_state(
@@ -1571,140 +1615,139 @@ pub fn capture_snapshot(
                 graze_registry.patch(tile.position),
                 &labor_config.forage,
             ));
-            tile_tags.insert(tile.position, tile.terrain_tags);
+            tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {
                 seasonal_weights.insert(tile.position, module.seasonal_weight);
             }
+            if forage_registry.patch(tile.position).is_some() {
+                patch_tiles.push(tile);
+            }
         }
     }
-    // **Why the ground under each patch will not take seed** — the `plant:field` rung's own
-    // `site_requirement`, resolved through the SAME `RungSiteRequirement::refusal` seam the `sow`
-    // command (`validate_sow`) and the labor arm's placement gate use, so the wire, the rejection and
-    // the sim can never disagree about which ground is farmable. Only refusals are stored: a coord
-    // absent from the map is ground that takes seed (the `seasonal_weights` convention).
+    // Sweep 2 of 2 — the patch tiles only, both per-patch readouts built in ONE walk of the subset
+    // sweep 1 picked out. It cannot fold into sweep 1: `tile_is_fresh_watered` reads a tile's
+    // NEIGHBOURS' tags, so it needs the finished `tile_tags` grid. Held as an explicit guard rather
+    // than a wrapping block so the (long) composition closure below keeps its indentation.
     //
-    // Patches only — the client asks "why can't I sow *here*?" of a tile it is looking at, and a
-    // patch is on every food-bearing tile there is (see core_sim/CLAUDE.md → the Field).
-    let sow_site_refusals: HashMap<UVec2, SiteRefusal> = {
-        // Sweep 2 of 3 over the full tile query.
-        let _s = crate::turn_profile::scope("snapshot.build.sow_refusals");
-        let field_rung = ladder_config.rung(RungKey::PlantField);
-        let grid = config.grid_size;
-        let wrap_horizontal = config.map_topology.wrap_horizontal;
-        tiles
-            .iter()
-            .filter(|(_, tile, _)| forage_registry.patch(tile.position).is_some())
-            .filter_map(|(_, tile, _)| {
-                let fresh_water =
-                    tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
-                        tile_tags.get(&coord).copied()
-                    });
-                rung_site_refusal(field_rung, tile, &labor_config.forage, fresh_water)
-                    .map(|refusal| (tile.position, refusal))
-            })
-            .collect()
-    };
-    // **What grows on each patch tile** — the named plants its forage capacity decomposes into,
-    // resolved through the ONE `forage::tile_flora_composition` seam (the twin of
+    // **Why the ground under each patch will not take seed** (`sow_site_refusals`) — the
+    // `plant:field` rung's own `site_requirement`, resolved through the SAME
+    // `RungSiteRequirement::refusal` seam the `sow` command (`validate_sow`) and the labor arm's
+    // placement gate use, so the wire, the rejection and the sim can never disagree about which
+    // ground is farmable. Only refusals are stored: a coord absent from the map is ground that takes
+    // seed (the `seasonal_weights` convention).
+    //
+    // **What grows on each patch tile** (`flora_compositions`) — the named plants its forage capacity
+    // decomposes into, resolved through the ONE `forage::tile_flora_composition` seam (the twin of
     // `tile_forage_capacity`), so a navigable hex's *two* capacity terms are both named and the wire
-    // cannot disagree with the table. Patch tiles only, mirroring the `sow_site_refusals` sweep above.
-    // Sweep 3 of 3 over the full tile query. Held as an explicit guard rather than a wrapping block
-    // so the (long) composition closure below keeps its indentation.
-    let flora_scope = crate::turn_profile::scope("snapshot.build.flora");
-    let flora_compositions: HashMap<UVec2, Vec<FloraShareInfo>> = tiles
-        .iter()
-        .filter_map(|(_, tile, _)| {
-            forage_registry.patch(tile.position)?;
-            // The quotes below are taken against **this tile's own `K`** — never the live patch's,
-            // which may already be concentrated by an existing commitment — and at the standing crop
-            // each rung *settles* at, so they answer "what would this ground pay once this crop is
-            // established here" rather than pricing a 25-turn investment off one transient turn.
-            let tile_capacity = tile_forage_capacity(&labor_config.forage, tile);
-            // What this tile pays left wild — the denominator every ratio on this tile divides by,
-            // resolved once.
-            let wild = wild_payoff(
-                tile.position,
-                tile_capacity,
-                &flora_config,
-                &labor_config.forage,
-                FORECAST_OUTPUT_MULTIPLIER,
-            );
-            let shares =
-                tile_flora_composition(&flora_config, &labor_config.forage, tile, config.map_seed)
-                    .iter()
-                    .map(|share| {
-                        let def = &flora_config.species[&share.species];
-                        // **What this tile would pay per turn once committed to THIS plant**, per rung —
-                        // through `forage::commit_payoff`, which builds the patch the sim would have and
-                        // asks the *same* payoff functions the sim quotes and pays each rung with
-                        // (`tended_provisions` / `field_provisions`). Nothing is re-derived here, which
-                        // is what stops the published number and the payout from drifting.
-                        let payoff = |rung| {
-                            commit_payoff(
-                                tile.position,
-                                tile_capacity,
-                                &share.species,
-                                share.share,
-                                &flora_config,
-                                &labor_config.forage,
-                                FORECAST_OUTPUT_MULTIPLIER,
-                                rung,
-                            )
-                        };
-                        let cultivate = payoff(RungKey::PlantTended);
-                        let sow = payoff(RungKey::PlantField);
-                        FloraShareInfo {
-                            species: share.species.clone(),
-                            display_name: def.display_name.clone(),
-                            share: share.share,
-                            // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
-                            // `cultivation_ceiling`, straight off the roster, so the client's crop
-                            // picker can grey out what is impossible without holding a roster of its
-                            // own. Species-global: it says nothing about whether this tile is a good
-                            // place for it — the payoff/ratio below answer that, and a legal-but-marginal
-                            // crop is exactly the loss §4.3 leaves the player free to choose.
-                            can_cultivate: def.cultivation_ceiling.allows_cultivate(),
-                            can_sow: def.cultivation_ceiling.allows_sow(),
-                            cultivate_payoff: cultivate,
-                            sow_payoff: sow,
-                            // **Is it worth it?** — the same payoffs over the same wild payoff, so the
-                            // ratio can never disagree with the numbers it relates.
-                            cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
-                            sow_yield_ratio: commit_yield_ratio(sow, wild),
-                            // **What a hay Field of this plant would pay into the FODDER account** (F3) —
-                            // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays
-                            // with, so the picker can show hay's value where `sow_yield_ratio` reads 0×.
-                            // `0` for a staple (no fodder in its vector) or a plant that cannot Sow here.
-                            sow_fodder_payoff: commit_fodder_payoff(
-                                tile.position,
-                                tile_capacity,
-                                &share.species,
-                                share.share,
-                                &flora_config,
-                                &labor_config.forage,
-                                FORECAST_OUTPUT_MULTIPLIER,
-                            ),
-                            // **What a cash-crop Field of this plant would pay into the TRADE account**
-                            // (F4) — the exact trade twin, through the same `commit_trade_payoff` seam
-                            // the sim's `field_trade_goods` pays with, so the picker can show a cash
-                            // crop's value where `sow_yield_ratio` reads 0×. `0` for a staple/hay or a
-                            // plant that cannot Sow here.
-                            sow_trade_payoff: commit_trade_payoff(
-                                tile.position,
-                                tile_capacity,
-                                &share.species,
-                                share.share,
-                                &flora_config,
-                                &labor_config.forage,
-                                FORECAST_OUTPUT_MULTIPLIER,
-                            ),
-                        }
-                    })
-                    .collect();
-            Some((tile.position, shares))
-        })
-        .collect();
-    drop(flora_scope);
+    // cannot disagree with the table.
+    //
+    // Patches only, for both — the client asks "why can't I sow *here*?" / "what grows here?" of a
+    // tile it is looking at, and a patch is on every food-bearing tile there is (see
+    // core_sim/CLAUDE.md → the Field).
+    let patches_scope = crate::turn_profile::scope("snapshot.build.patches");
+    let field_rung = ladder_config.rung(RungKey::PlantField);
+    let grid = config.grid_size;
+    let wrap_horizontal = config.map_topology.wrap_horizontal;
+    let mut sow_site_refusals: HashMap<UVec2, SiteRefusal> = HashMap::new();
+    let mut flora_compositions: HashMap<UVec2, Vec<FloraShareInfo>> = HashMap::new();
+    for tile in patch_tiles {
+        let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
+            tile_tags.get(coord)
+        });
+        if let Some(refusal) =
+            rung_site_refusal(field_rung, tile, &labor_config.forage, fresh_water)
+        {
+            sow_site_refusals.insert(tile.position, refusal);
+        }
+        // The quotes below are taken against **this tile's own `K`** — never the live patch's,
+        // which may already be concentrated by an existing commitment — and at the standing crop
+        // each rung *settles* at, so they answer "what would this ground pay once this crop is
+        // established here" rather than pricing a 25-turn investment off one transient turn.
+        let tile_capacity = tile_forage_capacity(&labor_config.forage, tile);
+        // What this tile pays left wild — the denominator every ratio on this tile divides by,
+        // resolved once.
+        let wild = wild_payoff(
+            tile.position,
+            tile_capacity,
+            &flora_config,
+            &labor_config.forage,
+            FORECAST_OUTPUT_MULTIPLIER,
+        );
+        let shares =
+            tile_flora_composition(&flora_config, &labor_config.forage, tile, config.map_seed)
+                .iter()
+                .map(|share| {
+                    let def = &flora_config.species[&share.species];
+                    // **What this tile would pay per turn once committed to THIS plant**, per rung —
+                    // through `forage::commit_payoff`, which builds the patch the sim would have and
+                    // asks the *same* payoff functions the sim quotes and pays each rung with
+                    // (`tended_provisions` / `field_provisions`). Nothing is re-derived here, which
+                    // is what stops the published number and the payout from drifting.
+                    let payoff = |rung| {
+                        commit_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                            rung,
+                        )
+                    };
+                    let cultivate = payoff(RungKey::PlantTended);
+                    let sow = payoff(RungKey::PlantField);
+                    FloraShareInfo {
+                        species: share.species.clone(),
+                        display_name: def.display_name.clone(),
+                        share: share.share,
+                        // **Which rungs this plant can EVER climb** (Flora Roster S1) — its own
+                        // `cultivation_ceiling`, straight off the roster, so the client's crop
+                        // picker can grey out what is impossible without holding a roster of its
+                        // own. Species-global: it says nothing about whether this tile is a good
+                        // place for it — the payoff/ratio below answer that, and a legal-but-marginal
+                        // crop is exactly the loss §4.3 leaves the player free to choose.
+                        can_cultivate: def.cultivation_ceiling.allows_cultivate(),
+                        can_sow: def.cultivation_ceiling.allows_sow(),
+                        cultivate_payoff: cultivate,
+                        sow_payoff: sow,
+                        // **Is it worth it?** — the same payoffs over the same wild payoff, so the
+                        // ratio can never disagree with the numbers it relates.
+                        cultivate_yield_ratio: commit_yield_ratio(cultivate, wild),
+                        sow_yield_ratio: commit_yield_ratio(sow, wild),
+                        // **What a hay Field of this plant would pay into the FODDER account** (F3) —
+                        // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays
+                        // with, so the picker can show hay's value where `sow_yield_ratio` reads 0×.
+                        // `0` for a staple (no fodder in its vector) or a plant that cannot Sow here.
+                        sow_fodder_payoff: commit_fodder_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        ),
+                        // **What a cash-crop Field of this plant would pay into the TRADE account**
+                        // (F4) — the exact trade twin, through the same `commit_trade_payoff` seam
+                        // the sim's `field_trade_goods` pays with, so the picker can show a cash
+                        // crop's value where `sow_yield_ratio` reads 0×. `0` for a staple/hay or a
+                        // plant that cannot Sow here.
+                        sow_trade_payoff: commit_trade_payoff(
+                            tile.position,
+                            tile_capacity,
+                            &share.species,
+                            share.share,
+                            &flora_config,
+                            &labor_config.forage,
+                            FORECAST_OUTPUT_MULTIPLIER,
+                        ),
+                    }
+                })
+                .collect();
+        flora_compositions.insert(tile.position, shares);
+    }
+    drop(patches_scope);
 
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {

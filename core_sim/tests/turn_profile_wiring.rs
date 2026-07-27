@@ -35,11 +35,10 @@ const EXPECTED_STAGES: [&str; 11] = [
 /// publication, for rollback, and on a `resync` request — none of which is a steady-state turn.
 /// This test failing with "encode.flat_snapshot vanished" is exactly the alarm working: it is the
 /// only thing that would have caught the turn path silently losing an encode.
-const EXPECTED_CAPTURE_PHASES: [&str; 11] = [
+const EXPECTED_CAPTURE_PHASES: [&str; 10] = [
     "snapshot.build",
     "snapshot.build.tiles",
-    "snapshot.build.sow_refusals",
-    "snapshot.build.flora",
+    "snapshot.build.patches",
     "snapshot.build.rasters",
     "snapshot.finalize_hash",
     "snapshot.history",

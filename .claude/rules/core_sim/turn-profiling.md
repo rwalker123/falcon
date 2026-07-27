@@ -39,6 +39,64 @@ snapshot wider: the cost lands on every tile of every turn, forever, whether or 
 about that tile changed. It is also why a bigger map is the thing that will break this first
 (a 160×104 map is ~72 ms/turn), not more bands or more herds.
 
+## The capture walks the tile query ONCE, then walks the patch subset
+
+`capture_snapshot` used to make **three** full passes over `tiles.iter()` — one building
+`tile_states`/`tile_tags`/`seasonal_weights`, one for `sow_site_refusals`, one for
+`flora_compositions` (issue #387). The last two both *filtered to forage-patch tiles*, so two
+whole-map walks were being spent to reach a subset.
+
+Now there is **one** full sweep, which also collects the `patch_tiles: Vec<&Tile>` both readouts
+are about (so `forage_registry.patch()` is asked once per tile, not once per readout), and **one**
+walk of that subset that builds both. Collecting `&Tile` out of the query is sound because the
+query is read-only and outlives the vec.
+
+**The second pass cannot fold into the first, and that is a property of the rule, not of the
+code.** `forage::tile_is_fresh_watered` reads a tile's *neighbours'* tags, so the `plant:field`
+site refusal needs the tag grid **finished** before the first refusal is judged. Anything else
+per-tile and self-contained belongs in sweep 1.
+
+> ### A `HashMap<UVec2, _>` read once per hex NEIGHBOUR is a real cost at map scale
+>
+> `tile_tags` was a `HashMap<UVec2, TerrainTags>` whose only consumer probes **six** neighbours per
+> patch tile — ~14k SipHash lookups a turn on an 80×52 map, which was most of what the refusal
+> sweep cost. It is now a flat `TerrainTagGrid` (`Vec<Option<TerrainTags>>` indexed by grid
+> position, sized from `config.grid_size`). Flattening it made even the sweep that *writes* the
+> grid measurably faster, and that is the transferable finding: **per-tile coord-keyed hashing is
+> cheap until something reads it per adjacency.**
+>
+> The cell stays `Option<TerrainTags>` deliberately — "no tile there" and "a tile carrying no tags"
+> are different readings, the same reason `seasonal_weights` stores only what it has.
+
+**Measured** (80×52, release, `late_forager_tribe` on `earthlike`, steady state, mean of 30 turns
+after 5 warm-ups):
+
+| | before | after |
+|---|---|---|
+| `snapshot.build.tiles` | 0.33 | **0.25** |
+| `snapshot.build.sow_refusals` + `.flora` | 0.40 + 1.58 | — |
+| `snapshot.build.patches` | — | **1.40** |
+| `snapshot.build` | 4.09 | **3.62** |
+| `snapshot` | 9.64 | **9.19** |
+
+**The two labels became one.** `snapshot.build.sow_refusals` and `snapshot.build.flora` are now
+`snapshot.build.patches`, because one loop does both jobs and two labels would be a fiction. The
+cost is real and worth stating: flora dominates that number (~1.4 of 1.4 ms), so a flora
+regression no longer has its own line — it shows up as `patches` growing.
+`core_sim/tests/turn_profile_wiring.rs`'s `EXPECTED_CAPTURE_PHASES` pins the new set.
+
+### Profiling this path: pin the seed, and don't compare hashes
+
+Two traps, both hit while measuring #387:
+
+- **`map_seed: 0` in the shipped `simulation_config.json` means "roll from entropy"**, so a
+  before/after profile run against the default config measures **two different worlds**. Pin the
+  seed (a `SIM_CONFIG_PATH` copy) or the numbers are noise wearing a table.
+- **`header.hash` is not reproducible run-to-run even on unchanged code** — the `influencers` list
+  is nondeterministic, which is exactly why `integration_tests/tests/determinism.rs` clears it
+  before hashing. To prove a capture refactor is output-neutral, diff the *structures* it touched
+  (dump `forage_patches` + `tiles` coord-sorted across several turns), never the snapshot hash.
+
 ## What the turn path actually broadcasts
 
 `broadcast_latest` (`network.rs`) sends two things per publication:
