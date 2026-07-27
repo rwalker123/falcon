@@ -636,6 +636,18 @@ impl CheckpointHistory {
             .map(|(_, state)| state.clone())
     }
 
+    /// The newest checkpoint at or before `tick`, and the tick it was taken at.
+    ///
+    /// This is what makes sparse checkpointing work: rolling back to a tick with no checkpoint of
+    /// its own restores this one and replays forward to the target.
+    pub fn nearest_at_or_before(&self, tick: u64) -> Option<(u64, std::sync::Arc<SimState>)> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|(entry_tick, _)| *entry_tick <= tick)
+            .map(|(entry_tick, state)| (*entry_tick, state.clone()))
+    }
+
     /// Drop every checkpoint after `tick` — a rollback invalidates the futures it just discarded.
     pub fn truncate_after(&mut self, tick: u64) {
         self.entries.retain(|(entry_tick, _)| *entry_tick <= tick);
@@ -656,19 +668,41 @@ impl CheckpointHistory {
     }
 }
 
-/// Record this turn's checkpoint into [`CheckpointHistory`].
+/// Set while a rollback is replaying turns forward from a checkpoint.
+///
+/// **A rollback is one publication and one history.** Replayed turns re-run the simulation, so they
+/// must not also re-publish frames the client already applied, and must not push new entries into
+/// the very rings the rollback is rewinding — a rollback that grew its own history could not
+/// terminate. `capture_snapshot` and `record_checkpoint` are gated off this; `collect_metrics` and
+/// `advance_tick`, which share their stage, are **not**, because the tick has to advance and
+/// `SimulationMetrics` is checkpoint state the next turn reads.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Replaying(pub bool);
+
+/// Run condition: true on a normal turn, false while replaying forward.
+pub fn not_replaying(replaying: Option<Res<Replaying>>) -> bool {
+    !replaying.is_some_and(|replaying| replaying.0)
+}
+
+/// Record this turn's checkpoint into [`CheckpointHistory`], every
+/// [`crate::resources::SimulationConfig::checkpoint_interval`] turns.
 ///
 /// Exclusive because [`capture_sim_state`] reads the whole world, which is also what keeps it a
 /// pure function of the world rather than of what ran before it.
 pub fn record_checkpoint(world: &mut World) {
-    let capacity = world
+    let (capacity, interval) = world
         .get_resource::<crate::resources::SimulationConfig>()
-        .map(|config| config.snapshot_history_limit)
-        .unwrap_or(1)
-        .max(1);
+        .map(|config| (config.snapshot_history_limit, config.checkpoint_interval))
+        .unwrap_or((1, 1));
+    let interval = interval.max(1);
     let tick = world.resource::<SimulationTick>().0;
+    if !tick.is_multiple_of(interval) {
+        return;
+    }
     let state = capture_sim_state(world);
     let mut history = world.resource_mut::<CheckpointHistory>();
-    history.set_capacity(capacity);
+    // The ring is bounded in TURNS, not entries, so the window a rollback can reach stays the same
+    // whatever the interval is — raising the interval buys memory, not a shorter history.
+    history.set_capacity((capacity as u64 / interval).max(1) as usize);
     history.record(tick, state);
 }

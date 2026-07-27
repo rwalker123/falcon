@@ -22,7 +22,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
-use core_sim::sim_state::{restore_sim_state, CheckpointHistory};
+use core_sim::sim_state::{restore_sim_state, CheckpointHistory, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
@@ -5669,8 +5669,11 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
 /// the snapshot that was published at that tick — so publishing the stored view after restoring
 /// the stored state cannot show the client a world the simulation is not in.
 fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat: &SnapshotServer) {
-    let checkpoint = app.world.resource::<CheckpointHistory>().entry(tick);
-    let Some(checkpoint) = checkpoint else {
+    let nearest = app
+        .world
+        .resource::<CheckpointHistory>()
+        .nearest_at_or_before(tick);
+    let Some((checkpoint_tick, checkpoint)) = nearest else {
         warn!(
             target: "shadow_scale::server",
             tick,
@@ -5680,6 +5683,26 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
     };
 
     restore_sim_state(&mut app.world, checkpoint.as_ref());
+
+    // **Replay forward to the requested tick.** Checkpoints are sparse
+    // (`SimulationConfig::checkpoint_interval`), so the nearest one is usually *before* the target.
+    // Replaying is exact rather than approximate — `checkpoint_replay_is_bit_exact` is the proof —
+    // and the turns run with `Replaying` set so they neither publish frames the client already has
+    // nor push entries into the ring this rollback is rewinding.
+    if checkpoint_tick < tick {
+        app.world.resource_mut::<Replaying>().0 = true;
+        for _ in checkpoint_tick..tick {
+            run_turn(app);
+        }
+        app.world.resource_mut::<Replaying>().0 = false;
+        info!(
+            target: "shadow_scale::server",
+            tick,
+            from = checkpoint_tick,
+            replayed = tick - checkpoint_tick,
+            "rollback.replayed_forward"
+        );
+    }
     // Everything after `tick` is a future this rollback just discarded; leaving those checkpoints
     // in the ring would let a later rollback jump *forward* into a world that no longer happened.
     app.world

@@ -460,7 +460,12 @@ fn checkpoint_replay_is_bit_exact() {
 }
 
 /// **A rollback to tick T produces the world T had, and the frame the client receives is derived
-/// from that world.**
+/// from that world** — the *dense* path, where T has a checkpoint of its own and nothing replays.
+///
+/// Its sparse counterpart is `rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick`. Both are
+/// kept: `checkpoint_interval = 1` is a supported setting (restore every tick, never replay), and
+/// it is the configuration in which a restore bug cannot hide behind a replay that re-derives the
+/// state anyway.
 ///
 /// This is the whole guarantee, and it is stronger than the tick-agreement property it replaces.
 /// That earlier version asserted two parallel histories filed under matching ticks — which was the
@@ -473,6 +478,9 @@ fn a_rollback_produces_the_world_that_tick_had() {
     use core_sim::sim_state::CheckpointHistory;
 
     let mut app = new_app();
+    if let Some(mut config) = app.world.get_resource_mut::<SimulationConfig>() {
+        config.checkpoint_interval = 1;
+    }
     for _ in 0..CHECKPOINT_TICKS {
         app.update();
     }
@@ -495,6 +503,78 @@ fn a_rollback_produces_the_world_that_tick_had() {
     assert_snapshots_match(
         "rolling back to a tick did not reproduce the world that tick had",
         &published,
+        &latest_snapshot(&app),
+    );
+}
+
+/// **Rolling back to a tick with no checkpoint of its own reproduces that tick exactly.**
+///
+/// This is the whole of sparse checkpointing. Checkpoints are taken every
+/// `SimulationConfig::checkpoint_interval` turns, so most ticks have none — restoring one of those
+/// means restoring the nearest checkpoint *before* it and replaying forward, and the world that
+/// comes out has to be the world that tick originally had, not merely a plausible one.
+///
+/// Without this the replay-forward path is unguarded: `checkpoint_replay_is_bit_exact` proves a
+/// replayed turn is exact, but only this proves the rollback path picks the right checkpoint and
+/// replays the right number of turns.
+#[test]
+fn rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick() {
+    use core_sim::sim_state::{CheckpointHistory, Replaying};
+
+    const INTERVAL: u64 = 4;
+    let mut app = new_app();
+    if let Some(mut config) = app.world.get_resource_mut::<SimulationConfig>() {
+        config.checkpoint_interval = INTERVAL;
+    }
+
+    // Run to a tick that is deliberately NOT a multiple of the interval.
+    let mut published = Vec::new();
+    for _ in 0..(INTERVAL * 3 + 1) {
+        app.update();
+        published.push(latest_snapshot(&app));
+    }
+    let target = published.last().expect("published frames").header.tick;
+    assert_ne!(
+        target % INTERVAL,
+        0,
+        "the test target must be a tick with no checkpoint of its own, or it proves nothing"
+    );
+    let expected = published.last().expect("published frames").clone();
+
+    // March on, so the rollback has a genuinely later world to undo.
+    for _ in 0..INTERVAL {
+        app.update();
+    }
+
+    let (checkpoint_tick, state) = app
+        .world
+        .resource::<CheckpointHistory>()
+        .nearest_at_or_before(target)
+        .expect("a checkpoint at or before the target");
+    assert!(
+        checkpoint_tick < target,
+        "the nearest checkpoint must be strictly before the target, or no replay happens and this \
+         test degenerates into `checkpoint_restore_is_lossless`"
+    );
+
+    restore_sim_state(&mut app.world, state.as_ref());
+    app.world.resource_mut::<Replaying>().0 = true;
+    let ring_before = app.world.resource::<CheckpointHistory>().len();
+    for _ in checkpoint_tick..target {
+        core_sim::run_turn(&mut app);
+    }
+    app.world.resource_mut::<Replaying>().0 = false;
+    assert_eq!(
+        app.world.resource::<CheckpointHistory>().len(),
+        ring_before,
+        "replaying forward pushed entries into the ring it was rewinding — a rollback must not grow \
+         its own history"
+    );
+
+    recapture_snapshot_in_place(&mut app.world);
+    assert_snapshots_match(
+        "rolling back to a non-checkpoint tick did not reproduce that tick",
+        &expected,
         &latest_snapshot(&app),
     );
 }

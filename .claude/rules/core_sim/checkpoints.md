@@ -125,6 +125,39 @@ because nothing in the system reported a total. Estimating it structurally is no
 `size_of` does not see the `Vec` and `HashMap` heap that is most of an entry, and a structural
 estimate of this ring was wrong by 5× in the direction that mattered.
 
+## Checkpoints are sparse, and a rollback replays the gap
+
+`SimulationConfig::checkpoint_interval` sets how often `record_checkpoint` runs. A rollback restores
+the newest checkpoint **at or before** the target tick and replays forward to it, which is exact
+rather than approximate — that is what `checkpoint_replay_is_bit_exact` proves, and what
+`rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick` proves end to end through the rollback
+path itself.
+
+The ring is bounded in **turns**, not entries: capacity is `snapshot_history_limit / interval`, so
+the window a rollback can reach is the same whatever the interval. Raising the interval buys memory,
+not a shorter history.
+
+Measured on the standard recipe, 300 turns so the ring is full:
+
+| interval | ring RSS | entries | worst-case replay |
+|---|---|---|---|
+| 1 | 1.79 GB | 256 | 0 turns |
+| 4 | 0.51 GB | 64 | 3 turns — 2.6 ms |
+| 8 | 0.28 GB | 32 | 7 turns — 6.0 ms |
+| **16 (default)** | **0.18 GB** | **16** | **15 turns — 12.9 ms** |
+| 32 | 0.11 GB | 8 | 31 turns — 26.7 ms |
+
+A replayed turn costs **0.86 ms** against a normal turn's **4.61 ms**, because the two systems replay
+gates off — `capture_snapshot` and `record_checkpoint` — are most of a turn's cost. So a rollback is
+cheaper than the turns it undoes at any interval on this table. 16 is the knee: 90% of the memory
+gone, and doubling again buys 0.07 GB for another 13.8 ms.
+
+**What replay must not do**, and what `Replaying` exists to prevent: republish frames the client has
+already applied, and push entries into the ring the rollback is rewinding — a rollback that grew its
+own history could not terminate. `collect_metrics` and `advance_tick` share that stage and are
+deliberately **not** gated: the tick has to advance, and `SimulationMetrics` is checkpoint state the
+next turn reads.
+
 ## Reading this arc's numbers
 
 `integration_tests/tests/replay_determinism.rs` reports **differing leaves out of compared leaves**,

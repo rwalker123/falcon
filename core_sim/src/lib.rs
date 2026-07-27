@@ -513,6 +513,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(WorldEpoch::default())
         .insert_resource(BandIdAllocator::default())
         .insert_resource(sim_state::CheckpointHistory::default())
+        .insert_resource(sim_state::Replaying::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(crisis_telemetry_resource)
@@ -864,10 +865,11 @@ pub fn build_headless_app() -> App {
             (
                 metrics::collect_metrics,
                 systems::advance_tick,
-                snapshot::capture_snapshot,
-                // The rollback ring. After the capture so both rings file this turn under the same
-                // tick; it reads the world and writes only its own resource.
-                sim_state::record_checkpoint,
+                // Both gated off `Replaying`: a rollback replaying turns forward must not
+                // re-publish frames nor push entries into the ring it is rewinding. Their two
+                // stage-mates above are deliberately NOT gated — see `sim_state::Replaying`.
+                snapshot::capture_snapshot.run_if(sim_state::not_replaying),
+                sim_state::record_checkpoint.run_if(sim_state::not_replaying),
             )
                 // `SimulationTick` then `SimulationMetrics` — a genuine sequence, and the one
                 // stage where running out of order would publish the wrong tick.
