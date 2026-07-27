@@ -604,6 +604,58 @@ pub struct InfluentialRoster {
     config: Arc<InfluencerBalanceConfig>,
 }
 
+/// Everything [`InfluentialRoster`] holds **except its config handle**.
+///
+/// Config is not simulation state. If a checkpoint cloned the roster whole it would carry the
+/// `Arc<InfluencerBalanceConfig>` that was live when the checkpoint was taken, and restoring it
+/// would silently reinstall that tuning — hot-reload a config, roll back, and the reload is undone
+/// with nothing logged. Restore re-attaches whatever config is live *now* by leaving
+/// `InfluentialRoster::config` untouched.
+#[derive(Debug, Clone)]
+pub struct InfluentialRosterCheckpoint {
+    seed: u64,
+    individuals: Vec<InfluentialIndividual>,
+    next_id: InfluentialId,
+    /// Turns until the next organic spawn. Not published on the wire, so no `WorldSnapshot`-based
+    /// restore could ever recover it.
+    spawn_cooldown: u32,
+    last_sentiment: [Scalar; 4],
+    last_logistics: Scalar,
+    last_morale: Scalar,
+    last_power: Scalar,
+    last_culture: InfluencerCultureResonance,
+}
+
+impl InfluentialRoster {
+    /// Snapshot the roster's state, leaving its config behind.
+    pub fn checkpoint(&self) -> InfluentialRosterCheckpoint {
+        InfluentialRosterCheckpoint {
+            seed: self.seed,
+            individuals: self.individuals.clone(),
+            next_id: self.next_id,
+            spawn_cooldown: self.spawn_cooldown,
+            last_sentiment: self.last_sentiment,
+            last_logistics: self.last_logistics,
+            last_morale: self.last_morale,
+            last_power: self.last_power,
+            last_culture: self.last_culture,
+        }
+    }
+
+    /// Restore state, keeping the config currently attached.
+    pub fn restore_checkpoint(&mut self, checkpoint: &InfluentialRosterCheckpoint) {
+        self.seed = checkpoint.seed;
+        self.individuals = checkpoint.individuals.clone();
+        self.next_id = checkpoint.next_id;
+        self.spawn_cooldown = checkpoint.spawn_cooldown;
+        self.last_sentiment = checkpoint.last_sentiment;
+        self.last_logistics = checkpoint.last_logistics;
+        self.last_morale = checkpoint.last_morale;
+        self.last_power = checkpoint.last_power;
+        self.last_culture = checkpoint.last_culture;
+    }
+}
+
 impl InfluentialRoster {
     pub fn with_seed(
         seed: u64,

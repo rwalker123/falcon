@@ -452,3 +452,78 @@ fn every_band_has_a_unique_durable_id() {
         "allocator is at {next} but band {highest} already exists — the next spawn would alias it"
     );
 }
+
+/// `capture_sim_state` sees every entity the tables above call simulation state, and leaks no
+/// `Entity` into the checkpoint.
+///
+/// The counts are the point. A checkpoint that quietly captured *some* of the tiles would restore a
+/// world that looked plausible and diverged later, which is the failure this arc exists to remove;
+/// comparing against a direct query is the cheapest oracle for "did the walk find everything".
+#[test]
+fn capture_sees_every_sim_state_entity() {
+    use core_sim::sim_state::capture_sim_state;
+    use core_sim::{BandId, LogisticsLink, PopulationCohort, PowerNode, Settlement, Tile};
+
+    let mut app = build_headless_app();
+    run_turn(&mut app);
+
+    let tiles = app.world.query::<&Tile>().iter(&app.world).count();
+    let links = app.world.query::<&LogisticsLink>().iter(&app.world).count();
+    let powered = app.world.query::<&PowerNode>().iter(&app.world).count();
+    let bands = app
+        .world
+        .query::<(&PopulationCohort, &BandId)>()
+        .iter(&app.world)
+        .count();
+    let settlements = app.world.query::<&Settlement>().iter(&app.world).count();
+
+    let state = capture_sim_state(&app.world);
+
+    assert_eq!(state.tiles.len(), tiles, "captured tile count");
+    assert_eq!(state.links.len(), links, "captured logistics link count");
+    assert_eq!(state.bands.len(), bands, "captured band count");
+    assert_eq!(
+        state.settlements.len(),
+        settlements,
+        "captured settlement count"
+    );
+    assert_eq!(
+        state.tiles.iter().filter(|t| t.power.is_some()).count(),
+        powered,
+        "captured power node count"
+    );
+    assert!(tiles > 0 && links > 0 && bands > 0, "world was not built");
+
+    // Every reference must be a stable sim id. A live `Entity` in here would resolve to a different
+    // thing after a restore, silently.
+    for band in &state.bands {
+        assert_eq!(
+            band.cohort.home,
+            Entity::PLACEHOLDER,
+            "band {:?} leaked a live `home` entity into the checkpoint",
+            band.id
+        );
+        assert_eq!(
+            band.cohort.current_tile,
+            Entity::PLACEHOLDER,
+            "band {:?} leaked a live `current_tile` entity",
+            band.id
+        );
+        if let Some(expedition) = &band.expedition {
+            assert_eq!(
+                expedition.expedition.home_band,
+                Entity::PLACEHOLDER,
+                "expedition {:?} leaked a live `home_band` entity",
+                band.id
+            );
+        }
+    }
+    for link in &state.links {
+        assert_eq!(link.link.from, Entity::PLACEHOLDER, "link leaked `from`");
+        assert_eq!(link.link.to, Entity::PLACEHOLDER, "link leaked `to`");
+    }
+
+    // Bands are keyed by id, so the ids must be unique within a checkpoint.
+    let unique: BTreeSet<u64> = state.bands.iter().map(|band| band.id.0).collect();
+    assert_eq!(unique.len(), state.bands.len(), "duplicate BandId captured");
+}

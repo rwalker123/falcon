@@ -59,6 +59,7 @@ mod scalar;
 mod sedentarization;
 mod sedentarization_config;
 mod settlement_stage_config;
+pub mod sim_state;
 mod sites;
 mod sites_config;
 mod snapshot;

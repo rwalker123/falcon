@@ -247,6 +247,45 @@ pub struct KnowledgeLedger {
     config: Arc<KnowledgeLedgerConfig>,
 }
 
+/// Everything [`KnowledgeLedger`] holds **except its config handle** — see
+/// [`crate::influencers::InfluentialRosterCheckpoint`] for why config stays out of a checkpoint.
+#[derive(Debug, Clone)]
+pub struct KnowledgeLedgerCheckpoint {
+    entries: HashMap<(FactionId, u32), KnowledgeLedgerEntry>,
+    timeline: VecDeque<KnowledgeTimelineEvent>,
+    max_timeline_events: usize,
+    last_emitted_tick: Option<u64>,
+    last_emitted_metrics: KnowledgeMetricsState,
+    timeline_version: u64,
+    last_emitted_timeline_version: Option<u64>,
+}
+
+impl KnowledgeLedger {
+    /// Snapshot the ledger's state, leaving its config behind.
+    pub fn checkpoint(&self) -> KnowledgeLedgerCheckpoint {
+        KnowledgeLedgerCheckpoint {
+            entries: self.entries.clone(),
+            timeline: self.timeline.clone(),
+            max_timeline_events: self.max_timeline_events,
+            last_emitted_tick: self.last_emitted_tick,
+            last_emitted_metrics: self.last_emitted_metrics.clone(),
+            timeline_version: self.timeline_version,
+            last_emitted_timeline_version: self.last_emitted_timeline_version,
+        }
+    }
+
+    /// Restore state, keeping the config currently attached.
+    pub fn restore_checkpoint(&mut self, checkpoint: &KnowledgeLedgerCheckpoint) {
+        self.entries = checkpoint.entries.clone();
+        self.timeline = checkpoint.timeline.clone();
+        self.max_timeline_events = checkpoint.max_timeline_events;
+        self.last_emitted_tick = checkpoint.last_emitted_tick;
+        self.last_emitted_metrics = checkpoint.last_emitted_metrics.clone();
+        self.timeline_version = checkpoint.timeline_version;
+        self.last_emitted_timeline_version = checkpoint.last_emitted_timeline_version;
+    }
+}
+
 impl Default for KnowledgeLedger {
     fn default() -> Self {
         let config = Arc::new(

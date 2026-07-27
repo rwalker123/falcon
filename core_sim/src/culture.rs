@@ -540,6 +540,46 @@ pub struct CultureManager {
     smoothed_resonance: InfluencerCultureResonance,
 }
 
+/// Everything [`CultureManager`] holds **except its settings** — see
+/// [`crate::influencers::InfluentialRosterCheckpoint`] for why config stays out of a checkpoint.
+///
+/// `CultureManagerSettings` is the subtle one: it is config held **by value**, not behind an `Arc`,
+/// so a search for `Arc<*Config>` misses it entirely. It is derived at boot from
+/// `culture_corruption_config`, and cloning the manager whole would carry it.
+#[derive(Debug, Clone)]
+pub struct CultureManagerCheckpoint {
+    next_id: CultureLayerId,
+    global: Option<CultureLayer>,
+    regional: HashMap<u32, CultureLayer>,
+    locals: HashMap<u64, CultureLayer>,
+    tension_events: Vec<CultureTensionRecord>,
+    smoothed_resonance: InfluencerCultureResonance,
+}
+
+impl CultureManager {
+    /// Snapshot the manager's state, leaving its settings behind.
+    pub fn checkpoint(&self) -> CultureManagerCheckpoint {
+        CultureManagerCheckpoint {
+            next_id: self.next_id,
+            global: self.global.clone(),
+            regional: self.regional.clone(),
+            locals: self.locals.clone(),
+            tension_events: self.tension_events.clone(),
+            smoothed_resonance: self.smoothed_resonance,
+        }
+    }
+
+    /// Restore state, keeping the settings currently attached.
+    pub fn restore_checkpoint(&mut self, checkpoint: &CultureManagerCheckpoint) {
+        self.next_id = checkpoint.next_id;
+        self.global = checkpoint.global.clone();
+        self.regional = checkpoint.regional.clone();
+        self.locals = checkpoint.locals.clone();
+        self.tension_events = checkpoint.tension_events.clone();
+        self.smoothed_resonance = checkpoint.smoothed_resonance;
+    }
+}
+
 impl CultureManager {
     pub fn new() -> Self {
         Self::with_settings(CultureManagerSettings::default())
