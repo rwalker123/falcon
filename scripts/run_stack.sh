@@ -10,11 +10,12 @@ RUN_CLIENT=true
 RUN_GODOT=false
 PORT_BASE=""
 
-# Default port base; base+0=snapshot, +1=command, +2=flat/stream, +3=log.
+# Default port base; base+0 is RESERVED (it carried the retired bincode
+# snapshot socket, #388), +1=command, +2=flat/stream, +3=log.
 # base=41000 reproduces the historical fixed ports (41000..41003).
 DEFAULT_PORT_BASE=41000
 # Auto-derived bases are spaced this far apart so each worktree gets its own
-# contiguous block of four ports without overlapping its neighbours.
+# contiguous block of four slots without overlapping its neighbours.
 PORT_BLOCK_STRIDE=10
 # Number of distinct auto-derived slots (DEFAULT_PORT_BASE .. +99*stride).
 PORT_SLOT_COUNT=100
@@ -108,10 +109,12 @@ port_in_use() {
   return 1
 }
 
-# True if all four ports in the block starting at $1 are free.
+# True if every BOUND port in the block starting at $1 is free. Slot 0 is
+# reserved and nothing binds it, so a stranger sitting on it must not push us to
+# another block.
 block_free() {
   local base="$1" offset
-  for offset in 0 1 2 3; do
+  for offset in 1 2 3; do
     if port_in_use "$((base + offset))"; then
       return 1
     fi
@@ -145,7 +148,7 @@ if (( PORT_BASE < 1 || PORT_BASE + 3 > 65535 )); then
 fi
 
 # When we're about to start the server on an auto-derived block, make sure the
-# four ports are actually free; otherwise bump to the next slot (wrapping).
+# bound ports are actually free; otherwise bump to the next slot (wrapping).
 if [[ "$RUN_SERVER" == true && "$port_base_explicit" == false ]]; then
   attempts=0
   while ! block_free "$PORT_BASE"; do
@@ -159,7 +162,6 @@ if [[ "$RUN_SERVER" == true && "$port_base_explicit" == false ]]; then
   done
 fi
 
-SNAPSHOT_PORT="$PORT_BASE"
 COMMAND_PORT="$((PORT_BASE + 1))"
 STREAM_PORT="$((PORT_BASE + 2))"
 LOG_PORT="$((PORT_BASE + 3))"
@@ -167,7 +169,7 @@ LOG_PORT="$((PORT_BASE + 3))"
 # The server reads SIM_PORT_BASE; the client reads the individual ports.
 export SIM_PORT_BASE="$PORT_BASE"
 
-echo "[run_stack] Port base $PORT_BASE (snapshot=$SNAPSHOT_PORT command=$COMMAND_PORT stream=$STREAM_PORT log=$LOG_PORT)"
+echo "[run_stack] Port base $PORT_BASE (command=$COMMAND_PORT stream=$STREAM_PORT log=$LOG_PORT; base+0 reserved)"
 
 # --- Build --------------------------------------------------------------------
 

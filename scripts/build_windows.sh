@@ -7,7 +7,7 @@
 #
 #   ShadowScale-windows/
 #     ShadowScale.exe                # double-click THIS — starts the server, then the client
-#     server.exe                     # core_sim server (binds 127.0.0.1:41000-41003)
+#     server.exe                     # core_sim server (binds 127.0.0.1:41001-41003)
 #     ShadowScaleClient.exe          # Godot thin client (+ its .pck)
 #     shadow_scale_godot.dll         # the GDExtension, beside the client exe
 #     README.txt

@@ -9,10 +9,10 @@ use bevy::{
 };
 use log::warn;
 use sim_runtime::{
-    encode_delta, encode_delta_flatbuffer, encode_snapshot, encode_snapshot_flatbuffer,
-    AccessibleStockpileEntryState, AccessibleStockpileState, AxisBiasState, CampaignProfileState,
-    ClimateBandsState, CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem,
-    CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
+    encode_delta_flatbuffer, encode_snapshot_flatbuffer, AccessibleStockpileEntryState,
+    AccessibleStockpileState, AxisBiasState, CampaignProfileState, ClimateBandsState,
+    CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
+    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,

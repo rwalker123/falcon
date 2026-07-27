@@ -2,7 +2,7 @@
 
 ## Overview
 - **Headless Core (`core_sim`)**: Bevy-based ECS that resolves a single turn via `run_turn`. Systems run in `TurnStage` order — Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot (`core_sim/src/lib.rs`; `core_sim/CLAUDE.md` is the doc-side authority).
-- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. Commands flow over a single length-prefixed Protobuf `CommandEnvelope` socket (`SimulationConfig::command_bind`), while snapshots broadcast on `SimulationConfig::snapshot_bind` / `snapshot_flat_bind` and logs on `SimulationConfig::log_bind`.
+- **Networking**: Thin TCP layer (`core_sim::network`) streams snapshot deltas, emits structured tracing/log frames, and receives control commands. Commands flow over a single length-prefixed Protobuf `CommandEnvelope` socket (`SimulationConfig::command_bind`), while snapshots broadcast on `SimulationConfig::snapshot_flat_bind` (the one snapshot socket since #388) and logs on `SimulationConfig::log_bind`.
 - **Simulation Defaults**: `core_sim/src/data/simulation_config.json` seeds `SimulationConfig` with map dimensions, environmental tuning, trade/power/corruption multipliers, migration knobs, and the default TCP bind addresses/snapshot history depth. Designers can edit these baselines (grid size, mass bounds, leak curve, corruption penalties, networking ports) without touching Rust; the loader converts floats to fixed-point `Scalar` values on startup.
 - **Serialization**: Snapshots/deltas represented via Rust structs and `sim_schema::schemas/snapshot.fbs` for cross-language clients.
 - **Shared Runtime (`sim_runtime`)**: Lightweight helpers (command parsing, bias handling, validation) shared by tooling and the headless core.
@@ -61,7 +61,7 @@ What was intentionally kept (it is simulation/2D data, not 3D rendering):
 ---
 
 ## Data Flow
-- **Snapshots**: Binary `bincode` frames prefixed with length for streaming.
+- **Snapshots**: Length-prefixed FlatBuffers frames — a full snapshot for a world's first frame, a delta every turn after it. The parallel `bincode` snapshot socket was retired in #388.
 - **FlatBuffers**: Schema mirrors Rust structs for alternate clients.
 - **Logs**: Length-prefixed JSON frames carrying `tracing` events published via the log stream socket (default `tcp://127.0.0.1:41003`).
 - **Commands**: Length-prefixed Protobuf `CommandEnvelope` messages covering verbs such as turn stepping, axis bias, influencer directives, spawning, and corruption injection. `sim_runtime::command_bus` exposes builder/decoder helpers, and the Godot tooling issues structured payloads via the native `CommandBridge` instead of raw strings.

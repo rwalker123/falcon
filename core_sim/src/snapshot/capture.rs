@@ -1,7 +1,5 @@
 use super::*;
 
-pub(crate) type EncodedBuffers = (Arc<Vec<u8>>, Arc<Vec<u8>>);
-
 #[derive(SystemParam)]
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
@@ -88,31 +86,21 @@ pub struct StoredSnapshot {
     pub tick: u64,
     pub snapshot: Arc<WorldSnapshot>,
     pub delta: Arc<WorldDelta>,
-    pub encoded_snapshot: Arc<Vec<u8>>,
-    pub encoded_delta: Arc<Vec<u8>>,
     /// `None` on every turn but the world's first — see [`StoredSnapshot::encode_flat`].
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
 }
 
 impl StoredSnapshot {
-    /// **There is deliberately no flat-encoded delta here.** The turn path broadcasts the *bincode*
-    /// delta and the *flat* snapshot ([`crate::network::broadcast_latest`]), so a per-turn
-    /// FlatBuffers delta was pure dead work — it cost ~24% of an 80×52 turn and had no reader in the
-    /// repo. The on-demand feed paths (`update_axis_bias` / `update_influencers` /
-    /// `update_command_events`) still build one, but locally, and return it for immediate broadcast
-    /// rather than storing it.
+    /// **A ring entry stores no encoded bytes at all on a steady-state turn.** The flat socket is
+    /// the only socket ([`crate::network::broadcast_latest`]), and what it broadcasts per turn — the
+    /// flat delta — is built by `publish` for immediate sending rather than retained: 256 ring
+    /// entries holding a delta nobody re-reads cost ~24% of an 80×52 turn for nothing. The
+    /// on-demand feed paths (`update_axis_bias` / `update_influencers` / `update_corruption`) build
+    /// theirs the same way, locally, and return it.
     ///
-    /// The three encodings that remain are profiled separately so the log says which costs what
-    /// (see [`crate::turn_profile`]).
+    /// So the one encoding left here is `encode.flat_snapshot`, on a world's **first** publication
+    /// only, profiled separately so the log says what it costs (see [`crate::turn_profile`]).
     fn new(snapshot: Arc<WorldSnapshot>, delta: Arc<WorldDelta>, flat_snapshot: bool) -> Self {
-        let encoded_snapshot = {
-            let _s = crate::turn_profile::scope("encode.bincode_snapshot");
-            Arc::new(encode_snapshot(snapshot.as_ref()).expect("snapshot serialization failed"))
-        };
-        let encoded_delta = {
-            let _s = crate::turn_profile::scope("encode.bincode_delta");
-            Arc::new(encode_delta(delta.as_ref()).expect("delta serialization failed"))
-        };
         // Only the world's FIRST publication pays for a flat snapshot; every later turn broadcasts
         // the flat delta instead. This is the 44%-of-a-turn line item from #384, and it is now the
         // baseline's cost rather than every turn's.
@@ -124,8 +112,6 @@ impl StoredSnapshot {
             tick: snapshot.header.tick,
             snapshot,
             delta,
-            encoded_snapshot,
-            encoded_delta,
             encoded_snapshot_flat,
         }
     }
@@ -161,8 +147,6 @@ pub struct SnapshotHistory {
     capacity: usize,
     pub last_snapshot: Option<Arc<WorldSnapshot>>,
     pub last_delta: Option<Arc<WorldDelta>>,
-    pub encoded_snapshot: Option<Arc<Vec<u8>>>,
-    pub encoded_delta: Option<Arc<Vec<u8>>>,
     pub encoded_snapshot_flat: Option<Arc<Vec<u8>>>,
     /// The flat DELTA broadcast on the client's socket every turn after the first.
     pub encoded_delta_flat: Option<Arc<Vec<u8>>>,
@@ -237,8 +221,6 @@ impl SnapshotHistory {
             capacity,
             last_snapshot: None,
             last_delta: None,
-            encoded_snapshot: None,
-            encoded_delta: None,
             encoded_snapshot_flat: None,
             encoded_delta_flat: None,
             frame_seq: 0,
@@ -341,12 +323,11 @@ impl SnapshotHistory {
     /// It used to re-encode a FULL flat snapshot instead — per world-mutating command, so a player
     /// assigning labor to three sources and moving a band paid four full encodes, which is the
     /// cost this arc removed from the turn path re-entering by the side door.
-    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<EncodedBuffers> {
+    ///
+    /// Returns the flat delta for the caller to broadcast.
+    pub fn refresh_latest(&mut self, snapshot: WorldSnapshot) -> Option<Arc<Vec<u8>>> {
         self.publish(snapshot, Publication::Recapture);
-        match (self.encoded_delta.clone(), self.encoded_delta_flat.clone()) {
-            (Some(bincode), Some(flat)) => Some((bincode, flat)),
-            _ => None,
-        }
+        self.encoded_delta_flat.clone()
     }
 
     fn publish(&mut self, snapshot: WorldSnapshot, kind: Publication) {
@@ -771,13 +752,10 @@ impl SnapshotHistory {
             // post-command world, then stop: no baseline commit, no new ring entry.
             self.last_snapshot = Some(snapshot_arc);
             self.last_delta = Some(delta_arc);
-            self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
-            self.encoded_delta = Some(stored.encoded_delta.clone());
             self.encoded_snapshot_flat = None;
             self.encoded_delta_flat = Some(encoded_delta_flat);
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = stored.snapshot.clone();
-                back.encoded_snapshot = stored.encoded_snapshot.clone();
             }
             return;
         }
@@ -834,8 +812,6 @@ impl SnapshotHistory {
         self.food_modules = food_modules_state;
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
-        self.encoded_snapshot = Some(stored.encoded_snapshot.clone());
-        self.encoded_delta = Some(stored.encoded_delta.clone());
         // `None` on every turn but the world's first, which is what makes `broadcast_latest`'s
         // "full frame if there is one, else the delta" a statement of the publication rule rather
         // than a preference — and what stops a later turn re-broadcasting a stale full snapshot.
@@ -966,8 +942,6 @@ impl SnapshotHistory {
 
         self.last_snapshot = Some(entry.snapshot.clone());
         self.last_delta = Some(entry.delta.clone());
-        self.encoded_snapshot = Some(entry.encoded_snapshot.clone());
-        self.encoded_delta = Some(entry.encoded_delta.clone());
         self.encoded_snapshot_flat = entry.encoded_snapshot_flat.clone();
         // Defensive: a delta encoded against the baseline we just rewound past describes a
         // transition that no longer happened, and it names a `base_frame_seq` the client can no
@@ -1028,7 +1002,7 @@ impl SnapshotHistory {
         encoded
     }
 
-    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<EncodedBuffers> {
+    pub fn update_axis_bias(&mut self, bias: AxisBiasState) -> Option<Arc<Vec<u8>>> {
         if self.axis_bias == bias {
             return None;
         }
@@ -1112,90 +1086,44 @@ impl SnapshotHistory {
         delta.header.frame_seq = frame_seq;
         delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
-        let encoded_delta =
-            Arc::new(encode_delta(delta_arc.as_ref()).expect("axis bias delta encoding failed"));
-        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
-        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
-        // per-turn encode this arc removed (see `StoredSnapshot::new`).
+        // Built for the caller to broadcast immediately and deliberately NOT stored: a ring entry
+        // holding a delta nobody re-reads is the per-turn encode this arc removed, re-added by the
+        // side door (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
-        self.encoded_delta = Some(encoded_delta.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.axis_bias = bias.clone();
             let snapshot = snapshot.finalize();
-            let encoded_snapshot =
-                Arc::new(encode_snapshot(&snapshot).expect("axis bias snapshot encoding failed"));
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
-            self.encoded_snapshot = Some(encoded_snapshot.clone());
             self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc;
-                back.encoded_snapshot = encoded_snapshot;
                 back.encoded_snapshot_flat = Some(encoded_snapshot_flat);
             }
         }
 
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
-            back.encoded_delta = encoded_delta.clone();
         }
 
-        Some((encoded_delta, encoded_delta_flat))
+        Some(encoded_delta_flat)
     }
 
-    pub fn update_command_events(
-        &mut self,
-        events: Vec<CommandEventState>,
-    ) -> Option<EncodedBuffers> {
-        if self.command_events == events {
-            return None;
-        }
-
-        let last_snapshot = self.last_snapshot.as_ref()?;
-
-        self.command_events = events.clone();
-
-        let mut snapshot = (**last_snapshot).clone();
-        snapshot.command_events = events.clone();
-
-        let snapshot_arc = Arc::new(snapshot);
-        let encoded_snapshot = Arc::new(
-            encode_snapshot(snapshot_arc.as_ref()).expect("command event snapshot encoding failed"),
-        );
-        let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(snapshot_arc.as_ref()));
-
-        self.last_snapshot = Some(snapshot_arc.clone());
-        self.encoded_snapshot = Some(encoded_snapshot.clone());
-        self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
-        if let Some(back) = self.history.back_mut() {
-            back.snapshot = snapshot_arc.clone();
-            back.encoded_snapshot = encoded_snapshot.clone();
-            back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
-        }
-
-        Some((encoded_snapshot, encoded_snapshot_flat))
-    }
-
-    /// Refresh the latest broadcast snapshot from a **freshly-captured** `WorldSnapshot` of the
-    /// current world, **in place** — mirroring [`Self::update_command_events`] but replacing the
-    /// whole world state, not just the feed. Used by the post-command re-capture path so a
-    /// world-mutating command (expedition launch, `move_band`, `assign_labor`, …) is reflected in
-    /// the client's snapshot immediately, without waiting for the next turn.
+    /// Publish an auxiliary **influencer** frame: a delta carrying only the roster change, plus a
+    /// refresh of `last_snapshot` and the back ring entry so a rollback to this tick restores it.
     ///
-    /// Like `update_command_events` this updates `last_snapshot` + the current back ring entry (so a
-    /// rollback to this tick restores the post-command world) and re-encodes for broadcast, but it
-    /// **does not** push a new ring entry or touch the delta baselines (`self.tiles`/`populations`/…)
-    /// — so the rollback ring stays one-entry-per-tick and the next turn's delta still carries these
-    /// structural changes (a redundant but idempotent re-send on top of this full snapshot). Never
-    /// advances the turn or the `TurnQueue`.
+    /// Like its siblings ([`Self::update_axis_bias`], [`Self::update_corruption`]) it does **not**
+    /// push a new ring entry or touch the delta baselines (`self.tiles`/`populations`/…), so the
+    /// ring stays one-entry-per-tick and the next turn's delta re-sends the change harmlessly.
+    /// Never advances the turn or the `TurnQueue`.
     pub fn update_influencers(
         &mut self,
         states: Vec<InfluentialIndividualState>,
-    ) -> Option<EncodedBuffers> {
+    ) -> Option<Arc<Vec<u8>>> {
         let mut index = HashMap::with_capacity(states.len());
         for state in &states {
             index.insert(state.id, state.clone());
@@ -1286,30 +1214,23 @@ impl SnapshotHistory {
         delta.header.frame_seq = frame_seq;
         delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
-        let encoded_delta =
-            Arc::new(encode_delta(delta_arc.as_ref()).expect("influencer delta encoding failed"));
-        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
-        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
-        // per-turn encode this arc removed (see `StoredSnapshot::new`).
+        // Built for the caller to broadcast immediately and deliberately NOT stored: a ring entry
+        // holding a delta nobody re-reads is the per-turn encode this arc removed, re-added by the
+        // side door (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
-        self.encoded_delta = Some(encoded_delta.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.influencers = states.clone();
             snapshot.header.influencer_count = states.len() as u32;
             let snapshot = snapshot.finalize();
-            let encoded_snapshot =
-                Arc::new(encode_snapshot(&snapshot).expect("influencer snapshot encoding failed"));
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
-            self.encoded_snapshot = Some(encoded_snapshot.clone());
             self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
-                back.encoded_snapshot = encoded_snapshot.clone();
                 back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
@@ -1318,13 +1239,12 @@ impl SnapshotHistory {
 
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
-            back.encoded_delta = encoded_delta.clone();
         }
 
-        Some((encoded_delta, encoded_delta_flat))
+        Some(encoded_delta_flat)
     }
 
-    pub fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<EncodedBuffers> {
+    pub fn update_corruption(&mut self, ledger: CorruptionLedger) -> Option<Arc<Vec<u8>>> {
         if self.corruption == ledger {
             return None;
         }
@@ -1408,39 +1328,31 @@ impl SnapshotHistory {
         delta.header.frame_seq = frame_seq;
         delta.header.base_frame_seq = base_frame_seq;
         let delta_arc = Arc::new(delta);
-        let encoded_delta =
-            Arc::new(encode_delta(delta_arc.as_ref()).expect("corruption delta encoding failed"));
-        // Built for the caller to broadcast immediately and deliberately NOT stored: the flat delta
-        // has no reader on the turn path, so keeping one on `SnapshotHistory` only re-added the
-        // per-turn encode this arc removed (see `StoredSnapshot::new`).
+        // Built for the caller to broadcast immediately and deliberately NOT stored: a ring entry
+        // holding a delta nobody re-reads is the per-turn encode this arc removed, re-added by the
+        // side door (see `StoredSnapshot::new`).
         let encoded_delta_flat = Arc::new(encode_delta_flatbuffer(delta_arc.as_ref()));
         self.last_delta = Some(delta_arc.clone());
-        self.encoded_delta = Some(encoded_delta.clone());
 
         if let Some(previous_snapshot) = self.last_snapshot.take() {
             let mut snapshot = (*previous_snapshot).clone();
             snapshot.corruption = ledger.clone();
             let snapshot = snapshot.finalize();
-            let encoded_snapshot =
-                Arc::new(encode_snapshot(&snapshot).expect("corruption snapshot encoding failed"));
             let encoded_snapshot_flat = Arc::new(encode_snapshot_flatbuffer(&snapshot));
             let snapshot_arc = Arc::new(snapshot);
             self.last_snapshot = Some(snapshot_arc.clone());
-            self.encoded_snapshot = Some(encoded_snapshot.clone());
             self.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             if let Some(back) = self.history.back_mut() {
                 back.snapshot = snapshot_arc.clone();
-                back.encoded_snapshot = encoded_snapshot.clone();
                 back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
 
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
-            back.encoded_delta = encoded_delta.clone();
         }
 
-        Some((encoded_delta, encoded_delta_flat))
+        Some(encoded_delta_flat)
     }
 
     fn prune(&mut self) {
@@ -2238,8 +2150,8 @@ pub struct SnapshotCaptureMode {
 /// push, no turn/`TurnQueue` advance. Runs [`capture_snapshot`] with
 /// `SnapshotCaptureMode::refresh_in_place` toggled on, so a mid-turn command's world mutation
 /// (expedition launch, `move_band`, `assign_labor`, …) is reflected in the client's snapshot
-/// immediately. The server broadcasts `SnapshotHistory::encoded_snapshot` / `encoded_snapshot_flat`
-/// afterward. Kept in this module so `capture_snapshot`'s private `SystemParam` types stay internal.
+/// immediately. The server broadcasts the result afterward (`broadcast_latest`, off
+/// `SnapshotHistory::encoded_snapshot_flat` / `encoded_delta_flat`). Kept in this module so `capture_snapshot`'s private `SystemParam` types stay internal.
 pub fn recapture_snapshot_in_place(world: &mut World) {
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = true;
     world.run_system_once(capture_snapshot);

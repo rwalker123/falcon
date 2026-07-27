@@ -146,10 +146,6 @@ fn gds_snapshot_stream_carries_resolved_records() {
         .expect("Great Discovery snapshot should be captured");
 
     assert!(
-        !stored.encoded_snapshot.is_empty(),
-        "binary snapshot stream should not be empty"
-    );
-    assert!(
         !stored.encode_flat().is_empty(),
         "flatbuffer snapshot stream should not be empty"
     );

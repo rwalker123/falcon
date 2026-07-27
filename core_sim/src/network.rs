@@ -73,21 +73,14 @@ pub fn start_snapshot_server(listener: TcpListener) -> SnapshotServer {
     SnapshotServer { sender }
 }
 
-/// Publish the latest turn on both sockets.
+/// Publish the latest turn on the flat socket — the only snapshot socket (#388).
 ///
-/// The bincode socket is unchanged (it has always carried the delta). The **flat socket carries a
-/// full snapshot only for a world's first publication** — the baseline a client applies deltas to —
-/// and the flat delta for every turn after it. `encoded_snapshot_flat` is `Some` on exactly those
-/// frames (`SnapshotHistory::update`, and `refresh_latest` for a mid-tick recapture), so the
-/// branch below states the publication rule rather than choosing between options.
-pub fn broadcast_latest(
-    bincode_server: &SnapshotServer,
-    flat_server: &SnapshotServer,
-    history: &SnapshotHistory,
-) {
-    if let Some(bytes) = history.encoded_delta.as_ref() {
-        bincode_server.broadcast(bytes.as_ref());
-    }
+/// It **carries a full snapshot only for a world's first publication** — the baseline a client
+/// applies deltas to — and the flat delta for every turn after it. `encoded_snapshot_flat` is
+/// `Some` on exactly those frames (`SnapshotHistory::update`, and `refresh_latest` for a mid-tick
+/// recapture), so the branch below states the publication rule rather than choosing between
+/// options.
+pub fn broadcast_latest(flat_server: &SnapshotServer, history: &SnapshotHistory) {
     if let Some(bytes) = history.encoded_snapshot_flat.as_ref() {
         flat_server.broadcast(bytes.as_ref());
     } else if let Some(bytes) = history.encoded_delta_flat.as_ref() {
