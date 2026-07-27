@@ -458,3 +458,43 @@ fn checkpoint_replay_is_bit_exact() {
         );
     }
 }
+
+/// The two rings agree: the checkpoint filed under a tick rebuilds the world the snapshot filed
+/// under that same tick was published from.
+///
+/// This is the assumption `handle_rollback` rests on. It restores the world from
+/// `CheckpointHistory` and re-baselines the client from `SnapshotHistory` — two different rings,
+/// read at one tick — so if `record_checkpoint` ever filed under a different tick than
+/// `capture_snapshot`, a rollback would silently show the client a world the simulation is not in.
+/// `checkpoint_restore_is_lossless` proves a checkpoint round-trips; this proves the ring hands
+/// back the right one.
+#[test]
+fn the_rollback_ring_and_the_snapshot_ring_agree_tick_for_tick() {
+    use core_sim::sim_state::CheckpointHistory;
+
+    let mut app = new_app();
+    for _ in 0..CHECKPOINT_TICKS {
+        app.update();
+    }
+    let target_tick = latest_snapshot(&app).header.tick;
+    let published = latest_snapshot(&app);
+
+    // March on, so the restore has a genuinely different world to undo.
+    for _ in 0..REPLAY_TICKS {
+        app.update();
+    }
+
+    let state = app
+        .world
+        .resource::<CheckpointHistory>()
+        .entry(target_tick)
+        .expect("the rollback ring holds a checkpoint for every recent tick");
+    restore_sim_state(&mut app.world, state.as_ref());
+    recapture_snapshot_in_place(&mut app.world);
+
+    assert_snapshots_match(
+        "the checkpoint ring's entry did not rebuild the world its snapshot was published from",
+        &published,
+        &latest_snapshot(&app),
+    );
+}

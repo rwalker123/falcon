@@ -591,3 +591,84 @@ fn owned_entities(world: &mut World) -> Vec<Entity> {
     owned.extend(settlements.iter(world));
     owned
 }
+
+/// The rollback ring: one [`SimState`] per turn, newest last.
+///
+/// **Separate from `SnapshotHistory` on purpose.** That ring lives on the *publisher* thread,
+/// behind a mutex, and every entry reaches it across a channel. A `SimState` is a full clone of the
+/// world and is never published, so putting it in a ring entry would ship the largest object in the
+/// system across that channel every turn for a consumer that never reads it — re-adding exactly the
+/// per-turn publisher cost that moving publication off the turn thread removed. This ring stays on
+/// the turn thread, where both its writer and its only reader already are.
+///
+/// **Bounded by `SimulationConfig::snapshot_history_limit`**, the same knob that bounds the
+/// snapshot ring, so the two stay the same depth and rollback to any tick the client can name finds
+/// both halves. One entry is a full world clone — every tile, band, link and registry — so at the
+/// default depth of 256 this is the largest resident allocation in the process, on the order of a
+/// megabyte per entry on an 80×52 map. Sparse checkpointing is what makes that cheap, and this
+/// ring's `record`-per-turn shape is deliberately the thing a scheduling change can thin out.
+#[derive(Resource, Debug, Default)]
+pub struct CheckpointHistory {
+    entries: std::collections::VecDeque<(u64, std::sync::Arc<SimState>)>,
+    capacity: usize,
+}
+
+impl CheckpointHistory {
+    /// Match the ring depth to config. Called each turn beside the capture, so a config reload
+    /// takes effect without a restart.
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity.max(1);
+        self.trim();
+    }
+
+    /// Record this turn's checkpoint.
+    pub fn record(&mut self, tick: u64, state: SimState) {
+        self.entries.push_back((tick, std::sync::Arc::new(state)));
+        self.trim();
+    }
+
+    /// The checkpoint taken at `tick`, if it is still in the ring.
+    pub fn entry(&self, tick: u64) -> Option<std::sync::Arc<SimState>> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|(entry_tick, _)| *entry_tick == tick)
+            .map(|(_, state)| state.clone())
+    }
+
+    /// Drop every checkpoint after `tick` — a rollback invalidates the futures it just discarded.
+    pub fn truncate_after(&mut self, tick: u64) {
+        self.entries.retain(|(entry_tick, _)| *entry_tick <= tick);
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn trim(&mut self) {
+        while self.entries.len() > self.capacity.max(1) {
+            self.entries.pop_front();
+        }
+    }
+}
+
+/// Record this turn's checkpoint into [`CheckpointHistory`].
+///
+/// Exclusive because [`capture_sim_state`] reads the whole world, which is also what keeps it a
+/// pure function of the world rather than of what ran before it.
+pub fn record_checkpoint(world: &mut World) {
+    let capacity = world
+        .get_resource::<crate::resources::SimulationConfig>()
+        .map(|config| config.snapshot_history_limit)
+        .unwrap_or(1)
+        .max(1);
+    let tick = world.resource::<SimulationTick>().0;
+    let state = capture_sim_state(world);
+    let mut history = world.resource_mut::<CheckpointHistory>();
+    history.set_capacity(capacity);
+    history.record(tick, state);
+}

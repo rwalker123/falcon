@@ -22,6 +22,7 @@ use core_sim::grid_utils::hex_distance_wrapped;
 use core_sim::metrics::SimulationMetrics;
 use core_sim::network::{start_snapshot_server, SnapshotServer};
 use core_sim::port_base_override;
+use core_sim::sim_state::{restore_sim_state, CheckpointHistory};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
@@ -34,23 +35,22 @@ use core_sim::{
     WellbeingConfigHandle, NO_FORAGE_SEASON,
 };
 use core_sim::{
-    build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place,
-    restore_world_from_snapshot, run_turn, scalar_from_f32, AgentAssignment, BandIdAllocator,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CounterIntelBudgets,
-    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
-    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
-    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EcologyPhase, EspionageAgentHandle,
-    EspionageCatalog, EspionageMissionId, EspionageMissionKind, EspionageMissionState,
-    EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders, FactionRegistry,
-    FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry, FrameSink,
-    GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts, InfluentialRoster,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place, run_turn, scalar_from_f32,
+    AgentAssignment, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
+    CorruptionLedgers, CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
+    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
+    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
+    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
+    EcologyPhase, EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry,
+    FrameSink, GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts,
+    InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
+    QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, SupportChannel, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
     TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
@@ -5660,7 +5660,25 @@ fn apply_orders(submissions: &[(FactionId, FactionOrders)]) {
     }
 }
 
+/// Roll the world back to `tick`.
+///
+/// **Two rings, two jobs.** The world is rebuilt from [`CheckpointHistory`]'s `SimState`, which is
+/// the save state and carries everything a turn reads. The *client* is re-baselined from
+/// `SnapshotHistory`'s entry for the same tick, which is the view. They agree by construction —
+/// `checkpoint_restore_is_lossless` asserts that recapturing a restored world reproduces exactly
+/// the snapshot that was published at that tick — so publishing the stored view after restoring
+/// the stored state cannot show the client a world the simulation is not in.
 fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat: &SnapshotServer) {
+    let checkpoint = app.world.resource::<CheckpointHistory>().entry(tick);
+    let Some(checkpoint) = checkpoint else {
+        warn!(
+            target: "shadow_scale::server",
+            tick,
+            "rollback.failed=missing_checkpoint"
+        );
+        return;
+    };
+
     let entry: Option<StoredSnapshot> = {
         let history = app.world.resource::<SnapshotHistory>();
         history.entry(tick)
@@ -5675,11 +5693,12 @@ fn handle_rollback(app: &mut bevy::prelude::App, tick: u64, snapshot_server_flat
         return;
     };
 
-    restore_world_from_snapshot(&mut app.world, entry.snapshot.as_ref());
-    {
-        let mut tick_res = app.world.resource_mut::<SimulationTick>();
-        tick_res.0 = tick;
-    }
+    restore_sim_state(&mut app.world, checkpoint.as_ref());
+    // Everything after `tick` is a future this rollback just discarded; leaving those checkpoints
+    // in the ring would let a later rollback jump *forward* into a world that no longer happened.
+    app.world
+        .resource_mut::<CheckpointHistory>()
+        .truncate_after(tick);
     // Rollback re-baselines the client, so it publishes a FULL frame — encoded on demand (under
     // delta streaming a ring entry almost never carries one) and stamped with a FRESH publication
     // sequence number, so the client's applied seq matches what the next delta names as its base.

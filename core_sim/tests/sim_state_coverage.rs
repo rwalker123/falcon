@@ -134,7 +134,11 @@ const WORLD_STATIC_RESOURCES: [&str; 16] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 8] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 9] = [
+    (
+        "CheckpointHistory",
+        "the rollback ring itself: a checkpoint of checkpoints is not simulation state",
+    ),
     (
         "SnapshotHistory",
         "the publication ring itself; restoring it into a restore would be circular",
