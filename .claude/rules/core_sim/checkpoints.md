@@ -239,6 +239,18 @@ world-static, infrastructure, or config. Adding a `Resource` or a `Component` fa
 someone decides which it is. It asserts the reverse too, so a table entry naming a type that no
 longer exists fails rather than silently excusing nothing.
 
+**Its scope is the library's resources, which is narrower than "omission" makes it sound.** The app
+it walks is `build_headless_app`, so anything the `server` **binary** inserts is invisible to it —
+today `ResolvedPortBase`, `ConfigWatcherRegistry`, `CommandSenderResource` and `CommandLog`. Naming
+a server-side resource in one of the tables makes the test fail as *stale*, not pass as classified.
+That boundary is real and worth knowing before trusting the guard as a general omission check.
+
+It matters less than it looks for the one that carries rollback. The property `CommandLog` needs is
+*every command is logged*, and that is guaranteed **structurally, by the single uniform dispatch
+seam**: a new command variant is logged whether or not anyone remembers it exists. A coverage table
+would be the weaker guarantee — it catches a forgotten *type*, where the seam catches a forgotten
+*case*.
+
 The component half is not optional. `PowerNode.base_generation` / `.base_demand` is component-level
 omission that had already happened — restore set `base = current`, so the next turn re-applied
 modifiers to an already-modified base — and a resource-only guard would have missed the very bug

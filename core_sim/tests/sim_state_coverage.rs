@@ -5,6 +5,12 @@
 //! and that is precisely how `core_sim` arrived at thirteen resources with no representation in
 //! any checkpoint: nothing failed when they were left out, because nothing was looking.
 //!
+//! **Scope: the library's resources and components.** The app walked is `build_headless_app`, so
+//! anything the `server` binary inserts — `ResolvedPortBase`, `ConfigWatcherRegistry`,
+//! `CommandSenderResource`, `CommandLog` — is invisible here, and naming one below fails the stale
+//! check rather than classifying it. Those are covered by the seams that produce them, not by a
+//! table; see `.claude/rules/core_sim/checkpoints.md`.
+//!
 //! So the enumeration side is taken from a **built app at runtime** — `world.storages().resources`
 //! and `world.components()` — never from a hand-maintained list or a grep. Adding a `Resource` or a
 //! `Component` puts a name in front of this test that is in none of the tables below, and the test

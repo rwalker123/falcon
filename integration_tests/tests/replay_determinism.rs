@@ -591,3 +591,43 @@ fn rolling_back_to_a_non_checkpoint_tick_reproduces_that_tick() {
         &latest_snapshot(&app),
     );
 }
+
+/// **A recapture during replay publishes nothing.**
+///
+/// `capture_snapshot` is gated on `not_replaying` in the turn schedule, but
+/// `recapture_snapshot_in_place` reaches it through `World::run_system_once`, which invokes the
+/// system directly — **run conditions are a schedule feature and do not apply**. So the schedule's
+/// gate protects the turn path and nothing else, and any caller that recaptures mid-replay would
+/// broadcast a frame the client must not see: a rollback is one publication.
+///
+/// The gate therefore lives *inside* `recapture_snapshot_in_place`, covering every caller rather
+/// than the call sites anyone happened to think of. This test is what says the bypass is real
+/// rather than theoretical — it fails if the check is removed.
+#[test]
+fn a_recapture_while_replaying_publishes_nothing() {
+    use core_sim::sim_state::Replaying;
+
+    let mut app = new_app();
+    for _ in 0..CHECKPOINT_TICKS {
+        app.update();
+    }
+    let before = latest_snapshot(&app).header.frame_seq;
+
+    app.world.resource_mut::<Replaying>().0 = true;
+    recapture_snapshot_in_place(&mut app.world);
+    let during = latest_snapshot(&app).header.frame_seq;
+    app.world.resource_mut::<Replaying>().0 = false;
+
+    assert_eq!(
+        before, during,
+        "a recapture published a frame while replaying — the schedule's `not_replaying` gate does \
+         not cover `run_system_once`, so the check has to be inside the function"
+    );
+
+    // ...and still works normally once replay is over, or the gate would be a mute button.
+    recapture_snapshot_in_place(&mut app.world);
+    assert!(
+        latest_snapshot(&app).header.frame_seq > during,
+        "recapture stopped publishing outside replay"
+    );
+}

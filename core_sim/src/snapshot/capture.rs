@@ -2486,6 +2486,20 @@ pub struct SnapshotCaptureMode {
 /// immediately. The server broadcasts the result afterward (`broadcast_latest`, off
 /// `SnapshotHistory::encoded_snapshot_flat` / `encoded_delta_flat`). Kept in this module so `capture_snapshot`'s private `SystemParam` types stay internal.
 pub fn recapture_snapshot_in_place(world: &mut World) {
+    // **Nothing publishes while a rollback is replaying.** `capture_snapshot` is gated on
+    // `not_replaying` in the turn schedule, but this path reaches it through `run_system_once`,
+    // which invokes the system directly — run conditions are a schedule feature and do not apply.
+    // So the schedule's gate covers the turn path and nothing else.
+    //
+    // The check is *here*, not at the call sites, for the same reason the command seam is uniform:
+    // a curated list of "callers that must not publish during replay" is a thing to forget, and any
+    // caller reaching this during replay is wrong by definition — a rollback is one publication.
+    if world
+        .get_resource::<crate::sim_state::Replaying>()
+        .is_some_and(|replaying| replaying.0)
+    {
+        return;
+    }
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = true;
     world.run_system_once(capture_snapshot);
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
