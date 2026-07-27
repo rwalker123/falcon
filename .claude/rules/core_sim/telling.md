@@ -432,7 +432,7 @@ It round-trips through the rollback snapshot as `WorldSnapshot.beat_ledger`
 (`sim_schema::BeatLedgerState`) on the `HerdRegistry` pattern: sim-side serde only, **not** on the
 FlatBuffers client stream (beats reach the client as `CommandEvent`s).
 
-> **Capture AND restore.** `restore_world_from_snapshot` rebuilds the resource via
+> **Capture AND restore.** `restore_sim_state` rebuilds the resource via
 > `BeatLedger::from_state`. This is deliberately **not** the `SedentarizationScore` shape, which is
 > captured but never restored (`capture.rs` has no rebuild for it — a latent bug; do not copy it).
 > A ledger that was only captured would leave a beat marked fired after a rollback past it, so it

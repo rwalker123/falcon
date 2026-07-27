@@ -59,7 +59,7 @@ deterministic.
 
 **Registry + persistence.** `DiscoveredSites` resource: per-faction `Vec<DiscoveredSiteRecord {
 pos, site_id }>` + a `seen` set backing an O(1) `contains(faction, pos)`. **Snapshot-persisted** —
-`restore_world_from_snapshot` rebuilds it from the snapshot (like the fog reset) so a rollback
+`restore_sim_state` rebuilds it from the checkpoint so a rollback
 neither un-discovers a site nor retains discoveries made after the restore point. (The `SiteTag`s
 themselves are worldgen tile tags and, like `FoodModuleTag`, are **not** rebuilt on rollback — the
 registry is the durable record.)
@@ -311,7 +311,7 @@ mission:
 `party × per_worker_carry`, `0` otherwise) and persistence-only `homeBandEntity` /
 `expeditionAnnounced` / `pendingRevealX` / `pendingRevealY`
 (`snapshot.fbs`, `sim_schema`). Capture fills them from `Option<&Expedition>`;
-`restore_world_from_snapshot` re-attaches `Expedition` for a rolled-back in-flight party (resolving
+`restore_sim_state` re-attaches `Expedition` for a rolled-back in-flight party (resolving
 `home_band` from `homeBandEntity` via the cohort entity-remap; missing home band → log + skip) and
 re-attaches `ResidentBand` to every non-expedition cohort so the `With<ResidentBand>` systems keep
 running after a rollback. `PopulationCohortState` also echoes `maxExpeditionPartySize` per cohort

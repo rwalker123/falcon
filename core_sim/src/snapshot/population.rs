@@ -8,53 +8,6 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
     }
 }
 
-pub(crate) fn pending_migration_from_state(state: &PendingMigrationState) -> PendingMigration {
-    PendingMigration {
-        destination: FactionId(state.destination),
-        eta: state.eta,
-        fragments: fragments_from_contract(&state.fragments),
-    }
-}
-
-/// Rebuild a [`LaborAllocation`] from its snapshot state (rollback restores the exact allocation,
-/// as `harvest_task`/`scout_task` did for the retired single-task model). Unknown role strings are
-/// skipped defensively; a hunt with an unparseable policy falls back to `FollowPolicy::Sustain`
-/// (the assignment is kept, not dropped — we serialize valid policy strings, so this only guards
-/// against a corrupt/forward-incompatible snapshot).
-pub(crate) fn labor_allocation_from_state(states: &[LaborAssignmentState]) -> LaborAllocation {
-    let assignments = states
-        .iter()
-        .filter_map(|state| {
-            let target = match state.kind.as_str() {
-                "forage" => LaborTarget::Forage {
-                    tile: UVec2::new(state.target_x, state.target_y),
-                    policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
-                    // `""` = "pick the tile's dominant legal plant" — the wire's `Option::None`,
-                    // the same absent-means-none convention `fauna_id` uses on this row.
-                    species: Some(state.species.clone()).filter(|key| !key.is_empty()),
-                },
-                "hunt" => LaborTarget::Hunt {
-                    fauna_id: state.fauna_id.clone(),
-                    policy: FollowPolicy::from_str(&state.policy).unwrap_or_default(),
-                },
-                "scout" => LaborTarget::Scout,
-                "warrior" => LaborTarget::Warrior,
-                _ => return None,
-            };
-            Some(LaborAssignment {
-                target,
-                workers: state.workers,
-            })
-        })
-        .collect();
-    // `last_yields` is derived telemetry, not persisted — it stays empty on rehydrate and is
-    // rebuilt by the next `advance_labor_allocation`.
-    LaborAllocation {
-        assignments,
-        ..Default::default()
-    }
-}
-
 /// Serialize one labor assignment for the snapshot (client readout + rollback persistence). The
 /// `yields` carry this turn's actual/sustainable food income for the source (per-source breakdown;
 /// derived, not part of the rollback-persisted intent — defaulted to `0` when telemetry is absent,
@@ -606,7 +559,10 @@ pub(crate) fn snapshot_demographics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::FertilityFactors;
+    // Test-only since the restore path that shared them was deleted.
+    use crate::components::{
+        ExpeditionPhase, FertilityFactors, LocalStore, MoraleCause, MoraleContributions,
+    };
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
 
     /// Enough larder that the runway is decided by the flows, not by an empty cupboard.

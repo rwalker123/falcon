@@ -111,7 +111,12 @@ Measured RSS, release, 300 turns so the rings are full:
 | 80×52 | 1.68 GB | 3.18 GB | **1.68 GB** |
 
 Both rings are **linear in tile count** (3.5× for 4× the tiles), so the exponent, not the current
-figure, is what governs: a 160×104 map is 4× the tiles again.
+figure, is what governs. Measured on the shipped configuration: **0.18 GB at 80×52 and 0.61 GB at
+160×104** — 3.4× for 4× the tiles, the same slope.
+
+The pre-fix figure at 160×104 is not in this table because it could not be run: two 256-deep rings
+of whole worlds at that size exceeded available memory, which is a more useful statement about the
+old shape than any ratio would have been.
 
 The snapshot ring collapsed to a single entry because rollback was its only historical reader, and
 that read was redundant — recapturing the client frame from the restored world yields the same

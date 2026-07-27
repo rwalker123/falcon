@@ -77,7 +77,7 @@ re-enable fog one delta after it was turned off) and renders what it is told.
 
 Toggled by the `set_fog <on|off>` command (alias `fog`), which mutates the resource; the server's
 post-command `recapture_and_broadcast` makes it visible on the same round trip. `SimulationConfig` is
-deliberately **not** rollback state — `restore_world_from_snapshot` does not re-insert it — so the
+deliberately **not** rollback state — `restore_sim_state` does not re-insert it — so the
 setting survives a rewind, which is correct for a display preference.
 
 Per-faction visibility tracking with three states: `Unexplored` (never seen), `Discovered` (previously seen), `Active` (currently visible).

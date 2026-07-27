@@ -1300,6 +1300,26 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
+    /// The shipped `checkpoint_interval` parses, and is the value its tradeoff was measured for.
+    ///
+    /// Cheap on purpose. The oracles exercise the replay-forward path at a short interval because a
+    /// full run at 16 covers the same code more slowly; what they cannot notice is the *default*
+    /// silently moving, which changes the memory/latency point the rule file quotes without
+    /// changing any behaviour a test asserts.
+    #[test]
+    fn the_shipped_checkpoint_interval_is_the_one_that_was_measured() {
+        let config = SimulationConfig::builtin();
+        assert_eq!(
+            config.checkpoint_interval, 16,
+            "the default checkpoint interval moved; re-measure the memory/latency table in \
+             `.claude/rules/core_sim/checkpoints.md` before changing this"
+        );
+        assert!(
+            config.checkpoint_interval >= 1,
+            "an interval below 1 would checkpoint never"
+        );
+    }
+
     #[test]
     fn apply_port_base_overrides_ports_and_preserves_hosts() {
         let mut config = SimulationConfig::builtin();

@@ -290,8 +290,8 @@ pub use resources::{
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
-    command_events_to_state, recapture_snapshot_in_place, restore_world_from_snapshot, FrameSink,
-    SnapshotHistory, StoredSnapshot,
+    command_events_to_state, recapture_snapshot_in_place, FrameSink, SnapshotHistory,
+    StoredSnapshot,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{

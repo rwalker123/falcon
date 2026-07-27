@@ -12,9 +12,10 @@
 
 mod common;
 
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, HerdRegistry, SimulationConfig,
-    SnapshotHistory, ViewerFaction, VisibilityLedger,
+    build_headless_app, HerdRegistry, SimulationConfig, SnapshotHistory, ViewerFaction,
+    VisibilityLedger,
 };
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 
@@ -186,16 +187,10 @@ fn disabling_fog_survives_a_rollback() {
     app.update();
     app.update();
 
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history
-            .last_snapshot()
-            .expect("a turn was captured")
-            .clone()
-    };
+    let checkpoint = capture_sim_state(&app.world);
 
     app.world.resource_mut::<SimulationConfig>().fog_enabled = false;
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     assert!(
         !app.world.resource::<SimulationConfig>().fog_enabled,

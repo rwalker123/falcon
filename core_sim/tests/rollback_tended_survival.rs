@@ -14,16 +14,15 @@
 //! throwing away the whole rebuild plus every ExtendPen ring).
 //!
 //! This goes through a REAL snapshot round-trip — a live world captured by the shipped capture path,
-//! restored by `restore_world_from_snapshot`, then advanced exactly one turn — not a hand-built
+//! restored by `restore_sim_state`, then advanced exactly one turn — not a hand-built
 //! rollback state. The fix is a one-turn grace: seed both flags `true` in the restore constructors.
 
 use bevy::math::UVec2;
 
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    available_workers, build_headless_app, recapture_snapshot_in_place,
-    restore_world_from_snapshot, run_turn, FactionId, FollowPolicy, ForageRegistry, HerdRegistry,
-    LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
-    SnapshotHistory,
+    available_workers, build_headless_app, run_turn, FactionId, FollowPolicy, ForageRegistry,
+    HerdRegistry, LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
 };
 
 /// Build a headless world (one `update()` runs the whole Startup worldgen chain — including
@@ -129,15 +128,8 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
     }
 
     // --- Capture a REAL published snapshot of this world, then restore it. ----------------------
-    recapture_snapshot_in_place(&mut app.world);
-    let snapshot = app
-        .world
-        .resource::<SnapshotHistory>()
-        .last_snapshot()
-        .map(|s| (*s).clone())
-        .expect("a snapshot was captured");
-
-    restore_world_from_snapshot(&mut app.world, &snapshot);
+    let checkpoint = capture_sim_state(&app.world);
+    restore_sim_state(&mut app.world, &checkpoint);
 
     // The durable state survives the round-trip (sanity — the improvement is intact right after
     // restore, so any loss below is the post-restore turn, not the capture).

@@ -1,9 +1,8 @@
 mod common;
 
 use bevy::math::UVec2;
-use core_sim::{
-    build_headless_app, restore_world_from_snapshot, FactionId, HerdRegistry, SnapshotHistory,
-};
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+use core_sim::{build_headless_app, FactionId, HerdRegistry};
 
 /// Regression: the authoritative `HerdRegistry` (biomass / position / movement / domestication)
 /// must round-trip through the rollback snapshot. Before the `HerdState` capture/restore was
@@ -18,13 +17,10 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     app.update();
 
     // Snapshot A (pre-mutation), plus the live herd's captured identity/state.
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        let stored = history.latest_entry().expect("snapshot captured");
-        stored.snapshot.clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     assert!(
-        !snapshot.herd_registry.is_empty(),
+        !checkpoint.herds.entries().is_empty(),
         "capture must persist the authoritative herd registry, not just display telemetry"
     );
 
@@ -62,7 +58,7 @@ fn herd_registry_biomass_and_position_rewind_on_rollback() {
     assert_ne!(mutated_pos, pos0, "mutation must actually move the herd");
 
     // Roll back to snapshot A.
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     // The authoritative registry is rewound to the captured values.
     let registry = app.world.resource::<HerdRegistry>();
@@ -102,14 +98,8 @@ fn under_herded_edge_state_rewinds_on_rollback() {
 
     // Turn 2: it sheds → the edge latches → captured in this turn's snapshot.
     app.update();
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history
-            .latest_entry()
-            .expect("snapshot captured")
-            .snapshot
-            .clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     assert!(
         app.world
             .resource::<HerdRegistry>()
@@ -131,7 +121,7 @@ fn under_herded_edge_state_rewinds_on_rollback() {
     }
 
     // Roll back: the persisted edge-gate rewinds to true.
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
     assert!(
         app.world
             .resource::<HerdRegistry>()

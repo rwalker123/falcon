@@ -1,8 +1,7 @@
 mod common;
 
-use core_sim::{
-    build_headless_app, restore_world_from_snapshot, FactionId, ForageRegistry, SnapshotHistory,
-};
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+use core_sim::{build_headless_app, FactionId, ForageRegistry};
 
 /// Regression: the authoritative `ForageRegistry` (per-patch biomass / ecology phase) must
 /// round-trip through the rollback snapshot, mirroring the herd-registry rewind. A mutate-then-
@@ -15,13 +14,10 @@ fn forage_registry_biomass_rewinds_on_rollback() {
     // Turn 1: worldgen seeds forage patches on every `FoodModuleTag` tile and captures the ring.
     app.update();
 
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        let stored = history.latest_entry().expect("snapshot captured");
-        stored.snapshot.clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     assert!(
-        !snapshot.forage_registry.is_empty(),
+        !checkpoint.forage.patches.is_empty(),
         "capture must persist the authoritative forage registry"
     );
 
@@ -45,7 +41,7 @@ fn forage_registry_biomass_rewinds_on_rollback() {
     }
 
     // Roll back to the captured snapshot.
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(tile).expect("patch present after restore");
@@ -68,14 +64,8 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
 
     // Turn 1: seed patches (all uncultivated) and capture the ring.
     app.update();
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history
-            .latest_entry()
-            .expect("snapshot captured")
-            .snapshot
-            .clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
 
     // Grab a live patch's captured (uncultivated) cultivation state.
     let (tile, progress0, owner0) = {
@@ -100,7 +90,7 @@ fn forage_registry_cultivation_rewinds_on_rollback() {
     }
 
     // Roll back to the captured (uncultivated) snapshot.
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     let registry = app.world.resource::<ForageRegistry>();
     let patch = registry.patch(tile).expect("patch present after restore");

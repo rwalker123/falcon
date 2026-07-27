@@ -1,13 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use bevy::{
     ecs::system::{RunSystemOnce, SystemParam},
     prelude::*,
 };
-use log::warn;
 use sim_runtime::{
     encode_delta_flatbuffer, encode_snapshot_flatbuffer, AccessibleStockpileEntryState,
     AccessibleStockpileState, AxisBiasState, CampaignProfileState, ClimateBandsState,
@@ -39,23 +37,21 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, LaborAllocation,
-        LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
-        Tile, TradeLink, FODDER, FOOD,
+        available_workers, fragments_to_contract, BandTravel, Expedition, ExpeditionMission,
+        FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
+        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
     },
     culture::{
-        CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
-        CultureManager, CultureOwner, CultureTensionKind as SimCultureTensionKind,
-        CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
+        CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
+        CultureTensionKind as SimCultureTensionKind, CultureTensionRecord,
+        CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
         herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
-        Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED,
-        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        Herd, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle},
@@ -70,31 +66,25 @@ use crate::{
     graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
-        GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+        GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
-    influencers::{
-        InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
-        BUILTIN_INFLUENCER_CONFIG,
-    },
+    influencers::InfluentialRoster,
     intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
-    knowledge_ledger::{
-        encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
-        KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
-    },
+    knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
     labor_config::{ForageLaborConfig, LaborConfig},
     map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
-    power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
+    power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity},
     resources::FoodSiteRegistry,
     resources::{
-        BandIdAllocator, CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
+        CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
         DiscoveryProgressLedger, FactionInventory, MoistureRaster, SentimentAxisBias,
-        SimulationConfig, SimulationTick, StartLocation, TileRegistry, WorldEpoch,
+        SimulationConfig, SimulationTick, StartLocation, WorldEpoch,
     },
-    scalar::{scalar_zero, Scalar},
+    scalar::Scalar,
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
     sites_config::SitesConfigHandle,
@@ -508,6 +498,10 @@ mod tests {
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
 
     use super::*;
+    // Used only by the fixtures below. They lived at file scope while
+    // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
+    use crate::components::{ElementKind, LocalStore, MoraleCause};
+    use crate::power::PowerNodeId;
     use crate::{
         intensification::RUNG_COMPLETE,
         labor_config::LaborConfig,
@@ -1175,10 +1169,10 @@ mod tests {
         let assignment = LaborAssignment { target, workers: 6 };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
         assert_eq!(state.policy, "deplete", "policy serialized");
-
-        let restored = labor_allocation_from_state(std::slice::from_ref(&state));
-        assert_eq!(restored.assignments.len(), 1);
-        assert_eq!(restored.assignments[0], assignment, "policy round-trips");
+        // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
+        // and it existed solely for `restore_world_from_snapshot` — the server never reads labor
+        // assignments back off the wire, it reads them from the checkpoint. Keeping a decoder alive
+        // for a test to call is the shape this arc removed, so the return leg went with it.
     }
 
     #[test]

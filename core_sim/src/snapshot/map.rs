@@ -185,28 +185,3 @@ pub(crate) fn map_mountain_kind(kind: MountainType) -> MountainKind {
         MountainType::Dome => MountainKind::Dome,
     }
 }
-
-pub(crate) fn mountain_metadata_from_state(
-    kind: MountainKind,
-    relief: f32,
-) -> Option<MountainMetadata> {
-    match kind {
-        MountainKind::None => None,
-        MountainKind::Fold => Some(MountainMetadata {
-            kind: MountainType::Fold,
-            relief,
-        }),
-        MountainKind::Fault => Some(MountainMetadata {
-            kind: MountainType::Fault,
-            relief,
-        }),
-        MountainKind::Volcanic => Some(MountainMetadata {
-            kind: MountainType::Volcanic,
-            relief,
-        }),
-        MountainKind::Dome => Some(MountainMetadata {
-            kind: MountainType::Dome,
-            relief,
-        }),
-    }
-}
