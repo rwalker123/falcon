@@ -625,17 +625,17 @@ const DRAW_PROFILE_WINDOW_FRAMES := 100
 # splices `last_display_profile` into its line, so these stay short and unqualified.
 const PROFILE_OVERLAYS := "overlays"   # channel ingest + terrain raster + biome colours + cache kill
 const PROFILE_LAYERS := "layers"       # palette/tags, culture layers, crisis annotations, routes
-const PROFILE_SITES := "sites"         # food / discovered / forage / harvest / scout deep copies
+const PROFILE_SITES := "sites"         # food / discovered / forage / harvest / scout ingests
 # `layers` and `sites` each cover several unrelated ingests and were the two biggest surprises in the
 # first live run (layers 31.6 ms, sites 9.8 ms), so each is broken down one level further. The parent
 # still reports the whole block; these say which part of it.
 const PROFILE_LAYERS_TAGS := "layers.tags"                # terrain palette + the terrain_tags full-grid conversion + tag labels
-const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_map duplicate(true) loop + removals
+const PROFILE_LAYERS_CULTURE := "layers.culture"          # the culture_layer_map merge + removals
 const PROFILE_LAYERS_CRISIS := "layers.crisis"            # AnnotationRenderer.set_crisis_annotations
 const PROFILE_LAYERS_ROUTES := "layers.routes"            # AnnotationRenderer.set_routes (the `orders` array)
-const PROFILE_SITES_FOOD := "sites.food"                  # food_modules deep copies + terrain stamping
-const PROFILE_SITES_DISCOVERED := "sites.discovered"      # per-faction discovered-site deep copies
-const PROFILE_SITES_FORAGE := "sites.forage"              # forage_patches deep copies
+const PROFILE_SITES_FOOD := "sites.food"                  # food_modules ingest + the terrain_id stamp
+const PROFILE_SITES_DISCOVERED := "sites.discovered"      # the per-faction discovered-site ingest
+const PROFILE_SITES_FORAGE := "sites.forage"              # the forage_patches ingest
 const PROFILE_SITES_POPULATIONS := "sites.populations"    # the populations harvest/scout target extraction
 const PROFILE_TILES := "tiles"         # the full-grid per-tile GDScript loop
 const PROFILE_SHADER := "shader"       # the six full-grid splatmap rebuilds
@@ -903,23 +903,9 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	var t_layers_culture: int = profile.begin(PROFILE_LAYERS_CULTURE)
 	# One gate for both halves: the decoder names `culture_layers` when the section's diff carried
 	# EITHER changed rows or removed ids (removals set the section's changed flag), so a frame that
-	# does not name it has neither to apply. Measured at 2.4 ms of `duplicate(true)` per turn on a
-	# section that moves once in a while.
+	# does not name it has neither to apply.
 	if SnapshotSections.changed(snapshot, SECTION_CULTURE_LAYERS):
-		var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
-		if culture_layers_variant is Array:
-			for layer_variant in culture_layers_variant:
-				if layer_variant is Dictionary:
-					var layer: Dictionary = layer_variant
-					var id: int = int(layer.get("id", -1))
-					if id >= 0:
-						culture_layer_map[id] = layer.duplicate(true)
-		var removed_layers_variant: Variant = snapshot.get("culture_layer_removed", null)
-		if removed_layers_variant is Array:
-			for raw_id in removed_layers_variant:
-				var id := int(raw_id)
-				if culture_layer_map.has(id):
-					culture_layer_map.erase(id)
+		_ingest_culture_layers(snapshot)
 	profile.end(PROFILE_LAYERS_CULTURE, t_layers_culture)
 	var t_layers_crisis: int = profile.begin(PROFILE_LAYERS_CRISIS)
 	_annotations.set_crisis_annotations(overlays.get("crisis_annotations", []))
@@ -938,64 +924,15 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# be gated on a key it does not read.
 	if SnapshotSections.changed(snapshot, SECTION_FOOD_MODULES):
 		var t_sites_food: int = profile.begin(PROFILE_SITES_FOOD)
-		food_sites = []
-		food_site_lookup.clear()
-		var food_variant: Variant = snapshot.get("food_modules", [])
-		if food_variant is Array:
-			for entry in food_variant:
-				if not (entry is Dictionary):
-					continue
-				var site: Dictionary = (entry as Dictionary).duplicate(true)
-				food_sites.append(site)
-				var x_site: int = int(site.get("x", -1))
-				var y_site: int = int(site.get("y", -1))
-				# Stamp the tile's terrain so both consumers (map marker + HUD Forage row) resolve the
-				# terrain-aware FoodIcons.for_site split from one source and can't disagree (riverine_delta
-				# splits fish↔reeds by terrain). Unconditional: for x<0 it's harmless (-1 → fish default).
-				site["terrain_id"] = _terrain_id_at(x_site, y_site)
-				if x_site >= 0 and y_site >= 0:
-					food_site_lookup[Vector2i(x_site, y_site)] = site
+		_ingest_food_modules(snapshot)
 		profile.end(PROFILE_SITES_FOOD, t_sites_food)
 	if SnapshotSections.changed(snapshot, SECTION_DISCOVERED_SITES):
 		var t_sites_discovered: int = profile.begin(PROFILE_SITES_DISCOVERED)
-		discovered_sites = []
-		discovered_site_lookup.clear()
-		var sites_variant: Variant = snapshot.get("discovered_sites", [])
-		if sites_variant is Array:
-			for entry in sites_variant:
-				if not (entry is Dictionary):
-					continue
-				var faction_entry: Dictionary = entry
-				if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
-					continue
-				var faction_sites: Variant = faction_entry.get("sites", [])
-				if not (faction_sites is Array):
-					continue
-				for site_entry in faction_sites:
-					if not (site_entry is Dictionary):
-						continue
-					var wsite: Dictionary = (site_entry as Dictionary).duplicate(true)
-					discovered_sites.append(wsite)
-					var wx: int = int(wsite.get("x", -1))
-					var wy: int = int(wsite.get("y", -1))
-					if wx >= 0 and wy >= 0:
-						discovered_site_lookup[Vector2i(wx, wy)] = wsite
+		_ingest_discovered_sites(snapshot)
 		profile.end(PROFILE_SITES_DISCOVERED, t_sites_discovered)
-	# The single biggest win in this function: 10.0 ms of `duplicate(true)` per turn on a section a
-	# steady-state delta never carries.
 	if SnapshotSections.changed(snapshot, SECTION_FORAGE_PATCHES):
 		var t_sites_forage: int = profile.begin(PROFILE_SITES_FORAGE)
-		forage_patch_lookup.clear()
-		var patch_variant: Variant = snapshot.get("forage_patches", [])
-		if patch_variant is Array:
-			for entry in patch_variant:
-				if not (entry is Dictionary):
-					continue
-				var patch: Dictionary = (entry as Dictionary).duplicate(true)
-				var px: int = int(patch.get("x", -1))
-				var py: int = int(patch.get("y", -1))
-				if px >= 0 and py >= 0:
-					forage_patch_lookup[Vector2i(px, py)] = patch
+		_ingest_forage_patches(snapshot)
 		profile.end(PROFILE_SITES_FORAGE, t_sites_forage)
 	# `populations` is named on essentially every turn (a cohort's size or morale always moves), so
 	# this gate is not expected to skip. It is here for the same reason the others are: the two
@@ -1003,35 +940,7 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 	# person accidentally wipes the harvest markers.
 	if SnapshotSections.changed(snapshot, SECTION_POPULATIONS):
 		var t_sites_populations: int = profile.begin(PROFILE_SITES_POPULATIONS)
-		harvest_sites.clear()
-		scout_sites.clear()
-		var population_variant: Variant = snapshot.get("populations", [])
-		if population_variant is Array:
-			for entry in population_variant:
-				if not (entry is Dictionary):
-					continue
-				var cohort: Dictionary = entry
-				var harvest_variant: Variant = cohort.get("harvest", {})
-				if harvest_variant is Dictionary:
-					var harvest: Dictionary = (harvest_variant as Dictionary).duplicate(true)
-					var hx := int(harvest.get("target_x", -1))
-					var hy := int(harvest.get("target_y", -1))
-					if hx >= 0 and hy >= 0:
-						var key := Vector2i(hx, hy)
-						harvest["module_label"] = _food_module_label(String(harvest.get("module", "")))
-						var existing: Array = harvest_sites.get(key, [])
-						existing.append(harvest)
-						harvest_sites[key] = existing
-				var scout_variant: Variant = cohort.get("scout", {})
-				if scout_variant is Dictionary:
-					var scout: Dictionary = (scout_variant as Dictionary).duplicate(true)
-					var sx := int(scout.get("target_x", -1))
-					var sy := int(scout.get("target_y", -1))
-					if sx >= 0 and sy >= 0:
-						var scout_key := Vector2i(sx, sy)
-						var scout_existing: Array = scout_sites.get(scout_key, [])
-						scout_existing.append(scout)
-						scout_sites[scout_key] = scout_existing
+		_ingest_population_sites(snapshot)
 		profile.end(PROFILE_SITES_POPULATIONS, t_sites_populations)
 	profile.end(PROFILE_SITES, t_sites)
 
@@ -1229,6 +1138,147 @@ func _ingest_tile(tile_dict: Dictionary) -> void:
 			var index: int = y * grid_width + x
 			if index >= 0 and index < culture_layer_grid.size():
 				culture_layer_grid[index] = int(tile_dict.get("culture_layer", -1))
+
+
+## Merge the frame's culture layers into `culture_layer_map` by id, then apply its removals.
+##
+## **The layer dictionaries are HELD BY REFERENCE, not copied.** Both readers
+## (`_install_province_overlay`, `_resolve_province_for_layer`) only `get` off them, and a layer
+## whose data moved arrives as a NEW dictionary in the republished array, which this loop overwrites
+## — so a copy would buy nothing and cost an allocation per layer per turn. See
+## `.claude/rules/client/turn-profiling.md` → "Snapshot sub-trees are held by reference".
+func _ingest_culture_layers(snapshot: Dictionary) -> void:
+	var culture_layers_variant: Variant = snapshot.get("culture_layers", null)
+	if culture_layers_variant is Array:
+		for layer_variant in culture_layers_variant:
+			if layer_variant is Dictionary:
+				var layer: Dictionary = layer_variant
+				var id: int = int(layer.get("id", -1))
+				if id >= 0:
+					culture_layer_map[id] = layer
+	var removed_layers_variant: Variant = snapshot.get("culture_layer_removed", null)
+	if removed_layers_variant is Array:
+		for raw_id in removed_layers_variant:
+			var id := int(raw_id)
+			if culture_layer_map.has(id):
+				culture_layer_map.erase(id)
+
+
+## Refill `food_sites` / `food_site_lookup` from the frame's food modules.
+##
+## **The one ingest here that must copy, and it copies SHALLOWLY.** It stamps `terrain_id` onto each
+## row, and writing into a row we do not own would write into the decoder's cached world (see the
+## rule file). A shallow `duplicate()` is enough because the stamp is a top-level key — nothing
+## nested is touched — and it leaves the row's nested values shared rather than re-allocated.
+func _ingest_food_modules(snapshot: Dictionary) -> void:
+	food_sites = []
+	food_site_lookup.clear()
+	var food_variant: Variant = snapshot.get("food_modules", [])
+	if not (food_variant is Array):
+		return
+	for entry in food_variant:
+		if not (entry is Dictionary):
+			continue
+		var site: Dictionary = (entry as Dictionary).duplicate()
+		food_sites.append(site)
+		var x_site: int = int(site.get("x", -1))
+		var y_site: int = int(site.get("y", -1))
+		# Stamp the tile's terrain so both consumers (map marker + HUD Forage row) resolve the
+		# terrain-aware FoodIcons.for_site split from one source and can't disagree (riverine_delta
+		# splits fish↔reeds by terrain). Unconditional: for x<0 it's harmless (-1 → fish default).
+		site["terrain_id"] = _terrain_id_at(x_site, y_site)
+		if x_site >= 0 and y_site >= 0:
+			food_site_lookup[Vector2i(x_site, y_site)] = site
+
+
+## Refill `discovered_sites` / `discovered_site_lookup` with the PLAYER faction's wonder sites.
+##
+## Rows held by reference: `SecondaryMarkerRenderer.compute_slots` / `_wonder_renders` only read
+## them, and nothing stamps anything on.
+func _ingest_discovered_sites(snapshot: Dictionary) -> void:
+	discovered_sites = []
+	discovered_site_lookup.clear()
+	var sites_variant: Variant = snapshot.get("discovered_sites", [])
+	if not (sites_variant is Array):
+		return
+	for entry in sites_variant:
+		if not (entry is Dictionary):
+			continue
+		var faction_entry: Dictionary = entry
+		if int(faction_entry.get("faction", -1)) != PLAYER_FACTION_ID:
+			continue
+		var faction_sites: Variant = faction_entry.get("sites", [])
+		if not (faction_sites is Array):
+			continue
+		for site_entry in faction_sites:
+			if not (site_entry is Dictionary):
+				continue
+			var wsite: Dictionary = site_entry
+			discovered_sites.append(wsite)
+			var wx: int = int(wsite.get("x", -1))
+			var wy: int = int(wsite.get("y", -1))
+			if wx >= 0 and wy >= 0:
+				discovered_site_lookup[Vector2i(wx, wy)] = wsite
+
+
+## Refill `forage_patch_lookup` from the frame's forage patches.
+##
+## **The largest of the held-by-reference wins.** A patch row carries ~25 scalars *and* a nested
+## `composition` array of per-species dictionaries, so the deep copy this replaced re-allocated the
+## whole flora roster of every patch on the map, every turn it changed. `_tile_info_at` copies the
+## values it wants out onto `tile_info`, and `HudBandLaborState.set_forage_patches` — fed the same
+## array by `Main` — has always held these rows by reference.
+func _ingest_forage_patches(snapshot: Dictionary) -> void:
+	forage_patch_lookup.clear()
+	var patch_variant: Variant = snapshot.get("forage_patches", [])
+	if not (patch_variant is Array):
+		return
+	for entry in patch_variant:
+		if not (entry is Dictionary):
+			continue
+		var patch: Dictionary = entry
+		var px: int = int(patch.get("x", -1))
+		var py: int = int(patch.get("y", -1))
+		if px >= 0 and py >= 0:
+			forage_patch_lookup[Vector2i(px, py)] = patch
+
+
+## Refill `harvest_sites` / `scout_sites` from each cohort's harvest + scout targets.
+##
+## The harvest entry is copied for the same reason the food row is — it gets `module_label` stamped
+## on — and shallowly, for the same reason. The scout entry is stamped with nothing, so it is held
+## by reference.
+func _ingest_population_sites(snapshot: Dictionary) -> void:
+	harvest_sites.clear()
+	scout_sites.clear()
+	var population_variant: Variant = snapshot.get("populations", [])
+	if not (population_variant is Array):
+		return
+	for entry in population_variant:
+		if not (entry is Dictionary):
+			continue
+		var cohort: Dictionary = entry
+		var harvest_variant: Variant = cohort.get("harvest", {})
+		if harvest_variant is Dictionary:
+			var hx := int((harvest_variant as Dictionary).get("target_x", -1))
+			var hy := int((harvest_variant as Dictionary).get("target_y", -1))
+			if hx >= 0 and hy >= 0:
+				var harvest: Dictionary = (harvest_variant as Dictionary).duplicate()
+				var key := Vector2i(hx, hy)
+				harvest["module_label"] = _food_module_label(String(harvest.get("module", "")))
+				var existing: Array = harvest_sites.get(key, [])
+				existing.append(harvest)
+				harvest_sites[key] = existing
+		var scout_variant: Variant = cohort.get("scout", {})
+		if scout_variant is Dictionary:
+			var scout: Dictionary = scout_variant
+			var sx := int(scout.get("target_x", -1))
+			var sy := int(scout.get("target_y", -1))
+			if sx >= 0 and sy >= 0:
+				var scout_key := Vector2i(sx, sy)
+				var scout_existing: Array = scout_sites.get(scout_key, [])
+				scout_existing.append(scout)
+				scout_sites[scout_key] = scout_existing
 
 
 func _ingest_overlay_channels(overlays: Variant) -> void:
