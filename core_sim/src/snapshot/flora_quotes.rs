@@ -40,6 +40,7 @@
 //! is not local to the tile and could not be fingerprinted per entry the way the quotes are. It is
 //! also cheap — a flat `TerrainTagGrid` probe per neighbour — so there is nothing to win by trying.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -162,23 +163,35 @@ pub(crate) struct FloraQuoteSweep<'a> {
 
 impl FloraQuoteSweep<'_> {
     /// This tile's quotes, derived only if the ground under them has moved (or was never seen).
+    ///
+    /// One `Entry` lookup, so the common case — the hit, once per patch tile per capture — costs a
+    /// single hash probe and hands back the held entry directly rather than looking it up again.
     pub(crate) fn quotes(&mut self, tile: &Tile) -> &[FloraShareInfo] {
+        // Destructured so the entry's mutable borrow of `entries` stays disjoint from the reads of
+        // the config fields the derivation needs.
+        let Self {
+            entries,
+            flora,
+            forage,
+            map_seed,
+        } = self;
         let resource_terrain = tile.resource_terrain();
-        let stale = self.entries.get(&tile.position).is_none_or(|cached| {
-            cached.terrain != tile.terrain || cached.resource_terrain != resource_terrain
-        });
-        if stale {
-            let shares = derive_tile_quotes(self.flora, self.forage, tile, self.map_seed);
-            self.entries.insert(
-                tile.position,
-                CachedQuotes {
-                    terrain: tile.terrain,
-                    resource_terrain,
-                    shares,
-                },
-            );
-        }
-        &self.entries[&tile.position].shares
+        let derive = || CachedQuotes {
+            terrain: tile.terrain,
+            resource_terrain,
+            shares: derive_tile_quotes(flora, forage, tile, *map_seed),
+        };
+        let held = match entries.entry(tile.position) {
+            Entry::Occupied(slot) => {
+                let held = slot.into_mut();
+                if held.terrain != tile.terrain || held.resource_terrain != resource_terrain {
+                    *held = derive();
+                }
+                held
+            }
+            Entry::Vacant(slot) => slot.insert(derive()),
+        };
+        &held.shares
     }
 }
 
