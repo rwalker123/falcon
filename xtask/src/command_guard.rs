@@ -145,9 +145,30 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             }
         };
 
-        let Some(sent) = band_handle(&payload) else {
-            // Not every emitted command names a band; those simply have nothing to check here.
-            continue;
+        // **A missing handle is a FAILURE here, never a skip.** Every command the Godot half drives
+        // is band-addressed, so there is no benign reason for one to arrive without an id — and the
+        // benign-looking outcome is the dangerous one: `select_starting_band` falls back to a
+        // default-band picker when `band_id` is `None`, so the command *appears* to work while
+        // addressing whichever band the server picked. Skipping that case would make this guard
+        // report PASS for exactly the regression it exists to catch.
+        let sent = match band_handle(&payload) {
+            BandHandle::Named(id) => id,
+            BandHandle::Omitted => {
+                failures.push(format!(
+                    "{label}: emitted a band-addressed command with NO band handle. The server \
+                     would fall back to its default-band picker and silently act on some other \
+                     band. Line: `{line}`"
+                ));
+                continue;
+            }
+            BandHandle::NotBandAddressed => {
+                failures.push(format!(
+                    "{label}: parsed to a command variant that names no band, but this harness only \
+                     drives band-addressed commands — so either the emit path changed or \
+                     `band_handle` is missing a variant. Line: `{line}`"
+                ));
+                continue;
+            }
         };
         let expected = if matches!(payload, CommandPayload::RecallExpedition { .. }) {
             expedition_band_id
@@ -192,14 +213,29 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// What a parsed payload says about the band it addresses.
+///
+/// **Three outcomes, not two.** Collapsing `Omitted` and `NotBandAddressed` into a single `None`
+/// made the caller `continue`, which turned "the client sent a band command with no handle" — the
+/// exact regression this gate exists to catch — into a silent pass.
+enum BandHandle {
+    /// The command names a band.
+    Named(u64),
+    /// A band-addressed variant whose optional handle is absent. The server would fall back to its
+    /// default-band picker, so the command works and addresses the wrong band.
+    Omitted,
+    /// A variant that names no band at all.
+    NotBandAddressed,
+}
+
 /// The band handle a payload names, whatever the variant calls it.
 ///
 /// Every `CommandPayload` variant carrying a band handle is listed. **The gate's coverage is not
 /// bounded by this function** — it is bounded by which commands the Godot half actually drives, so a
 /// new band-addressed command needs adding *there* to be checked at all. This match only has to know
 /// where the handle lives once a command is emitted.
-fn band_handle(payload: &CommandPayload) -> Option<u64> {
-    match payload {
+fn band_handle(payload: &CommandPayload) -> BandHandle {
+    let optional = match payload {
         CommandPayload::AssignLabor { band_id, .. }
         | CommandPayload::CancelOrder { band_id, .. }
         | CommandPayload::FollowHerd { band_id, .. }
@@ -213,7 +249,11 @@ fn band_handle(payload: &CommandPayload) -> Option<u64> {
         CommandPayload::RecallExpedition {
             expedition_band_id, ..
         } => Some(*expedition_band_id),
-        _ => None,
+        _ => return BandHandle::NotBandAddressed,
+    };
+    match optional {
+        Some(id) => BandHandle::Named(id),
+        None => BandHandle::Omitted,
     }
 }
 
