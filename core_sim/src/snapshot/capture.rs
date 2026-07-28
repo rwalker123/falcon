@@ -1719,6 +1719,10 @@ pub fn capture_snapshot(
     // children (see `crate::turn_profile`). Hashing, history diffing and encoding are separate
     // top-level labels below.
     let build_scope = crate::turn_profile::scope("snapshot.build");
+    // Config resolution before any world data is read: destructuring the context, `.get()`ing the
+    // hot-reloadable config handles, and composing the morale-pressure struct the tile sweep needs.
+    // O(1) in world size — it touches no entity.
+    let prelude_scope = crate::turn_profile::scope("snapshot.build.prelude");
     let SnapshotContext {
         config,
         tick,
@@ -1795,6 +1799,7 @@ pub fn capture_snapshot(
     // so `forage_registry.patch()` is asked once per tile instead of once per readout. Borrowing out
     // of `tiles.iter()` is sound here: the query is read-only and outlives every use of this vec.
     let mut patch_tiles: Vec<&Tile> = Vec::new();
+    drop(prelude_scope);
     {
         // Sweep 1 of 2 — the ONLY walk of the full tile query.
         let _s = crate::turn_profile::scope("snapshot.build.tiles");
@@ -1940,6 +1945,11 @@ pub fn capture_snapshot(
     }
     drop(patches_scope);
 
+    // Everything that finishes the tile vector once both sweeps are done: the food-module site
+    // list, the per-tile culture-layer stamp (one `local_layer_by_owner` lookup per tile), the sort
+    // into entity order, and the entity → coord index the population/expedition readouts join
+    // against. Per tile, plus per food site.
+    let tile_index_scope = crate::turn_profile::scope("snapshot.build.tile_index");
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
             x: site.position.x,
@@ -1960,7 +1970,11 @@ pub fn capture_snapshot(
         .iter()
         .map(|state| (state.entity, UVec2::new(state.x, state.y)))
         .collect();
+    drop(tile_index_scope);
 
+    // The two link records, both copied straight off the `LogisticsLink`/`TradeLink` components.
+    // Per logistics link.
+    let links_scope = crate::turn_profile::scope("snapshot.build.links");
     let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
     let mut trade_states: Vec<TradeLinkState> = Vec::new();
     for (entity, link, trade) in logistics_links.iter() {
@@ -1969,7 +1983,12 @@ pub fn capture_snapshot(
     }
     logistics_states.sort_unstable_by_key(|state| state.entity);
     trade_states.sort_unstable_by_key(|state| state.entity);
+    drop(links_scope);
 
+    // The per-cohort readout: two walks of the population query (the coord index, then the states),
+    // each of which derives travel/scout/expedition figures rather than copying them. Per cohort,
+    // and the expedition-delivery forecast inside it is a forward sim per in-flight party.
+    let populations_scope = crate::turn_profile::scope("snapshot.build.populations");
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
     let settlement_stage_config = settlement_stage.get();
@@ -2069,7 +2088,10 @@ pub fn capture_snapshot(
         )
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
+    drop(populations_scope);
 
+    // Power nodes plus the grid-wide metrics aggregate. Per power node.
+    let power_scope = crate::turn_profile::scope("snapshot.build.power");
     let mut power_states: Vec<PowerNodeState> = power_nodes
         .iter()
         .map(|(entity, node)| power_state(entity, node))
@@ -2077,6 +2099,11 @@ pub fn capture_snapshot(
     power_states.sort_unstable_by_key(|state| state.entity);
 
     let power_metrics = power_metrics_from_grid(&power_grid);
+    drop(power_scope);
+
+    // Ledger-shaped readouts that walk a resource, not the world: the knowledge ledger's three
+    // payload vectors, the generation registry, and the influential roster. Per ledger entry.
+    let ledgers_scope = crate::turn_profile::scope("snapshot.build.ledgers");
     let KnowledgeSnapshotPayload {
         entries: knowledge_ledger_states,
         timeline: knowledge_timeline_states,
@@ -2089,7 +2116,11 @@ pub fn capture_snapshot(
 
     let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
     influencer_states.sort_unstable_by_key(|state| state.id);
+    drop(ledgers_scope);
 
+    // The culture layer/tension lists, copied off `CultureManager`. Per culture layer, and the
+    // local layers are one-per-owned-tile, so this one tracks the map.
+    let culture_scope = crate::turn_profile::scope("snapshot.build.culture");
     let mut culture_layer_states: Vec<CultureLayerState> = Vec::new();
     if let Some(global_layer) = culture.global_layer() {
         culture_layer_states.push(culture_layer_state(global_layer));
@@ -2111,11 +2142,17 @@ pub fn capture_snapshot(
         (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
     });
 
+    drop(culture_scope);
+
+    // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
+    // count, so it grows when the catalog does, never with the map.
+    let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
     let discovery_states = discovery_progress_entries(&discovery_progress);
     let great_discovery_definition_states = snapshot_definitions(&gds.registry);
     let great_discovery_states = snapshot_discoveries(&gds.ledger);
     let great_discovery_progress_states = snapshot_progress(&gds.readiness);
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
+    drop(discovery_scope);
 
     // The contiguous full-grid raster block: terrain, logistics, sentiment, corruption, culture,
     // military, visibility. The moisture/elevation overlays are built further down (they need
@@ -2162,6 +2199,10 @@ pub fn capture_snapshot(
     );
     drop(raster_scope);
 
+    // The four sentiment axes and their itemised driver lists — a derived attribution built by
+    // walking the policy/incident/influencer sources and formatting a label per non-zero
+    // contribution. Per (influencer + corruption exposure) × 4 axes, so it tracks roster size.
+    let sentiment_scope = crate::turn_profile::scope("snapshot.build.sentiment");
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
     let influencer_axes = roster.sentiment_totals();
@@ -2276,12 +2317,20 @@ pub fn capture_snapshot(
     };
 
     let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
+    drop(sentiment_scope);
+
+    // The crisis heatmap + annotations, cloned wholesale out of the overlay resource. A full-map
+    // `Vec` copy, so it belongs with the rasters in shape even though it is not built here.
+    let crisis_scope = crate::turn_profile::scope("snapshot.build.crisis");
     let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
     let crisis_overlay_state = CrisisOverlayState {
         heatmap: crisis_overlay.raster.clone(),
         annotations: crisis_overlay.annotations.clone(),
     };
+    drop(crisis_scope);
 
+    // Counts, build id and campaign label. O(1).
+    let header_scope = crate::turn_profile::scope("snapshot.build.header");
     let mut header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
@@ -2303,6 +2352,7 @@ pub fn capture_snapshot(
     let start_marker_state = start_location
         .position()
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
+    drop(header_scope);
 
     // Second entry into `snapshot.build.rasters` (see the block above) — the two remaining
     // full-grid overlays, which could not be built with the others.
@@ -2313,6 +2363,11 @@ pub fn capture_snapshot(
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
     drop(raster_scope);
+    // The remaining readouts, each a resource → wire-state conversion. Split into `herds`,
+    // `forage_patches` and `readouts` because the first two are the ones with a world-sized
+    // denominator (herds; forage patches ≈ food-bearing tiles) while the rest are per-faction or
+    // per-content-item.
+    let readouts_scope = crate::turn_profile::scope("snapshot.build.readouts");
     // The climate-band cut points ride the snapshot beside the other worldgen overlays
     // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
     // told. A per-map constant read straight off the active `ClimateConfig`.
@@ -2329,6 +2384,10 @@ pub fn capture_snapshot(
     // same faction `visibility_raster` below is rendered from, so the two can never disagree about
     // whether a herd is on visible ground. The unfiltered sim record is the `HerdRegistry` itself,
     // which the checkpoint carries; the snapshot is the view only.
+    //
+    // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
+    // against the viewer's fog before it is emitted.
+    let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2342,10 +2401,14 @@ pub fn capture_snapshot(
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
     });
+    drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
+    // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
+    // quotes for that patch, so this one is both map-sized and derivation-heavy.
+    let forage_patches_scope = crate::turn_profile::scope("snapshot.build.forage_patches");
     let forage_patches_state = snapshot_forage_patches(
         &forage_registry,
         &labor_config.forage,
@@ -2355,6 +2418,7 @@ pub fn capture_snapshot(
         &sow_site_refusals,
         &flora_compositions,
     );
+    drop(forage_patches_scope);
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
@@ -2363,7 +2427,12 @@ pub fn capture_snapshot(
     let voice_medium_state = snapshot_voice_medium(&beat_ledger);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
+    drop(readouts_scope);
 
+    // The struct literal itself. Every field the publisher compares whole-section is `.clone()`d
+    // into it, so this is a second full copy of the rasters, the herd list, the forage patches and
+    // the crisis heatmap — proportional to the assembled snapshot's own byte size.
+    let assemble_scope = crate::turn_profile::scope("snapshot.build.assemble");
     let assembled = WorldSnapshot {
         header,
         tiles: tile_states,
@@ -2417,6 +2486,7 @@ pub fn capture_snapshot(
         crisis_telemetry: crisis_telemetry_state.clone(),
         crisis_overlay: crisis_overlay_state.clone(),
     };
+    drop(assemble_scope);
     drop(build_scope);
 
     // **The turn thread's last act on this snapshot.** Hashing, diffing, encoding and the socket

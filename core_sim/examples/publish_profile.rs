@@ -53,6 +53,9 @@ const PINNED_MAP_SEED: u64 = 0x5EED_C0DE;
 /// The config key holding the world seed.
 const MAP_SEED_KEY: &str = "map_seed";
 
+/// The config key holding the map dimensions, overridden by the scaling sweep.
+const GRID_SIZE_KEY: &str = "grid_size";
+
 /// Milliseconds per second, for rendering.
 const MILLIS_PER_SECOND: f64 = 1_000.0;
 
@@ -66,14 +69,27 @@ const DIFF_LABEL: &str = "publish.diff";
 /// remainder is where publisher contention lands.
 const BUILD_LABEL: &str = "snapshot.build";
 
+/// The prefix every `snapshot.build` sub-label shares. Row 4 reports each of these as a share of
+/// [`BUILD_LABEL`], which contains them (the profiler nests flat — see `core_sim::turn_profile`).
+const BUILD_PREFIX: &str = "snapshot.build.";
+
+/// The map sizes row 4 sweeps, smallest first. The middle one is the shipped 80×52, and the outer
+/// two are a half/double of it in **each** axis, so tile count moves by 4× per step — enough to
+/// separate an `O(tiles)` section from one that merely looks big at the shipped size.
+const SWEEP_GRIDS: [(u32, u32); 3] = [(40, 26), (80, 52), (160, 104)];
+
+/// Nanoseconds per second, for the per-unit columns (a per-tile cost is sub-microsecond).
+const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
 fn main() {
-    let pinned = write_pinned_config();
+    let pinned = write_pinned_config(None);
     std::env::set_var("SIM_CONFIG_PATH", &pinned);
 
     println!("\nmap_seed={PINNED_MAP_SEED:#x}  warmups={WARMUP_TURNS}  frames={MEASURED_FRAMES}");
     publisher_row();
     turn_row("idle (publisher shut down)", Publisher::ShutDown);
     turn_row("busy (publisher concurrent)", Publisher::Running);
+    build_breakdown_row();
 }
 
 /// Whether the turn row runs against a live publisher.
@@ -198,6 +214,181 @@ fn turn_row(name: &str, publisher: Publisher) {
     );
 }
 
+/// Row 4: `snapshot.build`'s sub-label breakdown, swept across [`SWEEP_GRIDS`].
+///
+/// Two things this row does that the others do not:
+///
+/// * **The grids are interleaved, not batched.** All three worlds are built up front and one frame
+///   of each is resolved per round, so a thermal or scheduling drift over the run lands on every
+///   grid equally instead of on whichever was measured last. Sequential batches on this machine
+///   drift by ~0.12 ms within a single baseline, which is the same order as the smaller sections.
+/// * **Every section is reported per unit as well as per frame.** A section whose per-tile cost is
+///   flat across a 16× change in tile count is genuinely `O(tiles)`; one whose per-tile cost falls
+///   is fixed overhead wearing a tile-shaped disguise.
+///
+/// Idle, like row 2: the publisher is shut down before the warm-ups, so what is measured is the
+/// turn thread alone.
+fn build_breakdown_row() {
+    let denominators: Vec<Denominators> = SWEEP_GRIDS.iter().map(|g| denominators_of(*g)).collect();
+
+    let mut apps: Vec<_> = SWEEP_GRIDS
+        .iter()
+        .map(|grid| {
+            std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(*grid)));
+            let mut app = build_headless_app();
+            app.world.resource_mut::<SnapshotHistory>().shutdown();
+            for _ in 0..WARMUP_TURNS {
+                run_turn(&mut app);
+            }
+            app
+        })
+        .collect();
+
+    // Label → per-grid totals, in first-seen order so the table reads like the capture's timeline.
+    let mut rows: Vec<(&'static str, Vec<Duration>)> = Vec::new();
+    for _ in 0..MEASURED_FRAMES {
+        for (idx, app) in apps.iter_mut().enumerate() {
+            turn_profile::begin_turn();
+            run_turn(app);
+            for phase in turn_profile::take() {
+                if phase.label != BUILD_LABEL && !phase.label.starts_with(BUILD_PREFIX) {
+                    continue;
+                }
+                match rows.iter_mut().find(|(label, _)| *label == phase.label) {
+                    Some((_, totals)) => totals[idx] += phase.total,
+                    None => {
+                        let mut totals = vec![Duration::ZERO; SWEEP_GRIDS.len()];
+                        totals[idx] = phase.total;
+                        rows.push((phase.label, totals));
+                    }
+                }
+            }
+        }
+    }
+
+    let frames = MEASURED_FRAMES as f64;
+    println!("\nsnapshot.build breakdown, idle, interleaved across grids");
+    print!("{:<30}", "world");
+    for (w, h) in SWEEP_GRIDS.iter() {
+        print!("{:>12}{:>10}", format!("{w}x{h}"), "ns/tile");
+    }
+    println!("{:>8}", "% build");
+    for (label, totals) in &rows {
+        print!("{:<30}", label.trim_start_matches("snapshot."));
+        for (idx, total) in totals.iter().enumerate() {
+            let ms = total.as_secs_f64() * MILLIS_PER_SECOND / frames;
+            let per_tile = total.as_secs_f64() * NANOS_PER_SECOND
+                / frames
+                / f64::from(denominators[idx].tiles);
+            print!("{ms:>12.3}{per_tile:>10.1}");
+        }
+        // Share of the parent at the shipped size, which is the middle grid.
+        let shipped = SWEEP_GRIDS.len() / 2;
+        let parent = rows
+            .iter()
+            .find(|(name, _)| *name == BUILD_LABEL)
+            .map(|(_, t)| t[shipped])
+            .unwrap_or(Duration::ZERO);
+        let share = if parent.is_zero() {
+            0.0
+        } else {
+            totals[shipped].as_secs_f64() / parent.as_secs_f64() * PERCENT
+        };
+        println!("{share:>8.1}");
+    }
+
+    println!("\ndenominators");
+    print!("{:<30}", "count");
+    for (w, h) in SWEEP_GRIDS.iter() {
+        print!("{:>12}", format!("{w}x{h}"));
+    }
+    println!();
+    for (name, pick) in Denominators::COLUMNS {
+        print!("{name:<30}");
+        for d in &denominators {
+            print!("{:>12}", pick(d));
+        }
+        println!();
+    }
+
+    for mut app in apps {
+        app.world.resource_mut::<SnapshotHistory>().shutdown();
+    }
+}
+
+/// The counts every section's cost is divided by, read off one published snapshot per grid.
+struct Denominators {
+    tiles: u32,
+    populations: u32,
+    logistics: u32,
+    power_nodes: u32,
+    herds: u32,
+    forage_patches: u32,
+    culture_layers: u32,
+    influencers: u32,
+    food_modules: u32,
+    /// Total named-plant shares across every patch — the *inner* loop count of both
+    /// `build.patches` and `build.forage_patches`, since each share is priced at every rung. This
+    /// is the denominator that separates "more tiles" from "a bigger flora roster".
+    flora_shares: u32,
+}
+
+/// One row of the printed denominator census: its name and how to read it off a [`Denominators`].
+type DenominatorColumn = (&'static str, fn(&Denominators) -> u32);
+
+impl Denominators {
+    /// The printed census, in the order the sections that consume them appear in the capture.
+    const COLUMNS: [DenominatorColumn; 10] = [
+        ("tiles", |d| d.tiles),
+        ("food_modules", |d| d.food_modules),
+        ("forage_patches", |d| d.forage_patches),
+        ("flora shares (patch x species)", |d| d.flora_shares),
+        ("logistics links", |d| d.logistics),
+        ("power nodes", |d| d.power_nodes),
+        ("population cohorts", |d| d.populations),
+        ("herds", |d| d.herds),
+        ("culture layers", |d| d.culture_layers),
+        ("influencers", |d| d.influencers),
+    ];
+}
+
+/// Build a throwaway world at `grid`, resolve enough turns to reach the same steady state the
+/// measured run starts from, and count what the snapshot carries.
+///
+/// A separate app rather than the measured one because the measured one shuts its publisher down
+/// **before** the warm-ups (that is what makes it the idle row), and with no publisher there is no
+/// published snapshot to count.
+fn denominators_of(grid: (u32, u32)) -> Denominators {
+    std::env::set_var("SIM_CONFIG_PATH", write_pinned_config(Some(grid)));
+    let mut app = build_headless_app();
+    for _ in 0..WARMUP_TURNS {
+        run_turn(&mut app);
+    }
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .last_snapshot()
+        .expect("a warmed-up world has published at least one snapshot");
+    let counts = Denominators {
+        tiles: snapshot.tiles.len() as u32,
+        populations: snapshot.populations.len() as u32,
+        logistics: snapshot.logistics.len() as u32,
+        power_nodes: snapshot.power.len() as u32,
+        herds: snapshot.herds.len() as u32,
+        forage_patches: snapshot.forage_patches.len() as u32,
+        culture_layers: snapshot.culture_layers.len() as u32,
+        influencers: snapshot.influencers.len() as u32,
+        food_modules: snapshot.food_modules.len() as u32,
+        flora_shares: snapshot
+            .forage_patches
+            .iter()
+            .map(|patch| patch.composition.len() as u32)
+            .sum(),
+    };
+    app.world.resource_mut::<SnapshotHistory>().shutdown();
+    counts
+}
+
 /// One entry per whole-section comparison in `PublishState::publish`, and whether that section is
 /// present (i.e. judged **changed**) in this delta.
 ///
@@ -255,7 +446,8 @@ fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 37] {
 }
 
 /// Copy the **current** shipped `simulation_config.json` with the seed pinned, and return its path.
-fn write_pinned_config() -> PathBuf {
+/// `grid` overrides the map dimensions (row 4's sweep); `None` keeps the shipped size.
+fn write_pinned_config(grid: Option<(u32, u32)>) -> PathBuf {
     let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("data")
@@ -265,8 +457,16 @@ fn write_pinned_config() -> PathBuf {
     let mut config: serde_json::Value =
         serde_json::from_str(&text).expect("shipped simulation_config.json should parse");
     config[MAP_SEED_KEY] = serde_json::json!(PINNED_MAP_SEED);
+    let suffix = match grid {
+        Some((width, height)) => {
+            config[GRID_SIZE_KEY] = serde_json::json!({ "x": width, "y": height });
+            format!("_{width}x{height}")
+        }
+        None => String::new(),
+    };
 
-    let out = std::env::temp_dir().join("publish_profile_simulation_config.json");
+    // One file per grid, so a run's three worlds cannot race each other's config on disk.
+    let out = std::env::temp_dir().join(format!("publish_profile_simulation_config{suffix}.json"));
     std::fs::write(&out, serde_json::to_string_pretty(&config).unwrap())
         .unwrap_or_else(|err| panic!("writing {}: {err}", out.display()));
     out

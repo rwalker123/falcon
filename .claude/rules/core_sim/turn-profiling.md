@@ -97,6 +97,102 @@ cost is real and worth stating: flora dominates that number (~1.4 of 1.4 ms), so
 regression no longer has its own line — it shows up as `patches` growing.
 `core_sim/tests/turn_profile_wiring.rs`'s `EXPECTED_CAPTURE_PHASES` pins the new set.
 
+## `snapshot.build` is fully decomposed — and the growth column is the one to read
+
+For three arcs `snapshot.build` carried three labels over a ~700-line body, so its dominant
+section had no name and nothing had ever printed it. It now carries **eighteen**, one per section,
+and they **sum to the parent** (2.917 of 2.919 ms measured at 80×52): a region that lands in no
+section is a decomposition bug, which is why `EXPECTED_CAPTURE_PHASES` pins every one of them
+including the sections that measure ~0.
+
+Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
+
+| section | ms @80×52 | % | copy or derive | proportional to | grows when |
+|---|---|---|---|---|---|
+| `patches` | **1.217** | 41.7 | **derive** | patch tiles × realized species × **payoff accounts** | map grows; **a payoff account is added** |
+| `readouts.forage_patches` | 0.424 | 14.5 | **derive** | patches × ladder rungs | map grows; a rung/policy is added |
+| `rasters` (9 overlays, 2 blocks) | 0.319 | 10.9 | **derive** | tiles × rasters | map grows; a raster is added |
+| `tiles` | 0.211 | 7.2 | copy + 2 cheap derivations | tiles | map grows |
+| `culture` | 0.206 | 7.0 | **copy** | culture layers (one local layer per tile) | map grows |
+| `assemble` | 0.204 | 7.0 | **copy** (`.clone()` per field) | assembled snapshot bytes | anything grows |
+| `tile_index` | 0.159 | 5.5 | derive/join | tiles (culture probe + sort + coord index) | map grows |
+| `power` | 0.104 | 3.6 | copy | power nodes (= tiles) | map grows |
+| `readouts.herds` | 0.060 | 2.1 | **derive** (fog filter + hunt forecast) | herds, ~4–5 µs each | herd count grows |
+| `prelude` · `links` · `populations` · `ledgers` · `discovery` · `sentiment` · `crisis` · `header` · `readouts` remainder | 0.017 | 0.6 | mixed | O(1), content counts, faction counts | with the content catalog, or never |
+
+**Pick a target from the growth column, not the ms column.** A section at 0.05 ms that is
+`O(tiles × subsystems)` compounds twice as the game develops; one at 1 ms that is `O(1)` never
+moves again. Reading the ms column alone is what produced the standing (wrong) assumption that
+rasters were the thing to attack.
+
+### One more raster costs 0.028 ms — the block is `O(tiles × rasters)` with a tiny constant
+
+Measured by labelling all nine individually (scaffolding, since removed — the shipped code has the
+single `rasters` scope). At 80×52 the **marginal** cost of adding one overlay is **0.028 ms
+median**, 0.035 mean, range 0.001 (moisture) to 0.089 (corruption, military): about **1% of
+`snapshot.build`**, at ~**8.5 ns per tile per raster**. The `O(tiles × rasters)` shape is real and
+both factors do grow — the constant is simply 24× smaller per tile than `patches`.
+
+**The block is not uniform, and the split is meaningful.** `corruption`, `military`, `sentiment`
+and `logistics` are **84%** of it, because each derives its cell from *other* snapshot sections
+(tile states, populations, power nodes, the logistics raster). `terrain`, `culture`, `visibility`,
+`moisture` and `elevation` are near-copies of a resource or a field and cost 0.001–0.008 ms each.
+A new overlay's cost therefore depends on which of those two it is.
+
+### `patches` is `O(patch tiles × k × payoff accounts)` — only the third factor is unbounded
+
+- **patch tiles** — one per food-bearing tile (2110 at 80×52, 7811 at 160×104). Grows with the map.
+- **k, the realized species per patch** — capped by `flora_config.json`'s **`realized_species_max`
+  (4)**, observed mean 2.84. Worth stating explicitly: *a bigger flora roster does not run away
+  here.* More species per biome only pushes `min(hosted, 4)` toward 4 and then stops.
+- **payoff accounts** — the inner loop prices every share at every account:
+  `commit_payoff(PlantTended)`, `commit_payoff(PlantField)`, `commit_fodder_payoff` (F3),
+  `commit_trade_payoff` (F4). **Four today; it was two before F3/F4.** This is the factor that
+  grows with the subsystem count, and it is a multiplier on the whole map.
+
+A **fifth payoff account costs ~+0.30 ms, ~10% of `snapshot.build` — roughly ten rasters.** Cost
+per flora share is flat across a 16× change in tile count (217 / 203 / 218 ns at 40×26 / 80×52 /
+160×104), so that projection is linear arithmetic, not extrapolation.
+
+**The forecast is derived for the whole map to answer a per-selection question.** `forage_patches`
+is read by the client's `MapView._tile_info_at(col, row)` — a per-tile query on selection — and by
+the compose stepper for one source. Both consumers are per-selection, and the server derives a
+pre-commit forecast for every patch on the map every turn.
+
+### Write-side change emission addresses 18% of `snapshot.build`
+
+Emission — systems publishing changes as they mutate — can replace a **copy**. It cannot replace a
+**derivation**, which still has to be recomputed when its inputs move. Splitting the table that
+way: `tiles` + `culture` + `power` + the small copies = **0.53 ms, 18%**. The other **82%** —
+`patches`, `forage_patches`, `rasters`, `assemble`, `tile_index`, `herds` — is derivation or join
+work that an emission arc would leave exactly where it is. That is the number to scope such an arc
+against.
+
+### Per-unit cost rises 24–50% with map size, and the cause is the memory hierarchy
+
+Over a 16× increase in tile count, per-unit cost is **flat** for `patches` (per flora share) and
+`tiles` (per tile), **falls** for `assemble` (fixed overhead amortising), and **rises** for
+`power` (21→31 ns/node), `culture` (44→64 ns/layer), `tile_index` (36→46 ns/tile),
+`forage_patches` (182→250 ns/patch) and `rasters` (7.8→9.7 ns/tile/raster). None of those is
+superlinear algorithmically — every riser is hash-probe or random-access heavy, and the rise is a
+working set outgrowing cache. **Map-scaled sections are therefore slightly worse than linear in
+practice**, which is the opposite direction from the one a big-O reading predicts.
+
+### Read shares, not absolutes — this has now bitten the arc twice
+
+Absolute milliseconds on this machine drift **~8% between sessions** (identical code measured
+`snapshot.build` at 2.92 and 3.25 in the same afternoon); within a session, sequential batches
+drift ~0.12 ms, which has already been enough to fake an effect once. **Shares and per-unit ratios
+held to ~1% across every session.** So: interleave A/B arms rather than batching them, quote the
+narrowest label that shows the effect, and treat a cross-session absolute as an order of magnitude
+rather than a number.
+
+`core_sim/examples/publish_profile.rs` is the harness. Its map-size sweep builds all three worlds
+up front and resolves one frame of each per round, for that reason; it prints a denominator census
+(tiles, patches, flora shares, culture layers, power nodes, cohorts, herds) beside the timings,
+because a section's time without its denominator cannot be classified. Interleaving costs ~1.5% on
+the absolutes — three resident worlds share the caches — and nothing on the shares.
+
 ### Profiling this path: pin the seed, and don't compare hashes
 
 Two traps, both hit while measuring #387:
