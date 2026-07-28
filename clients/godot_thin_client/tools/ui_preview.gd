@@ -98,6 +98,17 @@ const LOCAL_HUNT_CAPPED_CREW := 3
 ## components are read on carries no waste term to argue with; the wolf rides the same crew so the
 ## inedible quarry and the both-products control are compared at ONE party size.
 const PELT_FRAME_HUNTERS := 2
+## The two INVESTMENT-rung payoff faces the Wild Boar frame is judged on (issue #397), spelled out as
+## literal strings rather than rebuilt from `SourceForecast.picker_products` — an assertion that
+## re-derives the face through the very formatter under test asserts nothing. `→` is the payoff arrow
+## (`HudComposeVocab.POLICY_PAYOFF_COMPACT`), food leads, and each half appears because the boar pays
+## both; the pre-fix face was the food clause alone.
+const BOAR_TAME_PAYOFF_FACE := "→ 1.48 food · 0.37 trade"
+const BOAR_CORRAL_PAYOFF_FACE := "→ 2.95 food · 0.74 trade"
+## Which line of a rung's two-line face carries the metric: line 0 is the rung NAME
+## (`HudFormat.policy_face`), line 1 the products (`HudWidgets._policy_rung_cell` builds them in that
+## order). A rung with no metric wears line 0 alone.
+const POLICY_RUNG_METRIC_LINE := 1
 ## "no count dialed in" for `_compose_herd` — a real dial can be 0 (an unstaffed compose), so the
 ## sentinel has to sit outside the valid range rather than reuse 0.
 const COMPOSE_COUNT_UNSET := -1
@@ -1924,6 +1935,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_both_products")
 
+	# 3z — THE INVESTMENT-RUNG TWIN of 3y (issue #397). The extractive rungs above have paid a pair since
+	# #337, but Tame and Corral rendered a FOOD-ONLY payoff face — a Wild Boar read `→ 1.48 food` beside
+	# its own extractive rungs' `0.74 food · 0.18 trade`, silently dropping a trade half the sim exports
+	# (`pastoralTrade` / `corralTrade`). A prepared herd pays the same two products a hunted one does, so
+	# the payoff obeys the same render-only-when-non-zero rule: both faces must name FOOD THEN TRADE.
+	# Domestication is mid-ladder on purpose — Tame retires from the picker once the herd is fully tamed,
+	# and Corral is knowledge-gated below that, so a frame carrying BOTH rungs necessarily has one greyed.
+	# A gated rung still wears its payoff (that is the point of showing it), which this frame also proves.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+	var payoff_boar := _investment_pair_boar_herd()
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_band(-1)
+	_hud.show_herd_selection(payoff_boar)
+	_compose_herd(payoff_boar, PELT_FRAME_HUNTERS, "tame")
+	await _settle()
+	await _save("herd_investment_both_products")
+	# The rungs are found by `HudWidgets.POLICY_RUNG_META`, never by button text: the face is an
+	# empty-`text` Button under a two-Label stack, so a text search finds nothing at all.
+	_assert_hud("Tame's payoff face names BOTH products, food leading",
+		_policy_rung_metric(_hud._drawercompose._compose_sheet, "tame") == BOAR_TAME_PAYOFF_FACE)
+	_assert_hud("Corral's payoff face names BOTH products, food leading",
+		_policy_rung_metric(_hud._drawercompose._compose_sheet, "corral") == BOAR_CORRAL_PAYOFF_FACE)
+
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	_hud._band_labor._player_bands = []
 	_hud._band_labor._player_band = _band_fixture()
@@ -3374,6 +3410,41 @@ func _find_button_by_text(root: Node, text: String) -> Button:
 		if found != null:
 			return found
 	return null
+
+## The METRIC line of a policy rung's two-line face — `→ 1.48 food · 0.37 trade`, the products line
+## the payoff/cap assertions read. The rung is found by `HudWidgets.POLICY_RUNG_META`, its identity,
+## and NEVER by button text: the face lives on a two-Label stack beside an empty-`text` Button, so
+## `_find_button_by_text` finds nothing at all here. "" when the rung is absent from the picker or
+## wears its name alone (no metric).
+func _policy_rung_metric(root: Node, policy: String) -> String:
+	var btn := _find_policy_rung(root, policy)
+	if btn == null:
+		return ""
+	# The face's Labels are siblings of the Button under the rung's CELL, not children of it.
+	var lines := _face_lines(btn.get_parent())
+	return lines[POLICY_RUNG_METRIC_LINE] if lines.size() > POLICY_RUNG_METRIC_LINE else ""
+
+func _find_policy_rung(root: Node, policy: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).get_meta(HudWidgets.POLICY_RUNG_META, "") == policy:
+		return root as Button
+	for child in root.get_children():
+		var found := _find_policy_rung(child, policy)
+		if found != null:
+			return found
+	return null
+
+## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
+func _face_lines(root: Node) -> Array[String]:
+	var lines: Array[String] = []
+	if root == null:
+		return lines
+	if root is Label:
+		lines.append((root as Label).text)
+	for child in root.get_children():
+		lines.append_array(_face_lines(child))
+	return lines
 
 ## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
 func _count_buttons_by_text(root: Node, text: String) -> int:
@@ -4909,6 +4980,30 @@ func _taming_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 0.4
 	fixture["ecology_phase"] = "thriving"
 	fixture["tile_info"] = _compact_herd_tile_fixture()
+	return fixture
+
+## THE BOTH-PRODUCTS INVESTMENT PAYOFF (issue #397) — a Wild Boar, edible AND worth its hide/bristles,
+## on a pen-ceiling species so BOTH investment rungs are offered. Its four extractive rungs already pay
+## a pair; the numbers here are the OTHER pair, the one the payoff faces render:
+##   Tame   → `pastoral_yield` 1.48 food + `pastoral_trade` 0.37 trade  ⇒ `→ 1.48 food · 0.37 trade`
+##   Corral → `corral_yield`   2.95 food + `corral_trade`   0.74 trade  ⇒ `→ 2.95 food · 0.74 trade`
+## The food halves are the boar figures from the issue's own report (where the faces read `→ 1.48 food`
+## and `→ 2.95 food` and the trade halves were dropped); each trade half is a quarter of its food half,
+## the boar's hide-to-meat ratio, so the pair ascends together up the ladder exactly as the extractive
+## caps do. Ordering is the ladder's: Sustain (0.90) < Tame (1.48) < Corral (2.95).
+## `domestication` stays mid-ladder (0.4) because Tame RETIRES from the picker at full domestication
+## while Corral is gated below it — the only way both rungs appear at once, with Corral greyed and
+## still wearing its payoff.
+func _investment_pair_boar_herd() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["id"] = "game_boar_11"
+	fixture["label"] = "Wild Boar (game_boar_11)"
+	fixture["species"] = "Wild Boar"
+	fixture["size_class"] = "medium"
+	fixture["pastoral_yield"] = 1.48
+	fixture["pastoral_trade"] = 0.37
+	fixture["corral_yield"] = 2.95
+	fixture["corral_trade"] = 0.74
 	return fixture
 
 ## The same herd, STRESSED — the "why isn't my Tame progressing?" case. Taming accrues only while the

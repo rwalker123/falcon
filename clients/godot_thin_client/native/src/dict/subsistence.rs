@@ -167,6 +167,11 @@ pub(crate) fn herds_to_array(
         // they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
         // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("corral_yield", herd.corralYield());
+        // The trade half of that SAME payoff — read the two as ONE pair, exactly like
+        // `per_worker_yield`/`per_worker_trade`. The Corral rung's picker face renders the pair,
+        // each component only when non-zero, so a boar reads `→ food · trade` and a pelt-only
+        // species reads trade alone.
+        let _ = dict.insert("corral_trade", herd.corralTrade());
         // The pen as a managed POPULATION (docs/plan_corral_managed_population.md): a confined herd
         // cannot graze, so its keeper hauls it food every turn.
         //   `pen_upkeep`       = the feed/turn the pen DEMANDS, or WOULD demand once built, at the
@@ -272,6 +277,9 @@ pub(crate) fn herds_to_array(
         // `→ +pastoral_yield` (like Cultivate/Sow/Corral) instead of quoting only the dip. Sustain <
         // Tame < Corral. Appended-field audit: this is the newest slot on HerdTelemetryState.
         let _ = dict.insert("pastoral_yield", herd.pastoralYield());
+        // The trade half of the Tame payoff, the twin of `corral_trade` above — one pair, rendered
+        // component-by-component only when non-zero, so Tame's face carries both products.
+        let _ = dict.insert("pastoral_trade", herd.pastoralTrade());
         array.push(&dict.to_variant());
     }
     array

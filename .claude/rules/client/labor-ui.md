@@ -436,10 +436,15 @@ paths:
     compact string is the face's SECOND LINE, the verbose full string moves to the tooltip. Extractive rungs →
     compact `0.96 food` (`SourceForecast.picker_products(ceiling, trade)`, fed by `_forage_policy_takes` off `SourceForecast.forecast_inputs`),
     full `up to +0.96/turn` (`POLICY_CAP_FORMAT` — the tooltip keeps the sign and the unit, being the one
-    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.20 food`
-    (`POLICY_PAYOFF_COMPACT`; the payoff every ladder rung builds toward is a provisions rate, so the face
-    names food and the arrow is what keeps it from reading as a take today), full `builds toward +1.20/turn` (`POLICY_PAYOFF_FULL_FORMAT`) — the
-    `tended_yield`/`field_yield` (forage) or `pastoral_yield`/`corral_yield` (hunt) they build toward, NOT
+    place that says "up to"). INVESTMENT rungs on BOTH pickers → compact `→ 1.48 food · 0.37 trade`
+    (`POLICY_PAYOFF_COMPACT` over the SAME `SourceForecast.picker_products` the extractive rungs use, so
+    the payoff obeys the render-only-when-non-zero rule too: a boar's Tame names both products, a
+    pure-meat species' names food alone, a plant rung is always food-only; the arrow is what keeps it
+    from reading as a take today), full `builds toward +1.48/turn · ⇄ +0.37 trade goods/turn`
+    (`POLICY_PAYOFF_FULL_FORMAT` joined to the shared `POLICY_CAP_TRADE_FORMAT` clause by
+    `TRADE_COMPONENT_SEPARATOR`, the same shape `extractive_take_pair` builds) — the
+    `tended_yield`/`field_yield` (forage) or `pastoral_yield`+`pastoral_trade` /
+    `corral_yield`+`corral_trade` (hunt) they build toward, NOT
     the prep dip, which reads below Sustain and was identical for both hunt rungs (quoting it made
     taming/penning look worse than hunting); a locked rung may still show its payoff, the gate-reason line
     (under the picker) explains the lock. **The tooltip carries the VERBOSE metric the face compacts** —
@@ -450,7 +455,9 @@ paths:
     **line 1 alone** — glyph + name — so a button is never a lone glyph and never a lone number. The three
     pickers — forage / local hunt / expedition — wear an **identical** face: `<glyph> <Name>` over
     `X food[ · Y trade]` (extractive, `up to X/turn` in the tooltip via `POLICY_CAP_FORMAT` /
-    `SourceForecast.extractive_take`) or over `→ X food` (investment, Cultivate/Sow AND Tame/Corral). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
+    `SourceForecast.extractive_take`) or over `→ X food[ · Y trade]` (investment, Cultivate/Sow AND
+    Tame/Corral — the trade half only ever appears on the two HERD rungs, the plant web projecting no
+    trade rate). **The expedition picker no longer shows raid animals** (`≈N` / `EXPEDITION_TAKE_COMPACT`
     is retired) — `SourceForecast.expedition_policy_takes` now emits each policy's **MAX obtainable food/turn**, the max
     over party sizes of `deliveredFood / trip_turns` (`trip_turns = turnsToFill + round-trip travel`), so it
     is **worker-independent** (never blinks as the Party stepper steps) and the four read ASCENDING Sustain <
@@ -633,8 +640,10 @@ paths:
       **`bodyMass` → `body_mass`** (a real appended field, the 4th drop; BIOMASS, surfaced for
       completeness — it **cannot** drive the rhythm, see below) and **`foodPerAnimal` →
       `food_per_animal`** (slot 72, the food-unit quantity the rhythm actually divides by) and
-      **`pastoralYield` → `pastoral_yield`** (the newest slot — Tame's payoff, the pastoral twin of
-      `corralYield`, which lets Tame render `→ +Y`; verified present on the herd dict) → bare keys
+      **`pastoralYield` → `pastoral_yield`** (Tame's payoff, the pastoral twin of `corralYield`) and
+      the trade halves of both payoffs, **`pastoralTrade` → `pastoral_trade`** / **`corralTrade` →
+      `corral_trade`** (the newest slots, appended after `tradePerAnimal`; each is read as ONE pair
+      with its food sibling, so a prepared herd's rung face names both products) → bare keys
       on the herd dict. `LaborAssignment`: `actualYield` / `sustainableYield` / `workersNeeded` +
       **`wastedYield` → `wasted_yield`** (the understaffing signal, also dropped) +
       **`overdraws` → `overdraws`** (the sim-answered overhunting ⚠ for the confirmed rows/map labels,
@@ -811,6 +820,16 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   those chips already spend their `·` separating a count from its total).
 - **`extractive_take_pair(food, trade)`** — the rung metric `{compact, full}` (the food-only
   `extractive_take` survives for the forage picker, whose plant-side trade is not projected).
+- **The rule reaches the INVESTMENT payoffs too**, not just the extractive caps.
+  `SourceForecast.FORECAST_PAYOFF_TRADE_KEYS` (`corral` → `corral_trade`, `tame` → `pastoral_trade`
+  — HERD rungs only, the plant web projecting no trade rate) gives `forecast_inputs` a
+  **`payoff_trade`** beside `payoff`, and `DrawerComposeController._payoff_take(payoff,
+  payoff_trade)` builds the same shape `extractive_take_pair` does: `picker_products` on the face,
+  the `POLICY_PAYOFF_FULL_FORMAT` food clause joined to the shared `POLICY_CAP_TRADE_FORMAT` trade
+  clause in the tooltip, each half only when `has_component`. `POLICY_CAP_TRADE_FORMAT` is bare
+  wording with no "up to" in it, which is why it serves both the cap and the payoff despite its name.
+  `_hunt_policy_takes` emits a face when EITHER component is non-zero, so a trade-only payoff still
+  gets one; `_forage_policy_takes` passes `0.0` explicitly rather than relying on a default.
 - **`picker_products(food, trade)`** → `0.96 food · 0.24 trade` — the same rule and the same food-leads
   order **in WORDS and without the sign**, for the ONE surface that has room to name its products: the
   policy picker's two-line rung face (`compact` above is written in terms of it). The picker names
@@ -894,7 +913,11 @@ empty-state that tests food alone.**
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
 rungs read `0.90 / 1.35 / 1.95 / 2.70 trade`, no food line, no zeros, and the animals-first preview +
 averaging-window disclaimer still render off the TRADE quantum) · **`herd_hunt_both_products`** (the
-same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_hunt_pelts_raid`** (the wolf as an
+same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_investment_both_products`**
+(its INVESTMENT twin — a Wild Boar whose Tame reads `→ 1.48 food · 0.37 trade` and whose greyed Corral
+reads `→ 2.95 food · 0.74 trade`, asserted as literal strings against the rungs found by
+`HudWidgets.POLICY_RUNG_META`; `herd_tame`'s food-only deer is the companion showing no `0 trade` is
+printed) · **`herd_hunt_pelts_raid`** (the wolf as an
 expedition target: `delivers ≈3 Grey Wolf over ≈9 turns · ⇄ ~4 trade goods`, primary Send — NOT a
 denial) · `herd_hunt_eradicate` (an Eradicate boar raid now delivers `~40 food · ⇄ ~5 trade goods`) ·
 `hunt_picker_ascending` (the drawer's standing summary `+0.84 /turn · ⇄ +0.12`) · `food_tile` (the

@@ -167,6 +167,8 @@ fn create_herds<'a>(
                 perWorkerTrade: herd.per_worker_trade,
                 tradePerAnimal: herd.trade_per_animal,
                 corralYield: herd.corral_yield,
+                // The Corral rung's trade half (issue #397) — appended last (append-only wire).
+                corralTrade: herd.corral_trade,
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
@@ -191,6 +193,8 @@ fn create_herds<'a>(
                 herdedFraction: herd.herded_fraction,
                 // The Tame rung's payoff — appended last (append-only wire).
                 pastoralYield: herd.pastoral_yield,
+                // The Tame rung's trade half (issue #397) — appended last (append-only wire).
+                pastoralTrade: herd.pastoral_trade,
                 // Hay this pen drew last turn (F3) — appended last (append-only wire).
                 fodderDraw: herd.fodder_draw,
                 // The render-ready feed split (F3) — appended last (append-only wire).
