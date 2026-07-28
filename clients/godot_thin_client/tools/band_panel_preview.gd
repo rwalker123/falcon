@@ -89,6 +89,33 @@ const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
 ## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
 const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 
+## THE SOURCE-RUNG BOARD — one row per rung of both ladders, on ONE band, so the marks are judged
+## against each other rather than one frame at a time. Wild carries NO mark (that is the design), so
+## it is on the board as the control: without it the frame cannot show that absence reads as wild
+## rather than as a missing glyph.
+##   plants:  (70,20) wild · (71,20) 🌾 Tended Patch · (72,20) ▦ Field
+##   animals: `game_boar_rp` ◎ pastoral (tamed, unpenned) · `game_aurochs_rp` 🐄 penned
+## The two herds are the pair `DetailFormat` alone CANNOT tell apart — `husbandry_label` and
+## `corral_label` both wear 🐄 — so a pastoral row that reads 🐄 here is the exact defect the mark
+## exists to prevent.
+const RUNG_WILD_TILE := Vector2i(70, 20)
+const RUNG_TENDED_TILE := Vector2i(71, 20)
+const RUNG_FIELD_TILE := Vector2i(72, 20)
+## The committed crop each prepared patch carries — it rides the rung mark's TOOLTIP, which is the
+## only place the board has room to name it.
+const RUNG_TENDED_CROP := "Wild Emmer"
+const RUNG_FIELD_CROP := "Einkorn"
+const RUNG_PASTORAL_HERD_ID := "game_boar_rp"
+const RUNG_PENNED_HERD_ID := "game_aurochs_rp"
+## The penned herd's crew, staffed in full — this frame is about the RUNG, so it must not also trip
+## the under-herded ⚠ and leave two explanations for one amber row.
+const RUNG_PENNED_HERDERS := 2
+## Every Nth many-source patch carries a rung, so the paged/threshold frames show rung marks mixed
+## among wild rows at real board density. Coprime with each other and with the 3 the overstaffed
+## rows cycle on, so no row lands on two conditions in lockstep.
+const RUNG_MANY_TENDED_STRIDE := 4
+const RUNG_MANY_FIELD_STRIDE := 7
+
 # The two hunt-party fixtures the parties-inspector states open (entities from the fixtures below).
 const HUNT_DELIVERING_ENTITY := 952
 const HUNT_LEAN_ENTITY := 953
@@ -447,8 +474,11 @@ func _ready() -> void:
 	_push_bands([_band_fixture()])
 
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
-	# pager must appear and NOTHING may scroll.
+	# pager must appear and NOTHING may scroll. Its patches carry RUNG marks on a stride, so the
+	# board is also where the marks are judged at real density — and, because the shell-threshold
+	# probes below re-render this same band, where they are judged at the narrowest legal column.
 	_hud.update_food_modules(_many_forage_modules())
+	_hud.update_forage_patches(_many_source_patch_fixtures())
 	_push_bands([_many_sources_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -566,8 +596,49 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
-	# Restore the reference band so later states start from their usual subject.
+
+	# THE SOURCE-RUNG BOARD — five rows, one per rung of the two ladders, on ONE band so the marks are
+	# read against each other: wild forage (NO mark, the control) · 🌾 Tended Patch · ▦ Field · ◎
+	# pastoral herd · 🐄 penned herd. The mark is orthogonal to the policy glyph, which reads ♻ Sustain
+	# on every row here precisely so the frame cannot be passed by the verb: before this, a Tended Patch
+	# under Sustain and plain wild ground under Sustain were indistinguishable on the board. The narrow
+	# (L) shell puts all five in one column at `WORK_COLUMN_MIN_WIDTH`, which is also where the label's
+	# remaining width is judged.
+	_hud.update_food_modules(_rung_forage_modules())
+	_hud.update_forage_patches(_rung_patch_fixtures())
+	_hud.update_herds(_rung_herd_fixtures())
+	_push_bands([_rung_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_rungs")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_work_row_rungs()
+	_assert_rung_labels_are_hoverable()
+
+	# The same five rows in the WIDE (bottom) shell, where the rung slot competes with the multi-column
+	# split for the label's width.
+	_panel.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("band_panel_work_rungs_wide")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+
+	# Back to the LEFT dock before moving on: the states after this one inherit the dock rather than
+	# setting their own, so leaving the panel bottom-docked would silently re-render `band_panel_no_idle`
+	# and `band_panel_compose_hunt` in the wide shell.
+	_panel.set_dock(SIDE_LEFT)
+
+	# Restore the reference band so later states start from their usual subject — and the paged board's
+	# patch set with it, because `update_forage_patches` REPLACES the lookup: the ultrawide, dock-row
+	# and shell-threshold states below re-render `_many_sources_band_fixture`, so leaving the five rung
+	# patches installed would strip the marks back off exactly the frames that judge them at the
+	# narrowest legal column.
 	_hud.update_herds(_herd_fixtures())
+	_hud.update_forage_patches(_many_source_patch_fixtures())
 	_push_bands([_band_fixture()])
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
@@ -1348,6 +1419,169 @@ func _assert_under_herded_work_row(herd_id: String) -> void:
 			print("band_panel_preview: assert OK — under-herded Hunt row flags the shed (⚠ + note)")
 	if not found:
 		push_error("band_panel_preview: no Hunt work row for %s" % herd_id)
+
+# ---- THE SOURCE-RUNG BOARD ------------------------------------------------------------------------
+#
+# `update_forage_patches` was called EXACTLY ONCE in this whole harness (the per-source-cap state), so
+# `forage_patch_lookup()` was empty for every Work-tab frame and no rung could ever have rendered here.
+# These fixtures close that: the rung frame below, and rung-marked patches under the paged board so the
+# marks are also seen at real density and in the narrow-shell threshold frames.
+
+## A band working one source per rung — three forage rows (wild / Tended / Field) and two hunt rows
+## (pastoral / penned). Every row is staffed and unremarkable otherwise, so the ONLY thing that differs
+## down the board is the rung mark.
+func _rung_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 922
+	band["id"] = "Band 22"
+	band["idle_workers"] = 6
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"target_x": RUNG_WILD_TILE.x, "target_y": RUNG_WILD_TILE.y,
+			"actual_yield": 0.61, "sustainable_yield": 0.61},
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"target_x": RUNG_TENDED_TILE.x, "target_y": RUNG_TENDED_TILE.y,
+			"actual_yield": 0.97, "sustainable_yield": 0.97},
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"target_x": RUNG_FIELD_TILE.x, "target_y": RUNG_FIELD_TILE.y,
+			"actual_yield": 1.94, "sustainable_yield": 1.94},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"fauna_id": RUNG_PASTORAL_HERD_ID, "target_x": 70, "target_y": 19,
+			"actual_yield": 1.20, "sustainable_yield": 1.20},
+		{"kind": "hunt", "workers": RUNG_PENNED_HERDERS, "workers_needed": RUNG_PENNED_HERDERS,
+			"policy": "sustain",
+			"fauna_id": RUNG_PENNED_HERD_ID, "target_x": 69, "target_y": 20,
+			"actual_yield": 5.40, "sustainable_yield": 5.40},
+	]
+	return band
+
+## The three patches those forage rows work. Deliberately RUNG FIELDS ONLY — no `per_worker_yield` /
+## `ceiling_*` — so `SourceForecast.max_useful_workers` stays UNBOUNDED and the steppers gate exactly as
+## they did before patches were pushed here at all. This frame is about the mark, not the cap.
+func _rung_patch_fixtures() -> Array:
+	return [
+		{"x": RUNG_WILD_TILE.x, "y": RUNG_WILD_TILE.y, "is_cultivated": false, "is_field": false},
+		{"x": RUNG_TENDED_TILE.x, "y": RUNG_TENDED_TILE.y, "is_cultivated": true, "is_field": false,
+			"committed_display_name": RUNG_TENDED_CROP},
+		# A Field is ALSO cultivated — that is why the row builder tests `is_field` FIRST, and why this
+		# fixture sets both rather than the field flag alone.
+		{"x": RUNG_FIELD_TILE.x, "y": RUNG_FIELD_TILE.y, "is_cultivated": true, "is_field": true,
+			"committed_display_name": RUNG_FIELD_CROP},
+	]
+
+## The two herds those hunt rows work: one TAMED but unpenned (pastoral), one CORRALLED. The penned one
+## is fully staffed so the frame carries no ⚠ competing with the rung mark for the eye.
+func _rung_herd_fixtures() -> Array:
+	var penned := {
+		"id": RUNG_PENNED_HERD_ID, "species": "Aurochs", "x": 69, "y": 20,
+		"population": 180, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 1.0, "corralled": true,
+		"hunt_policy_ceilings": {"sustain": 5.40},
+	}
+	_set_managed_herders(penned, RUNG_PENNED_HERDERS)
+	return [
+		{
+			"id": RUNG_PASTORAL_HERD_ID, "species": "Wild Boar", "x": 70, "y": 19,
+			"population": 140, "ecology_phase": "thriving", "huntable": true,
+			# Tamed but NOT corralled — the rung the animal ladder had no glyph of its own for.
+			"domestication": 1.0, "corralled": false,
+			"hunt_policy_ceilings": {"sustain": 1.20},
+		},
+		penned,
+	]
+
+## Forage modules for the rung tiles, so each Forage row still resolves its map glyph and the rung mark
+## is read BESIDE a source glyph rather than in isolation.
+func _rung_forage_modules() -> Array:
+	var modules: Array = []
+	for tile in [RUNG_WILD_TILE, RUNG_TENDED_TILE, RUNG_FIELD_TILE]:
+		modules.append({"x": tile.x, "y": tile.y, "module": "savanna_grassland", "kind": "gather"})
+	return modules
+
+## Patches for the PAGED board, so the rung marks are also seen at real board density and in the
+## narrow-shell threshold frames. Carries `_cap_demo_patch_fixtures()` forward because
+## `update_forage_patches` CLEARS the lookup: dropping (71,18) would re-enable a `+` the
+## `band_panel_work_trade_*` frames render disabled, moving a frame this change has nothing to do with.
+## Rung fields only, for the same cap-neutrality reason as `_rung_patch_fixtures`.
+func _many_source_patch_fixtures() -> Array:
+	var patches := _cap_demo_patch_fixtures()
+	for i in range(MANY_SOURCE_COUNT):
+		var patch := {"x": MANY_SOURCE_ORIGIN_X + i, "y": MANY_SOURCE_ORIGIN_Y}
+		if i % RUNG_MANY_FIELD_STRIDE == 3:
+			patch["is_cultivated"] = true
+			patch["is_field"] = true
+			patch["committed_display_name"] = RUNG_FIELD_CROP
+		elif i % RUNG_MANY_TENDED_STRIDE == 1:
+			patch["is_cultivated"] = true
+			patch["committed_display_name"] = RUNG_TENDED_CROP
+		patches.append(patch)
+	return patches
+
+## Every row on the rung board must carry the mark its rung wears — and, decisively, the WILD row must
+## carry NONE. Asserting only the marked rows would pass a build that stamped a glyph on everything.
+func _assert_work_row_rungs() -> void:
+	var expected := {
+		"forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]: "",
+		"forage:%d,%d" % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y]: DetailFormat.CULTIVATION_GLYPH,
+		"forage:%d,%d" % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y]: DetailFormat.field_glyph(),
+		"hunt:%s" % RUNG_PASTORAL_HERD_ID: DetailFormat.pastoral_glyph(),
+		"hunt:%s" % RUNG_PENNED_HERD_ID: DetailFormat.CORRAL_GLYPH,
+	}
+	var seen := {}
+	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
+		var m: Dictionary = model
+		var key := String(m.get("key", ""))
+		if not expected.has(key):
+			continue
+		seen[key] = true
+		var glyph := String(m.get("rung_glyph", ""))
+		if glyph != String(expected[key]):
+			push_error("band_panel_preview: %s expected rung glyph '%s' but got '%s'" % [
+				key, expected[key], glyph])
+		elif glyph != "" and String(m.get("rung_tooltip", "")) == "":
+			push_error("band_panel_preview: %s wears a rung glyph with no tooltip naming the rung" % key)
+	for key in expected:
+		if not seen.has(key):
+			push_error("band_panel_preview: no work row for %s on the rung board" % key)
+	if seen.size() == expected.size():
+		print("band_panel_preview: assert OK — %d work rows wear their standing rung (wild bare)" % seen.size())
+
+## The rung mark's TOOLTIP has to actually be reachable, and its slot must not eat the row's click —
+## two SILENT failures a rendered frame cannot show. A `Label` defaults to `MOUSE_FILTER_IGNORE`, which
+## makes `tooltip_text` a no-op (this HUD has shipped six such tooltips nobody ever saw), while the
+## obvious fix, `HudWidgets.set_label_tooltip`, sets `STOP` — which would swallow the press that opens
+## the inspector strip. Only `PASS` satisfies both, so that is what is asserted.
+##
+## The marks are found by `HudWorkVocab.WORK_ROW_RUNG_META`, NEVER by their glyph: `savanna_grassland`'s
+## SITE icon is also 🌾, so a text match walks straight into the row's source-icon Label — which this
+## assertion did, and failed on, before the meta existed.
+func _assert_rung_labels_are_hoverable() -> void:
+	var labels: Array = []
+	_collect_rung_labels(_panel, labels)
+	var marked := 0
+	for label_variant in labels:
+		var label: Label = label_variant
+		if String(label.get_meta(HudWorkVocab.WORK_ROW_RUNG_META)) == "":
+			continue   # a WILD row's reserved-but-empty slot — nothing to hover
+		marked += 1
+		if label.tooltip_text == "":
+			push_error("band_panel_preview: rung mark '%s' carries no tooltip" % label.text)
+			return
+		if label.mouse_filter != Control.MOUSE_FILTER_PASS:
+			push_error("band_panel_preview: rung mark '%s' has mouse_filter %d — PASS is the only value that both shows the tooltip and lets the row's click through" % [
+				label.text, label.mouse_filter])
+			return
+	if marked == 0:
+		push_error("band_panel_preview: no rung mark rendered in the panel (%d slots) — the mark is missing" % labels.size())
+	else:
+		print("band_panel_preview: assert OK — %d rung marks are hoverable (tooltip + PASS), %d wild slots bare" % [
+			marked, labels.size() - marked])
+
+func _collect_rung_labels(node: Node, out: Array) -> void:
+	if node is Label and (node as Label).has_meta(HudWorkVocab.WORK_ROW_RUNG_META):
+		out.append(node)
+	for child in node.get_children():
+		_collect_rung_labels(child, out)
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
 ## repage so the picker actually renders. `_work_policy_open` is otherwise never true in either

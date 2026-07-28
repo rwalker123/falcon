@@ -88,6 +88,25 @@ const MORALE_HINT_PERSISTENT := "  Hunting a herd also lifts morale each turn (+
 
 const CORRAL_GLYPH := "🐄"
 
+# ---- The four LADDER RUNG glyphs, glyph-ONLY -----------------------------------------------------
+# The rung LABELS below (`cultivation_label` / `field_label` / `corral_label`) weld the glyph to its
+# words — "🌾 Tended Patch" — which a one-glyph column cannot take. These are the same marks with the
+# words stripped, so a mark column reads the glyph and a detail row reads the label WITHOUT either
+# slicing the other's string. One home per glyph, and every one of them is REUSED, never minted here:
+#   plants:  wild → 🌾 Tended Patch → ▦ Field       animals: wild → ◎ pastoral → 🐄 penned
+# The two FIELD/PASTORAL marks come from `FoodIcons.POLICY_ICONS` — the ladder's own table, where each
+# verb wears the glyph of THE RUNG IT BUILDS, so `sow`'s ▦ IS the Field's mark and `tame`'s ◎ IS the
+# pastoral herd's. **The animal side has no rung glyph of its own and must borrow**: `husbandry_label`
+# (Domesticated) and `corral_label` (Corralled) BOTH wear 🐄, so reusing it for the pastoral rung would
+# make pastoral and penned indistinguishable — the one distinction a rung mark exists to draw.
+const CULTIVATION_GLYPH := "🌾"
+
+static func field_glyph() -> String:
+    return FoodIcons.for_policy(HudConst.LABOR_POLICY_SOW)
+
+static func pastoral_glyph() -> String:
+    return FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)
+
 # ---- Band/City panel identity grid ---------------------------------------------------------------
 # The panel's own header already states the band's name + settlement stage, so the summary rows there
 # drop the `Unit: <name>` row (a THIRD copy of the same name) and replace `Size: <n>` (population
@@ -601,7 +620,7 @@ static func herders_value_hex(value: String) -> String:
 ## value via `cultivation_value_hex`.
 static func cultivation_label(progress: float, cultivated: bool) -> String:
     if cultivated or progress >= CULTIVATION_PROGRESS_COMPLETE:
-        return "🌾 Tended Patch"
+        return "%s Tended Patch" % CULTIVATION_GLYPH
     # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
     # percentage buried in the tile card was easy to miss and broke parity with the animal side.
     return "%s %d%%" % [
@@ -622,7 +641,7 @@ static func cultivation_value_hex(value: String) -> String:
 ## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
 static func field_label(progress: float, is_field: bool) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
-        return "%s %s" % [FoodIcons.for_policy(HudConst.LABOR_POLICY_SOW), FIELD_BADGE_LABEL]
+        return "%s %s" % [field_glyph(), FIELD_BADGE_LABEL]
     return "%s %d%%" % [FIELD_SOWING_LABEL, HudFormat.progress_percent(progress)]
 
 ## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop

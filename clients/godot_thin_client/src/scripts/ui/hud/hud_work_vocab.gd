@@ -265,6 +265,21 @@ const WORK_ROW_RATE_WIDTH := 46.0
 
 const WORK_ROW_MARKS_WIDTH := 20.0
 
+## The SOURCE-RUNG slot, immediately left of the policy/⚠ marks. Sized like `WORK_ROW_ICON_WIDTH` —
+## it holds the same one-emoji family (🌾 / 🐄) at the same `WORK_ROW_FONT_SIZE`, and a Label's
+## `custom_minimum_size` is a FLOOR, so a wider glyph still renders whole. It is reserved on EVERY
+## row, wild ones included: the marks and rate columns are right-anchored behind the expanding label,
+## so a slot that appeared only on tended rows would shift the rate column row-to-row and the board
+## would read ragged. Costs the label ~20px (slot + `WORK_ROW_SEPARATION`) out of the
+## `WORK_COLUMN_MIN_WIDTH` budget.
+const WORK_ROW_RUNG_WIDTH := 16.0
+
+## The stable handle on a rung mark, mirroring `HudWidgets.POLICY_RUNG_META`'s job for a picker rung.
+## `band_panel_preview` identifies the mark by THIS, never by its glyph: `FoodIcons.SITE_ICONS`
+## already spends 🌾 on `savanna_grassland`, so a text match finds the row's SOURCE icon too and the
+## harness would assert against the wrong Label.
+const WORK_ROW_RUNG_META := &"work_row_rung"
+
 ## A board row must be EXACTLY `WORK_ROW_HEIGHT` — the capacity maths divides by it, so a row that
 ## renders taller silently overflows the page off the bottom of the zone. The default button chrome
 ## (`HudStyle._button_stylebox`, 9px of vertical padding) makes a stepper ~42px tall on its own, so a
@@ -336,6 +351,32 @@ const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 
 const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."
+
+## THE SOURCE-RUNG MARK — what the source IS, beside the policy glyph's what-the-band-is-DOING.
+## The two are ORTHOGONAL and the row carries both: a Tended Patch being Sustained and a Tended Patch
+## being Depleted are different situations, and one mark cannot say which. The row's policy glyph
+## tracks the verb IN FLIGHT — a patch under construction wears 🌱 Cultivate and, the turn the build
+## lands, reverts to ♻ Sustain — so without this mark ~25 turns of investment become invisible on the
+## board where labor is actually managed.
+##
+## WILD IS THE ABSENCE OF A MARK: rung 1 is the default every source starts on, and glyphing it would
+## put a mark on every row in the game to say "nothing has happened here yet".
+##
+## The glyphs are each rung's EXISTING mark, reused (`DetailFormat.CULTIVATION_GLYPH` /
+## `field_glyph` / `pastoral_glyph` / `CORRAL_GLYPH`) — see the block above them for why the pastoral
+## rung has to borrow the `tame` verb's ◎.
+const WORK_ROW_RUNG_TENDED_TOOLTIP := "Tended Patch — this ground has been cultivated."
+
+## …and the committed crop when the patch carries one (`committed_display_name`, e.g. "Wild Emmer").
+const WORK_ROW_RUNG_TENDED_CROP_FORMAT := "Tended Patch — %s. This ground has been cultivated."
+
+const WORK_ROW_RUNG_FIELD_TOOLTIP := "Field — this ground has been sown, the top plant rung."
+
+const WORK_ROW_RUNG_FIELD_CROP_FORMAT := "Field — %s sown, the top plant rung."
+
+const WORK_ROW_RUNG_PASTORAL_TOOLTIP := "Pastoral herd — tamed, and it keeps to your camp."
+
+const WORK_ROW_RUNG_PENNED_TOOLTIP := "Penned herd — corralled, the top animal rung. It eats from your larder every turn."
 
 ## The under-contained managed-herd note (fauna neglect-escape arc): fewer herders staffed than the
 ## herd needs, so it sheds whole animals into a nearby wild herd. Drives the row's amber stripe + the

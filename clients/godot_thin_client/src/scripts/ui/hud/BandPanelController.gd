@@ -648,8 +648,13 @@ func _build_work_chip(filter: StringName, text: String, alert: bool) -> Button:
     chip.pressed.connect(func() -> void: _set_work_filter(filter))
     return chip
 
-## ONE-LINE source row: severity stripe · glyph · label (clipped) · rate · policy/⚠ marks · the
-## existing −/+ stepper. Clicking anywhere but the stepper opens the row in the inspector strip.
+## ONE-LINE source row: severity stripe · glyph · label (clipped) · rate · SOURCE-RUNG mark ·
+## policy/⚠ marks · the existing −/+ stepper. Clicking anywhere but the stepper opens the row in the
+## inspector strip.
+##
+## The rung mark and the policy marks are TWO AXES and both are needed: the rung says what the source
+## IS (wild / Tended Patch / Field, wild / pastoral / penned), the marks say what is being done to it
+## right now. A Tended Patch on Sustain and a Tended Patch on Deplete are different situations.
 func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     var open := String(model.get("key", "")) == _work_open_key
     var row := PanelContainer.new()
@@ -705,6 +710,25 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     rate.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     rate.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(rate)
+    # THE SOURCE-RUNG MARK, in its own reserved slot left of the marks — what the source IS, beside
+    # what the band is DOING to it. Tinted SIGNAL because a standing rung is a completed investment,
+    # the same treatment `DetailFormat.cultivation_value_hex` / `field_value_hex` / `corral_value_hex`
+    # give it in the detail readouts; that colour is also what keeps the two glyph families from
+    # reading as one compound mark at this size. Empty text on a wild source — the slot stays reserved
+    # so the right-anchored furniture lines up down the board.
+    var rung := Label.new()
+    rung.text = String(model.get("rung_glyph", ""))
+    rung.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_RUNG_WIDTH, 0.0)
+    rung.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    rung.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    # PASS, not IGNORE: a Label needs a non-IGNORE filter for its own `tooltip_text` to ever show.
+    # Deliberately NOT `HudWidgets.set_label_tooltip`, which sets STOP — the whole row is a click
+    # target, and STOP here would make the rung slot a dead 16px hole in it. PASS shows the tooltip
+    # AND lets the press bubble to the row's `gui_input`.
+    rung.mouse_filter = Control.MOUSE_FILTER_PASS if rung.text != "" else Control.MOUSE_FILTER_IGNORE
+    rung.tooltip_text = String(model.get("rung_tooltip", ""))
+    rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, String(model.get("rung_glyph", "")))
+    line.add_child(rung)
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
@@ -916,6 +940,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var label := ""
         var cap := {}
         var live_herd := {}
+        var patch := {}
         if kind == SourceForecast.LABOR_KIND_FORAGE:
             if not (policy in HudBandLaborState.FORAGE_POLICY_OPTIONS):
                 policy = SourceForecast.DEFAULT_HUNT_POLICY
@@ -924,8 +949,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
             label = HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [x, y]
+            # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
+            # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
+            patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
-                _band_labor.forage_patch_lookup().get(Vector2i(x, y), {}), SourceForecast.SOURCE_KIND_FORAGE,
+                patch, SourceForecast.SOURCE_KIND_FORAGE,
                 HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
         else:
             if not (policy in HudBandLaborState.HUNT_POLICY_OPTIONS):
@@ -940,6 +968,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
                 HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
         var note := String(yld.get("note", ""))
+        var rung := _work_source_rung(kind, patch, live_herd)
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -964,6 +993,8 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "workers": workers, "pending": pending, "warn": bool(yld.get("warn", false)),
             "under_herded": under_herded,
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
+            # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
+            "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
@@ -973,6 +1004,37 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "attention": bool(yld.get("warn", false)) or note != "" or pending,
         })
     return models
+
+## The source's STANDING RUNG as `{glyph, tooltip}` — `{}` for WILD ground / a wild herd, which is the
+## honest default and keeps the common row unmarked (see `HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP`).
+##
+## **THE HIGHER RUNG IS TESTED FIRST, and that ordering is load-bearing**: a Field is ALSO
+## `is_cultivated` and a penned herd is ALSO fully domesticated, so testing rung 2 first would mark
+## every rung-3 source as a rung-2 one — collapsing exactly the distinction this mark exists to draw.
+##
+## The dicts are the RAW wire ones (`forage_patch_lookup` / `world_herds`), so every key is spelled
+## BARE. Do NOT reach for the `patch_`-prefixed `tile_info` spellings here.
+func _work_source_rung(kind: String, patch: Dictionary, herd: Dictionary) -> Dictionary:
+    if kind == SourceForecast.LABOR_KIND_FORAGE:
+        var crop := String(patch.get("committed_display_name", "")).strip_edges()
+        if bool(patch.get("is_field", false)):
+            return {
+                "glyph": DetailFormat.field_glyph(),
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_FIELD_TOOLTIP if crop == "" \
+                    else HudWorkVocab.WORK_ROW_RUNG_FIELD_CROP_FORMAT % crop,
+            }
+        if bool(patch.get("is_cultivated", false)):
+            return {
+                "glyph": DetailFormat.CULTIVATION_GLYPH,
+                "tooltip": HudWorkVocab.WORK_ROW_RUNG_TENDED_TOOLTIP if crop == "" \
+                    else HudWorkVocab.WORK_ROW_RUNG_TENDED_CROP_FORMAT % crop,
+            }
+        return {}
+    if bool(herd.get("corralled", false)):
+        return {"glyph": DetailFormat.CORRAL_GLYPH, "tooltip": HudWorkVocab.WORK_ROW_RUNG_PENNED_TOOLTIP}
+    if float(herd.get("domestication", 0.0)) >= DetailFormat.HUSBANDRY_PROGRESS_COMPLETE:
+        return {"glyph": DetailFormat.pastoral_glyph(), "tooltip": HudWorkVocab.WORK_ROW_RUNG_PASTORAL_TOOLTIP}
+    return {}
 
 ## Reset a filter that now selects nothing back to `All`. A kind/attention chip is hidden once its set
 ## empties (the last herd is unassigned, the last ⚠ clears), so a standing filter would otherwise

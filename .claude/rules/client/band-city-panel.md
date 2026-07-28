@@ -257,7 +257,11 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   the last hidden at k = 0), replacing collapsible group headers. Both the header total and the chip
   rates state BOTH products, each only when non-zero — see "Work rows and the two hunt products". Rows are ONE line at a fixed
   `WORK_ROW_HEIGHT`: severity stripe (WARN overdrawing/overstaffed, SIGNAL pending) · glyph · clipped
-  label · rate · policy/⚠ marks · the existing `−/+`. **Capacity is derived ENTIRELY from
+  label · rate · the SOURCE-RUNG mark · policy/⚠ marks · the existing `−/+`. The rung mark and the
+  policy marks are TWO AXES — what the source IS against what is being done to it — and the row keeps
+  both; the rung slot is reserved on every row, so the label's share of a
+  `WORK_COLUMN_MIN_WIDTH` column is ~20px narrower than the marks column alone would suggest (spec in
+  `labor-ui.md` → "The work row carries TWO axes"). **Capacity is derived ENTIRELY from
   `work_zone_size()`** (`_work_board_capacity`): `cols = clamp(w / WORK_COLUMN_MIN_WIDTH, 1,
   WORK_MAX_COLUMNS)`, `rows = (h − head − chips − inspector − pager) / WORK_ROW_HEIGHT`, filled
   **column-major** with a hairline between columns; the pager is resolved in **two passes** because it
