@@ -222,8 +222,10 @@ func _format_animal_rate(value: float) -> String:
 ##       (`hunt_policy_ceilings`): a bare signed rate on the face, framed "up to X/turn" in the tooltip
 ##       — the ceiling it is, distinct from the crew's carry-aware delivered line below the picker. Read
 ##       straight off the sim; never re-derived.
-##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward (`pastoral_yield` / `corral_yield`),
-##       `→+Y` on the face / "builds toward Y/turn" in the tooltip. NOT the during-building dip: that dip
+##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward, a PAIR like the caps above
+##       (`pastoral_yield`+`pastoral_trade` / `corral_yield`+`corral_trade`): `→ Y food · Z trade` on
+##       the face / "builds toward Y/turn · ⇄ +Z trade goods/turn" in the tooltip, each component only
+##       when non-zero. NOT the during-building dip: that dip
 ##       reads BELOW Sustain and is identical
 ##       for both rungs, so quoting it made taming/penning look strictly worse than hunting. Shown even
 ##       when the rung is gated/greyed — informative — with the gate-reason line explaining the lock; a
@@ -252,19 +254,33 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
         var payoff := float(forecast["payoff"])
-        if payoff > 0.0:
-            takes[policy] = _payoff_take(payoff)
+        # BOTH products on the payoff too (issue #397, extending #337's rule): a prepared herd pays a pair, so the emit gate
+        # accepts EITHER component. A rung whose payoff is trade-only must still get a face rather
+        # than falling back to a bare glyph+name — the same rule one level up from `_payoff_take`.
+        var payoff_trade := float(forecast["payoff_trade"])
+        if payoff > 0.0 or payoff_trade > 0.0:
+            takes[policy] = _payoff_take(payoff, payoff_trade)
     return takes
 
 
 ## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led product line on the
-## button face's second row (`→ 1.20 food`), the "builds toward X/turn" wording in the tooltip. Shared
-## by hunt + forage. The payoff every ladder rung builds toward (tended/field/pastoral/corral yield) is
-## a PROVISIONS rate, so the face names food; the arrow is what keeps it from reading as a take today.
-func _payoff_take(payoff: float) -> Dictionary:
+## button face's second row (`→ 1.48 food · 0.37 trade`), the "builds toward X/turn" wording in the
+## tooltip. Shared by hunt + forage. The payoff is a PAIR like every other yield in this model, and
+## obeys the same render-only-when-non-zero rule as `SourceForecast.extractive_take_pair`: a pure-meat
+## species reads `→ 1.48 food`, an inedible one `→ 0.37 trade`, and a component the species never pays
+## is never printed as a zero. The plant rungs pass 0.0 trade (no plant trade rate). The face names
+## its products in words; the ARROW — not a currency word — is what keeps it from reading as a take
+## the source pays today rather than one the preparation builds toward.
+func _payoff_take(payoff: float, payoff_trade: float) -> Dictionary:
+    var full_parts: Array[String] = []
+    if SourceForecast.has_component(payoff) or not SourceForecast.has_component(payoff_trade):
+        full_parts.append(HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % SourceForecast.format_signed(payoff))
+    if SourceForecast.has_component(payoff_trade):
+        full_parts.append(SourceForecast.POLICY_CAP_TRADE_FORMAT % [
+            FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_signed(payoff_trade)])
     return {
-        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(payoff, 0.0),
-        "full": HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % SourceForecast.format_signed(payoff),
+        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(payoff, payoff_trade),
+        "full": SourceForecast.TRADE_COMPONENT_SEPARATOR.join(full_parts),
     }
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
@@ -759,7 +775,11 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
             continue
         var payoff := float(forecast["payoff"])
         if payoff > 0.0:
-            takes[policy] = _payoff_take(payoff)
+            # Trade is passed 0.0 EXPLICITLY: the plant web projects no trade rate at all, so a
+            # cultivated/sown patch's payoff is food-only and renders as one product. Stated at the
+            # call site rather than defaulted in `_payoff_take`, so no future caller can drop a real
+            # trade payoff by forgetting the argument.
+            takes[policy] = _payoff_take(payoff, 0.0)
     return takes
 
 ## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed

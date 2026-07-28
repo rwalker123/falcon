@@ -166,6 +166,13 @@ pub struct HerdTelemetryState {
     /// **Gross** — the pen's feed (`pen_upkeep`) is a separate debit.
     #[serde(default)]
     pub corral_yield: f32,
+    /// **The Corral rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of
+    /// the same `managed_yield` `YieldPair` [`Self::corral_yield`] reads its provisions from. Read
+    /// the two as one vector, rendering each component only when non-zero.
+    /// **Gross** like its food sibling: the pen's feed (`pen_upkeep`) is a *provisions* debit and
+    /// never touches this. `0` on a herd that never offers Corral.
+    #[serde(default)]
+    pub corral_trade: f32,
     /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
     /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
     /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
@@ -283,6 +290,12 @@ pub struct HerdTelemetryState {
     /// penned, or a `wild`-ceiling species). Appended last (append-only).
     #[serde(default)]
     pub pastoral_yield: f32,
+    /// **The Tame rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of the
+    /// same `pastoral_yield` `YieldPair` [`Self::pastoral_yield`] reads its provisions from. Read the
+    /// two as one vector, rendering each component only when non-zero. `0` on a herd that never
+    /// offers Tame (already penned, or a `wild`-ceiling species).
+    #[serde(default)]
+    pub pastoral_trade: f32,
     /// The hay this pen drew from its keeper band's FODDER store last turn (Flora Roster F3), in
     /// fodder units. `0` for an unpenned herd, a keeper that has not learned Foddering, or a pen its
     /// own footprint already fed. Lets the client show "fed by hay" beside the `pen_upkeep` bread bill.
@@ -362,6 +375,7 @@ impl Default for HerdTelemetryState {
             per_worker_trade: 0.0,
             trade_per_animal: 0.0,
             corral_yield: 0.0,
+            corral_trade: 0.0,
             hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
             pen_upkeep: 0.0,
@@ -378,6 +392,7 @@ impl Default for HerdTelemetryState {
             herders_needed: 0,
             herded_fraction: fully_herded(),
             pastoral_yield: 0.0,
+            pastoral_trade: 0.0,
             fodder_draw: 0.0,
             pen_larder_bill: 0.0,
             pen_hay_food: 0.0,

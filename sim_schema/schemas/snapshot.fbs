@@ -1597,6 +1597,17 @@ table HerdTelemetryState {
   // COUNT is the same on either component, because a ratio is unit-free.
   perWorkerTrade:float = 0;
   tradePerAnimal:float = 0;
+  // --- The INVESTMENT rungs' trade half (issue #397, appended last) --- the trade twins of
+  // `pastoralYield` / `corralYield`. A rung's payoff is a PAIR like every other yield in this
+  // model (`SourceYieldForecast::pastoral_yield` / `managed_yield` are `YieldPair`s); exporting
+  // only the provisions half made a Wild Boar's Tame/Corral picker faces read `→ 1.48 food` while
+  // its four extractive rungs correctly read `0.74 food · 0.18 trade`.
+  // Read each beside its food sibling as one vector, and render each component only when it is
+  // non-zero (the same rule `perWorkerTrade` follows). 0 on a herd that never offers the rung.
+  // `corralTrade` is GROSS like `corralYield`; the pen's feed (`penUpkeep`) is a PROVISIONS debit
+  // and stays on the food half only.
+  pastoralTrade:float = 0;
+  corralTrade:float = 0;
 }
 
 table CommandEventState {

@@ -248,6 +248,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // The Corral investment rung's (gross) payoff once penned; the preparing dip is the
                 // `corral` row of `hunt_policy_ceilings` below.
                 corral_yield: forecast.managed_yield.provisions,
+                // The trade half of that same `managed_yield` pair — a rung's payoff is a vector.
+                corral_trade: forecast.managed_yield.trade_goods,
                 // The pen as a managed population: what it EATS, and whether its keeper is paying.
                 // `pen_upkeep` is answered for EVERY herd — a projection ("what would this pen cost to
                 // feed?") for an unpenned one, the live demand for a penned one — on the same biomass
@@ -332,6 +334,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // every ceiling above reads, so it cannot drift; `0` for a source that never offers
                 // Tame (penned/forage), which is exactly `SourceYieldForecast::pastoral_yield`.
                 pastoral_yield: forecast.pastoral_yield.provisions,
+                // The trade half of that same `pastoral_yield` pair — a rung's payoff is a vector.
+                pastoral_trade: forecast.pastoral_yield.trade_goods,
                 // The hay this pen drew last turn (Flora Roster F3) — the transient `Herd::fodder_draw`
                 // the corral-tend branch wrote, so the client can render "fed by hay" beside the
                 // `pen_upkeep` bread bill. `0.0` for an unpenned/absent herd or one no hay reached.

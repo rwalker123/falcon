@@ -91,7 +91,8 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > **New wire fields** (each appended at the END of its table — slots are positional):
 > `HuntPolicyCeiling.tradeGoodsPerTurn` · `HuntTripEstimate.deliveredTrade` (beside the already-shipped
 > `deliversTrade`) · `HerdTelemetryState.perWorkerTrade` / `tradePerAnimal` ·
-> `LaborAssignment.tradeYield` / `realizedTradeYield`.
+> `LaborAssignment.tradeYield` / `realizedTradeYield`. The investment rungs' twins
+> `HerdTelemetryState.pastoralTrade` / `corralTrade` followed in issue #397 (below).
 >
 > **`PopulationCohortState.huntPerWorkerProvisions` is SPECIES-BLIND — do not clamp a per-herd preview
 > with it.** It is a per-*cohort* echo of the global `hunt.provisions_per_biomass`, and a cohort has no
@@ -128,7 +129,14 @@ serves both.) **The `Tame` rung has its own payoff twin: `HerdTelemetryState.pas
 `SourceYieldForecast::pastoral_yield`) — what a Sustain hunt pays **once the herd is tamed**, so the
 client can render Tame's `→ +Y` instead of quoting only its during-building dip (`ceiling_tame`, which
 reads *below* wild Sustain and hides that taming out-yields wild hunting). `0` on a source that never
-offers Tame (a forage patch, or a herd already penned/forage-tended). **Both `pastoralYield` and the
+offers Tame (a forage patch, or a herd already penned/forage-tended). **Each investment payoff is a
+PAIR on the wire** (issue #397): `pastoralTrade` / `corralTrade` carry the `trade_goods` half of the
+very same `SourceYieldForecast::pastoral_yield` / `managed_yield` `YieldPair`s their food siblings read
+`provisions` from, so an inedible-but-valuable species' Tame/Corral rungs quote the same vector its four
+extractive rungs already do (before them a Wild Boar's picker read `→ 1.48 food` on the investment rungs
+beside `0.74 food · 0.18 trade` on the extractive ones). `corralTrade` is **gross** like `corralYield` —
+the pen's feed (`penUpkeep`) is a provisions debit and never touches the trade component — and each
+component renders only when non-zero, the rule `perWorkerTrade` follows. **Both `pastoralYield` and the
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while

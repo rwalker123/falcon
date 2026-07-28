@@ -117,7 +117,9 @@ const COMPACT_COMPONENT_SEPARATOR := " "
 # food term that already carries one, or under a tooltip that spells the unit out.
 const TRADE_COMPONENT_FORMAT := "%s %s"
 # The trade half of a rung's tooltip. Spelled with the generic noun so the tooltip, unlike the compact
-# face, can never be misread as a second food number.
+# face, can never be misread as a second food number. Despite the `CAP` in its name this is the SHARED
+# trade-rate clause: it is bare wording with no "up to" in it (unlike `POLICY_CAP_FORMAT`), so the
+# INVESTMENT rungs' payoff tooltip ("builds toward …") reuses it rather than duplicating the phrasing.
 const POLICY_CAP_TRADE_FORMAT := "%s %s trade goods/turn"
 # The trade half of a worked row's tooltip, beside "Actual +0.31 /turn".
 const TRADE_TOOLTIP_FORMAT := "Trade goods %s %s/turn"
@@ -210,6 +212,15 @@ const FORECAST_PAYOFF_KEYS := {
     "corral": "corral_yield",
     "sow": "field_yield",
     "tame": "pastoral_yield",
+}
+# The TRADE half of that same payoff (issue #337's render-only-when-non-zero rule, reaching the
+# investment rungs): a prepared herd pays a PAIR, so a boar's Tame reads `→ food · trade`.
+# HERD RUNGS ONLY, deliberately — the plant web projects no trade rate at all, so `cultivate` and
+# `sow` have no twin here and their payoff trade resolves to 0.0, exactly as the forage picker's
+# `extractive_take` stays food-only.
+const FORECAST_PAYOFF_TRADE_KEYS := {
+    "corral": "corral_trade",
+    "tame": "pastoral_trade",
 }
 # The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
@@ -528,8 +539,10 @@ static func herd_axis_rates(herd: Dictionary, policy: String) -> Dictionary:
 ## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
 ## patch's fields, `patch_`-prefixed); `known` is false for a dead-season source or an older
 ## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
-## An INVESTMENT policy additionally carries `payoff` (the tended/corral yield the preparation buys)
-## and `investment: true`, so `_forecast_yield_row` can state the deal instead of one number.
+## An INVESTMENT policy additionally carries `investment: true` and the payoff the preparation buys,
+## as a PAIR like every other yield in this model: `payoff` (food/turn) and `payoff_trade`
+## (trade goods/turn, herd rungs only — the plant web projects no trade rate), so
+## `_forecast_yield_row` can state the deal instead of one number.
 ## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the scalar keys (the two are
 ## independent — a forage patch reaches here under either forage prefix).
 static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
@@ -562,6 +575,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
     var payoff := 0.0
     if investment:
         payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy]), 0.0))
+    # The payoff's TRADE component — a pair like every other yield in this model. Only the herd rungs
+    # have one (see FORECAST_PAYOFF_TRADE_KEYS); a tended patch's stays 0.0 and renders as nothing.
+    var payoff_trade := 0.0
+    if investment and policy in FORECAST_PAYOFF_TRADE_KEYS:
+        payoff_trade = float(src.get(prefix + String(FORECAST_PAYOFF_TRADE_KEYS[policy]), 0.0))
     # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
     # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
     # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
@@ -599,6 +617,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         "per_worker": per_worker,
         "ceiling": ceiling,
         "payoff": payoff,
+        "payoff_trade": payoff_trade,
         "investment": investment,
         "feed_rung": feed_rung,
         "feed": feed,

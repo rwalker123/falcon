@@ -37,19 +37,27 @@ mod tests {
     /// **The pen-as-a-managed-population fields survive the wire.** `penUpkeep` (what the pen eats
     /// each turn) and `penFedFraction` (`< 1` = starving) are appended to `HerdTelemetryState`
     /// (append-only discipline), and the client renders the feed as a negative row against the
-    /// **gross** `corralYield`. Encode → decode with the generated reader, so a field that silently
-    /// failed to serialize cannot pass.
+    /// **gross** `corralYield`. The two investment rungs' payoffs are **pairs**, so their trade
+    /// halves (`pastoralTrade` / `corralTrade`) ride the same fixture — the sim held both on a
+    /// `YieldPair` while the wire carried only the provisions half. Encode → decode with the
+    /// generated reader, so a field that silently failed to serialize cannot pass.
     #[test]
     fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {
         const UPKEEP: f32 = 1.2;
         const FED: f32 = 0.25;
         const CORRAL_YIELD: f32 = 3.6;
+        const CORRAL_TRADE: f32 = 0.9;
+        const PASTORAL_YIELD: f32 = 1.8;
+        const PASTORAL_TRADE: f32 = 0.45;
 
         let snapshot = snapshot_with_herd(HerdTelemetryState {
             id: "herd_pen".to_string(),
             species: "Red Deer".to_string(),
             corralled: true,
             corral_yield: CORRAL_YIELD,
+            corral_trade: CORRAL_TRADE,
+            pastoral_yield: PASTORAL_YIELD,
+            pastoral_trade: PASTORAL_TRADE,
             pen_upkeep: UPKEEP,
             pen_fed_fraction: FED,
             ..Default::default()
@@ -67,6 +75,9 @@ mod tests {
             .get(0);
         assert!(herd.corralled());
         assert!((herd.corralYield() - CORRAL_YIELD).abs() < 1e-6);
+        assert!((herd.corralTrade() - CORRAL_TRADE).abs() < 1e-6);
+        assert!((herd.pastoralYield() - PASTORAL_YIELD).abs() < 1e-6);
+        assert!((herd.pastoralTrade() - PASTORAL_TRADE).abs() < 1e-6);
         assert!((herd.penUpkeep() - UPKEEP).abs() < 1e-6);
         assert!((herd.penFedFraction() - FED).abs() < 1e-6);
     }
