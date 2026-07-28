@@ -45,6 +45,38 @@ display telemetry had lost. Restore reads `SimState` now, which carries all four
 left**. They are deleted. The rule the `WorldSnapshot` doc comment now states — *every field is
 there because something downstream renders or exports it* — has no exceptions.
 
+**So no field of a `Herd`, `ForagePatch` or `GrazePatch` is exempt from a rollback** — the registries
+are cloned whole, field by field, with no per-field opt-out anywhere. A field comment therefore has
+nothing to say about persistence, and the dozen that claimed "not snapshot-persisted" were describing
+the retired restore path, which rebuilt registries from `*State` records that omitted exactly those
+fields. The axis that *does* vary per field is **on the client wire or not**, which is a different
+question with a different answer; that is what those comments say now. `pen_starving`,
+`tamed_this_turn`, `pen_fed_fraction`, `fodder_delivery_rate` and `footprint_intake` are the ones a
+reader is most likely to have been misled by: each is transient *within* a turn — recomputed by a named
+system — and each survives a restore verbatim, so an edge-gated notice does not re-fire and a starving
+pen does not read as fed.
+
+**The band half is the same story, and it is the larger family.** `BandRecord` stores
+`cohort: cohort.clone()` and `labor: entity.get::<LaborAllocation>().cloned()`, so **every**
+`PopulationCohort` and `LaborAllocation` field rewinds too — the per-turn readouts
+(`last_food_consumption`, `last_morale_delta` / `_cause` / `_contributions`,
+`last_fertility_factors`, `discontent_fraction`, `last_emigrated` / `last_immigrated`) and the labor
+telemetry (`last_yields`, `last_pen_feed_upkeep`, `last_raid_forfeit`) alike, plus `BandTravel`,
+which is why a restored band resumes its move rather than cancelling it. Two things this retires:
+
+- **The old restore rebuilt a `LaborAllocation` from its `*State` record**, via a
+  `labor_allocation_from_state` that no longer exists, keeping only the assignments — which is where
+  "a rehydrated cohort reads `0` until the next tick" came from. A restored allocation carries its
+  telemetry now. The **no-data sentinels are still live and still needed** (`SourceYield::ZERO` for
+  an unresolved row, `FertilityFactors`' all-zero NOT-PROJECTED reading, `band_food_flow`'s `None`),
+  but what they answer for is a band that has *not yet been through a turn*, not a restored one.
+- **`LaborAllocation`'s manual `PartialEq` still compares assignments only.** That is about intent
+  versus telemetry in a comparison, not about persistence, and it is unaffected.
+
+The one genuinely non-persisted member of this neighbourhood is `SupplyNetworkMembership`, a
+resource keyed by `Entity` that `balance_supply_networks` rebuilds every turn — no `Entity` crosses a
+checkpoint, so it could not be carried even if it wanted to be.
+
 Three things this is worth knowing for:
 
 - **The cost was per turn and map-sized.** `forage_registry` and `graze_registry` were collected

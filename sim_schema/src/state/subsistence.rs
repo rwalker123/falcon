@@ -195,7 +195,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pen_upkeep: f32,
     /// The fraction of `pen_upkeep` the keeper actually **paid** last turn. `1.0` = fully fed (also
-    /// the value for a herd that is not penned, and for a rehydrated one); `< 1` = **starving** — the
+    /// the value for a herd that is not penned); `< 1` = **starving** — the
     /// herd is shrinking by `pen.starve_shrink_rate × (1 − this) × biomass` per turn, and its yield
     /// with it. It recovers when fed again (it never despawns and never loses the pen).
     #[serde(default = "pen_fully_fed")]

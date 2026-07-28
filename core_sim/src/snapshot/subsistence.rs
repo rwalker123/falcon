@@ -280,10 +280,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(0),
                 // The pen economy (Grazing 2d). `penFootprintTiles` is the SERVER's in-bounds count of
                 // the fenced footprint (not the closed-form disk, which is wrong at map edges); `0` for
-                // an unpenned herd. `pen_pasture_fraction` is transient per-turn scratch (Population ran
-                // before this capture, so it reflects the current turn); `pen_extend_progress` is
-                // authoritative, snapshot-persisted `Herd` state (the in-flight ExtendPen ring meter,
-                // rollback-safe) — here it just crosses to the client wire alongside it.
+                // an unpenned herd. `pen_pasture_fraction` is per-turn scratch (Population ran before
+                // this capture, so it reflects the current turn); `pen_extend_progress` is
+                // authoritative `Herd` state (the in-flight ExtendPen ring meter) — here it just
+                // crosses to the client wire alongside it.
                 pen_radius: herd.map(|herd| herd.pen_radius).unwrap_or(0),
                 pen_footprint_tiles: herd
                     .and_then(|herd| {

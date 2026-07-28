@@ -314,7 +314,8 @@ pub struct Herd {
     /// paid its keeper **place-local** at the higher corral rate (via the tending Hunt assignment in
     /// `advance_labor_allocation`), not the mobile even-split husbandry yield. Only a *domesticated*
     /// herd whose owner knows **Penning** can be corralled (`corral` command). Authoritative sim state —
-    /// snapshot-persisted. The animal mirror of a cultivated patch being a fixed tended patch;
+    /// rewound by rollback with the cloned registry. The animal mirror of a cultivated patch being a
+    /// fixed tended patch;
     /// contrast the deliberate asymmetry — an *un*corralled domesticated herd stays mobile
     /// (pastoralism travels with the band).
     pub corralled_at: Option<UVec2>,
@@ -334,19 +335,20 @@ pub struct Herd {
     /// *fenced land* a penned herd grazes and derives its `K` over (`hex_range_tiles(corralled_at,
     /// pen_radius)`). `0` = today's single tile; each ring the `ExtendPen` command (2d-β) works off
     /// raises it. Read by **all** the pen-footprint logic (K, grazing, the larder offset, the wire
-    /// count) so β only has to grow it. Authoritative sim state — snapshot-persisted.
+    /// count) so β only has to grow it. Authoritative sim state — rewound by rollback with the cloned
+    /// registry.
     pub pen_radius: u32,
     /// Pen-**extension** build progress `[0.0, 1.0]` for the in-flight ring (the `ExtendPen` labor
     /// ladder, 2d-β), accrued each turn the keeper tends an *extending* pen at
     /// `husbandry.corral_build_progress_per_turn`; at `1.0` the ring completes (`pen_radius += 1`, this
     /// resets to `0.0`, `pen_extending` clears). Exported as `penExtendProgress` for a "Fencing N%"
-    /// badge. Snapshot-persisted alongside `pen_radius`.
+    /// badge. Authoritative sim state, alongside `pen_radius`.
     pub pen_extend_progress: f32,
     /// **The `ExtendPen` "extending" state** (2d-β): `true` while a keeper is fencing the next ring
     /// (`pen_extend_progress` accruing, the harvest dipped to `corralling_yield_fraction`), the animal
     /// mirror of a herd's under-construction `corral_progress`. Set by the `ExtendPen` command, cleared
-    /// when the ring completes. Snapshot-persisted so a rollback rewinds an in-flight extension rather
-    /// than stranding a half-progress meter that never completes.
+    /// when the ring completes. A rollback rewinds an in-flight extension rather than stranding a
+    /// half-progress meter that never completes.
     pub pen_extending: bool,
     /// **The herd's biomass at the START of this turn, before Logistics regrowth** — captured at the
     /// top of [`regrow_biomass`] and read the same turn by the Population-stage hunt take (slice 8b).
@@ -358,43 +360,43 @@ pub struct Herd {
     /// makes Sustain take exactly one turn's growth below `K/2` (the herd **holds**), and a full MSY
     /// above it (declines gently to `K/2`). See [`hunt_policy_rate`].
     ///
-    /// **Not** snapshot-persisted (transient — reset every turn in `regrow_biomass`); a rehydrated herd
-    /// reads its current biomass until the next turn regrows it (a one-turn approximation that
-    /// self-corrects). Defaults to `biomass` at construction so a herd that has never regrown reads a
-    /// sane pre-regrowth value.
+    /// Re-stamped every turn at the top of `regrow_biomass`, so it is never more than one turn old;
+    /// sim-side only — not on the client wire. Defaults to `biomass` at construction so a herd that has
+    /// never regrown reads a sane pre-regrowth value.
     pub biomass_before_regrowth: f32,
     /// Transient per-turn scratch: the graze biomass this herd actually drew from its footprint this
     /// turn (`advance_herd_grazing`, Logistics), read the same turn by the pen larder-offset in
     /// `advance_labor_allocation` (Population). For a penned herd it is what the fenced footprint fed
-    /// the pen; the larder pays only the remainder. **Not** snapshot-persisted (recomputed each turn).
+    /// the pen; the larder pays only the remainder. Recomputed each turn; sim-side only — not on the
+    /// client wire.
     pub footprint_intake: f32,
     /// Transient per-turn scratch: the share of a penned herd's feed its footprint covered last FEED
     /// (`footprint_intake / (fodder_per_biomass × biomass)`, clamped `[0, 1]`; Grazing 2d §2.3). `1.0`
     /// = the pasture feeds the pen for free; `0.0` = a barren footprint pays the full larder bill.
-    /// Exported as `penPastureFraction`. `0.0` for an unpenned herd. **Not** snapshot-persisted.
+    /// Exported as `penPastureFraction`. `0.0` for an unpenned herd.
     pub pen_pasture_fraction: f32,
     /// Transient per-turn scratch: the hay this pen drew from its keeper band's `FODDER` store last
     /// FEED (Flora Roster F3, §5.2), in fodder units. Written by the corral-tend branch of
     /// `advance_labor_allocation` (Population); `0.0` for an unpenned herd, a keeper who does not know
     /// Foddering, or a pen whose footprint already fed it. Exported as `fodderDraw` so the client can
-    /// show "fed by hay" beside the `penUpkeep` "fed by bread". **Not** snapshot-persisted (recomputed
-    /// each turn; the *store* itself rides `LocalStore`, which is persisted).
+    /// show "fed by hay" beside the `penUpkeep` "fed by bread". Recomputed each turn — it records what
+    /// was drawn, while the hay itself lives in the keeper's `LocalStore`.
     pub fodder_draw: f32,
     /// Transient per-turn scratch: the **net** food/turn this pen's keeper hauls from the `FOOD` larder,
     /// *after* the footprint's pasture and any drawn hay have paid their share (Flora Roster F3) — the
     /// corral-tend branch's own `demand` local (`gross pen_upkeep × (1 − land_hay_fraction)`), in
     /// **food** units and the exact number the branch bills. `0.0` when pasture and hay fully feed the
     /// pen, or for an unpenned herd. Exported as `penLarderBill` — the render-ready larder term of the
-    /// "pasture NN% · hay X.X · larder Y.Y" feed split, so the client sums nothing. **Not**
-    /// snapshot-persisted (recomputed each turn, like `fodder_draw`/`pen_pasture_fraction`).
+    /// "pasture NN% · hay X.X · larder Y.Y" feed split, so the client sums nothing. Recomputed each
+    /// turn, like `fodder_draw`/`pen_pasture_fraction`.
     pub pen_larder_bill: f32,
     /// Transient per-turn scratch: hay's contribution to this pen's feed, converted to
     /// **food-equivalent** units — the food it *displaced* from the larder (`gross pen_upkeep ×
     /// fodder_draw / grass_demand`, Flora Roster F3). [`Self::fodder_draw`] itself is in grass units
     /// (~25× the food scale) and cannot share a row with the food-unit pasture/larder terms; this can.
     /// `0.0` when no hay was drawn, the keeper lacks Foddering, or the herd is unpenned. Exported as
-    /// `penHayFood` — the hay term of the feed split. Written beside `fodder_draw`; **not**
-    /// snapshot-persisted. The three terms partition the gross bill:
+    /// `penHayFood` — the hay term of the feed split. Written beside `fodder_draw`, and recomputed each
+    /// turn with it. The three terms partition the gross bill:
     /// `gross × pen_pasture_fraction + pen_hay_food + pen_larder_bill == gross` (± f32 epsilon).
     pub pen_hay_food: f32,
     /// Transient per-turn scratch: the **sustained fodder inflow** in range of this pen's keeper band
@@ -404,8 +406,7 @@ pub struct Herd {
     /// deliberately NOT the store's **stock**: raising `K` off a built-up buffer would spike K → the
     /// herd grows → the store empties → K collapses → starvation, an oscillation. The flow is what the
     /// farming sustainably delivers, so the loop settles. `0.0` for an unpenned herd or one no hay
-    /// reaches. **Not** snapshot-persisted (derived) — a rehydrated pen reads `0.0` until its keeper
-    /// works a turn, so a rollback can only *shrink* K for a turn, never inflate it.
+    /// reaches; sim-side only — not on the client wire (the *draw* it produces rides `fodderDraw`).
     pub fodder_delivery_rate: f32,
     /// Transient per-turn flag: a Hunt assignment tended this corralled herd this turn (set in
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
@@ -423,8 +424,7 @@ pub struct Herd {
     /// Written by the corral-tend branch of `advance_labor_allocation` (Population) and read one turn
     /// later by `advance_husbandry` (Logistics), which **starves** an underfed pen — the same
     /// deliberate one-turn lag as `corralled_tended_this_turn`, and reset to `1.0` after reading.
-    /// **Not** snapshot-persisted (derived): a rehydrated herd reads `1.0` (fed), so a rollback can
-    /// only *delay* a starvation turn, never invent one.
+    /// Exported as `penFedFraction`.
     pub pen_fed_fraction: f32,
     /// Transient per-turn signal: how well this managed herd was **staffed** last turn — `min(1,
     /// assigned / herders_needed)`, written by the Hunt arm of `advance_labor_allocation` (Population)
@@ -433,14 +433,13 @@ pub struct Herd {
     ///
     /// **Understaffing degrades proportionally — it never triggers an escape** (see
     /// [`herded_fraction`]). `1.0` = fully herded (and the value for a herd nobody needs to herd).
-    ///
-    /// **Not** snapshot-persisted (derived): a rehydrated herd reads `1.0` (fully herded), so a
-    /// rollback can only *delay* a decay turn, never invent one — exactly the `pen_fed_fraction` rule.
+    /// Exported as `herdedFraction`.
     pub herded_fraction: f32,
     /// Transient edge-gate for the starving-pen feed line: `true` while the herd is *already known* to
     /// be starving, so `advance_husbandry` announces the famine **once** on the turn it starts rather
     /// than every turn it continues. Cleared when the pen is fed again (so a *second* famine is
-    /// announced afresh). Not snapshot-persisted — a rollback can at worst re-announce.
+    /// announced afresh). Off the client wire — the *notice* is what the player sees, not the gate —
+    /// and a rollback rewinds the gate rather than re-announcing a famine already reported.
     pub pen_starving: bool,
     /// **Was this herd actively TAMED this turn** — set by the `Tame` arm of
     /// `advance_labor_allocation`, read by `advance_husbandry` to spare it from `decay_domestication`.
@@ -453,8 +452,8 @@ pub struct Herd {
     /// Distinct from a plain hunt at any other policy: a Sustain hunt *harvests* a herd, it does not
     /// tame it, so it must not hold the taming meter up.
     ///
-    /// **Not** snapshot-persisted (derived) — a rehydrated herd reads `false` ("untended"), so a
-    /// rollback can only *delay* a decay turn by one, never invent progress.
+    /// Cleared every turn in `advance_husbandry` after it is read, so it can never go stale; sim-side
+    /// only — not on the client wire.
     pub tamed_this_turn: bool,
     /// **The hysteresis-stabilized herder requirement** — the remembered `herders_needed` for a
     /// *managed* herd (`0` for a wild one). The raw `ceil(animals / animals_per_herder)` flickers ±1
@@ -468,10 +467,10 @@ pub struct Herd {
     /// dip and drops only on a genuine multi-band fall.
     ///
     /// It is **the source every consumer reads** ([`herd_herders_needed`] → the `herded_fraction`
-    /// decay, `managed_crew_needed`, the `herdersNeeded` snapshot field). **Snapshot-persisted**
-    /// (authoritative sim state, like `corral_progress`), so a rollback restores the remembered
-    /// requirement rather than re-flickering for a turn. `0` also means "not yet stabilized" — a
-    /// freshly-tamed or rehydrated-uninitialized managed herd, for which [`herd_herders_needed`]
+    /// decay, `managed_crew_needed`, the `herdersNeeded` snapshot field). **Authoritative sim state**
+    /// (like `corral_progress`), so a rollback restores the remembered requirement rather than
+    /// re-flickering for a turn. `0` also means "not yet stabilized" — a
+    /// freshly-tamed or newly-spawned managed herd, for which [`herd_herders_needed`]
     /// falls back to the raw ceil until the next `advance_husbandry` seeds this.
     pub herders_needed: u32,
     /// **Edge-gate for the under-herded feed line** (neglect-escape slice 2,
@@ -479,8 +478,8 @@ pub struct Herd {
     /// under-contained — too few herders to hold all its animals, so it is shedding this turn. Set on
     /// the `false → true` transition (`advance_husbandry` fires the notice **once**), cleared the turn
     /// it recovers (fully staffed / no overage) so a later relapse re-announces. The herder-shortfall
-    /// twin of `pen_starving`, but **snapshot-persisted** (like `herders_needed`) so a rollback rewinds
-    /// the edge and it does not spuriously re-fire after a restore.
+    /// twin of `pen_starving`, and like it a rollback rewinds the edge rather than re-firing the
+    /// notice.
     pub under_herded: bool,
 }
 
@@ -805,7 +804,7 @@ impl Herd {
 }
 
 /// A fully-fed pen (`paid == demand`, or nothing demanded). The neutral value of
-/// `Herd::pen_fed_fraction`, so an un-penned / freshly-rehydrated herd never starves.
+/// `Herd::pen_fed_fraction`, so an un-penned or newly-spawned herd never starves.
 pub(crate) const PEN_FULLY_FED: f32 = 1.0;
 
 /// A pen with **no keeper at all** — unfed (`docs/plan_fauna_neglect_escape.md` §2.4). `advance_husbandry`
@@ -3198,7 +3197,8 @@ pub fn advance_husbandry(
         // herd is no longer shedding (fully staffed / within capacity). Distinct from the pen-*lost*
         // (`announce_pen_lost`) and pen-*starving* (`starve_underfed_pen`) edges — this is the
         // herder-shortfall edge, and it fires for pastoral herds too. The precedent is the pen-starving
-        // edge gate (`Herd::pen_starving`); this bool is persisted so a rollback doesn't re-fire it.
+        // edge gate (`Herd::pen_starving`); like it, this bool rewinds with a rollback rather than
+        // re-firing the notice.
         if under_contained {
             if !herd.under_herded {
                 herd.under_herded = true;

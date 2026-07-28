@@ -8,10 +8,9 @@ pub(crate) fn pending_migration_to_state(migration: &PendingMigration) -> Pendin
     }
 }
 
-/// Serialize one labor assignment for the snapshot (client readout + rollback persistence). The
-/// `yields` carry this turn's actual/sustainable food income for the source (per-source breakdown;
-/// derived, not part of the rollback-persisted intent — defaulted to `0` when telemetry is absent,
-/// e.g. a rehydrated save before the next tick).
+/// Serialize one labor assignment for the client readout. The `yields` carry this turn's
+/// actual/sustainable food income for the source (per-source breakdown; defaulted to `0` when the
+/// telemetry row is absent, e.g. an assignment no `advance_labor_allocation` has resolved yet).
 pub(crate) fn labor_assignment_to_state(
     assignment: &LaborAssignment,
     yields: &SourceYield,
@@ -104,7 +103,7 @@ pub(crate) fn larder_runway_turns(
 
 /// The band-wide merged arrival schedule: element-wise sum of every source's `arrivals`, so slot
 /// `i` is **all** the food landing `i + 1` turns from now (the client's `_merged_arrival_schedule`).
-/// Empty when nothing was projected — Scout/Warrior only, or a rehydrated save before the next tick.
+/// Empty when nothing was projected — Scout/Warrior only, or a source no turn has resolved yet.
 fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
     let mut merged: Vec<f32> = Vec::new();
     let Some(allocation) = allocation else {
@@ -231,8 +230,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let working_age = available_workers(cohort.working);
     let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
     let idle_workers = working_age.saturating_sub(assigned);
-    // Zip each assignment with its retained per-source yield telemetry (same index order). A
-    // rehydrated allocation has an empty `last_yields` until the next tick → default 0 yields.
+    // Zip each assignment with its retained per-source yield telemetry (same index order). An
+    // assignment with no telemetry row yet → default 0 yields rather than a panic.
     const NO_YIELD: SourceYield = SourceYield::ZERO;
     let labor_assignments = allocation
         .map(|a| {
@@ -268,18 +267,17 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     // its pens by `advance_labor_allocation`). It is in NEITHER of the two terms above — a pen's feed
     // comes straight off `cohort.stores` — so without exporting it the client's
     // `food_income − food_consumption` net-food row overstates the surplus by exactly the upkeep, and
-    // the player watches the larder drain with no explanation. Derived, like `food_income`: `0.0` on a
-    // rehydrated save until the next tick.
+    // the player watches the larder drain with no explanation. Derived per-turn, like `food_income`.
     let pen_feed_upkeep = allocation.map(|a| a.last_pen_feed_upkeep).unwrap_or(0.0);
     // The food this band forfeited to a predator raid this turn (the real `LocalStore::take` debit
     // `advance_predator_raids` levied on a casualty-causing raid). Like `pen_feed_upkeep` it is in
     // NEITHER food term — a negative ledger row the client draws separately — and, like it, is derived
-    // per-turn (`0.0` on a rehydrated save until the next tick).
+    // per-turn by `advance_predator_raids` (`0.0` on a band not raided this turn).
     let raid_forfeit = allocation.map(|a| a.last_raid_forfeit).unwrap_or(0.0);
     // The honest larder runway — turns until the larder empties, INCOME INCLUDED (the wire calls it
     // `turns_of_food`; see `larder_runway_turns`). Consumption is the forward `demand` above (what
     // the people will want to eat), not `last_food_consumption`: `demand` is always resolvable,
-    // where the actual debit is `0` on a rehydrated save and short of demand in a famine.
+    // where the actual debit is `0` before a band's first turn and short of demand in a famine.
     let turns_of_food = if demand.raw() <= 0 {
         NOT_FOOD_LIMITED_TURNS
     } else {
@@ -459,7 +457,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // The three fertility factors this turn's births were actually resolved from — read off the
         // cohort, never re-derived here: they are computed on the turn's *opening* brackets and
         // *pre-meal* larder, so recomputing on the post-turn state would publish numbers that never
-        // drove a birth. All-zero on a rehydrated cohort (the not-projected sentinel).
+        // drove a birth. All-zero on a cohort that has not ticked (the not-projected sentinel).
         fertility_hunger: cohort.last_fertility_factors.hunger.raw(),
         fertility_reserve: cohort.last_fertility_factors.reserve.raw(),
         fertility_trend: cohort.last_fertility_factors.trend.raw(),
@@ -710,13 +708,13 @@ mod tests {
         assert_eq!(state.fertility_trend, factors.trend.raw());
     }
 
-    /// **The no-data rule on the wire.** The factors are derived, not persisted, so a rehydrated
-    /// cohort has no reading yet — and it must publish the all-zero NOT-PROJECTED sentinel rather
-    /// than a fabricated one. `reserve == 0` is what makes it unambiguous: a computed `reserve` is
+    /// **The no-data rule on the wire.** A cohort that has not yet been through a turn has no
+    /// reading — and it must publish the all-zero NOT-PROJECTED sentinel rather than a fabricated
+    /// one. `reserve == 0` is what makes it unambiguous: a computed `reserve` is
     /// ≥ 1 by construction, while `hunger` and `trend` both legitimately reach 0. The client reads a
     /// zero reserve as "no reading", never as a famine.
     #[test]
-    fn a_rehydrated_cohort_publishes_the_not_projected_sentinel() {
+    fn a_cohort_that_has_not_ticked_publishes_the_not_projected_sentinel() {
         let state = captured(&cohort(TEST_LARDER), None, None);
         assert_eq!(
             (
@@ -794,7 +792,7 @@ mod tests {
     }
 
     /// **An empty schedule is "no data", never a famine.** A cohort whose sources were not projected
-    /// (Scout/Warrior only, or a rehydrated save before the next tick) falls back to the smooth
+    /// (Scout/Warrior only, or a band no turn has resolved yet) falls back to the smooth
     /// estimate on its steady income — and a band with no income at all still reports the honest
     /// `larder / consumption`, not `0`.
     #[test]

@@ -221,7 +221,7 @@ effective_stance(axis) = clamp(normalize(signal) + declared_offset(axis), -1.0, 
 Each axis is also a readable `stance.<axis>` signal (injected into the sample immediately after the
 base signals, *before* any predicate or gloss evaluates), so content can gloss it — the shipped fork
 glosses `stance.roam_settle` — and future beats can gate on it. The effective values are also kept
-on the ledger as **derived scratch** (`last_effective_stance`, not persisted, excluded from
+on the ledger as **derived scratch** (`last_effective_stance`, recomputed every tick, excluded from
 equality — the `LaborAllocation::last_yields` convention) purely so the snapshot can export them
 without re-sampling.
 

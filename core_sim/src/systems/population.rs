@@ -77,11 +77,11 @@ struct DemographicOutcome {
     pub fertility: FertilityFactors,
 }
 
-/// The **flow** fertility factor. `None` flow means *not projected* — a rehydrated cohort (whose
-/// `last_yields` is derived, not persisted) or a band with no `LaborAllocation` at all — and must
-/// read as **no data → neutral**, never as zero income. Reading empty telemetry as a famine would
-/// suppress births on every rollback; this is the same trap already documented for the arrivals
-/// schedule in `larder_runway_turns`.
+/// The **flow** fertility factor. `None` flow means *not projected* — a band with no
+/// `LaborAllocation` at all, or one whose `last_yields` no turn has written yet — and must read as
+/// **no data → neutral**, never as zero income. Reading absent telemetry as a famine would suppress
+/// births on a band that simply has not been resolved yet; this is the same trap already documented
+/// for the arrivals schedule in `larder_runway_turns`.
 fn trend_factor(flow: Option<FoodFlow>, demand: Scalar, cfg: &DemographicsTrend) -> Scalar {
     let Some(flow) = flow else {
         return scalar_one();
@@ -148,12 +148,12 @@ fn fertility_factors(
 }
 
 /// Read a band's food flow off last turn's labor telemetry, distinguishing **no data** from a
-/// genuine zero. `LaborAllocation::last_yields` is derived-not-persisted, so "empty" is ambiguous
-/// and the two readings are opposite:
+/// genuine zero. An empty `LaborAllocation::last_yields` is ambiguous, and the two readings are
+/// opposite:
 ///
-/// - **no `LaborAllocation`**, or **assignments staffed but `last_yields` empty** (a rehydrated
-///   cohort, before the next `advance_labor_allocation`) → `None`, *not projected*. The trend factor
-///   stays neutral; reading this as zero income would suppress births on every rollback.
+/// - **no `LaborAllocation`**, or **assignments staffed but `last_yields` empty** (telemetry no
+///   `advance_labor_allocation` has written yet) → `None`, *not projected*. The trend factor stays
+///   neutral; reading this as zero income would suppress births on a band that has not resolved yet.
 /// - **`assignments` empty** → `Some` with zero income. An idle band really does produce nothing,
 ///   and that emptiness is a fact about the band, not missing telemetry.
 fn band_food_flow(labor: Option<&LaborAllocation>) -> Option<FoodFlow> {
@@ -661,7 +661,7 @@ mod demographics_tests {
         (s.children + s.working + s.elders).to_f32()
     }
 
-    /// One turn with **no flow telemetry** — the neutral-trend path a rehydrated cohort takes.
+    /// One turn with **no flow telemetry** — the neutral-trend path an unprojected cohort takes.
     fn run(s: DemographicState, temp: f32) -> DemographicState {
         run_with_flow(s, temp, None)
     }
@@ -969,8 +969,8 @@ mod demographics_tests {
         );
     }
 
-    /// **No data is not a famine.** A rehydrated cohort has empty yield telemetry; reading that as
-    /// zero income would suppress births on every rollback. `None` must score a neutral `trend` —
+    /// **No data is not a famine.** A cohort no turn has resolved has empty yield telemetry; reading
+    /// that as zero income would suppress its births. `None` must score a neutral `trend` —
     /// *exactly* break-even, not merely "better than starving".
     #[test]
     fn missing_flow_telemetry_reads_neutral_not_starving() {
@@ -1048,9 +1048,8 @@ mod demographics_tests {
     }
 }
 
-/// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). `last_yields` is derived, not
-/// persisted, so "empty" alone cannot tell a rehydrated cohort from an idle one — and the two must
-/// read oppositely.
+/// `band_food_flow`'s no-data-vs-genuine-zero disambiguation (#286). An empty `last_yields` alone
+/// cannot tell an unresolved cohort from an idle one — and the two must read oppositely.
 #[cfg(test)]
 mod food_flow_tests {
     use super::band_food_flow;
@@ -1075,8 +1074,8 @@ mod food_flow_tests {
         assert!(band_food_flow(None).is_none());
     }
 
-    /// **A rehydrated cohort**: the assignments survived rollback, the derived telemetry did not.
-    /// This must read as *not projected*, or every rollback would suppress births.
+    /// **A cohort with intent but no reading**: staffed assignments, and no turn has written their
+    /// telemetry yet. This must read as *not projected* rather than as zero income.
     #[test]
     fn staffed_assignments_without_telemetry_are_no_data() {
         let labor = LaborAllocation {
@@ -1087,7 +1086,7 @@ mod food_flow_tests {
         };
         assert!(
             band_food_flow(Some(&labor)).is_none(),
-            "rehydrated telemetry must not be read as zero income"
+            "unwritten telemetry must not be read as zero income"
         );
     }
 

@@ -1017,7 +1017,8 @@ mod tests {
         assert!((state.labor_assignments[1].realized_yield - 0.25).abs() < 1e-5);
     }
 
-    /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
+    /// An allocation with no telemetry yet (empty `last_yields`) reports zero food income and zero
+    /// per-row yields
     /// — the default-0.0 branch — while still exporting the assignment rows.
     #[test]
     fn population_state_food_income_defaults_to_zero_without_telemetry() {

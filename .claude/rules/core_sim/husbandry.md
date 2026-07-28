@@ -392,8 +392,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   would watch the larder drain unexplained. `penFeedUpkeep` is **the food the band actually PAID** this
   turn (the summed `LocalStore::take` *return*, not the demand — a band that can only part-pay reports
   only what it handed over, and its herds starve for the rest), carried on
-  `LaborAllocation::last_pen_feed_upkeep` (derived per-turn, not persisted, excluded from equality —
-  same treatment as `last_yields`). It closes the identity
+  `LaborAllocation::last_pen_feed_upkeep` (rebuilt per-turn, excluded from equality — same treatment
+  as `last_yields`). It closes the identity
   ```text
   larder_delta == foodIncome − foodConsumption − penFeedUpkeep
   ```

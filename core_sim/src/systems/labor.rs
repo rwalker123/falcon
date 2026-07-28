@@ -121,7 +121,7 @@ pub fn advance_labor_allocation(
         let mult_f = mult.to_f32();
 
         let mut lapsed: Vec<usize> = Vec::new();
-        // Retained per-source yield telemetry (derived, not persisted): one entry per assignment in
+        // Retained per-source yield telemetry, rebuilt from scratch: one entry per assignment in
         // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
         // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved. This also
         // *overwrites* any assign-time forecast seed (`LaborAllocation::set_source_yield`) with the

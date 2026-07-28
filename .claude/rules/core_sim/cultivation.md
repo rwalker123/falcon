@@ -79,8 +79,9 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   `core_sim/tests/flora_roster.rs`) rather than the retired boost. A *bare* tended patch (no crop) now
   pays exactly wild (measured on `AlluvialPlain`, K = 195: wild **0.61** = bare tended **0.61**
   prov/turn; a committed Wild Emmer rises above it via conversion).
-  Working a completed improvement at either rung marks it `tended_this_turn` (a transient,
-  non-persisted per-turn flag) so the decay pass can tell tended from abandoned. The old
+  Working a completed improvement at either rung marks it `tended_this_turn` (a per-turn flag, off the
+  client wire, carried across the turn boundary by the Population→Logistics lag) so the decay pass can
+  tell tended from abandoned. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
   - **`Cultivate` on a COMPLETED patch still pays its dip.** The dip means "the crew is preparing

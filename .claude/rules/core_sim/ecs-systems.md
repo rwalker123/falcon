@@ -164,8 +164,8 @@ still shipped whole and masked by the raster client-side.
 into the destination ledger and the whole band emigrates (`cohort.faction = destination`) — the
 high-morale "brain-drain" / Cultural Osmosis vector. `simulate_population` gates it on **both** high
 morale (`migration_morale_threshold`) **and** a settled duration: a band must have been simulated at
-least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, incremented each turn and
-snapshot-persisted) before its population can emigrate. This stops a freshly-spawned, well-fed
+least `migration_min_settled_turns` turns (`PopulationCohort.age_turns`, incremented each turn by
+`simulate_population`) before its population can emigrate. This stops a freshly-spawned, well-fed
 starting band from defecting on turn one (the `well_fed_morale_bonus` alone would otherwise clear the
 morale threshold immediately).
 

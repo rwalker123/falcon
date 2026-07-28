@@ -2,7 +2,6 @@ use bevy::prelude::Resource;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::scalar::{scalar_from_f32, Scalar};
-use sim_runtime::GenerationState;
 
 pub type GenerationId = u16;
 
@@ -15,15 +14,6 @@ pub struct GenerationBias {
 }
 
 impl GenerationBias {
-    pub fn from_scaled(values: [i64; 4]) -> Self {
-        Self {
-            knowledge: Scalar::from_raw(values[0]),
-            trust: Scalar::from_raw(values[1]),
-            equity: Scalar::from_raw(values[2]),
-            agency: Scalar::from_raw(values[3]),
-        }
-    }
-
     pub fn to_scaled(self) -> [i64; 4] {
         [
             self.knowledge.raw(),
@@ -111,33 +101,6 @@ impl GenerationRegistry {
         } else {
             self.profiles[index % self.profiles.len()].id
         }
-    }
-
-    pub fn update_from_states(&mut self, states: &[GenerationState]) {
-        if states.is_empty() {
-            return;
-        }
-        self.profiles = states
-            .iter()
-            .map(|state| GenerationProfile {
-                id: state.id,
-                name: state.name.clone(),
-                bias: GenerationBias::from_scaled([
-                    state.bias_knowledge,
-                    state.bias_trust,
-                    state.bias_equity,
-                    state.bias_agency,
-                ]),
-            })
-            .collect();
-    }
-
-    pub fn from_states(states: &[GenerationState]) -> Self {
-        let mut registry = Self {
-            profiles: Vec::new(),
-        };
-        registry.update_from_states(states);
-        registry
     }
 }
 
