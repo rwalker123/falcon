@@ -10,9 +10,13 @@ path = "src/lib.rs"
 [dependencies]
 ahash = "0.8"
 # `rc` is what lets a state struct hold an `Arc<[_]>` for a payload that belongs to the world rather
-# than to the frame (`ForagePatchState::composition`). serde's caveat — a round trip does not
-# preserve sharing — costs nothing here: the only serde consumer of these types is the `export_map`
-# JSON dump, a debug artifact, and the live wire is FlatBuffers.
+# than to the frame (`ForagePatchState::composition`). These types go through serde in several places
+# — `export_map`/`MapExport`, `hash_snapshot`'s bincode, the replay-determinism oracle, the
+# `decode_fixture` round trip — and **none of them depends on sharing**, which is what makes serde's
+# caveat (a round trip hands back one allocation per holder) harmless: the worst it does is re-split
+# a fixture's baskets. The encoded bytes are unchanged either way, because serde forwards `Arc<[T]>`
+# to the slice impl, so it serializes byte-identically to the `Vec<T>` this replaced. The live client
+# wire is FlatBuffers and does not involve serde at all.
 serde = { version = "1.0", features = ["derive", "rc"] }
 bincode = "1.3"
 serde_json = "1.0"
