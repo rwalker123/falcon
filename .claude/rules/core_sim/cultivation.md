@@ -50,6 +50,24 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
     gate lapses mid-run (another band overdraws the patch to Stressed) progress simply **stops accruing
     that turn** — it is not lost and the policy is not silently switched; the patch is still marked
     worked, so it doesn't decay either, and accrual resumes when it recovers.
+  - **Thriving is a START gate, not a CONTINUE gate** (`validate_labor_policy`,
+    `ForagePatch::cultivation_underway`). It asks whether the land is fit for a crew to *begin*
+    clearing it, so **a build already underway for this faction** (`cultivation_progress >
+    RUNG_UNSTARTED`, not yet complete, `owner == faction`) is **exempt from the phase check** — and
+    from that check alone. The knowledge gate, the already-cultivated rejection and the
+    other-faction-owner rejection all still run; the exemption is a *condition on one check*, never an
+    early return past the ones below it (pinned by
+    `a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`, which fails against an early
+    return). **This is what makes the mid-build-lapse ruling above actionable.** Adjusting the crew on
+    a paused build re-issues exactly the `Cultivate` assignment the start gate refuses, so with the
+    gate applied unconditionally the only executable response to a paused build was `workers == 0`
+    (the one always-allowed path) — which clears `tended_this_turn` and starts the feral bleed. "Stops
+    accruing, is not lost, is not switched" would have meant *abandon it or nothing*.
+  - **The animal rungs have no such trap, checked rather than assumed:** `validate_tame` carries **no
+    phase gate at all** (a herd's `ecology_phase` swings as it is hunted, so refusing the verb on it
+    would be un-actionable churn), and `validate_sow` gates on the rung's **`site_requirement`** —
+    static land that cannot lapse — plus knowledge, already-a-Field and the owner rule. Only the plant
+    rung-2 gate reads a value that moves under the build.
   - **Accrues AFTER the turn's take**, so the turn pays exactly what the pre-commit forecast promised
     (forecast == actual). The turn progress reaches `1.0` is the last preparing take; the full tended
     yield starts the next turn.
@@ -84,11 +102,22 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   tell tended from abandoned. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
-  - **`Cultivate` on a COMPLETED patch still pays its dip.** The dip means "the crew is preparing
-    ground, not gathering", which does not stop being true once the ground is ready — so the player
-    switches to a harvest policy to collect the payoff. The animal side has always behaved this way
-    (`Tame` on an already-tamed herd pays the pastoral dip); slice 7 made the plant side agree, because
-    the retired managed branch ignored the policy entirely.
+  - **Completion RETIRES the build verb — a completed patch is never left on `Cultivate`.** The dip
+    means "the crew is preparing ground, not gathering", which is why it is charged for the whole
+    build; the moment the meter fills it stops being true *and can never become true again on this
+    ground*, so `Cultivate` is a dead rung there. `advance_labor_allocation` therefore rewrites the
+    completing assignment onto the harvest rung — the module constant `HARVEST_POLICY_AFTER_BUILD`
+    (`FollowPolicy::Sustain`), declared once so all four investment rungs can only hand off to the
+    same place — preserving the tile, the **committed species** and the worker count; only the verb
+    changes. **The completing turn still pays the dip** (the accrue-after-take ordering: the turn
+    progress reaches `1.0` is the last preparing take), and the harvest rung pays from the next turn.
+    The completion event carries the handoff as `retired_policy=sustain` beside its
+    `status=complete action=cultivate x=… y=…` detail. **This is the one seam for all four build
+    verbs** — `Sow`, `Tame` and `Corral` retire identically, from the same post-loop pass; the plant
+    rung-3 helper `accrue_field` returns a completion `bool` for it, mirroring `Herd::accrue_corral`.
+    A gate that **lapses mid-build** is untouched by this and still keeps its build verb (a patch that
+    drops out of Thriving holds its progress and simply stops accruing) — nothing is finished there,
+    so there is nothing to hand off.
 - **Feral if unworked** — `advance_cultivation` (`forage.rs`, `TurnStage::Logistics` alongside
   `advance_forage_regrowth`) is the **decay/feral** pass only. A patch **worked as an improvement this
   turn** (`tended_this_turn` — tending a completed patch *or* preparing one under Cultivate) is
@@ -108,8 +137,10 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   proto/runtime/text plumbing, `CommandEventKind::Cultivate`) now **sets the `Cultivate` policy** on
   the band(s) already foraging that tile (`set_policy_on_working_bands`) — the command form of what the
   client's policy picker does. It **claims nothing**. Gates (shared with `assign_labor` via
-  `validate_labor_policy`): faction knows Cultivation, patch is **Thriving**, not already cultivated,
-  not another faction's; plus a rejection when **no band is foraging** the tile (staff it first).
+  `validate_labor_policy`): faction knows Cultivation, patch is **Thriving** *unless this faction
+  already has a build underway on it* (the start-gate/continue-gate rule above), not already
+  cultivated, not another faction's; plus a rejection when **no band is foraging** the tile (staff it
+  first).
 - **Policy validation** — `FollowPolicy::valid_for_forage` / `valid_for_hunt`: `Cultivate` is
   Forage-only and `Corral` Hunt-only. `handle_assign_labor` rejects an invalid combo (and a failed
   gate) with a clear failure event before touching the allocation; unassigning (`workers == 0`) is

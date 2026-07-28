@@ -59,6 +59,17 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   **`Tame`** and `Corral` arms — so **forecast == actual** for free (see "Pre-commit Yield
   Forecast"). **Extending** a pen (2d-β) reads the *same* `animal:pen` rung, so a ring can never drift
   from the initial build.
+- **Completion retires the build verb — ONE seam for all four rungs.** A build verb only means "the
+  crew is preparing, not harvesting", so once a meter fills it names a rung that can never accomplish
+  anything more on that source and the dip would be charged forever for nothing. Each of the four
+  accrual arms therefore records the completing assignment's index, and a single post-loop pass in
+  `advance_labor_allocation` rewrites that assignment's policy to **`HARVEST_POLICY_AFTER_BUILD`**
+  (`FollowPolicy::Sustain` — the rung that collects the payoff the build just unlocked), preserving
+  the source, the committed species and the worker count. **The completing turn still pays the dip**
+  (accrual is after the take), so the handoff takes effect the next turn; the retire runs **before**
+  the lapsed-assignment removal, which invalidates indices. Each completion event carries
+  `retired_policy=sustain`. A rung whose gate merely **lapses mid-build** is untouched — nothing
+  completed, so the source keeps its build verb and its progress.
 
 ### The knowledge pattern — practise rung N, unlock rung N+1
 

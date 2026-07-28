@@ -57,6 +57,15 @@ const GATE_REASON_ALREADY_TENDED_FORMAT := "Already a Tended Patch — %s Sustai
 
 const GATE_REASON_ALREADY_FIELD_FORMAT := "Already a Field — %s Sustain-forage it to harvest"
 
+# The HERD twin of the two above, and the ONE gate reason written for a rung that is normally not on
+# the picker at all: a fully tamed herd RETIRES Tame outright (`DrawerComposeController`'s
+# husbandry-ceiling pass hides it), so this reason is only ever read by a band caught STANDING on
+# Tame when the meter filled — the rung is re-admitted selected + gated so the player can see what
+# they are on and clear it themselves. Same voice and same remedy shape as the plant pair: the
+# ♻ Sustain-hunt that now harvests the tamed herd, which is also what teaches Penning for the rung
+# above.
+const GATE_REASON_ALREADY_TAMED_FORMAT := "Already fully tamed — %s Sustain-hunt it to harvest"
+
 # THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
 # the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
 # client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so

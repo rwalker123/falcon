@@ -63,6 +63,14 @@ pub const BUILTIN_INTENSIFICATION_LADDER: &str = include_str!("data/intensificat
 /// sprinkled across the accrual sites.
 pub const RUNG_COMPLETE: f32 = 1.0;
 
+/// **An untouched build meter** — the other end of the same `[0.0, 1.0]` span [`RUNG_COMPLETE`]
+/// closes. Named because the distinction *"has any progress been banked here at all"* is a real
+/// question with real consequences (ownership is set on the first accrual, and a started build is
+/// exempt from the **start**-only gates — see `ForagePatch::cultivation_underway`), so the threshold
+/// deserves the same one-home treatment as the completion point rather than a bare literal at each
+/// site that asks.
+pub const RUNG_UNSTARTED: f32 = 0.0;
+
 /// **The build timescale of a rung whose sources all build at the rung's own pace.** Passed by every
 /// caller that has no per-source multiplier to apply (the plant `tended` patch, the animal `pen` and
 /// its `ExtendPen` rings) — a rung's dials *are* its turns, undilated.

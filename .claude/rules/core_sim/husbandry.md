@@ -184,6 +184,11 @@ gated, **paid** verb, so both food webs read the same:
   either. Ownership is **not** in the gate: `accrue_domestication` owns the
   `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
   Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
+  **The turn the herd becomes domesticated, `Tame` retires onto the harvest rung** — the assignment is
+  rewritten to `HARVEST_POLICY_AFTER_BUILD` (`Sustain`) with the herd and the crew intact, so the band
+  starts drawing the pastoral payoff instead of paying the taming dip on a herd with nothing left to
+  gentle. The completing turn still pays the dip. One seam for all four investment rungs — see
+  "Completion retires the build verb" in `intensification.md`.
 - **Tameness is PERMANENT once earned (neglect-escape arc, `docs/plan_fauna_neglect_escape.md` §2.1).**
   `domestication_progress` is monotone-up: `Tame` builds it and **nothing decays it** — the tameness-bleed
   (`decay_under_herded`/`decay_domestication`) is deleted. An abandoned part-tamed herd keeps its earned
@@ -266,8 +271,12 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
   pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
   below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
-  `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace) and
-  pushes a `CommandEventKind::Corral` feed line.
+  `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
+  pushes a `CommandEventKind::Corral` feed line, and **retires `Corral` onto the harvest rung** —
+  the keeper crew stays on the herd under `HARVEST_POLICY_AFTER_BUILD` (`Sustain`) rather than
+  fencing a pen that is already up. Extending a pen is command-driven (`herd.pen_extending`), not
+  policy-driven, so the retire cannot block a later ring. One seam for all four investment rungs —
+  see "Completion retires the build verb" in `intensification.md`.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; unchanged
   proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) now **sets
   the `Corral` policy** on the band(s) already hunting the herd standing on that tile — the command

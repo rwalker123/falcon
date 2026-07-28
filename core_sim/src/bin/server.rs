@@ -1702,7 +1702,18 @@ fn validate_labor_policy(
                     tile.x, tile.y
                 ));
             }
-            if patch.ecology_phase != EcologyPhase::Thriving {
+            // **Thriving is a START gate, not a CONTINUE gate.** It asks whether the land is fit for
+            // a crew to *begin* clearing it — a question a build already underway has answered. The
+            // sim's own mid-build ruling is that a patch dropping out of Thriving **holds its
+            // progress and stops accruing**, neither losing the investment nor switching the policy;
+            // that ruling is only actionable if the player can still adjust the crew while the build
+            // is paused, and adjusting a crew re-issues this exact `Cultivate` assignment. Gated on
+            // the phase, the only executable response to a paused build was to unassign it
+            // (`workers == 0`, the one exempt path) — which clears `tended_this_turn` and starts the
+            // feral bleed. So a build underway skips **this** check and nothing else: the rejections
+            // above and below still run, in particular the other-faction owner rule.
+            if !patch.cultivation_underway(faction) && patch.ecology_phase != EcologyPhase::Thriving
+            {
                 return Err(format!(
                     "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
                     tile.x, tile.y
@@ -5997,6 +6008,26 @@ mod tests {
             .id()
     }
 
+    /// [`spawn_working_band`] plus the two markers the **command path** resolves a band through:
+    /// `StartingUnit` (the addressable unit) and `ResidentBand` (what `select_starting_band`'s
+    /// default picker filters on, so a band-less command never commandeers an expedition). Use this
+    /// when the test drives a real `handle_*` command rather than a validator directly.
+    fn spawn_resident_working_band(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        target: LaborTarget,
+    ) -> Entity {
+        let band = spawn_working_band(app, faction, target);
+        app.world.entity_mut(band).insert((
+            StartingUnit {
+                kind: "BandForager".to_string(),
+                tags: Vec::new(),
+            },
+            ResidentBand,
+        ));
+        band
+    }
+
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
 
@@ -6267,6 +6298,267 @@ mod tests {
             &app,
             "No band is foraging"
         ));
+    }
+
+    // --- The Thriving gate is a START gate, not a CONTINUE gate (issue #420) ----------------------
+    //
+    // A build already underway is exempt from the phase check, and from **that check only**. Without
+    // the exemption a paused build could not be **re-crewed**: adjusting workers re-issues the same
+    // `Cultivate` assignment the gate refuses, so the sole executable response to a paused build was
+    // `workers == 0` (the one always-allowed path) — which stops `tended_this_turn` and starts the
+    // feral bleed. "Stops accruing, is not lost, is not switched" is only actionable if the crew can
+    // still be moved.
+
+    /// Seat the source patch as a **paused build**: part-prepared and owned, but no longer Thriving —
+    /// exactly the state a patch reaches when another band overdraws it mid-cultivation.
+    fn seed_paused_build(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry
+            .patch_mut(coord)
+            .expect("the fixture seeded a patch");
+        patch.cultivation_progress = PART_PREPARED_PROGRESS;
+        patch.owner = owner;
+        patch.ecology_phase = EcologyPhase::Stressed;
+    }
+
+    /// Progress a paused build has banked — any value strictly inside `(RUNG_UNSTARTED,
+    /// RUNG_COMPLETE)` works; a mid-build figure reads as the state it represents.
+    const PART_PREPARED_PROGRESS: f32 = 0.5;
+
+    /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
+    /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
+    /// off* and let the patch regrow, the remedy the client's gated-policy sheet actually prescribes.
+    #[test]
+    fn a_paused_cultivation_can_still_be_re_crewed() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        seed_paused_build(&mut app, coord, Some(faction));
+        grant_cultivation(&mut app, faction);
+
+        let verdict = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Cultivate,
+                species: None,
+            },
+        );
+        assert!(
+            verdict.is_ok(),
+            "a build already underway must accept a re-crew on a paused patch: {verdict:?}"
+        );
+
+        // End to end, at a **changed** worker count — the shape of the command the remedy issues.
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Cultivate,
+                species: None,
+            },
+        );
+        const EASED_OFF_WORKERS: u32 = BAND_WORKERS - 1;
+        handle_assign_labor(
+            &mut app,
+            faction,
+            None,
+            "forage".to_string(),
+            EASED_OFF_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            Some("cultivate".to_string()),
+            None,
+        );
+        let allocation = app
+            .world
+            .get::<LaborAllocation>(band)
+            .expect("the band keeps its allocation");
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "the re-crew replaces the row on the same source, it does not add one"
+        );
+        assert_eq!(
+            allocation.assignments[0].workers, EASED_OFF_WORKERS,
+            "the eased-off crew is what the command must be able to apply"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Cultivate,
+            "the build keeps its verb through a re-crew"
+        );
+        assert!(
+            !cultivate_failure_detail_contains(&app, "not thriving")
+                && !forage_failure_detail_contains(&app, "not thriving"),
+            "re-crewing a paused build must emit no phase rejection"
+        );
+    }
+
+    /// **The gate that must not weaken.** A *fresh* `Cultivate` on a non-Thriving patch — nothing
+    /// banked, nobody's — is still refused, with the same message. Exempting a build underway is not
+    /// exempting the verb.
+    #[test]
+    fn a_fresh_cultivate_on_a_stressed_patch_is_still_refused() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.ecology_phase = EcologyPhase::Stressed;
+        }
+        grant_cultivation(&mut app, faction);
+
+        let verdict = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Cultivate,
+                species: None,
+            },
+        );
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("not thriving")),
+            "an unstarted build on unhealthy ground is still refused: {verdict:?}"
+        );
+    }
+
+    /// The exemption is **this faction's** build, not any build. Asserted from both sides, because
+    /// the two rejections are different rules and only one of them is the point:
+    ///
+    /// - a rival's **paused** build never reaches the exemption (owner mismatch), so the phase check
+    ///   refuses it — the case the fix must not have opened;
+    /// - a rival's build on **Thriving** ground gets *past* the phase check and is refused by the
+    ///   **owner** rule that sits after it, so that rule is confirmed reachable.
+    ///
+    /// The exemption-is-a-condition-not-an-early-return claim is pinned separately by
+    /// [`a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`], which is the only shape
+    /// that can actually distinguish the two.
+    #[test]
+    fn another_factions_cultivation_is_still_refused_paused_or_not() {
+        let faction = FactionId(0);
+        let rival = FactionId(1);
+        let coord = UVec2::new(1, 1);
+        let cultivate = LaborTarget::Forage {
+            tile: coord,
+            policy: FollowPolicy::Cultivate,
+            species: None,
+        };
+
+        let mut paused = build_headless_app();
+        seed_thriving_patch(&mut paused, coord);
+        seed_paused_build(&mut paused, coord, Some(rival));
+        grant_cultivation(&mut paused, faction);
+        let verdict = validate_labor_policy(&paused, faction, &cultivate);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("not thriving")),
+            "a rival's paused build is not this faction's build underway, so the phase check still \
+             refuses it: {verdict:?}"
+        );
+
+        let mut thriving = build_headless_app();
+        seed_thriving_patch(&mut thriving, coord);
+        {
+            let mut registry = thriving.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_progress = PART_PREPARED_PROGRESS;
+            patch.owner = Some(rival);
+        }
+        grant_cultivation(&mut thriving, faction);
+        let verdict = validate_labor_policy(&thriving, faction, &cultivate);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("Another people")),
+            "the owner rule sits after the phase check and must still fire: {verdict:?}"
+        );
+    }
+
+    /// **The exemption is a condition on ONE check, not an early return past the rest.** The only
+    /// gate that can tell the two apart is the species selection, which runs *after* the phase check
+    /// and is the one successor a build-underway patch can still fail (the owner rule cannot fire on
+    /// a build this faction owns, which is the exemption's own precondition). So this seats a real
+    /// tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge — and
+    /// asks for a plant that does not exist: an early return would accept it.
+    #[test]
+    fn a_paused_build_is_exempt_from_the_phase_check_and_nothing_else() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_grid_with_baskets(&mut app, PHASE_GATE_GRID);
+        seed_thriving_patch(&mut app, coord);
+        seed_paused_build(&mut app, coord, Some(faction));
+        grant_cultivation(&mut app, faction);
+
+        // The control: with no selection named, the paused build re-crews (the phase check is the
+        // only thing that was refusing it, and it is now exempt).
+        let permitted = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Cultivate,
+                species: None,
+            },
+        );
+        assert!(
+            permitted.is_ok(),
+            "control: a paused build with no crop named re-crews: {permitted:?}"
+        );
+
+        let verdict = validate_labor_policy(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Cultivate,
+                species: Some("not_a_plant".to_string()),
+            },
+        );
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("know no plant")),
+            "a build underway skips the PHASE check only — the species gate below it still runs: \
+             {verdict:?}"
+        );
+    }
+
+    /// Side of the square tile grid [`seed_grid_with_baskets`] builds. Small, but it has to contain
+    /// the `(1, 1)` these tests site their patch on.
+    const PHASE_GATE_GRID: u32 = 2;
+
+    /// A square grid of real `Tile`s on a food-bearing biome, plus the `TileRegistry` that indexes
+    /// them. `build_headless_app` runs no Startup, so it has no map at all — and the species gate
+    /// short-circuits to `Ok` without one, which would quietly make it untestable.
+    fn seed_grid_with_baskets(app: &mut bevy::prelude::App, side: u32) {
+        let tiles: Vec<Entity> = (0..side * side)
+            .map(|i| {
+                app.world
+                    .spawn(Tile {
+                        position: UVec2::new(i % side, i / side),
+                        terrain: SOURCE_BIOME,
+                        ..Default::default()
+                    })
+                    .id()
+            })
+            .collect();
+        app.world.insert_resource(TileRegistry {
+            tiles,
+            width: side,
+            height: side,
+        });
     }
 
     // --- `sow` (the plant rung-3 verb, slice 5). The rejections are the contract: each one names a
@@ -7010,6 +7302,18 @@ mod tests {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
             .add_progress(faction, CULTIVATION_DISCOVERY_ID, scalar_from_f32(1.0));
+    }
+
+    /// `assign_labor forage` reports under `CommandEventKind::Forage`, not `Cultivate` — so a test
+    /// that asserts the *absence* of a rejection has to watch the kind the command path emits.
+    fn forage_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
+        app.world.resource::<CommandEventLog>().iter().any(|entry| {
+            matches!(entry.kind, CommandEventKind::Forage)
+                && entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains(needle))
+        })
     }
 
     fn cultivate_failure_detail_contains(app: &bevy::prelude::App, needle: &str) -> bool {
