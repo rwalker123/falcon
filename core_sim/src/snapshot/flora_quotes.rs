@@ -42,7 +42,7 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bevy::prelude::*;
 use sim_runtime::{FloraShareInfo, TerrainType};
@@ -59,10 +59,21 @@ use crate::labor_config::{ForageLaborConfig, LaborConfig};
 use super::FORECAST_OUTPUT_MULTIPLIER;
 
 /// One tile's memoized quotes, beside the ground they were derived from.
+///
+/// `shares` is an `Arc<[_]>` because the readout hands this exact basket to the wire state
+/// ([`FloraQuoteCache::composition`]): the tile owns it, so a patch row shares it rather than
+/// deep-copying two `String`s per named plant every turn.
 struct CachedQuotes {
     terrain: TerrainType,
     resource_terrain: TerrainType,
-    shares: Vec<FloraShareInfo>,
+    shares: Arc<[FloraShareInfo]>,
+}
+
+/// The basket handed back for ground the sweep never visited. Built once rather than per call —
+/// `Arc<[_]>` allocates its header even when empty, and this is the miss path of a per-patch lookup.
+fn no_plants_here() -> &'static Arc<[FloraShareInfo]> {
+    static EMPTY: OnceLock<Arc<[FloraShareInfo]>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from(Vec::new()))
 }
 
 /// The memo. Keyed by tile coord; filled lazily by [`FloraQuoteCache::sweep`] during
@@ -139,10 +150,15 @@ impl FloraQuoteCache {
     /// What grows on this tile, for the readout. **Empty for a coord the sweep never visited** —
     /// "unknown ground names no plants", the same absent-means-nothing convention `seasonal_weights`
     /// and `sow_site_refusals` use, never a fabricated basket.
-    pub(crate) fn composition(&self, tile: UVec2) -> &[FloraShareInfo] {
-        self.entries
-            .get(&tile)
-            .map_or(&[][..], |cached| &cached.shares)
+    ///
+    /// Hands back the memo's own `Arc`, which is what the wire state then holds: the basket is a
+    /// property of the tile, so a patch row costs one refcount bump rather than a deep copy of every
+    /// named plant. Safe to share because nothing downstream mutates a published composition.
+    pub(crate) fn composition(&self, tile: UVec2) -> Arc<[FloraShareInfo]> {
+        self.entries.get(&tile).map_or_else(
+            || Arc::clone(no_plants_here()),
+            |cached| Arc::clone(&cached.shares),
+        )
     }
 
     /// Entries currently held — for the guards, which assert on what the memo *did* rather than on
@@ -179,7 +195,7 @@ impl FloraQuoteSweep<'_> {
         let derive = || CachedQuotes {
             terrain: tile.terrain,
             resource_terrain,
-            shares: derive_tile_quotes(flora, forage, tile, *map_seed),
+            shares: Arc::from(derive_tile_quotes(flora, forage, tile, *map_seed)),
         };
         let held = match entries.entry(tile.position) {
             Entry::Occupied(slot) => {
@@ -436,10 +452,40 @@ mod tests {
     }
 
     /// A coord the sweep never visited names no plants. The readout relies on this for a patch whose
-    /// tile is absent from the map — an empty basket, never a fabricated one.
+    /// tile is absent from the map — an empty basket, never a fabricated one. The empty basket is
+    /// **shared** too, so the miss path allocates nothing per lookup.
     #[test]
     fn an_unvisited_coord_names_no_plants() {
         let cache = FloraQuoteCache::default();
-        assert!(cache.composition(UVec2::new(4, 4)).is_empty());
+        let absent = UVec2::new(4, 4);
+        assert!(cache.composition(absent).is_empty());
+        assert!(
+            Arc::ptr_eq(&cache.composition(absent), &cache.composition(absent)),
+            "the empty basket allocated a fresh Arc per lookup"
+        );
+    }
+
+    /// **Reading a tile's basket shares it — it does not copy it.** This is the whole point of the
+    /// `Arc<[_]>`: the readout builds one row per patch per turn, so a copy here re-allocated two
+    /// `String`s per named plant on every patch of the map, every turn, for a value that belongs to
+    /// the tile and never changes while the ground does not.
+    ///
+    /// Asserted on the pointer rather than on a timing, because sharing is the property — a `to_vec`
+    /// that reappeared would still compare `==` and would still pass every other guard in this file.
+    #[test]
+    fn reading_a_tiles_basket_shares_it_rather_than_copying_it() {
+        let (flora, labor) = configs();
+        let mut cache = FloraQuoteCache::default();
+        let tile = tile_at(UVec2::new(2, 3), TerrainType::MixedWoodland);
+
+        let mut sweep = cache.sweep(&flora, &labor, 5, UVec2::new(16, 16));
+        sweep.quotes(&tile);
+
+        let first = cache.composition(tile.position);
+        assert!(!first.is_empty(), "the fixture tile named no plants");
+        assert!(
+            Arc::ptr_eq(&first, &cache.composition(tile.position)),
+            "two reads of one tile's basket handed back two allocations"
+        );
     }
 }

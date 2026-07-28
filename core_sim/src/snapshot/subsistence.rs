@@ -467,7 +467,10 @@ pub(crate) fn snapshot_forage_patches(
                 // (`docs/plan_flora_roster.md` §2). Read straight off the roster's precomputed,
                 // deterministically-ordered per-biome table: it is a function of the BIOME, so no
                 // per-patch state feeds it and every tile of a biome reads the same basket.
-                composition: tile_quotes.composition(patch.tile).to_vec(),
+                // Shared, never copied: the basket belongs to the tile, and the memo already holds
+                // it (`snapshot/flora_quotes.rs`). Deep-copying it here re-allocated two `String`s
+                // per named plant on every patch on every turn — half of this readout's whole cost.
+                composition: tile_quotes.composition(patch.tile),
                 // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
                 // wild mixed basket, a positive statement rather than "unknown". The display name is
                 // resolved here because the client holds no roster (the `FloraShareInfo::display_name`

@@ -1,5 +1,7 @@
 //! Subsistence-section state: herds, forage, graze, food modules, and sedentarization.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -474,8 +476,15 @@ pub struct ForagePatchState {
     /// `share × forage_capacity` is that plant's own capacity and the parts always re-sum to the
     /// whole. Empty on a biome that carries no forage. Deterministically sorted (share DESC, then
     /// species key ASC).
+    ///
+    /// **`Arc<[_]>`, not `Vec<_>`, because this basket belongs to the TILE and not to the patch or
+    /// to the turn.** It is derived once per tile per world into the capture's flora-quote memo
+    /// (`core_sim`'s `snapshot/flora_quotes.rs`, #410); a `Vec` here made every patch row deep-copy
+    /// it — two `String`s per named plant, ~5,984 plants at 80×52 — on every turn, and again on
+    /// every whole-section clone downstream. Shared, a row costs one refcount bump. Nothing mutates
+    /// a published basket, so sharing is invisible to every reader.
     #[serde(default)]
-    pub composition: Vec<FloraShareInfo>,
+    pub composition: Arc<[FloraShareInfo]>,
     /// **Which ONE named plant this patch has been committed to** (Flora Roster S1) — the stable
     /// `flora_config.json` species key. **`""` means the wild mixed basket, not "unknown"**: it is a
     /// positive statement that the patch is gathered as the whole [`Self::composition`] above.
