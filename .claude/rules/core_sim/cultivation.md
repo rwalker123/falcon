@@ -306,9 +306,14 @@ herd has one appetite).
   **same** `RungSiteRequirement::refusal` seam the command and the labor arm gate on — pinned by
   `the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on`, so the wire cannot disagree with
   the gate.
-- **Client follow-up (slice 6):** the native reader
-  (`clients/godot_thin_client/native/src/lib.rs::forage_patches_to_array`) does not yet surface the
-  five new fields as dict keys, and no panel renders them.
+- **On the client (slice 6):** the native reader — now
+  `clients/godot_thin_client/native/src/dict/subsistence.rs::forage_patches_to_array`, not the old
+  `lib.rs` home — surfaces all five as dict keys: `field_progress` / `is_field` / `ceiling_sow` /
+  `field_yield` / `sow_site_refusal` (the last optional), beside the already-shipped
+  `cultivation_progress` / `is_cultivated`. **Two spellings reach GDScript and they are not
+  interchangeable:** `HudBandLaborState.forage_patch_lookup()` holds the keys **bare**, while the
+  `tile_info` dict the tile card and compose sheet read carries a `patch_` prefix — except for the
+  cultivation pair, which `MapView` stamps bare there too. Read whichever the caller's dict uses.
 
 See Also: "Cultivation (Intensification Phase 1a)" (the rung below), "Corral (Intensification Rung 1c)"
 (the animal rung 3 this mirrors), "The Intensification Ladder" (the engine + the config).
