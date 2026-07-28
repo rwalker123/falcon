@@ -323,6 +323,14 @@ world-static, infrastructure, or config. Adding a `Resource` or a `Component` fa
 someone decides which it is. It asserts the reverse too, so a table entry naming a type that no
 longer exists fails rather than silently excusing nothing.
 
+**The tables are also asserted pairwise disjoint**, which is not tidiness. They are unioned into a
+`BTreeSet` before being checked against the runtime, and a set cannot report that it absorbed a
+name twice — so a resource listed in two buckets is covered by *neither*: delete it from either one
+and every other assertion in the file still passes. That is a hole shaped exactly like the omission
+the guard exists to catch, and it opened where this document says the danger is: `HerdTelemetry`,
+`PowerGridState` and `SimulationMetrics` — the three worked examples of the derived/state
+distinction above — sat in `SIM_STATE_RESOURCES` and `DERIVED_RESOURCES` at once.
+
 **Its scope is the library's resources, which is narrower than "omission" makes it sound.** The app
 it walks is `build_headless_app`, so anything the `server` **binary** inserts is invisible to it —
 today `ResolvedPortBase`, `ConfigWatcherRegistry`, `CommandSenderResource` and `CommandLog`. Naming

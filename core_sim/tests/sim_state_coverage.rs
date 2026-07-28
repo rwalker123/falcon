@@ -27,13 +27,18 @@
 //! | `NOT_SIM_STATE_*` | Infrastructure, session-scoped, or honestly not understood. |
 //! | `CONFIG_RESOURCES` | Immutable balance data loaded from `src/data/*.json`. |
 //!
+//! **A name belongs to exactly one of them**, enforced by `classification_tables_are_disjoint`.
+//! The union above is a `BTreeSet`, and a set cannot report that it absorbed the same name twice —
+//! so a name in two buckets is "classified" by whichever a reader opens first, and deleting it from
+//! the other leaves every assertion in this file still passing.
+//!
 //! Being in a table is not a claim that the checkpoint *currently* handles it — the behavioural
 //! oracles in `integration_tests/tests/replay_determinism.rs` are what prove that. This test proves
 //! only that nothing is unaccounted for, which is the half that was missing.
 
 use bevy::prelude::*;
 use core_sim::{build_headless_app, run_turn};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
@@ -99,17 +104,18 @@ const SIM_STATE_RESOURCES: [&str; 37] = [
     "VisibilitySweepTracker",
 ];
 
-/// Rebuilt from scratch every turn by the named system, before anything reads it.
-const DERIVED_RESOURCES: [(&str, &str); 7] = [
+/// Rebuilt from scratch every turn by the named system, **and read by nothing in between**.
+///
+/// The second half is the load-bearing one, and it is why `HerdTelemetry`, `PowerGridState` and
+/// `SimulationMetrics` are not here despite each having a system that rebuilds it: `capture_snapshot`
+/// publishes all three within the same turn. See the comment on them in `SIM_STATE_RESOURCES`.
+const DERIVED_RESOURCES: [(&str, &str); 4] = [
     (
         "CrisisOverlayCache",
         "advance_crisis_system -> rebuild_overlay",
     ),
     ("CultureEffectsCache", "reconcile_culture_layers"),
     ("HerdDensityMap", "advance_herds"),
-    ("HerdTelemetry", "advance_herds"),
-    ("PowerGridState", "simulate_power"),
-    ("SimulationMetrics", "collect_metrics"),
     ("SupplyNetworkMembership", "balance_supply_networks"),
 ];
 
@@ -284,16 +290,71 @@ fn leaf(type_path: &str) -> &str {
     type_path.rsplit("::").next().unwrap_or(type_path)
 }
 
+/// Every resource table paired with its name, so a duplicate can report *which two* tables hold it.
+/// One list feeds both the union below and the disjointness check, so neither can go out of date.
+fn resource_tables() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("SIM_STATE_RESOURCES", SIM_STATE_RESOURCES.to_vec()),
+        (
+            "DERIVED_RESOURCES",
+            DERIVED_RESOURCES.iter().map(|(name, _)| *name).collect(),
+        ),
+        ("WORLD_STATIC_RESOURCES", WORLD_STATIC_RESOURCES.to_vec()),
+        (
+            "NOT_SIM_STATE_RESOURCES",
+            NOT_SIM_STATE_RESOURCES
+                .iter()
+                .map(|(name, _)| *name)
+                .collect(),
+        ),
+        ("CONFIG_RESOURCES", CONFIG_RESOURCES.to_vec()),
+        ("CONFIG_RESOURCES_CONT", CONFIG_RESOURCES_CONT.to_vec()),
+    ]
+}
+
+fn component_tables() -> Vec<(&'static str, Vec<&'static str>)> {
+    vec![
+        ("SIM_STATE_COMPONENTS", SIM_STATE_COMPONENTS.to_vec()),
+        (
+            "NOT_SIM_STATE_COMPONENTS",
+            NOT_SIM_STATE_COMPONENTS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect(),
+        ),
+    ]
+}
+
 fn classified_resources() -> BTreeSet<&'static str> {
-    SIM_STATE_RESOURCES
-        .iter()
-        .copied()
-        .chain(DERIVED_RESOURCES.iter().map(|(name, _)| *name))
-        .chain(WORLD_STATIC_RESOURCES.iter().copied())
-        .chain(NOT_SIM_STATE_RESOURCES.iter().map(|(name, _)| *name))
-        .chain(CONFIG_RESOURCES.iter().copied())
-        .chain(CONFIG_RESOURCES_CONT.iter().copied())
+    resource_tables()
+        .into_iter()
+        .flat_map(|(_, names)| names)
         .collect()
+}
+
+/// Fails naming the symbol and both tables holding it.
+fn assert_tables_disjoint(kind: &str, tables: &[(&'static str, Vec<&'static str>)]) {
+    let mut home: BTreeMap<&'static str, &'static str> = BTreeMap::new();
+    let mut clashes: Vec<String> = Vec::new();
+    for (table, names) in tables {
+        for name in names {
+            if let Some(first) = home.insert(name, table) {
+                clashes.push(format!(
+                    "`{name}` is classified in BOTH `{first}` and `{table}`"
+                ));
+            }
+        }
+    }
+    assert!(
+        clashes.is_empty(),
+        "a {kind} is classified twice:\n  {}\n\n\
+         The buckets are mutually exclusive claims about one symbol, so a name in two of them is \
+         two contradictory decisions — and because the tables are unioned into a set before they \
+         are checked against the runtime, the duplicate ALSO makes the surviving copy optional: \
+         delete it from either table and every other assertion in this file still passes. Pick the \
+         bucket that is true and delete the other entry.",
+        clashes.join("\n  ")
+    );
 }
 
 /// Resource type paths a built app actually holds, restricted to this crate's own types.
@@ -306,6 +367,21 @@ fn runtime_resources(world: &World) -> Vec<String> {
         .filter_map(|(id, _)| world.components().get_info(id))
         .map(|info| info.name().to_string())
         .collect()
+}
+
+/// No symbol is classified twice — the guard the other tests in this file cannot supply.
+///
+/// They compare a `BTreeSet` union of the tables against the runtime, and a set silently absorbs a
+/// repeat. So a name listed in two buckets is covered by neither: remove it from one and the union
+/// is unchanged, which is a coverage hole shaped exactly like the omission this file exists to
+/// catch. `HerdTelemetry`, `PowerGridState` and `SimulationMetrics` were in both
+/// `SIM_STATE_RESOURCES` and `DERIVED_RESOURCES` — the two halves of the one distinction
+/// `.claude/rules/core_sim/checkpoints.md` names as the tempting shortcut, and the three it uses as
+/// its worked examples of getting it wrong.
+#[test]
+fn classification_tables_are_disjoint() {
+    assert_tables_disjoint("resource", &resource_tables());
+    assert_tables_disjoint("component", &component_tables());
 }
 
 #[test]
@@ -379,10 +455,9 @@ fn every_registered_component_is_classified() {
         .map(|(id, _)| id)
         .collect();
 
-    let classified: BTreeSet<&str> = SIM_STATE_COMPONENTS
-        .iter()
-        .copied()
-        .chain(NOT_SIM_STATE_COMPONENTS.iter().map(|(name, _)| *name))
+    let classified: BTreeSet<&str> = component_tables()
+        .into_iter()
+        .flat_map(|(_, names)| names)
         .collect();
 
     let mut unclassified: Vec<String> = Vec::new();

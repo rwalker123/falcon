@@ -495,11 +495,12 @@ impl TileState {
     /// from equality in exactly two ways, both measured rather than assumed
     /// (`docs/plan_delta_streaming.md` §3.5):
     ///
-    /// 1. **`mass` is ignored**, because it is not published to the client at all. It is a
-    ///    rollback-only field (`restore_world_from_snapshot` rebuilds the ECS `Tile` from it) that
-    ///    rides the bincode snapshot, and its FlatBuffers slot is deprecated. It drifted every turn
-    ///    on every tile — including open ocean — which by itself put all 4160 tiles of an 80x52 map
-    ///    into every delta. A field nobody receives must never be able to mark a tile dirty.
+    /// 1. **`mass` is ignored**, because it is not published to the client at all: its FlatBuffers
+    ///    slot is `(deprecated)`, so nothing encodes it and no client can read it. Nor is it read
+    ///    back on this side — rollback restores from `SimState`, which clones the whole ECS `Tile`
+    ///    rather than rebuilding it from this record. It drifted every turn on every tile —
+    ///    including open ocean — which by itself put all 4160 tiles of an 80x52 map into every
+    ///    delta. A field nobody receives must never be able to mark a tile dirty.
     /// 2. **Floating-point and fixed-point fields compare at hundredths**, per
     ///    [`WIRE_COMPARE_SCALE`].
     ///

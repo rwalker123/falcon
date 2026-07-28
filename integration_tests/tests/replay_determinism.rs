@@ -6,22 +6,28 @@
 //! localizing differ so a failure names the field instead of two hashes. What it cannot see is the
 //! **restore** direction: whether a world rebuilt from a checkpoint is the world that produced the
 //! checkpoint, and whether marching it forward reproduces the ticks that already happened. That is
-//! the property a command-sourced rollback (a command log plus sparse checkpoints, replayed
-//! forward) rests on entirely, and today it does not hold.
+//! the property a command-sourced rollback rests on entirely. **It holds**, and nothing here is
+//! `#[ignore]`d — a regression fails the build rather than sitting in a disabled test.
 //!
-//! The two `#[ignore]`d tests are the oracle for that work, in increasing strength:
+//! The two round-trip oracles, in increasing strength:
 //!
-//! - [`checkpoint_restore_is_lossless`] catches state that `capture_snapshot` **publishes** but
-//!   `restore_world_from_snapshot` does not put back.
-//! - [`a_restored_world_simulates_forward_identically`] catches state that merely **influences**
-//!   what is published.
-//!   That is the more valuable half: a dozen mutable resources (`ActiveCrisisLedger`,
-//!   `PowerTopology`, `ObservationLedger`, the espionage set, …) have no representation in
-//!   `WorldSnapshot` at all, so the round-trip test above is blind to them while this one is not.
+//! - [`checkpoint_restore_is_lossless`] catches state a restore does not put back, as far as the
+//!   **published frame** can see it.
+//! - [`a_restored_world_simulates_forward_identically`] catches state that never reaches the wire
+//!   but still **influences** what is published. That is the more valuable half: a dozen mutable
+//!   resources (`ActiveCrisisLedger`, `PowerTopology`, the espionage set, …) have no representation
+//!   in `WorldSnapshot` at all, so the round-trip test above is blind to them while this one is not.
 //!
-//! Together they are meant to be an oracle that fails **automatically** on an omission, rather than
-//! a checklist someone has to remember to extend when they add a resource — which is the failure
-//! mode the current design has, silently.
+//! Both restore from **`SimState`** (`core_sim/src/sim_state.rs`) and never from the published
+//! `WorldSnapshot`: the snapshot is the client's view — fog-filtered herds, derived rasters,
+//! display-only readouts — and using it as a save state is the defect this arc removed.
+//!
+//! **These are behavioural oracles, and the structural half lives elsewhere.** They prove that
+//! restoring reproduces *this* world; they cannot prove a newly added resource is carried, because
+//! state that nothing exercises within [`REPLAY_TICKS`] diverges in neither direction.
+//! `core_sim/tests/sim_state_coverage.rs` is the complement — it enumerates a built app's resources
+//! and components at runtime and fails until each is classified, so an omission arrives as a test
+//! failure instead of silently.
 
 mod common;
 
@@ -215,12 +221,18 @@ fn compare(left: &Value, right: &Value, path: &str, out: &mut Comparison) {
     }
 }
 
+/// Cut a rendered value to [`MAX_VALUE_CHARS`] **characters**.
+///
+/// Chars, not bytes, and that is not pedantry: the values walked here include narrative prose
+/// (`BeatVoiceLineState.text`, and `core_sim/src/data/beat_definitions.json` is full of 3-byte
+/// em-dashes), so a byte index lands mid-codepoint and panics. This code path exists to *localize a
+/// determinism failure* — a panic here replaces the diff someone needed with a stack trace.
 fn truncate(value: &str) -> String {
-    if value.len() > MAX_VALUE_CHARS {
-        format!("{}…", &value[..MAX_VALUE_CHARS])
-    } else {
-        value.to_string()
+    let mut cut: String = value.chars().take(MAX_VALUE_CHARS).collect();
+    if value.chars().nth(MAX_VALUE_CHARS).is_some() {
+        cut.push('…');
     }
+    cut
 }
 
 /// Collapse `foo[3].bar[7].baz` to `foo[].bar[].baz` so per-element results aggregate into one row
@@ -248,7 +260,7 @@ fn shape_of(path: &str) -> String {
 
 /// Serialize a snapshot with **entity identity canonicalized away**.
 ///
-/// `restore_world_from_snapshot` despawns and respawns every tile, link and cohort, so bevy hands
+/// `restore_sim_state` despawns and respawns every tile, link and cohort, so bevy hands
 /// back fresh `Entity` generations. `capture_snapshot` publishes tiles sorted by entity bits, which
 /// means a restored world emits the *same* tiles in a *different* order — roughly 6,300 spurious
 /// leaves that drown every real divergence. Re-keying on world coordinates removes that noise.
@@ -290,7 +302,15 @@ fn canonical(snapshot: &WorldSnapshot) -> Value {
         &["entity", "from", "to"],
     );
     sort_populations(&mut value);
-    // Local culture layers are owned by an entity, addressed by its bits.
+    // `owner` is blanked, but **no longer because it carries entity bits** — `CultureOwner` is
+    // derived from tile position, region id or `BandId` now, none of which a restore renumbers, and
+    // probing the compared frames finds only `TILE_OWNER_TAG | y << 32 | x` values and small region
+    // ids across all 390 rows. Removing the blank keeps every test here green.
+    //
+    // It stays because that has not been *established*: these rows come from `CultureManager.locals`,
+    // a `HashMap`, so their order may be only incidentally aligned between the two frames — which
+    // would make an un-blanked `owner` flaky rather than stronger, and a flaky determinism oracle is
+    // worse than a slightly loose one. Ordering the rows is what would let this blank go.
     blank_fields(&mut value, "culture_layers", &["owner"]);
     value
 }
@@ -367,6 +387,29 @@ fn assert_snapshots_match(label: &str, expected: &WorldSnapshot, actual: &WorldS
 // Tests
 // ---------------------------------------------------------------------------------------------
 
+/// The differ's own truncation survives multi-byte text.
+///
+/// A one-line guard for a one-line fix, because the byte-indexed version it replaces was reachable
+/// from real data and would regress silently: nothing else in this file renders a long string, so
+/// the panic would only ever appear the day a determinism test failed on a narrative field — the
+/// worst possible moment to lose the diff.
+#[test]
+fn truncate_cuts_on_a_char_boundary() {
+    // An em-dash is 3 bytes, so a byte-indexed cut at MAX_VALUE_CHARS lands mid-codepoint.
+    let prose = "—".repeat(MAX_VALUE_CHARS * 2);
+    let cut = truncate(&prose);
+    assert_eq!(
+        cut.chars().count(),
+        MAX_VALUE_CHARS + 1,
+        "expected {MAX_VALUE_CHARS} characters plus the ellipsis, got {cut}"
+    );
+    assert!(cut.ends_with('…'), "a truncated value must say it was cut");
+
+    // A value at the limit is returned whole, multi-byte or not.
+    let exact = "—".repeat(MAX_VALUE_CHARS);
+    assert_eq!(truncate(&exact), exact);
+}
+
 /// Two independent runs of the same seed agree, field for field.
 ///
 /// `determinism.rs` asserts the same thing via `hash_snapshot`; this states it through the
@@ -390,10 +433,12 @@ fn forward_determinism_is_bit_exact() {
 
 /// Restoring a checkpoint reproduces the world that checkpoint was taken from.
 ///
-/// Ignored: fails today by ~1,000 canonicalized leaves. `WorldSnapshot` is the **client view** —
-/// fog-filtered herds, derived rasters, display-only readouts — and it is being used as a save
-/// state, so restoring from it cannot recover what it never carried. Turn this on when the
-/// checkpoint becomes a dedicated full-world payload rather than the client's snapshot.
+/// It failed by ~1,000 canonicalized leaves for as long as the checkpoint *was* the published
+/// `WorldSnapshot`: a client view cannot restore what it never carried. It restores from `SimState`
+/// now and holds exactly, which is why it runs rather than being `#[ignore]`d.
+///
+/// It is the weaker of the two round-trip oracles — it can only see divergence that reaches the
+/// published frame. [`a_restored_world_simulates_forward_identically`] covers the rest.
 #[test]
 fn checkpoint_restore_is_lossless() {
     let mut app = new_app();

@@ -92,8 +92,13 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     // addressed by entity bits resolved to nothing when replayed. `band_id` survives that, which is
     // why the server's `resolve_starting_unit_entity` takes it and nothing else. `entity` stays on
     // the wire for CLIENT-LOCAL identity only (selection, marker keys, roster lookup) — never for
-    // anything sent back. Bit-reinterpreted as i64 like `entity`, so the full u64 range round-trips.
-    // 0 means "no id" and does not occur for a real band.
+    // anything sent back.
+    //
+    // **The range is bounded by the counter, not by this cast.** Godot ints are `i64`, and the trip
+    // home is a *decimal text* command line (`Main.format_*` → `"assign_labor %d %d …"`), not these
+    // bits — so an id above `i64::MAX` would be transmitted as a negative decimal and fail the
+    // server's `u64` parse. It cannot arise: `BandIdAllocator` starts at 1 and increments by 1, so
+    // ids stay astronomically inside `i64`. `0` means "no id" and does not occur for a real band.
     let _ = dict.insert("band_id", cohort.bandId() as i64);
     let _ = dict.insert("home", cohort.home() as i64);
     let _ = dict.insert("current_x", cohort.currentX() as i64);
