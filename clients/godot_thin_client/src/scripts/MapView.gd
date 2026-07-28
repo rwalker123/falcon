@@ -1429,9 +1429,6 @@ func _draw() -> void:
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
 
-	# Selected + hovered hex outlines (drawn under the markers).
-	_draw_tile_selection_highlight(radius, origin)
-
 	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
 	# its assignable reach (work-range ring). Drawn before the
 	# unit/herd markers so those sit on top of the tile tints. Its per-source yield LABELS are the
@@ -1445,6 +1442,11 @@ func _draw() -> void:
 	# Selected CORRALLED herd: its fenced pen footprint (a distinct enclosure tint). A corralled herd
 	# draws no roam-range above, so exactly one of the two ever renders.
 	_band_overlays.draw_pen_footprint_highlight(radius, origin)
+
+	# Selected + hovered hex outlines: the TOPMOST tile border, drawn after every per-tile overlay
+	# border above — each of those stamps an outline on EVERY tile of its disk, so a selection drawn
+	# earlier is erased on any tile inside one. Still under the markers, so tokens read on top.
+	_draw_tile_selection_highlight(radius, origin)
 
 	_draw_supply_links(radius, origin)
 	_band_markers.draw_primary_bands(radius, origin)
@@ -2384,7 +2386,9 @@ func _handle_entity_selection(col: int, row: int) -> void:
 		selected_unit_id = -1
 		selected_herd_id = ""
 		emit_signal("selection_cleared")
-		selected_tile = Vector2i(-1, -1)
+		# The OCCUPANT selection clears; the TILE selection does NOT. The click that reached here ran
+		# _emit_tile_selection one call earlier and selected this hex, and the land card is what the hex
+		# falls back to (refresh_selection_payload → {"kind": "tile"}, Hud.clear_selection → select_land).
 		queue_redraw()
 
 func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:

@@ -895,40 +895,52 @@ func _ready() -> void:
 	# 2b-iii). The same earthlike frame with a big-game herd parked mid-prairie (its range-1 disc of 7
 	# tiles sits entirely on the rich prairie steppe) and SELECTED: the warm graze-amber ring must read
 	# clearly over the straw/green pasture ramp — that ring-over-graze is the whole point (the player sees
-	# the exact ground the sim derives the herd's carrying capacity from).
+	# the exact ground the sim derives the herd's carrying capacity from). A tile one hex EAST of the herd
+	# — inside the graze disc, not the anchor — is also selected: the white selection outline must survive
+	# on top of the graze rim that the overlay stamps on every tile of the disc (issue #405).
 	_map.display_snapshot(_snapshot_pasture_herd())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_HERD_ID
+	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 1, PASTURE_HERD_ROW)
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_pasture_herd_range")
 	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
 
 	# State "predator prey-sense ring" — a selected Grey Wolf Pack (Predators Phase 1a). A carnivore
 	# doesn't graze, so `prey_sense_radius` (4) REPLACES the graze ring: the map must draw the wide
 	# radius-4 predator-ORANGE ring (a 61-tile disk), NOT the small gold graze ring. A prey deer sits
 	# nearby to prove the two herd kinds coexist (selecting IT would draw the gold graze ring — the
 	# replacement is carnivore-only). Read against map_pasture_herd_range.png: bigger disk, orange not gold.
+	# A tile two hexes east of the wolf — well inside the radius-4 disk, not the anchor — is selected: the
+	# white selection outline must survive on top of the prey-sense rim stamped on every disk tile (#405).
 	_map.display_snapshot(_snapshot_pasture_wolf())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_WOLF_ID
+	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 2, PASTURE_HERD_ROW)
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_predator_prey_sense")
 	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
 
 	# State "pasture pen footprint" — the SAME frame, but the herd is CORRALLED with pen_radius 1 (Grazing
 	# 2d-γ). A penned herd draws no roam-range ring; instead its fenced FOOTPRINT (the 7-tile hex disk of
 	# radius 1 around the pen anchor) reads in the distinct enclosure-GREEN tint — deliberately NOT the gold
 	# of the roam-range above, so a fenced footprint is unmistakably a different thing. Read it against
-	# map_pasture_herd_range.png: same herd tile, green disc instead of gold.
+	# map_pasture_herd_range.png: same herd tile, green disc instead of gold. Same off-anchor tile inside
+	# the footprint is selected: the white selection outline must survive on top of the enclosure rim the
+	# footprint stamps on every tile of the disc (issue #405).
 	_map.display_snapshot(_snapshot_pasture_pen())
 	_map.set_overlay_channel(PASTURE_OVERLAY_KEY)
 	_map.selected_herd_id = PASTURE_HERD_ID
+	_map.selected_tile = Vector2i(PASTURE_HERD_COL + 1, PASTURE_HERD_ROW)
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_pasture_pen_footprint")
 	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
 
 	# State "forage" — THE HUMAN-FOOD DISTRIBUTION, the twin of "pasture". Same earthlike shape, the
 	# OTHER food web: it must look VISIBLY DIFFERENT from the pasture frame (that divergence is the whole
