@@ -16,8 +16,8 @@ use sim_runtime::{
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
-    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
-    FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
+    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
+    ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
     GreatDiscoveryTelemetryState, HerdTelemetryState, HuntPolicyCeilingState,
     HuntTripEstimateState, InfluentialIndividualState, IntensificationKnowledgeState,
@@ -58,10 +58,8 @@ use crate::{
     flora_config::{FloraConfig, FloraConfigHandle},
     food::FoodModuleTag,
     forage::{
-        commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
-        field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
-        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForageRegistry,
-        CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        field_provisions, forage_forecast, rung_site_refusal, tile_is_fresh_watered,
+        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
@@ -115,6 +113,7 @@ mod campaign;
 mod capture;
 mod culture;
 mod economy;
+mod flora_quotes;
 mod governance;
 mod knowledge;
 mod map;
@@ -127,6 +126,7 @@ pub use campaign::*;
 pub use capture::*;
 pub(crate) use culture::*;
 pub(crate) use economy::*;
+pub use flora_quotes::*;
 pub(crate) use governance::*;
 pub(crate) use knowledge::*;
 pub(crate) use map::*;
@@ -1544,9 +1544,10 @@ mod tests {
             &LadderConfig::builtin(),
             &HashMap::new(),
             &HashMap::new(),
-            // No tiles behind these fixture patches, so no composition is published — "unknown
-            // ground names no plants", never a fabricated basket.
-            &HashMap::new(),
+            // No tiles behind these fixture patches, so the quote memo was never swept over them and
+            // no composition is published — "unknown ground names no plants", never a fabricated
+            // basket.
+            &FloraQuoteCache::default(),
         );
         assert_eq!(patches.len(), 2);
         // Emitted in stable (y, x) order: (1,0) then (0,1).

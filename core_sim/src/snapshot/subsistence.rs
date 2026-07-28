@@ -394,10 +394,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
 /// and a Field's managed harvest is biomass-based and seasonless, so it forecasts correctly regardless. Captured at
 /// `output_multiplier = 1.0`: the client scales by the acting band's `outputMultiplier`.
 ///
-/// `tile_compositions` maps tile coord → **what grows there** — the named plants the tile's forage
-/// capacity is made of, resolved by the caller (which has the tiles) through the one
-/// `forage::tile_flora_composition` seam, so the composition and `tile_forage_capacity` agree about a
-/// tile's shape (in particular about a navigable hex's **two** capacity terms). A patch whose tile is
+/// `tile_quotes` answers **what grows there** — the named plants the tile's forage capacity is made
+/// of, plus what each would pay once committed to. Filled by the caller (which has the tiles) through
+/// the one `forage::tile_flora_composition` seam, so the composition and `tile_forage_capacity` agree
+/// about a tile's shape (in particular about a navigable hex's **two** capacity terms). It is a
+/// **memo**, not a per-turn derivation — the quotes are a pure function of ground and config, so they
+/// are derived once per tile per world (`snapshot/flora_quotes.rs`, #410). A patch whose tile is
 /// absent from the map ships an **empty** composition — "no named plants here", never a fabricated
 /// one.
 pub(crate) fn snapshot_forage_patches(
@@ -407,7 +409,7 @@ pub(crate) fn snapshot_forage_patches(
     ladder: &LadderConfig,
     seasonal_weights: &HashMap<UVec2, f32>,
     sow_site_refusals: &HashMap<UVec2, SiteRefusal>,
-    tile_compositions: &HashMap<UVec2, Vec<FloraShareInfo>>,
+    tile_quotes: &FloraQuoteCache,
 ) -> Vec<ForagePatchState> {
     let mut patches: Vec<ForagePatchState> = registry
         .patches
@@ -465,10 +467,7 @@ pub(crate) fn snapshot_forage_patches(
                 // (`docs/plan_flora_roster.md` §2). Read straight off the roster's precomputed,
                 // deterministically-ordered per-biome table: it is a function of the BIOME, so no
                 // per-patch state feeds it and every tile of a biome reads the same basket.
-                composition: tile_compositions
-                    .get(&patch.tile)
-                    .cloned()
-                    .unwrap_or_default(),
+                composition: tile_quotes.composition(patch.tile).to_vec(),
                 // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
                 // wild mixed basket, a positive statement rather than "unknown". The display name is
                 // resolved here because the client holds no roster (the `FloraShareInfo::display_name`

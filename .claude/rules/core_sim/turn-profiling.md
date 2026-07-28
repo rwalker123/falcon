@@ -109,7 +109,7 @@ Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
 
 | section | ms @80×52 | % | copy or derive | proportional to | grows when |
 |---|---|---|---|---|---|
-| `patches` | **1.217** | 41.7 | **derive** | patch tiles × realized species × **payoff accounts** | map grows; **a payoff account is added** |
+| `patches` | **1.217** | 41.7 | **derive** — *memoized since #410, see below* | patch tiles × realized species × **payoff accounts** | map grows; **a payoff account is added** |
 | `readouts.forage_patches` | 0.424 | 14.5 | **derive** | patches × ladder rungs | map grows; a rung/policy is added |
 | `rasters` (9 overlays, 2 blocks) | 0.319 | 10.9 | **derive** | tiles × rasters | map grows; a raster is added |
 | `tiles` | 0.211 | 7.2 | copy + 2 cheap derivations | tiles | map grows |
@@ -124,6 +124,10 @@ Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
 `O(tiles × subsystems)` compounds twice as the game develops; one at 1 ms that is `O(1)` never
 moves again. Reading the ms column alone is what produced the standing (wrong) assumption that
 rasters were the thing to attack.
+
+> **The `patches` row is the pre-#410 figure, kept because the whole table is one session and the
+> rows sum to the parent.** That section is now a memo and reads **0.131 ms** on the turn — see
+> "The flora quotes are a memo" below. Every other row is current.
 
 ### One more raster costs 0.028 ms — the block is `O(tiles × rasters)` with a tiny constant
 
@@ -150,14 +154,46 @@ A new overlay's cost therefore depends on which of those two it is.
   `commit_trade_payoff` (F4). **Four today; it was two before F3/F4.** This is the factor that
   grows with the subsystem count, and it is a multiplier on the whole map.
 
-A **fifth payoff account costs ~+0.30 ms, ~10% of `snapshot.build` — roughly ten rasters.** Cost
-per flora share is flat across a 16× change in tile count (217 / 203 / 218 ns at 40×26 / 80×52 /
-160×104), so that projection is linear arithmetic, not extrapolation.
+A **fifth payoff account cost ~+0.30 ms, ~10% of `snapshot.build` — roughly ten rasters** — *of
+every turn, forever*. Cost per flora share is flat across a 16× change in tile count (217 / 203 /
+218 ns at 40×26 / 80×52 / 160×104), so that projection is linear arithmetic, not extrapolation.
 
-**The forecast is derived for the whole map to answer a per-selection question.** `forage_patches`
-is read by the client's `MapView._tile_info_at(col, row)` — a per-tile query on selection — and by
-the compose stepper for one source. Both consumers are per-selection, and the server derives a
-pre-commit forecast for every patch on the map every turn.
+### The flora quotes are a memo — that whole shape is off the turn (#410)
+
+**Every input to the per-tile quote block is ground or config**: the tile's `position`, `terrain`
+and `resource_terrain()`, the `map_seed`, the flora roster, the forage config. No live `ForagePatch`
+state reaches any of it — the payoffs are taken against the **tile's own `K`** through
+`hypothetical_patch`, never the standing patch's, so that a 25-turn investment is not priced off one
+transient turn's biomass. Terrain is written only by worldgen and hydrology. So the sweep produced
+byte-identical output every turn for the whole life of a world.
+
+It is now `snapshot/flora_quotes.rs`, a `FloraQuoteCache` filled once per tile per world. Measured
+80×52, release, `map_seed` pinned, publisher shut down, **30 interleaved pairs in one process** (the
+memo-off arm forces every tile to miss, so both arms are the same binary and the same world):
+
+| | memo off | memo on |
+|---|---|---|
+| `snapshot.build.patches` | 1.367 | **0.131** |
+| `snapshot.build` | 3.107 | **1.891** |
+
+What is left in `patches` is the `plant:field` **site refusal**, which stays per-turn deliberately:
+`tile_is_fresh_watered` reads a tile's *neighbours'* tags, so its input set is not local to the tile
+and cannot be fingerprinted per entry the way the quotes are — and at ~62 ns/patch-tile there is
+nothing to win by trying.
+
+**The invalidation is the complete input set, not a claim that terrain never changes** — world-level
+inputs (`map_seed`, `grid_size`, the two config `Arc`s by pointer identity) are checked once per
+capture and clear everything; `terrain` / `resource_terrain` are checked on every lookup. So the
+memo re-derives whether or not a later arc remembers it exists, which is also why it is not sim
+state and needs no restore path.
+
+**The growth column consequently reads differently: a fifth payoff account now costs its ~0.30 ms
+once per world rather than once per turn.**
+
+**The remaining half of #410 is `readouts.forage_patches`.** That one *does* read live biomass, so
+it is a genuine per-turn derivation — and it is derived for every patch on the map to answer a
+per-selection question: `forage_patches` is read by the client's `MapView._tile_info_at(col, row)`
+(a per-tile query on selection) and by the compose stepper for one source.
 
 ### Write-side change emission addresses 18% of `snapshot.build`
 
@@ -167,6 +203,10 @@ way: `tiles` + `culture` + `power` + the small copies = **0.53 ms, 18%**. The ot
 `patches`, `forage_patches`, `rasters`, `assemble`, `tile_index`, `herds` — is derivation or join
 work that an emission arc would leave exactly where it is. That is the number to scope such an arc
 against.
+
+**Both shares are off the same pre-#410 table, so read them as proportions of that session.** With
+`patches` memoized the absolute figures have moved; the ruling has not, and it is the ruling that
+scopes the arc.
 
 ### Per-unit cost rises 24–50% with map size, and the cause is the memory hierarchy
 

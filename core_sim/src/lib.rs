@@ -534,6 +534,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(fauna_metadata)
         .insert_resource(flora_handle)
         .insert_resource(flora_metadata)
+        .insert_resource(snapshot::FloraQuoteCache::default())
         .insert_resource(labor_handle)
         .insert_resource(labor_metadata)
         .insert_resource(ladder_handle)

@@ -146,7 +146,12 @@ const WORLD_STATIC_RESOURCES: [&str; 16] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 9] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 10] = [
+    (
+        "FloraQuoteCache",
+        "a memo of a pure function of ground + config; it re-derives on demand and its own \
+         per-tile / per-config identity check catches anything that moved (#410)",
+    ),
     (
         "Replaying",
         "a flag held only for the duration of one rollback; a checkpoint is never taken while set",
