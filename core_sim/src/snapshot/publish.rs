@@ -100,7 +100,7 @@ impl Default for SnapshotHistory {
     }
 }
 
-/// Rollback ring depth when nothing says otherwise (`SimulationConfig::snapshot_history_limit`
+/// Publication ring depth when nothing says otherwise (`snapshot::PUBLICATION_RING_DEPTH`
 /// overrides it for a real world).
 const DEFAULT_HISTORY_CAPACITY: usize = 256;
 

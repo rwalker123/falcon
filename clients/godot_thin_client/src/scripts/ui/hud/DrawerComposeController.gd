@@ -705,6 +705,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         assign_btn.text = HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
+        assign_btn.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
         # `SourceForecast.style_send_hunt_button` already disabled it when the raid returns empty (no surplus); a
         # positive party is the other precondition. (`or` — never clear a disable the style step set.)
@@ -716,7 +717,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
                 return
             emit_signal("send_hunt_expedition_requested", {
                 "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-                "band": int(band.get("entity", -1)),
+                "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
                 "party_workers": _compose.hunt_count(),
                 "fauna_id": herd_id,
                 "fauna_label": SourceForecast.herd_display_name(herd),

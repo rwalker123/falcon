@@ -12,6 +12,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
 
+mod command_guard;
 mod decode_fixture;
 mod decode_guard;
 
@@ -25,6 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .and_then(|()| decode_fixture::write_headerless_fixture())
             .and_then(|()| decode_fixture::write_delta_fixtures()),
         Some("decode-guard") => decode_guard::run(args.collect()),
+        Some("command-guard") => command_guard::run(args.collect()),
         Some("manifest-schema") => generate_manifest_schema(),
         Some("validate-manifests") => validate_manifests(),
         Some("help") | None => {

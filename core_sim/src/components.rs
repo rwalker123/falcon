@@ -356,49 +356,55 @@ pub struct PopulationCohort {
     /// *post*-turn brackets — is the consumption term of the larder ledger identity
     /// `larder_delta == food_income − food_consumption − pen_feed_upkeep`, so it holds by
     /// construction whether the band is fully fed or starving (the debit symmetry of
-    /// `LaborAllocation::last_pen_feed_upkeep`, the food the pen actually paid). Derived each turn by
-    /// `simulate_population`; not snapshot-persisted — a rehydrated cohort reads `0` until the next
-    /// turn recomputes it.
+    /// `LaborAllocation::last_pen_feed_upkeep`, the food the pen actually paid). Recomputed each turn
+    /// by `simulate_population`; on the client wire as `PopulationCohortState.food_consumption`.
     pub last_food_consumption: f32,
-    /// This turn's signed morale delta (before clamping into `[0, 1]`). Derived each turn by
-    /// `simulate_population`; the client renders it as a rising/falling trend arrow. Not
-    /// snapshot-persisted — a rehydrated cohort reads `0` until the next turn recomputes it.
+    /// This turn's signed morale delta (before clamping into `[0, 1]`). Recomputed each turn by
+    /// `simulate_population`; on the client wire as `PopulationCohortState.morale_delta`, which the
+    /// client renders as a rising/falling trend arrow.
     pub last_morale_delta: Scalar,
     /// The dominant *negative* driver behind `last_morale_delta` when morale fell this turn
-    /// (`None` when it rose or held), so the client can name *why* — e.g. "harsh terrain". Derived
-    /// each turn alongside `last_morale_delta`; not snapshot-persisted.
+    /// (`None` when it rose or held), so the client can name *why* — e.g. "harsh terrain".
+    /// Recomputed each turn alongside `last_morale_delta`; on the client wire as
+    /// `PopulationCohortState.morale_cause`.
     pub last_morale_cause: MoraleCause,
     /// The Layer-1 named morale contributors whose signed sum IS `last_morale_delta` (the wellbeing
-    /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Derived each turn by
-    /// `simulate_population`; not snapshot-persisted.
+    /// model's per-band morale breakdown — see `docs/plan_civ_wellbeing.md`). Recomputed each turn by
+    /// `simulate_population`; on the client wire as `PopulationCohortState.morale_{settling,terrain,
+    /// climate,unrest}`.
     pub last_morale_contributions: MoraleContributions,
     /// The three named fertility factors behind this turn's births — `hunger` (did we eat) ×
     /// `reserve` (is there a cushion) × `trend` (is the cushion growing or shrinking), the
     /// `birth_rate` multiplier from `docs/plan_population_growth_model.md`. The birth path's
     /// equivalent of `last_morale_contributions`: growth slows for named reasons, and this is what
     /// lets the client itemize them instead of leaving the player with only the inputs (larder,
-    /// Food /turn) and the effect (population). Derived each turn by `simulate_population`; not
-    /// snapshot-persisted — a rehydrated cohort reads the all-zero **not-projected** default until
-    /// the next turn recomputes it (see `FertilityFactors`).
+    /// Food /turn) and the effect (population). Recomputed each turn by `simulate_population`; on the
+    /// client wire as `PopulationCohortState.fertility_{hunger,reserve,trend}`. A cohort that has not
+    /// yet been through a turn carries the all-zero **not-projected** default (see
+    /// [`FertilityFactors`]).
     pub last_fertility_factors: FertilityFactors,
     /// Layer 2 — the share of the band that is unhappy this turn, `g(morale)` (working-weighted at
     /// the migration/grievance stage). `0` = content, `1` = fully discontented. Drives the
-    /// productivity modifier stack and migration. Derived each turn; not snapshot-persisted.
+    /// productivity modifier stack and migration. Recomputed each turn by `simulate_population`; on
+    /// the client wire as `PopulationCohortState.discontent_fraction`.
     pub discontent_fraction: Scalar,
     /// Layer 2 — the severity × duration grievance accumulator: rises with sustained discontent
     /// (faster when trapped with nowhere to migrate), decays while content. Phase 1 only populates
-    /// it (reserved for a future revolution consequence — no consequence reads it yet). Persisted
-    /// in the snapshot so rollback preserves the accumulation.
+    /// it (reserved for a future revolution consequence — no consequence reads it yet). Accumulated
+    /// by `advance_population_migration`; on the client wire as `PopulationCohortState.grievance`.
     pub grievance: Scalar,
     /// How many people emigrated **from** this band last turn via discontent-driven migration
-    /// (relocated to a happier same-faction band). `0` = none. Derived each turn; not persisted.
+    /// (relocated to a happier same-faction band). `0` = none. Recomputed each turn by
+    /// `advance_population_migration`; on the client wire as `PopulationCohortState.last_emigrated`.
     pub last_emigrated: u32,
     /// How many people immigrated **into** this band last turn (a high-morale band is a magnet).
-    /// `0` = none. Derived each turn; not persisted.
+    /// `0` = none. Recomputed each turn by `advance_population_migration`; on the client wire as
+    /// `PopulationCohortState.last_immigrated`.
     pub last_immigrated: u32,
     /// Turns this band has been simulated. Gates knowledge-migration (`simulate_population`) so a
     /// freshly-spawned band must settle for `migration_min_settled_turns` before its population can
-    /// emigrate to a neighbor. Persisted in the snapshot so rollback preserves the gate.
+    /// emigrate to a neighbor. Incremented each turn by `simulate_population`; on the client wire as
+    /// `PopulationCohortState.age_turns`.
     pub age_turns: u32,
     pub generation: GenerationId,
     pub faction: FactionId,
@@ -477,8 +483,8 @@ pub struct MoraleContributions {
 /// rewrite of the birth path. Surfaced in the snapshot so the client can itemize *why* growth is
 /// slow.
 ///
-/// **`Default` is all-zero, and that is the NOT-PROJECTED sentinel** — the same derived-not-
-/// persisted shape as `MoraleContributions`, so a rehydrated cohort reads it until the next tick.
+/// **`Default` is all-zero, and that is the NOT-PROJECTED sentinel** — what a cohort carries until
+/// its first `simulate_population` tick writes a real reading.
 /// It is unambiguous because a *computed* set can never carry `reserve == 0`: `reserve` is
 /// `1 + bonus × ramp` with both terms ≥ 0, so it is ≥ 1 by construction. `hunger` and `trend` both
 /// legitimately reach 0 (an empty larder, a `deficit_penalty` of 1.0), so neither could serve.
@@ -621,6 +627,26 @@ impl StartingUnit {
 /// an expedition that drops `Expedition` and gains `ResidentBand` (`docs/plan_exploration_and_sites.md`).
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ResidentBand;
+
+/// A band's durable identity, stable across a checkpoint restore.
+///
+/// **`Entity` is not an identity.** Restoring a checkpoint despawns and respawns every cohort, and
+/// bevy hands back a fresh generation, so `Entity::to_bits()` names a different band before and
+/// after — which is why anything that stored one (an expedition's `home_band`, the visibility
+/// sweep tracker's previous positions) could not survive a rollback. Every other durable thing in
+/// the sim already has an id of its own — [`PowerNodeId`], `InfluentialId`, `GreatDiscoveryId` —
+/// and a band is the one that did not.
+///
+/// Bands are the only entity class with **no natural key**: tiles are `(x, y)`, logistics links are
+/// their endpoint pair, power nodes are `y * width + x`, but a band splits, merges, migrates and
+/// dies, and several can stand on one hex. So the id is explicit and allocated from
+/// [`crate::resources::BandIdAllocator`], which is itself checkpoint state — restoring the counter
+/// is what stops a replay from re-issuing an id that is already in use.
+///
+/// This is **identity only**. Bands carrying their own culture layer is issue #407 and is additive
+/// on top of this; nothing here anticipates it.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BandId(pub u64);
 
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
@@ -990,10 +1016,9 @@ pub struct LaborAllocation {
     pub assignments: Vec<LaborAssignment>,
     /// Per-turn, per-source yield telemetry — one entry per `assignments` in the **same iteration
     /// order** (so the snapshot zips by index). Rebuilt from scratch each turn in
-    /// `advance_labor_allocation`; it is **derived, not persisted** (rollback restores only the
-    /// assignments via `labor_allocation_from_state`, leaving this empty until the next tick) and is
-    /// **excluded from equality** (see the manual `PartialEq` below) so it can never perturb the
-    /// persisted-intent comparison.
+    /// `advance_labor_allocation`, and on the client wire as the per-row yield fields of
+    /// `LaborAssignmentState`. **Excluded from equality** (see the manual `PartialEq` below) so
+    /// telemetry can never perturb a comparison of two allocations' intent.
     pub last_yields: Vec<SourceYield>,
     /// **The food this band actually PAID for pen feed this turn** — the summed `paid` returned by
     /// `LocalStore::take` in the corral-tend branch of `advance_labor_allocation`, across every pen it
@@ -1016,9 +1041,8 @@ pub struct LaborAllocation {
     ///
     /// which `core_sim/tests/fauna_husbandry.rs` pins against a real turn.
     ///
-    /// Same treatment as `last_yields`: rebuilt from scratch each turn, **derived, not persisted** (a
-    /// rehydrated cohort reads `0.0` until the next tick), and **excluded from equality** below so it
-    /// can never perturb the persisted-intent comparison.
+    /// Same treatment as `last_yields`: rebuilt from scratch each turn, and **excluded from equality**
+    /// below so it can never perturb a comparison of two allocations' intent.
     pub last_pen_feed_upkeep: f32,
     /// **The food this band forfeited to a predator raid this turn** (Predators Phase 3) — the actual
     /// `LocalStore::take` debit `advance_predator_raids` levies on a **casualty-causing** raid (the
@@ -1034,14 +1058,14 @@ pub struct LaborAllocation {
     /// larder_delta == food_income − food_consumption − pen_feed_upkeep − raid_forfeit
     /// ```
     ///
-    /// Same treatment as `last_pen_feed_upkeep`: rebuilt from scratch each turn, **derived, not
-    /// persisted**, and **excluded from equality** below.
+    /// Same treatment as `last_pen_feed_upkeep`: reset then re-levied each turn by
+    /// `advance_predator_raids`, and **excluded from equality** below.
     pub last_raid_forfeit: f32,
 }
 
 /// Equality is **intent only** — two allocations with equal `assignments` are equal regardless of
-/// the derived `last_yields` telemetry. This keeps `last_yields` out of any rollback / persisted-
-/// state comparison (it is deliberately not part of the assignment's identity).
+/// the derived `last_yields` telemetry. This keeps the per-turn telemetry out of any state
+/// comparison (it is deliberately not part of the assignment's identity).
 impl PartialEq for LaborAllocation {
     fn eq(&self, other: &Self) -> bool {
         self.assignments == other.assignments
@@ -1194,8 +1218,8 @@ impl LaborAllocation {
 
 /// A pending `move_band` order: the band advances toward `target` at
 /// `band_move_tiles_per_turn`/turn, updating `current_tile`/`home` until it arrives, then the
-/// component is removed. Not snapshot-persisted (a rollback mid-move cancels the travel), mirroring
-/// the retired pursuit's non-persistence.
+/// component is removed. On the client wire as `PopulationCohortState.is_traveling` +
+/// `travel_target_x`/`travel_target_y`, so the client can draw the destination it is walking to.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BandTravel {
     pub target: UVec2,

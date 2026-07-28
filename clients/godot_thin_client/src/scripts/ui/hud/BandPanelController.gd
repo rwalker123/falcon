@@ -1408,13 +1408,14 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     # The button carries the verdict: slow/long/denial raids stay ENABLED and warn-styled, and only a
     # herd with no surplus disables. `SourceForecast.style_send_hunt_button` owns the text in every branch.
     SourceForecast.style_send_hunt_button(confirm, trip, reason)
+    confirm.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
     if no_surplus:
         sheet.add_child(HudWidgets.alloc_hint_label(reason))
     var quarry_id := _compose.party_quarry_id()
     confirm.pressed.connect(func() -> void:
         emit_signal("send_hunt_expedition_requested", {
             "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-            "band": int(band.get("entity", -1)),
+            "band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
             "party_workers": _send_expedition_count,
             "fauna_id": quarry_id,
             "fauna_label": SourceForecast.herd_display_name(herd),
@@ -1497,9 +1498,11 @@ func _push_zone_badges(band: Dictionary) -> void:
 func _on_recall_expedition_pressed(expedition: Dictionary) -> void:
     if expedition.is_empty():
         return
+    # A detached party is a band too, and `recall_expedition <faction> <expedition_band_id>` names it
+    # by the same durable id — never its ECS entity bits.
     emit_signal("recall_expedition_requested", {
         "faction": int(expedition.get("faction", HudConst.PLAYER_FACTION_ID)),
-        "expedition": int(expedition.get("entity", -1)),
+        "expedition_band_id": int(expedition.get("band_id", HudConst.NO_BAND_ID)),
     })
 
 ## Render a player band's detail + labor allocation into the dockable Band/City panel and

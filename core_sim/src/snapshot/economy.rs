@@ -88,24 +88,6 @@ pub(crate) fn trade_link_state(
     }
 }
 
-pub(crate) fn trade_link_from_state(state: &TradeLinkState) -> TradeLink {
-    TradeLink {
-        from_faction: FactionId(state.from_faction),
-        to_faction: FactionId(state.to_faction),
-        throughput: Scalar::from_raw(state.throughput),
-        tariff: Scalar::from_raw(state.tariff),
-        openness: Scalar::from_raw(state.knowledge.openness),
-        decay: Scalar::from_raw(state.knowledge.decay),
-        leak_timer: state.knowledge.leak_timer,
-        last_discovery: if state.knowledge.last_discovery == 0 {
-            None
-        } else {
-            Some(state.knowledge.last_discovery)
-        },
-        pending_fragments: fragments_from_contract(&state.pending_fragments),
-    }
-}
-
 pub(crate) fn snapshot_faction_inventory(
     inventory: &FactionInventory,
 ) -> Vec<SchemaFactionInventoryState> {

@@ -13,9 +13,9 @@
 //! (`docs/plan_grazing_foundation.md` §1). The `FoodModuleTag` still decides what **kind** of
 //! gathering a tile offers (and its `seasonal_weight`); the table decides **how much** is there.
 //! Foraging **draws the patch down** (`forage_take`), and `advance_forage_regrowth` regrows it each
-//! turn toward `carrying_capacity`. The patch's state round-trips through the rollback snapshot via
-//! the shared `sim_schema::ForageState`/`EcologyState` records — the same 0-i persistence pattern
-//! the `HerdRegistry` uses (`ForageRegistry::from_states`/`update_from_states`).
+//! turn toward `carrying_capacity`. The patch's state round-trips through rollback because the
+//! checkpoint carries the whole `ForageRegistry` (`SimState::forage`) — the same way the
+//! `HerdRegistry` persists.
 //!
 //! Unlike a wild herd, a patch uses **pure logistic regrowth** (no Allee / critical-depensation
 //! crash) and **never despawns** — plants reseed, so a depleted (feral) patch always recovers. A
@@ -59,7 +59,6 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use bevy::prelude::*;
-use sim_schema::ForageState;
 
 use crate::{
     components::{FollowPolicy, SourceYield, Tile},
@@ -186,12 +185,12 @@ pub struct ForagePatch {
     /// `advance_labor_allocation`, Population). `advance_cultivation` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
     /// Sparing a *preparing* patch too is what makes the investment accrue at the full
-    /// `progress_per_turn` (25 turns) rather than net-of-decay. **Not** snapshot-persisted (derived,
-    /// transient) — a rehydrated patch reads `true` for **one turn** (a deliberate grace, seeded in
-    /// `forage_patch_from_state`), so the first post-restore Logistics decay pass — which runs before
-    /// the labor arm can re-mark a patch a band is working — spares it rather than reverting a tended
-    /// patch / Field a band tends every turn. A genuinely abandoned patch still goes feral next turn;
-    /// a rollback can only *delay* a feral reversion by one turn, never resurrect a farm.
+    /// `progress_per_turn` (25 turns) rather than net-of-decay. **Not** on the client wire (derived,
+    /// transient), but it **does survive a rollback**: the checkpoint clones the whole
+    /// `ForageRegistry` (`SimState::forage`), so a restored patch resumes with exactly the worked flag
+    /// it was captured with. That is what keeps the first post-restore Logistics decay pass — which
+    /// runs before the labor arm can re-mark a patch a band is working — from reverting a tended patch
+    /// / Field a band tends every turn.
     pub tended_this_turn: bool,
 }
 
@@ -364,27 +363,6 @@ impl ForageRegistry {
         self.patches.len()
     }
 
-    /// Rebuild the authoritative patch map from a rollback snapshot's `ForageState`s (clear +
-    /// rebuild), mirroring `HerdRegistry::update_from_states`. Restores per-patch biomass / phase so
-    /// a rollback rewinds forage depletion, not just display state.
-    pub fn update_from_states(&mut self, states: &[ForageState]) {
-        self.patches = states
-            .iter()
-            .map(|state| {
-                let patch = forage_patch_from_state(state);
-                (patch.tile, patch)
-            })
-            .collect();
-    }
-
-    /// Construct a registry directly from snapshot `ForageState`s (mirrors
-    /// `HerdRegistry::from_states`).
-    pub fn from_states(states: &[ForageState]) -> Self {
-        let mut registry = Self::default();
-        registry.update_from_states(states);
-        registry
-    }
-
     /// Number of **completed plant improvements** owned by `faction` — tended patches *and* sown
     /// Fields (`ForagePatch::is_managed`). Folded (with domesticated herds) into the sedentarization
     /// "domestication" signal — plant + animal domestication share one driver. The plant mirror of
@@ -398,34 +376,6 @@ impl ForageRegistry {
             .values()
             .filter(|patch| patch.is_managed() && patch.owner == Some(faction))
             .count()
-    }
-}
-
-/// Reconstruct a live `ForagePatch` from its snapshot mirror (the rollback restore side of
-/// `snapshot::forage_state`). The `progress`/`owner` `EcologyState` fields carry cultivation
-/// (Phase 1a) and the record's own `field_progress` the rung-3 Field meter, mirroring
-/// `herd_from_state` (whose `corral_progress` likewise sits beside the ecology's own progress).
-fn forage_patch_from_state(state: &ForageState) -> ForagePatch {
-    ForagePatch {
-        tile: UVec2::new(state.x, state.y),
-        biomass: state.ecology.biomass,
-        carrying_capacity: state.ecology.carrying_capacity,
-        ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
-        cultivation_progress: state.ecology.progress,
-        field_progress: state.field_progress,
-        // `""` is the wire's "wild mixed basket" — the `Option::None` of the commitment, the same
-        // absent-means-none convention `fauna_id` uses on a labor row.
-        species: Some(state.species.clone()).filter(|key| !key.is_empty()),
-        owner: state.ecology.owner.map(FactionId),
-        // Transient (not persisted) — seeded `true` for a **one-turn grace**: the same signal the
-        // Cultivate/Sow arm of `advance_labor_allocation` sets on any patch a band worked this turn,
-        // and the plant twin of the grace `Herd::corral_at` grants a freshly-penned herd. The
-        // rollback-restore path runs the Logistics decay pass (`advance_cultivation`) *before* the
-        // Population labor arm can re-mark a patch a band is working, so seeding this `false` would
-        // decay a tended patch / Field one tick on the very first post-restore turn — flipping
-        // `is_managed()` false and destroying the improvement even while a band tends it every turn.
-        // The grace spares exactly that turn; a genuinely abandoned patch still goes feral next turn.
-        tended_this_turn: true,
     }
 }
 
@@ -1975,7 +1925,6 @@ mod tests {
     use super::*;
     use crate::labor_config::LaborConfig;
     use sim_runtime::TerrainType;
-    use sim_schema::EcologyState;
 
     /// The **shipped** forage config (the per-biome capacity table lives only in the JSON — the
     /// struct default is deliberately empty, so `ForageLaborConfig::default()` would read every
@@ -2401,39 +2350,6 @@ mod tests {
                 "flat MSY plateau at biomass = {frac}·K"
             );
         }
-    }
-
-    #[test]
-    fn forage_state_roundtrip_is_identity() {
-        // A ForageState with non-default ecology, **both** improvement meters AND a committed
-        // species, so biomass / cap / phase / cultivation / field / owner / commitment all
-        // round-trip (a rollback must rewind a half-sown Field, not lose the investment — and it
-        // must restore the crop that Field is, since the commitment decides both the patch's
-        // effective capacity and its conversion rate).
-        let original = ForageState {
-            x: 7,
-            y: 3,
-            field_progress: 0.4,
-            species: "wild_emmer".to_string(),
-            ecology: EcologyState {
-                biomass: 42.5,
-                carrying_capacity: 120.0,
-                ecology_phase: "stressed".to_string(),
-                progress: 0.6,
-                owner: Some(3),
-            },
-        };
-
-        let registry = ForageRegistry::from_states(std::slice::from_ref(&original));
-        let patch = registry
-            .patch(UVec2::new(7, 3))
-            .expect("one patch restored");
-        assert_eq!(patch.cultivation_progress, 0.6);
-        assert_eq!(patch.field_progress, 0.4);
-        assert_eq!(patch.species.as_deref(), Some("wild_emmer"));
-        assert_eq!(patch.owner, Some(FactionId(3)));
-        let restored = crate::snapshot::forage_state(patch);
-        assert_eq!(restored, original);
     }
 
     #[test]

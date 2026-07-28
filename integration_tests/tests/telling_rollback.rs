@@ -1,9 +1,7 @@
 mod common;
 
-use core_sim::{
-    build_headless_app, restore_world_from_snapshot, BeatCatalogHandle, BeatLedger, FactionId,
-    Scalar, SnapshotHistory,
-};
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
+use core_sim::{build_headless_app, BeatCatalogHandle, BeatLedger, FactionId, Scalar};
 
 /// Regression: The Telling's `BeatLedger` must round-trip through the rollback snapshot
 /// **including restore**. A ledger that is captured but never restored (the `SedentarizationScore`
@@ -18,19 +16,16 @@ fn beat_ledger_rewinds_on_rollback_so_a_beat_can_fire_again() {
     // Turn 1: the pipeline runs `telling_tick` and `capture_snapshot` records the ring entry.
     app.update();
 
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        let stored = history.latest_entry().expect("snapshot captured");
-        stored.snapshot.clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     // Turn 0 fires the opening beat, so the captured ledger is non-empty — which is what makes
     // this a real round-trip rather than a default-vs-default comparison.
     assert!(
-        !snapshot.beat_ledger.fired.is_empty(),
+        !checkpoint.beat_ledger.to_state().fired.is_empty(),
         "capture must persist the beat ledger's fired-set"
     );
     assert!(
-        !snapshot.beat_ledger.edge_state.is_empty(),
+        !checkpoint.beat_ledger.to_state().edge_state.is_empty(),
         "capture must persist the edge state backing `crosses`"
     );
 
@@ -64,7 +59,7 @@ fn beat_ledger_rewinds_on_rollback_so_a_beat_can_fire_again() {
     assert!(app.world.resource::<BeatLedger>().has_fired(LATER_BEAT));
 
     // Roll back to the captured snapshot.
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     let restored = app.world.resource::<BeatLedger>();
     assert!(
@@ -146,17 +141,11 @@ fn answering_a_fork_after_the_rollback_point_is_rewound_by_the_rollback() {
 
     // Re-capture so the ring entry we roll back to carries the pending fork.
     app.update();
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history
-            .latest_entry()
-            .expect("snapshot captured")
-            .snapshot
-            .clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     let captured = app.world.resource::<BeatLedger>().clone();
     assert_eq!(
-        snapshot.beat_ledger.pending_forks.len(),
+        checkpoint.beat_ledger.to_state().pending_forks.len(),
         1,
         "capture must persist the pending fork"
     );
@@ -177,7 +166,7 @@ fn answering_a_fork_after_the_rollback_point_is_rewound_by_the_rollback() {
         assert!(answered.pending_forks().is_empty());
     }
 
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     let restored = app.world.resource::<BeatLedger>();
     assert!(
@@ -208,14 +197,8 @@ fn threads_and_the_attained_medium_rewind_with_the_ledger() {
     let mut app = build_headless_app();
     app.update();
 
-    let snapshot = {
-        let history = app.world.resource::<SnapshotHistory>();
-        history
-            .latest_entry()
-            .expect("snapshot captured")
-            .snapshot
-            .clone()
-    };
+    // The checkpoint, taken the way the server's rollback path takes it.
+    let checkpoint = capture_sim_state(&app.world);
     let captured = app.world.resource::<BeatLedger>().clone();
 
     // Write a thread and advance the medium *after* the rollback point.
@@ -247,7 +230,7 @@ fn threads_and_the_attained_medium_rewind_with_the_ledger() {
         assert_eq!(live.medium_for(FactionId(0)).map(|m| m.index), Some(2));
     }
 
-    restore_world_from_snapshot(&mut app.world, snapshot.as_ref());
+    restore_sim_state(&mut app.world, &checkpoint);
 
     let restored = app.world.resource::<BeatLedger>();
     assert!(

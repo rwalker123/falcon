@@ -298,11 +298,12 @@ verbs — a free-form `species` string means new species need no schema change).
 >   or the turn after a rollback clears the ledger) **every** herd is hidden — which is exactly what
 >   `visibility_raster_from_ledger` does in the same state (an all-unexplored, black raster). The two
 >   read the same ledger for the same faction, so they cannot disagree about a herd on dark ground.
-> - **Only the VIEW is filtered.** `WorldSnapshot.herd_registry` — the authoritative rollback record,
->   and `export_map`'s ground truth — carries every live herd. Restore rebuilds `HerdTelemetry` from
->   the registry (never from `snapshot.herds`), so rollback is untouched. **Consequence:** an
->   `export_map` JSON's `snapshot.herds` is now the *player's view*; read `snapshot.herd_registry`
->   for the full roster.
+> - **Only the VIEW is filtered.** The authoritative record is the `HerdRegistry` itself, which the
+>   **checkpoint** carries (`SimState::herds`) and which holds every live herd; restore rebuilds
+>   `HerdTelemetry` from it (never from `snapshot.herds`), so rollback is untouched. **Consequence:**
+>   an `export_map` JSON's `snapshot.herds` is the *player's view* and there is no unfiltered roster
+>   beside it — the snapshot's `herd_registry` copy was deleted once the checkpoint arc left it
+>   without a reader (`checkpoints.md` → "The client view carries no save state at all any more").
 > - **A hunted herd stays visible for free** — `calculate_visibility` reveals `worked_source_sight_range`
 >   around each worked Hunt herd's tile, so a herd your band is working is always `Active`.
 > - **Known gap:** a hunting **expedition**'s target herd is *not* revealed (an expedition is
@@ -325,7 +326,7 @@ verbs — a free-form `species` string means new species need no schema change).
 > heading suppression) and `integration_tests/tests/fauna_fog.rs`, which asserts on the **encoded
 > FlatBuffers bytes** the client actually receives, decoded through the client's own accessor chain.
 
-**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_entity_bits]`
+**Hunt (one-shot)** — the `hunt_fauna <faction> <herd_id> [band_id]`
 command (`handle_hunt_fauna`, `server.rs`; full plumbing in `command.proto` /
 `commands.rs` / `command_text.rs`) attaches a `FaunaPursuit` component (`components.rs`)
 to a band (auto-picked when no band id is given). Each turn `advance_fauna_pursuits`
@@ -338,7 +339,7 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 `hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
 
 **Follow (persistent, per policy)** — `follow_herd <faction> <herd_id> [policy]
-[band_entity_bits]` attaches a `FaunaPursuit { mode: Follow { policy } }`
+[band_id]` attaches a `FaunaPursuit { mode: Follow { policy } }`
 (`FollowPolicy` ∈ Sustain | Surplus | Deplete | Eradicate). The same `advance_fauna_pursuits`
 system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
 **auto-hunts each turn per policy** instead of removing the component. The policy is a
@@ -474,8 +475,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   head) **flickers 1↔2 every turn** as the lumpy whole-animal kill breathes its biomass ±1 animal
 >   across the boundary — and because the `herded_fraction` decay lags a turn, the player is told
 >   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
->   now a **persisted, deadband-stabilized `Herd::herders_needed`** (round-tripped through `HerdState`
->   like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   now a **persisted, deadband-stabilized `Herd::herders_needed`** (rewound by rollback with the
+>   cloned registry, like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
 >   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
 >   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
 >   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a
@@ -608,7 +609,7 @@ in `calculate_visibility` by posting forward-observer vantages (`scout.vantage_d
 in all 6 hex directions, LOS revealed from each — re-marked Active every turn while scouts are
 staffed, scaling with head-count); Warrior is inert until the predator slice. `move_band <faction> <band> <x> <y>` sets a `BandTravel` component that
 `advance_band_movement` steps at `band_move_tiles_per_turn`/turn. `assign_labor` sets one target's
-worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_entity_bits]
+worker count (0 unassigns; clamps to free headroom); **`cancel_order <faction_id> [band_id]
 [all|work|roles]`** clears the assignments its **scope** names — `all` (the default when the token is
 omitted, and the historical behaviour) clears every assignment **and** stops movement (fully idle),
 `work` unassigns only the worked Forage/Hunt sources, `roles` clears only the Scout/Warrior standing

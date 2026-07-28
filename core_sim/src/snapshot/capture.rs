@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::OnceLock;
+
 #[derive(SystemParam)]
 pub(crate) struct GreatDiscoverySnapshotParam<'w, 's> {
     ledger: Res<'w, GreatDiscoveryLedger>,
@@ -23,19 +25,19 @@ pub struct SnapshotContext<'w> {
     pub crisis_overlay: Res<'w, CrisisOverlayCache>,
     pub start_location: Res<'w, StartLocation>,
     pub herds: Res<'w, HerdTelemetry>,
-    /// Authoritative herd sim state, captured into the rollback snapshot (`herd_registry`) so a
-    /// rollback rewinds biomass / position / movement — the display `herds` telemetry alone is lossy.
+    /// Authoritative herd sim state — read to fill in what the lossy display `herds` telemetry
+    /// lacks (carrying capacity, the yield forecast). The registry itself is not published; the
+    /// checkpoint carries it (`SimState::herds`).
     pub herd_registry: Res<'w, HerdRegistry>,
-    /// Authoritative depletable-forage sim state, captured into the rollback snapshot
-    /// (`forage_registry`) so a rollback rewinds patch biomass / ecology phase. Mirrors
-    /// `herd_registry` — see the forage-depletion note in `core_sim/CLAUDE.md`.
+    /// Authoritative depletable-forage sim state — read for the per-tile `forage_patches` readout
+    /// and the "is there a patch here?" tile flag. Not published; the checkpoint carries it.
     pub forage_registry: Res<'w, ForageRegistry>,
-    /// Authoritative graze/pasture sim state, captured into the rollback snapshot (`graze_registry`)
-    /// so a rollback rewinds grazing draw-down. The *client* readout rides `TileState.graze_*` (graze
-    /// is on nearly every land tile, so a per-patch list would be the wrong shape) — see `graze.rs`.
+    /// Authoritative graze/pasture sim state — read for the per-tile `TileState.graze_*` readout
+    /// (graze is on nearly every land tile, so a per-patch list would be the wrong shape — see
+    /// `graze.rs`). Not published as a registry; the checkpoint carries it.
     pub graze_registry: Res<'w, GrazeRegistry>,
-    /// The Telling's narrative memory, captured into the rollback snapshot (`beat_ledger`) so a
-    /// rollback past a beat lets that beat fire again — see `core_sim/src/telling/mod.rs`.
+    /// The Telling's narrative memory — read for the client-facing fork tier, stance and voice
+    /// readouts. The ledger itself is not published; the checkpoint carries it.
     pub beat_ledger: Res<'w, BeatLedger>,
     pub elevation: Res<'w, ElevationField>,
     pub moisture: Option<Res<'w, MoistureRaster>>,
@@ -224,6 +226,454 @@ pub(crate) struct PublishState {
     history: VecDeque<StoredSnapshot>,
 }
 
+/// How many threads the publisher's diff fan-out may use.
+///
+/// Deliberately a small fixed number rather than `num_cpus`. The publisher runs **concurrently with
+/// the next turn** by construction, so a pool as wide as the machine buys its own milliseconds by
+/// taking cores from the simulation it is racing — and the simulation is the half that has to keep
+/// scaling as systems are added. Today the sim is ~5% of a turn, so a greedy publisher costs nothing
+/// visible; sizing the pool now is what stops that from being discovered later, in a profile nobody
+/// takes.
+///
+/// Four covers the three map-sized sections (tiles, culture layers, power) plus a worker for the
+/// tail of small ones, which is where the work-stealing has something to steal.
+const DIFF_POOL_THREADS: usize = 4;
+
+/// The publisher's own rayon pool, built once per process.
+///
+/// Process-wide rather than per world: `cargo test` runs many worlds at once, each with its own
+/// publisher thread, and one bounded pool shared between them is the point — a pool *per* world
+/// would multiply the core budget by the number of worlds and defeat the bound.
+static DIFF_POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+
+/// Run `work` on the publisher's bounded pool, falling back to the caller's thread if the pool could
+/// not be built. A pool that failed to construct is not a reason to stop publishing.
+fn in_diff_pool<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let pool = DIFF_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(DIFF_POOL_THREADS)
+            .thread_name(|index| format!("snapshot-diff-{index}"))
+            .build()
+            .map_err(|err| log::error!("snapshot diff pool unavailable, diffing serially: {err}"))
+            .ok()
+    });
+    match pool {
+        Some(pool) => pool.install(work),
+        None => work(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The snapshot's SECTIONS: one group of collections per subsystem, each diffed as a unit and
+// spawned as one task by `PublishState::publish`. A section is a `*Parts` output struct, an
+// optional `*Baselines` borrow bundle, and a `diff_*` function between them.
+//
+// The partition is SEMANTIC, not cost-balanced. A cost-balanced one has to be re-measured every
+// time a subsystem grows or a raster is added; a semantic one keeps its meaning as the weights
+// move, and the scheduler is what balances it — `rayon::scope` work-steals, so an unequal section
+// is absorbed rather than baked into the partition.
+//
+// ADDING A SNAPSHOT COLLECTION IS: a baseline field, a line in its section's `*Parts`, a line in
+// its section's `diff_*`, a line in the assembly. No new task, no re-balancing, no measurement.
+// That registration property is what this shape is for.
+//
+// Two rules hold for every section, and both are load-bearing:
+//
+// * A section reads and writes ONLY its own baselines. That is what makes the `&mut` borrows
+//   disjoint by construction and the tasks free of shared mutable state. A section needing another
+//   section's baseline would mean the partition is wrong, not that a lock is needed.
+// * NO `crate::turn_profile::publish_scope` inside a section. The publisher profiler's accumulator
+//   is thread-local, so a span opened on a pool worker folds into an accumulator nothing ever
+//   drains — the label would vanish from the frame's profile and leak into the next frame on that
+//   worker. The single `publish.diff` scope stays on the publisher thread, around the whole
+//   fan-out.
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Debug, Default)]
+struct TileParts {
+    sent: Vec<TileState>,
+    removed: Vec<u64>,
+}
+
+/// The map's tiles: the largest single collection, one entry per hex.
+fn diff_tiles(
+    baseline: &mut HashMap<u64, TileState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> TileParts {
+    let (sent, removed) = diff_new_tiles(baseline, &snapshot.tiles, write);
+    TileParts { sent, removed }
+}
+
+#[derive(Debug, Default)]
+struct CultureParts {
+    sent: Vec<CultureLayerState>,
+    removed: Vec<u32>,
+    tensions: Option<Vec<CultureTensionState>>,
+}
+
+/// Culture: the per-tile layer grid (map-sized, on the published-state deadband) and the tension
+/// roster that rides with it.
+fn diff_culture(
+    layers: &mut HashMap<u32, CultureLayerState>,
+    tensions: &mut Vec<CultureTensionState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CultureParts {
+    let (sent, removed) = diff_new_culture_layers(layers, &snapshot.culture_layers, write);
+    CultureParts {
+        sent,
+        removed,
+        tensions: diff_whole(tensions, &snapshot.culture_tensions, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct PowerParts {
+    sent: Vec<PowerNodeState>,
+    removed: Vec<u64>,
+    metrics: Option<PowerTelemetryState>,
+}
+
+/// Power: one node per tile, so map-sized like the two above, plus the grid's telemetry block.
+fn diff_power(
+    nodes: &mut HashMap<u64, PowerNodeState>,
+    metrics: &mut PowerTelemetryState,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> PowerParts {
+    let (sent, removed) = diff_new(nodes, &snapshot.power, |state| state.entity, write);
+    PowerParts {
+        sent,
+        removed,
+        metrics: diff_whole(metrics, &snapshot.power_metrics, write),
+    }
+}
+
+/// Every whole-map raster and overlay. Each is one `Vec` the size of the map, so the comparison is
+/// cheap and the clone — taken only when it differs — is not.
+#[derive(Debug, Default)]
+struct RasterParts {
+    terrain: Option<TerrainOverlayState>,
+    moisture: Option<FloatRasterState>,
+    elevation: Option<ElevationOverlayState>,
+    climate_bands: Option<ClimateBandsState>,
+    logistics: Option<ScalarRasterState>,
+    sentiment: Option<ScalarRasterState>,
+    corruption: Option<ScalarRasterState>,
+    culture: Option<ScalarRasterState>,
+    military: Option<ScalarRasterState>,
+    visibility: Option<ScalarRasterState>,
+}
+
+/// The baselines the raster section owns, borrowed disjointly out of [`PublishState`].
+struct RasterBaselines<'a> {
+    terrain: &'a mut TerrainOverlayState,
+    moisture: &'a mut FloatRasterState,
+    elevation: &'a mut ElevationOverlayState,
+    climate_bands: &'a mut ClimateBandsState,
+    logistics: &'a mut ScalarRasterState,
+    sentiment: &'a mut ScalarRasterState,
+    corruption: &'a mut ScalarRasterState,
+    culture: &'a mut ScalarRasterState,
+    military: &'a mut ScalarRasterState,
+    visibility: &'a mut ScalarRasterState,
+}
+
+fn diff_rasters(
+    baseline: RasterBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> RasterParts {
+    RasterParts {
+        terrain: diff_whole(baseline.terrain, &snapshot.terrain, write),
+        moisture: diff_whole(baseline.moisture, &snapshot.moisture_raster, write),
+        elevation: diff_whole(baseline.elevation, &snapshot.elevation_overlay, write),
+        // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
+        climate_bands: diff_whole(baseline.climate_bands, &snapshot.climate_bands, write),
+        logistics: diff_whole(baseline.logistics, &snapshot.logistics_raster, write),
+        sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment_raster, write),
+        corruption: diff_whole(baseline.corruption, &snapshot.corruption_raster, write),
+        culture: diff_whole(baseline.culture, &snapshot.culture_raster, write),
+        military: diff_whole(baseline.military, &snapshot.military_raster, write),
+        visibility: diff_whole(baseline.visibility, &snapshot.visibility_raster, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct KnowledgeParts {
+    ledger: Vec<KnowledgeLedgerEntryState>,
+    removed_ledger: Vec<u64>,
+    metrics: Option<KnowledgeMetricsState>,
+    timeline: Option<Vec<KnowledgeTimelineEventState>>,
+    discovery_progress: Vec<DiscoveryProgressEntry>,
+    great_discoveries: Vec<GreatDiscoveryState>,
+    great_discovery_progress: Vec<GreatDiscoveryProgressState>,
+    great_discovery_definitions: Option<Vec<GreatDiscoveryDefinitionState>>,
+    great_discovery_telemetry: Option<GreatDiscoveryTelemetryState>,
+}
+
+/// The baselines the knowledge section owns.
+struct KnowledgeBaselines<'a> {
+    ledger: &'a mut HashMap<u64, KnowledgeLedgerEntryState>,
+    metrics: &'a mut KnowledgeMetricsState,
+    timeline: &'a mut Vec<KnowledgeTimelineEventState>,
+    discovery_progress: &'a mut HashMap<(u32, u32), DiscoveryProgressEntry>,
+    great_discoveries: &'a mut HashMap<(u32, u16), GreatDiscoveryState>,
+    great_discovery_progress: &'a mut HashMap<(u32, u16), GreatDiscoveryProgressState>,
+    great_discovery_definitions: &'a mut HashMap<u16, GreatDiscoveryDefinitionState>,
+    great_discovery_telemetry: &'a mut GreatDiscoveryTelemetryState,
+}
+
+/// Knowledge, espionage and great discoveries.
+///
+/// `discovery_progress`, `great_discoveries` and `great_discovery_progress` have no `removed_*`
+/// counterpart on the wire, so their removals are dropped after the baseline has been pruned — the
+/// entry leaves the baseline, the client simply is not told (it never was).
+fn diff_knowledge(
+    baseline: KnowledgeBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> KnowledgeParts {
+    let (ledger, removed_ledger) = diff_new(
+        baseline.ledger,
+        &snapshot.knowledge_ledger,
+        |entry| encode_ledger_key(FactionId(entry.owner_faction), entry.discovery_id),
+        write,
+    );
+    let (discovery_progress, _) = diff_new(
+        baseline.discovery_progress,
+        &snapshot.discovery_progress,
+        |entry| (entry.faction, entry.discovery),
+        write,
+    );
+    let (great_discoveries, _) = diff_new(
+        baseline.great_discoveries,
+        &snapshot.great_discoveries,
+        |state| (state.faction, state.id),
+        write,
+    );
+    let (great_discovery_progress, _) = diff_new(
+        baseline.great_discovery_progress,
+        &snapshot.great_discovery_progress,
+        |state| (state.faction, state.discovery),
+        write,
+    );
+    KnowledgeParts {
+        ledger,
+        removed_ledger,
+        metrics: diff_whole(baseline.metrics, &snapshot.knowledge_metrics, write),
+        timeline: diff_whole(baseline.timeline, &snapshot.knowledge_timeline, write),
+        discovery_progress,
+        great_discoveries,
+        great_discovery_progress,
+        great_discovery_definitions: diff_whole_indexed(
+            baseline.great_discovery_definitions,
+            &snapshot.great_discovery_definitions,
+            |state| state.id,
+            write,
+        ),
+        great_discovery_telemetry: diff_whole(
+            baseline.great_discovery_telemetry,
+            &snapshot.great_discovery_telemetry,
+            write,
+        ),
+    }
+}
+
+#[derive(Debug, Default)]
+struct CrisisParts {
+    telemetry: Option<CrisisTelemetryState>,
+    overlay: Option<CrisisOverlayState>,
+    victory: Option<VictorySnapshotState>,
+}
+
+/// Crisis and victory — the two whole-section telemetry blocks that decide how a campaign ends.
+fn diff_crisis(
+    telemetry: &mut CrisisTelemetryState,
+    overlay: &mut CrisisOverlayState,
+    victory: &mut VictorySnapshotState,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CrisisParts {
+    CrisisParts {
+        telemetry: diff_whole(telemetry, &snapshot.crisis_telemetry, write),
+        overlay: diff_whole(overlay, &snapshot.crisis_overlay, write),
+        victory: diff_whole(victory, &snapshot.victory, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct CampaignParts {
+    profiles: Option<Vec<CampaignProfileState>>,
+    command_events: Option<Vec<CommandEventState>>,
+    pending_forks: Option<Vec<PendingForksState>>,
+    stance_axes: Option<Vec<StanceState>>,
+    voice_medium: Option<Vec<VoiceMediumState>>,
+    faction_inventory: Option<Vec<SchemaFactionInventoryState>>,
+    sedentarization: Option<Vec<SchemaSedentarizationState>>,
+    discovered_sites: Option<Vec<SchemaDiscoveredSitesState>>,
+    demographics: Option<Vec<SchemaPopulationDemographicsState>>,
+    intensification_knowledge: Option<Vec<IntensificationKnowledgeState>>,
+    start_marker: Option<StartMarkerState>,
+}
+
+/// The baselines the campaign section owns.
+struct CampaignBaselines<'a> {
+    profiles: &'a mut Vec<CampaignProfileState>,
+    command_events: &'a mut Vec<CommandEventState>,
+    pending_forks: &'a mut Vec<PendingForksState>,
+    stance_axes: &'a mut Vec<StanceState>,
+    voice_medium: &'a mut Vec<VoiceMediumState>,
+    faction_inventory: &'a mut Vec<SchemaFactionInventoryState>,
+    sedentarization: &'a mut Vec<SchemaSedentarizationState>,
+    discovered_sites: &'a mut Vec<SchemaDiscoveredSitesState>,
+    demographics: &'a mut Vec<SchemaPopulationDemographicsState>,
+    intensification_knowledge: &'a mut Vec<IntensificationKnowledgeState>,
+    start_marker: &'a mut Option<StartMarkerState>,
+}
+
+/// Campaign and the Telling: the profile roster, the stance vector, the fork queue, and the
+/// per-faction readouts the campaign panels render.
+fn diff_campaign(
+    baseline: CampaignBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> CampaignParts {
+    CampaignParts {
+        profiles: diff_whole(baseline.profiles, &snapshot.campaign_profiles, write),
+        command_events: diff_whole(baseline.command_events, &snapshot.command_events, write),
+        pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
+        stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
+        voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
+        faction_inventory: diff_whole(
+            baseline.faction_inventory,
+            &snapshot.faction_inventory,
+            write,
+        ),
+        sedentarization: diff_whole(baseline.sedentarization, &snapshot.sedentarization, write),
+        discovered_sites: diff_whole(baseline.discovered_sites, &snapshot.discovered_sites, write),
+        demographics: diff_whole(baseline.demographics, &snapshot.demographics, write),
+        intensification_knowledge: diff_whole(
+            baseline.intensification_knowledge,
+            &snapshot.intensification_knowledge,
+            write,
+        ),
+        // `Option` on both sides, so the delta carries the INNER option: `None` here means
+        // unchanged, and a marker that was cleared arrives as `Some(None)` flattened to `None` —
+        // the same conflation this field has always had.
+        start_marker: diff_whole(baseline.start_marker, &snapshot.start_marker, write).flatten(),
+    }
+}
+
+#[derive(Debug, Default)]
+struct SubsistenceParts {
+    herds: Option<Vec<HerdTelemetryState>>,
+    forage_patches: Option<Vec<ForagePatchState>>,
+    food_modules: Option<Vec<FoodModuleState>>,
+}
+
+/// Fauna and flora: the herd roster, the forage patches, and the food-module map.
+fn diff_subsistence(
+    herds: &mut Vec<HerdTelemetryState>,
+    forage_patches: &mut Vec<ForagePatchState>,
+    food_modules: &mut Vec<FoodModuleState>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> SubsistenceParts {
+    SubsistenceParts {
+        herds: diff_whole(herds, &snapshot.herds, write),
+        forage_patches: diff_whole(forage_patches, &snapshot.forage_patches, write),
+        food_modules: diff_whole(food_modules, &snapshot.food_modules, write),
+    }
+}
+
+#[derive(Debug, Default)]
+struct PeopleParts {
+    logistics: Vec<LogisticsLinkState>,
+    removed_logistics: Vec<u64>,
+    trade_links: Vec<TradeLinkState>,
+    removed_trade_links: Vec<u64>,
+    populations: Vec<PopulationCohortState>,
+    removed_populations: Vec<u64>,
+    generations: Vec<GenerationState>,
+    removed_generations: Vec<u16>,
+    influencers: Vec<InfluentialIndividualState>,
+    removed_influencers: Vec<u32>,
+    axis_bias: Option<AxisBiasState>,
+    sentiment: Option<SentimentTelemetryState>,
+    corruption: Option<CorruptionLedger>,
+    capability_flags: Option<u32>,
+}
+
+/// The baselines the people-and-network section owns.
+struct PeopleBaselines<'a> {
+    logistics: &'a mut HashMap<u64, LogisticsLinkState>,
+    trade_links: &'a mut HashMap<u64, TradeLinkState>,
+    populations: &'a mut HashMap<u64, PopulationCohortState>,
+    generations: &'a mut HashMap<u16, GenerationState>,
+    influencers: &'a mut HashMap<u32, InfluentialIndividualState>,
+    axis_bias: &'a mut AxisBiasState,
+    sentiment: &'a mut SentimentTelemetryState,
+    corruption: &'a mut CorruptionLedger,
+    capability_flags: &'a mut u32,
+}
+
+/// People and the networks between them: cohorts, generations, influencers, the logistics and trade
+/// graphs, and the faction-wide scalars that ride with them.
+fn diff_people(
+    baseline: PeopleBaselines<'_>,
+    snapshot: &WorldSnapshot,
+    write: Baseline,
+) -> PeopleParts {
+    let (logistics, removed_logistics) = diff_new(
+        baseline.logistics,
+        &snapshot.logistics,
+        |state| state.entity,
+        write,
+    );
+    let (trade_links, removed_trade_links) = diff_new(
+        baseline.trade_links,
+        &snapshot.trade_links,
+        |state| state.entity,
+        write,
+    );
+    let (populations, removed_populations) = diff_new(
+        baseline.populations,
+        &snapshot.populations,
+        |state| state.entity,
+        write,
+    );
+    let (generations, removed_generations) = diff_new(
+        baseline.generations,
+        &snapshot.generations,
+        |state| state.id,
+        write,
+    );
+    let (influencers, removed_influencers) = diff_new(
+        baseline.influencers,
+        &snapshot.influencers,
+        |state| state.id,
+        write,
+    );
+    PeopleParts {
+        logistics,
+        removed_logistics,
+        trade_links,
+        removed_trade_links,
+        populations,
+        removed_populations,
+        generations,
+        removed_generations,
+        influencers,
+        removed_influencers,
+        axis_bias: diff_whole(baseline.axis_bias, &snapshot.axis_bias, write),
+        sentiment: diff_whole(baseline.sentiment, &snapshot.sentiment, write),
+        corruption: diff_whole(baseline.corruption, &snapshot.corruption, write),
+        capability_flags: diff_whole(baseline.capability_flags, &snapshot.capability_flags, write),
+    }
+}
+
 impl PublishState {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -348,398 +798,252 @@ impl PublishState {
         // `SnapshotHeader::hash`). Retired in #393 rather than merely moved off the turn thread,
         // because moving dead work still pays for it.
 
-        // Everything from here to the `WorldDelta` being assembled: the per-collection indices plus
-        // the `diff_new`/`diff_removed` comparisons against last turn's indices.
+        // The baselines are mutated IN PLACE by the fan-out below, so the recapture path states its
+        // intent up front rather than by declining to store a returned map: a mid-tick recapture
+        // holds the baseline where the last resolved turn left it, which is what makes its deltas
+        // cumulative.
+        let write = match kind {
+            Publication::Turn => Baseline::Advance,
+            Publication::Recapture => Baseline::Hold,
+        };
+
+        // Destructure the baselines into disjoint `&mut` borrows, one bundle per section. This is
+        // what lets the sections run concurrently without a lock: each borrow names different fields
+        // of the same struct, so the compiler proves the disjointness the partition claims.
+        let PublishState {
+            tiles: tiles_baseline,
+            culture_layers: culture_layers_baseline,
+            culture_tensions: culture_tensions_baseline,
+            power: power_baseline,
+            power_metrics: power_metrics_baseline,
+            terrain_overlay,
+            moisture_raster,
+            elevation_overlay,
+            climate_bands,
+            logistics_raster,
+            sentiment_raster,
+            corruption_raster,
+            culture_raster,
+            military_raster,
+            visibility_raster,
+            knowledge_ledger,
+            knowledge_metrics,
+            knowledge_timeline,
+            discovery_progress,
+            great_discoveries,
+            great_discovery_progress,
+            great_discovery_definitions,
+            great_discovery_telemetry,
+            crisis_telemetry,
+            crisis_overlay,
+            victory,
+            campaign_profiles,
+            command_events,
+            pending_forks,
+            stance_axes,
+            voice_medium,
+            faction_inventory,
+            sedentarization,
+            discovered_sites,
+            demographics,
+            intensification_knowledge,
+            start_marker,
+            herds,
+            forage_patches,
+            food_modules,
+            logistics,
+            trade_links,
+            populations,
+            generations,
+            influencers,
+            axis_bias,
+            sentiment,
+            corruption,
+            capability_flags,
+            fog_enabled,
+            ..
+        } = &mut *self;
+
+        let mut tile_parts = TileParts::default();
+        let mut culture_parts = CultureParts::default();
+        let mut power_parts = PowerParts::default();
+        let mut raster_parts = RasterParts::default();
+        let mut knowledge_parts = KnowledgeParts::default();
+        let mut crisis_parts = CrisisParts::default();
+        let mut campaign_parts = CampaignParts::default();
+        let mut subsistence_parts = SubsistenceParts::default();
+        let mut people_parts = PeopleParts::default();
+
+        // The one scope over the whole fan-out, opened and closed on the publisher thread — see the
+        // section registry above for why no task may open one of its own.
         let diff_scope = crate::turn_profile::publish_scope("publish.diff");
-        let mut tiles_index = HashMap::with_capacity(snapshot.tiles.len());
-        for state in &snapshot.tiles {
-            tiles_index.insert(state.entity, state.clone());
+        let captured = &snapshot;
+        in_diff_pool(|| {
+            rayon::scope(|scope| {
+                scope.spawn(|_| tile_parts = diff_tiles(tiles_baseline, captured, write));
+                scope.spawn(|_| {
+                    culture_parts = diff_culture(
+                        culture_layers_baseline,
+                        culture_tensions_baseline,
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    power_parts =
+                        diff_power(power_baseline, power_metrics_baseline, captured, write)
+                });
+                scope.spawn(|_| {
+                    raster_parts = diff_rasters(
+                        RasterBaselines {
+                            terrain: terrain_overlay,
+                            moisture: moisture_raster,
+                            elevation: elevation_overlay,
+                            climate_bands,
+                            logistics: logistics_raster,
+                            sentiment: sentiment_raster,
+                            corruption: corruption_raster,
+                            culture: culture_raster,
+                            military: military_raster,
+                            visibility: visibility_raster,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    knowledge_parts = diff_knowledge(
+                        KnowledgeBaselines {
+                            ledger: knowledge_ledger,
+                            metrics: knowledge_metrics,
+                            timeline: knowledge_timeline,
+                            discovery_progress,
+                            great_discoveries,
+                            great_discovery_progress,
+                            great_discovery_definitions,
+                            great_discovery_telemetry,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    crisis_parts =
+                        diff_crisis(crisis_telemetry, crisis_overlay, victory, captured, write)
+                });
+                scope.spawn(|_| {
+                    campaign_parts = diff_campaign(
+                        CampaignBaselines {
+                            profiles: campaign_profiles,
+                            command_events,
+                            pending_forks,
+                            stance_axes,
+                            voice_medium,
+                            faction_inventory,
+                            sedentarization,
+                            discovered_sites,
+                            demographics,
+                            intensification_knowledge,
+                            start_marker,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+                scope.spawn(|_| {
+                    subsistence_parts =
+                        diff_subsistence(herds, forage_patches, food_modules, captured, write)
+                });
+                scope.spawn(|_| {
+                    people_parts = diff_people(
+                        PeopleBaselines {
+                            logistics,
+                            trade_links,
+                            populations,
+                            generations,
+                            influencers,
+                            axis_bias,
+                            sentiment,
+                            corruption,
+                            capability_flags,
+                        },
+                        captured,
+                        write,
+                    )
+                });
+            });
+        });
+
+        // Carried on EVERY delta rather than diffed (the wire default is `true`, so an omitted value
+        // would silently re-enable fog one delta after it was turned off), but the baseline still
+        // tracks it for the auxiliary feed deltas.
+        if write == Baseline::Advance {
+            *fog_enabled = snapshot.fog_enabled;
         }
 
-        let mut logistics_index = HashMap::with_capacity(snapshot.logistics.len());
-        for state in &snapshot.logistics {
-            logistics_index.insert(state.entity, state.clone());
-        }
-
-        let mut trade_index = HashMap::with_capacity(snapshot.trade_links.len());
-        for state in &snapshot.trade_links {
-            trade_index.insert(state.entity, state.clone());
-        }
-
-        let mut populations_index = HashMap::with_capacity(snapshot.populations.len());
-        for state in &snapshot.populations {
-            populations_index.insert(state.entity, state.clone());
-        }
-
-        let mut power_index = HashMap::with_capacity(snapshot.power.len());
-        for state in &snapshot.power {
-            power_index.insert(state.entity, state.clone());
-        }
-
-        let mut generations_index = HashMap::with_capacity(snapshot.generations.len());
-        for state in &snapshot.generations {
-            generations_index.insert(state.id, state.clone());
-        }
-
-        let mut influencers_index = HashMap::with_capacity(snapshot.influencers.len());
-        for state in &snapshot.influencers {
-            influencers_index.insert(state.id, state.clone());
-        }
-
-        let mut culture_layers_index = HashMap::with_capacity(snapshot.culture_layers.len());
-        for state in &snapshot.culture_layers {
-            culture_layers_index.insert(state.id, state.clone());
-        }
-
-        let mut discovery_index = HashMap::with_capacity(snapshot.discovery_progress.len());
-        for entry in &snapshot.discovery_progress {
-            discovery_index.insert((entry.faction, entry.discovery), entry.clone());
-        }
-
-        let axis_bias_state = snapshot.axis_bias.clone();
-        let axis_bias_delta = if self.axis_bias == axis_bias_state {
-            None
-        } else {
-            Some(axis_bias_state.clone())
-        };
-
-        let sentiment_state = snapshot.sentiment.clone();
-        let sentiment_delta = if self.sentiment == sentiment_state {
-            None
-        } else {
-            Some(sentiment_state.clone())
-        };
-
-        let culture_tensions_state = snapshot.culture_tensions.clone();
-        let delta_culture_tensions = if self.culture_tensions == culture_tensions_state {
-            None
-        } else {
-            Some(culture_tensions_state.clone())
-        };
-
-        let terrain_state = snapshot.terrain.clone();
-        let terrain_delta = if self.terrain_overlay == terrain_state {
-            None
-        } else {
-            Some(terrain_state.clone())
-        };
-
-        let moisture_state = snapshot.moisture_raster.clone();
-        let moisture_delta = if self.moisture_raster == moisture_state {
-            None
-        } else {
-            Some(moisture_state.clone())
-        };
-
-        let elevation_state = snapshot.elevation_overlay.clone();
-        let elevation_delta = if self.elevation_overlay == elevation_state {
-            None
-        } else {
-            Some(elevation_state.clone())
-        };
-
-        // A per-map constant: it changes only on (re)generation, so the delta re-sends it just then.
-        let climate_bands_state = snapshot.climate_bands;
-        let climate_bands_delta = if self.climate_bands == climate_bands_state {
-            None
-        } else {
-            Some(climate_bands_state)
-        };
-
-        let start_marker_state = snapshot.start_marker.clone();
-        let start_marker_delta = if self.start_marker == start_marker_state {
-            None
-        } else {
-            start_marker_state.clone()
-        };
-
-        let logistics_raster_state = snapshot.logistics_raster.clone();
-        let logistics_raster_delta = if self.logistics_raster == logistics_raster_state {
-            None
-        } else {
-            Some(logistics_raster_state.clone())
-        };
-
-        let sentiment_raster_state = snapshot.sentiment_raster.clone();
-        let sentiment_raster_delta = if self.sentiment_raster == sentiment_raster_state {
-            None
-        } else {
-            Some(sentiment_raster_state.clone())
-        };
-
-        let corruption_raster_state = snapshot.corruption_raster.clone();
-        let corruption_raster_delta = if self.corruption_raster == corruption_raster_state {
-            None
-        } else {
-            Some(corruption_raster_state.clone())
-        };
-
-        let fog_enabled_state = snapshot.fog_enabled;
-        let visibility_raster_state = snapshot.visibility_raster.clone();
-        let visibility_raster_delta = if self.visibility_raster == visibility_raster_state {
-            None
-        } else {
-            Some(visibility_raster_state.clone())
-        };
-
-        let culture_raster_state = snapshot.culture_raster.clone();
-        let culture_raster_delta = if self.culture_raster == culture_raster_state {
-            None
-        } else {
-            Some(culture_raster_state.clone())
-        };
-
-        let military_raster_state = snapshot.military_raster.clone();
-        let military_raster_delta = if self.military_raster == military_raster_state {
-            None
-        } else {
-            Some(military_raster_state.clone())
-        };
-
-        let mut great_discovery_definitions_index =
-            HashMap::with_capacity(snapshot.great_discovery_definitions.len());
-        for state in &snapshot.great_discovery_definitions {
-            great_discovery_definitions_index.insert(state.id, state.clone());
-        }
-        let great_discovery_definitions_delta =
-            if self.great_discovery_definitions == great_discovery_definitions_index {
-                None
-            } else {
-                Some(snapshot.great_discovery_definitions.clone())
-            };
-
-        let mut great_discoveries_index = HashMap::with_capacity(snapshot.great_discoveries.len());
-        for state in &snapshot.great_discoveries {
-            great_discoveries_index.insert((state.faction, state.id), state.clone());
-        }
-
-        let mut great_discovery_progress_index =
-            HashMap::with_capacity(snapshot.great_discovery_progress.len());
-        for state in &snapshot.great_discovery_progress {
-            great_discovery_progress_index.insert((state.faction, state.discovery), state.clone());
-        }
-
-        let great_discovery_telemetry_state = snapshot.great_discovery_telemetry.clone();
-        let great_discovery_telemetry_delta =
-            if self.great_discovery_telemetry == great_discovery_telemetry_state {
-                None
-            } else {
-                Some(great_discovery_telemetry_state.clone())
-            };
-
-        let power_metrics_state = snapshot.power_metrics.clone();
-        let power_metrics_delta = if self.power_metrics == power_metrics_state {
-            None
-        } else {
-            Some(power_metrics_state.clone())
-        };
-
-        let corruption_state = snapshot.corruption.clone();
-        let corruption_delta = if self.corruption == corruption_state {
-            None
-        } else {
-            Some(corruption_state.clone())
-        };
-
-        let mut knowledge_ledger_index = HashMap::with_capacity(snapshot.knowledge_ledger.len());
-        for entry in &snapshot.knowledge_ledger {
-            knowledge_ledger_index.insert(
-                encode_ledger_key(FactionId(entry.owner_faction), entry.discovery_id),
-                entry.clone(),
-            );
-        }
-
-        let knowledge_metrics_state = snapshot.knowledge_metrics.clone();
-        let knowledge_metrics_delta = if self.knowledge_metrics == knowledge_metrics_state {
-            None
-        } else {
-            Some(knowledge_metrics_state.clone())
-        };
-
-        let knowledge_timeline_delta = if self.knowledge_timeline == snapshot.knowledge_timeline {
-            None
-        } else {
-            Some(snapshot.knowledge_timeline.clone())
-        };
-
-        let crisis_telemetry_state = snapshot.crisis_telemetry.clone();
-        let crisis_telemetry_delta = if self.crisis_telemetry == crisis_telemetry_state {
-            None
-        } else {
-            Some(crisis_telemetry_state.clone())
-        };
-
-        let crisis_overlay_state = snapshot.crisis_overlay.clone();
-        let crisis_overlay_delta = if self.crisis_overlay == crisis_overlay_state {
-            None
-        } else {
-            Some(crisis_overlay_state.clone())
-        };
-
-        let victory_state = snapshot.victory.clone();
-        let victory_delta = if self.victory == victory_state {
-            None
-        } else {
-            Some(victory_state.clone())
-        };
-        let faction_inventory_state = snapshot.faction_inventory.clone();
-        let faction_inventory_delta = if self.faction_inventory == faction_inventory_state {
-            None
-        } else {
-            Some(faction_inventory_state.clone())
-        };
-        let sedentarization_state = snapshot.sedentarization.clone();
-        let sedentarization_delta = if self.sedentarization == sedentarization_state {
-            None
-        } else {
-            Some(sedentarization_state.clone())
-        };
-        let discovered_sites_state = snapshot.discovered_sites.clone();
-        let discovered_sites_delta = if self.discovered_sites == discovered_sites_state {
-            None
-        } else {
-            Some(discovered_sites_state.clone())
-        };
-        let demographics_state = snapshot.demographics.clone();
-        let demographics_delta = if self.demographics == demographics_state {
-            None
-        } else {
-            Some(demographics_state.clone())
-        };
-        let forage_patches_state = snapshot.forage_patches.clone();
-        let forage_patches_delta = if self.forage_patches == forage_patches_state {
-            None
-        } else {
-            Some(forage_patches_state.clone())
-        };
-        let intensification_knowledge_state = snapshot.intensification_knowledge.clone();
-        let intensification_knowledge_delta =
-            if self.intensification_knowledge == intensification_knowledge_state {
-                None
-            } else {
-                Some(intensification_knowledge_state.clone())
-            };
-        let campaign_profiles_state = snapshot.campaign_profiles.clone();
-        let campaign_profiles_delta = if self.campaign_profiles == campaign_profiles_state {
-            None
-        } else {
-            Some(campaign_profiles_state.clone())
-        };
-        let command_events_state = snapshot.command_events.clone();
-        let command_events_delta = if self.command_events == command_events_state {
-            None
-        } else {
-            Some(command_events_state.clone())
-        };
-        let pending_forks_state = snapshot.pending_forks.clone();
-        let pending_forks_delta = if self.pending_forks == pending_forks_state {
-            None
-        } else {
-            Some(pending_forks_state.clone())
-        };
-        let stance_axes_state = snapshot.stance_axes.clone();
-        let stance_axes_delta = if self.stance_axes == stance_axes_state {
-            None
-        } else {
-            Some(stance_axes_state.clone())
-        };
-        let voice_medium_state = snapshot.voice_medium.clone();
-        let voice_medium_delta = if self.voice_medium == voice_medium_state {
-            None
-        } else {
-            Some(voice_medium_state.clone())
-        };
-        let capability_flags_state = snapshot.capability_flags;
-        let capability_flags_delta = if self.capability_flags == capability_flags_state {
-            None
-        } else {
-            Some(capability_flags_state)
-        };
-        let herd_state = snapshot.herds.clone();
-        let herds_delta = if self.herds == herd_state {
-            None
-        } else {
-            Some(herd_state.clone())
-        };
-        let food_modules_state = snapshot.food_modules.clone();
-        let food_modules_delta = if self.food_modules == food_modules_state {
-            None
-        } else {
-            Some(food_modules_state.clone())
-        };
-
-        // Tiles and culture layers diff on PUBLISHED state, and hand back the baseline to store —
-        // which keeps the last *published* value for anything judged unchanged, so the hundredths
-        // comparison is a deadband that accumulates rather than a mask that freezes. See
-        // `diff_new_tiles`.
-        let (tiles_sent, tiles_index) = diff_new_tiles(&self.tiles, tiles_index);
-        let (culture_layers_sent, culture_layers_index) =
-            diff_new_culture_layers(&self.culture_layers, culture_layers_index);
-
+        // The wire layout is the `.fbs` schema's; the order here is grouped by section so the
+        // assembly reads as the inverse of the fan-out.
         let delta = WorldDelta {
             header: snapshot.header.clone(),
-            tiles: tiles_sent,
-            removed_tiles: diff_removed(&self.tiles, &tiles_index),
-            logistics: diff_new(&self.logistics, &logistics_index),
-            removed_logistics: diff_removed(&self.logistics, &logistics_index),
-            trade_links: diff_new(&self.trade_links, &trade_index),
-            removed_trade_links: diff_removed(&self.trade_links, &trade_index),
-            populations: diff_new(&self.populations, &populations_index),
-            removed_populations: diff_removed(&self.populations, &populations_index),
-            power: diff_new(&self.power, &power_index),
-            removed_power: diff_removed(&self.power, &power_index),
-            power_metrics: power_metrics_delta.clone(),
-            great_discovery_definitions: great_discovery_definitions_delta.clone(),
-            great_discoveries: diff_new(&self.great_discoveries, &great_discoveries_index),
-            great_discovery_progress: diff_new(
-                &self.great_discovery_progress,
-                &great_discovery_progress_index,
-            ),
-            great_discovery_telemetry: great_discovery_telemetry_delta.clone(),
-            knowledge_ledger: diff_new(&self.knowledge_ledger, &knowledge_ledger_index),
-            removed_knowledge_ledger: diff_removed(&self.knowledge_ledger, &knowledge_ledger_index),
-            knowledge_metrics: knowledge_metrics_delta.clone(),
-            victory: victory_delta.clone(),
-            capability_flags: capability_flags_delta,
-            campaign_profiles: campaign_profiles_delta.clone(),
-            command_events: command_events_delta.clone(),
-            pending_forks: pending_forks_delta.clone(),
-            stance_axes: stance_axes_delta.clone(),
-            voice_medium: voice_medium_delta.clone(),
-            faction_inventory: faction_inventory_delta.clone(),
-            sedentarization: sedentarization_delta.clone(),
-            discovered_sites: discovered_sites_delta.clone(),
-            demographics: demographics_delta.clone(),
-            forage_patches: forage_patches_delta.clone(),
-            intensification_knowledge: intensification_knowledge_delta.clone(),
-            herds: herds_delta.clone(),
-            food_modules: food_modules_delta.clone(),
-            knowledge_timeline: knowledge_timeline_delta.clone(),
-            crisis_telemetry: crisis_telemetry_delta.clone(),
-            crisis_overlay: crisis_overlay_delta.clone(),
-            moisture_raster: moisture_delta.clone(),
-            elevation_overlay: elevation_delta.clone(),
-            climate_bands: climate_bands_delta,
-            start_marker: start_marker_delta.clone(),
-            axis_bias: axis_bias_delta,
-            sentiment: sentiment_delta.clone(),
-            generations: diff_new(&self.generations, &generations_index),
-            removed_generations: diff_removed(&self.generations, &generations_index),
-            corruption: corruption_delta.clone(),
-            influencers: diff_new(&self.influencers, &influencers_index),
-            removed_influencers: diff_removed(&self.influencers, &influencers_index),
-            terrain: terrain_delta.clone(),
-            logistics_raster: logistics_raster_delta.clone(),
-            sentiment_raster: sentiment_raster_delta.clone(),
-            corruption_raster: corruption_raster_delta.clone(),
-            culture_raster: culture_raster_delta.clone(),
-            military_raster: military_raster_delta.clone(),
-            culture_layers: culture_layers_sent,
-            removed_culture_layers: diff_removed(&self.culture_layers, &culture_layers_index),
-            culture_tensions: delta_culture_tensions.clone(),
-            discovery_progress: diff_new(&self.discovery_progress, &discovery_index),
-            visibility_raster: visibility_raster_delta.clone(),
-            fog_enabled: fog_enabled_state,
+            tiles: tile_parts.sent,
+            removed_tiles: tile_parts.removed,
+            culture_layers: culture_parts.sent,
+            removed_culture_layers: culture_parts.removed,
+            culture_tensions: culture_parts.tensions,
+            power: power_parts.sent,
+            removed_power: power_parts.removed,
+            power_metrics: power_parts.metrics,
+            terrain: raster_parts.terrain,
+            moisture_raster: raster_parts.moisture,
+            elevation_overlay: raster_parts.elevation,
+            climate_bands: raster_parts.climate_bands,
+            logistics_raster: raster_parts.logistics,
+            sentiment_raster: raster_parts.sentiment,
+            corruption_raster: raster_parts.corruption,
+            culture_raster: raster_parts.culture,
+            military_raster: raster_parts.military,
+            visibility_raster: raster_parts.visibility,
+            knowledge_ledger: knowledge_parts.ledger,
+            removed_knowledge_ledger: knowledge_parts.removed_ledger,
+            knowledge_metrics: knowledge_parts.metrics,
+            knowledge_timeline: knowledge_parts.timeline,
+            discovery_progress: knowledge_parts.discovery_progress,
+            great_discoveries: knowledge_parts.great_discoveries,
+            great_discovery_progress: knowledge_parts.great_discovery_progress,
+            great_discovery_definitions: knowledge_parts.great_discovery_definitions,
+            great_discovery_telemetry: knowledge_parts.great_discovery_telemetry,
+            crisis_telemetry: crisis_parts.telemetry,
+            crisis_overlay: crisis_parts.overlay,
+            victory: crisis_parts.victory,
+            campaign_profiles: campaign_parts.profiles,
+            command_events: campaign_parts.command_events,
+            pending_forks: campaign_parts.pending_forks,
+            stance_axes: campaign_parts.stance_axes,
+            voice_medium: campaign_parts.voice_medium,
+            faction_inventory: campaign_parts.faction_inventory,
+            sedentarization: campaign_parts.sedentarization,
+            discovered_sites: campaign_parts.discovered_sites,
+            demographics: campaign_parts.demographics,
+            intensification_knowledge: campaign_parts.intensification_knowledge,
+            start_marker: campaign_parts.start_marker,
+            herds: subsistence_parts.herds,
+            forage_patches: subsistence_parts.forage_patches,
+            food_modules: subsistence_parts.food_modules,
+            logistics: people_parts.logistics,
+            removed_logistics: people_parts.removed_logistics,
+            trade_links: people_parts.trade_links,
+            removed_trade_links: people_parts.removed_trade_links,
+            populations: people_parts.populations,
+            removed_populations: people_parts.removed_populations,
+            generations: people_parts.generations,
+            removed_generations: people_parts.removed_generations,
+            influencers: people_parts.influencers,
+            removed_influencers: people_parts.removed_influencers,
+            axis_bias: people_parts.axis_bias,
+            sentiment: people_parts.sentiment,
+            corruption: people_parts.corruption,
+            capability_flags: people_parts.capability_flags,
+            fog_enabled: snapshot.fog_enabled,
         };
 
         drop(diff_scope);
@@ -777,56 +1081,8 @@ impl PublishState {
             return Some(encoded_delta_flat);
         }
 
-        self.tiles = tiles_index;
-        self.logistics = logistics_index;
-        self.trade_links = trade_index;
-        self.populations = populations_index;
-        self.power = power_index;
-        self.power_metrics = power_metrics_state;
-        self.great_discovery_definitions = great_discovery_definitions_index;
-        self.great_discoveries = great_discoveries_index;
-        self.great_discovery_progress = great_discovery_progress_index;
-        self.great_discovery_telemetry = great_discovery_telemetry_state;
-        self.knowledge_ledger = knowledge_ledger_index;
-        self.knowledge_metrics = knowledge_metrics_state;
-        self.knowledge_timeline = snapshot_arc.knowledge_timeline.clone();
-        self.crisis_telemetry = crisis_telemetry_state;
-        self.crisis_overlay = crisis_overlay_state;
-        self.generations = generations_index;
-        self.influencers = influencers_index;
-        self.culture_layers = culture_layers_index;
-        self.axis_bias = axis_bias_state;
-        self.sentiment = sentiment_state;
-        self.terrain_overlay = terrain_state;
-        self.elevation_overlay = elevation_state;
-        self.climate_bands = climate_bands_state;
-        self.start_marker = start_marker_state;
-        self.logistics_raster = logistics_raster_state;
-        self.sentiment_raster = sentiment_raster_state;
-        self.corruption_raster = corruption_raster_state;
-        self.visibility_raster = visibility_raster_state;
-        self.fog_enabled = fog_enabled_state;
-        self.culture_raster = culture_raster_state;
-        self.military_raster = military_raster_state;
-        self.moisture_raster = moisture_state;
-        self.corruption = corruption_state;
-        self.culture_tensions = culture_tensions_state;
-        self.discovery_progress = discovery_index;
-        self.victory = victory_state;
-        self.capability_flags = capability_flags_state;
-        self.faction_inventory = faction_inventory_state;
-        self.sedentarization = sedentarization_state;
-        self.discovered_sites = discovered_sites_state;
-        self.demographics = demographics_state;
-        self.forage_patches = forage_patches_state;
-        self.intensification_knowledge = intensification_knowledge_state;
-        self.campaign_profiles = campaign_profiles_state;
-        self.command_events = command_events_state;
-        self.pending_forks = pending_forks_state;
-        self.stance_axes = stance_axes_state;
-        self.voice_medium = voice_medium_state;
-        self.herds = herd_state;
-        self.food_modules = food_modules_state;
+        // Every baseline this frame advances was advanced in place by the fan-out above, under
+        // `Baseline::Advance`. What is left here is the publication bookkeeping.
         self.last_snapshot = Some(snapshot_arc);
         self.last_delta = Some(delta_arc);
         // `None` on every turn but the world's first, which is what makes `broadcast_latest`'s
@@ -1148,17 +1404,18 @@ impl PublishState {
         &mut self,
         states: Vec<InfluentialIndividualState>,
     ) -> Option<Arc<Vec<u8>>> {
-        let mut index = HashMap::with_capacity(states.len());
-        for state in &states {
-            index.insert(state.id, state.clone());
-        }
-
-        if index == self.influencers {
+        // The influencer baseline IS advanced here — it is this frame's whole subject — while every
+        // other baseline is left alone, which is what the doc comment above means by not touching
+        // them. Nothing to publish when the roster did not move.
+        let (added, removed) = diff_new(
+            &mut self.influencers,
+            &states,
+            |state| state.id,
+            Baseline::Advance,
+        );
+        if added.is_empty() && removed.is_empty() {
             return None;
         }
-
-        let added = diff_new(&self.influencers, &index);
-        let removed = diff_removed(&self.influencers, &index);
 
         let mut header = self
             .last_snapshot
@@ -1219,8 +1476,8 @@ impl PublishState {
             generations: Vec::new(),
             removed_generations: Vec::new(),
             corruption: None,
-            influencers: added.clone(),
-            removed_influencers: removed.clone(),
+            influencers: added,
+            removed_influencers: removed,
             terrain: None,
             culture_layers: Vec::new(),
             removed_culture_layers: Vec::new(),
@@ -1257,8 +1514,6 @@ impl PublishState {
                 back.encoded_snapshot_flat = Some(encoded_snapshot_flat.clone());
             }
         }
-
-        self.influencers = index;
 
         if let Some(back) = self.history.back_mut() {
             back.delta = delta_arc.clone();
@@ -1393,6 +1648,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static LaborAllocation>,
         Option<&'static BandTravel>,
         Option<&'static Expedition>,
+        Option<&'static BandId>,
     ),
 >;
 
@@ -1463,6 +1719,10 @@ pub fn capture_snapshot(
     // children (see `crate::turn_profile`). Hashing, history diffing and encoding are separate
     // top-level labels below.
     let build_scope = crate::turn_profile::scope("snapshot.build");
+    // Config resolution before any world data is read: destructuring the context, `.get()`ing the
+    // hot-reloadable config handles, and composing the morale-pressure struct the tile sweep needs.
+    // O(1) in world size — it touches no entity.
+    let prelude_scope = crate::turn_profile::scope("snapshot.build.prelude");
     let SnapshotContext {
         config,
         tick,
@@ -1504,7 +1764,6 @@ pub fn capture_snapshot(
         capture_mode,
     } = ctx;
     let overlays_config = overlays.get();
-    history.set_capacity(config.snapshot_history_limit.max(1));
 
     let population_cfg = pipeline_config.config().population();
     // Same place-based morale config the sim uses, so `habitability` matches the applied drain.
@@ -1540,6 +1799,7 @@ pub fn capture_snapshot(
     // so `forage_registry.patch()` is asked once per tile instead of once per readout. Borrowing out
     // of `tiles.iter()` is sound here: the query is read-only and outlives every use of this vec.
     let mut patch_tiles: Vec<&Tile> = Vec::new();
+    drop(prelude_scope);
     {
         // Sweep 1 of 2 — the ONLY walk of the full tile query.
         let _s = crate::turn_profile::scope("snapshot.build.tiles");
@@ -1685,6 +1945,11 @@ pub fn capture_snapshot(
     }
     drop(patches_scope);
 
+    // Everything that finishes the tile vector once both sweeps are done: the food-module site
+    // list, the per-tile culture-layer stamp (one `local_layer_by_owner` lookup per tile), the sort
+    // into entity order, and the entity → coord index the population/expedition readouts join
+    // against. Per tile, plus per food site.
+    let tile_index_scope = crate::turn_profile::scope("snapshot.build.tile_index");
     for site in food_sites.sites() {
         food_module_states.push(FoodModuleState {
             x: site.position.x,
@@ -1705,7 +1970,11 @@ pub fn capture_snapshot(
         .iter()
         .map(|state| (state.entity, UVec2::new(state.x, state.y)))
         .collect();
+    drop(tile_index_scope);
 
+    // The two link records, both copied straight off the `LogisticsLink`/`TradeLink` components.
+    // Per logistics link.
+    let links_scope = crate::turn_profile::scope("snapshot.build.links");
     let mut logistics_states: Vec<LogisticsLinkState> = Vec::new();
     let mut trade_states: Vec<TradeLinkState> = Vec::new();
     for (entity, link, trade) in logistics_links.iter() {
@@ -1714,7 +1983,12 @@ pub fn capture_snapshot(
     }
     logistics_states.sort_unstable_by_key(|state| state.entity);
     trade_states.sort_unstable_by_key(|state| state.entity);
+    drop(links_scope);
 
+    // The per-cohort readout: two walks of the population query (the coord index, then the states),
+    // each of which derives travel/scout/expedition figures rather than copying them. Per cohort,
+    // and the expedition-delivery forecast inside it is a forward sim per in-flight party.
+    let populations_scope = crate::turn_profile::scope("snapshot.build.populations");
     let demographics_config = demographics.get();
     let wellbeing_config = wellbeing.get();
     let settlement_stage_config = settlement_stage.get();
@@ -1740,7 +2014,7 @@ pub fn capture_snapshot(
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -1749,69 +2023,75 @@ pub fn capture_snapshot(
         .collect();
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
-        .map(|(entity, cohort, allocation, travel, expedition)| {
-            let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
-            let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
-            // A band is "traveling" while a `move_band` order is still en route to its target.
-            let is_traveling = travel
-                .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
-                .unwrap_or(false);
-            // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
-            let travel_target = travel.map(|t| t.target);
-            // Local scout: scouts are now forward observers posting vantage points out from the
-            // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
-            // with no scouts), using the same helper the visibility pass applies, so the field
-            // stays coherent for the client.
-            let scout_workers = allocation
-                .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
-                .unwrap_or(0);
-            let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
-            // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
-            // normal band). Reuses the raid forward-sim seeded with the party's current haul.
-            let expedition_delivery = expedition.and_then(|exp| {
-                let party_pos = current_pos?;
-                let home_pos = cohort_positions.get(&exp.home_band).copied();
-                crate::systems::expedition_delivery(
-                    exp,
-                    cohort.stores.get(FOOD).to_f32(),
-                    available_workers(cohort.working),
-                    party_pos,
-                    home_pos,
-                    &herd_registry,
-                    &fauna_config,
-                    &labor_config,
-                    &expedition_cfg,
-                    config.grid_size.x,
-                    config.map_topology.wrap_horizontal,
-                )
-            });
-            population_state(PopulationStateInputs {
-                entity,
-                cohort,
-                allocation,
-                expedition,
-                home_position: home_pos,
-                current_position: current_pos,
-                is_traveling,
-                stockpile_radius,
-                start_position,
-                inventory: &faction_inventory,
-                demographics: &demographics_config,
-                wellbeing: &wellbeing_config,
-                supply_membership: &supply_membership,
-                work_range: band_work_range,
-                raid_radius: fauna_config.predators.raid_radius,
-                scout_vantage_distance,
-                expedition_levers: &expedition_levers,
-                settlement_stage_config: &settlement_stage_config,
-                travel_target,
-                hunt_reach,
-                expedition_delivery,
-            })
-        })
+        .map(
+            |(entity, cohort, allocation, travel, expedition, band_id)| {
+                let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
+                let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
+                // A band is "traveling" while a `move_band` order is still en route to its target.
+                let is_traveling = travel
+                    .map(|t| current_pos.map(|p| p != t.target).unwrap_or(true))
+                    .unwrap_or(false);
+                // The `BandTravel` destination (for the client's target-hex display); `None` → 0,0.
+                let travel_target = travel.map(|t| t.target);
+                // Local scout: scouts are now forward observers posting vantage points out from the
+                // band. Carry the effective vantage distance (how far the vantage ring is posted, `0`
+                // with no scouts), using the same helper the visibility pass applies, so the field
+                // stays coherent for the client.
+                let scout_workers = allocation
+                    .map(|alloc| alloc.workers_on(&LaborTarget::Scout))
+                    .unwrap_or(0);
+                let scout_vantage_distance = labor_config.scout.vantage_distance(scout_workers);
+                // The in-flight delivery forecast for a live hunting party (`None` for a scout or a
+                // normal band). Reuses the raid forward-sim seeded with the party's current haul.
+                let expedition_delivery = expedition.and_then(|exp| {
+                    let party_pos = current_pos?;
+                    let home_pos = cohort_positions.get(&exp.home_band).copied();
+                    crate::systems::expedition_delivery(
+                        exp,
+                        cohort.stores.get(FOOD).to_f32(),
+                        available_workers(cohort.working),
+                        party_pos,
+                        home_pos,
+                        &herd_registry,
+                        &fauna_config,
+                        &labor_config,
+                        &expedition_cfg,
+                        config.grid_size.x,
+                        config.map_topology.wrap_horizontal,
+                    )
+                });
+                population_state(PopulationStateInputs {
+                    entity,
+                    band_id,
+                    cohort,
+                    allocation,
+                    expedition,
+                    home_position: home_pos,
+                    current_position: current_pos,
+                    is_traveling,
+                    stockpile_radius,
+                    start_position,
+                    inventory: &faction_inventory,
+                    demographics: &demographics_config,
+                    wellbeing: &wellbeing_config,
+                    supply_membership: &supply_membership,
+                    work_range: band_work_range,
+                    raid_radius: fauna_config.predators.raid_radius,
+                    scout_vantage_distance,
+                    expedition_levers: &expedition_levers,
+                    settlement_stage_config: &settlement_stage_config,
+                    travel_target,
+                    hunt_reach,
+                    expedition_delivery,
+                })
+            },
+        )
         .collect();
     population_states.sort_unstable_by_key(|state| state.entity);
+    drop(populations_scope);
 
+    // Power nodes plus the grid-wide metrics aggregate. Per power node.
+    let power_scope = crate::turn_profile::scope("snapshot.build.power");
     let mut power_states: Vec<PowerNodeState> = power_nodes
         .iter()
         .map(|(entity, node)| power_state(entity, node))
@@ -1819,6 +2099,11 @@ pub fn capture_snapshot(
     power_states.sort_unstable_by_key(|state| state.entity);
 
     let power_metrics = power_metrics_from_grid(&power_grid);
+    drop(power_scope);
+
+    // Ledger-shaped readouts that walk a resource, not the world: the knowledge ledger's three
+    // payload vectors, the generation registry, and the influential roster. Per ledger entry.
+    let ledgers_scope = crate::turn_profile::scope("snapshot.build.ledgers");
     let KnowledgeSnapshotPayload {
         entries: knowledge_ledger_states,
         timeline: knowledge_timeline_states,
@@ -1831,7 +2116,11 @@ pub fn capture_snapshot(
 
     let mut influencer_states: Vec<InfluentialIndividualState> = roster.states();
     influencer_states.sort_unstable_by_key(|state| state.id);
+    drop(ledgers_scope);
 
+    // The culture layer/tension lists, copied off `CultureManager`. Per culture layer, and the
+    // local layers are one-per-owned-tile, so this one tracks the map.
+    let culture_scope = crate::turn_profile::scope("snapshot.build.culture");
     let mut culture_layer_states: Vec<CultureLayerState> = Vec::new();
     if let Some(global_layer) = culture.global_layer() {
         culture_layer_states.push(culture_layer_state(global_layer));
@@ -1853,11 +2142,17 @@ pub fn capture_snapshot(
         (a.layer_id, a.kind as u8, a.timer).cmp(&(b.layer_id, b.kind as u8, b.timer))
     });
 
+    drop(culture_scope);
+
+    // The discovery ladder's four readouts plus its telemetry. Per catalogued discovery — a content
+    // count, so it grows when the catalog does, never with the map.
+    let discovery_scope = crate::turn_profile::scope("snapshot.build.discovery");
     let discovery_states = discovery_progress_entries(&discovery_progress);
     let great_discovery_definition_states = snapshot_definitions(&gds.registry);
     let great_discovery_states = snapshot_discoveries(&gds.ledger);
     let great_discovery_progress_states = snapshot_progress(&gds.readiness);
     let great_discovery_telemetry_state = snapshot_telemetry(&gds.ledger, &gds.telemetry);
+    drop(discovery_scope);
 
     // The contiguous full-grid raster block: terrain, logistics, sentiment, corruption, culture,
     // military, visibility. The moisture/elevation overlays are built further down (they need
@@ -1904,6 +2199,10 @@ pub fn capture_snapshot(
     );
     drop(raster_scope);
 
+    // The four sentiment axes and their itemised driver lists — a derived attribution built by
+    // walking the policy/incident/influencer sources and formatting a label per non-zero
+    // contribution. Per (influencer + corruption exposure) × 4 axes, so it tracks roster size.
+    let sentiment_scope = crate::turn_profile::scope("snapshot.build.sentiment");
     let policy_axes = axis_bias.policy_values();
     let incident_axes = axis_bias.incident_values();
     let influencer_axes = roster.sentiment_totals();
@@ -2018,12 +2317,20 @@ pub fn capture_snapshot(
     };
 
     let axis_bias_state = axis_bias_state_from_resource(&axis_bias);
+    drop(sentiment_scope);
+
+    // The crisis heatmap + annotations, cloned wholesale out of the overlay resource. A full-map
+    // `Vec` copy, so it belongs with the rasters in shape even though it is not built here.
+    let crisis_scope = crate::turn_profile::scope("snapshot.build.crisis");
     let crisis_telemetry_state = crisis_telemetry_state_from_metrics(&metrics.crisis);
     let crisis_overlay_state = CrisisOverlayState {
         heatmap: crisis_overlay.raster.clone(),
         annotations: crisis_overlay.annotations.clone(),
     };
+    drop(crisis_scope);
 
+    // Counts, build id and campaign label. O(1).
+    let header_scope = crate::turn_profile::scope("snapshot.build.header");
     let mut header = SnapshotHeader::new(
         tick.0,
         tile_states.len(),
@@ -2045,6 +2352,7 @@ pub fn capture_snapshot(
     let start_marker_state = start_location
         .position()
         .map(|pos| StartMarkerState { x: pos.x, y: pos.y });
+    drop(header_scope);
 
     // Second entry into `snapshot.build.rasters` (see the block above) — the two remaining
     // full-grid overlays, which could not be built with the others.
@@ -2055,6 +2363,11 @@ pub fn capture_snapshot(
     let elevation_overlay_state =
         elevation_overlay_from_field(elevation.as_ref(), config.grid_size);
     drop(raster_scope);
+    // The remaining readouts, each a resource → wire-state conversion. Split into `herds`,
+    // `forage_patches` and `readouts` because the first two are the ones with a world-sized
+    // denominator (herds; forage patches ≈ food-bearing tiles) while the rest are per-faction or
+    // per-content-item.
+    let readouts_scope = crate::turn_profile::scope("snapshot.build.readouts");
     // The climate-band cut points ride the snapshot beside the other worldgen overlays
     // (`docs/plan_climate_authority.md` §8.3): the sim owns them, the client renders the band it is
     // told. A per-map constant read straight off the active `ClimateConfig`.
@@ -2069,8 +2382,12 @@ pub fn capture_snapshot(
         .collect();
     // The client's DISPLAY herd list, fog-filtered for the viewer faction — the same ledger and the
     // same faction `visibility_raster` below is rendered from, so the two can never disagree about
-    // whether a herd is on visible ground. The authoritative `herd_registry_states` below is
-    // deliberately UNFILTERED: it is sim state (rollback + `export_map` ground truth), not a view.
+    // whether a herd is on visible ground. The unfiltered sim record is the `HerdRegistry` itself,
+    // which the checkpoint carries; the snapshot is the view only.
+    //
+    // Per herd, and derived rather than copied: each entry resolves distance/reach/visibility
+    // against the viewer's fog before it is emitted.
+    let herds_scope = crate::turn_profile::scope("snapshot.build.herds");
     let herd_states = herd_snapshot_entries(HerdSnapshotInputs {
         telemetry: &herds,
         registry: &herd_registry,
@@ -2084,28 +2401,14 @@ pub fn capture_snapshot(
         viewer: viewer_faction.0,
         fog_enabled: config.fog_enabled,
     });
-    // Authoritative herd state for rollback (distinct from the lossy display `herd_states` above),
-    // sorted deterministically by herd id like the generation states.
-    let mut herd_registry_states: Vec<HerdState> =
-        herd_registry.entries().iter().map(herd_state).collect();
-    herd_registry_states.sort_unstable_by(|a, b| a.id.cmp(&b.id));
-    // Authoritative depletable-forage state for rollback, sorted deterministically by tile coord
-    // (HashMap iteration order is unstable). Mirrors the herd-registry capture above.
-    let mut forage_registry_states: Vec<ForageState> =
-        forage_registry.patches.values().map(forage_state).collect();
-    forage_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
-    // Authoritative graze/pasture state for rollback, same coord-sorted shape as the forage registry.
-    // (The *client* readout is on `TileState`, captured above — this is the sim record only.)
-    let mut graze_registry_states: Vec<GrazeState> =
-        graze_registry.patches.values().map(graze_state).collect();
-    graze_registry_states.sort_unstable_by_key(|state| (state.y, state.x));
-    // The Telling's narrative memory. Already deterministically ordered (BTree-backed), so it
-    // needs no sort of its own.
-    let beat_ledger_state = beat_ledger.to_state();
+    drop(herds_scope);
     let faction_inventory_state = snapshot_faction_inventory(&faction_inventory);
     let sedentarization_state = snapshot_sedentarization(&sedentarization);
     let discovered_sites_state = snapshot_discovered_sites(&discovered_sites, &sites_config);
     let demographics_state = snapshot_demographics(&population_states);
+    // Per forage patch — one per food-bearing tile — and every entry re-derives the rung ladder's
+    // quotes for that patch, so this one is both map-sized and derivation-heavy.
+    let forage_patches_scope = crate::turn_profile::scope("snapshot.build.forage_patches");
     let forage_patches_state = snapshot_forage_patches(
         &forage_registry,
         &labor_config.forage,
@@ -2115,6 +2418,7 @@ pub fn capture_snapshot(
         &sow_site_refusals,
         &flora_compositions,
     );
+    drop(forage_patches_scope);
     let intensification_knowledge_state = snapshot_intensification_knowledge(&discovery_progress);
     let command_events_state = command_events_to_state(&command_events);
     // The Telling's client-facing fork tier + stance readout (BTree-backed, so already ordered).
@@ -2123,7 +2427,12 @@ pub fn capture_snapshot(
     let voice_medium_state = snapshot_voice_medium(&beat_ledger);
     let victory_snapshot_state = victory_snapshot_from_resource(&victory);
     let capability_bits = capability_flags.bits();
+    drop(readouts_scope);
 
+    // The struct literal itself. Every field the publisher compares whole-section is `.clone()`d
+    // into it, so this is a second full copy of the rasters, the herd list, the forage patches and
+    // the crisis heatmap — proportional to the assembled snapshot's own byte size.
+    let assemble_scope = crate::turn_profile::scope("snapshot.build.assemble");
     let assembled = WorldSnapshot {
         header,
         tiles: tile_states,
@@ -2146,10 +2455,6 @@ pub fn capture_snapshot(
         start_marker: start_marker_state.clone(),
         victory: victory_snapshot_state.clone(),
         herds: herd_states.clone(),
-        herd_registry: herd_registry_states,
-        forage_registry: forage_registry_states,
-        graze_registry: graze_registry_states,
-        beat_ledger: beat_ledger_state,
         food_modules: food_module_states.clone(),
         campaign_profiles: campaign_profiles_state,
         faction_inventory: faction_inventory_state.clone(),
@@ -2181,6 +2486,7 @@ pub fn capture_snapshot(
         crisis_telemetry: crisis_telemetry_state.clone(),
         crisis_overlay: crisis_overlay_state.clone(),
     };
+    drop(assemble_scope);
     drop(build_scope);
 
     // **The turn thread's last act on this snapshot.** Hashing, diffing, encoding and the socket
@@ -2200,6 +2506,22 @@ pub fn capture_snapshot(
     }
 }
 
+/// How many published frames the publisher keeps.
+///
+/// **One.** This ring used to be `SimulationConfig::checkpoint_history_turns` deep — 256 full
+/// `WorldSnapshot`s, which measured at **1.68 GB** resident on an 80×52 map and had never been
+/// measured before the checkpoint arc put a number beside it. Its only historical reader was
+/// rollback, fetching the stored view at the target tick to re-baseline the client; rollback now
+/// recaptures that frame from the world it just restored, which carries the same information
+/// (`a_rollback_produces_the_world_that_tick_had`) and cannot disagree with it.
+///
+/// What remains needs only the latest entry: `latest_entry` for resync and `export_map`, and the
+/// delta baseline, which tracks the previous publication rather than the ring.
+/// `SimulationConfig::checkpoint_history_turns` now governs
+/// [`crate::sim_state::CheckpointHistory`] alone — one depth knob, one history of worlds. It is set
+/// once at construction (`build_headless_app`) rather than re-asserted every turn.
+pub(crate) const PUBLICATION_RING_DEPTH: usize = 1;
+
 /// Selects how [`capture_snapshot`] writes its result: the normal turn path records a fresh ring
 /// entry (`false`); the post-command re-capture path refreshes the latest broadcast snapshot in
 /// place (`true`) so a world-mutating command is reflected immediately without corrupting the
@@ -2216,527 +2538,21 @@ pub struct SnapshotCaptureMode {
 /// immediately. The server broadcasts the result afterward (`broadcast_latest`, off
 /// `SnapshotHistory::encoded_snapshot_flat` / `encoded_delta_flat`). Kept in this module so `capture_snapshot`'s private `SystemParam` types stay internal.
 pub fn recapture_snapshot_in_place(world: &mut World) {
+    // **Nothing publishes while a rollback is replaying.** `capture_snapshot` is gated on
+    // `not_replaying` in the turn schedule, but this path reaches it through `run_system_once`,
+    // which invokes the system directly — run conditions are a schedule feature and do not apply.
+    // So the schedule's gate covers the turn path and nothing else.
+    //
+    // The check is *here*, not at the call sites, for the same reason the command seam is uniform:
+    // a curated list of "callers that must not publish during replay" is a thing to forget, and any
+    // caller reaching this during replay is wrong by definition — a rollback is one publication.
+    if world
+        .get_resource::<crate::sim_state::Replaying>()
+        .is_some_and(|replaying| replaying.0)
+    {
+        return;
+    }
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = true;
     world.run_system_once(capture_snapshot);
     world.resource_mut::<SnapshotCaptureMode>().refresh_in_place = false;
-}
-
-pub fn restore_world_from_snapshot(world: &mut World, snapshot: &WorldSnapshot) {
-    let knowledge_config = if let Some(handle) = world.get_resource::<KnowledgeLedgerConfigHandle>()
-    {
-        handle.get()
-    } else {
-        let parsed = Arc::new(
-            KnowledgeLedgerConfig::from_json_str(BUILTIN_KNOWLEDGE_LEDGER_CONFIG)
-                .expect("knowledge ledger config should parse"),
-        );
-        world.insert_resource(KnowledgeLedgerConfigHandle::new(parsed.clone()));
-        parsed
-    };
-
-    if let Some(mut ledger) = world.get_resource_mut::<KnowledgeLedger>() {
-        ledger.apply_config(knowledge_config.clone());
-        ledger.sync_from_snapshot(snapshot);
-    } else {
-        let mut ledger = KnowledgeLedger::with_config(knowledge_config.clone());
-        ledger.sync_from_snapshot(snapshot);
-        world.insert_resource(ledger);
-    }
-
-    let start_marker_position = snapshot
-        .start_marker
-        .as_ref()
-        .map(|marker| UVec2::new(marker.x, marker.y));
-    if let Some(mut start_loc) = world.get_resource_mut::<StartLocation>() {
-        *start_loc = StartLocation::new(start_marker_position);
-    } else {
-        world.insert_resource(StartLocation::new(start_marker_position));
-    }
-
-    let capability_flags = CapabilityFlags::from_bits_truncate(snapshot.capability_flags);
-    if let Some(mut flags) = world.get_resource_mut::<CapabilityFlags>() {
-        *flags = capability_flags;
-    } else {
-        world.insert_resource(capability_flags);
-    }
-
-    let moisture_raster = MoistureRaster::from_state(&snapshot.moisture_raster);
-    if let Some(mut existing) = world.get_resource_mut::<MoistureRaster>() {
-        *existing = moisture_raster;
-    } else {
-        world.insert_resource(moisture_raster);
-    }
-
-    // Reset per-faction Fog of War. WorldSnapshot doesn't carry the visibility
-    // ledger, and with permanent-memory FoW (decay disabled by default) a rollback
-    // would otherwise retain tiles discovered on ticks *after* the restore point,
-    // leaking future knowledge. Clearing both resources rebuilds visibility from the
-    // restored unit positions on the next turn (see calculate_visibility). The sweep
-    // tracker is cleared too so corridor sweeps don't reference pre-rollback tiles.
-    world.insert_resource(crate::visibility::VisibilityLedger::default());
-    world.insert_resource(crate::visibility::VisibilitySweepTracker::default());
-
-    // Rebuild the per-faction discovered-sites registry from the snapshot so a rollback neither
-    // un-discovers a site nor retains discoveries made after the restore point (the same
-    // future-knowledge concern as the fog reset above). The `SiteTag`s themselves are worldgen
-    // tile tags (like `FoodModuleTag`) and are not rebuilt here; the registry is the durable
-    // record of what has been found.
-    let restored_sites = snapshot.discovered_sites.iter().flat_map(|state| {
-        let faction = FactionId(state.faction);
-        state
-            .sites
-            .iter()
-            .map(move |site| (faction, UVec2::new(site.x, site.y), site.site_id.clone()))
-    });
-    if let Some(mut discovered) = world.get_resource_mut::<DiscoveredSites>() {
-        discovered.rebuild_from(restored_sites);
-    } else {
-        let mut discovered = DiscoveredSites::default();
-        discovered.rebuild_from(restored_sites);
-        world.insert_resource(discovered);
-    }
-
-    // Despawn existing entities.
-    let existing_tiles: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, With<Tile>>();
-        query.iter(world).collect()
-    };
-    for entity in existing_tiles {
-        let _ = world.despawn(entity);
-    }
-
-    let existing_logistics: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, With<LogisticsLink>>();
-        query.iter(world).collect()
-    };
-    for entity in existing_logistics {
-        let _ = world.despawn(entity);
-    }
-
-    let existing_populations: Vec<Entity> = {
-        let mut query = world.query_filtered::<Entity, With<PopulationCohort>>();
-        query.iter(world).collect()
-    };
-    for entity in existing_populations {
-        let _ = world.despawn(entity);
-    }
-
-    // Rebuild tiles (and attached power nodes).
-    let power_lookup: HashMap<u64, &PowerNodeState> = snapshot
-        .power
-        .iter()
-        .map(|state| (state.entity, state))
-        .collect();
-
-    let mut tile_entity_lookup: HashMap<u64, Entity> = HashMap::with_capacity(snapshot.tiles.len());
-    let mut tile_position_lookup: HashMap<(u32, u32), Entity> =
-        HashMap::with_capacity(snapshot.tiles.len());
-    let grid_size = world
-        .get_resource::<SimulationConfig>()
-        .map(|config| config.grid_size)
-        .unwrap_or(UVec2::new(0, 0));
-
-    for tile_state in &snapshot.tiles {
-        let element = ElementKind::from_u8(tile_state.element).unwrap_or(ElementKind::Ferrite);
-        let mut entity_mut = world.spawn_empty();
-        let entity = entity_mut.id();
-        entity_mut.insert(Tile {
-            position: UVec2::new(tile_state.x, tile_state.y),
-            element,
-            mass: Scalar::from_raw(tile_state.mass),
-            temperature: Scalar::from_raw(tile_state.temperature),
-            terrain: tile_state.terrain,
-            terrain_tags: tile_state.terrain_tags,
-            // The wire carries `resource_terrain()` (the real ground). It only *means* a preserved
-            // underlying biome on a navigable hex; elsewhere it equals `terrain`, so reconstruct the
-            // `Option` from the navigability signal to keep "Some only on NavigableRiver" true.
-            underlying_terrain: (tile_state.terrain == sim_runtime::TerrainType::NavigableRiver)
-                .then_some(tile_state.underlying_terrain),
-            mountain: mountain_metadata_from_state(
-                tile_state.mountain_kind,
-                tile_state.mountain_relief,
-            ),
-            river_edges: tile_state.river_edges,
-            river_inflow: tile_state.river_inflow,
-            river_channel: tile_state.river_channel,
-        });
-
-        if let Some(power_state) = power_lookup.get(&tile_state.entity) {
-            let generation = Scalar::from_raw(power_state.generation);
-            let demand = Scalar::from_raw(power_state.demand);
-            entity_mut.insert(PowerNode {
-                id: PowerNodeId(power_state.node_id),
-                base_generation: generation,
-                base_demand: demand,
-                generation,
-                demand,
-                efficiency: Scalar::from_raw(power_state.efficiency),
-                storage_capacity: Scalar::from_raw(power_state.storage_capacity),
-                storage_level: Scalar::from_raw(power_state.storage_level),
-                stability: Scalar::from_raw(power_state.stability),
-                surplus: Scalar::from_raw(power_state.surplus),
-                deficit: Scalar::from_raw(power_state.deficit),
-                incident_count: power_state.incident_count,
-            });
-        }
-
-        tile_entity_lookup.insert(tile_state.entity, entity);
-        tile_position_lookup.insert((tile_state.x, tile_state.y), entity);
-    }
-
-    // Rebuild logistics links.
-    let trade_lookup: HashMap<u64, &TradeLinkState> = snapshot
-        .trade_links
-        .iter()
-        .map(|state| (state.entity, state))
-        .collect();
-
-    for link_state in &snapshot.logistics {
-        let Some(&from_entity) = tile_entity_lookup.get(&link_state.from) else {
-            warn!(
-                "Skipping logistics link {} due to missing from entity {}",
-                link_state.entity, link_state.from
-            );
-            continue;
-        };
-        let Some(&to_entity) = tile_entity_lookup.get(&link_state.to) else {
-            warn!(
-                "Skipping logistics link {} due to missing to entity {}",
-                link_state.entity, link_state.to
-            );
-            continue;
-        };
-
-        let mut entity_mut = world.spawn_empty();
-        entity_mut.insert(LogisticsLink {
-            from: from_entity,
-            to: to_entity,
-            capacity: Scalar::from_raw(link_state.capacity),
-            flow: Scalar::from_raw(link_state.flow),
-        });
-        if let Some(trade_state) = trade_lookup.get(&link_state.entity) {
-            entity_mut.insert(trade_link_from_state(trade_state));
-        } else {
-            entity_mut.insert(TradeLink::default());
-        }
-    }
-
-    // Rebuild population cohorts. Track old→new cohort entity mapping so an expedition's
-    // `home_band` (stored as the OLD band's entity bits) can be resolved to the freshly-spawned
-    // band in a second pass (the home band may spawn after the expedition in the list).
-    let mut cohort_entity_lookup: HashMap<u64, Entity> =
-        HashMap::with_capacity(snapshot.populations.len());
-    let mut deferred_expeditions: Vec<(Entity, &PopulationCohortState)> = Vec::new();
-    for cohort_state in &snapshot.populations {
-        let Some(&home_entity) = tile_entity_lookup.get(&cohort_state.home) else {
-            warn!(
-                "Skipping population cohort {} due to missing home entity {}",
-                cohort_state.entity, cohort_state.home
-            );
-            continue;
-        };
-        let migration = cohort_state
-            .migration
-            .as_ref()
-            .map(pending_migration_from_state);
-        // Look up current_tile from saved position, falling back to home if not found
-        let current_tile = tile_position_lookup
-            .get(&(cohort_state.current_x, cohort_state.current_y))
-            .copied()
-            .unwrap_or(home_entity);
-        let mut stores = LocalStore::new();
-        for entry in &cohort_state.stores {
-            stores.set(&entry.item, Scalar::from_raw(entry.quantity));
-        }
-        let mut spawned = world.spawn(PopulationCohort {
-            home: home_entity,
-            current_tile,
-            size: cohort_state.size,
-            children: Scalar::from_raw(cohort_state.children),
-            working: Scalar::from_raw(cohort_state.working),
-            elders: Scalar::from_raw(cohort_state.elders),
-            stores,
-            morale: Scalar::from_raw(cohort_state.morale),
-            // Derived per-turn (not snapshot-persisted); recomputed on the next `simulate_population`.
-            last_food_consumption: 0.0,
-            last_morale_delta: scalar_zero(),
-            last_morale_cause: MoraleCause::None,
-            last_morale_contributions: MoraleContributions::default(),
-            last_fertility_factors: Default::default(),
-            discontent_fraction: scalar_zero(),
-            // Grievance is a multi-turn accumulator, so it IS persisted (like `age_turns`) — a
-            // rollback must not silently wipe brewing unrest.
-            grievance: Scalar::from_raw(cohort_state.grievance),
-            last_emigrated: 0,
-            last_immigrated: 0,
-            age_turns: cohort_state.age_turns,
-            generation: cohort_state.generation,
-            faction: FactionId(cohort_state.faction),
-            knowledge: fragments_from_contract(&cohort_state.knowledge_fragments),
-            migration,
-        });
-        // Restore the labor allocation (rollback → exact per-source staffing). Every band carries
-        // one; an empty vector rehydrates to a fully-idle band.
-        spawned.insert(labor_allocation_from_state(&cohort_state.labor_assignments));
-        let new_entity = spawned.id();
-        cohort_entity_lookup.insert(cohort_state.entity, new_entity);
-        if cohort_state.is_expedition {
-            // Expedition markers are re-attached in the second pass (home band must exist first).
-            deferred_expeditions.push((new_entity, cohort_state));
-        } else {
-            // Positive `ResidentBand` marker — a real band participating in the population/settlement
-            // arc (demographics/migration/sedentarization/supply). Restored so the `With<ResidentBand>`
-            // systems keep running after a rollback.
-            spawned.insert(ResidentBand);
-        }
-    }
-
-    // Second pass: re-attach `Expedition` to rolled-back in-flight parties, resolving `home_band`
-    // from the OLD band's entity bits via the mapping above. A missing home band is logged and
-    // skipped (the party rehydrates as a bare cohort) rather than panicking.
-    for (entity, cohort_state) in deferred_expeditions {
-        let Some(&home_band) = cohort_entity_lookup.get(&cohort_state.home_band_entity) else {
-            warn!(
-                "Skipping expedition {} re-attach: home band {} not found in snapshot",
-                cohort_state.entity, cohort_state.home_band_entity
-            );
-            continue;
-        };
-        let pending_reveal = cohort_state
-            .pending_reveal_x
-            .iter()
-            .zip(cohort_state.pending_reveal_y.iter())
-            .map(|(&x, &y)| UVec2::new(x, y))
-            .collect();
-        world.entity_mut(entity).insert(Expedition {
-            home_band,
-            mission: ExpeditionMission::from_wire(
-                &cohort_state.expedition_mission,
-                &cohort_state.expedition_target_herd,
-                &cohort_state.expedition_hunt_policy,
-            ),
-            phase: ExpeditionPhase::from_wire(&cohort_state.expedition_phase),
-            announced: cohort_state.expedition_announced,
-            pending_reveal,
-            carried_trade: cohort_state.expedition_carried_trade,
-        });
-    }
-
-    // Update tile registry.
-    let mut sorted_tiles: Vec<&TileState> = snapshot.tiles.iter().collect();
-    sorted_tiles.sort_by_key(|state| {
-        let y = state.y as u64;
-        let x = state.x as u64;
-        (y << 32) | x
-    });
-    let registry_tiles: Vec<Entity> = sorted_tiles
-        .into_iter()
-        .filter_map(|state| tile_entity_lookup.get(&state.entity).copied())
-        .collect();
-
-    if let Some(mut registry) = world.get_resource_mut::<TileRegistry>() {
-        registry.width = grid_size.x;
-        registry.height = grid_size.y;
-        registry.tiles = registry_tiles;
-    } else {
-        world.insert_resource(TileRegistry {
-            tiles: registry_tiles,
-            width: grid_size.x,
-            height: grid_size.y,
-        });
-    }
-
-    if let Some(mut generation_registry) = world.get_resource_mut::<GenerationRegistry>() {
-        generation_registry.update_from_states(&snapshot.generations);
-    } else {
-        world.insert_resource(GenerationRegistry::from_states(&snapshot.generations));
-    }
-
-    // Rebuild the authoritative herd registry from the snapshot so a rollback rewinds herd biomass /
-    // position / movement / ecology — not just the lossy display telemetry. Mirrors the
-    // generation-registry round-trip above.
-    if let Some(mut herd_registry) = world.get_resource_mut::<HerdRegistry>() {
-        herd_registry.update_from_states(&snapshot.herd_registry);
-    } else {
-        world.insert_resource(HerdRegistry::from_states(&snapshot.herd_registry));
-    }
-    // Rebuild the derived herd structures the same way `advance_herds` does post-loop, so the
-    // density map and display telemetry aren't stale for a turn after the restore.
-    {
-        let herd_registry_clone = world.resource::<HerdRegistry>().clone();
-        if let Some(mut density) = world.get_resource_mut::<HerdDensityMap>() {
-            density.rebuild(grid_size, &herd_registry_clone);
-        }
-        if let Some(mut telemetry) = world.get_resource_mut::<HerdTelemetry>() {
-            telemetry.entries = herd_registry_clone.snapshot_entries();
-        }
-    }
-
-    // Rebuild the authoritative depletable-forage registry so a rollback rewinds per-patch biomass /
-    // ecology phase — the forage counterpart of the herd round-trip above.
-    if let Some(mut forage_registry) = world.get_resource_mut::<ForageRegistry>() {
-        forage_registry.update_from_states(&snapshot.forage_registry);
-    } else {
-        world.insert_resource(ForageRegistry::from_states(&snapshot.forage_registry));
-    }
-
-    // Rebuild the authoritative graze/pasture registry, same round-trip. Note this also means
-    // `spawn_initial_graze`'s "already populated → skip" guard sees a restored world as seeded.
-    if let Some(mut graze_registry) = world.get_resource_mut::<GrazeRegistry>() {
-        graze_registry.update_from_states(&snapshot.graze_registry);
-    } else {
-        world.insert_resource(GrazeRegistry::from_states(&snapshot.graze_registry));
-    }
-
-    // Rebuild The Telling's narrative memory. **Restore, not just capture**: without this a
-    // rollback past a beat leaves it marked fired and it could never fire again.
-    world.insert_resource(BeatLedger::from_state(&snapshot.beat_ledger));
-
-    let influencer_config = if let Some(handle) = world.get_resource::<InfluencerConfigHandle>() {
-        handle.get()
-    } else {
-        let parsed = Arc::new(
-            InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)
-                .expect("influencer config should parse"),
-        );
-        world.insert_resource(InfluencerConfigHandle::new(parsed.clone()));
-        parsed
-    };
-
-    let roster_sentiment;
-    let roster_logistics;
-    let roster_morale;
-    let roster_power;
-    {
-        let generation_registry_clone = world.resource::<GenerationRegistry>().clone();
-        if let Some(mut roster) = world.get_resource_mut::<InfluentialRoster>() {
-            roster.apply_config(influencer_config.clone());
-            roster.update_from_states(&snapshot.influencers);
-        } else {
-            let mut roster = InfluentialRoster::with_seed(
-                0xA51C_E55E,
-                &generation_registry_clone,
-                influencer_config.clone(),
-            );
-            roster.update_from_states(&snapshot.influencers);
-            world.insert_resource(roster);
-        }
-    }
-    {
-        let roster = world.resource::<InfluentialRoster>();
-        roster_sentiment = roster.sentiment_totals();
-        roster_logistics = roster.logistics_total();
-        roster_morale = roster.morale_total();
-        roster_power = roster.power_total();
-    }
-
-    if let Some(mut impacts) = world.get_resource_mut::<InfluencerImpacts>() {
-        impacts.set_from_totals(roster_logistics, roster_morale, roster_power);
-    } else {
-        let mut impacts = InfluencerImpacts::default();
-        impacts.set_from_totals(roster_logistics, roster_morale, roster_power);
-        world.insert_resource(impacts);
-    }
-
-    if let Some(mut ledgers) = world.get_resource_mut::<CorruptionLedgers>() {
-        *ledgers.ledger_mut() = snapshot.corruption.clone();
-    } else {
-        let mut ledgers = CorruptionLedgers::default();
-        *ledgers.ledger_mut() = snapshot.corruption.clone();
-        world.insert_resource(ledgers);
-    }
-
-    if let Some(new_effects) =
-        world
-            .get_resource_mut::<CultureManager>()
-            .map(|mut culture_manager| {
-                culture_manager
-                    .restore_from_snapshot(&snapshot.culture_layers, &snapshot.culture_tensions);
-                culture_manager.compute_effects()
-            })
-    {
-        if let Some(mut effects_res) = world.get_resource_mut::<CultureEffectsCache>() {
-            *effects_res = new_effects;
-        } else {
-            world.insert_resource(new_effects);
-        }
-    }
-
-    let policy_bias = [
-        Scalar::from_raw(snapshot.sentiment.knowledge.policy),
-        Scalar::from_raw(snapshot.sentiment.trust.policy),
-        Scalar::from_raw(snapshot.sentiment.equity.policy),
-        Scalar::from_raw(snapshot.sentiment.agency.policy),
-    ];
-    let incident_bias = [
-        Scalar::from_raw(snapshot.sentiment.knowledge.incidents),
-        Scalar::from_raw(snapshot.sentiment.trust.incidents),
-        Scalar::from_raw(snapshot.sentiment.equity.incidents),
-        Scalar::from_raw(snapshot.sentiment.agency.incidents),
-    ];
-
-    if let Some(mut bias_res) = world.get_resource_mut::<SentimentAxisBias>() {
-        bias_res.reset_to_state(policy_bias, incident_bias);
-        bias_res.set_influencer(roster_sentiment);
-    } else {
-        let mut bias_res = SentimentAxisBias::default();
-        bias_res.reset_to_state(policy_bias, incident_bias);
-        bias_res.set_influencer(roster_sentiment);
-        world.insert_resource(bias_res);
-    }
-
-    let mut discovery_ledger_res = DiscoveryProgressLedger::default();
-    for entry in &snapshot.discovery_progress {
-        let faction = FactionId(entry.faction);
-        let progress = Scalar::from_raw(entry.progress);
-        discovery_ledger_res.add_progress(faction, entry.discovery, progress);
-    }
-    world.insert_resource(discovery_ledger_res);
-
-    if !snapshot.great_discovery_definitions.is_empty() {
-        if let Some(mut registry) = world.get_resource_mut::<GreatDiscoveryRegistry>() {
-            registry.restore_from_states(&snapshot.great_discovery_definitions);
-        } else {
-            let mut registry = GreatDiscoveryRegistry::default();
-            registry.restore_from_states(&snapshot.great_discovery_definitions);
-            world.insert_resource(registry);
-        }
-    } else if world.get_resource::<GreatDiscoveryRegistry>().is_none() {
-        world.insert_resource(GreatDiscoveryRegistry::default());
-    }
-
-    let registry_clone = world
-        .get_resource::<GreatDiscoveryRegistry>()
-        .cloned()
-        .unwrap_or_default();
-
-    if let Some(mut ledger) = world.get_resource_mut::<GreatDiscoveryLedger>() {
-        ledger.replace_with_states(&snapshot.great_discoveries);
-    } else {
-        let mut ledger = GreatDiscoveryLedger::default();
-        ledger.replace_with_states(&snapshot.great_discoveries);
-        world.insert_resource(ledger);
-    }
-
-    if let Some(mut readiness) = world.get_resource_mut::<GreatDiscoveryReadiness>() {
-        readiness.rebuild_from_states(&registry_clone, &snapshot.great_discovery_progress);
-        for state in &snapshot.great_discoveries {
-            readiness.mark_resolved(FactionId(state.faction), GreatDiscoveryId(state.id));
-        }
-    } else {
-        let mut readiness = GreatDiscoveryReadiness::default();
-        readiness.rebuild_from_states(&registry_clone, &snapshot.great_discovery_progress);
-        for state in &snapshot.great_discoveries {
-            readiness.mark_resolved(FactionId(state.faction), GreatDiscoveryId(state.id));
-        }
-        world.insert_resource(readiness);
-    }
-
-    if let Some(mut telemetry) = world.get_resource_mut::<GreatDiscoveryTelemetry>() {
-        telemetry.set_from_state(&snapshot.great_discovery_telemetry);
-    } else {
-        let mut telemetry = GreatDiscoveryTelemetry::default();
-        telemetry.set_from_state(&snapshot.great_discovery_telemetry);
-        world.insert_resource(telemetry);
-    }
 }

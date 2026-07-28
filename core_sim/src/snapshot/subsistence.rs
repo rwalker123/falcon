@@ -1,87 +1,6 @@
 use super::*;
 use crate::fauna_config::HuntYield;
 
-/// Capture a live `Herd` into its authoritative snapshot mirror for rollback (the inverse is
-/// `fauna::HerdRegistry::update_from_states`). Movement/identity fields are mirrored directly; the
-/// depletable-ecology subset goes into the embedded `EcologyState`. Coordinates cross as `(x, y)`.
-pub(crate) fn herd_state(herd: &Herd) -> HerdState {
-    HerdState {
-        id: herd.id.clone(),
-        label: herd.label.clone(),
-        species: herd.species.clone(),
-        size_class: herd.size_class.as_str().to_string(),
-        route: herd.route.iter().map(|p| (p.x, p.y)).collect(),
-        step_index: herd.step_index as u32,
-        current_pos: (herd.current_pos.x, herd.current_pos.y),
-        dwell_remaining: herd.dwell_remaining,
-        roam: HerdRoamState {
-            mode: herd.roam.mode_key().to_string(),
-            loiter_turns_left: herd.roam.loiter_turns_left(),
-        },
-        next_pos: herd.next_pos.map(|p| (p.x, p.y)),
-        corralled_at: herd.corralled_at.map(|p| (p.x, p.y)),
-        corral_progress: herd.corral_progress,
-        pen_radius: herd.pen_radius,
-        pen_extend_progress: herd.pen_extend_progress,
-        pen_extending: herd.pen_extending,
-        fodder_per_biomass: herd.fodder_per_biomass,
-        regrowth_rate: herd.regrowth_rate,
-        body_mass: herd.body_mass,
-        hunt_credit: herd.hunt_credit,
-        husbandry_ceiling: herd.husbandry_ceiling.as_str().to_string(),
-        herders_needed: herd.herders_needed,
-        under_herded: herd.under_herded,
-        ecology: EcologyState {
-            biomass: herd.biomass,
-            carrying_capacity: herd.carrying_capacity,
-            ecology_phase: herd.ecology_phase.as_str().to_string(),
-            progress: herd.domestication_progress,
-            owner: herd.owner.map(|f| f.0),
-        },
-    }
-}
-
-/// Capture a live `ForagePatch` into its authoritative snapshot mirror for rollback (the inverse is
-/// `forage::ForageRegistry::update_from_states`). The depletable-ecology subset — including
-/// cultivation (`progress`/`owner`, Phase 1a) — goes into the shared `EcologyState`, mirroring
-/// `herd_state`. Coordinates cross as the `(x, y)` tile key.
-pub(crate) fn forage_state(patch: &ForagePatch) -> ForageState {
-    ForageState {
-        x: patch.tile.x,
-        y: patch.tile.y,
-        field_progress: patch.field_progress,
-        // The species commitment (Flora Roster S1) — `""` is the wild mixed basket, the wire's
-        // `Option::None`. Persisted alongside the two improvement meters it belongs to: it decides
-        // both the patch's effective capacity and its conversion rate, so a rollback that lost it
-        // would rewind a farm into a differently-shaped one.
-        species: patch.species.clone().unwrap_or_default(),
-        ecology: EcologyState {
-            biomass: patch.biomass,
-            carrying_capacity: patch.carrying_capacity,
-            ecology_phase: patch.ecology_phase.as_str().to_string(),
-            progress: patch.cultivation_progress,
-            owner: patch.owner.map(|f| f.0),
-        },
-    }
-}
-
-/// Capture a live `GrazePatch` into its authoritative snapshot mirror for rollback (the inverse is
-/// `graze::GrazeRegistry::update_from_states`). Mirrors `forage_state`; graze is **wild ground**, so
-/// the shared `EcologyState`'s cultivation fields (`progress`/`owner`) stay at their defaults.
-pub(crate) fn graze_state(patch: &GrazePatch) -> GrazeState {
-    GrazeState {
-        x: patch.tile.x,
-        y: patch.tile.y,
-        ecology: EcologyState {
-            biomass: patch.biomass,
-            carrying_capacity: patch.carrying_capacity,
-            ecology_phase: patch.ecology_phase.as_str().to_string(),
-            progress: 0.0,
-            owner: None,
-        },
-    }
-}
-
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
 /// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
@@ -361,10 +280,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(0),
                 // The pen economy (Grazing 2d). `penFootprintTiles` is the SERVER's in-bounds count of
                 // the fenced footprint (not the closed-form disk, which is wrong at map edges); `0` for
-                // an unpenned herd. `pen_pasture_fraction` is transient per-turn scratch (Population ran
-                // before this capture, so it reflects the current turn); `pen_extend_progress` is
-                // authoritative, snapshot-persisted `Herd` state (the in-flight ExtendPen ring meter,
-                // rollback-safe) — here it just crosses to the client wire alongside it.
+                // an unpenned herd. `pen_pasture_fraction` is per-turn scratch (Population ran before
+                // this capture, so it reflects the current turn); `pen_extend_progress` is
+                // authoritative `Herd` state (the in-flight ExtendPen ring meter) — here it just
+                // crosses to the client wire alongside it.
                 pen_radius: herd.map(|herd| herd.pen_radius).unwrap_or(0),
                 pen_footprint_tiles: herd
                     .and_then(|herd| {

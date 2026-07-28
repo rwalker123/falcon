@@ -6,8 +6,8 @@
 //! nothing hashes a snapshot per frame any more. See [`SnapshotHeader::hash`].
 
 use crate::state::campaign::{
-    BeatLedgerState, CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState,
-    StanceState, VictorySnapshotState, VoiceMediumState,
+    CampaignLabel, CampaignProfileState, CommandEventState, PendingForksState, StanceState,
+    VictorySnapshotState, VoiceMediumState,
 };
 use crate::state::culture::{
     AxisBiasState, CultureLayerState, CultureTensionState, InfluentialIndividualState,
@@ -30,8 +30,8 @@ use crate::state::population::{
     GenerationState, PopulationCohortState, PopulationDemographicsState,
 };
 use crate::state::subsistence::{
-    FoodModuleState, ForagePatchState, ForageState, GrazeState, HerdState, HerdTelemetryState,
-    IntensificationKnowledgeState, SedentarizationState,
+    FoodModuleState, ForagePatchState, HerdTelemetryState, IntensificationKnowledgeState,
+    SedentarizationState,
 };
 use ahash::RandomState;
 use serde::{Deserialize, Serialize};
@@ -131,6 +131,11 @@ fn default_fog_enabled() -> bool {
     true
 }
 
+/// The **client view** of a world, and nothing else. Every field here exists because something
+/// downstream renders or exports it; simulation state a turn reads lives on `core_sim::SimState`,
+/// which is what a rollback restores. Adding a field that no client, export or delta consumes
+/// costs a capture and a diff on every turn of every game to produce a value nobody reads —
+/// see `.claude/rules/core_sim/checkpoints.md`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorldSnapshot {
     pub header: SnapshotHeader,
@@ -167,27 +172,6 @@ pub struct WorldSnapshot {
     pub voice_medium: Vec<VoiceMediumState>,
     #[serde(default)]
     pub herds: Vec<HerdTelemetryState>,
-    /// Authoritative herd sim state (`HerdRegistry`), round-tripped for rollback correctness —
-    /// distinct from the lossy display `herds` above (which the client consumes). Not wired to the
-    /// FlatBuffers client stream; rollback restore reads it via `HerdRegistry::update_from_states`.
-    #[serde(default)]
-    pub herd_registry: Vec<HerdState>,
-    /// Authoritative depletable-forage sim state (`ForageRegistry`), round-tripped for rollback
-    /// correctness (biomass / ecology phase per patch). Like `herd_registry`, this is not wired to
-    /// the FlatBuffers client stream; rollback restore reads it via `ForageRegistry::update_from_states`.
-    #[serde(default)]
-    pub forage_registry: Vec<ForageState>,
-    /// Authoritative graze/pasture sim state (`GrazeRegistry`), round-tripped for rollback correctness
-    /// (biomass / ecology phase per land tile). Like `herd_registry` / `forage_registry` this is the
-    /// *sim* record and is not on the FlatBuffers client stream — the client reads graze off the
-    /// per-tile `TileState.graze_*` fields. Restore reads it via `GrazeRegistry::update_from_states`.
-    #[serde(default)]
-    pub graze_registry: Vec<GrazeState>,
-    /// The Telling's narrative memory (`BeatLedger`), round-tripped for rollback correctness.
-    /// Like the registries above this is the *sim* record and is not on the FlatBuffers client
-    /// stream; restore reads it via `BeatLedger::from_state`.
-    #[serde(default)]
-    pub beat_ledger: BeatLedgerState,
     #[serde(default)]
     pub food_modules: Vec<FoodModuleState>,
     #[serde(default)]

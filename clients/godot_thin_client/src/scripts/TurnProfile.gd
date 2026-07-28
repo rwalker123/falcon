@@ -40,10 +40,14 @@ const ENV_FLAG := "SHADOW_SCALE_CLIENT_PROFILE"
 ## leaves profiling at [`DEFAULT_ENABLED`].
 const DISABLED_VALUES: PackedStringArray = ["0", "false", "off", "no"]
 
-## What an UNSET [`ENV_FLAG`] means. `true` while issue #384's client-side turn cost is being
-## measured; flipping the shipped default is this one constant, and the env var keeps working
-## in whichever direction it then has to.
-const DEFAULT_ENABLED := true
+## What an UNSET [`ENV_FLAG`] means. **`false` — profiling is opt-in.**
+##
+## It was `true` while issue #384's client-side turn cost was being measured, with a note that
+## flipping the shipped default is this one constant. #384 is closed, and the cost of leaving it on
+## is that a normal play session prints a `[TurnProfile] draw.avg100=…` line every hundred frames
+## forever — noise a player never asked for, in the log they would otherwise read for real problems.
+## Set `SHADOW_SCALE_CLIENT_PROFILE=1` to measure again; the env var works in both directions.
+const DEFAULT_ENABLED := false
 
 ## Grep handle shared by every line this module (and `MapView._draw`) prints.
 const LINE_PREFIX := "[TurnProfile]"

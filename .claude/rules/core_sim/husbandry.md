@@ -339,15 +339,15 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     keeper who is present but *broke* **starves** the herd (above) — it produces no shed (a keeper holds
     the flock, `herded_fraction > 0`), so it keeps its pen and recovers when fed; only animals *leaving*
     empty a herd.
-- **Persistence** — `corralled_at`, `corral_progress`, **and `pen_radius` / `pen_extend_progress` /
-  `pen_extending` (Grazing 2d)** round-trip through the rollback snapshot on `HerdState` (authoritative
-  sim state), so a rollback rewinds a half-built pen (or an in-flight fence extension) rather than losing
-  the investment;
+- **Persistence** — the checkpoint clones the whole `HerdRegistry` (`SimState::herds`), so **every**
+  `Herd` field rewinds with a rollback, `corralled_at` / `corral_progress` / `pen_radius` /
+  `pen_extend_progress` / `pen_extending` (Grazing 2d) included: a half-built pen (or an in-flight fence
+  extension) is restored rather than lost. The transient per-turn scratch —
   `corralled_tended_this_turn`, **`pen_fed_fraction`, `pen_starving`, `footprint_intake` and
-  `pen_pasture_fraction`** are transient (not persisted) — a rehydrated pen reads "tended (a
-  deliberate one-turn grace, seeded in `herd_from_state` so the first post-restore Logistics escape
-  pass spares a pen a keeper tends every turn), fully fed", so a rollback can only *delay* an escape or
-  a starvation turn by one turn, never invent a famine — and never *destroy* a standing pen on restore.
+  `pen_pasture_fraction`** — is transient *within a turn*, not across a checkpoint: it is captured and
+  restored verbatim like everything else, so a restored pen resumes exactly as tended and as fed as it
+  was, and a rollback can neither invent a famine nor destroy a standing pen. These fields are still
+  **off the client wire**; "not persisted" is no longer true of any of them.
 - **Config** (`fauna_config.json` `husbandry`): the **`pen`** block — `ecology` carries **phase bands
   only** now (its `regrowth_rate` is unused; the pen `r` is per-species — Grazing 2d),
   **`upkeep_per_biomass` (0.002 — the feed, now footprint-offset)** and `starve_shrink_rate` (**0.10** —
@@ -392,8 +392,8 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   would watch the larder drain unexplained. `penFeedUpkeep` is **the food the band actually PAID** this
   turn (the summed `LocalStore::take` *return*, not the demand — a band that can only part-pay reports
   only what it handed over, and its herds starve for the rest), carried on
-  `LaborAllocation::last_pen_feed_upkeep` (derived per-turn, not persisted, excluded from equality —
-  same treatment as `last_yields`). It closes the identity
+  `LaborAllocation::last_pen_feed_upkeep` (rebuilt per-turn, excluded from equality — same treatment
+  as `last_yields`). It closes the identity
   ```text
   larder_delta == foodIncome − foodConsumption − penFeedUpkeep
   ```
@@ -467,16 +467,17 @@ mechanic (the two are near-mechanical transposes).
 > arc's first slice, `docs/plan_intensification.md` §0-i). Each live `Herd` — identity,
 > movement (`route`/`step_index`/`current_pos`/`dwell_remaining`/`roam`/`next_pos`/`corralled_at`),
 > **and** its depletable-ecology subset (`biomass`/`carrying_capacity`/`ecology_phase`/
-> `domestication_progress`/`owner`) — round-trips through a serde `HerdState` (the ecology subset
-> embedded as a shared `EcologyState`) captured into `WorldSnapshot.herd_registry` and rebuilt on
-> restore via `HerdRegistry::update_from_states`, following the `GenerationRegistry` round-trip
-> convention. This closes a **latent bug**: only the lossy display `HerdTelemetry`
+> `domestication_progress`/`owner`) — survives a rollback because the **checkpoint carries the whole
+> registry** (`SimState::herds`). It reached that state by way of a serde `HerdState` mirror on
+> `WorldSnapshot.herd_registry`; the checkpoint arc made the mirror redundant and it was deleted
+> (`checkpoints.md`). This closes a **latent bug**: only the lossy display `HerdTelemetry`
 > (`WorldSnapshot.herds`) used to be captured, so herd biomass/position silently kept their
 > post-rollback values. Restore rebuilds the derived `HerdDensityMap` + `HerdTelemetry` (as
-> `advance_herds` does post-loop) so nothing is stale for a turn. `HerdState` is the sim side; the
-> FlatBuffers client stream is untouched (it keeps using the display telemetry). **`EcologyState`
-> is the shared depletable-ecology record** the forage-depletion slice (§0-ii) reuses for its
-> per-tile `ForageState`.
+> `advance_herds` does post-loop) so nothing is stale for a turn. The FlatBuffers client stream is
+> untouched (it keeps using the display telemetry). The serde `HerdState` / `HerdRoamState` /
+> `EcologyState` records and the registry-side `HerdRegistry::{from_states, update_from_states}`
+> constructors that read them are **deleted** — with the mirror gone there was no producer left, and a
+> decoder with nothing to decode is a second, drifting definition of a restored herd.
 
 Market hunting shipped as the third extractive rung, now named `FollowPolicy::Deplete`
 (`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its

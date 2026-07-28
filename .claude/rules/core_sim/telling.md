@@ -221,7 +221,7 @@ effective_stance(axis) = clamp(normalize(signal) + declared_offset(axis), -1.0, 
 Each axis is also a readable `stance.<axis>` signal (injected into the sample immediately after the
 base signals, *before* any predicate or gloss evaluates), so content can gloss it — the shipped fork
 glosses `stance.roam_settle` — and future beats can gate on it. The effective values are also kept
-on the ledger as **derived scratch** (`last_effective_stance`, not persisted, excluded from
+on the ledger as **derived scratch** (`last_effective_stance`, recomputed every tick, excluded from
 equality — the `LaborAllocation::last_yields` convention) purely so the snapshot can export them
 without re-sampling.
 
@@ -428,12 +428,14 @@ attained voice medium — persisted because it is monotone). `BTreeMap`/`BTreeSe
 and stable snapshot ordering, and **`Scalar`, not `f32`**, for everything persisted — sampled as
 `f64`, stored fixed-point, the same rollback-bit-exactness argument the rest of the codebase makes.
 
-It round-trips through the rollback snapshot as `WorldSnapshot.beat_ledger`
-(`sim_schema::BeatLedgerState`) on the `HerdRegistry` pattern: sim-side serde only, **not** on the
-FlatBuffers client stream (beats reach the client as `CommandEvent`s).
+The **checkpoint carries the ledger whole** (`SimState::beat_ledger`), so a rollback rewinds it. It
+reached that state by way of a `sim_schema::BeatLedgerState` mirror on `WorldSnapshot.beat_ledger`;
+that copy was deleted once the checkpoint left it without a reader (`checkpoints.md`). The ledger
+was never on the FlatBuffers client stream — beats reach the client as `CommandEvent`s — and the
+`BeatLedger::{to_state, from_state}` converters survive for the tests that drive a rollback by hand.
 
-> **Capture AND restore.** `restore_world_from_snapshot` rebuilds the resource via
-> `BeatLedger::from_state`. This is deliberately **not** the `SedentarizationScore` shape, which is
+> **Capture AND restore.** `restore_sim_state` re-inserts the resource. This is deliberately **not**
+> the `SedentarizationScore` shape, which is
 > captured but never restored (`capture.rs` has no rebuild for it — a latent bug; do not copy it).
 > A ledger that was only captured would leave a beat marked fired after a rollback past it, so it
 > could never fire again, and its stale `edge_state` would make `crosses` misfire. The fork tier

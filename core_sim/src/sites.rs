@@ -53,7 +53,7 @@ pub struct DiscoveredSiteRecord {
 }
 
 /// Per-faction registry of discovered sites. Snapshot-persisted (a rollback must not
-/// un-discover, nor leak discoveries made after the restore point — `restore_world_from_snapshot`
+/// un-discover, nor leak discoveries made after the restore point — `restore_sim_state`
 /// rebuilds it from the snapshot). A `seen` set backs an O(1) `contains(faction, pos)` check.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct DiscoveredSites {

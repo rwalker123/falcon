@@ -7,6 +7,7 @@ use sim_runtime::{
 };
 
 use crate::{
+    components::BandId,
     culture_corruption_config::{CulturePropagationSettings, DEFAULT_RESONANCE_RESPONSE},
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     resources::SimulationTick,
@@ -21,10 +22,22 @@ pub type CultureLayerId = u32;
 
 /// Opaque owner identifier encoded into snapshots.
 ///
-/// Global layers use `0`, regional layers should encode their region id, and
-/// local layers should encode the entity bits of the owning settlement/cohort.
+/// Global layers use `0`, regional layers encode their region id, and local layers encode the
+/// **tile** they sit on — every local layer is attached by worldgen to a tile entity
+/// (`attach_local`), so `(x, y)` is the owner's natural key.
+///
+/// **This used to be `entity.to_bits()`, and that was the single largest rollback defect in the
+/// sim.** Restoring a checkpoint despawns and respawns every tile, so bevy hands back fresh
+/// generations and every local layer was orphaned: `tiles[].culture_layer` collapsed to `0` for
+/// all 384 tiles, `culture_raster` went to zero, and `reconcile_culture_layers` then minted a
+/// second set of layers for the new entities. A position cannot be renumbered, so the key holds
+/// across a restore by construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CultureOwner(pub u64);
+
+/// Set on tile-owned keys so they occupy a range disjoint from region ids and band ids. Without it
+/// tile `(0, 0)` would encode to `0` and collide with [`CultureOwner::GLOBAL`].
+const TILE_OWNER_TAG: u64 = 1 << 63;
 
 impl CultureOwner {
     pub const GLOBAL: CultureOwner = CultureOwner(0);
@@ -33,8 +46,20 @@ impl CultureOwner {
         CultureOwner(region_id as u64)
     }
 
-    pub fn from_entity(entity: Entity) -> Self {
-        CultureOwner(entity.to_bits())
+    /// The owner key for a tile-local layer.
+    pub fn from_tile(position: UVec2) -> Self {
+        CultureOwner(TILE_OWNER_TAG | ((position.y as u64) << 32) | position.x as u64)
+    }
+
+    /// The owner key for a band-local layer.
+    ///
+    /// **No band owns a layer today** — `attach_local` is only ever called with a tile — so this
+    /// resolves to nothing and the faction rollup in `telling::signals` falls through to the global
+    /// layer, which is exactly what it did when the key was the band's entity bits. Bands carrying
+    /// their own culture is issue #407; this is the identity half only, kept so the rollup names a
+    /// stable band rather than a number that changed on every restore.
+    pub fn from_band(band: BandId) -> Self {
+        CultureOwner(band.0)
     }
 }
 
@@ -515,6 +540,46 @@ pub struct CultureManager {
     smoothed_resonance: InfluencerCultureResonance,
 }
 
+/// Everything [`CultureManager`] holds **except its settings** — see
+/// [`crate::influencers::InfluentialRosterCheckpoint`] for why config stays out of a checkpoint.
+///
+/// `CultureManagerSettings` is the subtle one: it is config held **by value**, not behind an `Arc`,
+/// so a search for `Arc<*Config>` misses it entirely. It is derived at boot from
+/// `culture_corruption_config`, and cloning the manager whole would carry it.
+#[derive(Debug, Clone)]
+pub struct CultureManagerCheckpoint {
+    next_id: CultureLayerId,
+    global: Option<CultureLayer>,
+    regional: HashMap<u32, CultureLayer>,
+    locals: HashMap<u64, CultureLayer>,
+    tension_events: Vec<CultureTensionRecord>,
+    smoothed_resonance: InfluencerCultureResonance,
+}
+
+impl CultureManager {
+    /// Snapshot the manager's state, leaving its settings behind.
+    pub fn checkpoint(&self) -> CultureManagerCheckpoint {
+        CultureManagerCheckpoint {
+            next_id: self.next_id,
+            global: self.global.clone(),
+            regional: self.regional.clone(),
+            locals: self.locals.clone(),
+            tension_events: self.tension_events.clone(),
+            smoothed_resonance: self.smoothed_resonance,
+        }
+    }
+
+    /// Restore state, keeping the settings currently attached.
+    pub fn restore_checkpoint(&mut self, checkpoint: &CultureManagerCheckpoint) {
+        self.next_id = checkpoint.next_id;
+        self.global = checkpoint.global.clone();
+        self.regional = checkpoint.regional.clone();
+        self.locals = checkpoint.locals.clone();
+        self.tension_events = checkpoint.tension_events.clone();
+        self.smoothed_resonance = checkpoint.smoothed_resonance;
+    }
+}
+
 impl CultureManager {
     pub fn new() -> Self {
         Self::with_settings(CultureManagerSettings::default())
@@ -566,10 +631,10 @@ impl CultureManager {
 
     pub fn attach_local(
         &mut self,
-        entity: Entity,
+        position: UVec2,
         parent_region: CultureLayerId,
     ) -> CultureLayerId {
-        let owner = CultureOwner::from_entity(entity);
+        let owner = CultureOwner::from_tile(position);
         if let Some(layer) = self.locals.get(&owner.0) {
             return layer.id;
         }
@@ -591,10 +656,10 @@ impl CultureManager {
 
     pub fn apply_initial_modifiers(
         &mut self,
-        entity: Entity,
+        position: UVec2,
         modifiers: [Scalar; CULTURE_TRAIT_AXES],
     ) {
-        if let Some(layer) = self.locals.get_mut(&CultureOwner::from_entity(entity).0) {
+        if let Some(layer) = self.locals.get_mut(&CultureOwner::from_tile(position).0) {
             layer
                 .traits
                 .modifier_mut()

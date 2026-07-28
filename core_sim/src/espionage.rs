@@ -731,7 +731,7 @@ pub enum AgentAssignment {
     Assigned(EspionageMissionInstanceId),
 }
 
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug, Default, Clone)]
 pub struct EspionageRoster {
     agents: HashMap<FactionId, Vec<EspionageAgent>>,
     next_agent_handle: u32,
@@ -846,7 +846,7 @@ impl EspionageRoster {
     }
 }
 
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug, Default, Clone)]
 pub struct EspionageMissionState {
     active: Vec<ScheduledEspionageMission>,
     next_instance: u64,
@@ -1428,7 +1428,7 @@ pub fn initialise_espionage_roster(
     roster.seed_from_catalog(&factions.factions, &catalog);
 }
 
-#[derive(Resource, Debug)]
+#[derive(Resource, Debug, Clone)]
 pub struct CounterIntelBudgets {
     reserves: HashMap<FactionId, Scalar>,
 }
@@ -1545,7 +1545,7 @@ pub enum SecurityPolicy {
     Crisis,
 }
 
-#[derive(Resource, Debug)]
+#[derive(Resource, Debug, Clone)]
 pub struct FactionSecurityPolicies {
     policies: HashMap<FactionId, SecurityPolicy>,
     default_policy: SecurityPolicy,

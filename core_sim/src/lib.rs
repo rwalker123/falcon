@@ -59,6 +59,7 @@ mod scalar;
 mod sedentarization;
 mod sedentarization_config;
 mod settlement_stage_config;
+pub mod sim_state;
 mod sites;
 mod sites_config;
 mod snapshot;
@@ -95,10 +96,11 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase,
-    FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-    LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
-    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, FODDER, FOOD, TRADE_GOODS,
+    available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
+    ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment,
+    LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
+    PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
+    FODDER, FOOD, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{
@@ -278,17 +280,18 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, port_base_override, CapabilityFlags,
-    CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
-    DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
-    HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns,
-    SentimentAxisBias, SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation,
-    TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
+    apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
+    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
+    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
+    FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster,
+    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
+    TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{
-    command_events_to_state, recapture_snapshot_in_place, restore_world_from_snapshot, FrameSink,
-    SnapshotHistory, StoredSnapshot,
+    command_events_to_state, recapture_snapshot_in_place, FrameSink, SnapshotHistory,
+    StoredSnapshot,
 };
 pub use systems::spawn_initial_world;
 pub use systems::{
@@ -391,7 +394,9 @@ pub fn build_headless_app() -> App {
 
     let faction_registry = orders::FactionRegistry::default();
     let turn_queue = orders::TurnQueue::new(faction_registry.factions.clone());
-    let snapshot_history = SnapshotHistory::with_capacity(config.snapshot_history_limit.max(1));
+    // Depth is decided in ONE place — `snapshot::PUBLICATION_RING_DEPTH`, which
+    // `capture_snapshot` no longer has to re-assert every turn.
+    let snapshot_history = SnapshotHistory::with_capacity(snapshot::PUBLICATION_RING_DEPTH);
     let generation_registry = GenerationRegistry::with_seed(0xC0FEBABE, 6);
     let influencer_config = Arc::new(
         InfluencerBalanceConfig::from_json_str(BUILTIN_INFLUENCER_CONFIG)
@@ -508,6 +513,8 @@ pub fn build_headless_app() -> App {
         // Default epoch (0) so `capture_snapshot` always finds the resource. The server overwrites
         // it with the live counter on every world (re)build; the idle boot app never captures.
         .insert_resource(WorldEpoch::default())
+        .insert_resource(BandIdAllocator::default())
+        .insert_resource(sim_state::Replaying::default())
         .insert_resource(CapabilityFlags::default())
         .insert_resource(SimulationMetrics::default())
         .insert_resource(crisis_telemetry_resource)
@@ -859,7 +866,10 @@ pub fn build_headless_app() -> App {
             (
                 metrics::collect_metrics,
                 systems::advance_tick,
-                snapshot::capture_snapshot,
+                // Gated off `Replaying`: a rollback replaying the command log forward must not
+                // re-publish frames the client already applied. Its stage-mates above are
+                // deliberately NOT gated — see `sim_state::Replaying`.
+                snapshot::capture_snapshot.run_if(sim_state::not_replaying),
             )
                 // `SimulationTick` then `SimulationMetrics` — a genuine sequence, and the one
                 // stage where running out of order would publish the wrong tick.

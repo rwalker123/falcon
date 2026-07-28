@@ -438,9 +438,9 @@ table TileState {
   // open ocean with no life on it — so it alone put all 4160 tiles of an 80x52 map into every
   // delta and pinned per-turn cost to tile count, which is the property delta streaming exists to
   // remove. Its only consumer in the whole client was the Inspector's Terrain tab, rendering it as
-  // "Mass: %.1f". It survives on the BINCODE snapshot (`TileState.mass`), which rollback needs to
-  // rebuild the ECS `Tile` — the same split the herd/forage/graze registries already use.
-  // Deprecated rather than deleted because slots are positional.
+  // "Mass: %.1f". The serde `TileState.mass` beside this slot is still populated by
+  // `snapshot/map.rs`, but nothing reads it back: rollback restores from `SimState`, which clones
+  // the whole ECS `Tile`. Deprecated rather than deleted because slots are positional.
   mass:long (deprecated);
   temperature:long;
   terrain:TerrainType;
@@ -735,6 +735,15 @@ table PopulationCohortState {
   // It is a PAST-turn stochastic debit, NOT a recurring cost — do not add it to the turnsOfFood runway
   // drain. Append-only.
   raidForfeit:float = 0;
+
+  // The band's durable identity, and the handle a client sends back in a command.
+  //
+  // APPENDED AT THE END OF THE TABLE — FlatBuffers slots are positional and this repo's merges are
+  // append-only (root CLAUDE.md), so a new field goes here and nowhere else.
+  //
+  // `entity` above is an ECS handle: it changes every time a rollback rebuilds the world, so it
+  // names a band only until the next one. `bandId` does not. Commands address bands by this.
+  bandId:ulong;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

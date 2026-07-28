@@ -34,11 +34,33 @@ const EXPECTED_STAGES: [&str; 11] = [
 ///
 /// The `snapshot.build.*` entries are the capture's own passes. `sow_refusals` and `flora` were
 /// folded into the single `patches` sweep in #387 — a merged label, not a lost one.
-const EXPECTED_CAPTURE_PHASES: [&str; 5] = [
+///
+/// **Every section of the capture is listed, including the ones that measure ~0.** The list is a
+/// statement that `snapshot.build` is fully decomposed: the sub-labels sum to the parent, so a
+/// section going missing means some region of the capture has become unattributed — which is
+/// exactly the state that let the dominant 42% (`patches`) go unexamined for three arcs. A
+/// genuinely free section is worth a line for the same reason a gated-off `TurnStage` records ~0:
+/// "costs nothing" and "is not instrumented" must not look identical.
+const EXPECTED_CAPTURE_PHASES: [&str; 20] = [
     "snapshot.build",
+    "snapshot.build.prelude",
     "snapshot.build.tiles",
     "snapshot.build.patches",
+    "snapshot.build.tile_index",
+    "snapshot.build.links",
+    "snapshot.build.populations",
+    "snapshot.build.power",
+    "snapshot.build.ledgers",
+    "snapshot.build.culture",
+    "snapshot.build.discovery",
     "snapshot.build.rasters",
+    "snapshot.build.sentiment",
+    "snapshot.build.crisis",
+    "snapshot.build.header",
+    "snapshot.build.readouts",
+    "snapshot.build.herds",
+    "snapshot.build.forage_patches",
+    "snapshot.build.assemble",
     "snapshot.handoff",
 ];
 

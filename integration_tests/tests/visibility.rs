@@ -1,9 +1,9 @@
 mod common;
 
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, FactionId, FactionRegistry, PopulationCohort,
-    Settlement, SnapshotHistory, StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger,
-    VisibilityState,
+    build_headless_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
+    StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// Test that visibility is isolated per-faction - one faction's visibility
@@ -224,9 +224,10 @@ fn visibility_persists_across_snapshots() {
     );
 
     // Create a new app and restore from snapshot
+    let checkpoint = capture_sim_state(&app.world);
     let mut restored_app = build_headless_app();
     restored_app.update();
-    restore_world_from_snapshot(&mut restored_app.world, snapshot.as_ref());
+    restore_sim_state(&mut restored_app.world, &checkpoint);
 
     // The visibility raster is in the snapshot, verify it was captured
     // Note: Full visibility restoration from snapshot would require additional

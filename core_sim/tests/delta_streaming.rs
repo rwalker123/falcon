@@ -431,3 +431,51 @@ fn an_unchanged_tension_list_is_absent_and_an_emptied_one_is_present_but_empty()
         "applying the emptied-roster delta must clear the client's tensions"
     );
 }
+
+/// **A turn in which nothing moved must produce a delta that carries nothing.**
+///
+/// This is the observable half of the `O(changed)` property the publication path now rests on: the
+/// diff walks the baselines without touching the entries that did not change, so a still world is
+/// cheap *and* silent. The two go together — a delta that carried an unchanged section would mean
+/// the diff had rewritten a baseline it should have left alone.
+///
+/// The guard needs teeth, so the world here is not empty: it carries tiles, a tension roster and a
+/// campaign profile, all of which are re-*captured* every turn and must still compare out.
+#[test]
+fn a_turn_that_changes_nothing_publishes_a_delta_that_carries_nothing() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        culture_tensions: vec![guard_tension()],
+        campaign_profiles: vec![CampaignProfileState {
+            id: Some("still-world".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    world.header.tick = 0;
+    history.update(world.clone());
+
+    // The world's first publication is a baseline and legitimately carries everything; the turn
+    // after it is the steady state under test.
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    let delta = history.last_delta().expect("a delta per turn");
+    assert!(
+        delta.tiles.is_empty() && delta.removed_tiles.is_empty(),
+        "an unchanged tile set must not be re-sent"
+    );
+    assert!(
+        delta.culture_layers.is_empty() && delta.power.is_empty() && delta.populations.is_empty(),
+        "no indexed collection may re-send an unchanged entry"
+    );
+    assert_eq!(delta.culture_tensions, None, "unchanged section: tensions");
+    assert_eq!(
+        delta.campaign_profiles, None,
+        "unchanged section: campaign profiles"
+    );
+    assert_eq!(delta.terrain, None, "unchanged section: terrain overlay");
+    assert_eq!(delta.victory, None, "unchanged section: victory");
+    assert_eq!(delta.herds, None, "unchanged section: herds");
+}

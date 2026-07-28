@@ -440,9 +440,9 @@ pub fn spawn_initial_world(
         } else {
             fallback_region
         };
-        culture.attach_local(tile_entity, parent_region);
+        culture.attach_local(proto.position, parent_region);
         let modifiers = seeded_modifiers_for_position(proto.position);
-        culture.apply_initial_modifiers(tile_entity, modifiers);
+        culture.apply_initial_modifiers(proto.position, modifiers);
     }
 
     for y in 0..height {
@@ -804,10 +804,16 @@ pub fn spawn_initial_world(
     );
 
     let mut cohort_index = 0usize;
+    // Worldgen creates the world, so it creates the band id space: the allocator is built here and
+    // inserted below, rather than taken as a `ResMut`. Taking it as a system param would oblige
+    // every hand-rolled test `World` in the crate to remember to insert one first — 33 of them —
+    // and each of those is a place to forget, which is the omission failure this whole arc is about.
+    let mut band_ids = BandIdAllocator::default();
     if config.start_profile_overrides.starting_units.is_empty() {
         spawn_default_population_clusters(
             &mut commands,
             &registry,
+            &mut band_ids,
             &tiles,
             &tags_grid,
             width,
@@ -822,6 +828,7 @@ pub fn spawn_initial_world(
         spawn_profile_population(
             &mut commands,
             &registry,
+            &mut band_ids,
             &tiles,
             &tags_grid,
             width,
@@ -833,6 +840,9 @@ pub fn spawn_initial_world(
         );
     }
 
+    // Publish the counter with the ids it just handed out, so the next band spawned (an
+    // expedition, a rollback) continues the sequence instead of colliding with a living band.
+    commands.insert_resource(band_ids);
     commands.insert_resource(StartLocation::new(Some(UVec2::new(start_x, start_y))));
     commands.insert_resource(FoodSiteRegistry::new(curated_entries));
 
@@ -2603,6 +2613,7 @@ fn module_distance_bonus(distance: u32, is_primary: bool) -> i32 {
 fn spawn_default_population_clusters(
     commands: &mut Commands,
     registry: &GenerationRegistry,
+    band_ids: &mut BandIdAllocator,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2631,6 +2642,7 @@ fn spawn_default_population_clusters(
                 spawn_population_entity(
                     commands,
                     registry,
+                    band_ids,
                     tiles[idx],
                     1_000,
                     cohort_index,
@@ -2646,6 +2658,7 @@ fn spawn_default_population_clusters(
 fn spawn_profile_population(
     commands: &mut Commands,
     registry: &GenerationRegistry,
+    band_ids: &mut BandIdAllocator,
     tiles: &[Entity],
     tags_grid: &[sim_runtime::TerrainTags],
     width: usize,
@@ -2667,6 +2680,7 @@ fn spawn_profile_population(
                 spawn_population_entity(
                     commands,
                     registry,
+                    band_ids,
                     tiles[idx],
                     spec.band_size(),
                     cohort_index,
@@ -2681,6 +2695,7 @@ fn spawn_profile_population(
         spawn_default_population_clusters(
             commands,
             registry,
+            band_ids,
             tiles,
             tags_grid,
             width,
@@ -2700,9 +2715,11 @@ fn spawn_profile_population(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // one more id source than the linter's threshold likes
 fn spawn_population_entity(
     commands: &mut Commands,
     registry: &GenerationRegistry,
+    band_ids: &mut BandIdAllocator,
     tile_entity: Entity,
     size: u32,
     cohort_index: &mut usize,
@@ -2741,6 +2758,9 @@ fn spawn_population_entity(
     // Every band carries a labor allocation (default empty = fully idle). The client drives
     // assignment; the startup food reserve covers the ramp before the first orders land.
     entity.insert(LaborAllocation::default());
+    // The band's durable identity — see `BandId`. Allocated here rather than derived from position
+    // because several bands can share a hex and a band outlives the hex it started on.
+    entity.insert(band_ids.allocate());
     // Positive `ResidentBand` marker: this is a real band and participates in the
     // population/settlement arc (demographics, migration, sedentarization, startup seeding, supply
     // networks, default-band command pickers). Detached expeditions are spawned separately and

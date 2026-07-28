@@ -33,12 +33,17 @@ fn deterministic_snapshots_match() {
     let snapshot_a = run_simulation(SNAPSHOT_TICKS);
     let snapshot_b = run_simulation(SNAPSHOT_TICKS);
 
+    // The hash covers the WHOLE snapshot, influencers included. It did not always: this test used
+    // to `clear()` `influencers` on both sides first, which hid a single live bug — the influencer
+    // roster drained a `HashSet` into the published `audience_generations` vector, so two runs
+    // emitted the same generation ids in a different order (see `InfluentialRoster::spawn_influencer`).
+    // Nothing else was ever under that mask. Do not reintroduce a per-field exclusion here: the
+    // point of hashing the whole payload is that a new nondeterministic field fails loudly instead
+    // of arriving inside an exemption someone added years ago for an unrelated reason.
     let mut normalized_a = snapshot_a.clone();
-    normalized_a.influencers.clear();
     normalized_a.header.hash = 0;
 
     let mut normalized_b = snapshot_b.clone();
-    normalized_b.influencers.clear();
     normalized_b.header.hash = 0;
 
     assert_eq!(
@@ -65,7 +70,9 @@ fn deterministic_snapshots_match() {
     assert_eq!(snapshot_a.power, snapshot_b.power);
     assert_eq!(snapshot_a.axis_bias, snapshot_b.axis_bias);
     assert_eq!(snapshot_a.sentiment, snapshot_b.sentiment);
-    assert_eq!(snapshot_a.influencers.len(), snapshot_b.influencers.len());
+    // Full equality, not just the count. These per-field asserts exist to LOCALIZE a hash
+    // mismatch, so a field the hash now covers has to be compared in full or it localizes nothing.
+    assert_eq!(snapshot_a.influencers, snapshot_b.influencers);
     assert_eq!(snapshot_a.generations, snapshot_b.generations);
     assert_eq!(snapshot_a.corruption, snapshot_b.corruption);
     assert_eq!(snapshot_a.trade_links, snapshot_b.trade_links);

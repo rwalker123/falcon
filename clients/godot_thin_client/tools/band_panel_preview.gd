@@ -45,6 +45,8 @@ const MANY_SOURCE_CHILD_RATIO := 0.56
 const MANY_SOURCE_ELDER_RATIO := 0.31
 # Sub-pixel slack when comparing a zone's content rect against its host rect.
 const ZONE_BOUNDS_TOLERANCE := 1.0
+## Offset applied to a fixture cohort's `entity` to derive its `band_id` — see `_push_bands`.
+const FIXTURE_BAND_ID_OFFSET := 4000
 ## One Wild Boar's worth of yield in provisions (`HerdTelemetryState.foodPerAnimal`) — the quarry
 ## fixture's delivered food is animals × this, so the sheet's forecast quotes a real food total.
 const QUARRY_FOOD_PER_ANIMAL := 4.0
@@ -237,7 +239,7 @@ func _ready() -> void:
 	_hud.update_food_modules([
 		{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"},
 	])
-	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	print("band_panel_preview: cycler split — player_bands=%d (expect 1), player_expeditions=%d (expect 2)" % [
 		_hud._band_labor._player_bands.size(), _hud._band_labor._player_expeditions.size()])
 
@@ -290,7 +292,7 @@ func _ready() -> void:
 	# exact signal a click emits and the exact handler it runs — a debug back door could pass here
 	# while the live path was broken.
 	# (a) Food breakdown (Gathered/Hunted/Eaten).
-	_hud.update_band_alerts([_band_fixture()])
+	_push_bands([_band_fixture()])
 	_panel.set_active_tab(&"band")   # the narrow shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_expanded_left"},
 			{"edge": SIDE_TOP, "name": "band_panel_food_expanded_top"}]:
@@ -318,7 +320,7 @@ func _ready() -> void:
 		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
-	_hud.update_band_alerts([_concerning_food_band_fixture()])
+	_push_bands([_concerning_food_band_fixture()])
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_food_concerning_left"},
 			{"edge": SIDE_TOP, "name": "band_panel_food_concerning_top"}]:
 		_panel.set_dock(state["edge"])
@@ -334,7 +336,7 @@ func _ready() -> void:
 	# Drop the earlier bug-2 pending assign (it targets the same tile as the confirmed forage row and
 	# would mask it) so this frame shows a CONFIRMED row and a PENDING row side by side.
 	_hud._band_labor._pending_labor.clear()
-	_hud.update_band_alerts([_band_fixture()] + _phase_expedition_fixtures())
+	_push_bands([_band_fixture()] + _phase_expedition_fixtures())
 	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 4, 72, 19, "", "surplus")
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
@@ -345,7 +347,7 @@ func _ready() -> void:
 	# T/B PANEL_HEIGHT would allow. Dock top/bottom and confirm every column's bottom row is visible and
 	# the reserved strip grew to fit (map/HUD reflow is fanned onto the HUD as usual).
 	_hud.show_tile_selection({})   # clear the foreign selection so the panel band is the subject again
-	_hud.update_band_alerts([_starving_band_fixture(), _scout_expedition_fixture(), _hunt_expedition_fixture()])
+	_push_bands([_starving_band_fixture(), _scout_expedition_fixture(), _hunt_expedition_fixture()])
 	for state in [
 		{"edge": SIDE_TOP, "name": "band_panel_top_tall"},
 		{"edge": SIDE_BOTTOM, "name": "band_panel_bottom_tall"},
@@ -364,7 +366,7 @@ func _ready() -> void:
 	_hud._band_labor._pending_labor.clear()
 	_hud.update_herds(_cap_demo_herd_fixtures())
 	_hud.update_forage_patches(_cap_demo_patch_fixtures())
-	_hud.update_band_alerts([_cap_demo_band_fixture()])
+	_push_bands([_cap_demo_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_source_cap")
@@ -387,7 +389,7 @@ func _ready() -> void:
 	# 115px, which is exactly the overflow the tier gating exists to prevent — and which the work-heavy
 	# `band_panel_work_wide` / `band_panel_parties_inspector_wide` states cannot catch (their big band's
 	# vitals carry no chart either).
-	_hud.update_band_alerts([_arrivals_band_fixture()])
+	_push_bands([_arrivals_band_fixture()])
 	_panel.set_active_tab(&"band")   # the narrow (L) shell shows ONE zone; these frames judge the band one
 	for state in [{"edge": SIDE_LEFT, "name": "band_panel_arrivals_left"},
 			{"edge": SIDE_TOP, "name": "band_panel_arrivals_top"},
@@ -402,7 +404,7 @@ func _ready() -> void:
 
 	# (b) A band whose larder EMPTIES inside the horizon: sparse lumpy hauls under a heavy drain, so the
 	# walk hits 0 and the chart draws the dashed DANGER "empty ~turn N" marker.
-	_hud.update_band_alerts([_arrivals_starving_band_fixture()])
+	_push_bands([_arrivals_starving_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_arrivals_empty")
@@ -442,12 +444,12 @@ func _ready() -> void:
 	_assert_people_sum_matches_size(_hud._selection._selected_unit, "band_panel_people_map_path")
 	await _save("band_panel_people_map_path")
 	# Restore the snapshot-path band so the later states start from the same subject they always did.
-	_hud.update_band_alerts([_band_fixture()])
+	_push_bands([_band_fixture()])
 
 	# The paged WORK BOARD at 34 sources — far past one page in the narrow (L dock) shell, so the
 	# pager must appear and NOTHING may scroll.
 	_hud.update_food_modules(_many_forage_modules())
-	_hud.update_band_alerts([_many_sources_band_fixture()])
+	_push_bands([_many_sources_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	await _settle()
@@ -488,7 +490,7 @@ func _ready() -> void:
 	# row does. The Food line above is the control: it still counts FOOD only, so a trade-only hunt must
 	# not move it (trade goods credit the faction stockpile, never the larder).
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
-	_hud.update_band_alerts([_concerning_food_band_fixture()])
+	_push_bands([_concerning_food_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	await _settle()
@@ -509,7 +511,7 @@ func _ready() -> void:
 	# rather than printed as a `0.00` that says the wolf pack yields nothing. This is the frame the
 	# fix is judged on: the previous state's header excluded the wolf's `+0.22` while its row sat
 	# directly underneath, so the arithmetic visibly did not add up.
-	_hud.update_band_alerts([_trade_only_hunt_band_fixture()])
+	_push_bands([_trade_only_hunt_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	await _settle()
@@ -525,7 +527,7 @@ func _ready() -> void:
 	# extractive rung (Sustain) must behave exactly as it always has — one lit rung, immediate emit.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_hud.update_herds(_investment_policy_herd_fixtures())
-	_hud.update_band_alerts([_investment_policy_band_fixture()])
+	_push_bands([_investment_policy_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	_open_work_policy_picker(INVESTMENT_ROW_POLICY)
@@ -555,7 +557,7 @@ func _ready() -> void:
 	# amber severity stripe) and the "Too few herders — animals are drifting off." note in the
 	# inspector, not only in its own drawer.
 	_hud.update_herds(_under_herded_work_herd_fixtures())
-	_hud.update_band_alerts([_under_herded_work_band_fixture()])
+	_push_bands([_under_herded_work_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
 	await _settle()
@@ -566,14 +568,14 @@ func _ready() -> void:
 	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
 	# Restore the reference band so later states start from their usual subject.
 	_hud.update_herds(_herd_fixtures())
-	_hud.update_band_alerts([_band_fixture()])
+	_push_bands([_band_fixture()])
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
 	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
 	# max-useful plateau, the trip forecast reads, and the Send button takes its verdict.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_hud.update_herds(_quarry_herd_fixtures())
-	_hud.update_band_alerts([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
+	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._party_compose_open = true
@@ -626,7 +628,7 @@ func _ready() -> void:
 
 	# Zero idle workers: BOTH mission buttons (Scout / Hunt) stay VISIBLE and DISABLED, with the
 	# shared reason line beneath them.
-	_hud.update_band_alerts([_no_idle_band_fixture()])
+	_push_bands([_no_idle_band_fixture()])
 	await _settle()
 	await _save("band_panel_no_idle")
 
@@ -648,7 +650,7 @@ func _ready() -> void:
 	# gating is what `band_panel_arrivals_top`/`_bottom` guard with a chart-bearing fixture). The strip
 	# + a party row + footer fit because the strip replaces the bottom spacer (`_build_parties_zone_content`).
 	_hud.update_food_modules(_many_forage_modules())
-	_hud.update_band_alerts([_many_sources_band_fixture(), _hunt_expedition_fixture()])
+	_push_bands([_many_sources_band_fixture(), _hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_BOTTOM)
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_DELIVERING_ENTITY))
 	await _settle()
@@ -661,7 +663,7 @@ func _ready() -> void:
 	# (b) NARROW shell (left dock, Parties tab): the tall L/R parties zone holds both parties + the strip
 	# with room to spare. Inspect the NO-SURPLUS party → the invisible-line bug the strip fixes:
 	# "Next delivery: none — the herd has no surplus to raid" must be VISIBLE, not hidden.
-	_hud.update_band_alerts([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture()])
+	_push_bands([_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"parties")
 	_hud._bandpanel._toggle_parties_inspector(str(HUNT_LEAN_ENTITY))
@@ -680,7 +682,7 @@ func _ready() -> void:
 	# party is bound to. Render all three parties + assert every line. `_world_herds` = _herd_fixtures():
 	# game_deer_07 (@68,15) + game_deer_79 (@64,11); the LOST party targets an absent id.
 	_hud.update_herds(_herd_fixtures())
-	_hud.update_band_alerts([
+	_push_bands([
 		_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
 		_lost_hunt_expedition_fixture(),
 	])
@@ -711,7 +713,7 @@ func _ready() -> void:
 	# read is the equality of the two black margins — and that the board itself is unchanged.
 	await _pin_window(Vector2i(ULTRAWIDE_WIDTH, ULTRAWIDE_HEIGHT))
 	_panel.set_dock(SIDE_BOTTOM)
-	_hud.update_band_alerts([_many_sources_band_fixture()])
+	_push_bands([_many_sources_band_fixture()])
 	await _settle()
 	await _save("band_panel_wide_ultrawide")
 	_assert_zones_within_bounds()
@@ -774,7 +776,7 @@ func _ready() -> void:
 func _render_dock_row_states() -> void:
 	await _pin_canvas(DOCKROW_CANVAS)
 	_seed_embedded_minimap()
-	_hud.update_band_alerts([_many_sources_band_fixture()])
+	_push_bands([_many_sources_band_fixture()])
 
 	# BOTTOM: the chrome in ONE column at the row's TRAILING end — minimap + zoom rail directly above the
 	# turn orb — nothing in the row's leading gutter (the band zone is flush to the left edge), and
@@ -1026,7 +1028,7 @@ func _assert_detail_panel_delivery() -> void:
 	view.display_snapshot({
 		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"populations": [party],
+		"populations": _stamp_band_ids([party]),
 	})
 	view.unit_selected.connect(_hud.show_unit_selection)
 	view.handle_hex_click(tile.x, tile.y, MOUSE_BUTTON_LEFT)
@@ -1913,8 +1915,27 @@ func _map_path_snapshot() -> Dictionary:
 	return {
 		"grid": {"width": MAP_PATH_GRID_W, "height": MAP_PATH_GRID_H, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
-		"populations": [_band_fixture()],
+		"populations": _stamp_band_ids([_band_fixture()]),
 	}
+
+## Stamp a fixture cohort with the `band_id` the real wire carries, DELIBERATELY DIFFERENT from its
+## `entity`. `band_id` is the durable handle every band-addressed command names
+## (`HudConst.NO_BAND_ID`); `entity` is client-local ECS allocation state. Both are plain ints, so a
+## fixture where the two agree cannot tell a correct emit from one that sent the entity — which is
+## exactly how that defect shipped. The offset keeps ids readable (band 904 -> 4904) while
+## guaranteeing they differ. Stamped at PUSH time, not at construction, because several fixtures
+## override `entity` after the builder returns.
+static func _stamp_band_ids(cohorts: Array) -> Array:
+	var stamped: Array = []
+	for cohort_variant in cohorts:
+		var cohort: Dictionary = (cohort_variant as Dictionary).duplicate(true)
+		cohort["band_id"] = int(cohort.get("entity", 0)) + FIXTURE_BAND_ID_OFFSET
+		stamped.append(cohort)
+	return stamped
+
+## Push a cohort roster through the real snapshot path (`update_band_alerts`), band ids stamped.
+func _push_bands(cohorts: Array) -> void:
+	_hud.update_band_alerts(_stamp_band_ids(cohorts))
 
 ## A player-faction Camp-stage band (population-snapshot shape update_band_alerts consumes):
 ## working-age labor with idle workers + a couple of active assignments + the settlement stage

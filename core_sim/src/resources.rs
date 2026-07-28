@@ -149,7 +149,6 @@ pub struct SimulationConfig {
     pub snapshot_flat_bind: SocketAddr,
     pub command_bind: SocketAddr,
     pub log_bind: SocketAddr,
-    pub snapshot_history_limit: usize,
     pub crisis_auto_seed: bool,
     /// Fog of war master switch — the SINGLE authority for it, and deliberately server-owned. It
     /// gates both the herd display list (`herd_snapshot_entries`) and the visibility raster, so the
@@ -311,7 +310,6 @@ struct SimulationConfigData {
     snapshot_flat_bind: String,
     command_bind: String,
     log_bind: String,
-    snapshot_history_limit: usize,
     #[serde(default)]
     crisis_auto_seed: bool,
     /// Defaulted through a function rather than `#[serde(default)]`, which would yield `false` for a
@@ -519,7 +517,6 @@ impl SimulationConfigData {
             snapshot_flat_bind: parse_socket(self.snapshot_flat_bind, "snapshot_flat_bind")?,
             command_bind: parse_socket(self.command_bind, "command_bind")?,
             log_bind: parse_socket(self.log_bind, "log_bind")?,
-            snapshot_history_limit: self.snapshot_history_limit,
             crisis_auto_seed: self.crisis_auto_seed,
             fog_enabled: self.fog_enabled,
         })
@@ -678,6 +675,53 @@ pub struct SimulationTick(pub u64);
 /// snapshot server replays to reconnecting subscribers. The idle boot app carries `0`.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorldEpoch(pub u32);
+
+/// Hands out [`crate::components::BandId`]s, and is **checkpoint state in its own right**.
+///
+/// A monotonic counter is only an identity source if it is restored with the world it numbered.
+/// Restore the bands but not the counter and the next band spawned after a rollback re-issues an
+/// id that a living band already holds, which is worse than the entity churn this replaces —
+/// duplicate ids alias silently rather than failing to resolve.
+///
+/// Starts at 1 so `BandId(0)` is available as an unmistakable "unset".
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BandIdAllocator {
+    next: u64,
+}
+
+impl Default for BandIdAllocator {
+    fn default() -> Self {
+        Self {
+            next: FIRST_BAND_ID,
+        }
+    }
+}
+
+/// First id handed out; `BandId(0)` is reserved for "unset".
+const FIRST_BAND_ID: u64 = 1;
+
+impl BandIdAllocator {
+    /// The next unused id.
+    pub fn allocate(&mut self) -> crate::components::BandId {
+        let id = crate::components::BandId(self.next);
+        self.next = self.next.saturating_add(1);
+        id
+    }
+
+    /// The counter's current position, for the checkpoint.
+    pub fn peek(&self) -> u64 {
+        self.next
+    }
+
+    /// Restore the counter, refusing to move it backwards.
+    ///
+    /// A checkpoint is the authority on where the counter was, but a rollback must never lower it
+    /// below an id already alive in this process — that is the aliasing case above, and clamping is
+    /// cheaper than trusting every caller to restore in the right order.
+    pub fn restore(&mut self, next: u64) {
+        self.next = self.next.max(next).max(FIRST_BAND_ID);
+    }
+}
 
 bitflags! {
     #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

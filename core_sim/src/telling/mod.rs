@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use bevy::{ecs::system::SystemParam, prelude::*};
 use tracing::info;
 
+use crate::components::BandId;
 use crate::{
     components::{LaborAllocation, PopulationCohort, ResidentBand, Tile},
     culture::CultureManager,
@@ -120,8 +121,9 @@ pub struct BeatLedger {
     /// civilization and is exported per faction.
     mediums: BTreeMap<u32, AttainedMedium>,
     /// Faction → axis → **effective** stance, recomputed every turn from the signals plus the
-    /// declared offsets. **Derived scratch**: not persisted (it is a pure function of state that
-    /// *is*) and excluded from equality, the `LaborAllocation::last_yields` convention. Exists so
+    /// declared offsets. **Derived scratch**: a pure function of the rest of the ledger, recomputed
+    /// every `telling_tick` and excluded from equality, the `LaborAllocation::last_yields`
+    /// convention. Exists so
     /// the snapshot can export what the player's identity currently reads as without re-sampling.
     last_effective_stance: BTreeMap<u32, BTreeMap<String, f32>>,
 }
@@ -298,7 +300,7 @@ impl BeatLedger {
     }
 
     /// The **effective** stance the last turn computed for `faction` (signal + declared offset).
-    /// Empty before the first `telling_tick` of a session — it is derived, not persisted.
+    /// Empty before the first `telling_tick` of a session, which is the only time it is empty.
     pub fn effective_stance_for(&self, faction: FactionId) -> Option<&BTreeMap<String, f32>> {
         self.last_effective_stance.get(&faction.0)
     }
@@ -703,7 +705,9 @@ impl BeatLedger {
                     )
                 })
                 .collect(),
-            // Derived, not persisted: recomputed by the next `telling_tick`.
+            // Absent from the serde record, and only from it: `SimState` clones the whole ledger,
+            // so a rollback DOES restore this. A ledger rebuilt from a `BeatLedgerState` starts
+            // without it and the next `telling_tick` recomputes it.
             last_effective_stance: BTreeMap::new(),
         }
     }
@@ -799,7 +803,7 @@ pub struct TellingSources<'w, 's> {
         'w,
         's,
         (
-            Entity,
+            &'static BandId,
             &'static PopulationCohort,
             Option<&'static LaborAllocation>,
         ),
@@ -874,8 +878,8 @@ pub fn telling_tick(
         .cohorts
         .iter()
         .filter(|(_, cohort, _)| cohort.faction == faction)
-        .map(|(entity, cohort, labor)| BandView {
-            entity,
+        .map(|(band, cohort, labor)| BandView {
+            band: *band,
             cohort,
             labor,
         })

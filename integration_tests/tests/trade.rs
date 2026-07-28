@@ -1,10 +1,11 @@
 mod common;
 
 use bevy::prelude::Entity;
+use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_headless_app, restore_world_from_snapshot, scalar_from_f32, scalar_one, scalar_zero,
-    DiscoveryProgressLedger, FactionId, FactionRegistry, KnowledgeFragment, LogisticsLink,
-    PendingMigration, PopulationCohort, Scalar, SnapshotHistory, TradeLink, TradeTelemetry,
+    build_headless_app, scalar_from_f32, scalar_one, scalar_zero, DiscoveryProgressLedger,
+    FactionId, FactionRegistry, KnowledgeFragment, LogisticsLink, PendingMigration,
+    PopulationCohort, Scalar, TradeLink, TradeTelemetry,
 };
 
 #[test]
@@ -186,20 +187,21 @@ fn trade_pending_fragments_survive_snapshot_restore() {
 
     app.update();
 
-    let history = app.world.resource::<SnapshotHistory>();
-    let stored = history.latest_entry().expect("snapshot captured");
-    let snapshot = stored.snapshot.clone();
+    let checkpoint = capture_sim_state(&app.world);
     assert!(
-        snapshot
-            .trade_links
-            .iter()
-            .any(|state| !state.pending_fragments.is_empty()),
-        "Snapshot should retain pending trade fragments"
+        checkpoint.links.iter().any(|link| link
+            .trade
+            .as_ref()
+            .is_some_and(|trade| !trade.pending_fragments.is_empty())),
+        "the checkpoint should retain pending trade fragments"
     );
 
+    // Restored into a FRESH app, which is the harder case: nothing carries over except the
+    // checkpoint itself, so anything `restore_sim_state` relies on finding must already exist in a
+    // bare `build_headless_app`.
     let mut restored_app = build_headless_app();
     restored_app.update();
-    restore_world_from_snapshot(&mut restored_app.world, snapshot.as_ref());
+    restore_sim_state(&mut restored_app.world, &checkpoint);
 
     {
         let mut query = restored_app.world.query::<&TradeLink>();
@@ -249,21 +251,19 @@ fn pending_migration_survives_snapshot_restore() {
 
     app.update();
 
-    let history = app.world.resource::<SnapshotHistory>();
-    let stored = history.latest_entry().expect("snapshot captured");
-    let snapshot = stored.snapshot.clone();
-    let migration_state = snapshot
-        .populations
+    let checkpoint = capture_sim_state(&app.world);
+    let migration_state = checkpoint
+        .bands
         .iter()
-        .find_map(|state| state.migration.as_ref())
-        .expect("migration persisted in snapshot");
-    assert_eq!(migration_state.destination, 1);
+        .find_map(|band| band.cohort.migration.as_ref())
+        .expect("migration persisted in the checkpoint");
+    assert_eq!(migration_state.destination, FactionId(1));
     assert_eq!(migration_state.eta, 1);
     assert_eq!(migration_state.fragments.len(), 1);
 
     let mut restored_app = build_headless_app();
     restored_app.update();
-    restore_world_from_snapshot(&mut restored_app.world, snapshot.as_ref());
+    restore_sim_state(&mut restored_app.world, &checkpoint);
 
     {
         let mut query = restored_app.world.query::<&PopulationCohort>();

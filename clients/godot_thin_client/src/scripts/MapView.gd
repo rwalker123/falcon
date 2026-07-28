@@ -2083,6 +2083,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 		label_cache[label] = true
 		var marker := {
 			"entity": int(entry.get("entity", -1)),
+			# THE HANDLE EVERY BAND-ADDRESSED COMMAND NAMES (see `HudConst.NO_BAND_ID`). It has to ride the
+			# marker because the emit path reads the SELECTED UNIT — which is this marker, not the raw
+			# cohort — so a marker that drops it emits commands naming band 0 and the server rejects every
+			# one. Distinct from `entity`, which never leaves the client.
+			"band_id": int(entry.get("band_id", HudConst.NO_BAND_ID)),
 			"faction": entry.get("faction", PLAYER_FACTION_ID),
 			"pos": [current_x, current_y],
 			"size": int(entry.get("size", 0)),

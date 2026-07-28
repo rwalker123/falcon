@@ -1335,9 +1335,19 @@ text = "Heat Debug"
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="HeatEntitySpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+[node name="HeatXLabel" type="Label" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
 layout_mode = 2
-max_value = 999999999.0
+text = "X"
+
+[node name="HeatXSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
+
+[node name="HeatYLabel" type="Label" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
+text = "Y"
+
+[node name="HeatYSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
+layout_mode = 2
 
 [node name="HeatDeltaSpin" type="SpinBox" parent="RootPanel/TabContainer/Commands/HeatControls/HeatRow"]
 layout_mode = 2

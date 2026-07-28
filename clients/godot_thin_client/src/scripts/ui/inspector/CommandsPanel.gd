@@ -70,8 +70,11 @@ const COMMAND_LOG_LIMIT := 40
 @onready var corruption_intensity_spin: SpinBox = $CorruptionControls/CorruptionRow/CorruptionIntensitySpin
 @onready var corruption_exposure_spin: SpinBox = $CorruptionControls/CorruptionRow/CorruptionExposureSpin
 @onready var corruption_inject_button: Button = $CorruptionControls/CorruptionRow/CorruptionInjectButton
-# Heat
-@onready var heat_entity_spin: SpinBox = $HeatControls/HeatRow/HeatEntitySpin
+# Heat — addressed by TILE, not by entity: `heat <x> <y> [delta]`, resolved server-side through the
+# tile registry. It used to take an entity id, which this panel had no honest way to obtain (it holds
+# no snapshot and no map selection), so the field was a raw number the designer had to guess.
+@onready var heat_x_spin: SpinBox = $HeatControls/HeatRow/HeatXSpin
+@onready var heat_y_spin: SpinBox = $HeatControls/HeatRow/HeatYSpin
 @onready var heat_delta_spin: SpinBox = $HeatControls/HeatRow/HeatDeltaSpin
 @onready var heat_apply_button: Button = $HeatControls/HeatRow/HeatApplyButton
 # Config reload
@@ -169,11 +172,10 @@ func _ready() -> void:
 		corruption_exposure_spin.value = 3
 	if corruption_inject_button != null:
 		corruption_inject_button.pressed.connect(_on_corruption_inject_button_pressed)
-	# Heat controls
-	if heat_entity_spin != null:
-		heat_entity_spin.min_value = 0
-		heat_entity_spin.max_value = 999999999
-		heat_entity_spin.step = 1
+	# Heat controls. The coordinate ceilings are DERIVED from the map-size registry — the largest map
+	# the client can ask for is the largest tile coordinate that can exist — rather than picked.
+	_configure_tile_coord_spin(heat_x_spin, _largest_offered_map_extent("width"))
+	_configure_tile_coord_spin(heat_y_spin, _largest_offered_map_extent("height"))
 	if heat_delta_spin != null:
 		heat_delta_spin.min_value = -1000000
 		heat_delta_spin.max_value = 1000000
@@ -240,7 +242,7 @@ func apply_typography() -> void:
 		channel_dropdown, channel_magnitude_spin, channel_boost_button,
 		spawn_scope_dropdown, spawn_generation_spin, spawn_button,
 		corruption_dropdown, corruption_intensity_spin, corruption_exposure_spin, corruption_inject_button,
-		heat_entity_spin, heat_delta_spin, heat_apply_button,
+		heat_x_spin, heat_y_spin, heat_delta_spin, heat_apply_button,
 		config_path_edit, turn_pipeline_reload_button, snapshot_overlays_reload_button
 	]:
 		if control != null:
@@ -518,15 +520,33 @@ func _on_corruption_inject_button_pressed() -> void:
 
 # --- Heat ---
 
+## `heat <x> <y> [delta]` — the target is a TILE, resolved server-side through the tile registry.
+## There is deliberately no validity gate on the coordinates: this panel holds no snapshot, so it
+## does not know the live grid's size, and (0, 0) is a perfectly good tile — the old `entity_id <= 0`
+## guard cannot be carried over as `x <= 0`. The spin ranges bound the input instead, and an
+## off-map tile is refused by the server, which is the only side that can honestly judge it.
 func _on_heat_apply_button_pressed() -> void:
-	var entity_id: int = int(heat_entity_spin.value) if heat_entity_spin != null else 0
+	var x: int = int(heat_x_spin.value) if heat_x_spin != null else 0
+	var y: int = int(heat_y_spin.value) if heat_y_spin != null else 0
 	var delta: int = int(heat_delta_spin.value) if heat_delta_spin != null else 0
-	if entity_id <= 0:
-		_append_log_sink.call("Heat command requires a valid entity id.")
-		return
-	var line: String = "heat %d %d" % [entity_id, delta]
-	var message: String = "Heat delta %d applied to entity %d." % [delta, entity_id]
+	var line: String = "heat %d %d %d" % [x, y, delta]
+	var message: String = "Heat delta %d applied to tile (%d, %d)." % [delta, x, y]
 	_send.call(line, message)
+
+## A whole-number tile-coordinate spin, bounded by the grid it could address.
+func _configure_tile_coord_spin(spin: SpinBox, extent: int) -> void:
+	if spin == null:
+		return
+	spin.min_value = 0
+	spin.max_value = max(0, extent - 1)
+	spin.step = 1
+
+## The largest `width`/`height` any offered map has — the ceiling on a legal tile coordinate.
+func _largest_offered_map_extent(axis: String) -> int:
+	var largest := 0
+	for option in MapSizes.OPTIONS:
+		largest = max(largest, int(option.get(axis, 0)))
+	return largest
 
 # --- Config reload ---
 
@@ -589,8 +609,10 @@ func _apply_enabled() -> void:
 		corruption_exposure_spin.editable = connected
 	if heat_apply_button != null:
 		heat_apply_button.disabled = not connected
-	if heat_entity_spin != null:
-		heat_entity_spin.editable = connected
+	if heat_x_spin != null:
+		heat_x_spin.editable = connected
+	if heat_y_spin != null:
+		heat_y_spin.editable = connected
 	if heat_delta_spin != null:
 		heat_delta_spin.editable = connected
 	if turn_pipeline_reload_button != null:

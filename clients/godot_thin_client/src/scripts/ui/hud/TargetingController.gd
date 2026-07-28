@@ -277,17 +277,22 @@ func _try_dispatch_pending_move_band(tile_info: Dictionary) -> void:
 	if x < 0 or y < 0:
 		return
 	var band := _pending_move_band
-	var bits := int(band.get("entity", -1))
+	# The command names the DURABLE `band_id` (see `HudConst.NO_BAND_ID`); the optimistic pending
+	# overlay stays filed under the client-local `entity`, which is what every reader of it looks up.
+	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	var entity := int(band.get("entity", -1))
+	if band_id == HudConst.NO_BAND_ID or entity < 0:
+		return
 	move_band_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-		"band": bits,
+		"band_id": band_id,
 		"x": x,
 		"y": y,
 	})
 	_pending_move_band = {}
 	_refresh_targeting()
 	# Optimistic feedback: mark the destination pending until a newer-turn snapshot confirms.
-	_band_labor.record_pending_move(bits, x, y)
+	_band_labor.record_pending_move(entity, x, y)
 	_after_pending_change_fn.call()
 
 # ---- Send-expedition -----------------------------------------------------------------------------
@@ -318,7 +323,7 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 	var band: Dictionary = _pending_send_expedition.get("band", {})
 	send_expedition_requested.emit({
 		"faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
-		"band": int(band.get("entity", -1)),
+		"band_id": int(band.get("band_id", HudConst.NO_BAND_ID)),
 		"party_workers": int(_pending_send_expedition.get("party_workers", 0)),
 		"x": x,
 		"y": y,

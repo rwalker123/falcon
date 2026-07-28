@@ -98,11 +98,11 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 > rather than punishing one bad stretch twice. **`1.0` stops growth outright** — a config change, not
 > a code change (pinned by `deficit_penalty_of_one_stops_growth_outright`).
 >
-> **`None` flow is NO DATA, never a famine.** `last_yields`/`last_pen_feed_upkeep` are derived, not
-> persisted, so `band_food_flow` must distinguish *unprojected* from *genuinely zero* — the same trap
+> **`None` flow is NO DATA, never a famine.** `last_yields`/`last_pen_feed_upkeep` are rebuilt each
+> turn, so `band_food_flow` must distinguish *unprojected* from *genuinely zero* — the same trap
 > already documented for the arrivals schedule in `larder_runway_turns`. **Staffed assignments with
-> empty `last_yields`** = a rehydrated cohort → `None` → neutral trend (otherwise every rollback
-> would suppress births); **empty `assignments`** = a really idle band → `Some` with zero income. The
+> empty `last_yields`** = telemetry no turn has written → `None` → neutral trend (otherwise a band
+> that has not resolved yet would be denied births); **empty `assignments`** = a really idle band → `Some` with zero income. The
 > disambiguation is `assignments.is_empty()` and it is pinned by `food_flow_tests`.
 >
 > Because `simulate_population` runs *before* `advance_labor_allocation`, the flow reading is one
@@ -110,14 +110,14 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
 > living rather than a single turn's haul.
 >
 > **The factors are EXPORTED, and the wire's not-projected sentinel is a ZERO RESERVE.** The set
-> `simulate_population` resolved is parked on the cohort as `last_fertility_factors` — derived, not
-> persisted, exactly like `last_morale_contributions` — and published as
+> `simulate_population` resolved is parked on the cohort as `last_fertility_factors` — recomputed
+> each turn, exactly like `last_morale_contributions` — and published as
 > `PopulationCohortState.fertilityHunger/Reserve/Trend` (fixed-point, **neutral at 1e6, not at 0**:
 > these multiply, they do not sum). `advance_demographics` returns them alongside the new bracket
 > state (`DemographicOutcome`) rather than the capture re-deriving them, because they are resolved on
 > the turn's *opening* brackets and *pre-meal* larder — a recomputation at capture would publish
 > numbers that never drove a birth (`the_capture_publishes_the_factors_that_actually_drove_the_births`).
-> A rehydrated cohort publishes the all-zero default, and **`reserve == 0` is what makes that
+> A cohort that has not yet been through a turn publishes the all-zero default, and **`reserve == 0` is what makes that
 > unambiguous**: a computed `reserve` is `1 + bonus × ramp` with both terms ≥ 0, so it is ≥ 1 by
 > construction, while `hunger` and `trend` both legitimately reach 0. The client keys "no reading" off
 > it and must never render a missing set as a famine — the same no-data rule the `trend` factor itself
@@ -143,8 +143,8 @@ snapshot read from one source. The cold term has a **tolerance dead-band**: `max
 = 9.0 in `simulation_config.json`), so temperate mid-latitudes (|Δ| ≤ 9°) bleed **zero** climate
 morale and only genuine extremes (poles/high-alt/equator) drain — e.g. at ambient 18° a −5° pole
 (|Δ| = 23°) drains `(23−9)·0.004 = 0.056`, a 30° equator (|Δ| = 12°) drains `0.012`. Habitability
-reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **derived per-turn, not snapshot-persisted** (a
-rehydrated cohort reads `0`/`None` until the next turn). Exported as `PopulationCohortState.moraleDelta`
+reuses this helper, so most of the map rates Hospitable/Fair and only extremes read Harsh/Hostile. These fields are **recomputed each turn** by
+`simulate_population`. Exported as `PopulationCohortState.moraleDelta`
 (fixed-point `long`, `FIXED_POINT_SCALE` = 1e6) + `moraleCause:ubyte` (`0=None, 1=Terrain, 2=Cold,
 3=Unrest`). `TileState.habitability:long` carries the band-independent `tile_morale_pressure` total
 for the tile (same fixed-point scale) so the client can rate a hex's harshness. All three are wired
@@ -163,7 +163,7 @@ so a dry larder bleeds down over several turns rather than in one.
 
 Each band's goods live in a `LocalStore` (`components.rs`) — a commodity-keyed bag (food under the
 `FOOD` = `"provisions"` key) held on `PopulationCohort.stores`, so the same store carries any future
-good. Brackets + store persist in the snapshot (`PopulationCohortState.stores`) so rollback restores
+good. Brackets + store ride the client wire as `PopulationCohortState.stores` so the HUD can render
 the exact larder. A per-faction age-structure + dependency-ratio HUD readout ships as
 `PopulationDemographicsState` (new `.fbs` table aggregated at capture, wired through
 sim_schema/snapshot/native/`Hud.gd` exactly like `SedentarizationState`).
@@ -213,8 +213,8 @@ with the most workers in the band's `LaborAllocation`). Both are computed at cap
 > renders as ∞.
 >
 > **Consumption here is the forward `food_demand`** (what the people will *want* to eat), not
-> `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` on a
-> rehydrated save and falls short of demand in a famine. The client's chart drains by
+> `last_food_consumption`: `demand` is always resolvable, where the actual debit is `0` before a
+> band's first turn and falls short of demand in a famine. The client's chart drains by
 > `foodConsumption` instead, so the two differ **only for a band already eating short** — where the
 > sim is the pessimistic (correct) one.
 >
@@ -237,11 +237,9 @@ posting forward-observer vantages that see around obstacles; field name kept for
 `LaborAllocation.last_yields` each turn — one `SourceYield { actual, sustainable, wasted, workers_needed, overdraws, realized }`
 (f32 provisions + a worker count)
 per assignment, **in the same index order** as `assignments` (so the snapshot zips by index — every
-`LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is
-**derived, not persisted**: it is out of rollback (`#[serde]` never sees it; `labor_allocation_from_state`
-restores only the assignments, leaving it empty until the next tick) and is **excluded from
-`LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so it can't perturb the
-persisted-intent comparison. A row is also written **at assign time**, seeded from the source's
+`LaborAllocation` mutator keeps the two aligned; see "Assign-time yield seeding"). It is **excluded
+from `LaborAllocation`'s equality** (manual `PartialEq` compares assignments only) so per-turn
+telemetry can't perturb a comparison of two allocations' intent. A row is also written **at assign time**, seeded from the source's
 pre-commit forecast, so a brand-new assignment shows its expected yield instead of `+0.00` before the
 turn resolves (see "Assign-time yield seeding (the `+0.00` fix)" under Pre-commit Yield Forecast). Definitions: **`actual`** = the provisions the source produced this turn
 (the value added to the larder); **`sustainable`** = what it could yield without drawing down its
@@ -282,7 +280,7 @@ brackets, **not** a `food_demand` re-derived at capture on the post-turn bracket
 births would inflate that and break the larder ledger identity by exactly the growth. `turnsOfFood`
 drains by the post-turn `food_demand` instead — a forward "turns I can last", a different question;
 see the runway callout above).
-All derived at capture (0 on a rehydrated save before the next tick). **The client
+All derived at capture (0 on a band no turn has resolved yet). **The client
 consumes these next** (allocation-panel rows + tooltip + ledger footer, a follow-up PR): a per-turn
 `actual > sustainable` is the client-derived **overhunting signal** — a *leading* flow indicator,
 distinct from the stock-based `ecology_phase` — and `workers > workersNeeded` is the **overstaffing**
@@ -368,7 +366,7 @@ construction: `Σ arrivals ≈ realized × horizon`, to within the partial body 
 - On the wire: `LaborAssignment.arrivalSchedule:[float]` (append-only, after `realizedYield`), on both
   `WorldSnapshot` and `WorldDelta`. A flat `[float]` rather than a vector of `{turn, amount}` tables is
   deliberate — **the index IS the turn offset**, so it needs no per-entry table and stays compact. An
-  **empty** vector means *not projected* (Scout/Warrior, or a rehydrated `SourceYield::ZERO`), which the
+  **empty** vector means *not projected* (Scout/Warrior, or an unresolved `SourceYield::ZERO`), which the
   client must read as "no data", never as famine. **Client follow-up:** nothing renders it yet; the
   merged per-band larder projection is the client's to compose from these plus consumption — the sim
   owns the model (when + how much), walking the larder is presentation.
@@ -435,8 +433,8 @@ Extension seams are present and empty — future factors/consequences slot in wi
   (Layer 3b). A `grievance` accumulator (severity × duration) rises by `grievance_gain ×
   discontent_fraction` (× `trapped_multiplier` when *trapped* — below the migration threshold with no
   reachable destination) and decays by `grievance_decay` while content. **Phase 1 only populates
-  `grievance`** — no consequence reads it (reserved for a future revolution trigger); it IS
-  snapshot-**persisted** (like `age_turns`) so a rollback preserves brewing unrest.
+  `grievance`** — no consequence reads it (reserved for a future revolution trigger); it rides the
+  client wire as `PopulationCohortState.grievance` (like `age_turns`) so the HUD can show brewing unrest.
 - **Layer 3a — productivity modifier stack.** `output_multiplier(cohort, cfg) = Π(modifiers)`
   (`systems.rs`). Phase 1 has one entry, `discontent_output_modifier = max(floor_mult, 1 −
   discontent_fraction × discontent_weight)` (floor 0.5, weight 1.0). Applied at **payout** at every

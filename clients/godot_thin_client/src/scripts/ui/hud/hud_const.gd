@@ -5,6 +5,17 @@ class_name HudConst
 
 const PLAYER_FACTION_ID := 0
 
+# THE ONE HANDLE A COMMAND MAY NAME A BAND BY: `PopulationCohortState.bandId`, decoded onto every
+# cohort dict as `band_id`. It is durable — a rollback rebuilds the ECS world and renumbers every
+# `entity`, so a command addressed by entity bits resolved to nothing when replayed, silently. The
+# sim's `resolve_starting_unit_entity` accepts `band_id` and nothing else, and both are `u64`, so
+# sending the wrong one fails NOWHERE until a player notices their orders do nothing.
+# `entity` remains correct for client-local identity (selection, marker keys, the pending-labor
+# overlay) — it simply never travels to the server.
+# The wire's "no id" value, which does not occur for a real band; used as the absent-band sentinel
+# so an unresolvable band emits no command at all rather than one naming band 0.
+const NO_BAND_ID := 0
+
 # `roster_occupant_selected`'s id for the LAND kind: the land has no entity, and the signal's id is
 # a Variant, so it carries the same "no occupant" sentinel the rest of the client uses.
 const LAND_SUBJECT_ID := -1

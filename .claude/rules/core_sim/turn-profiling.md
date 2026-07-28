@@ -97,6 +97,102 @@ cost is real and worth stating: flora dominates that number (~1.4 of 1.4 ms), so
 regression no longer has its own line — it shows up as `patches` growing.
 `core_sim/tests/turn_profile_wiring.rs`'s `EXPECTED_CAPTURE_PHASES` pins the new set.
 
+## `snapshot.build` is fully decomposed — and the growth column is the one to read
+
+For three arcs `snapshot.build` carried three labels over a ~700-line body, so its dominant
+section had no name and nothing had ever printed it. It now carries **eighteen**, one per section,
+and they **sum to the parent** (2.917 of 2.919 ms measured at 80×52): a region that lands in no
+section is a decomposition bug, which is why `EXPECTED_CAPTURE_PHASES` pins every one of them
+including the sections that measure ~0.
+
+Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
+
+| section | ms @80×52 | % | copy or derive | proportional to | grows when |
+|---|---|---|---|---|---|
+| `patches` | **1.217** | 41.7 | **derive** | patch tiles × realized species × **payoff accounts** | map grows; **a payoff account is added** |
+| `readouts.forage_patches` | 0.424 | 14.5 | **derive** | patches × ladder rungs | map grows; a rung/policy is added |
+| `rasters` (9 overlays, 2 blocks) | 0.319 | 10.9 | **derive** | tiles × rasters | map grows; a raster is added |
+| `tiles` | 0.211 | 7.2 | copy + 2 cheap derivations | tiles | map grows |
+| `culture` | 0.206 | 7.0 | **copy** | culture layers (one local layer per tile) | map grows |
+| `assemble` | 0.204 | 7.0 | **copy** (`.clone()` per field) | assembled snapshot bytes | anything grows |
+| `tile_index` | 0.159 | 5.5 | derive/join | tiles (culture probe + sort + coord index) | map grows |
+| `power` | 0.104 | 3.6 | copy | power nodes (= tiles) | map grows |
+| `readouts.herds` | 0.060 | 2.1 | **derive** (fog filter + hunt forecast) | herds, ~4–5 µs each | herd count grows |
+| `prelude` · `links` · `populations` · `ledgers` · `discovery` · `sentiment` · `crisis` · `header` · `readouts` remainder | 0.017 | 0.6 | mixed | O(1), content counts, faction counts | with the content catalog, or never |
+
+**Pick a target from the growth column, not the ms column.** A section at 0.05 ms that is
+`O(tiles × subsystems)` compounds twice as the game develops; one at 1 ms that is `O(1)` never
+moves again. Reading the ms column alone is what produced the standing (wrong) assumption that
+rasters were the thing to attack.
+
+### One more raster costs 0.028 ms — the block is `O(tiles × rasters)` with a tiny constant
+
+Measured by labelling all nine individually (scaffolding, since removed — the shipped code has the
+single `rasters` scope). At 80×52 the **marginal** cost of adding one overlay is **0.028 ms
+median**, 0.035 mean, range 0.001 (moisture) to 0.089 (corruption, military): about **1% of
+`snapshot.build`**, at ~**8.5 ns per tile per raster**. The `O(tiles × rasters)` shape is real and
+both factors do grow — the constant is simply 24× smaller per tile than `patches`.
+
+**The block is not uniform, and the split is meaningful.** `corruption`, `military`, `sentiment`
+and `logistics` are **84%** of it, because each derives its cell from *other* snapshot sections
+(tile states, populations, power nodes, the logistics raster). `terrain`, `culture`, `visibility`,
+`moisture` and `elevation` are near-copies of a resource or a field and cost 0.001–0.008 ms each.
+A new overlay's cost therefore depends on which of those two it is.
+
+### `patches` is `O(patch tiles × k × payoff accounts)` — only the third factor is unbounded
+
+- **patch tiles** — one per food-bearing tile (2110 at 80×52, 7811 at 160×104). Grows with the map.
+- **k, the realized species per patch** — capped by `flora_config.json`'s **`realized_species_max`
+  (4)**, observed mean 2.84. Worth stating explicitly: *a bigger flora roster does not run away
+  here.* More species per biome only pushes `min(hosted, 4)` toward 4 and then stops.
+- **payoff accounts** — the inner loop prices every share at every account:
+  `commit_payoff(PlantTended)`, `commit_payoff(PlantField)`, `commit_fodder_payoff` (F3),
+  `commit_trade_payoff` (F4). **Four today; it was two before F3/F4.** This is the factor that
+  grows with the subsystem count, and it is a multiplier on the whole map.
+
+A **fifth payoff account costs ~+0.30 ms, ~10% of `snapshot.build` — roughly ten rasters.** Cost
+per flora share is flat across a 16× change in tile count (217 / 203 / 218 ns at 40×26 / 80×52 /
+160×104), so that projection is linear arithmetic, not extrapolation.
+
+**The forecast is derived for the whole map to answer a per-selection question.** `forage_patches`
+is read by the client's `MapView._tile_info_at(col, row)` — a per-tile query on selection — and by
+the compose stepper for one source. Both consumers are per-selection, and the server derives a
+pre-commit forecast for every patch on the map every turn.
+
+### Write-side change emission addresses 18% of `snapshot.build`
+
+Emission — systems publishing changes as they mutate — can replace a **copy**. It cannot replace a
+**derivation**, which still has to be recomputed when its inputs move. Splitting the table that
+way: `tiles` + `culture` + `power` + the small copies = **0.53 ms, 18%**. The other **82%** —
+`patches`, `forage_patches`, `rasters`, `assemble`, `tile_index`, `herds` — is derivation or join
+work that an emission arc would leave exactly where it is. That is the number to scope such an arc
+against.
+
+### Per-unit cost rises 24–50% with map size, and the cause is the memory hierarchy
+
+Over a 16× increase in tile count, per-unit cost is **flat** for `patches` (per flora share) and
+`tiles` (per tile), **falls** for `assemble` (fixed overhead amortising), and **rises** for
+`power` (21→31 ns/node), `culture` (44→64 ns/layer), `tile_index` (36→46 ns/tile),
+`forage_patches` (182→250 ns/patch) and `rasters` (7.8→9.7 ns/tile/raster). None of those is
+superlinear algorithmically — every riser is hash-probe or random-access heavy, and the rise is a
+working set outgrowing cache. **Map-scaled sections are therefore slightly worse than linear in
+practice**, which is the opposite direction from the one a big-O reading predicts.
+
+### Read shares, not absolutes — this has now bitten the arc twice
+
+Absolute milliseconds on this machine drift **~8% between sessions** (identical code measured
+`snapshot.build` at 2.92 and 3.25 in the same afternoon); within a session, sequential batches
+drift ~0.12 ms, which has already been enough to fake an effect once. **Shares and per-unit ratios
+held to ~1% across every session.** So: interleave A/B arms rather than batching them, quote the
+narrowest label that shows the effect, and treat a cross-session absolute as an order of magnitude
+rather than a number.
+
+`core_sim/examples/publish_profile.rs` is the harness. Its map-size sweep builds all three worlds
+up front and resolves one frame of each per round, for that reason; it prints a denominator census
+(tiles, patches, flora shares, culture layers, power nodes, cohorts, herds) beside the timings,
+because a section's time without its denominator cannot be classified. Interleaving costs ~1.5% on
+the absolutes — three resident worlds share the caches — and nothing on the shares.
+
 ### Profiling this path: pin the seed, and don't compare hashes
 
 Two traps, both hit while measuring #387:
@@ -107,10 +203,13 @@ Two traps, both hit while measuring #387:
   from the current shipped file each time** rather than reusing an old one — a `SIM_CONFIG_PATH`
   naming a file that is stale against the *schema* is a boot panic, not a silent fallback
   (`config-loading.md`), and the keys do move: #388 renamed `snapshot_bind` → `port_base_bind`.
-- **`header.hash` is not reproducible run-to-run even on unchanged code** — the `influencers` list
-  is nondeterministic, which is exactly why `integration_tests/tests/determinism.rs` clears it
-  before hashing. To prove a capture refactor is output-neutral, diff the *structures* it touched
-  (dump `forage_patches` + `tiles` coord-sorted across several turns), never the snapshot hash.
+- **A snapshot IS reproducible run-to-run now, so `hash_snapshot` is a valid before/after.** This
+  used to say the opposite — the `influencers` list was nondeterministic and
+  `integration_tests/tests/determinism.rs` cleared it before hashing. The cause was one line: the
+  roster drained a `HashSet` into the published `audience_generations`, so two runs emitted the same
+  ids in a different order. It is a `BTreeSet`, the mask is gone, and the test hashes the whole
+  payload. Three separate processes at 30 turns agree bit-for-bit. Diffing the *structures* a
+  refactor touched is still the better failure message; it is no longer the only thing that works.
 
 ## What the turn path actually broadcasts
 
@@ -280,6 +379,10 @@ warm-ups — the standard recipe above:
 | `snapshot.build` | 3.27 | 3.16 / 4.75 (idle / busy) |
 | publisher, per frame | — | `diff` 1.72 · `encode.flat_delta` 0.61 |
 
+**The busy row in that table has since closed** — see "The diff is O(changed)" below, which took
+`publish.diff` from 1.72 ms to ~0.2 and left the busy and idle rows equal. The gap it describes is
+kept because the *mechanism* is the lesson.
+
 **Read both rows: the gap between them is the finding.** The work genuinely left the turn thread —
 4.55 ms is what a turn now executes. But when turns resolve **back to back**, the publisher's ~2.3 ms
 overlaps the *next* turn's capture and the two compete, and nearly all of that lands in
@@ -304,6 +407,123 @@ handoff tighter.
 > simulate interactive pacing lets the core idle down, which made **every** phase, on both threads,
 > ~2.3× slower. Compare back-to-back runs against back-to-back runs, and vary one thread's work with
 > a register-only, clock-free loop if you must vary it at all.
+
+## The diff is O(changed), not O(world) — and that is what made the busy row go away
+
+`publish.diff` was **1.72 ms of every frame on a still world**, and the reason was structural: the
+diff rebuilt its own inputs from scratch every turn. Broken down (the five sub-labels were
+measurement scaffolding and are **not** in the code — the single `publish.diff` scope is):
+
+| section of `publish.diff` | ms | share |
+|---|---|---|
+| build the `tiles` index | 0.08 | 4% |
+| build the other ~12 indexes | 0.29 | 16% |
+| the ~35 whole-section comparisons | 0.33 | 18% |
+| `diff_new_tiles` + `diff_new_culture_layers` | 0.85 | 48% |
+| assemble the `WorldDelta` | 0.24 | 13% |
+
+**The shape that matters is not "tiles is the big one" — it is that the body is FOUR map-sized
+collections.** `tiles` (4160 entries on an 80×52 map), `power` (one node per tile, 4160),
+`culture_layers` (4195), and the rasters (one `Vec` per map, compared and cloned as whole sections)
+are ~95% of it; the other ten indexed collections hold **≤ 6 entries between them**. A partition
+that treats "tiles" as the heavy case and "everything else" as the tail is wrong twice over.
+
+### An unchanged entry now costs one hash probe
+
+It used to cost **two clones and two hash inserts, every turn, forever, to produce no output**:
+`publish` cloned all 4160 `TileState`s into a fresh `HashMap`, `diff_new_tiles` consumed that map
+and built *another* fresh one as the new baseline (cloning `prev` for every unchanged tile), and
+`diff_removed` then walked the old baseline again.
+
+The baselines are now **mutated in place** (`diff_indexed` in `snapshot/mod.rs`): walk the captured
+`Vec`, probe the baseline, and on the unchanged path **do nothing at all** — no clone, no insert,
+no rewrite. Removal keeps its own rule: the walk counts how many baseline entries the capture still
+carries, and only when that count falls short does `diff_removed` sweep for the keys that vanished,
+so the common path never pays for the rare one.
+
+> **"Do nothing" is the deadband's requirement, not an optimization.** `same_published_state` is a
+> *rounded* comparison, and the baseline has to keep the value the client actually holds. Storing
+> the fresh value for an entry judged unchanged would re-zero the deadband every turn, so an
+> accumulating sub-hundredth drift would never cross the grid and the client would hold a stale tile
+> forever. The rewrite makes that unwritable — there is no store on the unchanged path — and
+> `snapshot::indexed_diff_tests` asserts it on the baseline map, which is the only place it shows.
+
+The ~35 **whole-section** comparisons had the mirror-image bug: `let x = snapshot.x.clone(); if
+self.x == x {…}` cloned the section *before* deciding whether it had changed, then assigned it to
+the baseline either way. `diff_whole` compares first and clones only on the changed branch, and
+leaves the baseline alone when nothing moved. Measured on a steady turn, **12 of the 37 sections
+differ** — so 25 full-section clones per frame, several of them whole-map rasters, were being taken
+to be thrown away.
+
+### `Baseline::Advance` / `Baseline::Hold` — because in-place mutation cannot be "not stored"
+
+A mid-tick **recapture** must not advance the baselines (that is what makes its deltas cumulative).
+While the diff returned a freshly-built map that was simple: the recapture arm returned early and
+never stored it. In-place mutation has nothing to withhold, so the intent is now an argument
+threaded through every diff helper, decided once at the top of `publish` from `Publication`. A
+`Hold` diff produces exactly the same delta and writes nothing.
+
+### ECS change detection is the WRONG tool here — do not re-propose it
+
+Bevy's `Changed<T>` marks on mutable **access**, which is a superset of "the value changed", which
+is itself a superset of "changed at **rendering precision**". The deadband already filters at
+rendering precision, so change detection is strictly *weaker* than the comparison that is already
+there: it would mark tiles a system merely touched, and the delta would grow. `O(changed)` here has
+to come from value comparison, because value comparison is the only kind that can respect the
+deadband.
+
+## The fan-out: a semantic section registry on a bounded pool
+
+The diff runs as nine tasks over `rayon::scope` — tiles · culture · power · rasters · knowledge &
+great discoveries · crisis & victory · campaign & telling · subsistence (herds, forage, food
+modules) · people & networks. Each is a `*Parts` output struct, an optional `*Baselines` borrow
+bundle, and a `diff_*` function, all in `snapshot/capture.rs`.
+
+**The partition is semantic, not cost-balanced.** A cost-balanced partition has to be re-measured
+every time a subsystem grows or a raster is added; a semantic one keeps its meaning as the weights
+move, and `rayon::scope` work-steals, so an unequal section is absorbed by the scheduler rather than
+baked into the design. **Adding a snapshot collection is: a baseline field, a line in its section's
+`*Parts`, a line in its `diff_*`, a line in the assembly.** That registration property is the
+deliverable; the milliseconds are a consequence.
+
+Two rules hold for every section:
+
+- **A section reads and writes only its own baselines.** `publish` destructures `&mut *self` into
+  per-section field borrows, so the compiler proves the disjointness the partition claims. A section
+  that needs another's baseline means the partition is wrong, not that a lock is needed.
+- **No `publish_scope` inside a section.** The publisher profiler's accumulator is thread-local, so
+  a span opened on a pool worker folds into an accumulator nothing drains — the label would vanish
+  from the frame and leak into the next frame on that worker. The single `publish.diff` scope is
+  opened and closed on the publisher thread, around the whole fan-out.
+
+**The pool is the publisher's own and is deliberately narrow** (`DIFF_POOL_THREADS = 4`, a process-
+wide `OnceLock` so parallel test worlds share one budget rather than one pool each). Rayon's global
+pool is `num_cpus` wide; the publisher runs *concurrently with the next turn* by construction, so a
+publisher that grabs the whole machine wins its own milliseconds by taking cores from the simulation
+it is racing. Today the sim is ~5% of a turn and that trade is invisible — bounding it now is what
+stops it being discovered later, in a profile nobody takes. A pool that fails to build falls back to
+the caller's thread; publication continues, serially.
+
+### Measured
+
+Standard recipe (80×52, release, `late_forager_tribe` on `earthlike`, `map_seed` pinned, mean of 30
+frames after 5 warm-ups), three points so the structural win and the parallel win are separable:
+
+| | before | O(changed) | + fan-out |
+|---|---|---|---|
+| `publish.diff` | 1.63 | **0.386** | **0.208** |
+| `run_turn`, publisher **busy** | 5.82 | 4.52 | **4.53** |
+| `snapshot.build`, publisher **busy** | 4.57 | 3.33 | **3.30** |
+| `run_turn`, publisher **idle** | 4.53 | 4.47 | 4.45 |
+
+**The busy row is the finding: it is now the idle row.** Publisher contention used to cost the turn
+thread ~1.3 ms of `snapshot.build` on back-to-back turns; with the publisher's per-frame work down
+to ~0.8 ms (`diff` + `encode.flat_delta`) there is nothing left to contend with, and a batched
+`turn 100` now runs at interactive speed. **Nearly all of that came from step one** — the fan-out
+halves an already-small number. It is in for what it does to the *next* ten subsystems, not for the
+0.18 ms.
+
+`encode.flat_delta` is unchanged at ~0.6 ms and is now the largest thing the publisher does.
 
 ## Reading a `turn.profile` line
 

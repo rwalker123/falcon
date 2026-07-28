@@ -79,6 +79,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `ecs-systems.md` | Power, crisis, culture, knowledge & espionage, great discovery, fog of war, trade diffusion | `power.rs`, `crisis.rs`, `culture.rs`, `visibility*.rs` |
 | `turn-profiling.md` | Where a turn's time goes (the sim is ~5%, publishing is ~94%), the `turn.profile` event, which snapshot encodes are load-bearing | `turn_profile.rs`, `snapshot/capture.rs`, `network.rs`, `sim_schema/world.rs` |
 | `schedule-parallelism.md` | How systems are ordered (declare edges, don't chain), the ambiguity gate, which stages are serial by data, what the multi-threaded executor costs | `lib.rs`, `Cargo.toml`, `tests/schedule_parallelism.rs` |
+| `checkpoints.md` | Why rollback restores `SimState` and not `WorldSnapshot`, the three construction rules (no `Entity`, no config, pure capture), when "derived" is unsafe, how omission is made to fail a test | `sim_state.rs`, `snapshot/capture.rs`, `tests/sim_state_coverage.rs`, `integration_tests/tests/replay_determinism.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
 | `world-handoff.md` | Which world a snapshot frame belongs to: no frame replay on connect, the reveal gate, retry-until-answered, per-world client caches (**spans both halves**) | `network.rs`, `Main.gd`, `GameLaunch.gd` |
 | `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
@@ -190,11 +191,9 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 
 ## Snapshot History & Rollback
 
-`SnapshotHistory` retains ring buffer of `WorldSnapshot` + `WorldDelta` pairs (default 256). `rollback <tick>` rewinds simulation, resets ECS world, truncates history.
+`rollback <tick>` rebuilds the world from a `SimState` checkpoint and replays the command log forward to that tick. `SnapshotHistory` holds **one** entry — the client view is derived, not archived. See `.claude/rules/core_sim/checkpoints.md` for what a checkpoint carries and why it is not the snapshot.
 
-The rollback snapshot round-trips the **authoritative `HerdRegistry`** (via `HerdState` + the shared `EcologyState` record in `WorldSnapshot.herd_registry`), not just the lossy display telemetry — see the herd-persistence note under "Fauna & Wild Game" for details and the bug it fixed. The **`ForageRegistry`** rides the same pattern (per-tile `ForageState` = tile key + the shared `EcologyState`, in `WorldSnapshot.forage_registry`) so a rollback rewinds forage depletion — see "Depletable Forage".
-
-**Map export**: the `export_map [path]` command (`write_map_export` in `bin/server.rs`) writes the latest `SnapshotHistory.last_snapshot` plus the resolved `SimulationConfig.map_seed`/`map_preset_id` to disk as a `sim_schema::MapExport` JSON (default `exports/map-tick<t>-seed<s>.json`, gitignored). No new protocol — it rides the existing one-way command channel; the seed makes the dumped map reproducible, and the JSON doubles as an offline-inspectable, test-loadable fixture.
+**Map export**: the `export_map [path]` command (`write_map_export` in `bin/server.rs`) writes the latest `SnapshotHistory.last_snapshot` plus the resolved `SimulationConfig.map_seed`/`map_preset_id` to disk as a `sim_schema::MapExport` JSON (default `exports/map-tick<t>-seed<s>.json`, gitignored). No new protocol — it rides the existing one-way command channel; the seed makes the dumped map reproducible, and the JSON doubles as an offline-inspectable, test-loadable fixture. **It exports the player's view** — `snapshot.herds` is the fog-filtered display list — so anything offline that wants ground truth needs a checkpoint, not an export.
 
 ---
 

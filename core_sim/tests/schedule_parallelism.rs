@@ -56,6 +56,31 @@ const MUST_BE_ORDERED: [(&str, &str); 3] = [
     ("resolve_great_discovery", "apply_capability_effects"),
 ];
 
+/// The `Update`-schedule systems allowed to take `Commands`, and the only ones.
+///
+/// **This is a review gate, not bookkeeping.** The ambiguity gate in `build_headless_app`
+/// (`ambiguity_detection: LogLevel::Error`) is what makes de-chaining safe: a pair of systems with
+/// conflicting data access and no ordering edge is a boot panic, so any ordering the turn's result
+/// depends on *must* be declared. `Commands` is the one hazard that gate cannot see — `Deferred`
+/// access conflicts with nothing, so two systems that communicate by spawning and reading register
+/// as independent while their auto-inserted `apply_deferred` sync point depends entirely on the
+/// edge between them. Bevy will happily run them in either order and nothing will complain.
+///
+/// Today both entries sit inside the fully-serial `Population` chain, so their sync points are
+/// pinned by edges that exist for other reasons. A third system taking `Commands` is not
+/// necessarily wrong — it just cannot be checked by the machinery, so it has to be checked by a
+/// person: does it spawn or despawn anything another system reads in the same turn, and is the
+/// edge that orders them declared? Answer that, then add it here.
+///
+/// It matters beyond a lost core. A rollback rewound by replaying a command log reproduces the
+/// original run only if every turn is a pure function of its start state, and an undeclared
+/// `apply_deferred` ordering is exactly the kind of dependency that makes it not one.
+///
+/// `Startup` is deliberately out of scope, both here and for the ambiguity gate: it is `.chain()`-ed
+/// wholesale, which is why `spawn_initial_world`, `reconcile_food_modules` and
+/// `place_wondrous_sites` take `Commands` without appearing below.
+const COMMANDS_SYSTEMS: [&str; 2] = ["advance_band_movement", "advance_expeditions"];
+
 /// Reachability over the schedule's dependency graph, flattened the way bevy flattens it.
 ///
 /// Dependency edges are declared between *nodes*, which may be system sets — `.chain()` yields
@@ -176,4 +201,46 @@ fn independent_systems_in_a_stage_are_free_to_run_concurrently() {
             "`{before}` must still run before `{after}` — this ordering is load-bearing"
         );
     }
+}
+
+/// The set of `Commands`-taking systems in the turn schedule is the reviewed one.
+///
+/// See [`COMMANDS_SYSTEMS`] for why this is worth a test: `Commands` is the single ordering hazard
+/// the boot-time ambiguity gate is structurally unable to detect.
+#[test]
+fn commands_using_systems_are_the_reviewed_set() {
+    let mut app = build_headless_app();
+    run_turn(&mut app);
+
+    let schedules = app.world.resource::<Schedules>();
+    let schedule = schedules
+        .get(Update)
+        .expect("the turn runs in the `Update` schedule");
+
+    // `has_deferred()` is true for any system holding a `Deferred` param, which in this crate means
+    // `Commands`. Asked of the built schedule rather than grepped out of function signatures, so a
+    // system that acquires `Commands` through a nested `SystemParam` is caught too.
+    let mut found: Vec<String> = schedule
+        .systems()
+        .expect("schedule is initialized after a turn")
+        .filter(|(_, system)| system.has_deferred())
+        .map(|(_, system)| {
+            let name = system.name();
+            name.rsplit("::").next().unwrap_or(&name).to_string()
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+
+    let mut expected: Vec<String> = COMMANDS_SYSTEMS.iter().map(|s| s.to_string()).collect();
+    expected.sort();
+
+    assert_eq!(
+        found, expected,
+        "the set of `Commands`-taking systems in the turn schedule changed.\n\
+         `Commands` registers no data access, so the ambiguity gate cannot see an ordering \
+         dependency between two systems that talk through spawn/despawn — the edge has to be \
+         declared by hand and reviewed by a person. Work out whether the new system's \
+         `apply_deferred` ordering is pinned by a real edge, then update `COMMANDS_SYSTEMS`."
+    );
 }

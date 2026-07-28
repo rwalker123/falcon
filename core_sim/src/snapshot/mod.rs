@@ -1,13 +1,11 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use bevy::{
     ecs::system::{RunSystemOnce, SystemParam},
     prelude::*,
 };
-use log::warn;
 use sim_runtime::{
     encode_delta_flatbuffer, encode_snapshot_flatbuffer, AccessibleStockpileEntryState,
     AccessibleStockpileState, AxisBiasState, CampaignProfileState, ClimateBandsState,
@@ -16,16 +14,16 @@ use sim_runtime::{
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
-    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry, EcologyState,
+    DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
-    FoodModuleState, ForagePatchState, ForageState, ForkChoiceState, GenerationState,
-    GlossEntryState, GrazeState, GreatDiscoveryDefinitionState, GreatDiscoveryProgressState,
-    GreatDiscoveryState, GreatDiscoveryTelemetryState, HerdRoamState, HerdState,
-    HerdTelemetryState, HuntPolicyCeilingState, HuntTripEstimateState, InfluentialIndividualState,
-    IntensificationKnowledgeState, KnowledgeLedgerEntryState, KnowledgeMetricsState,
-    KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState, MountainKind,
-    PendingForkState, PendingForksState, PendingMigrationState, PopulationCohortState,
+    FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
+    GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, HuntPolicyCeilingState,
+    HuntTripEstimateState, InfluentialIndividualState, IntensificationKnowledgeState,
+    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
+    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingForkState, PendingForksState,
+    PendingMigrationState, PopulationCohortState,
     PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
     PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
     SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
@@ -39,23 +37,22 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, LaborAllocation,
-        LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
-        Tile, TradeLink, FODDER, FOOD,
+        available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
+        ExpeditionMission, FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget,
+        LogisticsLink, PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink,
+        FODDER, FOOD,
     },
     culture::{
-        CultureEffectsCache, CultureLayer, CultureLayerScope as SimCultureLayerScope,
-        CultureManager, CultureOwner, CultureTensionKind as SimCultureTensionKind,
-        CultureTensionRecord, CultureTraitAxis as SimCultureTraitAxis,
+        CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
+        CultureTensionKind as SimCultureTensionKind, CultureTensionRecord,
+        CultureTraitAxis as SimCultureTraitAxis,
     },
     demographics_config::{DemographicsConfig, DemographicsConfigHandle},
     expedition_config::ExpeditionConfig,
     fauna::{
         herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
-        Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED,
-        HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID, PEN_FULLY_FED,
+        Herd, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
     flora_config::{FloraConfig, FloraConfigHandle},
@@ -63,38 +60,32 @@ use crate::{
     forage::{
         commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
         field_provisions, forage_forecast, rung_site_refusal, tile_flora_composition,
-        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
+        tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForageRegistry,
         CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},
     great_discovery::{
         snapshot_definitions, snapshot_discoveries, snapshot_progress, snapshot_telemetry,
-        GreatDiscoveryId, GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
+        GreatDiscoveryLedger, GreatDiscoveryReadiness, GreatDiscoveryRegistry,
         GreatDiscoveryTelemetry,
     },
     heightfield::ElevationField,
-    influencers::{
-        InfluencerBalanceConfig, InfluencerConfigHandle, InfluencerImpacts, InfluentialRoster,
-        BUILTIN_INFLUENCER_CONFIG,
-    },
+    influencers::InfluentialRoster,
     intensification::{LadderConfig, RungKey, SiteRefusal, SITE_ACCEPTED},
-    knowledge_ledger::{
-        encode_ledger_key, KnowledgeLedger, KnowledgeLedgerConfig, KnowledgeLedgerConfigHandle,
-        KnowledgeSnapshotPayload, BUILTIN_KNOWLEDGE_LEDGER_CONFIG,
-    },
+    knowledge_ledger::{encode_ledger_key, KnowledgeLedger, KnowledgeSnapshotPayload},
     labor_config::{ForageLaborConfig, LaborConfig},
     map_preset::MapPresetsHandle,
     metrics::SimulationMetrics,
     orders::FactionId,
-    power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity, PowerNodeId},
+    power::{PowerGridState, PowerIncidentSeverity as GridIncidentSeverity},
     resources::FoodSiteRegistry,
     resources::{
         CapabilityFlags, CommandEventLog, CorruptionLedgers, CorruptionTelemetry,
         DiscoveryProgressLedger, FactionInventory, MoistureRaster, SentimentAxisBias,
-        SimulationConfig, SimulationTick, StartLocation, TileRegistry, WorldEpoch,
+        SimulationConfig, SimulationTick, StartLocation, WorldEpoch,
     },
-    scalar::{scalar_zero, Scalar},
+    scalar::Scalar,
     sedentarization::SedentarizationScore,
     sites::DiscoveredSites,
     sites_config::SitesConfigHandle,
@@ -158,86 +149,347 @@ const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 /// snapshot exports the un-scaled forecast and the client multiplies by the acting band's own.
 const FORECAST_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-fn diff_new<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<T>
+/// Whether a diff may advance the published baseline it walks.
+///
+/// The baselines are mutated **in place** (see [`diff_indexed`]), so "don't commit" has to be an
+/// argument: there is no longer a freshly-built map a caller could decline to store. A resolved
+/// turn advances; a mid-tick **recapture** holds, which is what keeps its deltas cumulative —
+/// each one is `baseline(last turn) → now`, so applying them in order is idempotent and losing an
+/// intermediate one is harmless (`PublishState::publish`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Baseline {
+    Advance,
+    Hold,
+}
+
+/// Diff one indexed collection against its published baseline, **touching only what changed**.
+///
+/// The baseline is the last *published* state keyed by `key`; `current` is the freshly captured
+/// collection. An entry the baseline already holds and `same` accepts is left **completely
+/// alone** — not cloned, not re-inserted, not even rewritten with the identical fresh value — so a
+/// steady-state turn costs one hash probe per entry and nothing else. That is the whole point:
+/// `tiles`, `power` and `culture_layers` are each one entry per tile, and the overwhelming majority
+/// of them are unchanged on any given turn.
+///
+/// **Leaving the old value in place is the deadband's requirement, not an optimization.** `same` is
+/// a rounded, rendering-precision comparison for tiles and culture layers, so the baseline has to
+/// keep the value the client actually holds or a slow drift would be re-measured against a moving
+/// target and never publish. Storing the *fresh* value for an entry judged unchanged is precisely
+/// the bug this shape makes unwritable — there is no store on that path at all. See
+/// `TileState::drift_below_the_deadband_still_publishes_as_it_accumulates`.
+///
+/// Removal is the rare case and is not allowed to cost anything on the common path: the walk counts
+/// how many baseline entries the capture still carries, and only when that count falls short of the
+/// baseline's size does [`diff_removed`] sweep for the keys that vanished.
+fn diff_indexed<K, T, Key, Same>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    same: Same,
+    write: Baseline,
+) -> (Vec<T>, Vec<K>)
 where
-    K: Eq + Hash,
-    T: Clone + PartialEq,
+    K: Eq + Hash + Copy,
+    T: Clone,
+    Key: Fn(&T) -> K,
+    Same: Fn(&T, &T) -> bool,
 {
-    current
-        .iter()
-        .filter_map(|(id, state)| match previous.get(id) {
-            Some(prev) if prev == state => None,
-            _ => Some(state.clone()),
-        })
+    let baseline_len = baseline.len();
+    let mut sent = Vec::new();
+    // How many entries of `current` the baseline already held. Counted before any insert, so a
+    // newly-appeared entry does not mask a removal.
+    let mut retained = 0usize;
+    for state in current {
+        let id = key(state);
+        let unchanged = match baseline.get(&id) {
+            Some(previous) => {
+                retained += 1;
+                same(previous, state)
+            }
+            None => false,
+        };
+        if unchanged {
+            continue;
+        }
+        sent.push(state.clone());
+        if write == Baseline::Advance {
+            baseline.insert(id, state.clone());
+        }
+    }
+
+    if retained == baseline_len {
+        return (sent, Vec::new());
+    }
+    let removed = diff_removed(baseline, current, &key);
+    if write == Baseline::Advance {
+        for id in &removed {
+            baseline.remove(id);
+        }
+    }
+    (sent, removed)
+}
+
+/// The rare second walk: which baseline keys the captured collection no longer carries.
+///
+/// Reached only when [`diff_indexed`]'s pass found fewer baseline hits than the baseline holds, i.e.
+/// when something really was removed. A steady turn never calls it.
+fn diff_removed<K, T, Key>(baseline: &HashMap<K, T>, current: &[T], key: Key) -> Vec<K>
+where
+    K: Eq + Hash + Copy,
+    Key: Fn(&T) -> K,
+{
+    let present: HashSet<K> = current.iter().map(&key).collect();
+    baseline
+        .keys()
+        .filter(|id| !present.contains(id))
+        .copied()
         .collect()
 }
 
-/// `diff_new` for tiles, comparing **published** state rather than exact equality, and returning
-/// the baseline to store alongside the tiles to send.
+/// [`diff_indexed`] on exact equality — the rule for every per-entity collection except tiles and
+/// culture layers.
+fn diff_new<K, T, Key>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    write: Baseline,
+) -> (Vec<T>, Vec<K>)
+where
+    K: Eq + Hash + Copy,
+    T: Clone + PartialEq,
+    Key: Fn(&T) -> K,
+{
+    diff_indexed(
+        baseline,
+        current,
+        key,
+        |previous, state| previous == state,
+        write,
+    )
+}
+
+/// [`diff_indexed`] for tiles, comparing **published** state rather than exact equality.
 ///
-/// Tiles get their own diff because they are the only per-entity collection large enough for the
-/// comparison rule to matter: at 4160 entities on an 80x52 map, one field that drifts every turn
-/// costs the whole map every turn. See `TileState::same_published_state`.
-///
-/// **The returned baseline keeps the OLD value for any tile judged unchanged**, so the thing the
-/// comparison measures against is always the thing the client actually holds. That bounds the
-/// client's error at half a hundredth by construction, rather than leaving it to argument.
+/// Tiles get their own comparison because they are the largest per-entity collection: at 4160
+/// entities on an 80x52 map, one field that drifts every turn costs the whole map every turn. See
+/// `TileState::same_published_state`.
 ///
 /// (Slow drift reaches the client either way, because the comparison rounds to an absolute grid
 /// rather than testing `|a - b| < eps` — a relative band would let sub-band steps accumulate
-/// unbounded error, which is why it is not one. See
-/// `TileState::drift_below_the_deadband_still_publishes_as_it_accumulates`.)
+/// unbounded error, which is why it is not one.)
 fn diff_new_tiles(
-    previous: &HashMap<u64, TileState>,
-    current: HashMap<u64, TileState>,
-) -> (Vec<TileState>, HashMap<u64, TileState>) {
-    let mut send = Vec::new();
-    let mut baseline = HashMap::with_capacity(current.len());
-    for (id, state) in current {
-        match previous.get(&id) {
-            Some(prev) if prev.same_published_state(&state) => {
-                baseline.insert(id, prev.clone());
-            }
-            _ => {
-                send.push(state.clone());
-                baseline.insert(id, state);
-            }
-        }
-    }
-    (send, baseline)
+    baseline: &mut HashMap<u64, TileState>,
+    current: &[TileState],
+    write: Baseline,
+) -> (Vec<TileState>, Vec<u64>) {
+    diff_indexed(
+        baseline,
+        current,
+        |state| state.entity,
+        TileState::same_published_state,
+        write,
+    )
 }
 
-/// `diff_new` for culture layers. Same reasoning and the same last-published baseline rule as
-/// [`diff_new_tiles`]; see `CultureLayerState::same_published_state`.
+/// [`diff_new_tiles`] for culture layers — same reasoning, same deadband rule; see
+/// `CultureLayerState::same_published_state`.
 fn diff_new_culture_layers(
-    previous: &HashMap<u32, CultureLayerState>,
-    current: HashMap<u32, CultureLayerState>,
-) -> (Vec<CultureLayerState>, HashMap<u32, CultureLayerState>) {
-    let mut send = Vec::new();
-    let mut baseline = HashMap::with_capacity(current.len());
-    for (id, state) in current {
-        match previous.get(&id) {
-            Some(prev) if prev.same_published_state(&state) => {
-                baseline.insert(id, prev.clone());
-            }
-            _ => {
-                send.push(state.clone());
-                baseline.insert(id, state);
-            }
-        }
-    }
-    (send, baseline)
+    baseline: &mut HashMap<u32, CultureLayerState>,
+    current: &[CultureLayerState],
+    write: Baseline,
+) -> (Vec<CultureLayerState>, Vec<u32>) {
+    diff_indexed(
+        baseline,
+        current,
+        |state| state.id,
+        CultureLayerState::same_published_state,
+        write,
+    )
 }
 
-fn diff_removed<K, T>(previous: &HashMap<K, T>, current: &HashMap<K, T>) -> Vec<K>
+/// Diff one **whole section** against its published baseline: `None` when nothing changed.
+///
+/// The clone happens only on the changed branch. It used to be unconditional and taken *before* the
+/// comparison (`let state = snapshot.x.clone(); if self.x == state {…}`), which cost a full copy of
+/// every raster, roster and telemetry block every turn to discover that most of them had not moved.
+///
+/// **An unchanged section is not rewritten either**, for the same reason the indexed diff leaves an
+/// unchanged entry alone: the baseline already equals the captured value, so the assignment is a
+/// copy that cannot change anything.
+fn diff_whole<T>(baseline: &mut T, current: &T, write: Baseline) -> Option<T>
+where
+    T: Clone + PartialEq,
+{
+    if *baseline == *current {
+        return None;
+    }
+    if write == Baseline::Advance {
+        *baseline = current.clone();
+    }
+    Some(current.clone())
+}
+
+/// A section that is **indexed for comparison but sent whole**: the baseline is a map (so other
+/// paths can look an entry up by id) while the wire carries the entire list or nothing.
+///
+/// `great_discovery_definitions` is the only one — a catalog that changes when a config is loaded
+/// and never during play, so the comparison is a probe per entry and the rebuild is unreachable in
+/// steady state.
+fn diff_whole_indexed<K, T, Key>(
+    baseline: &mut HashMap<K, T>,
+    current: &[T],
+    key: Key,
+    write: Baseline,
+) -> Option<Vec<T>>
 where
     K: Eq + Hash + Copy,
+    T: Clone + PartialEq,
+    Key: Fn(&T) -> K,
 {
-    previous
-        .keys()
-        .filter(|id| !current.contains_key(id))
-        .copied()
-        .collect()
+    let unchanged = current.len() == baseline.len()
+        && current
+            .iter()
+            .all(|state| baseline.get(&key(state)).is_some_and(|held| held == state));
+    if unchanged {
+        return None;
+    }
+    if write == Baseline::Advance {
+        baseline.clear();
+        for state in current {
+            baseline.insert(key(state), state.clone());
+        }
+    }
+    Some(current.to_vec())
+}
+
+/// The O(changed) property of the indexed diffs, asserted on the baseline map itself.
+///
+/// A steady-state turn is almost entirely unchanged entries, so "an unchanged entry is not touched"
+/// is the property the whole publication budget now rests on — and it is invisible from the delta,
+/// which looks the same either way. These tests read the baseline instead.
+#[cfg(test)]
+mod indexed_diff_tests {
+    use super::*;
+    use sim_runtime::{MountainKind, TerrainTags, TerrainType};
+
+    /// Half a hundredth: below `same_published_state`'s rounding grid, so a tile carrying it is
+    /// judged UNCHANGED while still being `!=` — which is what makes "was the baseline rewritten?"
+    /// observable.
+    const SUB_DEADBAND_DRIFT: f32 = 0.004;
+
+    fn tile(entity: u64, relief: f32) -> TileState {
+        TileState {
+            entity,
+            x: 0,
+            y: 0,
+            element: 0,
+            mass: 0,
+            temperature: 0,
+            terrain: TerrainType::AlluvialPlain,
+            terrain_tags: TerrainTags::empty(),
+            culture_layer: 0,
+            mountain_kind: MountainKind::None,
+            mountain_relief: relief,
+            habitability: 0,
+            graze_biomass: 0.0,
+            graze_capacity: 0.0,
+            graze_ecology_phase: 0,
+            forage_capacity: 0.0,
+            underlying_terrain: TerrainType::AlluvialPlain,
+            river_edges: 0,
+            river_inflow: 0,
+            river_channel: 0,
+        }
+    }
+
+    /// **An unchanged entry is not rewritten** — not with the old value, and above all not with the
+    /// fresh one.
+    ///
+    /// Rewriting it with the fresh value would be the deadband bug: each turn's sub-hundredth step
+    /// would be measured against the previous turn's, so an accumulating drift would never cross the
+    /// grid and the client would hold a stale tile forever. The baseline keeping the last *published*
+    /// value is what bounds the client's error, and here that is demonstrated by the baseline still
+    /// carrying the ORIGINAL relief after a diff that judged the tile unchanged.
+    #[test]
+    fn an_unchanged_entry_leaves_the_baseline_holding_its_last_published_value() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 1.0 + SUB_DEADBAND_DRIFT)];
+        let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert!(sent.is_empty(), "a sub-deadband step publishes nothing");
+        assert!(removed.is_empty());
+        assert_eq!(
+            baseline[&1].mountain_relief, 1.0,
+            "the baseline must still hold the last PUBLISHED value — storing the fresh one would \
+             restart the deadband every turn and freeze an accumulating drift out of the delta"
+        );
+    }
+
+    /// The complement: a change past the grid is sent *and* advances the baseline, so the next
+    /// turn's comparison is against what the client now holds.
+    #[test]
+    fn a_changed_entry_is_sent_and_advances_the_baseline() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 2.0)];
+        let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert_eq!(sent.len(), 1);
+        assert_eq!(baseline[&1].mountain_relief, 2.0);
+    }
+
+    /// `Baseline::Hold` computes the same delta and advances nothing — the mid-tick recapture path,
+    /// which must leave the baseline where the last resolved turn left it or its cumulative deltas
+    /// stop being cumulative.
+    #[test]
+    fn holding_the_baseline_still_reports_the_change_but_does_not_commit_it() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+
+        let captured = vec![tile(1, 2.0)];
+        let (sent, _) = diff_new_tiles(&mut baseline, &captured, Baseline::Hold);
+
+        assert_eq!(sent.len(), 1, "the delta is the same either way");
+        assert_eq!(
+            baseline[&1].mountain_relief, 1.0,
+            "a held baseline is unmoved, so the next diff re-reports the same change"
+        );
+    }
+
+    /// Removal is the rare path, and it still has to work: a key the capture no longer carries is
+    /// reported once and leaves the baseline.
+    #[test]
+    fn a_vanished_entry_is_reported_and_dropped_from_the_baseline() {
+        let mut baseline: HashMap<u64, TileState> = HashMap::new();
+        baseline.insert(1, tile(1, 1.0));
+        baseline.insert(2, tile(2, 1.0));
+
+        let captured = vec![tile(1, 1.0)];
+        let (sent, removed) = diff_new_tiles(&mut baseline, &captured, Baseline::Advance);
+
+        assert!(sent.is_empty());
+        assert_eq!(removed, vec![2]);
+        assert!(!baseline.contains_key(&2));
+        assert_eq!(baseline.len(), 1);
+    }
+
+    /// A whole section that did not move is neither cloned nor written back.
+    #[test]
+    fn an_unchanged_whole_section_is_not_rewritten() {
+        let mut baseline = vec![1u8, 2, 3];
+        assert_eq!(
+            diff_whole(&mut baseline, &vec![1u8, 2, 3], Baseline::Advance),
+            None
+        );
+        assert_eq!(
+            diff_whole(&mut baseline, &vec![4u8], Baseline::Advance),
+            Some(vec![4u8])
+        );
+        assert_eq!(baseline, vec![4u8]);
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +499,11 @@ mod tests {
     const SNAPSHOT_BODY_MASS: f32 = 1.0;
 
     use super::*;
+    // Used only by the fixtures below. They lived at file scope while
+    // `restore_world_from_snapshot` needed them too; with that gone, the tests are the only caller.
+    use crate::components::{ElementKind, LocalStore, MoraleCause};
+    use crate::forage::ForagePatch;
+    use crate::power::PowerNodeId;
     use crate::{
         intensification::RUNG_COMPLETE,
         labor_config::LaborConfig,
@@ -318,104 +575,6 @@ mod tests {
             viewer: VIEWER,
             fog_enabled,
         })
-    }
-
-    #[test]
-    fn herd_state_roundtrip_is_identity() {
-        // A herd with every field non-default so movement + ecology + domestication all round-trip.
-        let original = HerdState {
-            id: "herd_test".to_string(),
-            label: "Test Herd (herd_test)".to_string(),
-            species: "Red Deer".to_string(),
-            size_class: "migratory".to_string(),
-            route: vec![(3, 4), (5, 6), (7, 2)],
-            step_index: 2,
-            current_pos: (5, 6),
-            dwell_remaining: 3,
-            body_mass: 800.0,
-            // Slice 8b: the kill-credit accumulator round-trips (a rollback rewinds progress toward
-            // the next kill rather than resetting the wait).
-            hunt_credit: 123.0,
-            roam: HerdRoamState {
-                mode: "loiter".to_string(),
-                loiter_turns_left: 9,
-            },
-            next_pos: Some((7, 2)),
-            // Rung 1c: a corralled (penned) herd round-trips its pen tile AND its pen-construction
-            // progress through the snapshot (a rollback must not lose a half-built — or finished — pen).
-            corralled_at: Some((5, 6)),
-            corral_progress: 1.0,
-            // Grazing 2d: the pen's fenced footprint radius + the in-flight extend meter/state round-trip.
-            pen_radius: 1,
-            pen_extend_progress: 0.5,
-            pen_extending: true,
-            // Grazing 2b-i: the cached per-species eating rate round-trips too, so a rollback restores
-            // the draw-down rate rather than leaving a rehydrated herd grazing at 0.
-            fodder_per_biomass: 0.05,
-            // Grazing 2b-ii: the cached per-species wild regrowth rate round-trips too.
-            regrowth_rate: 0.04,
-            // Grazing 2d-δ: the species' husbandry ceiling round-trips (mammoth = wild → hunt-only).
-            husbandry_ceiling: "wild".to_string(),
-            // Herder hysteresis: the remembered, deadband-stabilized keeper count round-trips so a
-            // rollback restores it rather than re-flickering for a turn.
-            herders_needed: 3,
-            // Slice 2: the under-herded edge-gate round-trips (persisted, unlike `pen_starving`).
-            under_herded: true,
-            ecology: EcologyState {
-                biomass: 4321.0,
-                carrying_capacity: 8000.0,
-                ecology_phase: "stressed".to_string(),
-                progress: 1.0,
-                owner: Some(1),
-            },
-        };
-
-        // HerdState -> Herd (restore side) -> HerdState (capture side) must be an identity.
-        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
-        let herd = registry.entries().first().expect("one herd restored");
-        assert!(herd.is_corralled(), "corralled_at restores the pen");
-        let restored = herd_state(herd);
-
-        assert_eq!(restored, original);
-    }
-
-    /// A **half-built** pen (the Corral investment mid-flight) must round-trip through the rollback
-    /// snapshot: a rollback rewinds the investment, it never silently loses it. The herd is still
-    /// mobile (`corralled_at` is `None`) until `corral_progress` reaches `1.0`.
-    #[test]
-    fn half_built_corral_progress_round_trips() {
-        const HALF_BUILT: f32 = 0.44;
-        let original = HerdState {
-            id: "herd_penning".to_string(),
-            size_class: "small".to_string(),
-            route: vec![(2, 2)],
-            current_pos: (2, 2),
-            roam: HerdRoamState {
-                mode: "graze_wander".to_string(),
-                loiter_turns_left: 0,
-            },
-            // Mid-build: the pen is not finished, so the herd is still mobile.
-            corralled_at: None,
-            corral_progress: HALF_BUILT,
-            // Set explicitly (like `size_class`): an empty default normalizes to "pen" and would break
-            // the round-trip identity.
-            husbandry_ceiling: "pen".to_string(),
-            ecology: EcologyState {
-                biomass: 60.0,
-                carrying_capacity: 100.0,
-                ecology_phase: "thriving".to_string(),
-                // Domesticated + owned — the gates the Corral policy requires to keep building.
-                progress: 1.0,
-                owner: Some(2),
-            },
-            ..Default::default()
-        };
-
-        let registry = HerdRegistry::from_states(std::slice::from_ref(&original));
-        let herd = registry.entries().first().expect("one herd restored");
-        assert!(!herd.is_corralled(), "a half-built pen is not yet a corral");
-        assert_eq!(herd.corral_progress, HALF_BUILT);
-        assert_eq!(herd_state(herd), original);
     }
 
     fn tile(entity: u64, x: u32, y: u32) -> TileState {
@@ -532,10 +691,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -598,10 +753,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -659,10 +810,6 @@ mod tests {
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
             herds: Vec::new(),
-            herd_registry: Vec::new(),
-            forage_registry: Vec::new(),
-            graze_registry: Vec::new(),
-            beat_ledger: Default::default(),
             food_modules: Vec::new(),
             faction_inventory: Vec::new(),
             sedentarization: Vec::new(),
@@ -749,6 +896,8 @@ mod tests {
         };
         population_state(PopulationStateInputs {
             entity: Entity::from_raw(1),
+            // This fixture asserts on the derived readouts, not on band identity.
+            band_id: None,
             cohort,
             allocation: Some(allocation),
             expedition: None,
@@ -868,7 +1017,8 @@ mod tests {
         assert!((state.labor_assignments[1].realized_yield - 0.25).abs() < 1e-5);
     }
 
-    /// A rehydrated allocation (empty `last_yields`) reports zero food income and zero per-row yields
+    /// An allocation with no telemetry yet (empty `last_yields`) reports zero food income and zero
+    /// per-row yields
     /// — the default-0.0 branch — while still exporting the assignment rows.
     #[test]
     fn population_state_food_income_defaults_to_zero_without_telemetry() {
@@ -914,10 +1064,10 @@ mod tests {
         let assignment = LaborAssignment { target, workers: 6 };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
         assert_eq!(state.policy, "deplete", "policy serialized");
-
-        let restored = labor_allocation_from_state(std::slice::from_ref(&state));
-        assert_eq!(restored.assignments.len(), 1);
-        assert_eq!(restored.assignments[0], assignment, "policy round-trips");
+        // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
+        // and it existed solely for `restore_world_from_snapshot` — the server never reads labor
+        // assignments back off the wire, it reads them from the checkpoint. Keeping a decoder alive
+        // for a test to call is the shape this arc removed, so the return leg went with it.
     }
 
     #[test]

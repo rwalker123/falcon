@@ -17,9 +17,9 @@ The **plant analog of animal husbandry** (`docs/plan_intensification.md` §3), e
 mechanical husbandry transpose into **Rung 1a — the worker-tended, place-local tended patch**, and now
 into an **explicit policy with an investment cost**. A patch carries `cultivation_progress` (0–1,
 `1.0` = cultivated) + `owner: Option<FactionId>` on `ForagePatch`, mirroring a `Herd`'s
-`domestication_progress`/`owner`, and rides the shared `EcologyState` (`progress`/`owner`) through the
-rollback snapshot. A completed patch is a **tended patch**: **worker-tended + place-local +
-higher-output + feral-if-abandoned**. *Sim-only — the client readout is a follow-up.*
+`domestication_progress`/`owner`; the checkpoint clones the whole `ForageRegistry`
+(`SimState::forage`), so both rewind with a rollback. A completed patch is a **tended patch**:
+**worker-tended + place-local + higher-output + feral-if-abandoned**. *Sim-only — the client readout is a follow-up.*
 
 > **The free path is gone (design fix).** Cultivation used to accrue **silently and for free** under
 > Sustain: same labor, same tile, no cost ⇒ cultivating was always correct and there was **no
@@ -79,8 +79,9 @@ higher-output + feral-if-abandoned**. *Sim-only — the client readout is a foll
   `core_sim/tests/flora_roster.rs`) rather than the retired boost. A *bare* tended patch (no crop) now
   pays exactly wild (measured on `AlluvialPlain`, K = 195: wild **0.61** = bare tended **0.61**
   prov/turn; a committed Wild Emmer rises above it via conversion).
-  Working a completed improvement at either rung marks it `tended_this_turn` (a transient,
-  non-persisted per-turn flag) so the decay pass can tell tended from abandoned. The old
+  Working a completed improvement at either rung marks it `tended_this_turn` (a per-turn flag, off the
+  client wire, carried across the turn boundary by the Population→Logistics lag) so the decay pass can
+  tell tended from abandoned. The old
   even-split-across-all-the-owner's-bands payment in `advance_cultivation` is **retired**, as is the
   flat `tended_provisions_per_biomass` managed rate.
   - **`Cultivate` on a COMPLETED patch still pays its dip.** The dip means "the crew is preparing
@@ -257,9 +258,9 @@ herd has one appetite).
 - **`cultivated_count` counts Fields** (`ForagePatch::is_managed`), so the sedentarization
   domestication signal cannot read rung 3 as *less* domesticated than rung 2 (a bare-ground Field
   carries no cultivation meter at all).
-- **Persistence** — `field_progress` rides `ForageState` (its own field beside the shared
-  `EcologyState`'s cultivation `progress`/`owner`, mirroring `HerdState.corral_progress`), so a
-  rollback rewinds a half-sown Field.
+- **Persistence** — `field_progress` is its own meter beside `cultivation_progress` (mirroring
+  `Herd::corral_progress` beside `domestication_progress`), and rides the checkpoint's whole-registry
+  clone, so a rollback rewinds a half-sown Field.
 - **On the wire (slice 6a — append-only, slots 36–44):** `ForagePatchState` carries
   `fieldProgress:float` + `isField:bool` (the rung-3 meter and the completed rung — read the *bool*,
   never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,

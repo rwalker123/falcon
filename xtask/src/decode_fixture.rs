@@ -829,22 +829,18 @@ fn seed_snapshot() -> WorldSnapshot {
 /// Subtrees of `WorldSnapshot` the client decoder **never reads**, so seeding one would grow the
 /// fixture without exercising a single line of the decoder.
 ///
-/// Two distinct reasons, and the distinction matters: the first four are the sim's own rollback
-/// records, round-tripped through the bincode save but never serialized into the envelope at all.
-/// `knowledge_ledger` and `knowledge_timeline` **are** encoded (`sim_schema/src/codec/knowledge.rs`
-/// writes both onto a delta) — they simply have no converter on the client side, so nothing in
-/// `native/src/dict/` would run. Being on the wire is not what earns a gate here; being decoded is.
+/// Both survivors **are** encoded (`sim_schema/src/codec/knowledge.rs` writes them onto a delta) —
+/// they simply have no converter on the client side, so nothing in `native/src/dict/` would run.
+/// Being on the wire is not what earns a gate here; being decoded is.
+///
+/// This list used to also hold four sim-only rollback records (`herd_registry`, `forage_registry`,
+/// `graze_registry`, `beat_ledger`). They were never *encoded* at all — being neither on the wire
+/// nor read, they were deleted from `WorldSnapshot` rather than gated, so the list is back to
+/// meaning one thing: encoded, but not decoded.
 ///
 /// Named individually rather than skipped by heuristic: if one of these ever *does* get wired to
 /// the client, deleting its entry here is what turns the gate back on.
-const OFF_WIRE_SUBTREES: [&str; 6] = [
-    "herd_registry",
-    "forage_registry",
-    "graze_registry",
-    "beat_ledger",
-    "knowledge_ledger",
-    "knowledge_timeline",
-];
+const OFF_WIRE_SUBTREES: [&str; 2] = ["knowledge_ledger", "knowledge_timeline"];
 
 fn is_off_wire(path: &str) -> bool {
     OFF_WIRE_SUBTREES.iter().any(|root| {

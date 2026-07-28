@@ -30,7 +30,8 @@ pub enum CommandPayload {
         height: u32,
     },
     Heat {
-        entity_bits: u64,
+        target_x: u32,
+        target_y: u32,
         delta: i64,
     },
     Orders {
@@ -115,13 +116,13 @@ pub enum CommandPayload {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
     },
     FollowHerd {
         faction_id: u32,
         herd_id: String,
         policy: Option<String>,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
     },
     FoundSettlement {
         faction_id: u32,
@@ -133,18 +134,18 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
         module: String,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
     },
     HuntGame {
         faction_id: u32,
         target_x: u32,
         target_y: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
     },
     HuntFauna {
         faction_id: u32,
         herd_id: String,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
     },
     Tame {
         faction_id: u32,
@@ -178,12 +179,12 @@ pub enum CommandPayload {
     },
     CancelOrder {
         faction_id: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         scope: CancelScope,
     },
     AssignLabor {
         faction_id: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         role: String,
         workers: u32,
         target_x: Option<u32>,
@@ -197,24 +198,24 @@ pub enum CommandPayload {
     },
     MoveBand {
         faction_id: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         target_x: u32,
         target_y: u32,
     },
     SendExpedition {
         faction_id: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         party_workers: u32,
         target_x: u32,
         target_y: u32,
     },
     RecallExpedition {
         faction_id: u32,
-        expedition_entity_bits: u64,
+        expedition_band_id: u64,
     },
     SendHuntExpedition {
         faction_id: u32,
-        band_entity_bits: Option<u64>,
+        band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
         policy: Option<String>,
@@ -367,12 +368,15 @@ impl CommandEnvelope {
                     height: *height,
                 })
             }
-            CommandPayload::Heat { entity_bits, delta } => {
-                pb::command_envelope::Command::Heat(pb::HeatCommand {
-                    entity_bits: *entity_bits,
-                    delta: *delta,
-                })
-            }
+            CommandPayload::Heat {
+                target_x,
+                target_y,
+                delta,
+            } => pb::command_envelope::Command::Heat(pb::HeatCommand {
+                target_x: *target_x,
+                target_y: *target_y,
+                delta: *delta,
+            }),
             CommandPayload::Orders {
                 faction_id,
                 directive,
@@ -521,23 +525,23 @@ impl CommandEnvelope {
                 faction_id,
                 target_x,
                 target_y,
-                band_entity_bits,
+                band_id,
             } => pb::command_envelope::Command::ScoutArea(pb::ScoutAreaCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
             }),
             CommandPayload::FollowHerd {
                 faction_id,
                 herd_id,
                 policy,
-                band_entity_bits,
+                band_id,
             } => pb::command_envelope::Command::FollowHerd(pb::FollowHerdCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
                 policy: policy.clone(),
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
             }),
             CommandPayload::FoundSettlement {
                 faction_id,
@@ -553,33 +557,33 @@ impl CommandEnvelope {
                 target_x,
                 target_y,
                 module,
-                band_entity_bits,
+                band_id,
             } => pb::command_envelope::Command::ForageTile(pb::ForageTileCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
                 module: module.clone(),
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
             }),
             CommandPayload::HuntGame {
                 faction_id,
                 target_x,
                 target_y,
-                band_entity_bits,
+                band_id,
             } => pb::command_envelope::Command::HuntGame(pb::HuntGameCommand {
                 faction_id: *faction_id,
                 target_x: *target_x,
                 target_y: *target_y,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
             }),
             CommandPayload::HuntFauna {
                 faction_id,
                 herd_id,
-                band_entity_bits,
+                band_id,
             } => pb::command_envelope::Command::HuntFauna(pb::HuntFaunaCommand {
                 faction_id: *faction_id,
                 herd_id: herd_id.clone(),
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
             }),
             CommandPayload::Tame {
                 faction_id,
@@ -635,16 +639,16 @@ impl CommandEnvelope {
             }),
             CommandPayload::CancelOrder {
                 faction_id,
-                band_entity_bits,
+                band_id,
                 scope,
             } => pb::command_envelope::Command::CancelOrder(pb::CancelOrderCommand {
                 faction_id: *faction_id,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
                 scope: Some(scope.as_str().to_string()),
             }),
             CommandPayload::AssignLabor {
                 faction_id,
-                band_entity_bits,
+                band_id,
                 role,
                 workers,
                 target_x,
@@ -654,7 +658,7 @@ impl CommandEnvelope {
                 species,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
                 role: role.clone(),
                 workers: *workers,
                 target_x: *target_x,
@@ -665,44 +669,44 @@ impl CommandEnvelope {
             }),
             CommandPayload::MoveBand {
                 faction_id,
-                band_entity_bits,
+                band_id,
                 target_x,
                 target_y,
             } => pb::command_envelope::Command::MoveBand(pb::MoveBandCommand {
                 faction_id: *faction_id,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
                 target_x: *target_x,
                 target_y: *target_y,
             }),
             CommandPayload::SendExpedition {
                 faction_id,
-                band_entity_bits,
+                band_id,
                 party_workers,
                 target_x,
                 target_y,
             } => pb::command_envelope::Command::SendExpedition(pb::SendExpeditionCommand {
                 faction_id: *faction_id,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
                 party_workers: *party_workers,
                 target_x: *target_x,
                 target_y: *target_y,
             }),
             CommandPayload::RecallExpedition {
                 faction_id,
-                expedition_entity_bits,
+                expedition_band_id,
             } => pb::command_envelope::Command::RecallExpedition(pb::RecallExpeditionCommand {
                 faction_id: *faction_id,
-                expedition_entity_bits: *expedition_entity_bits,
+                expedition_band_id: *expedition_band_id,
             }),
             CommandPayload::SendHuntExpedition {
                 faction_id,
-                band_entity_bits,
+                band_id,
                 party_workers,
                 fauna_id,
                 policy,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
-                band_entity_bits: *band_entity_bits,
+                band_id: *band_id,
                 party_workers: *party_workers,
                 fauna_id: fauna_id.clone(),
                 policy: policy.clone(),
@@ -742,7 +746,8 @@ impl CommandEnvelope {
                 height: cmd.height,
             },
             pb::command_envelope::Command::Heat(cmd) => CommandPayload::Heat {
-                entity_bits: cmd.entity_bits,
+                target_x: cmd.target_x,
+                target_y: cmd.target_y,
                 delta: cmd.delta,
             },
             pb::command_envelope::Command::Orders(cmd) => CommandPayload::Orders {
@@ -901,13 +906,13 @@ impl CommandEnvelope {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::FollowHerd(cmd) => CommandPayload::FollowHerd {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
                 policy: cmd.policy,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::FoundSettlement(cmd) => {
                 CommandPayload::FoundSettlement {
@@ -921,18 +926,18 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
                 module: cmd.module,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::HuntGame(cmd) => CommandPayload::HuntGame {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::HuntFauna(cmd) => CommandPayload::HuntFauna {
                 faction_id: cmd.faction_id,
                 herd_id: cmd.herd_id,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
             },
             pb::command_envelope::Command::Tame(cmd) => CommandPayload::Tame {
                 faction_id: cmd.faction_id,
@@ -965,7 +970,7 @@ impl CommandEnvelope {
             },
             pb::command_envelope::Command::CancelOrder(cmd) => CommandPayload::CancelOrder {
                 faction_id: cmd.faction_id,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
                 // Absent legitimately means "all", and the wire is not a boundary worth hard-failing
                 // on: an unrecognised token degrades to the historical clear-everything behaviour.
                 scope: cmd
@@ -976,7 +981,7 @@ impl CommandEnvelope {
             },
             pb::command_envelope::Command::AssignLabor(cmd) => CommandPayload::AssignLabor {
                 faction_id: cmd.faction_id,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
                 role: cmd.role,
                 workers: cmd.workers,
                 target_x: cmd.target_x,
@@ -987,13 +992,13 @@ impl CommandEnvelope {
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
             },
             pb::command_envelope::Command::SendExpedition(cmd) => CommandPayload::SendExpedition {
                 faction_id: cmd.faction_id,
-                band_entity_bits: cmd.band_entity_bits,
+                band_id: cmd.band_id,
                 party_workers: cmd.party_workers,
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
@@ -1001,13 +1006,13 @@ impl CommandEnvelope {
             pb::command_envelope::Command::RecallExpedition(cmd) => {
                 CommandPayload::RecallExpedition {
                     faction_id: cmd.faction_id,
-                    expedition_entity_bits: cmd.expedition_entity_bits,
+                    expedition_band_id: cmd.expedition_band_id,
                 }
             }
             pb::command_envelope::Command::SendHuntExpedition(cmd) => {
                 CommandPayload::SendHuntExpedition {
                     faction_id: cmd.faction_id,
-                    band_entity_bits: cmd.band_entity_bits,
+                    band_id: cmd.band_id,
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
                     policy: cmd.policy,

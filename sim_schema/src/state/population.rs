@@ -47,7 +47,7 @@ pub struct LaborAssignmentState {
     #[serde(default)]
     pub species: String,
     /// Provisions this source actually produced this turn (per-source food-income breakdown). Derived
-    /// per-turn at capture (0.0 on a rehydrated save before the next tick). Appended (append-only).
+    /// per-turn at capture (0.0 on a row no turn has resolved yet). Appended (append-only).
     #[serde(default)]
     pub actual_yield: f32,
     /// Provisions this source could yield without drawing down its stock this turn (forage: ≡
@@ -79,7 +79,7 @@ pub struct LaborAssignmentState {
     /// per-turn take (a kill turn cashes a whole banked animal, spiking `actual` above the steady
     /// sustainable rate even under Sustain). False for Sustain and the investment rungs
     /// (Cultivate/Tame/Corral/Sow) and every managed rung-3 source; true for Surplus/Deplete/Eradicate.
-    /// A row with no yield (Scout/Warrior, or a rehydrated [`SourceYield::ZERO`]) is `false`. Derived
+    /// A row with no yield (Scout/Warrior, or an unresolved [`SourceYield::ZERO`]) is `false`. Derived
     /// per-turn at capture. Appended (append-only).
     #[serde(default)]
     pub overdraws: bool,
@@ -88,8 +88,8 @@ pub struct LaborAssignmentState {
     /// ceiling)`, the pre-quantization rate the kill-credit bank is fed. On a whole-animal (hunt)
     /// source `actual_yield` pulses (0 on wait turns, spikes on kills) while this holds steady at
     /// ~`MSY`; on a continuous forage/Field source the two are equal. The client's headline "Food
-    /// /turn" reads this instead of the jumpy `actual_yield`. Derived per-turn at capture (0 on a
-    /// rehydrated save before the next tick). Appended (append-only).
+    /// /turn" reads this instead of the jumpy `actual_yield`. Derived per-turn at capture (0 on a row
+    /// no turn has resolved yet). Appended (append-only).
     #[serde(default)]
     pub realized_yield: f32,
     /// **WHEN the food actually lands** — the discrete twin of [`Self::realized_yield`], from the
@@ -98,8 +98,8 @@ pub struct LaborAssignmentState {
     /// `0.0` marks a turn on which nothing lands. A big-game Sustain hunt reads lumpy — zeros between
     /// hauls, totalling ≈ `realized_yield × horizon`, because the bank moves the *timing* and not the
     /// total — while a forage patch or fast game is positive in every slot, a continuous source the
-    /// client draws as a solid run. **Empty** on a row that was never projected (Scout/Warrior, or a
-    /// rehydrated [`SourceYield::ZERO`]): read that as *no data*, never as famine. Derived per-turn at
+    /// client draws as a solid run. **Empty** on a row that was never projected (Scout/Warrior, or an
+    /// unresolved [`SourceYield::ZERO`]): read that as *no data*, never as famine. Derived per-turn at
     /// capture from the source's **post-take** state, so slot 0 is the *next* delivery. Appended
     /// (append-only).
     #[serde(default)]
@@ -127,6 +127,12 @@ pub struct LaborAssignmentState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct PopulationCohortState {
     pub entity: u64,
+    /// The band's durable identity — the handle a client sends back in a command.
+    ///
+    /// `entity` beside it is an ECS handle and is renumbered by every rollback, so it names a band
+    /// only until the next one. Commands address bands by this.
+    #[serde(default)]
+    pub band_id: u64,
     pub home: u64,
     #[serde(default)]
     pub current_x: u32,
@@ -262,11 +268,12 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub supply_network_id: u32,
     /// This turn's signed morale delta (fixed-point raw, `Scalar::SCALE` = 1.0). The client renders
-    /// it as a rising/falling trend arrow. Derived at capture (not persisted for rollback).
+    /// it as a rising/falling trend arrow. Recomputed each turn by `simulate_population`
+    /// (`PopulationCohort::last_morale_delta`).
     #[serde(default)]
     pub morale_delta: i64,
     /// Dominant negative morale driver this turn: `0 = None, 1 = Terrain, 2 = Cold, 3 = Unrest`.
-    /// Names *why* morale is falling. Derived at capture (not persisted for rollback).
+    /// Names *why* morale is falling. Recomputed each turn alongside [`Self::morale_delta`].
     #[serde(default)]
     pub morale_cause: u8,
     /// Civilization Wellbeing (`docs/plan_civ_wellbeing.md`). Productivity modifier-stack result
@@ -317,8 +324,8 @@ pub struct PopulationCohortState {
     #[serde(default)]
     pub settlement_stage: SettlementStageViewState,
     /// Band-level food income this turn = Σ of every worked source's `actual_yield` (the per-source
-    /// breakdown summed). Derived per-turn at capture (0.0 on a rehydrated save before the next
-    /// tick). Appended last (append-only schema discipline). Lets the client draw a food ledger
+    /// breakdown summed). Derived per-turn at capture (0.0 on a band no turn has resolved yet).
+    /// Appended last (append-only schema discipline). Lets the client draw a food ledger
     /// footer without re-summing the assignment rows.
     #[serde(default)]
     pub food_income: f32,
@@ -367,8 +374,8 @@ pub struct PopulationCohortState {
     /// larder_delta == food_income − food_consumption − pen_feed_upkeep
     /// ```
     ///
-    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, not persisted (a rehydrated
-    /// cohort reads `0.0` until the next tick), exactly like `food_income`. Appended.
+    /// (pinned by `core_sim/tests/fauna_husbandry.rs`). Derived per-turn, exactly like `food_income`.
+    /// Appended.
     #[serde(default)]
     pub pen_feed_upkeep: f32,
     /// One worker's carry contribution to a hunt expedition's haul
@@ -411,8 +418,8 @@ pub struct PopulationCohortState {
     /// `morale_*` contributions above. Fixed-point raw (`Scalar::SCALE`), **neutral at 1.0, not at
     /// 0** — these are multiplicative factors, not signed contributions.
     ///
-    /// Derived per-turn, **not persisted** (like the morale contributions), so a rehydrated cohort
-    /// reads the all-zero default. **Zero `fertility_reserve` is the NOT-PROJECTED sentinel**: a
+    /// Derived per-turn: a cohort that has not yet been through a turn publishes the all-zero
+    /// default. **Zero `fertility_reserve` is the NOT-PROJECTED sentinel**: a
     /// computed `reserve` is ≥ 1 by construction, while `hunger` and `trend` both legitimately
     /// reach 0. Appended (append-only schema discipline).
     #[serde(default)]
@@ -439,7 +446,7 @@ pub struct PopulationCohortState {
     ///
     /// (pinned by `integration_tests/tests/raid_food_ledger.rs`). It is a **past-turn** stochastic
     /// debit, NOT a recurring cost, so it is deliberately absent from the `turns_of_food` runway drain.
-    /// Derived per-turn, not persisted (a rehydrated cohort reads `0.0` until the next tick). Appended.
+    /// Derived per-turn by `advance_predator_raids`. Appended.
     #[serde(default)]
     pub raid_forfeit: f32,
 }

@@ -466,6 +466,15 @@ static func gate_reasons(gates: Dictionary, policy: String) -> Array:
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
 
+## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
+## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
+## the rung meta above, only more so: this button's face is the raid VERDICT
+## (`SourceForecast.style_send_hunt_button` writes "Send Hunting Expedition" / "Send Anyway (≈54
+## turns)" / "Send (brings nothing home)" / "Herd too lean to raid"), so text is the one thing a
+## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
+## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
+const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
+
 ## ONE RUNG of the policy picker: a clickable, styleable, disable-able `Button` with a TWO-LINE face
 ## whose lines carry DIFFERENT TYPE — which `Button.text` structurally cannot do (one font size per
 ## button), so the lines are child Labels and the button's own `text` stays empty.
