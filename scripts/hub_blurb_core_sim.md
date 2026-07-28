@@ -40,6 +40,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `checkpoints.md` | Why rollback restores `SimState` and not `WorldSnapshot`, the three construction rules (no `Entity`, no config, pure capture), when "derived" is unsafe, how omission is made to fail a test | `sim_state.rs`, `snapshot/capture.rs`, `tests/sim_state_coverage.rs`, `integration_tests/tests/replay_determinism.rs` |
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
 | `world-handoff.md` | Which world a snapshot frame belongs to: no frame replay on connect, the reveal gate, retry-until-answered, per-world client caches (**spans both halves**) | `network.rs`, `Main.gd`, `GameLaunch.gd` |
+| `snapshot-socket.md` | Staying alive when a client stops reading: accept split from broadcast, the write timeout and why a timed-out client must be dropped, the bounded frame queue | `network.rs`, `tests/snapshot_socket.rs` |
 | `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`

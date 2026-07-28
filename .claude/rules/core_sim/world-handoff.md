@@ -74,10 +74,13 @@ replay back.
 
 ## The dropped-first-frame race, and why the retry is the answer
 
-Deleting the replay exposes a pre-existing hole in the accept loop. Its iteration is
-`accept() → push to clients → drain the channel`, so a frame queued while the connection is still
-sitting in the TCP backlog is drained **before** the socket joins `clients`, and that client never
-gets it. The replay used to paper over this by accident.
+Deleting the replay exposes a pre-existing hole on the accept path: a frame published while the
+connection is still sitting in the TCP backlog is broadcast **before** the socket joins the client
+list, and that client never gets it. The replay used to paper over this by accident.
+
+The topology has since changed — accept and broadcast are separate threads handing sockets over a
+channel (`snapshot-socket.md`) — and the race survives it unchanged, now with the handoff as one more
+place a frame can overtake a new client.
 
 It cannot be closed on the server: the backlog means a connection exists for the OS before the
 server knows about it, so *some* frame can always be broadcast into the gap. So the client closes it
