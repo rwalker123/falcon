@@ -49,6 +49,18 @@ paths:
     is what makes the land selectable at all on an occupied hex:** `refresh_selection_payload`
     answers `kind: "unit"` for as long as `selected_unit_id >= 0`, so without it the per-snapshot
     refresh restored the band and the tile branch was never reached.
+    **The map click deselects the same way.** Clicking a hex with no band or herd while an occupant
+    is selected runs `MapView._handle_entity_selection`'s clear branch, which drops
+    `selected_unit_id` / `selected_herd_id` and emits `selection_cleared` — and leaves `selected_tile`
+    on the hex just clicked, because `handle_hex_click` ran `_emit_tile_selection` one call earlier
+    and that hex IS the new selection. So deselecting an occupant on the map keeps the tile selected
+    (its white outline stays drawn) and falls back to the LAND card: `refresh_selection_payload`
+    reaches its `{"kind": "tile"}` branch, and `Hud.clear_selection` re-renders from the `tile_info`
+    that `show_tile_selection` populated on the same click. Clearing the tile there instead left the
+    hex with only its faint hover outline and no card (issue #405). Guarded by ui_preview
+    `tile_panel_deselect_keeps_tile`, which drives the real path — a MapView with fog off, Main's
+    three signals wired, a click on the herd then a click on empty land — and asserts the tile, the
+    cleared occupant and the `"tile"` payload. Verified to FAIL with the tile clear restored.
   - **`%SubjectScroll` / `%SubjectBody`** — the ONE drawer, filled by whichever row is lit and
     **height-capped** via `DockScrollFit.fit_height` against the room left in the dock
     (`SUBJECT_DRAWER_MIN_HEIGHT` floor), so a crowded hex scrolls INSIDE the drawer instead of

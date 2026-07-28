@@ -2386,7 +2386,9 @@ func _handle_entity_selection(col: int, row: int) -> void:
 		selected_unit_id = -1
 		selected_herd_id = ""
 		emit_signal("selection_cleared")
-		selected_tile = Vector2i(-1, -1)
+		# The OCCUPANT selection clears; the TILE selection does NOT. The click that reached here ran
+		# _emit_tile_selection one call earlier and selected this hex, and the land card is what the hex
+		# falls back to (refresh_selection_payload → {"kind": "tile"}, Hud.clear_selection → select_land).
 		queue_redraw()
 
 func _update_herd_trail(herd_id: String, herd: Dictionary) -> void:

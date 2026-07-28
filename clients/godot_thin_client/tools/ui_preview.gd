@@ -67,6 +67,11 @@ const STICKY_TILE := Vector2i(58, 24)
 const STICKY_GRID_W := 64
 const STICKY_GRID_H := 32
 const STICKY_TERRAIN_ID := 11
+# The deselect-keeps-the-tile state's two hexes, on the same grid: a hex carrying the lone herd, and
+# an EMPTY land hex a few columns away (far enough that no marker or occupant can bleed into it, so a
+# click there resolves as bare land).
+const DESELECT_HERD_TILE := Vector2i(30, 16)
+const DESELECT_LAND_TILE := Vector2i(34, 16)
 # Park the OS cursor over empty canvas before rendering. The HUD drops its hovered-hex record (and
 # with it the targeting banner's hunt forecast) whenever the pointer sits over an interactive HUD
 # control — see Hud._suppress_tooltip_over_ui. Wherever the cursor happened to be when the harness
@@ -2234,6 +2239,44 @@ func _ready() -> void:
 	sticky_map.unit_selected.disconnect(_hud.show_unit_selection)
 	_hud.roster_occupant_selected.disconnect(sticky_map.select_occupant)
 	sticky_map.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_deselect_keeps_tile — THE BEHAVIOURAL ASSERTION for issue #405: clicking an EMPTY hex
+	# while a herd is selected must leave that hex SELECTED, not selectionless. A PNG cannot carry this
+	# claim — "no selection outline" and "an outline drawn under an overlay" look identical — so it is
+	# asserted on state, through the real click path, the `tile_panel_land_sticky` idiom above: a real
+	# MapView, Main's signal wiring, real `handle_hex_click` calls. `_handle_entity_selection`'s clear
+	# branch only arms once an occupant is selected, so the first click (the herd) is what makes the
+	# second click able to fail; asserting on the empty click alone would pass vacuously.
+	var deselect_map: Node2D = MAP_VIEW_SCRIPT.new()
+	deselect_map.visible = false   # data only — a visible map renders behind the HUD in every later frame
+	add_child(deselect_map)
+	# FoW OFF, stated explicitly (the harness rule): `_fow_enabled` fails closed to `true`, and a
+	# fog-gated herd would never be selected by the first click, leaving nothing to deselect.
+	deselect_map.set_fow_enabled(false)
+	deselect_map.display_snapshot(_deselect_map_snapshot())
+	# Main's wiring for this path, verbatim (Main._on_map_tile_selected / _on_map_herd_selected /
+	# _on_map_selection_cleared).
+	deselect_map.tile_selected.connect(_hud.show_tile_selection)
+	deselect_map.herd_selected.connect(_hud.show_herd_selection)
+	deselect_map.selection_cleared.connect(_hud.clear_selection)
+	deselect_map.handle_hex_click(DESELECT_HERD_TILE.x, DESELECT_HERD_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("clicking a herd selects the herd AND its tile",
+		deselect_map.selected_herd_id != "" and deselect_map.selected_tile == DESELECT_HERD_TILE)
+	deselect_map.handle_hex_click(DESELECT_LAND_TILE.x, DESELECT_LAND_TILE.y, MOUSE_BUTTON_LEFT)
+	var deselect_payload: Dictionary = deselect_map.refresh_selection_payload()
+	await _settle()
+	_assert_hud("deselecting a herd on an empty hex KEEPS that hex selected (#405)",
+		deselect_map.selected_tile == DESELECT_LAND_TILE)
+	_assert_hud("deselecting a herd clears the OCCUPANT selection",
+		deselect_map.selected_herd_id == "" and deselect_map.selected_unit_id == -1)
+	_assert_hud("the deselected hex falls back to its land card",
+		String(deselect_payload.get("kind", "")) == "tile")
+	await _save("tile_panel_deselect_keeps_tile")
+	deselect_map.tile_selected.disconnect(_hud.show_tile_selection)
+	deselect_map.herd_selected.disconnect(_hud.show_herd_selection)
+	deselect_map.selection_cleared.disconnect(_hud.clear_selection)
+	deselect_map.queue_free()
 	await get_tree().process_frame
 
 	# tile_panel_unseen — a REMEMBERED hex. Chips + the land row render (geography is remembered
@@ -5267,6 +5310,33 @@ func _sticky_map_snapshot() -> Dictionary:
 		"overlays": {"terrain": terrain},
 		"populations": _crowded_bands_fixture(),
 		"herds": _crowded_herds_fixture(),
+	}
+
+## The MapView snapshot behind `tile_panel_deselect_keeps_tile` — ONE herd and no bands, so the first
+## click resolves as a herd rather than a band (a band would exercise `selected_unit_id`, the other
+## half of the same clear branch, but not the herd case the issue was reported on) and `DESELECT_LAND_TILE`
+## is genuinely bare. Same grid as the sticky fixture; fog is turned off by the caller.
+func _deselect_map_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)
+	terrain.fill(STICKY_TERRAIN_ID)
+	return {
+		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [],
+		"herds": [{
+			"id": "game_deer_405",
+			"label": "Red Deer (game_deer_405)",
+			"species": "Red Deer",
+			"size_class": "big",
+			"huntable": true,
+			"ecology_phase": "thriving",
+			"domestication": 0.0,
+			"biomass": 1480.0,
+			"carrying_capacity": 2150.0,
+			"graze_range_radius": 1,
+			"x": DESELECT_HERD_TILE.x, "y": DESELECT_HERD_TILE.y,
+		}],
 	}
 
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
