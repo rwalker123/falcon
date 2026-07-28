@@ -712,7 +712,9 @@ fn seed_snapshot() -> WorldSnapshot {
     s.forage_patches = rows();
     for patch in &mut s.forage_patches {
         patch.owner = Some(0);
-        patch.composition = rows();
+        // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
+        // handed over as one — the encoded bytes are identical either way.
+        patch.composition = rows::<sim_schema::FloraShareInfo>().into();
     }
     s.intensification_knowledge = rows();
 

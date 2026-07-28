@@ -110,11 +110,11 @@ Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
 | section | ms @80×52 | % | copy or derive | proportional to | grows when |
 |---|---|---|---|---|---|
 | `patches` | **1.217** | 41.7 | **derive** — *memoized since #410, see below* | patch tiles × realized species × **payoff accounts** | map grows; **a payoff account is added** |
-| `readouts.forage_patches` | 0.424 | 14.5 | **derive** | patches × ladder rungs | map grows; a rung/policy is added |
+| `readouts.forage_patches` | 0.424 | 14.5 | **derive** — *the basket is shared since #410 half B, see below* | patches × ladder rungs | map grows; a rung/policy is added |
 | `rasters` (9 overlays, 2 blocks) | 0.319 | 10.9 | **derive** | tiles × rasters | map grows; a raster is added |
 | `tiles` | 0.211 | 7.2 | copy + 2 cheap derivations | tiles | map grows |
 | `culture` | 0.206 | 7.0 | **copy** | culture layers (one local layer per tile) | map grows |
-| `assemble` | 0.204 | 7.0 | **copy** (`.clone()` per field) | assembled snapshot bytes | anything grows |
+| `assemble` | 0.204 | 7.0 | **copy** (`.clone()` per field) — *~70% of it left with the shared basket, see #410 half B below* | assembled snapshot bytes | anything grows |
 | `tile_index` | 0.159 | 5.5 | derive/join | tiles (culture probe + sort + coord index) | map grows |
 | `power` | 0.104 | 3.6 | copy | power nodes (= tiles) | map grows |
 | `readouts.herds` | 0.060 | 2.1 | **derive** (fog filter + hunt forecast) | herds, ~4–5 µs each | herd count grows |
@@ -125,9 +125,11 @@ Standard recipe, idle (publisher shut down), mean of 3 runs of 30 frames:
 moves again. Reading the ms column alone is what produced the standing (wrong) assumption that
 rasters were the thing to attack.
 
-> **The `patches` row is the pre-#410 figure, kept because the whole table is one session and the
-> rows sum to the parent.** That section is now a memo and reads **0.131 ms** on the turn — see
-> "The flora quotes are a memo" below. Every other row is current.
+> **Three rows are pre-#410 figures, kept because the whole table is one session and the rows sum to
+> the parent.** `patches` is now a memo and reads **0.131 ms** on the turn ("The flora quotes are a
+> memo" below); `readouts.forage_patches` and `assemble` both fell when the flora basket stopped
+> being copied per patch per turn, to **0.355** and **0.067** ("The other half of #410" below). Every
+> other row is current. The **growth column is current for all three** — it is the column to read.
 
 ### One more raster costs 0.028 ms — the block is `O(tiles × rasters)` with a tiny constant
 
@@ -190,10 +192,47 @@ state and needs no restore path.
 **The growth column consequently reads differently: a fifth payoff account now costs its ~0.30 ms
 once per world rather than once per turn.**
 
-**The remaining half of #410 is `readouts.forage_patches`.** That one *does* read live biomass, so
-it is a genuine per-turn derivation — and it is derived for every patch on the map to answer a
-per-selection question: `forage_patches` is read by the client's `MapView._tile_info_at(col, row)`
-(a per-tile query on selection) and by the compose stepper for one source.
+### The other half of #410 was not the forecast — it was copying the basket (#410 half B)
+
+`readouts.forage_patches` was the arc's remaining suspect on the reading that it re-forecasts every
+patch on the map to answer a per-selection question. **Measured, that forecast is 13% of the section
+and ~3% of `snapshot.build`** — 0.066 ms at 80×52, against the section's 0.50. Sub-labelling the
+section in two passes (one profiler span each, because ~3 spans per patch would swamp what they
+measure) and then ablating one field found the real cost: **`ForagePatchState::composition` was
+deep-copied per patch per turn**, 0.26 ms of it, and the flora basket is two `String`s per named
+plant × 5,984 named plants at 80×52.
+
+That basket is a property of the **tile** — the same value Half A's memo already holds, derived once
+per tile per world — so copying it into every row every turn was re-allocating a value that had
+neither a per-patch nor a per-turn reason to be fresh. It is now an **`Arc<[FloraShareInfo]>`** on
+the state struct, handed straight out of the memo; a row costs one refcount bump. Sharing is safe
+because nothing downstream mutates a published composition, and it is invisible to the diff:
+`FloraShareInfo` holds `f32`s so it is not `Eq`, which means `Arc`'s `PartialEq` takes no pointer
+shortcut and still compares element-wise exactly as the `Vec` did.
+
+Measured 80×52, release, `map_seed` pinned, publisher shut down, 30 frames — **three runs per arm,
+arms alternated** (two binaries built up front, so the arms interleave at run granularity rather than
+being two batches an hour apart):
+
+| | copied | shared |
+|---|---|---|
+| `snapshot.build.forage_patches` | 0.500 | **0.355** |
+| `snapshot.build.assemble` | 0.212 | **0.067** |
+| `snapshot.build` | 1.993 | **1.691** |
+
+**Read the `assemble` row, not the `forage_patches` row, for the size of the idea.** A section's own
+scope shows only the first copy; `assemble` `.clone()`s every field into the `WorldSnapshot` and was
+paying for the same baskets a second time, so it fell **~70% — at every map size** (0.063→0.024,
+0.212→0.067, 0.799→0.195 across 40×26 / 80×52 / 160×104). That is the transferable part: **a `Vec`
+of `String`-bearing rows on a snapshot state struct is paid for once per copy, and the capture is not
+the only thing that copies it.**
+
+**What is left of the forecast is not worth range-gating, and that is a measurement, not a
+preference.** Gating it on `band_work_range` would chase ~0.066 ms while costing the tile card its
+yield ceilings for any patch outside a band's reach — and *"what would this ground pay if I moved my
+band here"* is exactly the move/stay question the ceilings exist to answer. The remaining per-row
+allocations are the two `&'static str`-sourced `String`s (`ecology_phase`, `sow_site_refusal`,
+~0.08 ms together); they are recorded here so the next reader has the number rather than the hunch.
 
 ### Write-side change emission addresses 18% of `snapshot.build`
 
