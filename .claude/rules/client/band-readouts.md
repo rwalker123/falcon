@@ -186,8 +186,9 @@ paths:
   climate" (the server penalty fires on hot **or** cold deviation, so not literally "cold"),
   `Unrest`→"unrest". `Terrain` appends the band's `_selected_tile_info.terrain_label` in parens
   (`Morale: 22% ▼ — harsh terrain (Karst Cavern Mouth)`) — the "it's the hex you're on" payload. A
-  rehydrated save reports `morale_delta 0 / cause None` for one turn (the sim doesn't persist them); the
-  row degrades to a bare percentage.
+  band that has not ticked yet reports `morale_delta 0 / cause None` and the row degrades to a bare
+  percentage. **That is not a rollback case** — the checkpoint clones `PopulationCohort` whole, so a
+  restored band keeps its delta and cause; the sentinel answers for a cohort no turn has resolved.
 - **Civilization Wellbeing — productivity, itemized morale, recovery** (see
   `docs/plan_civ_wellbeing.md`; snapshot `PopulationCohortState.outputMultiplier` /
   `discontentFraction` / `lastEmigrated` / `lastImmigrated` / `grievance` + the four signed
@@ -247,8 +248,9 @@ paths:
       (`larder growing` / `larder shrinking`) the way the morale row's culture/unrest does. Only
       factors off the neutral 1.0 by more than `fertility.breakdown_epsilon` (`0.002`) list, so a
       thriving band's disclosure names what is HELPING rather than showing no-op rows.
-    - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived, not
-      persisted, so a rehydrated cohort publishes all zeros; `BandFoodStatus.fertility_is_projected`
+    - **NO DATA IS NOT A FAMINE, and the sentinel is a ZERO RESERVE.** The factors are derived per
+      turn, so a cohort no turn has resolved publishes all zeros — **not** a restored one, which
+      keeps them, since the checkpoint clones the cohort whole. `BandFoodStatus.fertility_is_projected`
       reads that off `fertility_reserve` (a computed reserve is `1 + bonus × ramp` ≥ 1 by
       construction, while `hunger` and `trend` both legitimately reach 0) and the producer emits **no
       Growth row and no disclosure at all** rather than a fabricated `0% of normal`. `MapView`
@@ -259,7 +261,7 @@ paths:
     - ui_preview: `band_growth_expanded` (188% neutral ink, disclosure naming the two helping factors,
       `hunger` neutral so its row is omitted) / `band_growth_collapsed` (16% red under a WARN caret,
       all three factors off neutral — the frame that proves the rows multiply out to the headline) /
-      `band_growth_unprojected` (a rehydrated band: NO Growth row). band_panel_preview:
+      `band_growth_unprojected` (a band no turn has resolved yet: NO Growth row). band_panel_preview:
       `band_panel_morale_expanded_*` carries the collapsed Growth row in the dock host.
   - **Action morale hints**: the Scout button tooltip (`MORALE_HINT_SCOUT`, "(+morale)") and the four
     persistent Hunt/Follow policy tooltips (Sustain/Surplus/Deplete/Eradicate get `MORALE_HINT_PERSISTENT`

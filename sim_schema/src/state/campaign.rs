@@ -86,14 +86,20 @@ pub struct BeatWardrobeUsageState {
     pub last_used_tick: u64,
 }
 
-/// Authoritative mirror of The Telling's `BeatLedger` — the narrative memory (what fired, what the
-/// signals read last turn, which dressings are stale). Round-tripped through the rollback snapshot
-/// **including restore**, so a rollback past a beat lets that beat fire again instead of leaving it
-/// wrongly marked fired. Every map crosses as a sorted `Vec` so the record is stable.
+/// Serde mirror of The Telling's `BeatLedger` — the narrative memory (what fired, what the signals
+/// read last turn, which dressings are stale). Every map crosses as a sorted `Vec` so the record is
+/// stable.
 ///
-/// Per-turn scratch (the tier budget counters) is deliberately absent — it is recomputed each
-/// turn, so a rehydrated ledger starts neutral. Sim-side only; not on the FlatBuffers client
-/// stream (beats reach the client as `CommandEvent`s). See `docs/plan_the_telling.md` §3.
+/// **Rollback does not go through this type.** `SimState` clones `BeatLedger` whole, so the
+/// narrative memory is rewound by the checkpoint and a rollback past a beat lets that beat fire
+/// again — the behaviour this record used to be responsible for, now carried by the clone. The
+/// `BeatLedger::{to_state, from_state}` pair survives as the ledger's **serde form**, reached only
+/// by tests today; see `.claude/rules/core_sim/checkpoints.md`.
+///
+/// Per-turn scratch (the tier budget counters) is deliberately absent — it is genuinely not a
+/// `BeatLedger` field, so a ledger built from this record starts neutral. Sim-side only; not on the
+/// FlatBuffers client stream (beats reach the client as `CommandEvent`s). See
+/// `docs/plan_the_telling.md` §3.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct BeatLedgerState {
     #[serde(default)]

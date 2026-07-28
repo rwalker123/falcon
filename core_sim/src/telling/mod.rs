@@ -705,7 +705,9 @@ impl BeatLedger {
                     )
                 })
                 .collect(),
-            // Derived, not persisted: recomputed by the next `telling_tick`.
+            // Absent from the serde record, and only from it: `SimState` clones the whole ledger,
+            // so a rollback DOES restore this. A ledger rebuilt from a `BeatLedgerState` starts
+            // without it and the next `telling_tick` recomputes it.
             last_effective_stance: BTreeMap::new(),
         }
     }
