@@ -11,7 +11,7 @@
 //! `127.0.0.1:0` so concurrent tests cannot collide on a port, and polls to a deadline rather than
 //! sleeping a fixed time — the only wall-clock assumption anywhere here is the timeout it injected.
 
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -36,6 +36,46 @@ fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
     loop {
         if cond() {
             return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// How many consecutive polls a frame queue must sit still to count as parked — see
+/// [`wait_until_broadcaster_parks`]. At [`POLL_INTERVAL`] apiece this is a fifth of a second, five
+/// orders of magnitude longer than a write to a socket that has room.
+const PARKED_SAMPLES: u32 = 20;
+
+/// Waits until the broadcast thread is parked inside `write_all` on a peer that never reads.
+///
+/// `queued_frames() > 0` alone does not say that: the broadcaster may simply not have reached the
+/// channel yet, and one still sitting in `select!` would pick up the next connection rather than
+/// leave it in the handoff slot. Parked is instead *took at least one frame off, then stopped
+/// taking them* — `frames_broadcast` is the count published, and the queue holding steady below it
+/// for [`PARKED_SAMPLES`] polls is the evidence. How much a socket absorbs before it blocks varies
+/// by platform and by autotuning, so how many frames the broadcaster gets through first is
+/// deliberately not assumed.
+///
+/// The state is absorbing, which is what lets the caller assert after the fact: the peer never
+/// reads, and the callers set a write timeout beyond the test's own runtime, so a parked
+/// broadcaster stays parked.
+fn wait_until_broadcaster_parks(server: &SnapshotServer, frames_broadcast: usize) -> bool {
+    let deadline = Instant::now() + POLL_DEADLINE;
+    let mut last = usize::MAX;
+    let mut unchanged = 0;
+    loop {
+        let queued = server.queued_frames();
+        if queued > 0 && queued < frames_broadcast && queued == last {
+            unchanged += 1;
+            if unchanged >= PARKED_SAMPLES {
+                return true;
+            }
+        } else {
+            unchanged = 0;
+            last = queued;
         }
         if Instant::now() >= deadline {
             return false;
@@ -210,6 +250,109 @@ fn a_stalled_client_does_not_block_a_new_connection() {
         1,
         "connected_clients()={} with only one live reader: a client whose write exceeds the write \
          timeout must be dropped, because its stream can no longer be framed",
+        server.connected_clients()
+    );
+}
+
+/// Pins the half of the #406 fix that the test above cannot: that accepting is a *separate thread*
+/// from writing.
+///
+/// `a_stalled_client_does_not_block_a_new_connection` cannot fail a merged-thread server *on the
+/// property it names*. Its connect check concedes as much in place — the kernel completes a loopback
+/// handshake into the listen backlog whether or not anyone calls `accept()` — and its delivery check
+/// is satisfied one write timeout later, when the lone thread drops the stalled peer, returns from
+/// the drain, loops back to `accept()` and registers the survivor. Nothing in it bounds how long
+/// that takes, so a regression that merged the threads back while keeping the timeout comes down to
+/// whether the survivor happened to register before the frame it is waiting for was broadcast.
+///
+/// The refusal arm of the pending-client backlog is what discriminates, because closing a connection
+/// that has nowhere to go is work only the accept thread can do *while a write is blocked*. With the
+/// backlog capped at one and the broadcaster parked in `write_all`, the second connection takes the
+/// single handoff slot and the third is accepted, finds no room, and is closed — a clean EOF on the
+/// client side. Under a merged thread the third connection is never accepted at all: it waits in the
+/// listen backlog and its read times out instead.
+#[test]
+fn the_accept_thread_keeps_running_while_a_write_is_blocked() {
+    // Long enough that it never fires during this test: the wedge has to hold for the whole run,
+    // and an evicted client would drain the queue and free the broadcaster.
+    const WRITE_TIMEOUT: Duration = Duration::from_secs(120);
+    // One handoff slot, so the second connection made during the wedge fills it and the third has
+    // nowhere to be put.
+    const PENDING_CLIENT_CAPACITY: usize = 1;
+    // 32 MiB in total, far beyond the socket buffers on either side of loopback however they are
+    // autotuned, so the broadcaster is certain to run out of window part-way through and park.
+    const STALL_FRAME_BYTES: usize = 1 << 20;
+    const STALL_FRAME_COUNT: usize = 32;
+    // Short on purpose: the property under test is that the refusal arrives *promptly*. A generous
+    // timeout here would turn a stopped accept path into a slow hang instead of a clear failure.
+    const REFUSAL_DEADLINE: Duration = Duration::from_secs(2);
+
+    let (listener, port) = bind_local();
+    let server = start_snapshot_server_with_limits(
+        listener,
+        SnapshotServerLimits {
+            write_timeout: WRITE_TIMEOUT,
+            // Twice what is broadcast below, so no frame can be dropped — which is what lets a
+            // queue shorter than `STALL_FRAME_COUNT` mean exactly one thing: the broadcaster took
+            // frames off it and then stopped.
+            frame_queue_capacity: STALL_FRAME_COUNT * 2,
+            pending_client_capacity: PENDING_CLIENT_CAPACITY,
+        },
+    );
+
+    // Client A registers and then never reads a byte.
+    let _stalled = connect_and_register(port, &server, 1);
+    let big = frame(vec![0xEF; STALL_FRAME_BYTES]);
+    for _ in 0..STALL_FRAME_COUNT {
+        server.broadcast(&big);
+    }
+    assert!(
+        wait_until_broadcaster_parks(&server, STALL_FRAME_COUNT),
+        "the broadcaster kept draining {} MiB into a client that never reads, so it is still in \
+         `select!` rather than inside `write_all` and the connections below would be serviced \
+         normally",
+        (STALL_FRAME_BYTES * STALL_FRAME_COUNT) >> 20
+    );
+
+    // Client B fills the single handoff slot. The accept thread hands it over; the broadcaster is
+    // inside `write_all` and cannot return to `select!` to register it.
+    let _pending = TcpStream::connect(("127.0.0.1", port))
+        .expect("a client must be able to connect while the broadcaster is wedged");
+
+    // Client C is accepted by the same still-running accept thread, finds the slot taken, and has
+    // its socket closed. The accept thread processes connections in backlog order on one thread, so
+    // B is already through the handoff by the time C is accepted.
+    let mut refused = TcpStream::connect(("127.0.0.1", port))
+        .expect("a client must be able to connect while the broadcaster is wedged");
+    refused
+        .set_read_timeout(Some(REFUSAL_DEADLINE))
+        .expect("set read timeout");
+
+    let mut probe = [0u8; 1];
+    match refused.read(&mut probe) {
+        // The refusal itself: the accept thread dropped the socket, so the stream ends. A close can
+        // surface as an RST instead of a FIN depending on the stack; both say the one thing this
+        // test asks, that the accept thread answered while a write was blocked.
+        Ok(0) => {}
+        Err(err) if err.kind() == ErrorKind::ConnectionReset => {}
+        Ok(n) => panic!(
+            "the refused client received {n} byte(s): with the handoff backlog full the accept \
+             thread must close the socket, not register a client the broadcaster has no room for"
+        ),
+        Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => panic!(
+            "nothing came back within {REFUSAL_DEADLINE:?} (connected_clients()={}): the socket was \
+             never accepted at all, which means accepting stops while a write is blocked — the \
+             single-threaded topology #406 was filed for",
+            server.connected_clients()
+        ),
+        Err(err) => panic!("the refused client's read failed unexpectedly: {err}"),
+    }
+
+    assert_eq!(
+        server.connected_clients(),
+        1,
+        "connected_clients()={}: only the wedged client may be registered, because a broadcaster \
+         parked in `write_all` cannot return to `select!` to pick up either later connection",
         server.connected_clients()
     );
 }

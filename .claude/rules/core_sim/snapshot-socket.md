@@ -90,6 +90,23 @@ Defaults live on the struct; `start_snapshot_server` uses them and
 `connected_clients()`, `queued_frames()` and `dropped_frames()` exist so the two failure modes are
 observable rather than inferred from a log; `core_sim/tests/snapshot_socket.rs` asserts on all three.
 
+**The obvious test cannot tell the thread split from the write timeout, and that is worth knowing
+before writing another one.** "A stalled client must not stop new connections" is satisfied on a
+*merged* server that merely has the timeout: the kernel completes a loopback handshake into the
+listen backlog whether or not anyone calls `accept()`, and one write timeout later the single thread
+drops the stalled peer, returns from the drain and registers the newcomer — so the test comes down
+to whether the survivor happened to register before the frame it waits for. What discriminates is
+**the pending-client backlog's refusal arm**, because closing a connection that has nowhere to go is
+work only the accept thread can do *while a write is blocked*:
+`the_accept_thread_keeps_running_while_a_write_is_blocked` caps the backlog at one, parks the
+broadcaster, and asserts the third connection gets a prompt EOF.
+
+Its synchronisation is the other transferable part. `queued_frames() > 0` does **not** establish
+that the broadcaster is wedged — it may not have reached the channel yet, and one still in `select!`
+picks up the next connection. Parked is *took at least one frame off, then stopped*, which is an
+absorbing state and platform-independent; how much a socket absorbs before it blocks varies by stack
+and by autotuning, so no frame count is assumed.
+
 ## What is deliberately not here
 
 **Per-client outbound buffering on nonblocking sockets.** It would be strictly better behaviour — a
