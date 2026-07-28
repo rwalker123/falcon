@@ -5,9 +5,9 @@ use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{build_headless_app, FactionId, HerdRegistry};
 
 /// Regression: the authoritative `HerdRegistry` (biomass / position / movement / domestication)
-/// must round-trip through the rollback snapshot. Before the `HerdState` capture/restore was
-/// added, only the lossy display telemetry was persisted, so a rollback silently kept the herd's
-/// post-rollback biomass and position. This asserts a mutate-then-restore rewinds the herd exactly.
+/// must round-trip through rollback. Before herd capture/restore was added, only the lossy display
+/// telemetry was persisted, so a rollback silently kept the herd's post-rollback biomass and
+/// position. This asserts a mutate-then-restore rewinds the herd exactly.
 #[test]
 fn herd_registry_biomass_and_position_rewind_on_rollback() {
     common::ensure_test_config();

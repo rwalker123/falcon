@@ -92,7 +92,9 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   fields that hold **cultivation** (Phase 1a, below), so a mutate-then-restore rewinds it like
   biomass. It reached that state by way of a per-tile `ForageState` mirror captured coord-sorted
   onto `WorldSnapshot.forage_registry`; that copy was deleted once the checkpoint left it without a
-  reader (`checkpoints.md`). Never wired to the FlatBuffers client stream.
+  reader (`checkpoints.md`), and the `ForageState` record plus `ForageRegistry::{from_states,
+  update_from_states}` followed it, having nothing left to decode. Never wired to the FlatBuffers
+  client stream.
 - **Companion client slice:** the sim side of the forage policy axis (§0-iii) is complete — the
   client `%ForageAssignControls` policy picker (mirroring `%HerdAssignControls`) that emits the
   policy in the `assign_labor forage` command is a **client-dev follow-up**. A client patch-ecology
@@ -202,8 +204,8 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   (from the assignment's selection, else the highest-share species in *this tile's* basket the rung's
   `cultivation_ceiling` permits), fixed from then on, and **cleared when both improvement meters lapse
   to zero** (`ForagePatch::reconcile_owner` — a fully feral patch is a wild stand, and a wild stand is
-  the whole basket). Persisted on `sim_schema::ForageState.species` beside the two meters, so a
-  rollback rewinds *which crop* a farm is, not just how far along it is. **On the wire** (append-only,
+  the whole basket). Held on the patch beside the two meters and rewound with the cloned registry, so
+  a rollback rewinds *which crop* a farm is, not just how far along it is. **On the wire** (append-only,
   `ForagePatchState.committedSpecies` / `committedDisplayName`, slots 48/50 — strictly after
   `composition`'s 46): the key plus a server-resolved display name, because the client holds no
   roster. `""` means **the wild mixed basket**, not "unknown". Note the pair is *recorded before it

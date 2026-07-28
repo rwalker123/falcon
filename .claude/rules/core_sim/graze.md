@@ -116,7 +116,8 @@ earthlike 80×52, seeds 11/4242/90210 — run with `--nocapture` for the joint h
   the **checkpoint carries the registry whole** (`SimState::graze`). It reached that state by way of
   a per-tile `GrazeState` mirror captured coord-sorted onto `WorldSnapshot.graze_registry`; that copy
   was deleted once the checkpoint left it without a reader (`checkpoints.md`), and its map-sized
-  per-turn sort went with it. Graze is **wild ground** — never owned, tended or improved.
+  per-turn sort went with it. The `GrazeState` record and `GrazeRegistry::{from_states,
+  update_from_states}` went next, having nothing left to decode. Graze is **wild ground** — never owned, tended or improved.
 - **Wire — on `TileState`, not a patch list.** `TileState.grazeBiomass:float` /
   `grazeCapacity:float` / `grazeEcologyPhase:ubyte` (`0` = none, `1` thriving, `2` stressed, `3`
   collapsing — the `moraleCause:ubyte` idiom; `none` is the default so "no pasture" can never be
@@ -175,8 +176,8 @@ layer inert.
   exact `hex_distance_wrapped` filter. Shared by the herd range (and the pen/anything later).
 - **`SpeciesDef.fodder_per_biomass`** (`fauna_config.json`, `#[serde(default)]`) — the fodder one unit
   of animal biomass demands per turn. **Cached onto `Herd` at spawn** (mirroring `carrying_capacity`)
-  and round-tripped through the rollback snapshot (`HerdState.fodder_per_biomass`, sim-side only — not
-  on the client wire). Shipped anchors (smaller animals eat MORE per unit biomass; **inert this slice**,
+  and rewound by rollback with the rest of the cloned registry (sim-side only — not on the client
+  wire). Shipped anchors (smaller animals eat MORE per unit biomass; **inert this slice**,
   retuned from a measured anchor in 2b-ii): rabbit **0.10** / fowl **0.09** / boar **0.06** / deer
   **0.05** / steppe_runner **0.05** / marsh_grazer **0.03** / mammoth **0.011**. Each is
   `range_tiles × per-tile MSY (0.1·capacity) ÷ species K`, so a herd near its constant K eats ~its
@@ -235,8 +236,8 @@ oscillates or crashes if built carelessly.
   must still yield a positive `K` (the design's formula named `sustainable_yield`, but that would read
   `K = 0` below `collapse_fraction` and crash a herd on ground that in fact regrows).
 - **Per-species `regrowth_rate` (`SpeciesDef.regrowth_rate: Option<f32>`, `#[serde(default)]`).** Cached
-  on `Herd` at spawn (`regrowth_rate_or(fauna.ecology.regrowth_rate)`), round-tripped through
-  `HerdState.regrowth_rate` (sim-side only). **`herd_ecology` now returns an owned `EcologyConfig`**
+  on `Herd` at spawn (`regrowth_rate_or(fauna.ecology.regrowth_rate)`), rewound by rollback with the
+  cloned registry (sim-side only). **`herd_ecology` now returns an owned `EcologyConfig`**
   with the wild curve's `regrowth_rate` swapped for the herd's own (phase bands stay shared); pastoral
   (0.25) / pen (0.90) keep their rung's rate. This is still THE single seam — every consumer reads the
   folded rate there. Anchors: rabbit/fowl **0.35**, deer/boar **0.10**, migratory **0.04** (was one
@@ -340,7 +341,7 @@ investment worked off over turns, reusing the corral build ladder — no materia
   footprint's higher K arrives on the next `advance_herds`. The FEED (larder offset) is unchanged while
   extending — self-feeding and the harvest dip are orthogonal.
 - **Config:** `husbandry.pen_radius_max` (**2** → up to a 19-tile footprint; validated `>= 1`). The only
-  new lever. **`pen_extending`** persists on `HerdState` alongside `pen_radius` / `pen_extend_progress`,
+  new lever. **`pen_extending`** rides the checkpoint alongside `pen_radius` / `pen_extend_progress`,
   so a rollback rewinds an in-flight extension. `penExtendProgress` on the wire now carries the live ring
   meter (α left it at 0) for a client "Fencing N%" badge.
 - **Tests:** `grazing_2d_pen::extend_pen_accrues_a_ring_flips_the_radius_raises_k_and_caps_at_max` (the
@@ -357,7 +358,7 @@ two flags — which makes the incoherent "pennable but not tameable" state unrep
 
 - **`SpeciesDef.husbandry_ceiling`** (`#[serde(default)]` = `Pen`, so an untagged/future species keeps
   the full ladder) is **cached onto `Herd` at spawn** (mirroring `regrowth_rate`/`fodder_per_biomass`),
-  round-tripped through `HerdState.husbandry_ceiling`, and read by the gates via `Herd::can_domesticate()`
+  rewound by rollback with the cloned registry, and read by the gates via `Herd::can_domesticate()`
   / `can_pen()`. Roster: **mammoth/deer = `wild`** (hunt-only), **steppe_runner/marsh_grazer =
   `pastoral`** (nomadic herding — follow, don't fence), **boar/rabbit/fowl = `pen`** (pigs/hutches/poultry).
 - **Three gates.** (1) **Domestication accrual** — `Herd::accrue_domestication` self-guards on

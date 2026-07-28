@@ -5,7 +5,6 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
-use sim_schema::HerdState;
 use tracing::info;
 
 use std::hash::{Hash, Hasher};
@@ -193,14 +192,14 @@ pub enum RoamState {
     Migrate,
 }
 
-/// Stable string keys for `RoamState`, shared by the snapshot capture (`HerdRoamState.mode`) and
-/// the rollback restore (`RoamState::from_mode`) so the mapping lives in one place.
+/// Stable string keys for `RoamState`, paired with [`RoamState::from_mode`] so the mapping between
+/// the live enum and its string spelling lives in one place.
 const ROAM_MODE_GRAZE_WANDER: &str = "graze_wander";
 const ROAM_MODE_LOITER: &str = "loiter";
 const ROAM_MODE_MIGRATE: &str = "migrate";
 
 impl RoamState {
-    /// Stable string key for the movement mode (snapshot `HerdRoamState.mode`).
+    /// Stable string key for the movement mode (inverse of [`RoamState::from_mode`]).
     pub fn mode_key(self) -> &'static str {
         match self {
             RoamState::GrazeWander => ROAM_MODE_GRAZE_WANDER,
@@ -265,17 +264,17 @@ pub struct Herd {
     /// at spawn (mirroring `fodder_per_biomass`), resolved via `SpeciesDef::regrowth_rate_or` so a row
     /// that omits it falls back to `fauna.ecology.regrowth_rate`. [`herd_ecology`] folds it into the
     /// herd's **wild** ecology (fast small game breeds hot, slow megafauna cold); a domesticated
-    /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Round-tripped through
-    /// the rollback snapshot (`HerdState.regrowth_rate`, sim-side only — not on the client wire).
+    /// (pastoral) or penned herd ignores it and keeps its rung's own faster `r`. Rewound by rollback with
+    /// the rest of the cloned registry (sim-side only — not on the client wire).
     pub regrowth_rate: f32,
     /// **The biomass of ONE animal** ([`crate::fauna_config::SpeciesDef::body_mass`]), cached from the
     /// `SpeciesDef` at spawn exactly as `regrowth_rate` / `fodder_per_biomass` are. The quantum every
     /// hunt take is floored to ([`quantise_animal_take`]): a herd holds `biomass / body_mass` animals,
     /// **derived on demand, never stored** — biomass stays the authoritative stock.
     ///
-    /// Round-tripped through the rollback snapshot (`HerdState.body_mass`, sim-side only — not on the
-    /// client wire) so a rehydrated herd keeps its quantum rather than reading `0` and being stripped
-    /// whole in one turn.
+    /// Rewound by rollback with the rest of the cloned registry (sim-side only — not on the client
+    /// wire) so a restored herd keeps its quantum rather than reading `0` and being stripped whole in
+    /// one turn.
     pub body_mass: f32,
     /// **The kill-credit accumulator** (slice 8b) — biomass a hunt has *earned toward its next whole
     /// animal* but not yet spent, in `[0, biomass]`.
@@ -292,15 +291,15 @@ pub struct Herd {
     /// kills, and is capped at the standing `biomass` so it can never bank credit for animals that do
     /// not exist (which would release a burst when the herd recovered).
     ///
-    /// Authoritative sim state — round-tripped through `HerdState.hunt_credit` (sim-side rollback only,
-    /// not on the client wire), so a rollback rewinds a herd's progress toward its next kill rather
-    /// than resetting the wait.
+    /// Authoritative sim state — rewound by rollback with the cloned registry (sim-side only, not on
+    /// the client wire), so a rollback rewinds a herd's progress toward its next kill rather than
+    /// resetting the wait.
     pub hunt_credit: f32,
     /// **How far up the husbandry ladder this herd's species can climb** (Grazing 2d-δ), cached from
     /// the `SpeciesDef` at spawn (mirroring `regrowth_rate` / `fodder_per_biomass`). Gates the three
     /// husbandry seams without re-resolving config: taming accrual + the `tame` command (a `Wild` herd
     /// never tames), and the `corral` / `extend_pen` paths (only a `Pen` herd pens).
-    /// Round-tripped through `HerdState.husbandry_ceiling` and exported as `husbandryCeiling`.
+    /// Rewound by rollback with the cloned registry and exported as `husbandryCeiling`.
     pub husbandry_ceiling: HusbandryCeiling,
     /// Coarse health band (Thriving/Stressed/Collapsing), recomputed each turn from
     /// biomass vs `carrying_capacity`. Surfaced to the client and the domestication hook.
@@ -324,7 +323,7 @@ pub struct Herd {
     /// `FollowPolicy::Corral` policy (faction knows **Penning** + owns the *domesticated* herd), at
     /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
     /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
-    /// buys. Authoritative sim state — snapshot-persisted (`HerdState.corral_progress`), so a rollback
+    /// buys. Authoritative sim state — rewound by rollback with the cloned registry, so a rollback
     /// rewinds a half-built pen rather than losing it. Unlike cultivation it does **not** decay
     /// gradually — but the two ends of its life differ: a **mid-build** gate lapse *keeps* progress
     /// (materials on the ground, not a field growing back over), while a **completed pen that
@@ -412,12 +411,12 @@ pub struct Herd {
     /// `advance_labor_allocation`, Population). `advance_husbandry` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it: a corralled herd tended this turn is spared, an
     /// untended one **escapes** (reverts to mobile). Mirrors `ForagePatch::tended_this_turn`. **Not**
-    /// snapshot-persisted (derived) — a rehydrated corralled herd reads `true` for **one turn** (a
-    /// deliberate grace, seeded in `herd_from_state`), so the first post-restore Logistics escape pass
-    /// — which runs before the labor arm can re-mark a pen its keeper is tending — spares it rather
-    /// than escaping a pen a keeper tends every turn (which would clear `corralled_at`/`pen_radius` and
-    /// throw away the whole rebuild). A truly abandoned pen still escapes next turn; a rollback can
-    /// only *delay* an escape by one turn, never resurrect a broken-out herd.
+    /// on the client wire (derived), but it **does survive a rollback**: the checkpoint clones the
+    /// whole `HerdRegistry` (`SimState::herds`), so a restored pen resumes with exactly the tended flag
+    /// it was captured with. That is what keeps the first post-restore Logistics escape pass — which
+    /// runs before the labor arm can re-mark a pen its keeper is tending — from escaping a pen a keeper
+    /// tends every turn (which would clear `corralled_at`/`pen_radius` and throw away the whole
+    /// rebuild).
     pub corralled_tended_this_turn: bool,
     /// Transient per-turn flag: the fraction of the pen's **feed** demand its keeper actually paid last
     /// turn (`paid / demand ∈ [0, 1]`; `1.0` = fully fed, and the value when nothing was demanded).
@@ -1236,85 +1235,6 @@ impl HerdRegistry {
             .iter()
             .filter(|herd| herd.is_domesticated() && herd.owner == Some(faction))
             .count()
-    }
-
-    /// Rebuild the authoritative herd list from a rollback snapshot's `HerdState`s (clear + rebuild,
-    /// mirroring `GenerationRegistry::update_from_states`). Restores biomass / position / movement /
-    /// ecology so a rollback rewinds herd sim state, not just display telemetry.
-    pub fn update_from_states(&mut self, states: &[HerdState]) {
-        self.herds = states.iter().map(herd_from_state).collect();
-    }
-
-    /// Construct a registry directly from snapshot `HerdState`s (mirrors
-    /// `GenerationRegistry::from_states`).
-    pub fn from_states(states: &[HerdState]) -> Self {
-        let mut registry = Self::default();
-        registry.update_from_states(states);
-        registry
-    }
-}
-
-/// Reconstruct a live `Herd` from its snapshot mirror (the rollback restore side of `herd_state`
-/// in `snapshot.rs`). Parses the `ecology_phase` / `size_class` / `roam` string keys back to their
-/// live enums.
-fn herd_from_state(state: &HerdState) -> Herd {
-    Herd {
-        id: state.id.clone(),
-        label: state.label.clone(),
-        species: state.species.clone(),
-        size_class: SizeClass::from_key(&state.size_class),
-        route: state.route.iter().map(|&(x, y)| UVec2::new(x, y)).collect(),
-        step_index: state.step_index as usize,
-        current_pos: UVec2::new(state.current_pos.0, state.current_pos.1),
-        dwell_remaining: state.dwell_remaining,
-        roam: RoamState::from_mode(&state.roam.mode, state.roam.loiter_turns_left),
-        next_pos: state.next_pos.map(|(x, y)| UVec2::new(x, y)),
-        biomass: state.ecology.biomass,
-        carrying_capacity: state.ecology.carrying_capacity,
-        fodder_per_biomass: state.fodder_per_biomass,
-        regrowth_rate: state.regrowth_rate,
-        body_mass: state.body_mass,
-        hunt_credit: state.hunt_credit,
-        // Transient (not persisted) — a rehydrated herd reads its current biomass until the next turn
-        // regrows it, a one-turn approximation of the pre-regrowth value (slice 8b).
-        biomass_before_regrowth: state.ecology.biomass,
-        husbandry_ceiling: HusbandryCeiling::from_key(&state.husbandry_ceiling),
-        ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
-        domestication_progress: state.ecology.progress,
-        owner: state.ecology.owner.map(FactionId),
-        corralled_at: state.corralled_at.map(|(x, y)| UVec2::new(x, y)),
-        corral_progress: state.corral_progress,
-        pen_radius: state.pen_radius,
-        pen_extend_progress: state.pen_extend_progress,
-        pen_extending: state.pen_extending,
-        // Transient (not persisted) — recomputed each turn (footprint/pasture) or reset to the neutral
-        // value: a rehydrated corralled herd is "fed" (so a rollback can delay a starvation turn but
-        // never invent one). `corralled_tended_this_turn` is seeded `true` for a **one-turn grace**,
-        // the exact precedent `Herd::corral_at` already sets on a freshly-penned herd. The
-        // rollback-restore path runs the Logistics escape pass (`advance_husbandry`)
-        // *before* the Population labor arm can re-mark a pen its keeper is tending, so seeding this
-        // `false` would make a corralled herd **escape outright** on the very first post-restore turn
-        // — clearing `corralled_at`/`pen_radius` and throwing away the whole pen rebuild plus every
-        // ExtendPen ring. The grace spares exactly that turn; a truly abandoned pen still escapes next.
-        footprint_intake: 0.0,
-        pen_pasture_fraction: 0.0,
-        // Transient F3 scratch — a rehydrated pen reads no hay draw and no fodder inflow until its
-        // keeper works a turn (so a rollback can only *shrink* K/feed for a turn, never inflate them).
-        fodder_draw: 0.0,
-        pen_larder_bill: 0.0,
-        pen_hay_food: 0.0,
-        fodder_delivery_rate: 0.0,
-        corralled_tended_this_turn: true,
-        pen_fed_fraction: PEN_FULLY_FED,
-        herded_fraction: FULLY_HERDED,
-        pen_starving: false,
-        tamed_this_turn: false,
-        // Persisted authoritative sim state (like `corral_progress`): a rollback restores the
-        // hysteresis-remembered requirement rather than re-flickering for a turn.
-        herders_needed: state.herders_needed,
-        // Persisted edge-gate (slice 2): a rollback restores the under-herded state so the notice does
-        // not spuriously re-fire (unlike the transient `pen_starving`, which re-announces on restore).
-        under_herded: state.under_herded,
     }
 }
 
@@ -2390,9 +2310,9 @@ pub fn carnivore_k_at(
 /// tile with no patch contributes nothing).
 ///
 /// **Deterministic under rollback.** Herds are drawn **sequentially in `HerdRegistry` order** — that
-/// Vec is itself rollback-persisted in a fixed order (captured coord-stable and rebuilt by
-/// `update_from_states`), and `advance_herds`' `retain` / immigration's `push` both preserve it — so
-/// two herds sharing a tile always draw in the same order, and the eaten state is reproducible.
+/// Vec is itself rollback-persisted in a fixed order (the checkpoint clones the registry whole), and
+/// `advance_herds`' `retain` / immigration's `push` both preserve it — so two herds sharing a tile
+/// always draw in the same order, and the eaten state is reproducible.
 ///
 /// **This is one half of the coupled model (2b-ii).** The draw-down lowers the range's graze, which is
 /// what [`ecological_carrying_capacity`] reads next turn to size the herd — so eating a range down

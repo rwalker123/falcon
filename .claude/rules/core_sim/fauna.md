@@ -475,8 +475,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   head) **flickers 1↔2 every turn** as the lumpy whole-animal kill breathes its biomass ±1 animal
 >   across the boundary — and because the `herded_fraction` decay lags a turn, the player is told
 >   "staff all 1", then "staff all 2", satisfies neither, and slips the tameness. So the requirement is
->   now a **persisted, deadband-stabilized `Herd::herders_needed`** (round-tripped through `HerdState`
->   like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
+>   now a **persisted, deadband-stabilized `Herd::herders_needed`** (rewound by rollback with the
+>   cloned registry, like `corral_progress`), updated every turn by `Herd::stabilize_herders_needed` in
 >   `advance_husbandry`: **up immediately** when the raw need rises (under-herding is harmful), **down
 >   only once the herd falls below `(current − 1)·animals_per_herder − band`** where `band =
 >   animals_per_herder × husbandry.herders_hysteresis_fraction` (**0.25**, `fauna_config.json`, a

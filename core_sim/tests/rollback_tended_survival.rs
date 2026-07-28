@@ -3,24 +3,21 @@
 //! Two transient within-turn "worked this improvement last turn" flags —
 //! `ForagePatch::tended_this_turn` and `Herd::corralled_tended_this_turn` — are the one-turn-lag
 //! signals the Logistics decay pass reads to spare a source a band is working
-//! (`forage::advance_cultivation`, `fauna::advance_husbandry`). They are deliberately **not**
-//! persisted in the rollback snapshot.
+//! (`forage::advance_cultivation`, `fauna::advance_husbandry`).
 //!
-//! The bug: the `*_from_state` constructors (`forage::forage_patch_from_state`,
-//! `fauna::herd_from_state`) reseed both flags `false`. **They are no longer on the restore path** —
-//! `restore_sim_state` clones the registries whole from the checkpoint, so nothing reconstructs a
-//! patch or herd from a `*State` record any more. This test still earns its place because it pins
-//! the *behaviour* (a worked source must survive a rollback without decaying), which is what a
-//! reader cares about and which no longer depends on how restore is implemented. On the very first
-//! Logistics pass after a
-//! restore — which runs *before* the Population labor arm can re-mark them — a tended patch / Field
-//! decays one tick (`is_managed()` flips false, the improvement lost even with a band working it
-//! every turn) and a corralled pen **escapes outright** (`corralled_at = None`, `pen_radius = 0`,
-//! throwing away the whole rebuild plus every ExtendPen ring).
+//! The failure this guards: on the very first Logistics pass after a restore — which runs *before*
+//! the Population labor arm can re-mark them — a source whose flag came back `false` would have a
+//! tended patch / Field decay one tick (`is_managed()` flips false, the improvement lost even with a
+//! band working it every turn) and a corralled pen **escape outright** (`corralled_at = None`,
+//! `pen_radius = 0`, throwing away the whole rebuild plus every ExtendPen ring).
 //!
-//! This goes through a REAL snapshot round-trip — a live world captured by the shipped capture path,
-//! restored by `restore_sim_state`, then advanced exactly one turn — not a hand-built
-//! rollback state. The fix is a one-turn grace: seed both flags `true` in the restore constructors.
+//! The test deliberately pins the **behaviour**, not the mechanism, so it survives the mechanism
+//! changing — as it has: a pair of `*_from_state` constructors used to reconstruct each source from
+//! a serde record and reseeded the flags, and `restore_sim_state` now clones the registries whole
+//! out of the checkpoint instead, carrying the real flags across.
+//!
+//! It goes through a REAL round-trip — a live world captured by the shipped capture path, restored
+//! by `restore_sim_state`, then advanced exactly one turn — not a hand-built rollback state.
 
 use bevy::math::UVec2;
 

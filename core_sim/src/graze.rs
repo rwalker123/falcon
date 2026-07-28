@@ -3,8 +3,8 @@
 //! Authoritative design: `docs/plan_grazing_foundation.md`. Mirrors `forage.rs` (which mirrors the
 //! herd biomass model) exactly: every eligible land tile carries a live per-tile
 //! `{ biomass, carrying_capacity, ecology_phase }` (`GrazePatch`) held in the authoritative
-//! [`GrazeRegistry`] resource, keyed by tile coord, round-tripped through the rollback snapshot via
-//! the shared `sim_schema::GrazeState`/`EcologyState` records (`GrazeRegistry::update_from_states`).
+//! [`GrazeRegistry`] resource, keyed by tile coord, and rewound by rollback because the checkpoint
+//! carries the whole registry (`SimState::graze`).
 //!
 //! **Humans and animals do not eat the same things.** `ForagePatch.biomass` (`forage.rs`) is the
 //! *human-edible* stock — seeds, nuts, tubers, fruit — and it exists only on `FoodModuleTag` tiles.
@@ -23,8 +23,8 @@
 //! Differences from `forage.rs`, each deliberate:
 //! - **No Allee / collapse branch.** Grass has no depensation: regrowth is pure `logistic_regrowth`
 //!   toward capacity, plus the reseed floor (via the shared `fauna::reseeding_logistic_regrowth`).
-//! - **No cultivation.** Graze is wild ground; it is never owned, tended or improved. The
-//!   `EcologyState` record's `progress`/`owner` fields therefore ride the snapshot as their defaults.
+//! - **No cultivation.** Graze is wild ground; it is never owned, tended or improved, so a
+//!   `GrazePatch` carries no owner or progress meter at all.
 //! - **Density.** Forage patches are sparse (food-module tiles only); graze sits on *nearly every land
 //!   tile*, so the wire readout is per-`TileState` (see `snapshot.rs`), not a per-patch list.
 
@@ -32,7 +32,6 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use sim_runtime::{TerrainTags, TerrainType};
-use sim_schema::GrazeState;
 
 use crate::{
     components::Tile,
@@ -101,26 +100,6 @@ impl GrazeRegistry {
         self.patches.len()
     }
 
-    /// Rebuild the authoritative patch map from a rollback snapshot's `GrazeState`s (clear + rebuild),
-    /// mirroring `ForageRegistry::update_from_states`. Restores per-tile biomass / phase so a rollback
-    /// rewinds grazing draw-down, not just display state.
-    pub fn update_from_states(&mut self, states: &[GrazeState]) {
-        self.patches = states
-            .iter()
-            .map(|state| {
-                let patch = graze_patch_from_state(state);
-                (patch.tile, patch)
-            })
-            .collect();
-    }
-
-    /// Construct a registry directly from snapshot `GrazeState`s (mirrors `ForageRegistry::from_states`).
-    pub fn from_states(states: &[GrazeState]) -> Self {
-        let mut registry = Self::default();
-        registry.update_from_states(states);
-        registry
-    }
-
     /// Total graze capacity across every patch — the map's whole pasture budget. The measurement seam
     /// (and, from Phase 2b, the thing a herd's range takes a slice of).
     pub fn total_capacity(&self) -> f32 {
@@ -153,18 +132,6 @@ impl GrazeRegistry {
                     .then(b_tile.y.cmp(&a_tile.y))
                     .then(b_tile.x.cmp(&a_tile.x))
             })
-    }
-}
-
-/// Reconstruct a live `GrazePatch` from its snapshot mirror (the rollback restore side of
-/// `snapshot::graze_state`). The shared `EcologyState`'s `progress`/`owner` fields are unused by graze
-/// (wild ground is never owned or improved) and are ignored here.
-fn graze_patch_from_state(state: &GrazeState) -> GrazePatch {
-    GrazePatch {
-        tile: UVec2::new(state.x, state.y),
-        biomass: state.ecology.biomass,
-        carrying_capacity: state.ecology.carrying_capacity,
-        ecology_phase: EcologyPhase::from_key(&state.ecology.ecology_phase),
     }
 }
 
