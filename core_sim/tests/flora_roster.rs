@@ -46,6 +46,41 @@ fn realized_share(flora: &FloraConfig, terrain: TerrainType, species: &str, coor
         .unwrap_or(0.0)
 }
 
+/// **The flat trade TOKEN every staple carries** — read off the roster as the smallest positive
+/// `trade_goods_per_biomass` in it, because since #433 the roster is the token's only home: the
+/// species-blind `forage.market.trade_goods_per_biomass` copy is retired, and the yield vector is now
+/// the one trade rate at every rung. A **cash** crop is defined here as one paying materially more
+/// than this.
+fn staple_trade_token(flora: &FloraConfig) -> f32 {
+    flora
+        .species
+        .values()
+        .map(|def| def.yield_.trade_goods_per_biomass)
+        .filter(|rate| *rate > 0.0)
+        .fold(f32::MAX, f32::min)
+}
+
+/// What a **tended** patch committed to `species` converts at on this basket, and what the same
+/// ground converts at gathered **wild** — both through the sim's own [`core_sim::
+/// patch_provisions_per_biomass`] seam, never a re-derivation of its arithmetic (§4.3's rule).
+fn tended_and_wild_rate(
+    flora: &FloraConfig,
+    labor: &LaborConfig,
+    composition: &[core_sim::FloraShare],
+    species: &str,
+) -> (f32, f32) {
+    let coord = UVec2::ZERO;
+    let capacity = 1.0; // rates are per unit biomass; the capacity is irrelevant to them.
+    let mut tended = core_sim::ForagePatch::new(coord, capacity);
+    tended.cultivation_progress = 1.0;
+    tended.species = Some(species.to_string());
+    let wild = core_sim::ForagePatch::new(coord, capacity);
+    (
+        core_sim::patch_provisions_per_biomass(&tended, composition, flora, &labor.forage),
+        core_sim::patch_provisions_per_biomass(&wild, composition, flora, &labor.forage),
+    )
+}
+
 #[test]
 fn every_biome_is_either_fully_named_or_carries_no_forage() {
     let flora = FloraConfig::builtin();
@@ -181,7 +216,7 @@ fn the_yield_vector_routes_by_account_and_only_opened_accounts_are_live() {
     let flora = FloraConfig::builtin();
     let forage = labor().forage;
 
-    let flat_trade = forage.market.trade_goods_per_biomass;
+    let flat_trade = staple_trade_token(&flora);
     let mut fodder_crops = 0;
     let mut cash_crops = 0;
     for (key, def) in &flora.species {
@@ -280,28 +315,25 @@ fn the_gathered_wild_things_never_beat_the_basket_average() {
     }
 }
 
-/// **THE commit trade, asserted as the design states it** (§4.3), now on the PER-TILE REALIZED share
-/// (§10):
+/// **THE commit trade, asserted as the design states it** (§4.3), on the PER-TILE REALIZED basket
+/// (§10) and **reframed by #433**.
 ///
-/// ```text
-/// tending is worth it  ⟺  concentration × species_rate  >  1.0 × wild_rate
-/// ```
+/// The older bar — *"committing must sometimes LOSE to leaving it wild"* — is retired, and
+/// deliberately: with the rung-2 conversion gain on the favored term, any commitment with a real
+/// share pays *something*, and rung 2's decision is which currency plus whether the 25-turn build is
+/// worth it. What must still differ is **the crop choice**, and that is what this asserts:
 ///
-/// The commit bar is per-tile: a species is worth committing on a tile where it **realizes a high
-/// local share** — its own tiles — and not where it is absent or marginal. So for every climbing
-/// species the roster must make that true on its **best realization** (some tile clears the bar) and
-/// false on its **worst** (some tile — where it is absent, or crowded in with richer neighbours —
-/// does not). This is exactly what lets cash crops sit on AlluvialPlain without tripping the wheat
-/// bar: wheat still dominates *its* alluvial tiles, cotton dominates cotton tiles. Swept over a grid
-/// of tiles at a pinned seed, so "best/worst realization" is a measured extreme, not the uniform
-/// biome share the pre-§10 test read.
+/// - on its **best country** a crop's tended rate beats gathering that same tile wild — the rung pays
+///   where the crop is at home;
+/// - and a crop's **best country out-pays its worst** — a river valley is not a hillside, so *where*
+///   you farm a crop is a real question rather than a formality.
+///
+/// Swept over a grid of tiles at a pinned seed, through the sim's own rate seam, so both readings are
+/// measured extremes of the number the sim actually pays.
 #[test]
-fn every_climbing_species_is_worth_committing_on_its_best_realization_and_not_on_its_worst() {
+fn every_climbing_species_pays_on_its_best_country_and_pays_less_on_its_worst() {
     let flora = FloraConfig::builtin();
     let labor = labor();
-    let forage = &labor.forage;
-    let tended_gain = forage.cultivation.tended_concentration_gain;
-    let wild = forage.provisions_per_biomass;
 
     for (key, def) in &flora.species {
         if !def.cultivation_ceiling.allows_cultivate() {
@@ -315,28 +347,46 @@ fn every_climbing_species_is_worth_committing_on_its_best_realization_and_not_on
         if def.yield_.provisions_per_biomass == 0.0 {
             continue;
         }
-        // The realized commit value on each hosted biome × a tile sweep: `min(1, realized_share ×
-        // gain) × rate` (0 where the tile does not realize this crop), against the wild basket's
-        // `1.0 × wild_rate`.
-        let mut best = f32::MIN;
-        let mut worst = f32::MAX;
+        // The best tended rate this crop reaches on each hosted biome, over a tile sweep — and the
+        // wild rate of whichever tile that was, so "beats wild" is answered on the same ground.
+        let mut per_country: Vec<f32> = Vec::new();
+        let mut best = (f32::MIN, 0.0_f32);
         for terrain in def.host_biomes.keys() {
+            let mut country_best = f32::MIN;
             for coord in sweep_tiles() {
-                let share = realized_share(&flora, *terrain, key, coord);
-                let value = (share * tended_gain).min(1.0) * def.yield_.provisions_per_biomass;
-                best = best.max(value);
-                worst = worst.min(value);
+                if realized_share(&flora, *terrain, key, coord) <= 0.0 {
+                    continue; // this tile did not realize the crop; there is nothing to tend.
+                }
+                let composition = flora.realized_composition(*terrain, coord, SWEEP_SEED);
+                let (tended, wild) = tended_and_wild_rate(&flora, &labor, &composition, key);
+                country_best = country_best.max(tended);
+                if tended > best.0 {
+                    best = (tended, wild);
+                }
+            }
+            if country_best > f32::MIN {
+                per_country.push(country_best);
             }
         }
         assert!(
-            best > wild,
-            "`{key}` is never worth tending on any realized tile — best realization pays {best} \
-             against the wild basket's {wild}"
+            !per_country.is_empty(),
+            "`{key}` realizes on no sampled tile of any host biome — the sweep cannot judge it"
         );
         assert!(
-            worst < wild,
-            "`{key}` is worth tending on every realized tile ({worst} vs {wild}) — a commitment that \
-             is right everywhere is not a decision"
+            best.0 > best.1,
+            "`{key}` never beats the wild basket even on its best country: tended {} vs wild {}",
+            best.0,
+            best.1
+        );
+        if per_country.len() < 2 {
+            continue; // a one-country crop has no "best vs worst country" to compare.
+        }
+        let richest = per_country.iter().copied().fold(f32::MIN, f32::max);
+        let poorest = per_country.iter().copied().fold(f32::MAX, f32::min);
+        assert!(
+            richest > poorest,
+            "`{key}` pays the same on every country it hosts ({richest}) — then WHERE you farm it \
+             is not a decision"
         );
     }
 }
@@ -390,7 +440,7 @@ fn the_fodder_crop_pays_a_positive_fodder_yield() {
 #[test]
 fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
     let flora = FloraConfig::builtin();
-    let flat_trade = labor().forage.market.trade_goods_per_biomass;
+    let flat_trade = staple_trade_token(&flora);
 
     let cash: Vec<(&String, &_)> = flora
         .species

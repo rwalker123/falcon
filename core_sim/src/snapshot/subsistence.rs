@@ -423,8 +423,14 @@ pub(crate) fn snapshot_forage_patches(
                 .get(&patch.tile)
                 .copied()
                 .unwrap_or(NO_FORAGE_SEASON);
+            // **What is growing on this tile**, off the same memo entry the quotes came from — every
+            // rate below is the share-weighted average of the *patch's* basket, which `forage.rs`
+            // derives from this one (#433). A patch whose tile is absent from the map names no
+            // plants and falls back to the empty-basket defaults.
+            let tile_composition = tile_quotes.tile_composition(patch.tile);
             let forecast = forage_forecast(
                 patch,
+                tile_composition,
                 forage,
                 flora,
                 ladder,
@@ -458,7 +464,13 @@ pub(crate) fn snapshot_forage_patches(
                 field_progress: patch.field_progress,
                 is_field: patch.is_field(),
                 ceiling_sow: forecast.ceiling_sow.provisions,
-                field_yield: field_provisions(patch, forage, flora, FORECAST_OUTPUT_MULTIPLIER),
+                field_yield: field_provisions(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
                 // **Why this ground will not take seed** — resolved by the caller through the *same*
                 // `RungSiteRequirement::refusal` seam the `sow` command and the labor arm gate on, so
                 // the wire cannot disagree with the gate. Absent from the map = the land takes seed
@@ -467,14 +479,25 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
-                // **What grows here** — the tile's forage capacity, decomposed into named plants
-                // (`docs/plan_flora_roster.md` §2). Read straight off the roster's precomputed,
-                // deterministically-ordered per-biome table: it is a function of the BIOME, so no
-                // per-patch state feeds it and every tile of a biome reads the same basket.
-                // Shared, never copied: the basket belongs to the tile, and the memo already holds
-                // it (`snapshot/flora_quotes.rs`). Deep-copying it here re-allocated two `String`s
-                // per named plant on every patch on every turn — half of this readout's whole cost.
-                composition: tile_quotes.composition(patch.tile),
+                // **What is growing here — as this PATCH has it** (#433). The tile names the
+                // plants (§2, per-tile realization §10) and the patch's rung then says how much of
+                // each: a tended patch's basket visibly collapses toward its crop and a Field
+                // publishes a single 100% entry, which is the whole of what a rung below 4 does.
+                // Resolved through the same `forage::patch_composition` seam every rate reads, so
+                // the card cannot show a basket the economy is not using.
+                //
+                // A **wild** patch is the tile's basket verbatim, and takes the memo's own `Arc`
+                // unchanged — shared, never copied, because the basket belongs to the tile and
+                // deep-copying it re-allocated two `String`s per named plant on every patch on
+                // every turn (half this readout's whole cost). Only a committed patch pays for a
+                // rebuilt list, and there are few of those.
+                composition: patch_composition_info(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    tile_quotes,
+                ),
                 // **Which ONE plant this patch is committed to** (Flora Roster S1) — `""` is the
                 // wild mixed basket, a positive statement rather than "unknown". The display name is
                 // resolved here because the client holds no roster (the `FloraShareInfo::display_name`
@@ -493,6 +516,62 @@ pub(crate) fn snapshot_forage_patches(
     patches.sort_unstable_by_key(|patch| (patch.y, patch.x));
     patches
 }
+
+/// **The patch's effective basket, in the wire's `FloraShareInfo` shape** — [`patch_composition`]
+/// applied to the tile's basket, with every entry's per-species picker payload (display name,
+/// ceilings, per-rung payoffs) taken off the tile's memo unchanged.
+///
+/// The payoffs stay **tile-level on purpose**: they answer *"what would this ground pay committed to
+/// this plant"*, which is a property of the land and the roster, not of what somebody already weeded.
+/// Only [`FloraShareInfo::share`] moves.
+///
+/// A **wild** patch hands back the memo's own `Arc` untouched — that is the >99% case and the whole
+/// reason the memo exists. A crop the tile's realized basket never named (only reachable through a
+/// `Sow` on bare ground, which reads the *affinity* roster) still has to appear, so it is built from
+/// the roster with no payoffs rather than dropped: a Field must never publish an empty basket.
+fn patch_composition_info(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    tile_quotes: &FloraQuoteCache,
+) -> Arc<[FloraShareInfo]> {
+    let effective = patch_composition(patch, tile_composition, forage);
+    let quoted = tile_quotes.composition(patch.tile);
+    let Cow::Owned(effective) = effective else {
+        return quoted; // wild: the tile's basket verbatim, shared rather than rebuilt.
+    };
+    effective
+        .iter()
+        .filter(|entry| entry.share > NO_PUBLISHED_SHARE)
+        .map(|entry| {
+            quoted
+                .iter()
+                .find(|info| info.species == entry.species)
+                .map_or_else(
+                    || FloraShareInfo {
+                        species: entry.species.clone(),
+                        display_name: flora
+                            .species
+                            .get(&entry.species)
+                            .map(|def| def.display_name.clone())
+                            .unwrap_or_default(),
+                        share: entry.share,
+                        ..FloraShareInfo::default()
+                    },
+                    |info| FloraShareInfo {
+                        share: entry.share,
+                        ..info.clone()
+                    },
+                )
+        })
+        .collect()
+}
+
+/// **The share below which a plant is not published at all** — a species weeded out of a patch is
+/// gone from it, not present at zero. The wire convention `NO_SHARE` states inside `forage.rs`,
+/// restated here because this is the readout that enforces it.
+const NO_PUBLISHED_SHARE: f32 = 0.0;
 
 /// Per-faction intensification-ladder knowledge for the client's learning/known meters — one field
 /// per rung-transition: Cultivation (2003) → Seed Selection (2005) up the plant ladder, Herding

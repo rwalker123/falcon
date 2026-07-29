@@ -48,7 +48,7 @@ use bevy::prelude::*;
 use sim_runtime::{FloraShareInfo, TerrainType};
 
 use crate::components::Tile;
-use crate::flora_config::FloraConfig;
+use crate::flora_config::{FloraConfig, FloraShare};
 use crate::forage::{
     commit_fodder_payoff, commit_payoff, commit_trade_payoff, commit_yield_ratio,
     tile_flora_composition, tile_forage_capacity, wild_payoff,
@@ -61,11 +61,17 @@ use super::FORECAST_OUTPUT_MULTIPLIER;
 /// One tile's memoized quotes, beside the ground they were derived from.
 ///
 /// `shares` is an `Arc<[_]>` because the readout hands this exact basket to the wire state
-/// ([`FloraQuoteCache::composition`]): the tile owns it, so a patch row shares it rather than
-/// deep-copying two `String`s per named plant every turn.
+/// ([`FloraQuoteCache::composition`]) whenever the patch on it is wild: the tile owns it, so such a
+/// patch row shares it rather than deep-copying two `String`s per named plant every turn.
+///
+/// `composition` is the same basket in its **raw** `FloraShare` form — the input every rate seam in
+/// `forage.rs` takes, and the thing a *committed* patch reweights ([`forage::patch_composition`]).
+/// Held here rather than re-derived per patch because the realization is a seeded draw over the whole
+/// affinity roster, which is exactly the work this memo exists to do once.
 struct CachedQuotes {
     terrain: TerrainType,
     resource_terrain: TerrainType,
+    composition: Arc<[FloraShare]>,
     shares: Arc<[FloraShareInfo]>,
 }
 
@@ -74,6 +80,13 @@ struct CachedQuotes {
 fn no_plants_here() -> &'static Arc<[FloraShareInfo]> {
     static EMPTY: OnceLock<Arc<[FloraShareInfo]>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::from(Vec::new()))
+}
+
+/// The raw twin of [`no_plants_here`] — "unknown ground names no plants", for the seams that take a
+/// `FloraShare` basket. Same once-built rationale.
+fn no_shares_here() -> &'static [FloraShare] {
+    static EMPTY: OnceLock<Vec<FloraShare>> = OnceLock::new();
+    EMPTY.get_or_init(Vec::new)
 }
 
 /// The memo. Keyed by tile coord; filled lazily by [`FloraQuoteCache::sweep`] during
@@ -161,6 +174,17 @@ impl FloraQuoteCache {
         )
     }
 
+    /// **What is growing on this tile, in the raw form the rate seams read** — the same basket
+    /// [`Self::composition`] publishes, before any patch reweight. Every forage payoff a capture
+    /// quotes derives the *patch's* basket from this one, so both come out of one memo entry and
+    /// cannot disagree about what the tile grows. **Empty for a coord the sweep never visited**, the
+    /// same absent-means-nothing convention.
+    pub(crate) fn tile_composition(&self, tile: UVec2) -> &[FloraShare] {
+        self.entries
+            .get(&tile)
+            .map_or_else(|| no_shares_here(), |cached| &cached.composition)
+    }
+
     /// Entries currently held — for the guards, which assert on what the memo *did* rather than on
     /// the timings it changed.
     #[cfg(test)]
@@ -192,10 +216,14 @@ impl FloraQuoteSweep<'_> {
             map_seed,
         } = self;
         let resource_terrain = tile.resource_terrain();
-        let derive = || CachedQuotes {
-            terrain: tile.terrain,
-            resource_terrain,
-            shares: Arc::from(derive_tile_quotes(flora, forage, tile, *map_seed)),
+        let derive = || {
+            let (composition, shares) = derive_tile_quotes(flora, forage, tile, *map_seed);
+            CachedQuotes {
+                terrain: tile.terrain,
+                resource_terrain,
+                composition: Arc::from(composition),
+                shares: Arc::from(shares),
+            }
         };
         let held = match entries.entry(tile.position) {
             Entry::Occupied(slot) => {
@@ -213,28 +241,31 @@ impl FloraQuoteSweep<'_> {
 
 /// **What grows on this tile, and what each plant would pay once committed to** — the whole derived
 /// block, in one pure function of ground and config so the memo above has something exact to key on.
+/// Returns the tile's raw basket beside the quoted one, because both are memo entries and both come
+/// out of the same realization draw.
 ///
-/// The quotes are taken against **this tile's own `K`** — never the live patch's, which may already
-/// be concentrated by an existing commitment — and at the standing crop each rung *settles* at, so
-/// they answer "what would this ground pay once this crop is established here" rather than pricing a
-/// 25-turn investment off one transient turn.
+/// The quotes are taken against **this tile's own `K`** — never the live patch's — and at the
+/// standing crop each rung *settles* at, so they answer "what would this ground pay once this crop is
+/// established here" rather than pricing a 25-turn investment off one transient turn.
 fn derive_tile_quotes(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     tile: &Tile,
     map_seed: u64,
-) -> Vec<FloraShareInfo> {
+) -> (Vec<FloraShare>, Vec<FloraShareInfo>) {
     let tile_capacity = tile_forage_capacity(forage, tile);
+    let composition = tile_flora_composition(flora, forage, tile, map_seed).into_owned();
     // What this tile pays left wild — the denominator every ratio on this tile divides by, resolved
-    // once.
+    // once. It reads the composition because a wild gather is the basket's own average (#433).
     let wild = wild_payoff(
         tile.position,
         tile_capacity,
+        &composition,
         flora,
         forage,
         FORECAST_OUTPUT_MULTIPLIER,
     );
-    tile_flora_composition(flora, forage, tile, map_seed)
+    let quotes = composition
         .iter()
         .map(|share| {
             let def = &flora.species[&share.species];
@@ -248,7 +279,7 @@ fn derive_tile_quotes(
                     tile.position,
                     tile_capacity,
                     &share.species,
-                    share.share,
+                    &composition,
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
@@ -283,7 +314,7 @@ fn derive_tile_quotes(
                     tile.position,
                     tile_capacity,
                     &share.species,
-                    share.share,
+                    &composition,
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
@@ -296,14 +327,15 @@ fn derive_tile_quotes(
                     tile.position,
                     tile_capacity,
                     &share.species,
-                    share.share,
+                    &composition,
                     flora,
                     forage,
                     FORECAST_OUTPUT_MULTIPLIER,
                 ),
             }
         })
-        .collect()
+        .collect();
+    (composition, quotes)
 }
 
 #[cfg(test)]
@@ -338,7 +370,7 @@ mod tests {
         let mut sweep = cache.sweep(&flora, &labor, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let fresh = derive_tile_quotes(&flora, &labor.forage, tile, 99);
+            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, tile, 99);
             assert_eq!(cached, fresh, "tile {:?}", tile.position);
         }
 
@@ -346,7 +378,7 @@ mod tests {
         let mut sweep = cache.sweep(&flora, &labor, 99, UVec2::new(16, 16));
         for tile in &tiles {
             let cached = sweep.quotes(tile).to_vec();
-            let fresh = derive_tile_quotes(&flora, &labor.forage, tile, 99);
+            let (_, fresh) = derive_tile_quotes(&flora, &labor.forage, tile, 99);
             assert_eq!(
                 cached, fresh,
                 "tile {:?} on the second sweep",
@@ -398,7 +430,7 @@ mod tests {
 
         assert_eq!(
             desert,
-            derive_tile_quotes(&flora, &labor.forage, &rewritten, 5)
+            derive_tile_quotes(&flora, &labor.forage, &rewritten, 5).1
         );
         assert_ne!(
             forest, desert,

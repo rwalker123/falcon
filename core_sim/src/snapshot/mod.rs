@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -16,8 +17,8 @@ use sim_runtime::{
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
     DiscoveredSitesState as SchemaDiscoveredSitesState, DiscoveryProgressEntry,
     ElevationOverlayState, FactionInventoryEntryState as SchemaFactionInventoryEntryState,
-    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FoodModuleState,
-    ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
+    FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
+    FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
     GreatDiscoveryTelemetryState, HerdTelemetryState, HuntPolicyCeilingState,
     HuntTripEstimateState, InfluentialIndividualState, IntensificationKnowledgeState,
@@ -55,11 +56,12 @@ use crate::{
         PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
-    flora_config::{FloraConfig, FloraConfigHandle},
+    flora_config::{FloraConfig, FloraConfigHandle, FloraShare},
     food::FoodModuleTag,
     forage::{
-        field_provisions, forage_forecast, rung_site_refusal, tile_is_fresh_watered,
-        ForageRegistry, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+        field_provisions, forage_forecast, patch_composition, rung_site_refusal,
+        tile_is_fresh_watered, ForagePatch, ForageRegistry, CULTIVATION_DISCOVERY_ID,
+        NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
     },
     generations::{GenerationProfile, GenerationRegistry},
     graze::{GrazePatch, GrazeRegistry},

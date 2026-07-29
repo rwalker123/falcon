@@ -14,13 +14,13 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, commit_payoff, commit_trade_payoff,
-    concentration_for_share, concentration_gain, generate_hydrology, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_world, tile_forage_capacity, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
-    FloraConfig, FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
-    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    generate_hydrology, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_world, tile_forage_capacity, CommandEventLog, CultureManager,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
+    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     BUILTIN_LABOR_CONFIG, FODDER, FOOD,
@@ -81,18 +81,17 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
     let tile = UVec2::new(terrain as u32, 0);
     let capacity = forage.capacity_for(terrain);
 
+    let composition = flora.composition(terrain);
     let payoffs = |species: &str| {
-        let share = flora
-            .composition(terrain)
-            .iter()
-            .find(|entry| entry.species == species)
-            .unwrap_or_else(|| panic!("{species} must host {terrain:?}"))
-            .share;
+        assert!(
+            composition.iter().any(|entry| entry.species == species),
+            "{species} must host {terrain:?}"
+        );
         let food = commit_payoff(
             tile,
             capacity,
             species,
-            share,
+            composition,
             &flora,
             forage,
             QUOTE_MULTIPLIER,
@@ -102,7 +101,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             tile,
             capacity,
             species,
-            share,
+            composition,
             &flora,
             forage,
             QUOTE_MULTIPLIER,
@@ -111,7 +110,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             tile,
             capacity,
             species,
-            share,
+            composition,
             &flora,
             forage,
             QUOTE_MULTIPLIER,
@@ -166,10 +165,14 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
     );
 }
 
-/// **The token is exactly `biomass × field_dial × token_rate / wild_rate`.** Pin the grain Field's
-/// trade token against the loaded dials by name, so a change to `field_provisions_per_biomass`, the
+/// **The token is exactly `K × field_dial × token_rate / wild_rate`.** Pin the grain Field's trade
+/// token against the loaded dials by name, so a change to `field_provisions_per_biomass`, the
 /// grain's `trade_goods_per_biomass`, or the wild `provisions_per_biomass` moves this number — this
 /// is the "assert the quote against the payoff function's inputs" discipline.
+///
+/// **The standing crop is the tile's whole `K`** (#433): a Field neither raises nor lowers the land's
+/// capacity, it only makes the whole of it one crop, so the crop's share of the wild basket does not
+/// appear here at all. It used to, as a concentration factor — that was the bug.
 #[test]
 fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
     let labor = labor();
@@ -179,18 +182,17 @@ fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
     let terrain = TerrainType::Floodplain;
     let tile = UVec2::new(terrain as u32, 0);
     let capacity = forage.capacity_for(terrain);
-    let share = flora
-        .composition(terrain)
-        .iter()
-        .find(|entry| entry.species == "wild_emmer")
-        .expect("emmer hosts the plain")
-        .share;
+    let composition = flora.composition(terrain);
+    assert!(
+        composition
+            .iter()
+            .any(|entry| entry.species == "wild_emmer"),
+        "emmer hosts the plain"
+    );
 
-    // The hypothetical Field the quote builds: this tile's K, concentrated by the field gain, at the
-    // full standing crop.
-    let biomass =
-        capacity * concentration_for_share(share, concentration_gain(forage, RungKey::PlantField));
-    let expected = biomass
+    // The hypothetical Field the quote builds: this tile's own K at the full standing crop, its
+    // basket forced to 100% the sown crop.
+    let expected = capacity
         * forage.cultivation.field_provisions_per_biomass
         * (flora.species["wild_emmer"].yield_.trade_goods_per_biomass
             / forage.provisions_per_biomass)
@@ -200,7 +202,7 @@ fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
         tile,
         capacity,
         "wild_emmer",
-        share,
+        composition,
         &flora,
         forage,
         QUOTE_MULTIPLIER,
@@ -407,9 +409,10 @@ fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
 
 /// **The picker quote is the number the sim pays.** The labor arm's `field_trade_goods` and the
 /// crop-picker's `commit_trade_payoff` are one seam: seed a Field at exactly the hypothetical patch
-/// the quote builds (this tile's K for the biome, concentrated by the field gain, at full standing
-/// crop) and the credited stockpile equals the quote, rounded — quote and payout cannot drift
-/// (the §4.3 "assert the quote against the payoff function" rule, extended to the trade account).
+/// the quote builds (this tile's own `K` for the biome, at full standing crop — a Field neither
+/// raises nor lowers it, #433) and the credited stockpile equals the quote, rounded — quote and
+/// payout cannot drift (the §4.3 "assert the quote against the payoff function" rule, extended to
+/// the trade account).
 #[test]
 fn the_picker_trade_payoff_matches_the_credited_stockpile() {
     let mut app = spawn_world();
@@ -422,12 +425,12 @@ fn the_picker_trade_payoff_matches_the_credited_stockpile() {
     let terrain = TerrainType::Floodplain;
     let quote_tile = UVec2::new(terrain as u32, 0);
     let quote_capacity = labor.forage.capacity_for(terrain);
-    let share = cotton_share(&flora, terrain);
-    let biomass = quote_capacity
-        * concentration_for_share(
-            share,
-            concentration_gain(&labor.forage, RungKey::PlantField),
-        );
+    let composition = flora.composition(terrain);
+    assert!(
+        cotton_share(&flora, terrain) > 0.0,
+        "cotton must host the quote biome"
+    );
+    let biomass = quote_capacity;
 
     seat_cotton_field(&mut app, coord, biomass);
     spawn_forager(&mut app, tile, coord);
@@ -437,7 +440,7 @@ fn the_picker_trade_payoff_matches_the_credited_stockpile() {
         quote_tile,
         quote_capacity,
         "cotton",
-        share,
+        composition,
         &flora,
         &labor.forage,
         QUOTE_MULTIPLIER,
