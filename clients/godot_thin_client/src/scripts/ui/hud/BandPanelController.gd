@@ -964,9 +964,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             live_herd = _band_labor.find_world_herd(herd_id)
-            cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
+            var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy)
+            # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
+            # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
+            # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the
+            # number; the forage branch above passes none, a patch owing no crew.
+            cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle,
+                SourceForecast.herd_crew_floor(live_herd, hunt_forecast))
         var note := String(yld.get("note", ""))
         var rung := _work_source_rung(kind, patch, live_herd)
         var marks := FoodIcons.for_policy(policy)

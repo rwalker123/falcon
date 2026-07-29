@@ -177,6 +177,19 @@ const PEN_FED_STARVING := 0.40
 # assignment and the auto-max assertion all read them from here rather than repeating bare 1s and 2s.
 const UNDER_HERDED_CORRAL_HERDERS_NEEDED := 2
 const UNDER_HERDED_CORRAL_HERDERS_STAFFED := 1
+# The stale-DATA reopen guard's herd (`herd_compose_reopen_fresh`), staged on ONE id across two turns.
+# Turn N it is still WILD — not owned, so the ownership-gated crew is 0 and only the would-be crew is
+# real. Turn N+1 the sim has taken ownership: a real crew of 4 (both halves equal, as the sim exports
+# them on a managed herd) and a meter that has just left zero. Every number the sheet quotes moves
+# between the two, and none of them is in the drawer's shape signature — which is the whole test.
+const REOPEN_HERD_ID := "game_deer_reopen_01"
+const REOPEN_WILD_WOULD_BE_HERDERS := 3
+const REOPEN_TAMING_HERDERS := 4
+const REOPEN_TAMING_DOMESTICATION := 0.04
+# Idle workers comfortably above BOTH max-useful caps (3 wild / 4 taming), so the stepper is bound by
+# USEFULNESS and renders the "max N workers useful here" note rather than the labor-bound one.
+const REOPEN_IDLE_WORKERS := 12
+const REOPEN_WORKING_AGE := 24
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -3075,6 +3088,94 @@ func _ready() -> void:
 	_hud._drawercompose.close_compose_sheet()
 	_hud._compose.reset_forage_source()
 
+	# STALE-DATA GUARD (herd) — herd_compose_reopen_fresh. The two guards above prove the retained
+	# compose-open closure re-targets when the SUBJECT changes; this one proves it re-reads when only
+	# the herd's STATE moves, which the shape signature deliberately cannot see. `_herd_actions_shape`
+	# carries the herd's IDENTITY and none of its live numbers (folding `domestication` /
+	# `herders_needed` in would rebuild the drawer every tick and bring back the reflow flash the patch
+	# path exists to remove), so the turn taming starts the drawer PATCHES in place and the button keeps
+	# its connection. A closure that CAPTURED the herd dict then feeds the sheet a pre-tame herd — the
+	# playtest report where the drawer read "Domesticating 4% · Herders 3 / 4" while the sheet beside it
+	# still said "This herd is 0% tamed" and "max 3 workers useful here", one whole turn behind.
+	# `_live_herd` re-resolves through the selection model at PRESS time, so both surfaces read one dict.
+	# A PNG alone cannot carry this claim: a fresh sheet and a stale one differ only in their numbers.
+	# Knowledge is complete on both rungs, so Tame is ungated (a gated Tame would be reset to Sustain
+	# and the frame would test nothing) and Corral's ONLY gate reason is the herd's own tameness — the
+	# number under test, rendered as the compact one-liner rather than a bulleted list.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+	var reopen_band := _band_fixture()
+	reopen_band["idle_workers"] = REOPEN_IDLE_WORKERS
+	reopen_band["working_age"] = REOPEN_WORKING_AGE
+	_hud._band_labor._player_band = reopen_band
+	_hud._band_labor._player_bands = [reopen_band]
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_policy(SourceForecast.DEFAULT_HUNT_POLICY)
+	var reopen_wild := _reopen_wild_herd_fixture()
+	var reopen_taming := _reopen_taming_herd_fixture()
+	# TURN N — select the wild herd through the real path, which fully rebuilds the drawer and wires a
+	# FRESH closure onto the compose-open button.
+	_hud.show_herd_selection(reopen_wild)
+	await _settle()
+	var reopen_btn := _find_button_by_text(
+		_hud.herd_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower())
+	assert(reopen_btn != null)
+	# Open the sheet by PRESSING the real button, then dial Tame in and press again — the second open
+	# finds `hunt_key` unchanged, so the rung survives the source-changed re-seed (`_compose_herd`'s
+	# double-open, done here through the button because the button's closure is what is under test).
+	reopen_btn.pressed.emit()
+	await _settle()
+	_hud._compose.set_hunt_policy(HudConst.LABOR_POLICY_TAME)
+	reopen_btn.pressed.emit()
+	await _settle()
+	# BASELINE — the pre-tame numbers, so the assertions below are proven to be a CHANGE and not a
+	# coincidence. Both sentences are built from the shipped formats, so they read what the player reads.
+	var tame_icon := FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)
+	var stale_tamed_line := HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [0, tame_icon]
+	var fresh_tamed_line := HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
+		HudFormat.progress_percent(REOPEN_TAMING_DOMESTICATION), tame_icon]
+	var stale_cap_note := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+		REOPEN_WILD_WOULD_BE_HERDERS, SourceForecast.MAX_USEFUL_NOUN_MANY]
+	var fresh_cap_note := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
+		REOPEN_TAMING_HERDERS, SourceForecast.MAX_USEFUL_NOUN_MANY]
+	_assert_hud("precondition: the WILD herd's sheet quotes its own untamed meter",
+		_has_label_containing(_hud._drawercompose._compose_sheet, stale_tamed_line))
+	_assert_hud("precondition: …and caps Tame at the wild would-be crew of 3",
+		_has_label_containing(_hud._drawercompose._compose_sheet, stale_cap_note))
+	# The player closes the sheet and ends the turn. Closing matters: with the sheet OPEN the snapshot's
+	# `refresh_compose_sheet` rebuilds it against `_selection.herd()` and self-heals, which is exactly
+	# why the bug reads as "one turn behind" rather than as a permanent lie.
+	_hud._drawercompose.close_compose_sheet()
+	await _settle()
+	var reopen_btn_id := reopen_btn.get_instance_id()
+	# TURN N+1 — the SAME herd id restated with taming under way, through the real per-snapshot path.
+	_hud.reapply_selection("herd", reopen_taming)
+	await _settle()
+	_assert_hud("the same-herd restate PATCHES the drawer in place (the button node survives)",
+		_hud.herd_assign_controls.get_child_count() == 1
+		and _hud.herd_assign_controls.get_child(0).get_instance_id() == reopen_btn_id)
+	# The crew NOUN is the second half of the report: the sim now demands keepers (`herders_needed` 4),
+	# so `SourceForecast.is_managed_hunt_source` reads managed and the button — patched in place, not
+	# rebuilt — flips to "Assign herders ▸", agreeing with the drawer's own "Herders: A / 4" row.
+	_assert_hud("…and its noun flips to herders, the sim having asked for keepers",
+		reopen_btn.text == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HERD_CREW_LABEL.to_lower())
+	reopen_btn.pressed.emit()
+	await _settle()
+	await _save("herd_compose_reopen_fresh")
+	_assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
+		_has_label_containing(_hud._drawercompose._compose_sheet, fresh_tamed_line)
+		and not _has_label_containing(_hud._drawercompose._compose_sheet, stale_tamed_line))
+	_assert_hud("…and caps Tame at the herd's live crew of 4, not the pre-tame 3",
+		_has_label_containing(_hud._drawercompose._compose_sheet, fresh_cap_note)
+		and not _has_label_containing(_hud._drawercompose._compose_sheet, stale_cap_note))
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_policy(SourceForecast.DEFAULT_HUNT_POLICY)
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
+	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
 	# WORLD-BOUNDARY GUARD — `Hud.reset_world_state()`, the HUD half of the stale-world fix.
 	# A freshly generated world sends `intensification_knowledge: []`, which MERGES to nothing, so the
 	# previous game's "⚒ Your people know" strip survived into the new one; the Telling panel is
@@ -5169,6 +5270,35 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["herders_needed"] = 0
 	fixture["herders_needed_if_managed"] = 10
+	return fixture
+
+## THE STALE-DATA REOPEN PAIR (`herd_compose_reopen_fresh`) — ONE herd id on two consecutive turns.
+##
+## Turn N, still WILD: the meter has not moved (`domestication` 0) and nothing is owned, so the
+## ownership-gated `herders_needed` is 0 while the would-be crew is a real 3. Turn N+1, TAMING has
+## started: the sim has taken the herd, so the crew is real (4, both halves equal — the sim exports
+## them that way on a managed herd) and the meter has just left zero.
+##
+## EVERYTHING ELSE IS DELIBERATELY IDENTICAL — same id, same species, same ceilings, same tile — so
+## `_herd_actions_shape` cannot tell the two apart and the restate takes the same-shape PATCH path.
+## What the sheet then quotes is decided entirely by whether the retained compose-open closure kept a
+## captured dict or re-resolves the live one. With the base fixture's Tame ceiling (0.23) over its
+## per-worker yield (0.30) the take-side max-useful is 1, so the Tame rung's cap is the herder floor
+## outright: 3 on the wild herd, 4 on the taming one.
+func _reopen_wild_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["id"] = REOPEN_HERD_ID
+	fixture["label"] = "Red Deer (%s)" % REOPEN_HERD_ID
+	fixture["domestication"] = 0.0
+	fixture[HERDERS_NEEDED_KEY] = 0
+	fixture[HERDERS_NEEDED_IF_MANAGED_KEY] = REOPEN_WILD_WOULD_BE_HERDERS
+	return fixture
+
+## The same herd one turn later, taming under way and owned — see `_reopen_wild_herd_fixture`.
+func _reopen_taming_herd_fixture() -> Dictionary:
+	var fixture := _reopen_wild_herd_fixture()
+	fixture["domestication"] = REOPEN_TAMING_DOMESTICATION
+	_set_managed_herders(fixture, REOPEN_TAMING_HERDERS)
 	return fixture
 
 ## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
