@@ -1682,10 +1682,19 @@ func focus_labor_source(x: int, y: int, herd_id: String = "") -> void:
         return
     var panel_band_keep: Dictionary = _band_labor.panel_band().duplicate(true) if not _band_labor.panel_band().is_empty() else {}
     emit_signal("alert_focus_requested", x, y)
-    # The focus above rebuilt the hex's roster, so the herd is resolvable now.
+    # The focus above rebuilt the hex's roster, so the subject is resolvable now.
     if herd_id != "" and not _selectioncard.find_roster_herd(herd_id).is_empty():
         _selectioncard.select_roster_occupant("herd", herd_id)
         emit_signal("roster_occupant_selected", "herd", herd_id)
+    elif herd_id == "":
+        # A FORAGE ROW NAMES THE LAND, exactly as a hunt row names its herd. Focusing the tile alone
+        # left the hex's AUTO-PICK to choose the subject, which on a shared hex opens whichever band or
+        # herd happens to stand there rather than the patch the player clicked — the row jumping to a
+        # place but not to a THING. The land is the patch's subject (its rung rows and its Sow control
+        # live on the land card), and `SUBJECT_LAND` is the established third kind on the `(kind, id)`
+        # contract, so this is the forage twin of the herd branch above and not a new mechanism.
+        _selectioncard.select_land_subject()
+        emit_signal("roster_occupant_selected", HudSelectionState.SUBJECT_LAND, HudConst.LAND_SUBJECT_ID)
     if not panel_band_keep.is_empty() and int(_band_labor.panel_band().get("entity", -1)) != int(panel_band_keep.get("entity", -1)):
         render_band(panel_band_keep)
 

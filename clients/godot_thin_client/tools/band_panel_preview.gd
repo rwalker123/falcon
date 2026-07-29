@@ -638,6 +638,14 @@ func _ready() -> void:
 	_assert_ready_filter_narrows()
 	_hud._bandpanel._set_work_filter(HudWorkVocab.WORK_FILTER_ALL)
 	_hud.update_intensification([])
+
+	# THE FORAGE JUMP NAMES THE LAND (issue #412, a pre-existing defect the marks made reachable-looking).
+	# A hunt row always named its herd; a forage row focused the tile and left the hex's AUTO-PICK to
+	# choose, so on a hex that also holds a band or a herd it opened THAT instead of the patch. The mark
+	# is what makes it matter: a row that says "this patch can be sown" must land on the patch.
+	#
+	# Asserted, not pictured — the wrong subject and the right one render the same card shape.
+	_assert_forage_jump_names_land()
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1389,6 +1397,18 @@ func _find_zone_hosts(node: Node) -> Array:
 ## Two Hunt rows on one band, told apart by the rung they STAND on: a part-built pen (an INVESTMENT
 ## rung, which the work inspector's four-extractive-rung picker cannot highlight) and an ordinary
 ## Sustain take (the control). Same band, same zone, so the two frames differ in exactly the rung.
+## The forage jump must leave the LAND as the lit subject, even on a hex whose roster also holds a
+## band (the auto-pick's preference, and what it used to hand back instead).
+func _assert_forage_jump_names_land() -> void:
+	var subjects: Array = []
+	_hud._bandpanel.roster_occupant_selected.connect(
+		func(kind: String, _id: Variant) -> void: subjects.append(kind), CONNECT_ONE_SHOT)
+	_hud._bandpanel.focus_labor_source(71, 18)
+	_assert_band_panel("forage jump — the row names the LAND, not the hex's auto-picked occupant",
+		subjects == [HudSelectionState.SUBJECT_LAND])
+	_assert_band_panel("forage jump — the land is the lit subject afterwards",
+		_hud._selection.subject() == HudSelectionState.SUBJECT_LAND)
+
 ## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
 ## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
 func _assert_band_panel(label: String, ok: bool) -> void:
