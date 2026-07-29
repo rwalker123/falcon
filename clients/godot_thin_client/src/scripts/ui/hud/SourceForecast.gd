@@ -770,11 +770,24 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     }
 
 ## A hunt source is MANAGED (its crew are herders/keepers, not a hunt party) once the herd is penned,
-## fully tamed (pastoral), or being penned under the composed Corral policy. `workersNeeded` on such a
-## source scales with the HERD (max herders, haulers), so the crew label must read as herders.
+## fully tamed (pastoral), being penned under the composed Corral policy, or **owed a herder crew by
+## the sim**. `workersNeeded` on such a source scales with the HERD (max herders, haulers), so the
+## crew label must read as herders.
+##
+## THE `herders_needed > 0` CLAUSE IS THE SIM'S OWN STATEMENT THAT THIS HERD OWES KEEPERS. The field
+## is ownership-gated (`fauna::herd_herders_needed`), so it goes positive the moment the herd becomes
+## OWNED — part-way through taming, well before `domestication` reaches completion. The drawer's
+## "Herders: A / N — under-herded" row gates on the SAME field and the SAME `> 0` test, so the two
+## surfaces can no longer disagree: without this clause the sheet's stepper and title said "Hunters"
+## directly beside a drawer demanding 4 herders every turn.
+##
+## Deliberately NOT `policy == LABOR_POLICY_TAME`: a still-WILD herd being tamed reports
+## `herders_needed == 0`, is not yet owned, and its crew genuinely hunts at a reduced take that turn —
+## "Hunters" is the honest word there. Corral is different because it BUILDS the pen the keepers hold.
 static func is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
     return bool(herd.get("corralled", false)) \
         or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
+        or int(herd.get("herders_needed", 0)) > 0 \
         or policy == LABOR_POLICY_CORRAL
 
 ## A herd's player-facing name (species → label → id). One definition, shared by the targeting banner's

@@ -137,6 +137,10 @@ const OVERHUNT_FLAG := "⚠"
 # A MANAGED hunt source's crew are HERDERS, not a hunt party (`workersNeeded` = max(herders, haulers),
 # scaling with herd size). The local stepper labels them so a pen needing several keepers doesn't read
 # as a hunt-party bug. See `SourceForecast.is_managed_hunt_source`.
+# "Managed" starts the moment the sim asks for keepers — `herders_needed > 0`, the very field the
+# drawer's "Herders: A / N" row reads — not only at a finished tame or a built pen, so a herd part-way
+# through taming reads Herders on both surfaces at once. A still-WILD herd being tamed owes no keepers
+# yet and keeps HUNT_CREW_LABEL.
 const HUNT_CREW_LABEL := "Hunters"
 
 const HERD_CREW_LABEL := "Herders"

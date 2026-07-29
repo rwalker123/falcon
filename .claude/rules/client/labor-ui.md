@@ -590,6 +590,44 @@ paths:
       non-Thriving patch, and re-staffing a paused build re-issues exactly that command, so the crew
       count cannot be changed while the pause lasts (unassign is exempt — `workers == 0` skips
       validation, so the remedy the sheet offers is always reachable).
+    - **A RETAINED DRAWER-ACTIONS CLOSURE NEVER CAPTURES ITS SUBJECT — it re-resolves through
+      `_live_herd` / `_live_tile_info` at press time.** The two drawer-action builders diff against a
+      shape signature (`_herd_actions_shape` / the forage twin) and PATCH a same-shape restate in
+      place, deliberately keeping the compose-open button's `pressed` connection intact so a
+      per-snapshot restate does not tear the drawer down. Those signatures carry the subject's
+      **IDENTITY and nothing else** — the herd id / tile key leads, plus the structural slots — and
+      that is the design, not an omission: `domestication`, `herders_needed`,
+      `herders_needed_if_managed`, biomass and the patch's `patch_*` forecast fields move every turn
+      without changing the drawer's structure, so folding them in would rebuild on every tick and
+      restore the reflow flash the patch path exists to remove. A closure holding a captured dict is
+      therefore frozen at whatever turn the drawer was last fully rebuilt, and the sheet opens against
+      it: the turn taming started, the drawer read `Domesticating 4%` / `Herders: 3 / 4 —
+      under-herded` while the sheet beside it still said `This herd is 0% tamed` and `max 3 workers
+      useful here`, healing only on the NEXT snapshot when `refresh_compose_sheet` rebuilt against
+      `_selection.herd()`. `_live_herd(herd_id, fallback)` / `_live_tile_info(subject_key, fallback)`
+      read the selection model at CALL time and fall back on an id/key mismatch (so a harness staging
+      a subject without touching `_selection` works off its own fixture), which makes the open path
+      and the per-snapshot refresh path read the SAME dict by construction. **Every** closure on both
+      builders routes through them — the compose-open buttons and the seven band-picker / stepper /
+      policy-picker / crop-picker rebuild calls inside `_build_herd_assign_controls` /
+      `_build_forage_assign_controls`, since a sheet opened from a stale button would otherwise re-pin
+      the stale dict on every stepper tick. The subject-key-leads rule in both signatures is
+      orthogonal and stays: it handles a SUBJECT change, this handles same-subject/stale-DATA.
+      ui_preview `herd_compose_reopen_fresh` (one herd id across two turns, the restate asserted to
+      take the patch branch), beside the subject-change pair
+      `herd_assign_button_targets_selected_herd` / `forage_assign_button_targets_selected_tile`.
+    - **A herd is MANAGED — its crew are Herders, not Hunters — from the moment the sim asks for
+      keepers.** `SourceForecast.is_managed_hunt_source` reads `corralled` **or** full
+      `domestication` **or `herders_needed > 0`** or a composed Corral. The third clause is the sim's
+      own statement that this herd owes a crew: `herders_needed` is ownership-gated
+      (`fauna::herd_herders_needed`), so it goes positive the moment the herd becomes owned — part-way
+      through taming, well before the meter completes — and it is the SAME field and the SAME `> 0`
+      test the drawer's `Herders: A / N` row gates on, so the sheet's stepper/title and the drawer row
+      can no longer disagree. Composing **`tame` is deliberately NOT a clause**: a still-wild herd
+      being tamed reports `herders_needed == 0`, is not yet owned, and its crew genuinely hunts at a
+      reduced take that turn, so "Hunters" is honest there; Corral is a clause because it builds the
+      pen the keepers hold. ui_preview `herd_compose_reopen_fresh` asserts the noun flips on the
+      in-place-patched button, and `herd_fully_herded` / `herd_under_herded` render the drawer form.
     - **`_tame_stalled_hint` — the one silent rule, said out loud.** Taming accrues only while the
       herd is **Thriving**, but that is deliberately NOT a gate: a herd's phase swings as it is
       hunted, so refusing the verb would be un-actionable churn. The sim just **pauses** the meter
@@ -720,8 +758,9 @@ paths:
       crew's carry-aware per-turn preview line below the picker) so Sustain < Surplus < Deplete < Eradicate
       reads as ASCENDING. `wasted_yield > 0` renders a muted "· N.N wasted" understaffing note (the low-key
       mirror of the WARN overstaff note). A MANAGED
-      (corralled/pastoral, or composing-Corral) herd's local crew are **Herders**, not Hunters
-      (`SourceForecast.is_managed_hunt_source` → the stepper + "Assign …" title noun), since `workersNeeded` there is
+      (corralled/pastoral, owed a herder crew, or composing-Corral) herd's local crew are **Herders**,
+      not Hunters (`SourceForecast.is_managed_hunt_source` → the stepper + "Assign …" title noun; the
+      full clause list and why `tame` is excluded are above), since `workersNeeded` there is
       the herding crew (max herders, haulers), not a hunt party. The in-progress Cultivation tile-card
       row leads with the **"Preparing N%"** build-verb, matching the herd's "Domesticating N%".
     - ui_preview (slice-8b UX + the local-hunt cleanup): `hunt_actions_rhythm` (two Current-actions Hunt

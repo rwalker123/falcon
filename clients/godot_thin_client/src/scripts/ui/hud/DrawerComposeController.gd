@@ -544,7 +544,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # how many workers"). Switching bands re-runs the distance-aware branch below for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_hunt_band(int(picked.get("entity", -1)))
-        _build_herd_assign_controls(herd, target)))
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
     # Distance-aware: a LOCAL hunt when the herd is within the SELECTED band's hunt_reach, a hunting
     # EXPEDITION when it's beyond. Distance is wrap-aware from the picked band's OWN tile — every part
     # of the decision (distance, reach, and the command's band target) keys off `band` explicitly, so
@@ -661,7 +661,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
             _compose.set_hunt_count(clampi(n, 0, cap))
-            _build_herd_assign_controls(herd, target)))
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -675,7 +675,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _compose.set_hunt_policy(policy)
         # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
         _compose.arm_hunt_autofill()
-        _build_herd_assign_controls(herd, target), _compose.hunt_policy(), hunt_options, hunt_gates, policy_takes))
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target), _compose.hunt_policy(), hunt_options, hunt_gates, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (both trade the take since #337, but only the
     # band's Sustain builds husbandry — an expedition accrues none), so one shared hint line under the
@@ -1124,13 +1124,15 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var resolved := _resolve_assign_band()
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
-    var key := "%d,%d" % [x, y]
+    # ONE key for this patch: the compose source key and the sheet's subject key are the same string
+    # by definition, and the rebuild closures below re-resolve the LIVE tile through it (`_live_tile_info`).
+    var subject_key := _forage_source_key(tile_info)
     # When the selected tile changes, default the actor band to the resolved band (and re-seed
     # the count from its staffing); otherwise preserve the picked band + count across the
     # per-snapshot re-renders of the same tile.
-    var source_changed := _compose.forage_key() != key
+    var source_changed := _compose.forage_key() != subject_key
     if source_changed:
-        _compose.begin_forage_source(key, int(resolved.get("entity", -1)))
+        _compose.begin_forage_source(subject_key, int(resolved.get("entity", -1)))
     var band := _band_labor.player_band_by_entity(_compose.forage_band())
     if band.is_empty():
         band = resolved
@@ -1160,7 +1162,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # for that band.
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_forage_band(int(picked.get("entity", -1)))
-        _build_forage_assign_controls(tile_info, target)))
+        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)))
     # Forage take policy (Sustain/Surplus/Deplete/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
@@ -1184,7 +1186,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _compose.set_forage_policy(policy)
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
         _compose.arm_forage_autofill()
-        _build_forage_assign_controls(tile_info, target), _compose.forage_policy(), HudBandLaborState.FORAGE_POLICY_OPTIONS,
+        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target), _compose.forage_policy(), HudBandLaborState.FORAGE_POLICY_OPTIONS,
         forage_gates, forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS,
         # Collapse the OTHER rungs' reasons only while a committing rung is composed — that is the one
         # card that also carries the crop picker, and the only place the height is not there.
@@ -1205,7 +1207,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             committed_crop if is_committed else "",
             func(species: String) -> void:
                 _compose.set_forage_species(species)
-                _build_forage_assign_controls(tile_info, target))
+                _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
         if crop_picker != null:
             target.add_child(crop_picker)
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
@@ -1231,7 +1233,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         HudComposeVocab.FORAGE_CREW_LABEL, _compose.forage_count(), _compose.forage_count() < cap,
         func(n: int) -> void:
             _compose.set_forage_count(clampi(n, 0, cap))
-            _build_forage_assign_controls(tile_info, target)))
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -1350,6 +1352,30 @@ func _herd_compose_available(herd: Dictionary) -> bool:
 func _forage_source_key(tile_info: Dictionary) -> String:
     return "%d,%d" % [int(tile_info.get("x", -1)), int(tile_info.get("y", -1))]
 
+## The LIVE herd dict for `herd_id`, or `fallback` when the selection has moved on.
+##
+## A `pressed`/rebuild closure must NEVER capture a herd dict. The drawer-actions same-shape patch
+## path deliberately keeps a button's connection intact across snapshots, and the shape signature
+## carries the herd's IDENTITY but none of its live state — so a captured dict is frozen at whatever
+## turn the drawer was last fully rebuilt, and the sheet opens against a pre-tame herd quoting a
+## stale `domestication` and `herders_needed_if_managed` (the "max 3 workers useful" / "0% tamed"
+## playtest report, one turn behind the drawer beside it). Re-resolving through the selection model
+## at CALL time is what makes the open path and the per-snapshot `refresh_compose_sheet` path read
+## the SAME dict by construction. The id guard keeps a harness that stages a herd without touching
+## `_selection` working off its own fixture.
+func _live_herd(herd_id: String, fallback: Dictionary) -> Dictionary:
+    var live := _selection.herd()
+    if live.is_empty() or String(live.get("id", "")) != herd_id:
+        return fallback
+    return live
+
+## The forage twin of `_live_herd` — same stale-capture rule, keyed on the tile's compose subject key.
+func _live_tile_info(subject_key: String, fallback: Dictionary) -> Dictionary:
+    var live := _selection.tile_info()
+    if live.is_empty() or _forage_source_key(live) != subject_key:
+        return fallback
+    return live
+
 ## The crew noun the sheet's stepper uses for this herd — herders on a MANAGED (corralled/pastoral)
 ## herd, hunters on a wild one. Read by the drawer button too, so the two always agree.
 func _herd_crew_noun(herd: Dictionary) -> String:
@@ -1430,11 +1456,16 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
     if not standing.is_empty():
         summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE, HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
     var subject_key := _forage_source_key(tile_info)
-    # The subject key LEADS the shape signature so switching to a different tile — even one of
-    # identical structure — forces a full rebuild and re-wires the compose-open button's
-    # `open_forage_compose(tile_info)` closure to the current tile. The same-shape patch path keeps
-    # that closure intact by design, so without the key a same-shape restate leaves the button
-    # opening the PREVIOUS tile's forage compose (the herd drawer's stale-closure bug, twinned here).
+    # THE SIGNATURE CARRIES IDENTITY ONLY, AND THE CLOSURE CARRIES NOTHING. Two halves:
+    #   • The subject key LEADS the shape signature, so switching to a different tile — even one of
+    #     identical structure — forces a full rebuild rather than a positional patch onto another
+    #     tile's nodes.
+    #   • The compose-open button's `pressed` closure does NOT capture `tile_info`; it re-resolves the
+    #     live tile through `_live_tile_info(subject_key, …)` when pressed. The same-shape patch path
+    #     deliberately keeps that connection intact across per-snapshot restates, and this signature
+    #     cannot carry the patch's live state (its `patch_*` forecast/progress fields move every turn
+    #     without changing the drawer's STRUCTURE) — nor should it try, since that would rebuild the
+    #     drawer on every tick and reintroduce the reflow flash the patch path exists to remove.
     var shape := [subject_key] + _standing_actions_shape(summary_model)
     var expected_children := (1 if not summary_model.is_empty() else 0) + 1
     # Same shape (summary present + its warn/note structure) → patch the summary + compose button in
@@ -1452,7 +1483,7 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
         _forage_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     _forage_assign_controls.add_child(_build_compose_open_button(
         HudComposeVocab.FORAGE_CREW_LABEL, subject_key,
-        func() -> void: open_forage_compose(tile_info)))
+        func() -> void: open_forage_compose(_live_tile_info(subject_key, tile_info))))
     _forage_drawer_shape = shape
 
 ## Free the forage drawer-actions and forget its shape, so the next build always rebuilds.
@@ -1507,7 +1538,7 @@ func build_herd_drawer_actions(herd: Dictionary) -> void:
         _herd_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     if available:
         _herd_assign_controls.add_child(_build_compose_open_button(
-            noun, herd_id, func() -> void: open_herd_compose(herd)))
+            noun, herd_id, func() -> void: open_herd_compose(_live_herd(herd_id, herd))))
     _herd_drawer_shape = shape
 
 ## Free the herd drawer-actions and forget its shape, so the next build always rebuilds.
@@ -1531,11 +1562,17 @@ func _standing_actions_shape(summary_model: Dictionary) -> Array:
         String(summary_model["note"]) != "", String(summary_model["muted_note"]) != ""]
 
 ## The herd drawer-actions shape: the herd SUBJECT KEY + the extend control's kind + the summary
-## structure + whether the compose button is present. The subject key LEADS because the compose-open
-## button's `pressed` closure captures THIS herd, and the same-shape patch path deliberately keeps
-## that closure intact — so a subject change (even to a herd of identical structure) must move the
-## signature and force a full rebuild, or the button re-wires against the wrong herd (stale-closure
-## bug). Any other structural change forces a rebuild too, rather than a positional patch.
+## structure + whether the compose button is present. The subject key LEADS so a subject change (even
+## to a herd of identical structure) moves the signature and forces a full rebuild, rather than a
+## positional patch onto another herd's nodes; any other structural change forces one too.
+##
+## THAT IS IDENTITY, AND IDENTITY IS ALL IT CARRIES. It deliberately holds none of the herd's LIVE
+## state (`domestication`, `herders_needed`, `herders_needed_if_managed`, biomass, ecology), which
+## moves every turn without changing the drawer's STRUCTURE — folding those in would rebuild the
+## drawer on every tick and reintroduce the reflow flash the patch path exists to remove. So the
+## compose-open button's `pressed` closure must not capture a herd dict either: it re-resolves the
+## live herd through `_live_herd(herd_id, …)` when pressed, which is what stops the sheet quoting a
+## pre-tame herd the turn taming starts (see `_live_herd`).
 func _herd_actions_shape(herd_id: String, corralled: bool, extending: bool, available: bool, summary_model: Dictionary) -> Array:
     return [herd_id, corralled, extending, available] + _standing_actions_shape(summary_model)
 
