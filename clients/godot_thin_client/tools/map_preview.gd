@@ -751,6 +751,16 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_travel_expedition")
 
+	# State — A HUNT EXPEDITION'S QUARRY IS MARKED (issue #412). The party is outbound to the wolf
+	# pack while the resident band hunts the deer locally: two different routes to a worked source,
+	# both wearing the same red ring and crew badge, because the mark describes the SOURCE and not who
+	# reached it.
+	_map.display_snapshot(_snapshot_hunt_expedition())
+	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_hunt_expedition_quarry")
+
 	# State Q — MULTI-BIOME terrain + edge-blend (Approach B: per-pixel biome-blend shader). Four vertical
 	# bands of the four REAL base textures (the other 33 are noise placeholders): hot_desert_erg /
 	# prairie_steppe / mixed_woodland / deep_ocean, left→right. desert+prairie are blend_class "flat"
@@ -1887,6 +1897,28 @@ func _expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
 		"expedition_phase": phase,
 		"is_traveling": phase != "awaiting",
 	}
+
+## A HUNTING party and its quarry (issue #412). A hunt expedition carries its target on the COHORT
+## (`expedition_target_herd`) rather than in `labor_assignments`, so before this it was the one kind of
+## work the map never marked: the party walked and the map never said what it was walking to. The
+## resident band beside it hunts a DIFFERENT herd locally, so the frame shows both routes to a marked
+## source in one picture — and the party is still `outbound`, which is exactly when "this herd is
+## already claimed" is worth knowing.
+func _snapshot_hunt_expedition() -> Dictionary:
+	var snap := _base_snapshot(_band([
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "policy": "sustain",
+			"target_x": 13, "target_y": 6, "actual_yield": 0.20, "sustainable_yield": 0.20,
+			"overdraws": false},
+	], 2, 0), [_deer_herd(), _pelt_only_wolf_herd()])
+	var party := _expedition(TRAVEL_EXPEDITION_ENTITY, 8, 5, "outbound")
+	party["id"] = "Hunt Party"
+	party["expedition_mission"] = "hunt"
+	party["expedition_target_herd"] = "game_wolf_03"
+	party["expedition_hunt_policy"] = "deplete"
+	party["travel_target_x"] = 11
+	party["travel_target_y"] = 4
+	snap["populations"].append(party)
+	return snap
 
 func _snapshot_expeditions() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [])

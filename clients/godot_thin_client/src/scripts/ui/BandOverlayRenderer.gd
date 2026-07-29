@@ -86,7 +86,9 @@ const WORKED_RING_OTHER_ALPHA := 0.5
 # `compute_slots` returns early below ICON_MIN_DETAIL_RADIUS, so at far zoom there are no markers to
 # ring and no slots to dock to. This is what survives there, and the fallback whenever a worked source
 # is overflowed past the visible cap.
-const WORKED_TILE_OUTLINE := Color(0.46, 0.96, 0.46, 0.35)
+# The outline takes the SOURCE's own colour at this alpha, never a fixed green: a hunted herd's tile
+# outlined in forage green says "we gather here", which is a different claim and a wrong one.
+const WORKED_TILE_OUTLINE_ALPHA := 0.35
 const WORKED_TILE_OUTLINE_WIDTH := 1.4
 # THE SOURCE BADGE — one plate per worked source, docked UNDER its marker, carrying the two facts the
 # ring cannot: how many people work it, and whether it can climb a rung. One plate rather than two,
@@ -251,6 +253,34 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 		var eff_col := _view._band_effective_col(band_col, radius, origin)
 		# The SELECTED band's own sources read louder — selection still wins the eye.
 		var selected := int(band.get("entity", -1)) == _view.selected_unit_id
+		# A HUNTING EXPEDITION IS WORK ON A SOURCE TOO, and its quarry rides the COHORT rather than a
+		# `labor_assignments` row — a detached party follows one herd, so the sim carries the target on
+		# the party itself (`expedition_target_herd`). Without this branch a raided herd wore no mark at
+		# all: the map showed the party walking and never said what it was walking to.
+		#
+		# Marked at EVERY phase, outbound included. "This herd is claimed" is exactly what the player
+		# needs before assigning a second crew to it, and a party three turns from arrival has claimed
+		# it as surely as one standing on it.
+		if bool(band.get("is_expedition", false)):
+			var quarry := String(band.get("expedition_target_herd", "")).strip_edges()
+			if quarry != "":
+				var qherd := _view._herd_by_id(quarry)
+				if not qherd.is_empty():
+					var qx := int(qherd.get("x", -1))
+					var qrow := int(qherd.get("y", -1))
+					if qx >= 0 and qrow >= 0 and qrow < _view.grid_height:
+						var qcol := eff_col + _view._wrapped_col_delta(band_col, qx)
+						var qkey := _view.secondary_herd_key(quarry)
+						# The party's own people are the crew on that herd, and they SUM with any
+						# resident band hunting it — one source, one number.
+						crew[qkey] = int(crew.get(qkey, 0)) + int(band.get("size", 0))
+						var qpolicy := String(band.get("expedition_hunt_policy", ""))
+						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
+						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
+							qpolicy, int(crew[qkey]), radius, origin)
+						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd, qpolicy, false)
+			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
+			continue
 		for entry_variant in _labor_assignments_of_marker(band):
 			if not (entry_variant is Dictionary):
 				continue
@@ -396,7 +426,9 @@ func _draw_source_badge(entry: Dictionary) -> void:
 ## outline renders — the mark degrades to the aggregate rather than landing somewhere arbitrary.
 func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: bool,
 		radius: float, origin: Vector2) -> void:
-	_view._outline_hex(col, row, radius, origin, WORKED_TILE_OUTLINE, WORKED_TILE_OUTLINE_WIDTH)
+	var outline := color
+	outline.a = WORKED_TILE_OUTLINE_ALPHA
+	_view._outline_hex(col, row, radius, origin, outline, WORKED_TILE_OUTLINE_WIDTH)
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
