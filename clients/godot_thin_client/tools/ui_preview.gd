@@ -3388,6 +3388,32 @@ func _ready() -> void:
 	_assert_hud("ready — a wild-ceiling species offers nothing at any knowledge level",
 		RungGates.next_rung_ready("hunt", rr_forever_wild, "sustain", rr_knows_all).is_empty())
 	# The mark names the rung with the SAME glyph the policy picker uses, never a private one.
+	# THE RUNG UNDER WAY — the state that used to render nothing. `next_rung_ready` excludes the verb
+	# in flight (a patch mid-Cultivate is progress, not an opportunity), which was right and left the
+	# in-flight case unmarked, so an actively-cultivated patch looked emptier than an untouched one.
+	var rr_building_patch := {
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"cultivation_progress": 0.42, "sow_site_refusal": "too_dry",
+		"composition": [{"can_cultivate": true, "can_sow": false}],
+	}
+	_assert_hud("building — a patch under Cultivate reports that verb and its meter",
+		RungGates.rung_in_progress("forage", rr_building_patch, "cultivate") == \
+			{"policy": "cultivate", "glyph": FoodIcons.for_policy("cultivate"), "progress": 0.42})
+	# Keyed on the POLICY, not on a non-zero meter: a half-built patch nobody is working is a standing
+	# rung, which is what the rung glyph is for.
+	_assert_hud("building — the same patch under Sustain is NOT building (a meter is not work)",
+		RungGates.rung_in_progress("forage", rr_building_patch, "sustain").is_empty())
+	# Each verb names its OWN meter — reading the wrong one would report a confident wrong number.
+	_assert_hud("building — Sow reads field_progress, not the cultivation meter beside it",
+		float(RungGates.rung_in_progress("forage", {"field_progress": 0.7, "cultivation_progress": 0.2},
+			"sow").get("progress", -1.0)) == 0.7)
+	_assert_hud("building — Corral reads corral_progress on a herd",
+		float(RungGates.rung_in_progress("hunt", {"corral_progress": 0.25, "domestication": 1.0},
+			"corral").get("progress", -1.0)) == 0.25)
+	# The two answers are mutually exclusive, which is what lets one badge slot carry both states.
+	_assert_hud("building and ready are mutually exclusive on one source",
+		RungGates.next_rung_ready("forage", rr_building_patch, "cultivate", rr_knows_all).is_empty() \
+			and not RungGates.rung_in_progress("forage", rr_building_patch, "cultivate").is_empty())
 	_assert_hud("ready — the answer carries the policy's own glyph",
 		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, "sustain", rr_knows_all).get("glyph", "")) == FoodIcons.for_policy("corral"))
 

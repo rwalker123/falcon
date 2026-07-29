@@ -112,6 +112,14 @@ const BADGE_CREW_COLOR := Color(0.616, 0.690, 0.678, 1.0)   # HudStyle.INK_DIM
 # READY wears SIGNAL cyan, NOT amber: amber is trouble in this HUD (overdraw, understaffing, a
 # starving pen), and colouring an opportunity amber trains the player to read good news as a warning.
 const BADGE_READY_COLOR := Color(0.310, 0.878, 0.812, 1.0)  # HudStyle.SIGNAL
+# A rung UNDER WAY reads in the SAME hue one step deeper (`HudStyle.SIGNAL_DEEP`): ready and building
+# are one axis in two states, so they belong to one colour family — bright says "act now", deep says
+# "already under way". A different hue would file them as unrelated facts, and amber is spoken for.
+const BADGE_BUILDING_COLOR := Color(0.122, 0.612, 0.557, 1.0)  # HudStyle.SIGNAL_DEEP
+# The building face is `<verb glyph><percent>%`. The chevron is deliberately ABSENT: `⌃` means "you
+# could start this", and the work has started. The percent is the whole point — it is what moves every
+# turn, and the only number that answers "how much longer?".
+const BADGE_BUILDING_FORMAT := "%s%d%% "
 const BADGE_BORDER_WIDTH := 1.2
 const BADGE_BORDER_IDLE := Color(0.149, 0.212, 0.235, 1.0)  # HudStyle.LINE
 # Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
@@ -372,9 +380,14 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
+	# BUILDING TAKES PRECEDENCE, and the two are mutually exclusive anyway: `next_rung_ready` excludes
+	# the verb already in flight, and `rung_in_progress` answers only for that verb.
 	var ready: Dictionary = {}
+	var building: Dictionary = {}
 	if not source.is_empty():
-		ready = RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge)
+		building = RungGates.rung_in_progress(kind, source, policy)
+		if building.is_empty():
+			ready = RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge)
 	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.
@@ -385,6 +398,8 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	_deferred_source_badges.append({
 		"key": key, "center": center, "crew": crew, "radius": radius,
 		"ready_glyph": String(ready.get("glyph", "")),
+		"building_glyph": String(building.get("glyph", "")),
+		"building_progress": float(building.get("progress", 0.0)),
 	})
 
 ## Render (and drain) the deferred badge batch — the crew count, and the ⌃ chevron when the source can
@@ -402,23 +417,32 @@ func _draw_source_badge(entry: Dictionary) -> void:
 		return
 	var font_size := int(clampf(radius * BADGE_FONT_SIZE_FACTOR, BADGE_FONT_SIZE_MIN, BADGE_FONT_SIZE_MAX))
 	var crew_text := "%s%d" % [BADGE_CREW_GLYPH, crew]
-	var ready_text := "" if ready_glyph == "" else "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
-	var text := ready_text + crew_text
+	# THE RUNG FACE — at most one of the two, a verb being neither offered nor under way at once.
+	var rung_text := ""
+	var rung_color := BADGE_READY_COLOR
+	var building_glyph := String(entry.get("building_glyph", ""))
+	if building_glyph != "":
+		rung_text = BADGE_BUILDING_FORMAT % [building_glyph,
+			int(round(float(entry.get("building_progress", 0.0)) * HudConst.PROGRESS_PERCENT_SCALE))]
+		rung_color = BADGE_BUILDING_COLOR
+	elif ready_glyph != "":
+		rung_text = "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
+	var text := rung_text + crew_text
 	var run: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
 	var pad := font_size * BADGE_PAD_FACTOR
 	var center: Vector2 = entry["center"] + Vector2(0.0, radius * BADGE_OFFSET_FACTOR)
 	var box := Rect2(center - Vector2(run.x * 0.5 + pad, run.y * 0.5 + pad * 0.5),
 		Vector2(run.x + pad * 2.0, run.y + pad))
 	_view.draw_rect(box, BADGE_BG, true)
-	# THE BORDER carries the ready state, so the plate reads as an offer at a glance without the eye
-	# having to resolve a small glyph: SIGNAL cyan when a rung is on offer, the quiet line colour when
-	# the source is merely worked.
-	_view.draw_rect(box, BADGE_READY_COLOR if ready_text != "" else BADGE_BORDER_IDLE, false, BADGE_BORDER_WIDTH)
+	# THE BORDER carries the rung state, so the plate reads at a glance without the eye having to
+	# resolve a small glyph: SIGNAL cyan when a rung is on OFFER, SIGNAL_DEEP while one is UNDER WAY,
+	# the quiet line colour when the source is merely worked.
+	_view.draw_rect(box, rung_color if rung_text != "" else BADGE_BORDER_IDLE, false, BADGE_BORDER_WIDTH)
 	var baseline := center + Vector2(-run.x * 0.5, run.y * 0.5 - font.get_descent(font_size))
-	if ready_text != "":
-		var ready_run: Vector2 = font.get_string_size(ready_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-		_view.draw_string(font, baseline, ready_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, BADGE_READY_COLOR)
-		baseline.x += ready_run.x
+	if rung_text != "":
+		var rung_run: Vector2 = font.get_string_size(rung_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		_view.draw_string(font, baseline, rung_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, rung_color)
+		baseline.x += rung_run.x
 	_view.draw_string(font, baseline, crew_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, BADGE_CREW_COLOR)
 
 ## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.

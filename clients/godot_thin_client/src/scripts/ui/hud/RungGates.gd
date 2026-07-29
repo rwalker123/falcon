@@ -180,6 +180,37 @@ static func next_rung_ready(kind: String, source: Dictionary, policy: String,
         return {}
     return {}
 
+## THE RUNG UNDER WAY — the twin of `next_rung_ready`, as `{policy, glyph, progress}` (progress 0..1),
+## or `{}` when this source is not building anything.
+##
+## `next_rung_ready` deliberately answers `{}` for a source whose policy IS the verb: a patch
+## mid-Cultivate is progress, not an opportunity. That reasoning is right and the CONSEQUENCE was
+## wrong — it left the in-flight case with no mark at all, so a patch you are actively cultivating
+## looked exactly like a patch nobody has touched, while the untouched one beside it advertised `⌃`.
+## The two answers are one axis in two states, and the badge shows whichever applies.
+##
+## Keyed on the POLICY, not on a non-zero meter: a half-built patch nobody works is not "in progress",
+## and its standing rung is what the rung glyph is for. Each investment verb names the meter it fills —
+## the one place that mapping is written down.
+static func rung_in_progress(kind: String, source: Dictionary, policy: String) -> Dictionary:
+    var current := policy.strip_edges().to_lower()
+    var meter := ""
+    if kind == SourceForecast.LABOR_KIND_FORAGE:
+        if current == HudConst.LABOR_POLICY_CULTIVATE:
+            meter = "cultivation_progress"
+        elif current == HudConst.LABOR_POLICY_SOW:
+            meter = "field_progress"
+    elif kind == SourceForecast.LABOR_KIND_HUNT:
+        if current == HudConst.LABOR_POLICY_TAME:
+            meter = "domestication"
+        elif current == SourceForecast.LABOR_POLICY_CORRAL:
+            meter = "corral_progress"
+    if meter == "":
+        return {}
+    var answer := _ready(current)
+    answer["progress"] = clampf(float(source.get(meter, 0.0)), 0.0, 1.0)
+    return answer
+
 ## Whether ANY plant in this patch's composition may climb the rung `flag` names — species-GLOBAL
 ## legality ("can this plant ever climb this rung"), never "is it a wise crop here". `share` answers
 ## that other question, and a marginal share must never suppress the mark: a legal crop at 4% is still

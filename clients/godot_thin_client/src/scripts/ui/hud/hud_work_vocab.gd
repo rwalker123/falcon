@@ -343,6 +343,11 @@ const WORK_ROW_READY_FORMAT := "⌃%s"
 ## Spelled out in the row tooltip, where there is room for words.
 const WORK_ROW_READY_TOOLTIP_FORMAT := "Ready to %s — open this row to start."
 
+## A rung UNDER WAY: the verb glyph and how far in. No chevron — `⌃` offers, this reports.
+const WORK_ROW_BUILDING_FORMAT := "%s%d%%"
+
+const WORK_ROW_BUILDING_TOOLTIP_FORMAT := "%s in progress — %d%% done."
+
 const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 
 const WORK_SOURCES_FORMAT := "%d sources"

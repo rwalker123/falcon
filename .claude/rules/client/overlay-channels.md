@@ -178,6 +178,13 @@ Each mark docks to the ring of the source's OWN secondary marker, via the slot
   penned-and-starving and ready-to-something. Ready rides the plate's BORDER as well as its glyph
   (`HudStyle.SIGNAL`), so an offer reads without resolving a small glyph. **Cyan, not amber**: amber is
   trouble here, and an opportunity in the trouble channel teaches the player to misread good news.
+- **The badge shows a rung ON OFFER or a rung UNDER WAY, never both** — one axis in two states,
+  mutually exclusive by construction. Under way renders `<verb glyph><percent>%` in
+  `HudStyle.SIGNAL_DEEP` with **no chevron** (`⌃` offers; this reports); on offer renders `⌃<glyph>` in
+  `HudStyle.SIGNAL`. The first cut shipped only the offer, which left a patch you were actively
+  cultivating looking emptier than the untouched one beside it — the state the player is *waiting on*
+  had no mark. `rung_in_progress` keys on the POLICY, not on a non-zero meter: a half-built source
+  nobody works is a standing rung, which the rung glyph already reports.
 - **CREW IS AGGREGATED PER SOURCE, NOT PER BAND** — two bands can work one patch, and two plates on
   one marker would be a lie about a single number.
 - **A HUNTING EXPEDITION'S QUARRY IS A WORKED SOURCE.** It rides the COHORT

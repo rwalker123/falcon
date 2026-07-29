@@ -104,6 +104,29 @@ One mark per source, **highest rung first** — the ordering `_work_source_rung`
 and for the same reason: a herd that can be corralled can also technically be re-tamed, and marking
 the lower rung would erase the distinction the mark exists to draw.
 
+### 3.2 A rung UNDER WAY is the other half of the same axis
+
+Condition 3 above is right and its first consequence was wrong. Excluding the verb in flight left the
+**in-progress case with no mark at all**, so a patch you were actively cultivating looked exactly like
+one nobody had touched — while the untouched patch beside it advertised `⌃`. The state the player is
+*waiting on* was the one state the map did not report.
+
+`RungGates.rung_in_progress` is the twin answer: `{policy, glyph, progress}` for the verb currently
+being worked. The badge and the work row show **whichever of the two applies**, and they are mutually
+exclusive by construction — `next_rung_ready` excludes the verb in flight, `rung_in_progress` answers
+only for it.
+
+- **Face:** `<verb glyph><percent>%` (`🌱42%`), with **no chevron**. `⌃` means *you could start this*,
+  and the work has started. The percent is the whole point — it is what moves every turn, and the only
+  number answering "how much longer?".
+- **Colour:** `HudStyle.SIGNAL_DEEP`, the ready cyan one step deeper. Ready and building are one axis
+  in two states, so they share a colour family — bright says *act now*, deep says *already under way*.
+  A separate hue would file them as unrelated facts, and amber is spoken for by trouble.
+- **Keyed on the POLICY, not on a non-zero meter.** A half-built patch nobody works is not "in
+  progress"; its standing rung is what the rung glyph reports. Each investment verb names the meter it
+  fills (`cultivation_progress` / `field_progress` / `domestication` / `corral_progress`) in one place,
+  so no caller can read the wrong meter and report a confident wrong number.
+
 ### 3.1 The mark needs its own chrome, not its own glyph
 
 The verb glyphs and the standing-rung glyphs collide: `▦` is both "Sow" and "this is a Field", `🐄`

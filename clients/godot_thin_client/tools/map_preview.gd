@@ -1838,7 +1838,24 @@ func _snapshot_work_ready() -> Dictionary:
 		"sow_site_refusal": "",
 		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
 			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}, {
+		# The SECOND worked tile is mid-Cultivate — the state that used to render nothing at all, so
+		# a patch you were actively building looked emptier than the untouched one beside it. Its
+		# assignment's policy is switched to `cultivate` below, which is what makes it "in progress"
+		# (a meter alone is a standing rung, not work in flight).
+		"x": 9, "y": 8,
+		"ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false,
+		"cultivation_progress": 0.42,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
+			"share": 1.0, "can_cultivate": true, "can_sow": false}],
 	}]
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
+			entry["policy"] = "cultivate"
+			entry["overdraws"] = false
 	for herd_variant in snap["herds"]:
 		var herd: Dictionary = herd_variant
 		if String(herd.get("id", "")) == "game_deer_07":

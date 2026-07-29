@@ -756,9 +756,18 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     # finding trouble two meanings.
     var ready := Label.new()
     var ready_glyph := String(model.get("ready_glyph", ""))
-    ready.text = "" if ready_glyph == "" else HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
+    var building_glyph := String(model.get("building_glyph", ""))
+    # UNDER WAY beats ON OFFER in this slot. Before this the slot was empty while a verb was being
+    # worked, so a patch you were actively cultivating looked emptier than the untouched one beside it
+    # advertising `⌃` — the state the player is WAITING ON was the one state with no mark.
+    if building_glyph != "":
+        ready.text = HudWorkVocab.WORK_ROW_BUILDING_FORMAT % [building_glyph,
+            HudFormat.progress_percent(float(model.get("building_progress", 0.0)))]
+    else:
+        ready.text = "" if ready_glyph == "" else HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
     ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
-    ready.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    ready.add_theme_color_override("font_color",
+        HudStyle.SIGNAL_DEEP if building_glyph != "" else HudStyle.SIGNAL)
     ready.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     ready.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(ready)
@@ -1011,9 +1020,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
         # `rung_glyph` (the rung the source STANDS on). Same `RungGates` answer the map's badge and the
         # compose sheet's gates use, so the three surfaces cannot disagree about what is climbable.
-        var ready := RungGates.next_rung_ready(kind,
-            patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd,
-            policy, _player_knowledge())
+        var rung_source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd
+        # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
+        # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
+        var building := RungGates.rung_in_progress(kind, rung_source, policy)
+        var ready := {} if not building.is_empty() \
+            else RungGates.next_rung_ready(kind, rung_source, policy, _player_knowledge())
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -1042,12 +1054,20 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
             # The rung this source could climb NOW ("" for none) — see `ready` above.
             "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
+            # The rung it is BUILDING right now, and how far in. The board shows the percent the map
+            # badge shows, off the same `RungGates` answer.
+            "building_policy": String(building.get("policy", "")),
+            "building_glyph": String(building.get("glyph", "")),
+            "building_progress": float(building.get("progress", 0.0)),
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
                 _policy_hint(kind, policy), String(cap.get("note", "")),
                 "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
+                "" if building.is_empty() else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
+                    HudFormat.policy_face(String(building.get("policy", ""))),
+                    HudFormat.progress_percent(float(building.get("progress", 0.0)))],
                 HudWorkVocab.WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
             "attention": bool(yld.get("warn", false)) or note != "" or pending,

@@ -541,7 +541,7 @@ two would erase the distinction the feature exists to draw:
 | slot | model key | question |
 |---|---|---|
 | rung | `rung_glyph` | what the source **IS** (its standing rung) |
-| ready | `ready_glyph` | what it **COULD BE** — `⌃` + the offered rung's policy glyph |
+| ready | `ready_glyph` / `building_glyph` | what it **COULD BE** (`⌃` + the offered rung's glyph, SIGNAL) or what it **IS BECOMING** (`<glyph><percent>%`, SIGNAL_DEEP) — one slot, two mutually exclusive states |
 | marks | `marks` | what the band is **DOING** (the verb in flight, plus `⚠`) |
 
 The ready answer is `RungGates.next_rung_ready`, the same call the map badge and the compose sheet's
