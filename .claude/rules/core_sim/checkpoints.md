@@ -295,6 +295,17 @@ those apart.
 checkpoint — whose answer does not depend on which world is running, so it is comparable across any
 two commits.
 
+**A dead field cannot diverge, so restore-loss also improves when a feature breaks.** The metric
+compares the checkpoint against the restore; a field that is uniformly empty on *both* sides scores
+as a perfect restore. The worked example is `bcf993f`, which re-keyed local culture layers from
+entity bits to position and recorded exactly 768 leaves recovered — `tiles[].culture_layer` (384)
+and `culture_raster` (384). Re-keying the layers was right and did fix their orphaning, but the two
+snapshot **readers** were left asking for `CultureOwner(tile.entity)` against a map now keyed by
+position, so both fields shipped uniformly zero from that commit until #407 fixed the readers. Part
+of that 768 was the fields ceasing to exist rather than the fields being restored. **A restore-loss
+improvement is evidence about structure, not about a feature working** — pair it with an assertion
+that the field carries a value at all, which is what nothing had for these two.
+
 **Replay divergence is only comparable across commits that do not change simulation behaviour.** A
 change that alters the world's trajectory produces a different world, and two replay figures then
 measure different simulations. This is not a small caveat: an RNG change during the arc moved replay

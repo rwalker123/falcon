@@ -29,7 +29,7 @@ use crate::{
     culture::{
         CultureEffectsCache, CultureLayerId, CultureManager, CultureSchismEvent,
         CultureTensionEvent, CultureTensionKind, CultureTensionRecord, CultureTraitAxis,
-        CULTURE_TRAIT_AXES,
+        CULTURE_TRAIT_AXES, FALLBACK_CULTURE_REGION_ID,
     },
     culture_corruption_config::{CorruptionSeverityConfig, CultureCorruptionConfigHandle},
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},

@@ -152,10 +152,10 @@ pub struct SignalSources<'a> {
 
 /// One resident band, as the signal sampler and the noun resolvers see it.
 pub struct BandView<'a> {
-    /// The band's durable id — the key its local culture layer would be filed under
-    /// (`CultureOwner::from_band`), for the faction culture rollup. No band owns a layer yet
-    /// (issue #407), so the rollup falls through to the global layer; this names the band stably
-    /// rather than by an entity id that changed on every restore.
+    /// The band's durable id — the key its own culture layer is filed under
+    /// (`CultureOwner::from_band`), which is what the faction culture rollup averages. A band with
+    /// no layer yet (it has not been through an `Influence` stage) simply does not vote, and a
+    /// faction where none of them do falls through to the global layer.
     pub band: BandId,
     pub cohort: &'a PopulationCohort,
     pub labor: Option<&'a LaborAllocation>,

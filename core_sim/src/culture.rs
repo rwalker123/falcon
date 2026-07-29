@@ -7,9 +7,14 @@ use sim_runtime::{
 };
 
 use crate::{
-    components::BandId,
-    culture_corruption_config::{CulturePropagationSettings, DEFAULT_RESONANCE_RESPONSE},
+    components::{BandId, PopulationCohort, ResidentBand, Tile},
+    culture_corruption_config::{
+        CulturePropagationSettings, DEFAULT_BAND_CHARACTER_AMPLITUDE, DEFAULT_BAND_ELASTICITY,
+        DEFAULT_BAND_HARD_TRIGGER_TICKS, DEFAULT_BAND_SOFT_TRIGGER_TICKS,
+        DEFAULT_RESONANCE_RESPONSE,
+    },
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
+    provinces::ProvinceMap,
     resources::SimulationTick,
     scalar::{scalar_from_f32, Scalar},
 };
@@ -51,17 +56,20 @@ impl CultureOwner {
         CultureOwner(TILE_OWNER_TAG | ((position.y as u64) << 32) | position.x as u64)
     }
 
-    /// The owner key for a band-local layer.
+    /// The owner key for a band's own culture layer.
     ///
-    /// **No band owns a layer today** — `attach_local` is only ever called with a tile — so this
-    /// resolves to nothing and the faction rollup in `telling::signals` falls through to the global
-    /// layer, which is exactly what it did when the key was the band's entity bits. Bands carrying
-    /// their own culture is issue #407; this is the identity half only, kept so the rollup names a
-    /// stable band rather than a number that changed on every restore.
+    /// A [`BandId`] is already durable across a checkpoint restore, so it *is* the key — no tag bit
+    /// is needed, because band layers live in their own map (`CultureManager::bands`) and are never
+    /// looked up by the tile lookups. That separation is what guarantees a band can never be
+    /// returned as a tile's layer, or walked as one.
     pub fn from_band(band: BandId) -> Self {
         CultureOwner(band.0)
     }
 }
+
+/// The regional layer a tile or band falls back to when it sits on no province — worldgen mints it
+/// up front (`upsert_regional`) so the fallback is always resolvable.
+pub const FALLBACK_CULTURE_REGION_ID: u32 = 0;
 
 /// Scope classification for a culture layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -69,6 +77,9 @@ pub enum CultureLayerScope {
     Global,
     Regional,
     Local,
+    /// A band's own culture, carried with the band as it moves. Parented to the regional layer of
+    /// the province the band currently stands in.
+    Band,
 }
 
 /// Named axes as described in the game manual.
@@ -348,6 +359,15 @@ impl ScopeSettings {
             CultureLayerScope::Global => Self::new(0.10, 0.6, 1.2, 1, 1),
             CultureLayerScope::Regional => Self::new(0.25, 0.6, 1.2, 1, 1),
             CultureLayerScope::Local => Self::new(0.40, 0.6, 1.2, 1, 1),
+            // See `DEFAULT_BAND_ELASTICITY` / `DEFAULT_BAND_*_TRIGGER_TICKS` for why a band is
+            // slower than a tile and why it is the one scope whose triggers wait.
+            CultureLayerScope::Band => Self::new(
+                DEFAULT_BAND_ELASTICITY,
+                0.6,
+                1.2,
+                DEFAULT_BAND_SOFT_TRIGGER_TICKS,
+                DEFAULT_BAND_HARD_TRIGGER_TICKS,
+            ),
         }
     }
 }
@@ -357,18 +377,24 @@ pub(crate) struct CultureManagerSettings {
     global: ScopeSettings,
     regional: ScopeSettings,
     local: ScopeSettings,
+    band: ScopeSettings,
     /// Per-turn rate of the low-pass on influencer resonance — the "culture is slow" dial.
     /// See `CulturePropagationSettings::resonance_response`.
     resonance_response: Scalar,
+    /// Amplitude of the per-band character offset seeded by [`seeded_modifiers_for_band`].
+    /// See `CulturePropagationSettings::band_character_amplitude`.
+    band_character_amplitude: f32,
 }
 
 impl Default for CultureManagerSettings {
     fn default() -> Self {
         Self {
             resonance_response: scalar_from_f32(DEFAULT_RESONANCE_RESPONSE),
+            band_character_amplitude: DEFAULT_BAND_CHARACTER_AMPLITUDE,
             global: ScopeSettings::default_for(CultureLayerScope::Global),
             regional: ScopeSettings::default_for(CultureLayerScope::Regional),
             local: ScopeSettings::default_for(CultureLayerScope::Local),
+            band: ScopeSettings::default_for(CultureLayerScope::Band),
         }
     }
 }
@@ -377,6 +403,7 @@ impl CultureManagerSettings {
     fn from_propagation(config: &CulturePropagationSettings) -> Self {
         Self {
             resonance_response: scalar_from_f32(config.resonance_response()),
+            band_character_amplitude: config.band_character_amplitude(),
             global: ScopeSettings::new(
                 config.global().elasticity(),
                 config.global().soft_threshold(),
@@ -398,6 +425,13 @@ impl CultureManagerSettings {
                 config.local().soft_trigger_ticks(),
                 config.local().hard_trigger_ticks(),
             ),
+            band: ScopeSettings::new(
+                config.band().elasticity(),
+                config.band().soft_threshold(),
+                config.band().hard_threshold(),
+                config.band().soft_trigger_ticks(),
+                config.band().hard_trigger_ticks(),
+            ),
         }
     }
 
@@ -406,6 +440,7 @@ impl CultureManagerSettings {
             CultureLayerScope::Global => self.global,
             CultureLayerScope::Regional => self.regional,
             CultureLayerScope::Local => self.local,
+            CultureLayerScope::Band => self.band,
         }
     }
 }
@@ -526,6 +561,13 @@ pub struct CultureManager {
     global: Option<CultureLayer>,
     regional: HashMap<u32, CultureLayer>,
     locals: HashMap<u64, CultureLayer>,
+    /// Band-owned layers, keyed by `CultureOwner::from_band(band).0` (i.e. `BandId.0`).
+    ///
+    /// **Deliberately a map of its own, not a second population of `locals`.** The tile lookups
+    /// (`local_layer_by_owner`, `local_layers`) are what the snapshot walks per tile and per raster
+    /// sample; a shared map would make "is this owner a tile or a band?" a runtime question that a
+    /// caller could get wrong. Two maps make it a type-level one.
+    bands: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
     settings: CultureManagerSettings,
     /// Influencer resonance as culture actually feels it: the raw vector low-passed at
@@ -552,6 +594,9 @@ pub struct CultureManagerCheckpoint {
     global: Option<CultureLayer>,
     regional: HashMap<u32, CultureLayer>,
     locals: HashMap<u64, CultureLayer>,
+    /// Band layers ride the checkpoint like every other layer — that is how a band's culture
+    /// survives a rollback without needing a `Resource`/`Component` of its own.
+    bands: HashMap<u64, CultureLayer>,
     tension_events: Vec<CultureTensionRecord>,
     smoothed_resonance: InfluencerCultureResonance,
 }
@@ -564,6 +609,7 @@ impl CultureManager {
             global: self.global.clone(),
             regional: self.regional.clone(),
             locals: self.locals.clone(),
+            bands: self.bands.clone(),
             tension_events: self.tension_events.clone(),
             smoothed_resonance: self.smoothed_resonance,
         }
@@ -575,6 +621,7 @@ impl CultureManager {
         self.global = checkpoint.global.clone();
         self.regional = checkpoint.regional.clone();
         self.locals = checkpoint.locals.clone();
+        self.bands = checkpoint.bands.clone();
         self.tension_events = checkpoint.tension_events.clone();
         self.smoothed_resonance = checkpoint.smoothed_resonance;
     }
@@ -591,6 +638,7 @@ impl CultureManager {
             global: None,
             regional: HashMap::new(),
             locals: HashMap::new(),
+            bands: HashMap::new(),
             tension_events: Vec::new(),
             settings,
             smoothed_resonance: InfluencerCultureResonance::default(),
@@ -648,6 +696,63 @@ impl CultureManager {
         id
     }
 
+    /// Give `band` a culture layer parented to `parent_region`. Idempotent — an existing layer's id
+    /// is returned untouched, so the reconcile system can call this every turn.
+    ///
+    /// The new layer is **seeded from the parent province's current values**, not from neutral: a
+    /// band that appears in (or forks inside) a long-diverged province starts *assimilated* to it.
+    /// Seeding neutral would make every new band maximally diverged from its own home and trip a
+    /// schism for existing. If the parent region is missing the seed falls back to neutral.
+    pub fn attach_band(&mut self, band: BandId, parent_region: CultureLayerId) -> CultureLayerId {
+        let owner = CultureOwner::from_band(band);
+        if let Some(layer) = self.bands.get(&owner.0) {
+            return layer.id;
+        }
+        let id = self.allocate_id();
+        let mut layer = CultureLayer::new(id, CultureLayerScope::Band);
+        layer.parent = Some(parent_region);
+        layer.owner = owner;
+        layer.apply_scope_settings(self.settings.scope(CultureLayerScope::Band), false);
+        layer.traits = match self.regional_layer_by_id(parent_region) {
+            Some(parent) => CultureTraitVector::with_baseline(*parent.traits.values()),
+            None => CultureTraitVector::neutral(),
+        };
+        *layer.traits.modifier_mut() =
+            seeded_modifiers_for_band(band, self.settings.band_character_amplitude);
+        self.bands.insert(owner.0, layer);
+        id
+    }
+
+    /// Drop a band's layer — the band is gone, or is no longer a resident band.
+    pub fn detach_band(&mut self, band: BandId) {
+        self.bands.remove(&CultureOwner::from_band(band).0);
+    }
+
+    /// Re-home a band's layer on a new province, **leaving its traits alone**. That is the whole
+    /// point: a migrating band keeps the culture it arrived with and then chases its new province
+    /// at the band scope's elasticity, so moving lags instead of snapping.
+    pub fn set_band_parent(&mut self, band: BandId, parent_region: CultureLayerId) {
+        if let Some(layer) = self.bands.get_mut(&CultureOwner::from_band(band).0) {
+            layer.parent = Some(parent_region);
+        }
+    }
+
+    pub fn band_layer_by_owner(&self, owner: CultureOwner) -> Option<&CultureLayer> {
+        self.bands.get(&owner.0)
+    }
+
+    pub fn band_layer_mut_by_owner(&mut self, owner: CultureOwner) -> Option<&mut CultureLayer> {
+        self.bands.get_mut(&owner.0)
+    }
+
+    pub fn band_layers(&self) -> impl Iterator<Item = &CultureLayer> {
+        self.bands.values()
+    }
+
+    fn regional_layer_by_id(&self, id: CultureLayerId) -> Option<&CultureLayer> {
+        self.regional.values().find(|layer| layer.id == id)
+    }
+
     fn allocate_id(&mut self) -> CultureLayerId {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
@@ -670,7 +775,11 @@ impl CultureManager {
     }
 
     pub fn reconcile(&mut self, tick: &SimulationTick, resonance: &InfluencerCultureResonance) {
-        if self.global.is_none() && self.regional.is_empty() && self.locals.is_empty() {
+        if self.global.is_none()
+            && self.regional.is_empty()
+            && self.locals.is_empty()
+            && self.bands.is_empty()
+        {
             return;
         }
 
@@ -679,7 +788,8 @@ impl CultureManager {
             tick = tick.0,
             has_global = self.global.is_some(),
             regional_layers = self.regional.len(),
-            local_layers = self.locals.len()
+            local_layers = self.locals.len(),
+            band_layers = self.bands.len()
         );
 
         self.tension_events.clear();
@@ -801,6 +911,38 @@ impl CultureManager {
             }
         }
 
+        for layer in self.bands.values_mut() {
+            let Some(parent_id) = layer.parent else {
+                continue;
+            };
+            let Some(parent_values) = regional_values.get(&parent_id) else {
+                continue;
+            };
+            // **No direct influencer resonance, deliberately.** A band feels influencers through
+            // its province, which chased the regional channel a few lines up. Giving bands a
+            // channel of their own would mean changing how influencers *attribute* resonance in the
+            // first place (`InfluencerCultureResonance` has exactly three), which is a different
+            // arc.
+            layer.resolve_against(parent_values, None);
+            layer.evaluate_divergence(parent_values);
+            let alert = layer.tick_thresholds();
+            layer.last_updated_tick = tick.0;
+            if let Some(kind) = alert {
+                let record = Self::build_tension_record(layer, kind);
+                tracing::debug!(
+                    target: "culture.tension",
+                    kind = ?record.kind,
+                    scope = ?record.scope,
+                    owner = record.owner.0,
+                    layer_id = record.layer_id,
+                    magnitude = record.magnitude.to_f32(),
+                    timer = record.timer,
+                    "band culture tension triggered"
+                );
+                pending_events.push(record);
+            }
+        }
+
         self.tension_events.extend(pending_events);
     }
 
@@ -839,6 +981,9 @@ impl CultureManager {
         for layer in self.locals.values() {
             self.collect_active(layer, &mut records);
         }
+        // Band layers are deliberately absent: this list is the snapshot's `culture_tensions`
+        // payload, and the wire enum (`sim_schema::CultureLayerScope`) has no `Band` member. A
+        // band's tensions still reach the sim through `take_tension_events` each turn.
 
         records
     }
@@ -914,6 +1059,9 @@ impl CultureManager {
         self.regional.clear();
         self.locals.clear();
         self.tension_events.clear();
+        // `bands` is NOT cleared: band layers are not published, so a snapshot carries no evidence
+        // about them and dropping them here would be a deletion on no evidence. A rollback restores
+        // them through `restore_checkpoint`, which does carry them.
 
         let next_id = layers.iter().map(|layer| layer.id).max().unwrap_or(0);
         self.next_id = next_id.wrapping_add(1).max(1);
@@ -963,6 +1111,12 @@ impl CultureManager {
                 CultureLayerScope::Local => {
                     self.locals.insert(state.owner, layer);
                 }
+                // Unreachable today — `from_schema_scope` cannot produce `Band`, because the wire
+                // enum has no such member. Kept total so adding one lands the layer in the right
+                // map rather than silently in `locals`.
+                CultureLayerScope::Band => {
+                    self.bands.insert(state.owner, layer);
+                }
             }
         }
     }
@@ -991,15 +1145,15 @@ impl CultureManager {
         self.global.as_ref()
     }
 
-    /// **The faction-level culture rollup**: a population-weighted average of `bands`' local
-    /// layers, per trait axis.
+    /// **The faction-level culture rollup**: a population-weighted average of the layers the
+    /// faction's bands carry, per trait axis.
     ///
-    /// Local layers key off a band's `Entity`, so a faction's culture is only ever the aggregate
-    /// of the bands that carry it — weight belongs on population, because a 200-person band should
+    /// Reads the **band** map (`CultureOwner::from_band`), so a faction's culture is the aggregate
+    /// of the bands that live it — weight belongs on population, because a 200-person band should
     /// speak louder than a 12-person one. Callers pass **resident** bands only (an expedition is
     /// detached and doesn't vote).
     ///
-    /// Falls back to the global layer for any faction with no local layers (or no people), which
+    /// Falls back to the global layer for any faction with no band layers (or no people), which
     /// is the reading `The Telling`'s `culture.axis.*` signals used before this existed.
     pub fn faction_trait_average(
         &self,
@@ -1008,7 +1162,7 @@ impl CultureManager {
         let mut totals = [0.0f32; CULTURE_TRAIT_AXES];
         let mut weight_total = 0.0f32;
         for (owner, people) in bands {
-            let (Some(layer), weight) = (self.local_layer_by_owner(*owner), *people as f32) else {
+            let (Some(layer), weight) = (self.band_layer_by_owner(*owner), *people as f32) else {
                 continue;
             };
             if weight <= 0.0 {
@@ -1044,6 +1198,104 @@ impl CultureManager {
 impl Default for CultureManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Spreads consecutive band ids apart before they are folded into a wave — the single-id twin of
+/// the tile seed's `x * 31 + y * 17`.
+const BAND_SEED_STRIDE: u64 = 31;
+
+/// Decorrelates the axes of one band, so a band is not simply the same offset fifteen times.
+const BAND_AXIS_STRIDE: i64 = 13;
+
+/// Fold period of the wave. Prime, and coprime with both strides, so the pattern does not repeat
+/// across the small band ids a campaign actually issues.
+const BAND_WAVE_PERIOD: i64 = 23;
+
+/// The per-band **character**: one offset per trait axis, symmetric about zero, a cheap
+/// deterministic function of the band's durable id. Mirrors `seeded_modifiers_for_position` in
+/// shape.
+///
+/// **This is load-bearing. Without a per-band modifier every band converges on its province and
+/// they are all identical** — the faction rollup would degenerate into a population-weighted
+/// average of provinces, and no band could ever diverge from its parent far enough to schism. The
+/// offset is what makes two bands standing in one province two cultures.
+///
+/// `amplitude` is the config lever `culture.propagation.band_character_amplitude`: it sets how far
+/// bands drift and therefore how often schism fires.
+pub fn seeded_modifiers_for_band(band: BandId, amplitude: f32) -> [Scalar; CULTURE_TRAIT_AXES] {
+    let mut modifiers = [Scalar::zero(); CULTURE_TRAIT_AXES];
+    let seed = (band.0.wrapping_mul(BAND_SEED_STRIDE) % BAND_WAVE_PERIOD as u64) as i64;
+    // Centre the fold so the wave straddles zero: `0..PERIOD-1` minus half a period.
+    let centre = BAND_WAVE_PERIOD / 2;
+    for (idx, slot) in modifiers.iter_mut().enumerate() {
+        let wave = ((seed + idx as i64 * BAND_AXIS_STRIDE) % BAND_WAVE_PERIOD) - centre;
+        let scaled = (wave as f32 / BAND_WAVE_PERIOD as f32).clamp(-1.0, 1.0) * amplitude;
+        *slot = scalar_from_f32(scaled);
+    }
+    modifiers
+}
+
+/// Keeps the band culture layers in step with the live set of **resident** bands, ahead of
+/// [`reconcile_culture_layers`] each turn.
+///
+/// Three cases, and they are the whole system: a resident band with no layer gets one parented to
+/// its current province, a layer whose band is gone (or has become an expedition) is dropped, and a
+/// resident band standing in a different province than its layer's parent is re-homed — traits
+/// intact, which is what makes a migration lag.
+///
+/// **Only `ResidentBand` owns a layer.** An expedition is detached and does not vote in the faction
+/// rollup (`faction_trait_average`'s contract), so it must not carry a culture either.
+///
+/// It runs in `TurnStage::Influence`, before `advance_band_movement` in `Population`, so the
+/// province a band is reconciled against is the one it *starts* the turn on. Worldgen-spawned bands
+/// therefore get their layers on the first `Update`, before the turn's snapshot is captured.
+pub fn reconcile_band_culture_layers(
+    mut manager: ResMut<CultureManager>,
+    province_map: Option<Res<ProvinceMap>>,
+    bands: Query<(&BandId, &PopulationCohort), With<ResidentBand>>,
+    tiles: Query<&Tile>,
+) {
+    let mut live: Vec<u64> = Vec::with_capacity(bands.iter().len());
+    for (band, cohort) in bands.iter() {
+        // Liveness is decided by the query alone, ahead of the tile resolve: a band left out of
+        // `live` is read by the stale sweep below as a dead band and has its layer detached, and
+        // re-attachment reseeds traits from the province rather than restoring the drift, timers
+        // and divergence the band had accumulated. A band whose tile does not resolve is therefore
+        // simply not re-homed this turn — its layer is left exactly as it stands. The reverse
+        // order is harmless: the sweep only removes layers that exist, so a live band with no
+        // layer yet costs nothing.
+        live.push(band.0);
+        let Ok(tile) = tiles.get(cohort.current_tile) else {
+            continue;
+        };
+        let region_id = province_map
+            .as_ref()
+            .and_then(|map| map.province_at(tile.position.x, tile.position.y))
+            .unwrap_or(FALLBACK_CULTURE_REGION_ID);
+        let parent = manager.upsert_regional(region_id);
+
+        let current_parent = manager
+            .band_layer_by_owner(CultureOwner::from_band(*band))
+            .map(|layer| layer.parent);
+        match current_parent {
+            None => {
+                manager.attach_band(*band, parent);
+            }
+            Some(existing) if existing != Some(parent) => {
+                manager.set_band_parent(*band, parent);
+            }
+            Some(_) => {}
+        }
+    }
+
+    let stale: Vec<BandId> = manager
+        .band_layers()
+        .filter(|layer| !live.contains(&layer.owner.0))
+        .map(|layer| BandId(layer.owner.0))
+        .collect();
+    for band in stale {
+        manager.detach_band(band);
     }
 }
 

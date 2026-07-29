@@ -122,9 +122,11 @@ pub use crisis_config::{
     BUILTIN_CRISIS_TELEMETRY_CONFIG,
 };
 pub use culture::{
-    reconcile_culture_layers, CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope,
-    CultureManager, CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
+    reconcile_band_culture_layers, reconcile_culture_layers, seeded_modifiers_for_band,
+    CultureEffectsCache, CultureLayer, CultureLayerId, CultureLayerScope, CultureManager,
+    CultureOwner, CultureSchismEvent, CultureTensionEvent, CultureTensionKind,
     CultureTensionRecord, CultureTraitAxis, CultureTraitVector, CULTURE_TRAIT_AXES,
+    FALLBACK_CULTURE_REGION_ID,
 };
 pub use culture_corruption_config::{
     CorruptionSeverityConfig, CultureCorruptionConfig, CultureCorruptionConfigHandle,
@@ -705,6 +707,9 @@ pub fn build_headless_app() -> App {
             Update,
             (
                 tick_influencers,
+                // Must precede the reconcile: it is what gives a band its layer (and re-homes a
+                // moved one) before the layer is resolved against its province.
+                culture::reconcile_band_culture_layers,
                 reconcile_culture_layers,
                 systems::process_culture_events,
             )

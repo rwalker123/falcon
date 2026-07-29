@@ -101,6 +101,19 @@ pub struct CulturePropagationSettings {
     global: CultureScopePropagation,
     regional: CultureScopePropagation,
     local: CultureScopePropagation,
+    /// The band scope: a band's culture, carried with it as it moves.
+    ///
+    /// **A band is slower than a tile** (0.20 against local's 0.40) because it carries cultural
+    /// memory across a move — re-parenting a band to a new province must make it *lag*, not snap.
+    /// And unlike every other scope its trigger ticks are `> 1`, so a band passing briefly through
+    /// a foreign province does not immediately read as a schism.
+    band: CultureScopePropagation,
+    /// How far a band's own character pulls it off its province, per trait axis — the amplitude of
+    /// `culture::seeded_modifiers_for_band`.
+    ///
+    /// A lever rather than a constant because it sets how far bands drift and therefore **how often
+    /// schism fires**. At `0.0` every band converges on its province and they are all identical.
+    band_character_amplitude: f32,
     /// How fast culture responds to influencer resonance, as the per-turn rate of a low-pass
     /// filter on the resonance vector (`smoothed += (raw - smoothed) * rate`).
     ///
@@ -128,8 +141,16 @@ impl CulturePropagationSettings {
         &self.local
     }
 
+    pub fn band(&self) -> &CultureScopePropagation {
+        &self.band
+    }
+
     pub fn resonance_response(&self) -> f32 {
         self.resonance_response
+    }
+
+    pub fn band_character_amplitude(&self) -> f32 {
+        self.band_character_amplitude
     }
 }
 
@@ -157,6 +178,14 @@ impl Default for CulturePropagationSettings {
                 soft_trigger_ticks: 1,
                 hard_trigger_ticks: 1,
             },
+            band: CultureScopePropagation {
+                elasticity: DEFAULT_BAND_ELASTICITY,
+                soft_threshold: 0.6,
+                hard_threshold: 1.2,
+                soft_trigger_ticks: DEFAULT_BAND_SOFT_TRIGGER_TICKS,
+                hard_trigger_ticks: DEFAULT_BAND_HARD_TRIGGER_TICKS,
+            },
+            band_character_amplitude: DEFAULT_BAND_CHARACTER_AMPLITUDE,
             resonance_response: DEFAULT_RESONANCE_RESPONSE,
         }
     }
@@ -164,6 +193,21 @@ impl Default for CulturePropagationSettings {
 
 /// Culture reaches a sustained influencer pressure over roughly `1 / 0.08` = ~12 turns.
 pub const DEFAULT_RESONANCE_RESPONSE: f32 = 0.08;
+
+/// A band chases its province half as fast as a tile does (local is 0.40): a band carries its
+/// culture with it, so arriving somewhere new has to lag rather than snap.
+pub const DEFAULT_BAND_ELASTICITY: f32 = 0.20;
+
+/// Unlike every other scope, a band's alerts wait several turns — a band crossing a foreign
+/// province for a turn or two is a journey, not a drift warning.
+pub const DEFAULT_BAND_SOFT_TRIGGER_TICKS: u16 = 3;
+
+/// …and a schism has to be a settled fact about a band, not a waypoint on its route.
+pub const DEFAULT_BAND_HARD_TRIGGER_TICKS: u16 = 5;
+
+/// Per-axis amplitude of a band's own character offset. Matches the per-tile amplitude in
+/// `seeded_modifiers_for_position`, so a band is as distinct from its province as a tile is.
+pub const DEFAULT_BAND_CHARACTER_AMPLITUDE: f32 = 0.2;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
