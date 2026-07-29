@@ -376,7 +376,7 @@ func _ready() -> void:
     # relays onto the HudLayer signal Main connects to.
     _bandpanel = BandPanelController.new(
         _band_labor, _compose, _selectioncard, _disclosures, _banddetail, self,
-        _emit_assign_labor, _herd_label_for_id, _targeting)
+        _emit_assign_labor, _herd_label_for_id, _targeting, _topbar)
     _bandpanel.cancel_order_requested.connect(
         func(band: Dictionary, scope: String) -> void: cancel_order_requested.emit(band, scope))
     _bandpanel.send_hunt_expedition_requested.connect(

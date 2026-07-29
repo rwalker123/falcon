@@ -272,7 +272,11 @@ const WORK_ROW_MARKS_WIDTH := 20.0
 ## so a slot that appeared only on tended rows would shift the rate column row-to-row and the board
 ## would read ragged. Costs the label ~20px (slot + `WORK_ROW_SEPARATION`) out of the
 ## `WORK_COLUMN_MIN_WIDTH` budget.
-const WORK_ROW_RUNG_WIDTH := 16.0
+const WORK_ROW_RUNG_WIDTH := 16
+
+## The ready slot is WIDER than the rung slot: it carries two glyphs (`⌃` + the verb) where the rung
+## slot carries one. Reserved even when empty, so the right-anchored furniture lines up down the board.
+const WORK_ROW_READY_WIDTH := 26
 
 ## The stable handle on a rung mark, mirroring `HudWidgets.POLICY_RUNG_META`'s job for a picker rung.
 ## `band_panel_preview` identifies the mark by THIS, never by its glyph: `FoodIcons.SITE_ICONS`
@@ -312,6 +316,11 @@ const WORK_FILTER_HUNT := &"hunt"
 
 const WORK_FILTER_ATTENTION := &"attention"
 
+## The rung-ready filter (issue #412) — its own chip and its own count, NOT folded into `attention`.
+## Attention means TROUBLE (overdrawing, wasted workers, an unacknowledged edit); a rung on offer is an
+## OPPORTUNITY. One control that means both is a control that finds neither.
+const WORK_FILTER_READY := &"ready"
+
 const WORK_SORT_YIELD := &"yield"
 
 const WORK_SORT_NAME := &"name"
@@ -321,6 +330,18 @@ const WORK_CHIP_ALL_FORMAT := "All %d"
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"
 
 const WORK_CHIP_ATTENTION_FORMAT := "⚠ %d"
+
+## The ready chip. `⌃` is the same chevron the map badge and the overflow chip use, so the three
+## surfaces share one mark for one idea and none of them needs a legend.
+const WORK_CHIP_READY_FORMAT := "⌃ %d ready"
+
+## A row's ready mark: the chevron plus the offered rung's own policy glyph (`⌃▦`, `⌃🐄`). The chevron
+## is load-bearing — the verb and standing-rung glyphs COLLIDE (▦ is both "Sow" and "this is a Field"),
+## so the glyph alone would read as *done* rather than *available*.
+const WORK_ROW_READY_FORMAT := "⌃%s"
+
+## Spelled out in the row tooltip, where there is room for words.
+const WORK_ROW_READY_TOOLTIP_FORMAT := "Ready to %s — open this row to start."
 
 const WORK_CHIP_TOOLTIP := "Filter the board to these sources."
 

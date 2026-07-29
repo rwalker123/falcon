@@ -117,7 +117,8 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
         banddetail: BandDetailLines, host: Node,
         emit_assign_labor: Callable, herd_label_for_id: Callable,
-        targeting: TargetingController) -> void:
+        targeting: TargetingController, topbar: TopBarReadouts) -> void:
+    _topbar = topbar
     _band_labor = band_labor
     _compose = compose
     _selectioncard = selectioncard
@@ -127,6 +128,15 @@ func _init(band_labor: HudBandLaborState, compose: ComposeState,
     _emit_assign_labor_fn = emit_assign_labor
     _herd_label_for_id_fn = herd_label_for_id
     _targeting = targeting
+
+## `_topbar` is held for `faction_tracks` ONLY — the rung-ready mark on a work row, exactly the narrow
+## reason `DrawerComposeController` holds it. A typed collaborator rather than a Callable injection,
+## per the extraction rules; do not grow other reads through it.
+var _topbar: TopBarReadouts = null
+
+## The player faction's {track: progress} row, threaded into every `RungGates` call.
+func _player_knowledge() -> Dictionary:
+    return _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID) if _topbar != null else {}
 
 # ---- Typed adapters over the two injected HudLayer helpers -------------------------------------
 
@@ -619,6 +629,13 @@ func _build_work_chips(models: Array) -> HFlowContainer:
     if not attention.is_empty():
         chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_ATTENTION,
             HudWorkVocab.WORK_CHIP_ATTENTION_FORMAT % attention.size(), true))
+    # The READY chip is its own count beside the attention one, never folded into it: trouble and
+    # opportunity are different questions, and it is what makes the knowledge-completion moment legible
+    # — a track finishes and a dozen rows light up at once.
+    var ready: Array = models.filter(func(m): return String(m["ready_policy"]) != "")
+    if not ready.is_empty():
+        chips.add_child(_build_work_chip(HudWorkVocab.WORK_FILTER_READY,
+            HudWorkVocab.WORK_CHIP_READY_FORMAT % ready.size(), false))
     return chips
 
 ## A filter chip's rate face: this kind's food total and trade total, each rendered only when non-zero.
@@ -729,6 +746,22 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     rung.tooltip_text = String(model.get("rung_tooltip", ""))
     rung.set_meta(HudWorkVocab.WORK_ROW_RUNG_META, String(model.get("rung_glyph", "")))
     line.add_child(rung)
+    # THE RUNG ON OFFER — the third and last glyph axis on a row, and it is deliberately a SEPARATE
+    # slot from the two beside it: `rung_glyph` is what the source IS, `marks` is what the band is
+    # DOING, and this is what it COULD BE. Folding it into either would collapse a distinction the
+    # whole feature exists to draw.
+    #
+    # It does NOT touch the severity stripe. That stripe means WARN (overdrawing, overstaffed) or
+    # SIGNAL (a pending edit); an opportunity in the same channel would give the one control for
+    # finding trouble two meanings.
+    var ready := Label.new()
+    var ready_glyph := String(model.get("ready_glyph", ""))
+    ready.text = "" if ready_glyph == "" else HudWorkVocab.WORK_ROW_READY_FORMAT % ready_glyph
+    ready.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_READY_WIDTH, 0.0)
+    ready.add_theme_color_override("font_color", HudStyle.SIGNAL)
+    ready.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
+    ready.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    line.add_child(ready)
     var marks := Label.new()
     marks.text = String(model.get("marks", ""))
     marks.custom_minimum_size = Vector2(HudWorkVocab.WORK_ROW_MARKS_WIDTH, 0.0)
@@ -975,6 +1008,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
                 SourceForecast.herd_crew_floor(live_herd, hunt_forecast))
         var note := String(yld.get("note", ""))
         var rung := _work_source_rung(kind, patch, live_herd)
+        # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
+        # `rung_glyph` (the rung the source STANDS on). Same `RungGates` answer the map's badge and the
+        # compose sheet's gates use, so the three surfaces cannot disagree about what is climbable.
+        var ready := RungGates.next_rung_ready(kind,
+            patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd,
+            policy, _player_knowledge())
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -1001,11 +1040,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "note": note, "muted_note": String(yld.get("muted_note", "")), "marks": marks,
             # The source's STANDING RUNG — orthogonal to `marks`, which carries the verb in flight.
             "rung_glyph": String(rung.get("glyph", "")), "rung_tooltip": String(rung.get("tooltip", "")),
+            # The rung this source could climb NOW ("" for none) — see `ready` above.
+            "ready_policy": String(ready.get("policy", "")), "ready_glyph": String(ready.get("glyph", "")),
             "policy": policy, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
-                _policy_hint(kind, policy), String(cap.get("note", "")), HudWorkVocab.WORK_ROW_OPEN_HINT]),
+                _policy_hint(kind, policy), String(cap.get("note", "")),
+                "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
+                HudWorkVocab.WORK_ROW_OPEN_HINT]),
             # A source wants attention when it overdraws, wastes workers, or is still unacknowledged.
             "attention": bool(yld.get("warn", false)) or note != "" or pending,
         })
@@ -1062,6 +1105,8 @@ func _work_models_matching(filter: StringName, models: Array) -> Array:
             return models.filter(func(m): return String(m["kind"]) == SourceForecast.LABOR_KIND_HUNT)
         HudWorkVocab.WORK_FILTER_ATTENTION:
             return models.filter(func(m): return bool(m["attention"]))
+        HudWorkVocab.WORK_FILTER_READY:
+            return models.filter(func(m): return String(m["ready_policy"]) != "")
     return models.duplicate()
 
 func _sort_work_models(models: Array) -> void:
