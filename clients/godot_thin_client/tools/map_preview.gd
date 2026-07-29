@@ -68,6 +68,15 @@ const FAR_GRID_H := 52
 # change can't silently un-guard it again.
 const YIELD_FAR_GRID_W := 110
 const YIELD_FAR_GRID_H := 80
+# State "max zoom" grid. MIRRORS MapSizes' SMALLEST offered map (Tiny, 56×36), and that is the whole
+# reason the state can judge the cap. `zoom_factor` is a multiple of the COVER FIT, so what
+# MAX_ZOOM_FACTOR means in pixels is decided by the grid: the SMALLEST map the player can start has
+# the largest fitted radius, hence the largest hexes — and therefore the most magnified terrain
+# texture — the zoom rail can ever reach in a real game. Judging the cap on a bigger grid would flatter
+# it; judging it on this harness's 16×12 grid would slander it (a single hex comes out wider than the
+# viewport, so every label and marker falls off-frame and the state judges nothing).
+const MAX_ZOOM_GRID_W := 56
+const MAX_ZOOM_GRID_H := 36
 # Mirrors MapView.ICON_MIN_DETAIL_RADIUS (the LOD threshold under which the annotation is suppressed).
 const LOD_MIN_RADIUS := 16.0
 # Multi-biome baseline: the four terrain ids that today have REAL base textures (the other 33 are
@@ -380,6 +389,25 @@ const ROUTE_UNKNOWN_PATH := [[1, 5], [3, 6], [2, 8]]   # left of the other two, 
 # TRADE_UNRESOLVED_TILE: a guard only guards the reference frame if the frame exercises it.
 const ROUTE_DEGENERATE_PATH := [[5, 11]]
 
+# State "max zoom". How far the achieved hex radius may sit from `base_hex_radius × MAX_ZOOM_FACTOR`
+# before the state is no longer judging the cap. Both sides are floats computed through the clamp in
+# `_update_layout_metrics`, so an exact compare would be a coin flip on the last bit; a fraction of a
+# pixel is far tighter than any zoom step (the smallest, MOUSE_ZOOM_STEP, moves the radius by ~0.2 ×
+# base) yet immune to float drift.
+const MAX_ZOOM_RADIUS_EPSILON := 0.01
+
+# The zoom-rail LADDER guard (`_assert_zoom_ladder`), in RUNGS above MIN_ZOOM_FACTOR so the probes
+# follow ZOOM_BUTTON_STEP rather than restating it. The on-rung probe sits clear of both limits, so
+# a click in either direction is a real move and not a clamp. The off-grid probe sits MID-WAY
+# between two rungs — far enough from both that neither a round-up nor a round-down bug can land on
+# the expected answer by luck, which a probe near either neighbour would let happen.
+const LADDER_ON_RUNG := 2.0
+const LADDER_PROBE_RUNG := 4.0
+const LADDER_OFF_RUNG_FRACTION := 0.54
+# Clicks in the printed ladder walk: enough to run MIN_ZOOM_FACTOR to the clamp at MAX_ZOOM_FACTOR
+# and show the short final step, so the whole rail reads in one line of the log.
+const LADDER_WALK_CLICKS := 13
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -432,6 +460,24 @@ func _ready() -> void:
 	# that wants fog says so at its own site (the first is `map_sites_fogged`); this seats the
 	# baseline for every state before it.
 	_map.set_fow_enabled(false)
+	# STATE THE INPUT-SPEED CONDITION too, by the same rule and for the same reason. The autoload has
+	# already loaded the DEVELOPER'S real `user://client_settings.cfg`, and `MapView.zoom_step` scales
+	# ZOOM_BUTTON_STEP by `zoom_speed_multiplier` — so the river close-ups (which reach their zoom
+	# through RIVER_JOIN_ZOOM_STEPS × zoom_step) rendered at a DIFFERENT zoom on any machine whose
+	# Options slider had been moved, which silently breaks the bit-identity reference this frame set
+	# is. Assign the members DIRECTLY, never the setters: a setter would _save over the player's own
+	# prefs file, the contamination `band_panel_preview` isolates its config paths to avoid.
+	ClientSettings.zoom_speed_multiplier = ClientSettings.ZOOM_SPEED_DEFAULT
+	ClientSettings.pan_speed_multiplier = ClientSettings.PAN_SPEED_DEFAULT
+	# And STATE THE INPUT CONDITION — the third of the same family, the treatment `blend_probe` already
+	# carries. This harness renders in a REAL window, so `MapView._unhandled_input` picks up the OS
+	# cursor and draws a faint HOVER hex outline into whichever frame happens to be rendering when the
+	# pointer is over the window. Measured here: `map_riverine_split` came back with a brightened hex
+	# outline on ~1 run in 5 — 319 pixels at a max delta of 37, on a DIFFERENT hex each time (hence a
+	# different hash each time), which is far too small to notice by eye and easily large enough to
+	# defeat the byte-diff this frame set exists to support. No state here is driven by input, so drop
+	# input entirely rather than trying to park the pointer.
+	_map.set_process_unhandled_input(false)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	# Warm-up: the FIRST captured state came back all-black — the window is still sizing on the opening
@@ -472,7 +518,7 @@ func _ready() -> void:
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
 	# clean token/highlight view, not floating-text soup. Regression guard for the yield-label LOD gate.
-	_map.display_snapshot(_snapshot_far_work())
+	_map.display_snapshot(_snapshot_work_on_grid(YIELD_FAR_GRID_W, YIELD_FAR_GRID_H))
 	_map.selected_unit_id = BAND_ENTITY
 	_map.selected_tile = Vector2i(-1, -1)
 	_map._fit_map_to_view()
@@ -1213,7 +1259,115 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_routes")
 
+	# State "max zoom" — the ZOOM CAP raised from 4× to 7× in issue #375. Every other state renders at
+	# the cover fit (MIN_ZOOM_FACTOR), so nothing here had ever judged the OTHER end of the rail, and
+	# the cap is only defensible if terrain, text and markers all still read at it. This state sits at
+	# exactly MAX_ZOOM_FACTOR with all three in one frame: textured terrain with edge blending on, the
+	# worked band's per-source yield labels, and BOTH marker families (the primary band token + its
+	# nameplate, the secondary herd glyph). It then pans the band hex to the centre — at the cap the
+	# viewport holds only a handful of hexes, so an unpanned frame is an arbitrary corner of the map
+	# with none of the subject in it.
+	#
+	# It renders on MAX_ZOOM_GRID (the game's smallest offered map) rather than this harness's 16×12
+	# grid, and that choice is the whole point of the frame — see the const for why the SMALLEST map is
+	# the worst case. In short: `zoom_factor` is a multiple of the COVER FIT, so what 7× means in pixels
+	# is decided by the grid, and on 16×12 a single hex comes out wider than the viewport (every label
+	# and marker off-frame, nothing judged).
+	#
+	# Read for: terrain textures coherent rather than a magnified blur or a per-hex tiling grid, the
+	# yield pills / nameplate at a sane size AGAINST THE HEXES (they scale with the marker, so the
+	# failure mode is a label that swells into the neighbouring hex), and no clipped/missing layer.
+	_map.set_fow_enabled(false)
+	_map.set_labor_pending({})
+	_map.enable_terrain_textures(true)
+	TerrainTextureManager.use_edge_blending = true
+	_map._map_cache_enabled = false
+	_map.display_snapshot(_snapshot_work_on_grid(MAX_ZOOM_GRID_W, MAX_ZOOM_GRID_H))
+	_map.selected_unit_id = BAND_ENTITY
+	_map.selected_herd_id = ""
+	_map.selected_tile = Vector2i(-1, -1)
+	_map._fit_map_to_view()
+	await _settle()
+	_map.set_zoom_factor(MAP_VIEW.MAX_ZOOM_FACTOR)
+	await _settle()
+	# Recompute the band's screen centre AFTER the zoom settles — MapView clamps pan_offset, so the
+	# request is not the result (the map_rivers_notch idiom).
+	var max_zoom_band := _work_grid_center(MAX_ZOOM_GRID_W, MAX_ZOOM_GRID_H)
+	_map.pan_offset += get_viewport().get_visible_rect().size * 0.5 \
+		- _map._hex_center(max_zoom_band.x, max_zoom_band.y, _map.last_hex_radius, _map.last_origin)
+	_map.queue_redraw()
+	await _settle()
+	var max_zoom_radius: float = _map.base_hex_radius * MAP_VIEW.MAX_ZOOM_FACTOR
+	if absf(_map.last_hex_radius - max_zoom_radius) > MAX_ZOOM_RADIUS_EPSILON:
+		push_warning("map_preview: max-zoom radius %.2f != base %.2f × MAX_ZOOM_FACTOR %.1f (= %.2f) — this state no longer sits at the zoom cap and stops guarding it" % [_map.last_hex_radius, _map.base_hex_radius, MAP_VIEW.MAX_ZOOM_FACTOR, max_zoom_radius])
+	await _save("map_max_zoom")
+
+	_assert_zoom_ladder()
+
 	get_tree().quit()
+
+## The zoom rail's LADDER, asserted rather than photographed — it SAVES NO PNG, deliberately, so the
+## frame set stays a 62-frame bit-identity reference and this guard cannot re-baseline anything.
+## A picture could never carry these claims anyway: every rung renders as a plausible map, so the
+## difference between a correct ladder and a drifting one is invisible in a frame.
+##
+## It exists because the rail shipped SCALED by `ClientSettings.zoom_speed_multiplier`: at the
+## slider's max each click was 1.5, so the rail ran 1.0 → 2.5 → 4.0 → 5.5 → 7.0 with no 6.0 or 6.5,
+## and a different ladder again from the startup zoom. `zoom_step` now snaps to rungs and ignores the
+## slider (the harness pins that slider anyway, so ONLY an assertion can see a regression here).
+func _assert_zoom_ladder() -> void:
+	var step: float = MAP_VIEW.ZOOM_BUTTON_STEP
+	var floor_zoom: float = MAP_VIEW.MIN_ZOOM_FACTOR
+	var ceil_zoom: float = MAP_VIEW.MAX_ZOOM_FACTOR
+
+	# ON a rung: one click must move exactly one rung, in both directions. The epsilon inside
+	# `zoom_step` is what this catches if it is wrong — too small and float drift makes the click a
+	# near-zero no-op, too large and it skips a rung.
+	var on_rung: float = floor_zoom + LADDER_ON_RUNG * step
+	_map.set_zoom_factor(on_rung)
+	_map.zoom_step(1)
+	_assert_ladder("on-rung +1 from %.2f" % on_rung, _map.zoom_factor, on_rung + step)
+	_map.zoom_step(-1)
+	_assert_ladder("on-rung -1 back to %.2f" % on_rung, _map.zoom_factor, on_rung)
+
+	# OFF the ladder — where the wheel and pinch leave it. One click must SNAP to the adjacent rung in
+	# the direction of travel, never add a step to the off-grid value. The probe sits mid-way between
+	# two rungs so neither a round-up nor a round-down bug can pass by luck.
+	var below_rung: float = floor_zoom + LADDER_PROBE_RUNG * step
+	var off_grid: float = below_rung + LADDER_OFF_RUNG_FRACTION * step
+	_map.set_zoom_factor(off_grid)
+	_map.zoom_step(1)
+	_assert_ladder("off-grid %.2f +1 snaps up" % off_grid, _map.zoom_factor, below_rung + step)
+	_map.set_zoom_factor(off_grid)
+	_map.zoom_step(-1)
+	_assert_ladder("off-grid %.2f -1 snaps down" % off_grid, _map.zoom_factor, below_rung)
+
+	# Both limits: the delta comes out 0 and `_apply_zoom`'s `is_zero_approx` early-out makes the
+	# click a clean no-op (no wrap, no crawl past the clamp, no spurious `zoom_changed`).
+	_map.set_zoom_factor(ceil_zoom)
+	_map.zoom_step(1)
+	_assert_ladder("+1 at MAX_ZOOM_FACTOR is a no-op", _map.zoom_factor, ceil_zoom)
+	_map.set_zoom_factor(floor_zoom)
+	_map.zoom_step(-1)
+	_assert_ladder("-1 at MIN_ZOOM_FACTOR is a no-op", _map.zoom_factor, floor_zoom)
+
+	# The ladder as a player walks it, printed so the rungs can be read at a glance in the run log.
+	_map.set_zoom_factor(floor_zoom)
+	var walk := PackedStringArray([("%.1f" % _map.zoom_factor)])
+	for _i in range(LADDER_WALK_CLICKS):
+		_map.zoom_step(1)
+		walk.append("%.1f" % _map.zoom_factor)
+	print("map_preview: zoom ladder = ", " → ".join(walk))
+
+## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL prints AND raises, so a regression is
+## visible in the run log next to the neighbouring states' `push_warning`s rather than needing a diff.
+func _assert_ladder(label: String, actual: float, expected: float) -> void:
+	if is_equal_approx(actual, expected):
+		print("map_preview: PASS zoom-ladder — %s (%.2f)" % [label, actual])
+	else:
+		var message := "map_preview: FAIL zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected]
+		print(message)
+		push_warning(message)
 
 func _settle() -> void:
 	await _ensure_canvas()
@@ -1958,14 +2112,18 @@ func _snapshot_herd_on_tile() -> Dictionary:
 
 ## Large grid so fitted hexes are tiny (< ICON_MIN_DETAIL_RADIUS): bands + secondaries present, but
 ## only the primary tokens should draw (secondary icons + chips suppressed by LOD).
-## The worked band (forage tile + overdrawing hunt, both carrying yields) on the FAR grid, so a fit
-## makes hexes tiny — exercises the yield-label LOD suppression at far zoom.
-func _snapshot_far_work() -> Dictionary:
+## The worked band (forage tile + hunted deer, both carrying yields) parked mid-grid on a grid of the
+## caller's choosing — the two ENDS of the zoom rail want the same subject at opposite scales. The
+## LOD state passes YIELD_FAR_GRID (fitted hexes go tiny, so the yield labels must suppress); the
+## max-zoom state passes MAX_ZOOM_GRID (the cap makes them large, so the labels must still read).
+## The band sits at `_work_grid_center`, its worked forage tile one hex east and the deer two.
+func _snapshot_work_on_grid(w: int, h: int) -> Dictionary:
 	var terrain: Array = []
-	terrain.resize(YIELD_FAR_GRID_W * YIELD_FAR_GRID_H)
+	terrain.resize(w * h)
 	terrain.fill(TERRAIN_ID)
-	var cx := YIELD_FAR_GRID_W / 2
-	var cy := YIELD_FAR_GRID_H / 2
+	var center := _work_grid_center(w, h)
+	var cx := center.x
+	var cy := center.y
 	var assignments := [
 		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
 		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
@@ -1975,11 +2133,17 @@ func _snapshot_far_work() -> Dictionary:
 		"id": "Band 1", "work_range": 2, "scout_reveal_radius": 2, "labor_assignments": assignments,
 	}, STAGE_NOMADIC)
 	return {
-		"grid": {"width": YIELD_FAR_GRID_W, "height": YIELD_FAR_GRID_H, "wrap_horizontal": false},
+		"grid": {"width": w, "height": h, "wrap_horizontal": false},
 		"overlays": {"terrain": terrain},
 		"populations": [band],
 		"herds": [{"id": "game_deer_07", "label": "Red Deer (game_deer_07)", "x": cx + 2, "y": cy, "biomass": 800.0, "huntable": true}],
 	}
+
+## Where _snapshot_work_on_grid parks the band. Shared with the max-zoom state, which has to CENTRE
+## the view on that hex: at MAX_ZOOM_FACTOR the viewport holds only a handful of hexes, so an
+## unpanned frame is an arbitrary corner of the map with none of the subject in it.
+func _work_grid_center(w: int, h: int) -> Vector2i:
+	return Vector2i(w / 2, h / 2)
 
 func _snapshot_far_zoom() -> Dictionary:
 	var terrain: Array = []

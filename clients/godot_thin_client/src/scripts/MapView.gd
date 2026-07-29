@@ -287,12 +287,25 @@ const FOW_MAX_SOFTNESS := 2.0
 const FOW_MAX_NOISE_AMOUNT := 1.0
 const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
-const MAX_ZOOM_FACTOR := 4.0
+# `zoom_factor` is a MULTIPLE OF THE COVER FIT, not an absolute hex size: `_update_layout_metrics`
+# sizes `base_hex_radius` so the map COVERS the viewport and MIN_ZOOM_FACTOR (1.0) is that fit. So
+# this cap says "how close a single hex can get", and what it buys depends on the panel — on a
+# hi-DPI / high-resolution display the cover fit already yields a small `base_hex_radius`, so at the
+# old 4.0 hexes stayed small even at full zoom-in (issue #375). 7.0 adds six more ZOOM_BUTTON_STEP
+# (0.5) clicks; terrain, labels and markers were checked to still read at the new maximum
+# (`map_preview`'s `map_max_zoom` state, which asserts it is sitting at this const).
+const MAX_ZOOM_FACTOR := 7.0
 const MOUSE_ZOOM_STEP := 0.2
-# One click of the on-screen zoom rail. Deliberately larger than MOUSE_ZOOM_STEP
-# (0.2) so a button press feels like a deliberate step, not a nudge; promote to a
-# config lever if it ever wants tuning.
+# One click of the on-screen zoom rail — also the RUNG SPACING of the ladder
+# `zoom_step` snaps to (see it for why the rail is a ladder). Deliberately larger
+# than MOUSE_ZOOM_STEP (0.2) so a button press feels like a deliberate step, not a
+# nudge; promote to a config lever if it ever wants tuning.
 const ZOOM_BUTTON_STEP := 0.5
+# Tolerance, IN RUNGS, for deciding whether `zoom_factor` is already sitting on a
+# ladder rung. Absorbs the float drift left by the pivot math in `_apply_zoom`, so a
+# factor a hair below a rung still counts as ON it and one click moves a WHOLE rung
+# rather than degenerating into a near-zero step.
+const ZOOM_RUNG_EPSILON := 0.001
 const KEYBOARD_ZOOM_SPEED := 0.8
 const KEYBOARD_PAN_SPEED := 600.0
 const PLAYER_FACTION_ID := 0
@@ -4071,12 +4084,39 @@ func _apply_zoom(delta_zoom: float, pivot: Vector2) -> void:
 	# cases early-returned above), so the readout only updates on a real change.
 	emit_signal("zoom_changed", zoom_factor)
 
-## Public zoom API — the on-screen zoom rail routes through the same `_apply_zoom`
-## path the trackpad/wheel uses, so there is exactly one map-zoom code path.
-## `direction` is +1 (in) / -1 (out); the pivot is the map center so button-zoom
-## doesn't drift the view.
+## Public zoom API — the on-screen zoom rail. `direction` is +1 (in) / -1 (out); the
+## pivot is the map center so button-zoom doesn't drift the view. It still expresses
+## its move as a delta through `_apply_zoom`, so there is exactly one map-zoom code
+## path (the `set_zoom_factor` idiom).
+##
+## The rail is a LADDER: rungs sit every `ZOOM_BUTTON_STEP` from `MIN_ZOOM_FACTOR`,
+## and a click moves to the ADJACENT rung rather than adding a delta to wherever
+## `zoom_factor` happens to be. Two decisions, both deliberate:
+##
+## - **Unscaled by `zoom_speed_multiplier`.** That slider means *speed* and belongs to
+##   the CONTINUOUS inputs — wheel, pinch, Q·E — which still read it. The rail is a
+##   DISCRETE, deliberate step, which is what `ZOOM_BUTTON_STEP`'s own comment already
+##   says it is for. Scaling it made the ladder unpredictable: at the slider's max (3.0)
+##   each click became 1.5, so the rail ran 1.0 → 2.5 → 4.0 → 5.5 → 7.0 with no 6.0 or
+##   6.5, and from the startup zoom it ran a DIFFERENT ladder (2.0 → 3.5 → 5.0 → 6.5).
+##   Same precedent as mouse-drag pan, which is deliberately 1:1.
+## - **Snapped, not accumulated.** The wheel and pinch use their own step and leave
+##   `zoom_factor` off-grid (3.27, say); without snapping the readout could never get
+##   back onto the ladder. From 3.27 a `+1` goes to 3.5 and a `-1` to 3.0 — the adjacent
+##   rung in the direction of travel — so one click always restores a round readout.
+##
+## `MAX_ZOOM_FACTOR` need not lie on the ladder; the clamp just makes the topmost click
+## a short one. At either limit the delta is 0 and `_apply_zoom`'s `is_zero_approx`
+## early-out makes the click a clean no-op, with no spurious `zoom_changed`.
 func zoom_step(direction: int) -> void:
-	_apply_zoom(float(direction) * ZOOM_BUTTON_STEP * ClientSettings.zoom_speed_multiplier, _viewport_center_pivot())
+	var rungs: float = (zoom_factor - MIN_ZOOM_FACTOR) / ZOOM_BUTTON_STEP
+	# The epsilon nudges an on-rung value off the floor/ceil boundary in the direction of
+	# travel, so "already on a rung" advances a whole rung instead of returning itself.
+	var target_rung: float = (floorf(rungs + ZOOM_RUNG_EPSILON) + 1.0) if direction > 0 \
+		else (ceilf(rungs - ZOOM_RUNG_EPSILON) - 1.0)
+	var target: float = clampf(
+		MIN_ZOOM_FACTOR + target_rung * ZOOM_BUTTON_STEP, MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR)
+	_apply_zoom(target - zoom_factor, _viewport_center_pivot())
 
 ## Absolute zoom setter — jump straight to a target `zoom_factor` (clamped to
 ## [MIN,MAX]), pivoting on the map centre. Reuses the single `_apply_zoom` path by
