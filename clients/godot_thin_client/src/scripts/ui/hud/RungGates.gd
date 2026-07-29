@@ -30,8 +30,8 @@ extends RefCounted
 ##     LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
 ##     reason on either web that the player answers by MOVING rather than by working.
 ##
-## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict — see
-## `forage_gates_from_patch` for the bare-keyed twin.
+## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict —
+## `forage_gates_from_patch` below is the bare-keyed twin.
 static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictionary:
     var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
     var gates := {}
@@ -122,6 +122,87 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
     if not corral_reasons.is_empty():
         gates[SourceForecast.LABOR_POLICY_CORRAL] = corral_reasons
     return gates
+
+## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
+## than the `patch_`-prefixed `tile_info` cross-ref.
+##
+## The cross-ref's prefixing is MIXED and always has been — `MapView._tile_info_at` stamps
+## `patch_ecology_phase` / `patch_is_field` / `patch_sow_site_refusal` but plain `is_cultivated` — so
+## this adapter is the ONE place that mapping is written down. Callers holding a wire patch (the map's
+## mark pass, the work board) come through here; nobody re-spells the keys at a call site.
+static func forage_gates_from_patch(patch: Dictionary, knowledge: Dictionary) -> Dictionary:
+    return forage_gates({
+        "is_cultivated": bool(patch.get("is_cultivated", false)),
+        "patch_ecology_phase": String(patch.get("ecology_phase", "")),
+        "patch_is_field": bool(patch.get("is_field", false)),
+        "patch_sow_site_refusal": String(patch.get("sow_site_refusal", "")),
+    }, knowledge)
+
+## THE READY TEST — the next rung this source could climb RIGHT NOW, as
+## `{policy, glyph}`, or `{}` when there is nothing to offer.
+##
+## It is not a new judgement: it is the test the compose sheet already runs to decide whether to grey a
+## rung, plus the two "is this rung offered at all" passes that sit beside it there. Three conditions,
+## all of which must hold (docs/plan_worked_source_marks.md §3):
+##
+##  1. **OFFERED** — the species or the land admits the rung. Hunt: the husbandry ceiling ("wild" /
+##     "pastoral" / "pen"), the SAME filter `_build_herd_assign_controls` applies. Forage: at least one
+##     composition entry that `can_cultivate` / `can_sow`, the species-global legality flag.
+##  2. **UNGATED** — `forage_gates` / `hunt_gates` return no reason for it (knowledge complete, the
+##     per-source prerequisite met, the rung not already finished, the ground willing).
+##  3. **NOT ALREADY RUNNING** — the source's current policy is not that verb. A patch mid-Cultivate is
+##     progress, not an opportunity, and marking it would never clear.
+##
+## **HIGHEST RUNG FIRST**, the ordering `BandPanelController._work_source_rung` already depends on and
+## for the same reason: a herd that can be corralled can also technically be re-tamed, and answering
+## with the lower rung would erase the distinction the mark exists to draw.
+static func next_rung_ready(kind: String, source: Dictionary, policy: String,
+        knowledge: Dictionary) -> Dictionary:
+    var current := policy.strip_edges().to_lower()
+    if kind == SourceForecast.LABOR_KIND_FORAGE:
+        var gates := forage_gates_from_patch(source, knowledge)
+        if current != HudConst.LABOR_POLICY_SOW and not gates.has(HudConst.LABOR_POLICY_SOW) \
+                and _any_crop_allows(source, "can_sow"):
+            return _ready(HudConst.LABOR_POLICY_SOW)
+        if current != HudConst.LABOR_POLICY_CULTIVATE and not gates.has(HudConst.LABOR_POLICY_CULTIVATE) \
+                and _any_crop_allows(source, "can_cultivate"):
+            return _ready(HudConst.LABOR_POLICY_CULTIVATE)
+        return {}
+    if kind == SourceForecast.LABOR_KIND_HUNT:
+        var hunt := hunt_gates(source, knowledge)
+        var ceiling := SourceForecast.husbandry_ceiling(source)
+        if current != SourceForecast.LABOR_POLICY_CORRAL and not hunt.has(SourceForecast.LABOR_POLICY_CORRAL) \
+                and ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
+            return _ready(SourceForecast.LABOR_POLICY_CORRAL)
+        if current != HudConst.LABOR_POLICY_TAME and not hunt.has(HudConst.LABOR_POLICY_TAME) \
+                and ceiling != SourceForecast.HUSBANDRY_CEILING_WILD:
+            return _ready(HudConst.LABOR_POLICY_TAME)
+        return {}
+    return {}
+
+## Whether ANY plant in this patch's composition may climb the rung `flag` names — species-GLOBAL
+## legality ("can this plant ever climb this rung"), never "is it a wise crop here". `share` answers
+## that other question, and a marginal share must never suppress the mark: a legal crop at 4% is still
+## a rung the player can choose.
+##
+## An ABSENT composition answers **false**, which is the honest reading: the flags ride every
+## `ForagePatchState`, so a patch without them is one the client cannot vouch for, and the mark exists
+## to promise the verb is available.
+static func _any_crop_allows(patch: Dictionary, flag: String) -> bool:
+    var composition: Variant = patch.get("composition", [])
+    if not (composition is Array):
+        return false
+    for entry_variant in composition:
+        if entry_variant is Dictionary and bool((entry_variant as Dictionary).get(flag, false)):
+            return true
+    return false
+
+## The answer shape: the rung's policy key plus the glyph naming it. The CHEVRON that makes a mark read
+## as "available" rather than "done" is the RENDERER's chrome, not part of this answer — the verb and
+## standing-rung glyphs collide (▦ is both "Sow" and "this is a Field"), so a bare glyph must never be
+## the whole message.
+static func _ready(policy: String) -> Dictionary:
+    return {"policy": policy, "glyph": FoodIcons.for_policy(policy)}
 
 ## One faction-knowledge track's 0..1 progress out of the caller's `knowledge` dict, 0.0 when absent.
 ## A missing track is "not learned", never "learned" — an absent key must gate, not open, or a
