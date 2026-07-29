@@ -396,13 +396,19 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## Cap the worker stepper at what the source can absorb: min(the band's assignable workers,
 ## max-useful). Returns `{cap, note}` — `note` is set ONLY when max-useful is the binding cap, so a
 ## dead `+` button is always explained rather than mysterious (the idle-worker cap explains itself).
+##
+## THE WORKED-ROW TWIN IS `SourceForecast.source_worker_cap_state`, which takes the SAME `useful_floor`
+## and applies it the same way — the compose sheet and the Band panel's work board must gate at one
+## ceiling, and a floor that reached only one of them let the board flag a herd under-herded and then
+## disable the `+` that fixes it.
 func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: int = 0) -> Dictionary:
     var useful := SourceForecast.max_useful_workers(forecast)
     # A managed herd's maintenance crew raises the usefulness ceiling above what the take/prepare side
     # reports: a Corral rung's prep forecast says "1 worker suffices to prepare", but a growing pen needs
-    # `herders_needed` hands EVERY turn to hold its tameness. Fold that floor in (callers pass it via
-    # `useful_floor`) so the player can always staff the herders the herd requires. An UNBOUNDED forecast
-    # stays unbounded — the floor is a RAISE, never a new cap — and a wild herd passes 0, so it's a no-op.
+    # its herding crew EVERY turn to hold its tameness. Callers pass that crew as `useful_floor` —
+    # `SourceForecast.herd_crew_floor` is its one definition, and it is where the ownership-gated vs
+    # would-be field split is explained. An UNBOUNDED forecast stays unbounded — the floor is a RAISE,
+    # never a new cap — and a wild herd passes 0, so it's a no-op there.
     if useful != SourceForecast.MAX_USEFUL_UNBOUNDED:
         useful = maxi(useful, useful_floor)
     if useful == SourceForecast.MAX_USEFUL_UNBOUNDED or useful >= assignable:
@@ -629,23 +635,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
     # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
     # hunter gap this pass closes). The local branch caps at the source's max-useful ceiling.
-    # A managed (corralling/pastoral) herd needs `herders_needed` hands every turn to hold its tameness,
-    # but the take/prepare max-useful ignores that — a Corral rung's prep says "1 worker useful", pinning
-    # the player at 1 even when a growing herd needs 2 herders (an unwinnable trap: the corral slips and is
-    # lost). Fold the herding crew into the LOCAL-hunt cap's usefulness ceiling so the maintenance crew is
-    # always staffable. `herders_needed == 0` on a wild herd, so max(take-useful, 0) is a no-op there. The
-    # expedition party has no herding crew, so `SourceForecast.expedition_useful_cap` is left alone.
-    #   BUT composing an INVESTMENT rung (Tame/Corral) on a still-WILD herd is the case `herders_needed`
-    #   floors to 0 exactly when the crew matters: the rung is what MAKES the herd managed, so the floor
-    #   is the ownership-INDEPENDENT would-be crew (`herders_needed_if_managed`) — otherwise the player
-    #   can only staff the 1-worker Tame-prep count, the herd becomes owned next turn needing (e.g.) 3,
-    #   and reads under-herded. For extractive policies the herd is NOT being managed, so no herders are
-    #   needed and the plain `herders_needed` (0 on a wild herd) is right. The two fields are equal on an
-    #   already-managed herd, so this is safe either way.
-    var herd_floor := int(herd.get("herders_needed_if_managed", 0)) if _compose.hunt_policy() in HudComposeVocab.INVESTMENT_POLICIES \
-        else int(herd.get("herders_needed", 0))
+    # A managed herd needs a herding crew EVERY turn to hold its tameness, which the take/prepare
+    # max-useful knows nothing about — so the LOCAL-hunt cap's usefulness ceiling is floored on
+    # `SourceForecast.herd_crew_floor`, the ONE definition of that number, shared with the Band panel's
+    # worked-row twin (`source_worker_cap_state`) so the sheet and the board can never gate differently.
+    # It reads the forecast's own `investment` flag to pick the ownership-gated vs would-be crew field;
+    # the rationale for that split lives on the helper. The expedition party has no herding crew, so
+    # `SourceForecast.expedition_useful_cap` is left alone.
     var capped := SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_policy(), assignable) if is_expedition \
-        else _forecast_worker_cap(forecast, assignable, herd_floor)
+        else _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(herd, forecast))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
     # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy

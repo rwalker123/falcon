@@ -661,16 +661,45 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         return ceili(peak_drop / per_worker)
     return int(ceilf(ceiling / per_worker))
 
+## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
+## read by BOTH cap twins so a worked row and a compose stepper can never gate differently.
+##
+## A managed herd needs `herders_needed` hands EVERY turn to HOLD it, but the take/prepare max-useful
+## knows nothing about that: it answers "2 workers saturate this herd's take", and the row's `+` then
+## goes dead two below the crew the sim is asking for — while the SAME row renders the under-herded ⚠.
+##
+## An INVESTMENT rung reads the ownership-INDEPENDENT `herders_needed_if_managed` instead, because the
+## rung is what MAKES the herd managed: a still-wild herd reports `herders_needed == 0` right up until
+## the Population stage sets ownership, so the plain field would pin the player at the 1-worker prep
+## count and the herd would read under-herded the moment it became theirs. The two fields are equal on
+## an already-managed herd, so this is safe either way. Keyed on the forecast's own `investment` flag
+## rather than a policy-name table, so this file stays free of the compose vocabulary.
+static func herd_crew_floor(herd: Dictionary, forecast: Dictionary) -> int:
+    if bool(forecast.get("investment", false)):
+        return int(herd.get("herders_needed_if_managed", 0))
+    return int(herd.get("herders_needed", 0))
+
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
-## compose stepper's `max_useful_workers` cap, and beside it so the two can never disagree. A source's
-## `+` may add a worker only while the band has an idle worker AND this source is below its own
-## max-useful ceiling, so a single source can't absorb workers past the point they help. An unknown
-## forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls back to the plain `idle > 0` gate. Returns
-## `{can_add, note}`; `note` is set ONLY when max-useful (not idle) is what stopped the `+`, so the row
-## tooltip explains a dead button rather than leaving it mysterious (the idle-exhausted gate explains
-## itself). Scout/Warrior are band-wide roles with no ceiling — they keep the plain gate and never call this.
-static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int) -> Dictionary:
+## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
+## beside it so the two can never disagree. A source's `+` may add a worker only while the band has an
+## idle worker AND this source is below its own max-useful ceiling, so a single source can't absorb
+## workers past the point they help. An unknown forecast (MAX_USEFUL_UNBOUNDED — no wire data) falls
+## back to the plain `idle > 0` gate. Returns `{can_add, note}`; `note` is set ONLY when max-useful (not
+## idle) is what stopped the `+`, so the row tooltip explains a dead button rather than leaving it
+## mysterious (the idle-exhausted gate explains itself). Scout/Warrior are band-wide roles with no
+## ceiling — they keep the plain gate and never call this.
+##
+## `useful_floor` IS WHAT KEEPS THE TWIN PROMISE HONEST. The compose side folds a managed herd's
+## herding crew into its usefulness ceiling; a row that did not would flag a herd under-herded and then
+## disable the very `+` that fixes it. A HUNT caller therefore passes `herd_crew_floor(herd, forecast)`
+## — the one definition of that number — and a FORAGE caller passes nothing, a patch owing no crew.
+## The floor is a RAISE, never a new cap, and an UNBOUNDED forecast stays unbounded; a wild herd
+## reports 0, so `max(useful, 0)` is a no-op there.
+static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int,
+        useful_floor: int = 0) -> Dictionary:
     var useful := max_useful_workers(forecast)
+    if useful != MAX_USEFUL_UNBOUNDED:
+        useful = maxi(useful, useful_floor)
     if useful == MAX_USEFUL_UNBOUNDED or workers < useful:
         return {"can_add": idle > 0, "note": ""}
     # At/over this source's max-useful: the `+` is capped by the source, not by idle. Explain only

@@ -89,6 +89,22 @@ const UNDER_HERDED_WORK_HERD_ID := "game_aurochs_uh"
 ## comes from (staffed 2 < needed 4), so the two read from one const rather than two loose literals.
 const UNDER_HERDED_WORK_HERDERS_NEEDED := 4
 
+## THE HERDER-FLOOR ROW (`band_panel_work_herder_floor`) — a MANAGED herd whose crew requirement is
+## LARGER than what its take saturates, which is the only shape that can expose the bug: the row flags
+## the herd under-herded and, without the floor, disables the very `+` that would staff the 3rd herder.
+## The numbers are the playtest's Wild Fowl. `ceil(0.09 take ÷ 0.05 per worker) = 2` is the take-side
+## max-useful; the crew is 3; the row is staffed at 2 with idle workers free, so the `+` is gated by
+## the source and by nothing else. `food_per_animal` is deliberately ABSENT — a whole-animal quantum
+## would re-derive the cap through the carry model and the frame would stop testing the floor.
+const HERDER_FLOOR_HERD_ID := "game_fowl_hf"
+const HERDER_FLOOR_HERDERS_NEEDED := 3
+const HERDER_FLOOR_STAFFED := 2
+const HERDER_FLOOR_PER_WORKER := 0.05
+const HERDER_FLOOR_SUSTAIN_CEILING := 0.09
+## What `max_useful_workers` answers for that pair, and what the cap would be WITHOUT the floor —
+## named because both cap twins are asserted against it and against the crew that must outrank it.
+const HERDER_FLOOR_TAKE_USEFUL := 2
+
 ## THE SOURCE-RUNG BOARD — one row per rung of both ladders, on ONE band, so the marks are judged
 ## against each other rather than one frame at a time. Wild carries NO mark (that is the design), so
 ## it is on the board as the control: without it the frame cannot show that absence reads as wild
@@ -596,6 +612,23 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
+
+	# THE HERDER FLOOR — the board must not flag a problem and then disable its own remedy. A managed
+	# Wild Fowl herd grew to owe 3 keepers while its take saturates at 2 workers, and the row is staffed
+	# at 2 with idle workers free. The take-side max-useful alone would gate the `+` dead at 2, directly
+	# under the ⚠ that says a 3rd herder is needed (the playtest report). Both cap twins now floor on
+	# `SourceForecast.herd_crew_floor`, so the row's `+` reaches the crew the sim is asking for — and the
+	# assertion states that as the twin invariant, which a PNG structurally cannot carry.
+	_hud.update_herds(_herder_floor_herd_fixtures())
+	_push_bands([_herder_floor_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_work_herder_floor")
+	_assert_zones_within_bounds()
+	_assert_work_zone_readable()
+	_assert_zone_content_fits()
+	_assert_herder_floor_row(HERDER_FLOOR_HERD_ID)
 
 	# THE SOURCE-RUNG BOARD — five rows, one per rung of the two ladders, on ONE band so the marks are
 	# read against each other: wild forage (NO mark, the control) · 🌾 Tended Patch · ▦ Field · ◎
@@ -1398,6 +1431,95 @@ func _under_herded_work_herd_fixtures() -> Array:
 	}
 	_set_managed_herders(penned, UNDER_HERDED_WORK_HERDERS_NEEDED)
 	return [penned]
+
+## The band working that Wild Fowl: 2 herders on it (below the crew of 3) and idle workers free, on an
+## EXTRACTIVE rung so `herd_crew_floor` reads the ownership-gated `herders_needed` — the field the row's
+## own under-herded ⚠ gates on, which is the whole point of the frame.
+func _herder_floor_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 919
+	band["id"] = "Band 19"
+	band["labor_assignments"] = [
+		{"kind": "hunt", "workers": HERDER_FLOOR_STAFFED,
+			"workers_needed": HERDER_FLOOR_HERDERS_NEEDED, "policy": "sustain",
+			"fauna_id": HERDER_FLOOR_HERD_ID, "target_x": 70, "target_y": 17,
+			"actual_yield": HERDER_FLOOR_SUSTAIN_CEILING,
+			"sustainable_yield": HERDER_FLOOR_SUSTAIN_CEILING, "overdraws": false},
+	]
+	return band
+
+## The herd itself — TAMED but unpenned (the ◎ pastoral rung), so it is owned and really does owe the
+## keepers its `herders_needed` names, while its take stays small enough that the take-side max-useful
+## (2) lands BELOW that crew (3).
+func _herder_floor_herd_fixtures() -> Array:
+	var fowl := {
+		"id": HERDER_FLOOR_HERD_ID, "species": "Wild Fowl", "x": 70, "y": 17,
+		"population": 60, "ecology_phase": "thriving", "huntable": true,
+		"domestication": 1.0, "corralled": false,
+		"per_worker_yield": HERDER_FLOOR_PER_WORKER,
+		"hunt_policy_ceilings": {
+			"sustain": HERDER_FLOOR_SUSTAIN_CEILING, "surplus": 0.14, "deplete": 0.20,
+			"eradicate": 0.30, "tame": 0.05, "corral": 0.05,
+		},
+	}
+	_set_managed_herders(fowl, HERDER_FLOOR_HERDERS_NEEDED)
+	return [fowl]
+
+## THE INVARIANT AS A TEST: one row cannot flag a problem and disable its own remedy, and the two cap
+## twins cannot gate differently.
+##
+## Three claims, and the middle one is what makes the other two non-vacuous:
+##   1. the row still carries the under-herded ⚠ — the board KNOWS the herd is short a keeper;
+##   2. its `+` is ENABLED at the staffed 2, so the remedy the ⚠ demands is reachable;
+##   3. `source_worker_cap_state` (the worked row) and `_forecast_worker_cap` (the compose stepper)
+##      answer with the SAME ceiling — the crew of 3, not the take-side 2 — which is the promise the
+##      two twins make by sitting beside each other.
+func _assert_herder_floor_row(herd_id: String) -> void:
+	var band: Dictionary = _hud._band_labor._panel_band
+	var idle := _hud._band_labor.effective_idle(band)
+	if idle <= 0:
+		push_error("band_panel_preview: herder-floor frame needs idle workers to gate on the source")
+		return
+	var found := false
+	for model in _hud._bandpanel._work_source_models(band, idle):
+		var m: Dictionary = model
+		if String(m.get("herd_id", "")) != herd_id:
+			continue
+		found = true
+		if not bool(m.get("under_herded", false)):
+			push_error("band_panel_preview: expected under_herded on the Hunt row for %s" % herd_id)
+		elif not bool(m.get("can_add", false)):
+			push_error(("band_panel_preview: the under-herded row for %s disables its own `+` at %d "
+				+ "workers with %d idle — the board flags the shed and refuses the fix")
+				% [herd_id, int(m.get("workers", 0)), idle])
+		else:
+			print("band_panel_preview: assert OK — the under-herded row keeps its `+` live (crew %d > take-useful %d)"
+				% [HERDER_FLOOR_HERDERS_NEEDED, HERDER_FLOOR_TAKE_USEFUL])
+	if not found:
+		push_error("band_panel_preview: no Hunt work row for %s" % herd_id)
+		return
+	# The twins, asked the same question about the same herd+policy. `_forecast_worker_cap` is given an
+	# assignable count above both candidate ceilings so its answer IS the usefulness ceiling and not a
+	# labor bound; `source_worker_cap_state` is probed on either side of that ceiling.
+	var herd := _hud._band_labor.find_world_herd(herd_id)
+	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, "sustain")
+	var floor_workers := SourceForecast.herd_crew_floor(herd, forecast)
+	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(
+		forecast, HERDER_FLOOR_HERDERS_NEEDED + 1, floor_workers)["cap"])
+	var row_below: bool = bool(SourceForecast.source_worker_cap_state(
+		forecast, HERDER_FLOOR_HERDERS_NEEDED - 1, 1, floor_workers)["can_add"])
+	var row_at: bool = bool(SourceForecast.source_worker_cap_state(
+		forecast, HERDER_FLOOR_HERDERS_NEEDED, 1, floor_workers)["can_add"])
+	if compose_cap != HERDER_FLOOR_HERDERS_NEEDED:
+		push_error("band_panel_preview: the compose stepper caps at %d, not the crew of %d"
+			% [compose_cap, HERDER_FLOOR_HERDERS_NEEDED])
+	elif not (row_below and not row_at):
+		push_error(("band_panel_preview: the worked row does not gate at the crew of %d "
+			+ "(can_add below=%s, at=%s)") % [HERDER_FLOOR_HERDERS_NEEDED, row_below, row_at])
+	else:
+		print("band_panel_preview: assert OK — both cap twins gate at the crew of %d, above the take-useful %d"
+			% [HERDER_FLOOR_HERDERS_NEEDED, HERDER_FLOOR_TAKE_USEFUL])
 
 ## The under-contained Hunt row must carry the shed flag: the ⚠ mark, the drifting-off note, and the
 ## `under_herded` model flag the row + inspector tint from.
