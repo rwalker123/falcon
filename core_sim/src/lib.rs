@@ -174,10 +174,11 @@ pub use forage::{
     default_species_for_rung, effective_forage_capacity, forage_source_yield_preview,
     patch_concentration, patch_provisions_per_biomass, patch_species_quality,
     project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
-    rung_site_refusal, spawn_initial_forage, species_is_legal_here, tile_flora_composition,
-    tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
-    SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, FULL_TILE_CONCENTRATION,
-    NO_CONCENTRATION, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID,
+    rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
+    tended_take_trade_goods, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
+    wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO,
+    CULTIVATION_DISCOVERY_ID, FULL_TILE_CONCENTRATION, NO_CONCENTRATION, NO_FORAGE_SEASON,
+    SEED_SELECTION_DISCOVERY_ID,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};
