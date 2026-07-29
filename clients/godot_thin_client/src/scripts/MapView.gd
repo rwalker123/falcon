@@ -1861,7 +1861,14 @@ func reset_world_state() -> void:
 	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
 	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
 	# and stale knowledge here would mark its wild sources as ready to climb.
-	faction_knowledge.clear()
+	# REBIND, never `.clear()`: this dict is the HUD's OWN row held BY REFERENCE
+	# (`TopBarReadouts.faction_tracks()` returns `_intensification_knowledge[faction]` uncopied,
+	# `Hud` emits that same object on `faction_knowledge_changed`, `set_faction_knowledge` stores it
+	# as-is), so clearing would reach back through the reference and empty the live knowledge strip.
+	# Today only the call ORDER in `Main._reset_per_world_state` — HUD reset before MapView's —
+	# masks that; dropping the reference is what makes it correct regardless of order. Same idiom as
+	# `BandOverlayRenderer.reset_world_state`'s `_labor_pending = {}`.
+	faction_knowledge = {}
 	herd_trails.clear()
 	culture_layer_map.clear()
 	selected_unit_id = -1

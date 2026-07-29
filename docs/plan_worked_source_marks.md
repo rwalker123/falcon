@@ -55,10 +55,17 @@ visible slot.
 
 Under each ringed marker sits **one badge** carrying the two remaining facts:
 
-- **Crew** — `⚒N`, total workers on *that* source across all bands, its border in the owning band's
-  faction colour (ink-dim when two factions share it).
-- **Ready** — when that source's next rung is available, the border turns `HudStyle.SIGNAL` and the
-  badge gains a `⌃` chevron plus the verb glyph: `⌃▦ ⚒3`.
+- **Crew** — `⚒N`, total workers on *that* source across all bands.
+- **Ready** — when that source's next rung is available, the badge gains a `⌃` chevron plus the verb
+  glyph (`⌃▦ ⚒3`) **and its border turns `HudStyle.SIGNAL`**, so an offer reads at a glance without the
+  eye having to resolve a small glyph. Otherwise the border is the quiet `HudStyle.LINE`.
+
+> **The border carries READINESS, not ownership.** An earlier cut of this plan gave it the owning
+> band's faction colour, with ink-dim for a source two factions share. That is dropped, and the
+> reason is worth recording: the mark pass filters on `MapView._is_player_unit`, so **only the
+> player's own work is ever marked** — a faction colour would be a constant, carrying no information,
+> while spending the one channel the badge has on its most useful signal. If foreign work is ever
+> surfaced, ownership needs a channel of its own rather than this one back.
 
 One plate, not two: with three sources on a hex, two elements each is six things competing for the
 same forty pixels.
