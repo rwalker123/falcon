@@ -285,6 +285,9 @@ func _ready() -> void:
         if hud != null and hud.has_signal("labor_pending_changed") and map_view.has_method("set_labor_pending"):
             if not hud.is_connected("labor_pending_changed", Callable(map_view, "set_labor_pending")):
                 hud.connect("labor_pending_changed", Callable(map_view, "set_labor_pending"))
+        if hud != null and hud.has_signal("faction_knowledge_changed") and map_view.has_method("set_faction_knowledge"):
+            if not hud.is_connected("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge")):
+                hud.connect("faction_knowledge_changed", Callable(map_view, "set_faction_knowledge"))
     if map_view != null and map_view.has_signal("overlay_legend_changed") and hud != null and hud.has_method("update_overlay_legend"):
         map_view.connect("overlay_legend_changed", Callable(self, "_on_overlay_legend_changed"))
         if map_view.has_method("refresh_overlay_legend"):

@@ -62,3 +62,28 @@ Verify visual changes via `tools/map_preview.gd` (`godot --path . res://tools/ma
 `map_stage_glyphs.png` (the ⛺→🛖→🏘️ progression + empty-stage neutral non-circular fallback marker) + the existing
 labor-highlight states).
 
+
+## The slot lookup is public, and the overflow chip reports what it hides
+
+The worked-source marks (`.claude/rules/client/overlay-channels.md`) dock to a source's OWN marker
+rather than its hex, so the slot system's answers are public: **`slot_of(key)`** (`0..cap-1`, or `-1`
+for overflowed/LOD-suppressed), **`slot_center`**, **`overflow_at(tile)`**, and the two key builders
+**`food_key` / `herd_key`** — so a mark and the marker it rides can never disagree about a source's
+identity. `BandOverlayRenderer` reaches all of them through `MapView` pass-throughs
+(`secondary_slot_of` / `secondary_slot_center` / `secondary_food_key` / `secondary_herd_key`), the
+same convention as `_hex_center` / `_herd_by_id` — **no renderer holds another**.
+
+**THE `+N` CHIP CARRIES WHAT IT HIDES.** Three visible slots is the right budget — six badges on a hex
+is not a map — but a cap that drops state SILENTLY reads as "nothing here", which is exactly the
+failure the worked-source marks exist to fix at a different scale. So the chip appends the hidden
+sources' rolled-up state, severity-ordered and at most two marks wide: `⚠` trouble, `⌃` a rung on
+offer, `⚒` merely worked (`_hidden_marks`, fed by `set_hidden_source_state` which `MapView._draw`
+threads across from the mark pass). The marks are the badges' own vocabulary, so the chip needs no
+legend.
+
+**Reaching a hidden source is NOT the chip's job** — re-clicking the hex cycles the whole occupant
+stack, land included (`map-renderers.md` → Select-then-cycle). The marks SIGNAL; the cycle REACHES.
+
+**A ready source is deliberately NOT promoted into a visible slot.** Slot fill is sequential precisely
+so icons never jump between frames; reordering on a state change would make a herd swap corners the
+turn a knowledge track completes. Frame: `map_overflow_worked`.

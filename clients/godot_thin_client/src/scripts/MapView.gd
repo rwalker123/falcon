@@ -510,6 +510,8 @@ var scout_sites: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
+## Player faction knowledge, pushed from the HUD — see `set_faction_knowledge`.
+var faction_knowledge: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -1466,11 +1468,22 @@ func _draw() -> void:
 	# per-tile river-edge mask — the water is drawn exactly on the edge the future crossing cost applies to.)
 	_annotations.draw_crisis_annotations(radius, origin)
 
-	# Selected player band: highlight what it's working (forage tiles / hunted herds) and
-	# its assignable reach (work-range ring). Drawn before the
-	# unit/herd markers so those sit on top of the tile tints. Its per-source yield LABELS are the
-	# exception — they are queued here and flushed at the very end of _draw (see
-	# _band_overlays.flush_yield_labels).
+	# SECONDARY MARKER SLOTS ARE COMPUTED HERE, not beside the marker draws below, because the
+	# worked-source marks dock a ring to the SOURCE's own marker and therefore need its slot before
+	# they can draw. This is a PURE computation over `discovered_sites` / `food_sites` / `herds` /
+	# `last_hex_radius`, none of which mutate during `_draw`, so hoisting it above the overlay pass is
+	# behaviour-neutral for the marker draws that still read the result further down.
+	_secondary_markers.compute_slots()
+
+	# Every player band's worked sources — a ring on each source's OWN marker, bold for the selected
+	# band and thin for the rest, plus a faint tile outline as the far-zoom/overflow fallback. NOT
+	# selection-gated: this is what makes "what are my people doing" answerable without clicking.
+	_band_overlays.draw_worked_source_marks(radius, origin)
+
+	# Selected player band: its assignable reach (the three range borders), the band→herd links, the
+	# optimistic pending overlay and the travel destination — the things SELECTION buys, on top of the
+	# always-on marks above. Its per-source yield LABELS are the exception — they are queued here and
+	# flushed at the very end of _draw (see _band_overlays.flush_yield_labels).
 	_band_overlays.draw_band_work_highlights(radius, origin)
 
 	# Selected herd: its grazing range (the ground that sets its carrying capacity), drawn over the
@@ -1488,13 +1501,16 @@ func _draw() -> void:
 	_draw_supply_links(radius, origin)
 	_band_markers.draw_primary_bands(radius, origin)
 
-	_secondary_markers.compute_slots()
+	# (Slots were computed above, before the worked-source marks that dock to them.)
 	for herd in herds:
 		_secondary_markers.draw_herd(herd, radius, origin)
 	for site in food_sites:
 		_secondary_markers.draw_food_site(site, radius, origin)
 	for wsite in discovered_sites:
 		_secondary_markers.draw_discovered_site(wsite, radius, origin)
+	# The chip reports what the cap hid, so it needs the mark pass's roll-up (threaded across here so
+	# neither renderer holds the other).
+	_secondary_markers.set_hidden_source_state(_band_overlays.hidden_source_state())
 	_secondary_markers.draw_secondary_overflow(radius, origin)
 
 	_secondary_markers.draw_harvest_markers(radius, origin)
@@ -1855,6 +1871,17 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## Not cleared, deliberately: `active_overlay_key`, the trade-overlay toggle, the terrain highlight id
 ## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
 func reset_world_state() -> void:
+	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
+	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
+	# and stale knowledge here would mark its wild sources as ready to climb.
+	# REBIND, never `.clear()`: this dict is the HUD's OWN row held BY REFERENCE
+	# (`TopBarReadouts.faction_tracks()` returns `_intensification_knowledge[faction]` uncopied,
+	# `Hud` emits that same object on `faction_knowledge_changed`, `set_faction_knowledge` stores it
+	# as-is), so clearing would reach back through the reference and empty the live knowledge strip.
+	# Today only the call ORDER in `Main._reset_per_world_state` — HUD reset before MapView's —
+	# masks that; dropping the reference is what makes it correct regardless of order. Same idiom as
+	# `BandOverlayRenderer.reset_world_state`'s `_labor_pending = {}`.
+	faction_knowledge = {}
 	herd_trails.clear()
 	culture_layer_map.clear()
 	selected_unit_id = -1
@@ -4001,6 +4028,30 @@ func _process(delta: float) -> void:
 func set_targeting(info: Dictionary) -> void:
 	_annotations.set_targeting(info)
 	queue_redraw()
+
+## SECONDARY-SLOT PASS-THROUGHS. `BandOverlayRenderer` docks its worked-source marks to the slot a
+## source's marker drew in, and a renderer reaches its siblings through MapView rather than holding
+## one another (the same convention as `_hex_center` / `_herd_by_id` / `_fill_hex`). The KEY builders
+## come through too, so a mark and the marker it rides can never disagree about a source's identity.
+## The player faction's {track: progress} knowledge row (`Hud.faction_knowledge_changed` → `Main`).
+## MapView holds the patches and the herds already; this is the one input the ready mark needs that it
+## cannot see, and it is deliberately the RAW row rather than a derived answer, so `RungGates` stays
+## the single place the rung rules are written.
+func set_faction_knowledge(knowledge: Dictionary) -> void:
+	faction_knowledge = knowledge if knowledge is Dictionary else {}
+	queue_redraw()
+
+func secondary_slot_of(key: String) -> int:
+	return _secondary_markers.slot_of(key)
+
+func secondary_slot_center(tile_center: Vector2, slot: int, radius: float) -> Vector2:
+	return _secondary_markers.slot_center(tile_center, slot, radius)
+
+func secondary_food_key(x: int, y: int) -> String:
+	return _secondary_markers.food_key(x, y)
+
+func secondary_herd_key(herd_id: String) -> String:
+	return _secondary_markers.herd_key(herd_id)
 
 func _is_player_unit(unit: Dictionary) -> bool:
 	return int(unit.get("faction", PLAYER_FACTION_ID)) == PLAYER_FACTION_ID

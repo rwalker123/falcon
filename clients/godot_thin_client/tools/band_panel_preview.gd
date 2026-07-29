@@ -608,6 +608,44 @@ func _ready() -> void:
 	_panel.set_active_tab(&"work")
 	await _settle()
 	await _save("band_panel_under_herded")
+
+	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
+	# and the CONTRAST is what the frame is for: a tended patch on willing ground offers `⌃▦`, a fully
+	# tamed "pen"-ceiling herd offers `⌃🐄`, and a wild-ceiling herd offers nothing however much the
+	# faction knows. A chevron on every row would prove nothing.
+	#
+	# Knowledge is pushed FIRST: the mark reads `RungGates` against the top bar's row, so without it
+	# every source is honestly "not ready" and the board renders a frame with nothing to look at.
+	_hud.update_intensification([{"faction": 0,
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}])
+	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
+	_hud.update_forage_patches(_ready_patch_fixtures())
+	_hud.update_herds(_ready_herd_fixtures())
+	_push_bands([_ready_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	_panel.set_active_tab(&"work")
+	await _settle()
+	await _save("band_panel_rung_ready")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_ready_marks()
+
+	# The READY FILTER chip narrows the board to exactly those rows — its own count beside the
+	# attention chip, never folded into it.
+	_hud._bandpanel._set_work_filter(HudWorkVocab.WORK_FILTER_READY)
+	await _settle()
+	await _save("band_panel_rung_ready_filter")
+	_assert_ready_filter_narrows()
+	_hud._bandpanel._set_work_filter(HudWorkVocab.WORK_FILTER_ALL)
+	_hud.update_intensification([])
+
+	# THE FORAGE JUMP NAMES THE LAND (issue #412, a pre-existing defect the marks made reachable-looking).
+	# A hunt row always named its herd; a forage row focused the tile and left the hex's AUTO-PICK to
+	# choose, so on a hex that also holds a band or a herd it opened THAT instead of the patch. The mark
+	# is what makes it matter: a row that says "this patch can be sown" must land on the patch.
+	#
+	# Asserted, not pictured — the wrong subject and the right one render the same card shape.
+	_assert_forage_jump_names_land()
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
@@ -1359,6 +1397,91 @@ func _find_zone_hosts(node: Node) -> Array:
 ## Two Hunt rows on one band, told apart by the rung they STAND on: a part-built pen (an INVESTMENT
 ## rung, which the work inspector's four-extractive-rung picker cannot highlight) and an ordinary
 ## Sustain take (the control). Same band, same zone, so the two frames differ in exactly the rung.
+## The forage jump must leave the LAND as the lit subject, even on a hex whose roster also holds a
+## band (the auto-pick's preference, and what it used to hand back instead).
+func _assert_forage_jump_names_land() -> void:
+	var subjects: Array = []
+	_hud._bandpanel.roster_occupant_selected.connect(
+		func(kind: String, _id: Variant) -> void: subjects.append(kind), CONNECT_ONE_SHOT)
+	_hud._bandpanel.focus_labor_source(71, 18)
+	_assert_band_panel("forage jump — the row names the LAND, not the hex's auto-picked occupant",
+		subjects == [HudSelectionState.SUBJECT_LAND])
+	_assert_band_panel("forage jump — the land is the lit subject afterwards",
+		_hud._selection.subject() == HudSelectionState.SUBJECT_LAND)
+
+## Pass/fail reporting for the rung-ready assertions, in this harness's `push_error` idiom so a
+## regression fails loudly in the run log rather than waiting to be noticed in a thumbnail.
+func _assert_band_panel(label: String, ok: bool) -> void:
+	if ok:
+		print("band_panel_preview: PASS — ", label)
+	else:
+		push_error("band_panel_preview: FAIL — %s" % label)
+
+## The rung-ready board fixture: three sources, exactly one of each answer the mark can give.
+func _ready_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["entity"] = 940
+	band["id"] = "Band 12"
+	band["labor_assignments"] = [
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "policy": "sustain",
+			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"fauna_id": "ready_tamed", "target_x": 70, "target_y": 17,
+			"actual_yield": 0.30, "sustainable_yield": 0.30},
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+			"fauna_id": "ready_never", "target_x": 69, "target_y": 19,
+			"actual_yield": 0.20, "sustainable_yield": 0.20},
+	]
+	return band
+
+## A TENDED patch on willing ground → its next rung is Sow.
+func _ready_patch_fixtures() -> Array:
+	return [{
+		"x": 71, "y": 18, "ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false, "sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+
+## One fully tamed "pen"-ceiling herd (→ Corral) and one "wild"-ceiling herd that can never climb —
+## the control that proves the mark is selective rather than decorative.
+func _ready_herd_fixtures() -> Array:
+	return [
+		{"id": "ready_tamed", "species": "Aurochs", "x": 70, "y": 17,
+			"population": 210, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 1.0, "husbandry_ceiling": "pen", "per_worker_yield": 0.15,
+			"hunt_policy_ceilings": {"sustain": 0.30, "surplus": 0.90, "deplete": 1.40,
+				"eradicate": 2.00, "corral": 0.70}},
+		{"id": "ready_never", "species": "Roe Deer", "x": 69, "y": 19,
+			"population": 90, "ecology_phase": "thriving", "huntable": true,
+			"domestication": 0.0, "husbandry_ceiling": "wild", "per_worker_yield": 0.10,
+			"hunt_policy_ceilings": {"sustain": 0.20, "surplus": 0.60, "deplete": 0.90,
+				"eradicate": 1.40}},
+	]
+
+## The mark is SELECTIVE — two of the three rows offer a rung, the wild-ceiling herd none. Asserted
+## rather than eyeballed: three chevrons and one chevron look similar in a thumbnail, and "the mark
+## renders" is a much weaker claim than "the mark renders where it should and nowhere else".
+func _assert_ready_marks() -> void:
+	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
+	var ready: Array = models.filter(func(m): return String(m["ready_policy"]) != "")
+	_assert_band_panel("ready — exactly two of the three worked sources offer a rung", ready.size() == 2)
+	var by_policy: Array = ready.map(func(m): return String(m["ready_policy"]))
+	by_policy.sort()
+	_assert_band_panel("ready — the tended patch offers Sow and the tamed herd Corral",
+		by_policy == ["corral", "sow"])
+	_assert_band_panel("ready — the wild-ceiling herd offers nothing",
+		models.filter(func(m): return String(m["herd_id"]) == "ready_never" \
+			and String(m["ready_policy"]) == "").size() == 1)
+
+## The ready chip narrows the board to the offering rows and nothing else.
+func _assert_ready_filter_narrows() -> void:
+	var models: Array = _hud._bandpanel._work_source_models(_hud._band_labor.panel_band(), 0)
+	var shown: Array = _hud._bandpanel._filter_work_models(models)
+	_assert_band_panel("ready filter — the board narrows to the two offering rows", shown.size() == 2)
+	_assert_band_panel("ready filter — every shown row actually offers a rung",
+		shown.filter(func(m): return String(m["ready_policy"]) == "").is_empty())
+
 func _investment_policy_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["entity"] = 912

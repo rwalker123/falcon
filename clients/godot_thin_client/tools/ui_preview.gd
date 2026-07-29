@@ -1147,7 +1147,7 @@ func _ready() -> void:
 		_has_label_containing(_hud._drawercompose._compose_sheet, PAUSED_CULTIVATE_REMEDY_NEEDLE))
 
 	# State 6b-cultivate-done-standing — the DEFENSIVE twin: the same standing Cultivate on a patch
-	# whose build has FINISHED. `_forage_policy_gates` retires the rung ("Already a Tended Patch — ♻
+	# whose build has FINISHED. `RungGates.forage_gates` retires the rung ("Already a Tended Patch — ♻
 	# Sustain-forage it to harvest") and it still renders selected + gated, so the sheet, the stepper
 	# and the `Now N` header all speak about ONE policy — the "Now 2 over a cap of 1" incoherence was
 	# two numbers computed for two different rungs. The sim retires a completed rung onto Sustain, so
@@ -3404,6 +3404,94 @@ func _ready() -> void:
 		_hud._telling._entries.is_empty())
 	await _save("world_reset")
 
+	# ---- the RUNG-READY predicate (issue #412) ---------------------------------------------------
+	# `RungGates.next_rung_ready` is what decides whether a worked source wears the ⌃ mark on the map
+	# and on the work board, and it is pure — no node, no snapshot — so it is asserted DIRECTLY over
+	# constructed sources rather than inferred from a picture. A PNG could not carry these claims: an
+	# absent mark and a mark the renderer happened to skip look identical.
+	#
+	# Each pair below pins ONE of the three conditions (§3 of the design doc) by flipping exactly one
+	# input, so a regression names which condition broke.
+	var rr_knows_all := {"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}
+	var rr_knows_none := {"cultivation": 0.4, "seed_selection": 0.0, "herding": 0.3, "penning": 0.0}
+	var rr_wild_patch := {
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"can_cultivate": true, "can_sow": true}],
+	}
+	var rr_tended_sowable := {
+		"ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+		"sow_site_refusal": "",
+		"composition": [{"can_cultivate": true, "can_sow": true}],
+	}
+	# THE ORDERING FIXTURE, and it has to be a WILD patch on sowable ground. `is_cultivated` retires
+	# Cultivate outright, so on a TENDED patch the two rungs are mutually exclusive and the answer is
+	# Sow whichever order they are tested in — an ordering assertion there passes for the wrong reason
+	# (measured: swapping the branches left it green). Sow needs NO prior patch, so this is the one
+	# shape that clears BOTH gates at once and can tell the orders apart.
+	var rr_wild_sowable := {
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"sow_site_refusal": "",
+		"composition": [{"can_cultivate": true, "can_sow": true}],
+	}
+	var rr_wild_herd := {"domestication": 0.0, "husbandry_ceiling": "pen"}
+	var rr_tamed_herd := {"domestication": 1.0, "husbandry_ceiling": "pen"}
+	var rr_forever_wild := {"domestication": 0.0, "husbandry_ceiling": "wild"}
+	# UNGATED: knowledge is the difference, nothing else.
+	_assert_hud("ready — a Thriving wild patch offers Cultivate once Cultivation is known",
+		String(RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_all).get("policy", "")) == "cultivate")
+	_assert_hud("ready — the same patch offers NOTHING while Cultivation is unlearned",
+		RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_none).is_empty())
+	# HIGHEST RUNG FIRST — the claim, on the only shape that can carry it (see rr_wild_sowable).
+	_assert_hud("ready — a wild patch clearing BOTH gates answers the HIGHER rung (Sow, not Cultivate)",
+		String(RungGates.next_rung_ready("forage", rr_wild_sowable, "sustain", rr_knows_all).get("policy", "")) == "sow")
+	# And the retire rule that makes the tended case mutually exclusive in the first place.
+	_assert_hud("ready — a tended patch offers Sow, its Cultivate rung being retired as finished",
+		String(RungGates.next_rung_ready("forage", rr_tended_sowable, "sustain", rr_knows_all).get("policy", "")) == "sow")
+	# OFFERED, the LAND half: the wild patch above is refused for Sow by the ground itself.
+	_assert_hud("ready — dry ground withholds Sow even with Seed Selection known",
+		String(RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_all).get("policy", "")) != "sow")
+	# NOT ALREADY RUNNING: the verb in flight is progress, not an opportunity.
+	_assert_hud("ready — a patch already being cultivated offers nothing (the verb is in flight)",
+		RungGates.next_rung_ready("forage", rr_wild_patch, "cultivate", rr_knows_all).is_empty())
+	# The animal web: same three conditions, one knowledge per transition.
+	_assert_hud("ready — a wild herd offers Tame once Herding is known",
+		String(RungGates.next_rung_ready("hunt", rr_wild_herd, "sustain", rr_knows_all).get("policy", "")) == "tame")
+	_assert_hud("ready — a fully tamed herd advances to Corral, not back to Tame",
+		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, "sustain", rr_knows_all).get("policy", "")) == "corral")
+	# OFFERED, the SPECIES half: a "wild"-ceiling animal never climbs, however much we know.
+	_assert_hud("ready — a wild-ceiling species offers nothing at any knowledge level",
+		RungGates.next_rung_ready("hunt", rr_forever_wild, "sustain", rr_knows_all).is_empty())
+	# The mark names the rung with the SAME glyph the policy picker uses, never a private one.
+	# THE RUNG UNDER WAY — the state that used to render nothing. `next_rung_ready` excludes the verb
+	# in flight (a patch mid-Cultivate is progress, not an opportunity), which was right and left the
+	# in-flight case unmarked, so an actively-cultivated patch looked emptier than an untouched one.
+	var rr_building_patch := {
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"cultivation_progress": 0.42, "sow_site_refusal": "too_dry",
+		"composition": [{"can_cultivate": true, "can_sow": false}],
+	}
+	_assert_hud("building — a patch under Cultivate reports that verb and its meter",
+		RungGates.rung_in_progress("forage", rr_building_patch, "cultivate") == \
+			{"policy": "cultivate", "glyph": FoodIcons.for_policy("cultivate"), "progress": 0.42})
+	# Keyed on the POLICY, not on a non-zero meter: a half-built patch nobody is working is a standing
+	# rung, which is what the rung glyph is for.
+	_assert_hud("building — the same patch under Sustain is NOT building (a meter is not work)",
+		RungGates.rung_in_progress("forage", rr_building_patch, "sustain").is_empty())
+	# Each verb names its OWN meter — reading the wrong one would report a confident wrong number.
+	_assert_hud("building — Sow reads field_progress, not the cultivation meter beside it",
+		float(RungGates.rung_in_progress("forage", {"field_progress": 0.7, "cultivation_progress": 0.2},
+			"sow").get("progress", -1.0)) == 0.7)
+	_assert_hud("building — Corral reads corral_progress on a herd",
+		float(RungGates.rung_in_progress("hunt", {"corral_progress": 0.25, "domestication": 1.0},
+			"corral").get("progress", -1.0)) == 0.25)
+	# The two answers are mutually exclusive, which is what lets one badge slot carry both states.
+	_assert_hud("building and ready are mutually exclusive on one source",
+		RungGates.next_rung_ready("forage", rr_building_patch, "cultivate", rr_knows_all).is_empty() \
+			and not RungGates.rung_in_progress("forage", rr_building_patch, "cultivate").is_empty())
+	_assert_hud("ready — the answer carries the policy's own glyph",
+		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, "sustain", rr_knows_all).get("glyph", "")) == FoodIcons.for_policy("corral"))
+
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
 	var probe_layer := CanvasLayer.new()
@@ -5498,7 +5586,7 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 ## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
 ## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which is the
 ## point the husbandry-ceiling pass RETIRES ◎ Tame from the picker (its per-source meter is full and
-## 🐄 Corral is what comes next) and `_hunt_policy_gates` answers "Already fully tamed …" for it. It is
+## 🐄 Corral is what comes next) and `RungGates.hunt_gates` answers "Already fully tamed …" for it. It is
 ## managed at that point, so it carries a real herder crew through `_set_managed_herders` — the field
 ## pair every herd fixture owes the frame guard.
 func _fully_tamed_herd_fixture() -> Dictionary:

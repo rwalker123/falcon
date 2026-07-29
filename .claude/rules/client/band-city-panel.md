@@ -529,3 +529,42 @@ Frames `band_panel_work_trade_rows` (mixed board — food row, food+trade row, t
 unassigned, so the sole hunt pays trade: `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` — the
 aggregate suppression path the mixed board cannot reach). The rule and the axis contract live in
 `labor-ui.md`.
+
+
+## The WORK board's rung-ready mark
+
+Issue #412, `docs/plan_worked_source_marks.md` §5 — the panel twin of the map badge.
+
+A work row carries **three orthogonal glyph axes, each in its own reserved slot**, and collapsing any
+two would erase the distinction the feature exists to draw:
+
+| slot | model key | question |
+|---|---|---|
+| rung | `rung_glyph` | what the source **IS** (its standing rung) |
+| ready | `ready_glyph` / `building_glyph` | what it **COULD BE** (`⌃` + the offered rung's glyph, SIGNAL) or what it **IS BECOMING** (`<glyph><percent>%`, SIGNAL_DEEP) — one slot, two mutually exclusive states |
+| marks | `marks` | what the band is **DOING** (the verb in flight, plus `⚠`) |
+
+The ready answer is `RungGates.next_rung_ready`, the same call the map badge and the compose sheet's
+gates make, so the three surfaces cannot disagree about what is climbable. The `⌃` chevron is
+load-bearing, not decoration: the verb and standing-rung glyphs COLLIDE (`▦` is both "Sow" and "this
+is a Field"), so the glyph alone would read as *done*.
+
+**THE SEVERITY STRIPE IS UNTOUCHED**, and the `⌃N ready` chip is its own count beside the `⚠` chip
+rather than folded into it. The stripe and the attention chip mean TROUBLE (overdrawing, overstaffed,
+an unacknowledged edit); a rung on offer is an OPPORTUNITY, and one control meaning both finds
+neither. The chip is what makes the knowledge-completion moment legible — a track finishes and a dozen
+rows light at once.
+
+`BandPanelController` holds **`_topbar` as a typed collaborator for `faction_tracks` ONLY**, the same
+narrow reason `DrawerComposeController` holds it, and a typed ref rather than a Callable per the
+extraction rules. Do not grow other reads through it.
+
+**`focus_labor_source` names the LAND for a forage row.** It always named the herd for a hunt row
+(`roster_occupant_selected("herd", herd_id)`), but the forage branch only focused the tile and let the
+hex's AUTO-PICK choose the subject — so on a shared hex it opened whichever band or herd stood there
+rather than the patch, jumping to a place but not to a thing. The land IS the patch's subject (its rung
+rows and its Sow control live on the land card), and `SUBJECT_LAND` is the established third kind on
+the `(kind, id)` contract that the panel's own land row and the map's select-then-cycle already use.
+
+Frames: `band_panel_rung_ready` (a tended patch offers Sow, a tamed pen-ceiling Aurochs offers Corral,
+a wild-ceiling Roe Deer offers nothing — the CONTRAST is the point) and `band_panel_rung_ready_filter`.

@@ -514,6 +514,23 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_label_overlap")
 	_map.set_labor_pending({})  # leave the pending overlay clear for the following states
+	# State A-ready — THE ⌃ READY MARK (issue #412). Same band, but now the sources can climb: a
+	# TENDED patch on sowable ground offers Sow, a fully TAMED "pen"-ceiling herd offers Corral, and a
+	# third source (the wolf pack, ceiling "wild") offers nothing however much we know. The contrast is
+	# the point — a chevron on every marker would prove nothing.
+	#
+	# Faction knowledge is PUSHED, not inherited: `map_preview` has no HUD, so the row that
+	# `Hud.faction_knowledge_changed` normally supplies is set here directly. Without it every source
+	# reads "not ready", which is the correct degradation but an unreadable frame.
+	_map.display_snapshot(_snapshot_work_ready())
+	_map.set_faction_knowledge({
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+	})
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_worked_ready")
+	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
@@ -605,6 +622,21 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_mixed_hex")
+
+	# State — THE OVERFLOW CHIP CARRIES WHAT IT HIDES (issue #412). Same crowded hex, but now the band
+	# WORKS the herd and the food site standing on it, and the three wonders take every visible slot —
+	# so both worked sources fall past the cap and have no marker to ring. Without the roll-up the chip
+	# would read a bare `+2` over a hex where two sources are staffed and one can climb a rung, which
+	# is precisely the "silent cap reads as nothing here" failure this feature exists to fix.
+	_map.display_snapshot(_snapshot_mixed_worked())
+	_map.set_faction_knowledge({
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+	})
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_overflow_worked")
+	_map.set_faction_knowledge({})
 
 	# State "riverine split" — the terrain-aware riverine_delta food glyph. Two riverine_delta food
 	# sites on different terrains in one frame: the LEFT marker sits on an open navigable river (🐟),
@@ -764,6 +796,16 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_travel_expedition")
+
+	# State — A HUNT EXPEDITION'S QUARRY IS MARKED (issue #412). The party is outbound to the wolf
+	# pack while the resident band hunts the deer locally: two different routes to a worked source,
+	# both wearing the same red ring and crew badge, because the mark describes the SOURCE and not who
+	# reached it.
+	_map.display_snapshot(_snapshot_hunt_expedition())
+	_map.selected_unit_id = TRAVEL_EXPEDITION_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_hunt_expedition_quarry")
 
 	# State Q — MULTI-BIOME terrain + edge-blend (Approach B: per-pixel biome-blend shader). Four vertical
 	# bands of the four REAL base textures (the other 33 are noise placeholders): hot_desert_erg /
@@ -1925,7 +1967,55 @@ func _snapshot_work() -> Dictionary:
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
 	# frame: green R2 innermost, azure R4, red hunt R5 outermost (the deer sits on the hunt border).
-	return _base_snapshot(_band(assignments, 2, 4), [_deer_herd(), _pelt_only_wolf_herd()])
+	var snap := _base_snapshot(_band(assignments, 2, 4), [_deer_herd(), _pelt_only_wolf_herd()])
+	# BOTH worked forage tiles carry a FOOD SITE, and that is load-bearing rather than dressing: the
+	# worked mark is a ring on the SOURCE's own marker (docs/plan_worked_source_marks.md §2.1), so a
+	# forage assignment on a tile with no site has nothing to ring and degrades to the bare tile
+	# outline. Without these two the frame could not show the green ring at all — which is exactly how
+	# the first cut of this state rendered, and why the fallback is visible here as well as the ring.
+	snap["food_modules"] = [
+		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
+		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
+	]
+	return snap
+
+## State A-ready fixture: the same worked band, with its sources standing one rung short of the top so
+## the ⌃ mark has something to offer. The deer is fully tamed with a "pen" ceiling (→ Corral); the
+## first forage tile is a tended patch on willing ground (→ Sow); the wolf pack keeps its "wild"
+## ceiling, so it stays unmarked and proves the mark is selective.
+func _snapshot_work_ready() -> Dictionary:
+	var snap := _snapshot_work()
+	snap["forage_patches"] = [{
+		"x": FORAGE_A_X, "y": FORAGE_A_Y,
+		"ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false,
+		"sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}, {
+		# The SECOND worked tile is mid-Cultivate — the state that used to render nothing at all, so
+		# a patch you were actively building looked emptier than the untouched one beside it. Its
+		# assignment's policy is switched to `cultivate` below, which is what makes it "in progress"
+		# (a meter alone is a standing rung, not work in flight).
+		"x": 9, "y": 8,
+		"ecology_phase": "thriving",
+		"is_cultivated": false, "is_field": false,
+		"cultivation_progress": 0.42,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"species": "wild_emmer", "display_name": "Wild Emmer",
+			"share": 1.0, "can_cultivate": true, "can_sow": false}],
+	}]
+	for entry_variant in snap["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
+			entry["policy"] = "cultivate"
+			entry["overdraws"] = false
+	for herd_variant in snap["herds"]:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) == "game_deer_07":
+			herd["domestication"] = 1.0
+			herd["husbandry_ceiling"] = "pen"
+	return snap
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
 ## its secondary glyph is drawn over that tile's yield label (the reported failure).
@@ -1978,6 +2068,28 @@ func _expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
 		"expedition_phase": phase,
 		"is_traveling": phase != "awaiting",
 	}
+
+## A HUNTING party and its quarry (issue #412). A hunt expedition carries its target on the COHORT
+## (`expedition_target_herd`) rather than in `labor_assignments`, so before this it was the one kind of
+## work the map never marked: the party walked and the map never said what it was walking to. The
+## resident band beside it hunts a DIFFERENT herd locally, so the frame shows both routes to a marked
+## source in one picture — and the party is still `outbound`, which is exactly when "this herd is
+## already claimed" is worth knowing.
+func _snapshot_hunt_expedition() -> Dictionary:
+	var snap := _base_snapshot(_band([
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "policy": "sustain",
+			"target_x": 13, "target_y": 6, "actual_yield": 0.20, "sustainable_yield": 0.20,
+			"overdraws": false},
+	], 2, 0), [_deer_herd(), _pelt_only_wolf_herd()])
+	var party := _expedition(TRAVEL_EXPEDITION_ENTITY, 8, 5, "outbound")
+	party["id"] = "Hunt Party"
+	party["expedition_mission"] = "hunt"
+	party["expedition_target_herd"] = "game_wolf_03"
+	party["expedition_hunt_policy"] = "deplete"
+	party["travel_target_x"] = 11
+	party["travel_target_y"] = 4
+	snap["populations"].append(party)
+	return snap
 
 func _snapshot_expeditions() -> Dictionary:
 	var snap := _base_snapshot(_band([], 2, 2), [])
@@ -2082,6 +2194,31 @@ func _snapshot_mixed() -> Dictionary:
 			],
 		}],
 	}
+	return snap
+
+## The crowded hex again, with its herd and its food site both WORKED and both pushed past the visible
+## marker cap by the three wonders. The herd is fully tamed on a "pen" ceiling, so one of the two
+## hidden sources is also READY — which is what makes the chip's `⌃` mark mean something here.
+func _snapshot_mixed_worked() -> Dictionary:
+	var snap := _snapshot_mixed()
+	var herds: Array = snap["herds"]
+	var herd: Dictionary = herds[0]
+	herd["domestication"] = 1.0
+	herd["husbandry_ceiling"] = "pen"
+	snap["populations"] = [_band([
+		{"kind": "forage", "workers": 3, "target_x": BAND_X, "target_y": BAND_Y, "policy": "sustain",
+			"actual_yield": 0.31, "sustainable_yield": 0.31, "overdraws": false},
+		{"kind": "hunt", "workers": 2, "fauna_id": String(herd.get("id", "")), "policy": "sustain",
+			"target_x": BAND_X, "target_y": BAND_Y,
+			"actual_yield": 0.22, "sustainable_yield": 0.22, "overdraws": false},
+	], 2, 0)]
+	snap["forage_patches"] = [{
+		"x": BAND_X, "y": BAND_Y,
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
 	return snap
 
 ## Four separate bands on adjacent hexes → the ⛺ / 🛖 / 🏘️ glyph tokens side by side for a direct
