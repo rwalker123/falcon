@@ -7,7 +7,9 @@
 //! `hay_grass` produced **nothing in any currency** while still being drawn down at full MSY every
 //! turn. These tests pin the three routings and, just as importantly, the two ways the fix could go
 //! wrong: an uncommitted patch's flat `Deplete` market sale must be untouched, and a committed patch
-//! must never be credited from *both* routes.
+//! must never be credited from *both* routes. They also pin that the committed route is
+//! **policy-blind** — `Eradicate` credits its take like any other, because that take already pays
+//! food, and the "denial, not commerce" ruling scopes to the flat wild-ground sale alone.
 //!
 //! Every assertion runs against the sim's own payoff functions or the published `SourceYield` row —
 //! never a re-derivation of their arithmetic (the §4.3 rule).
@@ -269,6 +271,7 @@ fn a_tended_cash_crop_under_sustain_credits_trade_goods_and_no_food() {
     let mut app = spawn_world();
     let (tile, coord) = richest_gathered_tile(&mut app);
     seat_tended_patch(&mut app, coord, "grapevine");
+    let before = standing_crop(&app, coord);
     let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
 
     assert_eq!(
@@ -293,9 +296,10 @@ fn a_tended_cash_crop_under_sustain_credits_trade_goods_and_no_food() {
         scalar_zero(),
         "grapevine's vector pays no fodder"
     );
+    let take = take_biomass(before, &app, coord);
     assert!(
-        standing_crop(&app, coord) < f32::MAX,
-        "the patch is gathered, not managed — it is drawn down"
+        take > 0.0,
+        "the patch is gathered, not managed — it is drawn down: took {take} off {before}"
     );
 }
 
@@ -452,6 +456,40 @@ fn a_committed_patch_under_deplete_is_credited_once_from_its_crop() {
     assert!(
         published < crop_only + market_only - EPSILON,
         "the flat market sale must NOT also fire: {published} >= {crop_only} + {market_only}"
+    );
+}
+
+/// **`Eradicate` on a committed stand still pays its crop.** The committed branch is **policy-blind**
+/// on purpose: an `Eradicate` gather already credits **food** out of its take, so refusing trade from
+/// that same take would be the inconsistent case — the vector routes whatever was actually harvested,
+/// in every currency. The surviving *"Eradicate is denial, not commerce"* ruling is about the flat
+/// `forage.market.*` sale on **wild** ground, which this patch does not take; pinned here so a later
+/// reading of that ruling cannot quietly re-gate a committed harvest on policy.
+#[test]
+fn a_committed_cash_crop_under_eradicate_still_credits_its_trade() {
+    let mut app = spawn_world();
+    let (tile, coord) = richest_gathered_tile(&mut app);
+    seat_tended_patch(&mut app, coord, "grapevine");
+    let before = standing_crop(&app, coord);
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Eradicate);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let take = take_biomass(before, &app, coord);
+    assert!(take > 0.0, "an Eradicate strip harvests the stand");
+    let flora = FloraConfig::builtin();
+    let patch = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch exists")
+        .clone();
+    let quoted = tended_take_trade_goods(take, &patch, &flora, NEUTRAL_MULTIPLIER);
+    assert!(quoted > 0.0, "the fixture must earn real trade");
+    assert!(
+        (published_trade(&app, band) - quoted).abs() <= EPSILON,
+        "an Eradicate of a committed crop sells at the crop's own rate: {} vs {quoted}",
+        published_trade(&app, band)
     );
 }
 

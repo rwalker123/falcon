@@ -583,9 +583,14 @@ pub fn advance_labor_allocation(
                     //
                     // An **uncommitted** patch — wild, or an improvement still building — keeps the
                     // original path unchanged: only Deplete sells (Sustain/Surplus/Eradicate produce
-                    // no trade goods; Eradicate is denial, not commerce), at the species-blind
-                    // `forage.market.*` rate. The roster stays economy-neutral until you commit. That
-                    // config block keeps its old name pending the plant-side pass.
+                    // no trade goods; **on this flat wild-ground sale** Eradicate is denial, not
+                    // commerce), at the species-blind `forage.market.*` rate. That ruling is about
+                    // the market sale alone and never about goods carried off a committed stand: the
+                    // branch above is policy-blind because an Eradicate already pays **food** out of
+                    // its take, so refusing trade from that same take would be the inconsistent case
+                    // — the vector routes whatever was actually harvested, in every currency. The
+                    // roster stays economy-neutral until you commit. That config block keeps its old
+                    // name pending the plant-side pass.
                     let forage_trade = if patch_commitment_in_effect(patch, &flora) {
                         tended_take_trade_goods(take, patch, &flora, mult_f)
                     } else if matches!(policy, FollowPolicy::Deplete) {
