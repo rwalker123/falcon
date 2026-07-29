@@ -159,9 +159,8 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
-/// Switch a band's (single) Forage assignment to `policy` — what the client's picker does, and what a
-/// player does the turn an improvement finishes and they want to start harvesting it rather than
-/// building it.
+/// Switch a band's (single) Forage assignment to `policy` — what the client's picker does. (The
+/// *finishing* case needs no picker since issue #420: completion retires the build verb itself.)
 fn set_forage_policy(app: &mut App, band: bevy::prelude::Entity, policy: FollowPolicy) {
     let mut allocation = app
         .world
@@ -470,12 +469,10 @@ fn cultivate_completes_then_pays_the_tended_yield() {
         assert_eq!(registry.cultivated_count(FactionId(0)), 1);
     }
 
-    // **Harvest it to read the payoff.** `Cultivate` is the *build* verb: its dip means "the crew is
-    // preparing ground, not gathering", which stays true once the ground is ready — so a completed
-    // patch left on `Cultivate` still pays the dip, exactly as `Tame` does on an already-tamed herd.
-    // (Slice 7: the retired managed branch ignored the policy and paid the flat rate, so this test
-    // used to read the payoff without ever switching off the build verb.) The player switches to a
-    // harvest policy; so does the test.
+    // **Harvest it to read the payoff.** Since issue #420 the sim retires `Cultivate` onto the
+    // harvest rung on the completing turn, so this is a no-op re-assert — kept because this test
+    // measures the *payoff* and must read it off the harvest rung whatever put the band there. The
+    // retire itself is pinned in `systems::labor::labor_yield_tests`.
     set_forage_policy(&mut app, band, FollowPolicy::Sustain);
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
@@ -561,8 +558,8 @@ fn tended_patch_pays_its_tending_band_place_local_and_draws_down() {
         patch.biomass
     };
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    // Sustain, not Cultivate: this test reads the finished rung's *harvest*, and the build verb pays
-    // its dip whether or not there is anything left to build.
+    // Sustain, not Cultivate: this test reads the finished rung's *harvest*, on a patch seated
+    // already-complete — the rung a band that really built it is retired onto (issue #420).
     spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 

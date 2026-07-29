@@ -218,25 +218,49 @@ static func _button_stylebox(bg: Color, border: Color) -> StyleBoxFlat:
 	sb.content_margin_bottom = 9
 	return sb
 
+## How far a SELECTED-yet-disabled button's text is pulled back from its live colour. It keeps the
+## variant's HUE (so the control still reads as the current choice) at reduced strength (so it still
+## reads as unavailable) instead of collapsing to the `INK_FAINT` a never-chosen disabled control
+## gets — see `button_font_color`'s `selected` argument.
+const BUTTON_SELECTED_DISABLED_TEXT_ALPHA := 0.72
+
 ## THE ONE PLACE a button's text colour is decided, for BOTH kinds of face: the themed one
 ## (`apply_button` feeds it straight into `font_color`) and the hand-built one (a stack of child
 ## Labels, which the theme cannot reach — see `BUTTON_PRIMARY_TEXT`). A caller that builds its own
 ## face asks here rather than repeating a colour, so a new state colour added below arrives on every
 ## face at once instead of only on the themed half.
-static func button_font_color(variant: String = "ghost", disabled: bool = false) -> Color:
-	if disabled:
-		return INK_FAINT
+##
+## `selected` is read ONLY when `disabled`, and it exists because the two states stopped being
+## mutually exclusive: a policy picker now renders the rung a band is STANDING ON even when that rung
+## has become unavailable ("you are doing this, and it is a dead end"). Fading such a control to
+## `INK_FAINT` like any other locked one erases the only mark that says which rung is current,
+## leaving a picker that appears to have no selection at all.
+static func button_font_color(variant: String = "ghost", disabled: bool = false,
+		selected: bool = false) -> Color:
+	var live: Color
 	match variant:
 		"primary":
-			return BUTTON_PRIMARY_TEXT
+			live = BUTTON_PRIMARY_TEXT
 		"armed":
-			return BUTTON_ARMED_TEXT
+			live = BUTTON_ARMED_TEXT
 		_:  # "ghost"
-			return INK
+			live = INK
+	if not disabled:
+		return live
+	if not selected:
+		return INK_FAINT
+	return Color(live, live.a * BUTTON_SELECTED_DISABLED_TEXT_ALPHA)
 
 ## Apply one of the button treatments: "primary" (the main action, cyan),
 ## "ghost" (secondary), or "armed" (an action awaiting cancellation).
-static func apply_button(button: Button, variant: String = "ghost") -> void:
+##
+## `selected_when_disabled` styles the disabled state as "the current choice, unavailable" rather
+## than "locked": the variant's own border survives instead of fading to `LINE_SOFT`, and the text
+## keeps its hue (`button_font_color`'s `selected`). Set it wherever a control can be both the
+## selection and gated — the standing-but-gated policy rung. It changes NOTHING while the button is
+## enabled, so it is safe to set before `disabled` is known.
+static func apply_button(button: Button, variant: String = "ghost",
+		selected_when_disabled: bool = false) -> void:
 	if button == null:
 		return
 	var bg_normal: Color
@@ -264,7 +288,8 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	button.add_theme_stylebox_override("normal", _button_stylebox(bg_normal, border_normal))
 	button.add_theme_stylebox_override("hover", _button_stylebox(bg_hover, border_hover))
 	button.add_theme_stylebox_override("pressed", _button_stylebox(bg_hover, border_hover))
-	var disabled := _button_stylebox(Color(bg_normal.r, bg_normal.g, bg_normal.b, 0.4), LINE_SOFT)
+	var disabled_border := border_normal if selected_when_disabled else LINE_SOFT
+	var disabled := _button_stylebox(Color(bg_normal.r, bg_normal.g, bg_normal.b, 0.4), disabled_border)
 	button.add_theme_stylebox_override("disabled", disabled)
 	var focus := _button_stylebox(bg_normal, SIGNAL)
 	focus.draw_center = false
@@ -274,7 +299,8 @@ static func apply_button(button: Button, variant: String = "ghost") -> void:
 	button.add_theme_color_override("font_hover_color", INK)
 	button.add_theme_color_override("font_pressed_color", text)
 	button.add_theme_color_override("font_focus_color", INK)
-	button.add_theme_color_override("font_disabled_color", button_font_color(variant, true))
+	button.add_theme_color_override("font_disabled_color",
+		button_font_color(variant, true, selected_when_disabled))
 
 # ---- inline link buttons ---------------------------------------------------
 # Padding around an inline link's text. Deliberately far tighter than the boxed

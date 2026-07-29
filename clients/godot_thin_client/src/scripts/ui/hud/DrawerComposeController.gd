@@ -521,6 +521,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if band.is_empty():
         band = resolved
         _compose.set_hunt_band(int(band.get("entity", -1)))
+    # THE BAND'S STANDING RUNG ON THIS HERD, or "" when it does not hunt this herd at all. The staffing
+    # test is what makes it meaningful: `policy_for_hunt` answers with the DEFAULT for an unstaffed
+    # source, so calling it blind would make every fresh sheet look as though the band were standing on
+    # Sustain — and the reset below would then never fire on a genuinely stale composition.
+    var standing_hunt := _band_labor.policy_for_hunt(band, herd_id) \
+        if _band_labor.workers_for_hunt(band, herd_id) > 0 else ""
     if source_changed:
         var staffed := _band_labor.workers_for_hunt(band, herd_id)
         _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP, _band_labor.policy_for_hunt(band, herd_id))
@@ -573,11 +579,31 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD \
                 or float(herd.get("domestication", 0.0)) >= SourceForecast.DOMESTICATION_COMPLETE:
             hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != HudConst.LABOR_POLICY_TAME)
+    # RE-ADMIT THE STANDING RUNG THE CEILING PASS JUST HID — and only ever that one. A band standing on
+    # Tame when its herd finishes taming is the one case the "hidden outright, never greyed" rule above
+    # would otherwise erase the player's own order from the sheet; every other out-of-ceiling rung stays
+    # hidden, since greying it would still imply a reachable prerequisite. This can never widen the
+    # picker beyond what the SIM allows: the sim refuses to put a band on a rung its species' ceiling
+    # forbids, so a rung can only be re-admitted here if the band is genuinely working under it. It is
+    # re-admitted GATED (`_hunt_policy_gates` answers "Already fully tamed …" at a full meter), so the
+    # rung reads as the dead end it is and clearing it stays the player's act.
+    if not is_expedition and standing_hunt != "" and not (standing_hunt in hunt_options):
+        var offered := hunt_options
+        # Filter the canonical ladder rather than appending, so the re-admitted rung lands in its own
+        # rung order instead of after Corral.
+        hunt_options = HudBandLaborState.HUNT_POLICY_OPTIONS.filter(func(policy: String) -> bool:
+            return policy in offered or policy == standing_hunt)
     var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
-    # A gated rung can never be the composed policy (the herd may still be taming under a standing
-    # Corral selection), so re-validate every render — not just when the selected herd changes.
+    # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A gated rung is normally not a legal
+    # composition (the herd may have finished taming under a standing Corral selection, or left the
+    # option set entirely), so re-validate every render — but a gated rung that IS the standing
+    # assignment renders SELECTED AND GATED with its remedy instead of being silently swapped for
+    # Sustain: forcing the default here made the sheet display a policy the sim was not working the
+    # source under, and every number below (the rung faces, the max-useful cap, the stepper ceiling)
+    # was then computed for the displayed rung while the herd was worked under the real one.
     if not (_compose.hunt_policy() in hunt_options) \
-            or not HudWidgets.gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty():
+            or (not HudWidgets.gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty() \
+                and _compose.hunt_policy() != standing_hunt):
         _compose.set_hunt_policy(SourceForecast.DEFAULT_HUNT_POLICY)
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
@@ -861,6 +887,14 @@ func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
     if herding < HudConst.KNOWLEDGE_COMPLETE:
         tame_reasons.append(HudFloraVocab.GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
             HudFormat.progress_percent(herding), sustain_icon])
+    # A fully tamed herd retires Tame, exactly as a finished patch retires Cultivate — the build is
+    # DONE, and re-running the verb would only pay its prep rate forever. It SUPERSEDES the knowledge
+    # prerequisite (moot once the meter is full), so it replaces the reason list rather than piling on.
+    # The rung is normally HIDDEN at this point (`_build_herd_assign_controls`'s ceiling pass), so this
+    # reason is read only when a band standing on Tame has it re-admitted so it can be seen and cleared.
+    if domestication >= SourceForecast.DOMESTICATION_COMPLETE:
+        tame_reasons.clear()
+        tame_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_TAMED_FORMAT % sustain_icon)
     if not tame_reasons.is_empty():
         gates[HudConst.LABOR_POLICY_TAME] = tame_reasons
     var corral_reasons: Array[String] = []
@@ -1101,6 +1135,12 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if band.is_empty():
         band = resolved
         _compose.set_forage_band(int(band.get("entity", -1)))
+    # THE BAND'S STANDING RUNG ON THIS PATCH, or "" when it does not work this tile at all. The staffing
+    # test is what makes it meaningful: `policy_for_forage` answers with the DEFAULT for an unstaffed
+    # source, so calling it blind would make every fresh sheet look as though the band were standing on
+    # Sustain — and the reset below would then never fire on a genuinely stale composition.
+    var standing_forage := _band_labor.policy_for_forage(band, x, y) \
+        if _band_labor.workers_for_forage(band, x, y) > 0 else ""
     if source_changed:
         # `seed_forage` also clears the crop: a crop pick belongs to the PATCH it was made on, and a
         # new tile has a different basket.
@@ -1125,10 +1165,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
     var forage_gates := _forage_policy_gates(tile_info)
-    # A gated rung can never be the composed policy — the patch may have left Thriving under a
-    # standing Cultivate selection, so re-validate every render, not just on a tile change.
+    # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A composed rung that is gated or not in the
+    # option set falls back to the default — but a gated rung that IS the standing assignment renders
+    # SELECTED AND GATED with its remedy instead. The case this exists for is the one the sim
+    # deliberately leaves alone: a patch that drops out of Thriving mid-build KEEPS its Cultivate
+    # assignment and merely pauses accrual, so repainting the sheet as Sustain claimed the band had
+    # been switched — and every number below it (the rung faces, the max-useful cap, the stepper
+    # ceiling) was then computed for Sustain while the sim worked the patch at the Cultivate prep dip.
     if not (_compose.forage_policy() in HudBandLaborState.FORAGE_POLICY_OPTIONS) \
-            or not HudWidgets.gate_reasons(forage_gates, _compose.forage_policy()).is_empty():
+            or (not HudWidgets.gate_reasons(forage_gates, _compose.forage_policy()).is_empty() \
+                and _compose.forage_policy() != standing_forage):
         _compose.set_forage_policy(SourceForecast.DEFAULT_HUNT_POLICY)
     # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
     # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,

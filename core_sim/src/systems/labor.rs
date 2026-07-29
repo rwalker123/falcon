@@ -14,6 +14,17 @@ pub struct LaborConfigs<'w> {
     pub creatures: Res<'w, CreaturesConfigHandle>,
 }
 
+/// **The rung a completed investment hands its crew to.** The four build verbs
+/// (`Cultivate`/`Sow`/`Tame`/`Corral`) pay their rung's `yield_fraction_while_building` dip because
+/// the crew is preparing ground or gentling a herd instead of harvesting it. The moment the build
+/// meter fills, that is no longer true and can never become true again on this source — there is
+/// nothing left to build, so the dip buys nothing and the assignment is stranded on a dead rung.
+/// So completion **retires the build verb** onto the harvest rung, and that rung is `Sustain`: the
+/// policy that collects the payoff the build just unlocked at the source's own replacement rate,
+/// without drawing the improvement the crew just paid 25 turns for back down. Declared once so all
+/// four rungs can only ever hand off to the same place.
+const HARVEST_POLICY_AFTER_BUILD: FollowPolicy = FollowPolicy::Sustain;
+
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
 /// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
 /// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
@@ -121,6 +132,11 @@ pub fn advance_labor_allocation(
         let mult_f = mult.to_f32();
 
         let mut lapsed: Vec<usize> = Vec::new();
+        // Assignments whose investment **completed this turn**: their build verb is now a dead rung
+        // (see [`HARVEST_POLICY_AFTER_BUILD`]), so each is rewritten onto the harvest policy after the
+        // loop. Collected rather than applied in place because the loop iterates `assignments`
+        // immutably; applied **before** the `lapsed` removal below, which invalidates indices.
+        let mut retired: Vec<usize> = Vec::new();
         // Retained per-source yield telemetry, rebuilt from scratch: one entry per assignment in
         // iteration order, pre-seeded to zero so any arm that `continue`s (out of range, module
         // lost, herd gone) leaves a correct 0-yield row and index alignment is preserved. This also
@@ -493,14 +509,17 @@ pub fn advance_labor_allocation(
                         if accrual > 0.0 {
                             patch.accrue_cultivation(faction, accrual);
                             if patch.is_cultivated() {
+                                retired.push(idx);
                                 event_log.push(CommandEventEntry::new(
                                     tick.0,
                                     CommandEventKind::Cultivate,
                                     faction,
                                     format!("Cultivated patch at ({}, {})", tile.x, tile.y),
                                     Some(format!(
-                                        "status=complete action=cultivate x={} y={}",
-                                        tile.x, tile.y
+                                        "status=complete action=cultivate x={} y={} retired_policy={}",
+                                        tile.x,
+                                        tile.y,
+                                        HARVEST_POLICY_AFTER_BUILD.as_str()
                                     )),
                                 ));
                             }
@@ -521,7 +540,7 @@ pub fn advance_labor_allocation(
                         // Marked worked-as-improvement so `advance_cultivation` spares it: a patch
                         // under active preparation neither goes feral nor bleeds its partial progress.
                         patch.tended_this_turn = true;
-                        accrue_field(
+                        if accrue_field(
                             patch,
                             field_rung,
                             *policy,
@@ -530,7 +549,9 @@ pub fn advance_labor_allocation(
                             &mut event_log,
                             tick.0,
                             *tile,
-                        );
+                        ) {
+                            retired.push(idx);
+                        }
                     }
                     // Deplete forage = gathered goods sold: convert the raw take to trade goods
                     // (mirror of the Hunt-Deplete arm). Only Deplete sells — Sustain/Surplus/Eradicate
@@ -1021,12 +1042,17 @@ pub fn advance_labor_allocation(
                         if accrual > 0.0 {
                             herd.accrue_domestication(faction, accrual);
                             if herd.is_domesticated() {
+                                retired.push(idx);
                                 event_log.push(CommandEventEntry::new(
                                     tick.0,
                                     CommandEventKind::Tame,
                                     faction,
                                     format!("Tamed the {} herd", herd.species),
-                                    Some(format!("status=complete action=tame herd={}", herd.id)),
+                                    Some(format!(
+                                        "status=complete action=tame herd={} retired_policy={}",
+                                        herd.id,
+                                        HARVEST_POLICY_AFTER_BUILD.as_str()
+                                    )),
                                 ));
                             }
                         }
@@ -1060,6 +1086,7 @@ pub fn advance_labor_allocation(
                         if accrual > 0.0 {
                             let pen_tile = herd.position();
                             if herd.accrue_corral(faction, accrual, pen_tile) {
+                                retired.push(idx);
                                 event_log.push(CommandEventEntry::new(
                                     tick.0,
                                     CommandEventKind::Corral,
@@ -1069,8 +1096,11 @@ pub fn advance_labor_allocation(
                                         fauna_id, pen_tile.x, pen_tile.y
                                     ),
                                     Some(format!(
-                                        "status=complete action=corral herd={} x={} y={}",
-                                        fauna_id, pen_tile.x, pen_tile.y
+                                        "status=complete action=corral herd={} x={} y={} retired_policy={}",
+                                        fauna_id,
+                                        pen_tile.x,
+                                        pen_tile.y,
+                                        HARVEST_POLICY_AFTER_BUILD.as_str()
                                     )),
                                 ));
                             }
@@ -1317,6 +1347,33 @@ pub fn advance_labor_allocation(
                 }
             }
         }
+        // **Retire the build verb of every investment that completed this turn** — the one seam all
+        // four rungs (Cultivate/Sow/Tame/Corral) hand off through. The assignment is *rewritten*, not
+        // dropped: the tile and its committed `species` (or the herd id) and the crew's head-count all
+        // survive, because the same crew keeps working the same source — only the verb changes, from
+        // "build this" to [`HARVEST_POLICY_AFTER_BUILD`] ("collect what it now pays"). Left on the
+        // build verb the band would go on paying `yield_fraction_while_building` forever on a rung
+        // that can never accomplish anything more (issue #420).
+        //
+        // **This turn's take is already banked above and is NOT rewound** — the turn a meter reaches
+        // `1.0` is the last preparing take, exactly as the accrue-after-take ordering promises the
+        // pre-commit forecast. The harvest rung starts paying next turn.
+        //
+        // **Before the `lapsed` removal below**, which shifts rows and invalidates these indices.
+        for idx in &retired {
+            let Some(assignment) = allocation.assignments.get_mut(*idx) else {
+                continue;
+            };
+            match &mut assignment.target {
+                LaborTarget::Forage { policy, .. } | LaborTarget::Hunt { policy, .. } => {
+                    *policy = HARVEST_POLICY_AFTER_BUILD;
+                }
+                // Unreachable — only the Forage/Hunt arms fill a build meter — but a band-wide role
+                // carries no policy to retire, so there is nothing to do rather than anything to panic
+                // about.
+                LaborTarget::Scout | LaborTarget::Warrior => {}
+            }
+        }
         // Drop lapsed hunts (reverse order to keep indices valid); workers return to the pool.
         // Remove the matching telemetry rows too so `last_yields` stays index-aligned with the
         // surviving assignments (lapsed rows carry a 0 yield anyway).
@@ -1372,6 +1429,11 @@ fn managed_crew_needed(herders_needed: u32, take_workers: u32) -> u32 {
 ///
 /// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
 /// for the turn: progress is neither lost nor silently switched.
+///
+/// Returns **`true` when THIS call completed the Field** — the caller retires the `Sow` verb onto
+/// [`HARVEST_POLICY_AFTER_BUILD`] on that signal. Shaped like `Herd::accrue_corral`'s completion
+/// bool rather than swallowing the completion into the event push, so both plant build rungs report
+/// the same thing to the same seam.
 #[allow(clippy::too_many_arguments)] // the rung, the gate, the actor and the feed line are all inputs
 fn accrue_field(
     patch: &mut ForagePatch,
@@ -1382,10 +1444,10 @@ fn accrue_field(
     event_log: &mut CommandEventLog,
     tick: u64,
     tile: UVec2,
-) {
+) -> bool {
     let accrual = field_rung.build_accrual(policy, eligible, RUNG_TIMESCALE_UNSCALED);
     if accrual <= 0.0 {
-        return;
+        return false;
     }
     patch.accrue_field(faction, accrual);
     if patch.is_field() {
@@ -1395,11 +1457,15 @@ fn accrue_field(
             faction,
             format!("Field sown at ({}, {})", tile.x, tile.y),
             Some(format!(
-                "status=complete action=sow x={} y={}",
-                tile.x, tile.y
+                "status=complete action=sow x={} y={} retired_policy={}",
+                tile.x,
+                tile.y,
+                HARVEST_POLICY_AFTER_BUILD.as_str()
             )),
         ));
+        return true;
     }
+    false
 }
 
 /// Layer 3b (wellbeing) — tech-gated migration: relocate-or-stay, population conserved within the
@@ -2219,8 +2285,8 @@ mod labor_yield_tests {
         patch.refresh_ecology_phase(&patch_ecology(patch, &forage));
     }
 
-    /// Switch a band's (single) Forage assignment to `policy` — what the client's picker does, and
-    /// what a player does the turn an improvement finishes and they want to start harvesting it.
+    /// Switch a band's (single) Forage assignment to `policy` — what the client's picker does. (The
+    /// *finishing* case needs no picker since issue #420: completion retires the build verb itself.)
     fn set_forage_policy(world: &mut World, band: Entity, policy: FollowPolicy) {
         let mut allocation = world
             .get_mut::<LaborAllocation>(band)
@@ -3666,13 +3732,12 @@ mod labor_yield_tests {
                 .is_cultivated(),
             "sustained Cultivate work completes the patch"
         );
-        // **Harvest the finished patch to read the payoff.** `Cultivate` is the *build* verb, and its
-        // dip is "the crew is preparing ground, not gathering" — a fact that does not stop being true
-        // because the ground is now ready, so a completed patch left on `Cultivate` still pays the
-        // dip. (The animal side has always behaved this way: `Tame` on an already-tamed herd pays the
-        // pastoral dip too. Slice 7 made the plant side agree — the old managed branch ignored the
-        // policy and paid full, which is why this line used to pass without switching.) The player
-        // switches back to a harvest policy; so does the test.
+        // **Harvest the finished patch to read the payoff.** The loop above already ran past the
+        // completing turn, so the sim has retired `Cultivate` onto the harvest rung itself (issue
+        // #420) and this call is a no-op re-assert — kept because what this test measures is the
+        // *payoff*, and it must read that number off the harvest rung whatever put the band there.
+        // The retire itself is pinned by
+        // `a_completed_cultivation_retires_the_build_verb_onto_the_harvest_rung`.
         set_forage_policy(&mut world, band, FollowPolicy::Sustain);
         world.run_system_once(advance_labor_allocation);
         let tended = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
@@ -3827,6 +3892,339 @@ mod labor_yield_tests {
             corral_yield > preparing,
             "a penned herd out-pays the build dip: {corral_yield} vs {preparing}"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // **Completion retires the build verb** (issue #420). All four investment rungs share one seam:
+    // the turn a build meter fills, the assignment is rewritten from the build verb onto
+    // `HARVEST_POLICY_AFTER_BUILD`, preserving the source, the commitment and the crew. Left on the
+    // build verb the band paid `yield_fraction_while_building` forever on a rung that could never
+    // accomplish anything more.
+    // ---------------------------------------------------------------------------------------------
+
+    /// The one policy every completed investment hands its crew to — read from the constant the sim
+    /// drives the handoff with, so a retune of the harvest rung cannot leave these tests asserting the
+    /// old one.
+    const RETIRED_TO: FollowPolicy = super::HARVEST_POLICY_AFTER_BUILD;
+
+    /// The client's pre-turn expected take on the source patch under `policy`, off the patch's
+    /// **current** state — the same `forage_forecast` composition the forecast==actual sweep uses. Lets
+    /// a test name the exact number a turn should pay without re-deriving the MSY/dip arithmetic.
+    fn forage_expected_take(world: &World, workers: u32, policy: FollowPolicy) -> f32 {
+        let patch = world
+            .resource::<ForageRegistry>()
+            .patch(SOURCE)
+            .cloned()
+            .expect("seeded patch");
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let forecast = forage_forecast(
+            &patch,
+            &labor.forage,
+            &FloraConfig::builtin(),
+            &LadderConfig::builtin(),
+            SEASONAL_WEIGHT,
+            NEUTRAL_OUTPUT_MULT,
+        );
+        expected_yield(&forecast, workers, policy)
+    }
+
+    /// The plant the source tile's realized basket auto-picks for `rung` — the same
+    /// `default_species_for_rung` answer the labor arm reaches. Named **explicitly** on the test
+    /// assignment so the retire pass can be asserted to carry the *commitment* across, not merely the
+    /// tile coordinate.
+    fn source_tile_default_crop(world: &World, rung: RungKey) -> String {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let flora = world
+            .resource::<crate::flora_config::FloraConfigHandle>()
+            .get();
+        let map_seed = world.resource::<SimulationConfig>().map_seed;
+        let tile_entity = world.resource::<TileRegistry>().tiles[0];
+        let ground = world.get::<Tile>(tile_entity).expect("the source tile");
+        let composition =
+            crate::forage::tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+        crate::forage::default_species_for_rung(&composition, &flora, rung)
+            .expect("the source tile grows something the tended rung can commit to")
+    }
+
+    /// The band's single assignment, destructured — the retire rewrites a policy *in place*, so every
+    /// other field of the row is evidence that nothing else moved.
+    fn only_assignment(world: &World, band: Entity) -> LaborAssignment {
+        let allocation = world.get::<LaborAllocation>(band).expect("the band works");
+        assert_eq!(
+            allocation.assignments.len(),
+            1,
+            "the retire rewrites a row, it never adds or drops one"
+        );
+        allocation.assignments[0].clone()
+    }
+
+    /// **THE issue-#420 fix, plant rung 2.** A band whose patch finishes cultivating this turn:
+    ///
+    /// 1. still pays the **dipped** take on the completing turn (the accrue-after-take ordering — the
+    ///    pre-commit forecast promised the dip, and completing must not retroactively pay more);
+    /// 2. is on the harvest rung **afterwards**, with its worker count, its tile and its committed
+    ///    species intact;
+    /// 3. **pays the tended harvest the NEXT turn** — the actual bug: left on `Cultivate` the band went
+    ///    on paying the dip forever on ground that was already prepared.
+    #[test]
+    fn a_completed_cultivation_retires_the_build_verb_onto_the_harvest_rung() {
+        let (mut world, tile) = world_with_source(CAP);
+        // The same worth-tending seed `cultivate_policy_pays_the_dip_then_the_tended_yield` pins: the
+        // source tile's realization must concentrate its staple hard enough that the tended payoff
+        // clears wild, or step 3 would be measuring a marginal crop rather than the retire.
+        world.resource_mut::<SimulationConfig>().map_seed = 3;
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+        let crop = source_tile_default_crop(&world, RungKey::PlantTended);
+        let progress_per_turn = {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            ladder.rung(RungKey::PlantTended).build_accrual(
+                FollowPolicy::Cultivate,
+                true,
+                RUNG_TIMESCALE_UNSCALED,
+            )
+        };
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Cultivate,
+                    species: Some(crop.clone()),
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        // Every turn but the last: the meter fills and the verb stays put.
+        let turns_to_prepare = (1.0 / progress_per_turn).ceil() as u32;
+        for _ in 0..turns_to_prepare - 1 {
+            world.run_system_once(advance_forage_regrowth);
+            world.run_system_once(advance_labor_allocation);
+        }
+        assert!(
+            !world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .unwrap()
+                .is_cultivated(),
+            "fixture: the patch must still be under construction here"
+        );
+        assert!(
+            matches!(
+                only_assignment(&world, band).target,
+                LaborTarget::Forage {
+                    policy: FollowPolicy::Cultivate,
+                    ..
+                }
+            ),
+            "an unfinished build keeps its verb — only completion retires it"
+        );
+
+        // (1) The completing turn still pays the dip, to the number.
+        world.run_system_once(advance_forage_regrowth);
+        let promised_dip = forage_expected_take(&world, WORKERS, FollowPolicy::Cultivate);
+        world.run_system_once(advance_labor_allocation);
+        let completing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            world
+                .resource::<ForageRegistry>()
+                .patch(SOURCE)
+                .unwrap()
+                .is_cultivated(),
+            "fixture: this is the completing turn"
+        );
+        assert!(
+            (completing - promised_dip).abs() < FORECAST_EPSILON,
+            "the turn progress reaches 1.0 is the LAST preparing take — it pays the dip the \
+             pre-commit forecast promised: {completing} vs {promised_dip}"
+        );
+
+        // (2) The handoff: the verb moved, nothing else did.
+        let retired = only_assignment(&world, band);
+        assert_eq!(retired.workers, WORKERS, "the crew stays on the source");
+        let LaborTarget::Forage {
+            tile: retired_tile,
+            policy,
+            species,
+        } = &retired.target
+        else {
+            panic!("the retire must not change the target's KIND: {retired:?}");
+        };
+        assert_eq!(*policy, RETIRED_TO, "completion retires the build verb");
+        assert_eq!(*retired_tile, SOURCE, "the same ground");
+        assert_eq!(
+            species.as_deref(),
+            Some(crop.as_str()),
+            "the crop the crew committed 25 turns to survives the handoff"
+        );
+
+        // (3) The bug: the next turn pays the tended harvest, not the dip.
+        world.run_system_once(advance_forage_regrowth);
+        let promised_harvest = forage_expected_take(&world, WORKERS, RETIRED_TO);
+        world.run_system_once(advance_labor_allocation);
+        let after = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        assert!(
+            (after - promised_harvest).abs() < FORECAST_EPSILON,
+            "the retired band collects the harvest rung's take: {after} vs {promised_harvest}"
+        );
+        assert!(
+            after > completing,
+            "the payoff the 25 turns bought arrives WITHOUT the player touching the policy \
+             picker — the whole of issue #420: {after} vs the dip {completing}"
+        );
+    }
+
+    /// **The animal twin, rung 2.** A herd that finishes taming this turn hands its crew to the harvest
+    /// rung with the herd id and the crew intact — so the band starts collecting the pastoral payoff
+    /// instead of paying the taming dip on an already-tame herd forever.
+    #[test]
+    fn a_completed_taming_retires_the_build_verb_onto_the_harvest_rung() {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        grant_knowledge(&mut world, HERDING_DISCOVERY_ID);
+        let (taming_per_turn, species) = {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let species = world.resource::<HerdRegistry>().herds[0].species.clone();
+            (
+                ladder.rung(RungKey::AnimalPastoral).build_accrual(
+                    FollowPolicy::Tame,
+                    true,
+                    fauna.taming_rate_for(&species),
+                ),
+                species,
+            )
+        };
+        assert!(
+            taming_per_turn > 0.0,
+            "fixture: the {species} herd must actually tame"
+        );
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Tame,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        let turns_to_tame = (1.0 / taming_per_turn).ceil() as u32;
+        for _ in 0..turns_to_tame - 1 {
+            world.run_system_once(advance_labor_allocation);
+        }
+        assert!(
+            !world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .is_domesticated(),
+            "fixture: the herd must still be being gentled here"
+        );
+        assert!(
+            matches!(
+                only_assignment(&world, band).target,
+                LaborTarget::Hunt {
+                    policy: FollowPolicy::Tame,
+                    ..
+                }
+            ),
+            "an unfinished build keeps its verb"
+        );
+
+        world.run_system_once(advance_labor_allocation);
+        assert!(
+            world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .is_domesticated(),
+            "fixture: this is the completing turn"
+        );
+        let retired = only_assignment(&world, band);
+        assert_eq!(retired.workers, WORKERS, "the crew stays on the herd");
+        let LaborTarget::Hunt { fauna_id, policy } = &retired.target else {
+            panic!("the retire must not change the target's KIND: {retired:?}");
+        };
+        assert_eq!(*policy, RETIRED_TO, "completion retires the build verb");
+        assert_eq!(fauna_id, HERD_ID, "the same herd");
+    }
+
+    /// **The animal twin, rung 3.** A pen that finishes this turn retires `Corral` the same way — the
+    /// keeper crew stays on the herd and starts drawing the pen's harvest.
+    #[test]
+    fn a_completed_pen_retires_the_build_verb_onto_the_harvest_rung() {
+        const BIG_HERD_CAP: f32 = 1_000.0;
+        let (mut world, tile) = world_with_source(CAP);
+        reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
+        grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
+        {
+            let mut registry = world.resource_mut::<HerdRegistry>();
+            registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+        }
+        let build_per_turn = {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            ladder.rung(RungKey::AnimalPen).build_accrual(
+                FollowPolicy::Corral,
+                true,
+                RUNG_TIMESCALE_UNSCALED,
+            )
+        };
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Hunt {
+                    fauna_id: HERD_ID.to_string(),
+                    policy: FollowPolicy::Corral,
+                },
+                workers: WORKERS,
+            }],
+        );
+
+        let turns_to_build = (1.0 / build_per_turn).ceil() as u32;
+        for _ in 0..turns_to_build - 1 {
+            world.run_system_once(advance_labor_allocation);
+        }
+        assert!(
+            !world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .is_corralled(),
+            "fixture: the pen must still be going up here"
+        );
+        assert!(
+            matches!(
+                only_assignment(&world, band).target,
+                LaborTarget::Hunt {
+                    policy: FollowPolicy::Corral,
+                    ..
+                }
+            ),
+            "an unfinished build keeps its verb"
+        );
+
+        world.run_system_once(advance_labor_allocation);
+        assert!(
+            world
+                .resource::<HerdRegistry>()
+                .find(HERD_ID)
+                .unwrap()
+                .is_corralled(),
+            "fixture: this is the completing turn"
+        );
+        let retired = only_assignment(&world, band);
+        assert_eq!(retired.workers, WORKERS, "the keeper crew stays on the pen");
+        let LaborTarget::Hunt { fauna_id, policy } = &retired.target else {
+            panic!("the retire must not change the target's KIND: {retired:?}");
+        };
+        assert_eq!(*policy, RETIRED_TO, "completion retires the build verb");
+        assert_eq!(fauna_id, HERD_ID, "the same herd");
     }
 
     /// Without the earned knowledge, the investment policies accrue **nothing** — the take is still the

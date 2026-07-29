@@ -487,15 +487,18 @@ const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 ## margins — which is the whole reason the button cannot be the parent: a `Button` is not a Container
 ## and would not grow to fit children, leaving the second line to be laid out by hand.
 ##
-## THE TINT IS ONE COLOUR, DERIVED TWICE, and that is the invariant to preserve. The single-`Button.text`
-## face this replaced tinted both lines together for free; here `HudStyle.button_font_color(variant,
-## disabled)` is asked ONCE and line 2 is the same colour at `POLICY_PICKER_METRIC_ALPHA`, so a
-## selected, disabled — or any future warned — rung moves both lines by construction. Never give line 2
-## a literal colour of its own; that is exactly the desynchronisation this note exists to prevent.
-## (`modulate` would also inherit, but it multiplies the BOX too, so a disabled rung would be dimmed
-## twice — once by the disabled stylebox's own faded fill, once again by the tint.)
+## THE TINT IS ONE COLOUR, DERIVED ONCE, and that is the invariant to preserve. The single-`Button.text`
+## face this replaced tinted both lines together for free; here the caller asks
+## `HudStyle.button_font_color` ONCE and passes the answer in as `tint`, and line 2 is that same colour
+## at `POLICY_PICKER_METRIC_ALPHA`, so a selected, disabled, standing-but-gated — or any future warned —
+## rung moves both lines by construction. Never give line 2 a literal colour of its own; that is exactly
+## the desynchronisation this note exists to prevent. (`modulate` would also inherit, but it multiplies
+## the BOX too, so a disabled rung would be dimmed twice — once by the disabled stylebox's own faded
+## fill, once again by the tint.) The tint arrives as a PARAMETER rather than being re-derived from the
+## variant here, because the disabled tint now also depends on whether the rung is the SELECTED one —
+## a fact this cell does not have and the caller does.
 static func _policy_rung_cell(btn: Button, title: String, metric: String,
-        variant: String) -> MarginContainer:
+        tint: Color) -> MarginContainer:
     var cell := MarginContainer.new()
     cell.add_child(btn)
     var pad := MarginContainer.new()
@@ -507,7 +510,6 @@ static func _policy_rung_cell(btn: Button, title: String, metric: String,
     var stack := VBoxContainer.new()
     stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stack.add_theme_constant_override("separation", HudWorkVocab.POLICY_PICKER_FACE_SEPARATION)
-    var tint := HudStyle.button_font_color(variant, btn.disabled)
     stack.add_child(_policy_rung_line(title, tint, 0))
     if metric != "":
         stack.add_child(_policy_rung_line(metric,
@@ -589,12 +591,19 @@ static func build_policy_picker(
         var take: Variant = takes.get(policy_key, null)
         var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        var variant := "primary" if policy_key == current else "ghost"
+        var is_selected := policy_key == current
+        var variant := "primary" if is_selected else "ghost"
         # `policy` meta, not the face string: the face is presentation (it grew a name, then a second
         # line, and its text now lives on a child Label), so a harness that identified a rung by reading
         # `btn.text` broke each time. The meta is the rung's identity and never moves.
         btn.set_meta(POLICY_RUNG_META, policy_key)
-        HudStyle.apply_button(btn, variant)
+        # SELECTED AND GATED IS A REAL STATE, not a contradiction. The compose sheet renders the rung
+        # the band is STANDING ON even after that rung has become unavailable (a Cultivate patch that
+        # slipped out of Thriving, a Tame herd that finished taming) — "this is what you are doing, and
+        # it is a dead end, here is the way out". `selected_when_disabled` keeps the selected border and
+        # the primary text hue through the disabled treatment, which would otherwise erase every mark of
+        # selection and leave the picker looking as though nothing were chosen.
+        HudStyle.apply_button(btn, variant, is_selected)
         # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
         # goods/turn"), led by the rung name; a gated button appends its gate reasons below, so a hover
         # tells you what the rung costs to unlock as well as what it pays.
@@ -609,7 +618,8 @@ static func build_policy_picker(
         btn.tooltip_text = HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
         # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
         # equal width and fill the panel content width.
-        var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric, variant)
+        var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric,
+            HudStyle.button_font_color(variant, btn.disabled, is_selected))
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)

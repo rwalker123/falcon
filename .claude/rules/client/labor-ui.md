@@ -408,11 +408,14 @@ paths:
     control `MOUSE_FILTER_IGNORE` so the click reaches the button beneath. The MarginContainer is what
     SIZES the cell — a `Button` is not a Container and would not grow to fit children, which is exactly why
     it cannot be the parent — and it is the CELL that carries `SIZE_EXPAND_FILL` into the grid now.
-    **THE TINT IS ONE COLOUR, DERIVED TWICE, and that invariant is the whole reason the single-`Button.text`
-    face existed:** `HudStyle.button_font_color(variant, disabled)` is asked ONCE and line 2 is that same
-    colour at `POLICY_PICKER_METRIC_ALPHA`, so a selected, disabled — or any future warned — rung moves BOTH
+    **THE TINT IS ONE COLOUR, DERIVED ONCE, and that invariant is the whole reason the single-`Button.text`
+    face existed:** `HudStyle.button_font_color(variant, disabled, selected)` is asked ONCE **by the picker
+    loop**, handed to `_policy_rung_cell` as a parameter, and line 2 is that same
+    colour at `POLICY_PICKER_METRIC_ALPHA`, so a selected, disabled, standing-but-gated — or any future
+    warned — rung moves BOTH
     lines by construction (the greyed `🐄 Corral` in `hunt_picker_ascending` is the frame). Never give line 2
-    a colour of its own. `modulate` was the other candidate and is worse here: it inherits to children but
+    a colour of its own. The cell takes the tint rather than re-deriving it from the variant because the
+    disabled tint now depends on whether the rung is the SELECTED one, which the cell does not know. `modulate` was the other candidate and is worse here: it inherits to children but
     multiplies the BOX too, so a disabled rung would be dimmed twice, once by the disabled stylebox's own
     faded fill. That the theme's `font_color` reaches a Button's `text` and nothing else is why
     `button_font_color` was split out of `apply_button` (which now feeds from it) — a hand-built face and a
@@ -507,6 +510,8 @@ paths:
       and Corral is what's next). Hidden, never greyed, because no amount of knowledge or work will
       ever let you pen a `"pastoral"`-ceiling species — greying it would imply a reachable
       prerequisite. Knowledge = "I know how"; ceiling = "this animal allows it" (§4.2, decoupled).
+      The **one** exception is a rung the band is already standing on, which is re-admitted so it can
+      be seen and cleared — see the sheet-renders-the-standing-rung invariant below.
     - **Disabled-with-reason-AND-remedy, never hidden.** `HudWidgets.build_policy_picker(on_pick, selected,
       options, gates)` renders a gated option **greyed, with every reason in the tooltip (one per
       line) AND spelled out under the row**, so the player discovers the rung and its prerequisites
@@ -527,9 +532,11 @@ paths:
         a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
         Tended Patch — ♻ Sustain-forage it to harvest"), because re-running the verb only pays the low
         prep dip forever. The completed reason SUPERSEDES the prep prerequisites (a done patch's
-        Thriving/knowledge gates are moot). Since a gated rung can never be the composed policy, this is
-        also what STOPS the panel lying on a done patch: a standing Cultivate falls back to Sustain, so
-        the "Preparing → then" prep line disappears and the forecast reads the Sustain harvest.
+        Thriving/knowledge gates are moot). On a done patch the band has no Cultivate assignment (the
+        sim retires a completed rung onto Sustain), so a composed Cultivate there is *stale* and falls
+        back to Sustain: the "Preparing → then" prep line disappears and the forecast reads the Sustain
+        harvest. A band that IS still standing on it renders it selected + gated — see the
+        sheet-renders-the-standing-rung invariant below.
       * `Sow` ← `seed_selection >= 1` **and** the ground will take seed (see the Sow site gate below)
         **and NOT already `patch_is_field`** — a finished Field retires Sow the same way
         (`GATE_REASON_ALREADY_FIELD_FORMAT`). Deliberately **no** Thriving gate: sown ground starts at
@@ -539,11 +546,50 @@ paths:
       Two more remedies are the *opposite* of "work harder", because their conditions are stocks, not
       policies: the **patch-ecology** gate (a fully staffed Sustain takes the whole regrowth and holds
       a Stressed patch Stressed forever) reads `Patch is Stressed — ease workers off and let it regrow
-      to Thriving`; and `_tame_stalled_hint` (below) says the same of a stalled tame. A gated rung can
-      never be the composed policy (re-validated every render, since a source can leave Thriving under
-      a standing selection). **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
+      to Thriving`; and `_tame_stalled_hint` (below) says the same of a stalled tame. The gates are
+      re-validated every render, since a source can leave Thriving under a standing selection.
+      **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
       **ownership** — the tracks are per-faction, so a herd tamed by ANOTHER faction reads as
       available client-side while the sim rejects the assign.
+    - **THE COMPOSE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON** (issue #420, both compose
+      builders). A gated rung is normally not a legal composition and is reset to Sustain — but **a
+      gated rung that IS the band's standing assignment renders SELECTED AND GATED, with its remedy**,
+      so clearing it is something the player *does* rather than something that happens to them. The
+      reset therefore fires only when the composed policy is gated/structurally invalid **and** differs
+      from the standing one. The standing rung is `policy_for_forage` / `policy_for_hunt` read **only
+      when `workers_for_forage` / `workers_for_hunt > 0`**: those helpers answer with the DEFAULT for an
+      unstaffed source, so calling them blind would make every fresh sheet look as though the band were
+      standing on Sustain and the reset would never fire on a genuinely stale composition.
+      The case this exists for is the one the sim deliberately leaves alone — a patch that drops out of
+      Thriving mid-build **keeps** its Cultivate assignment and merely pauses accrual
+      (`.claude/rules/core_sim/cultivation.md`, "neither lost nor silently switched"). Forcing the
+      default there claimed the band had been switched, and every number under it — the rung faces,
+      `max_useful_workers`, the stepper cap — was computed for the *displayed* rung while the sim
+      worked the source under the real one (the reported `Now 2` over a stepper capped at `1`).
+      **On the hunt side the standing rung is also RE-ADMITTED to the option set when the
+      husbandry-ceiling pass filtered it out** — the fully-tamed `Tame` case, which the ceiling pass
+      retires outright. Re-admission is for the standing rung ALONE and never general: the
+      "an out-of-ceiling rung is HIDDEN, never greyed" rule holds for every other case, and it cannot
+      widen the picker past what the sim allows, since the sim refuses to put a band on a rung its
+      species' ceiling forbids. A re-admitted `Tame` carries its own gate reason,
+      `GATE_REASON_ALREADY_TAMED_FORMAT` ("Already fully tamed — ♻ Sustain-hunt it to harvest"), in the
+      register of the plant pair; the reason is computed whether or not the rung is offered, so
+      visibility stays the option set's business and the gate stays the gate's.
+      **`HudWidgets.build_policy_picker` renders selected-and-gated as a distinct state** — the two
+      used to be mutually exclusive by construction, and the plain disabled treatment fades the border
+      to `LINE_SOFT` and the text to `INK_FAINT`, erasing the only mark of which rung is current and
+      leaving a picker that looks unselected. `HudStyle.apply_button`'s `selected_when_disabled` (and
+      `button_font_color`'s matching `selected`) keeps the variant's own border and text HUE at
+      `BUTTON_SELECTED_DISABLED_TEXT_ALPHA`, so the rung reads "you are doing this, and it is a dead
+      end". The face's two lines still take ONE tint, now passed INTO `_policy_rung_cell` as a
+      parameter rather than re-derived there, because the disabled tint depends on selectedness the
+      cell does not know. ui_preview `forage_cultivate_paused` (the primary frame) /
+      `forage_cultivate_done_standing` / `herd_tame_done_standing` (the re-admission) /
+      `herd_tame_done_other_rung` (the blast-radius guard: a band standing on Sustain sees no Tame).
+      **A SIM-SIDE GAP RIDES WITH IT:** `validate_labor_policy` rejects a *new* Cultivate assign on a
+      non-Thriving patch, and re-staffing a paused build re-issues exactly that command, so the crew
+      count cannot be changed while the pause lasts (unassign is exempt — `workers == 0` skips
+      validation, so the remedy the sheet offers is always reachable).
     - **`_tame_stalled_hint` — the one silent rule, said out loud.** Taming accrues only while the
       herd is **Thriving**, but that is deliberately NOT a gate: a herd's phase swings as it is
       hunted, so refusing the verb would be un-actionable churn. The sim just **pauses** the meter

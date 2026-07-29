@@ -71,7 +71,7 @@ use crate::{
     food::FoodModuleTag,
     intensification::{
         LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, RUNG_COMPLETE,
-        RUNG_TIMESCALE_UNSCALED,
+        RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
@@ -258,6 +258,25 @@ impl ForagePatch {
     /// on it, so the two cannot disagree about which patches are managed.
     pub fn is_managed(&self) -> bool {
         self.is_field() || self.is_cultivated()
+    }
+
+    /// **Is a `Cultivate` build already underway here, by `faction`?** — progress banked but not yet
+    /// complete, with this faction's name on it (ownership is set by the first accrual, so the two
+    /// always travel together).
+    ///
+    /// This is what separates a **start** gate from a **continue** gate. `Thriving` is what the land
+    /// must be for a crew to *begin* clearing it; it is deliberately **not** what the land must stay
+    /// for an existing build to survive — a patch that drops out of Thriving mid-build holds its
+    /// progress and simply stops accruing (see `advance_labor_allocation`'s Cultivate arm). That
+    /// ruling is only livable if the player can still *adjust the crew* while the build is paused,
+    /// which re-issues the very `Cultivate` assignment the start gate refuses. So
+    /// `validate_labor_policy` exempts a build underway from the Thriving check — and from that check
+    /// **only**: the knowledge gate, the already-cultivated rejection and the other-faction owner
+    /// rejection all still run, because none of them is a condition that lapses under a build.
+    pub fn cultivation_underway(&self, faction: FactionId) -> bool {
+        self.cultivation_progress > RUNG_UNSTARTED
+            && !self.is_cultivated()
+            && self.owner == Some(faction)
     }
 
     /// Accrue cultivation progress for `faction` (the preparing band, working the patch under

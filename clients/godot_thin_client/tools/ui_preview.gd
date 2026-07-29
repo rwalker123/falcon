@@ -1097,7 +1097,60 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_sow_done")
 
-	# Back to a plain Sustain compose for the range states below.
+	# ---- THE SHEET RENDERS THE POLICY THE BAND IS ON (issue #420) --------------------------------
+	# State 6b-cultivate-paused — THE PRIMARY FRAME. This is the case the sim deliberately leaves
+	# alone: a patch that drops out of Thriving mid-build KEEPS its standing Cultivate assignment and
+	# merely pauses accrual (`.claude/rules/core_sim/cultivation.md` — "neither lost nor silently
+	# switched"). The sheet has to say the same thing: 🌱 Cultivate renders SELECTED **and** GATED,
+	# with the ease-off-and-regrow remedy under it, and is NOT repainted as Sustain. Repainting it
+	# claimed the band had been switched, and every number below (the rung faces, the max-useful
+	# ceiling, the stepper cap) was then computed for Sustain while the sim worked the patch at the
+	# Cultivate prep dip. Contrast `forage_cultivate_stressed` above: the SAME gated rung on the SAME
+	# phase, but with no standing assignment — there the fallback to Sustain is still correct.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
+	_hud._compose.reset_forage_source()
+	_hud.show_tile_selection(_stressed_tile_fixture())
+	_compose_forage(_stressed_tile_fixture())
+	await _settle()
+	await _save("forage_cultivate_paused")
+	var paused_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "cultivate")
+	_assert_hud("a paused Cultivate build still renders as the composed rung",
+		paused_rung != null and _rung_is_selected(paused_rung))
+	_assert_hud("…and renders GATED, so clearing it is the player's act",
+		paused_rung != null and paused_rung.disabled)
+	_assert_hud("…with the remedy that clears it spelled out on the card",
+		_has_label_containing(_hud._drawercompose._compose_sheet, PAUSED_CULTIVATE_REMEDY_NEEDLE))
+
+	# State 6b-cultivate-done-standing — the DEFENSIVE twin: the same standing Cultivate on a patch
+	# whose build has FINISHED. `_forage_policy_gates` retires the rung ("Already a Tended Patch — ♻
+	# Sustain-forage it to harvest") and it still renders selected + gated, so the sheet, the stepper
+	# and the `Now N` header all speak about ONE policy — the "Now 2 over a cap of 1" incoherence was
+	# two numbers computed for two different rungs. The sim retires a completed rung onto Sustain, so
+	# this state should not arise in a live game; it guards the client half regardless.
+	var tended_tile := _tended_tile_fixture()
+	var tended_band := _cultivating_forage_band_fixture(int(tended_tile["x"]), int(tended_tile["y"]))
+	var tended_crew := int((tended_band["labor_assignments"][0] as Dictionary)["workers"])
+	_hud._band_labor._player_band = tended_band
+	_hud._compose.reset_forage_source()
+	_hud.show_tile_selection(tended_tile)
+	_compose_forage(tended_tile)
+	await _settle()
+	await _save("forage_cultivate_done_standing")
+	var done_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "cultivate")
+	_assert_hud("a finished patch's standing Cultivate still renders as the composed rung",
+		done_rung != null and _rung_is_selected(done_rung))
+	_assert_hud("…and renders GATED with the harvest remedy",
+		done_rung != null and done_rung.disabled
+		and _has_label_containing(_hud._drawercompose._compose_sheet, TENDED_CULTIVATE_REMEDY_NEEDLE))
+	_assert_hud("…and the dialed crew and the `Now N` header agree, being one rung's numbers",
+		_hud._compose.forage_count() == tended_crew
+		and _has_label_containing(_hud._drawercompose._compose_sheet,
+			HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [tended_crew, ""]))
+
+	# Restore the unassigned near band + a plain Sustain compose for the range states below.
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._compose.reset_forage_source()
+	_hud._compose.set_forage_count(1)
 	_hud._compose.set_forage_policy("sustain")
 
 	# States 2-fog-a/b/c — the three SIGHT states. The player must always be able to tell "there is
@@ -1547,7 +1600,46 @@ func _ready() -> void:
 	_assert_hud("…the would-be herder crew (10) does not leak into an extractive rung",
 		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
 
+	# State 6b-tame-done-standing — THE HUNT-SIDE TWIN of `forage_cultivate_done_standing` (issue #420),
+	# and the one frame that renders the RE-ADMISSION path. A fully tamed herd RETIRES ◎ Tame from the
+	# picker outright (the husbandry-ceiling pass hides an unreachable rung rather than greying it), so a
+	# band still standing on Tame would otherwise see no trace of its own order and the sheet would fall
+	# back to Sustain. The rung is re-admitted for the standing band ALONE, SELECTED and GATED with
+	# "Already fully tamed — ♻ Sustain-hunt it to harvest", beside the now-available 🐄 Corral that is
+	# genuinely what comes next.
+	var tamed_herd := _fully_tamed_herd_fixture()
+	var tamed_band := _tame_standing_band_fixture()
+	_hud._band_labor._player_band = tamed_band
+	_hud._band_labor._player_bands = [tamed_band]
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(tamed_herd)
+	_compose_herd(tamed_herd)
+	await _settle()
+	await _save("herd_tame_done_standing")
+	var tame_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "tame")
+	_assert_hud("a finished Tame the band still stands on is re-admitted to the picker",
+		tame_rung != null and _rung_is_selected(tame_rung))
+	_assert_hud("…GATED, with the harvest remedy that clears it",
+		tame_rung != null and tame_rung.disabled
+		and _has_label_containing(_hud._drawercompose._compose_sheet, TAMED_HERD_REMEDY_NEEDLE))
+
+	# COMPANION — the re-admission is for the STANDING rung ONLY. The same fully tamed herd, composed by
+	# a band that works it under SUSTAIN: ◎ Tame must be absent from the picker entirely, which is what
+	# proves the frame above is a targeted exception keyed on the band's OWN rung, not a blanket
+	# un-hiding of an out-of-ceiling rung on any staffed herd.
+	_hud._band_labor._player_band = tame_cap_band
+	_hud._band_labor._player_bands = [tame_cap_band]
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(tamed_herd)
+	_compose_herd(tamed_herd)
+	await _settle()
+	await _save("herd_tame_done_other_rung")
+	_assert_hud("a band standing on another rung sees no Tame on a fully tamed herd (retired, not greyed)",
+		_find_policy_rung(_hud._drawercompose._compose_sheet, "tame") == null)
+
 	# Back to a plain Sustain compose for the band-picker / distance states below.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = []
 	_hud._compose.set_hunt_policy("sustain")
 	_hud._compose.reset_hunt_source()
 
@@ -3378,6 +3470,16 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 const FORECAST_THEN_NEEDLE := "→ then"
 ## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
 const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
+## The two remedies a STANDING-but-gated Cultivate must still spell out (issue #420). Each is the tail
+## of its `HudFloraVocab` reason, so the assertion reads the sentence the player reads and not just the
+## rung's presence: the paused build's ease-off advice, and the finished patch's harvest advice.
+const PAUSED_CULTIVATE_REMEDY_NEEDLE := "let it regrow to Thriving"
+const TENDED_CULTIVATE_REMEDY_NEEDLE := "Already a Tended Patch"
+## The herd twin of the pair above — the reason a RE-ADMITTED Tame rung must carry.
+const TAMED_HERD_REMEDY_NEEDLE := "Already fully tamed"
+## The herder crew on the fully-tamed herd: the herd's `herders_needed` pair AND the workers the
+## standing Tame assignment staffs, so the two cannot disagree about how many hands are on it.
+const TAMED_HERD_CREW := 4
 
 func _label_text_containing(root: Node, needle: String) -> String:
 	if root == null:
@@ -3423,6 +3525,18 @@ func _policy_rung_metric(root: Node, policy: String) -> String:
 	# The face's Labels are siblings of the Button under the rung's CELL, not children of it.
 	var lines := _face_lines(btn.get_parent())
 	return lines[POLICY_RUNG_METRIC_LINE] if lines.size() > POLICY_RUNG_METRIC_LINE else ""
+
+## Is this rung the SELECTED one? Read off the `normal` stylebox's fill, which `HudStyle.apply_button`
+## writes from the variant — `BUTTON_PRIMARY_BG` is the one marker of "this is the chosen rung". It is
+## read here rather than the `disabled` box because a rung can now be selected AND gated at once
+## (issue #420): Godot then DRAWS the disabled box, but the variant the button was styled with is
+## still recorded on `normal`, so this answers "which rung is lit?" in both states.
+func _rung_is_selected(btn: Button) -> bool:
+	if btn == null:
+		return false
+	var box := btn.get_theme_stylebox("normal")
+	return box is StyleBoxFlat \
+		and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG)
 
 func _find_policy_rung(root: Node, policy: String) -> Button:
 	if root == null:
@@ -4000,10 +4114,16 @@ func _forage_range_bands() -> Array:
 ## `_standing_forage_band_fixture`, whose assignment is tuned to trip the drawer summary's overdraw and
 ## overstaff flags; this one is a plain, healthy Cultivate crew, so the unassign frame is judged on the
 ## button/forecast pair and nothing else.
-func _cultivating_forage_band_fixture() -> Dictionary:
+##
+## It is also the fixture behind the two STANDING-BUT-GATED frames (issue #420), which is why the tile
+## is a PARAMETER: a standing assignment is matched by TILE, so a frame selecting a patch other than
+## the (66,10) reference — the finished Tended Patch at (67,11) — would read as UNSTAFFED there, i.e.
+## exactly the "not standing" case those frames must not render. Both defaults keep every existing
+## caller on the reference tile.
+func _cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = _forage_range_bands()[0]
 	band["labor_assignments"] = [{
-		"kind": "forage", "workers": 1, "target_x": 66, "target_y": 10, "policy": "cultivate",
+		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "policy": "cultivate",
 		"actual_yield": 0.24, "sustainable_yield": 0.96, "realized_yield": 0.24,
 		"workers_needed": 1, "overdraws": false,
 	}]
@@ -5020,6 +5140,31 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 ## take-useful (7, driven by the carry model) so the "no leak" companion is meaningful: composing Tame
 ## floors the cap UP to the 10-crew, while composing the extractive Sustain must stay at its own 7 — a
 ## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
+## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which is the
+## point the husbandry-ceiling pass RETIRES ◎ Tame from the picker (its per-source meter is full and
+## 🐄 Corral is what comes next) and `_hunt_policy_gates` answers "Already fully tamed …" for it. It is
+## managed at that point, so it carries a real herder crew through `_set_managed_herders` — the field
+## pair every herd fixture owes the frame guard.
+func _fully_tamed_herd_fixture() -> Dictionary:
+	var fixture := _taming_herd_fixture()
+	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
+	_set_managed_herders(fixture, TAMED_HERD_CREW)
+	return fixture
+
+## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
+## else about `_band_fixture` is kept; only the assignment list is replaced, by the single hunt
+## assignment whose `fauna_id` matches `_fully_tamed_herd_fixture`'s and whose policy is the rung the
+## ceiling pass has since hidden.
+func _tame_standing_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	band["labor_assignments"] = [{
+		"kind": "hunt", "workers": TAMED_HERD_CREW, "fauna_id": _taming_herd_fixture()["id"],
+		"policy": "tame", "target_x": 70, "target_y": 17,
+		"actual_yield": 0.45, "sustainable_yield": 0.45,
+		"workers_needed": TAMED_HERD_CREW, "overdraws": false,
+	}]
+	return band
+
 func _tame_worker_cap_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["herders_needed"] = 0

@@ -657,6 +657,96 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     );
 }
 
+/// **Completion retires the build verb** (issue #420) — the `Sow` twin of the plant rung-2, animal
+/// rung-2 and animal rung-3 cases pinned in `systems::labor::labor_yield_tests`. The turn a Field
+/// finishes, the assignment is rewritten from `Sow` onto the harvest rung, carrying the tile, the
+/// committed crop and the crew across: left on the build verb the band would go on paying
+/// `yield_fraction_while_building` on ground with nothing left to sow.
+#[test]
+fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_seed_selection(&mut app, FactionId(0));
+    // Name the crop on the assignment (rather than leaving the auto-pick) so the retire can be
+    // asserted to carry the *commitment* across, not merely the tile coordinate.
+    let crop = default_sowable_species(&app, coord).expect("sowable ground grows a sowable plant");
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    {
+        let mut allocation = app
+            .world
+            .get_mut::<LaborAllocation>(band)
+            .expect("the band forages");
+        let LaborTarget::Forage { species, .. } = &mut allocation.assignments[0].target else {
+            panic!("the fixture band forages");
+        };
+        *species = Some(crop.clone());
+    }
+
+    // Every turn but the last: the meter fills and the verb stays put.
+    let (progress_per_turn, _) = field_build(&app);
+    let turns_to_build = (1.0 / progress_per_turn).ceil() as u32;
+    run_turns_with_forage(&mut app, turns_to_build - 1);
+    assert!(
+        !app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field(),
+        "fixture: the Field must still be going in here (progress {})",
+        field_progress_of(&app, coord)
+    );
+    assert!(
+        matches!(
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].target,
+            LaborTarget::Forage {
+                policy: FollowPolicy::Sow,
+                ..
+            }
+        ),
+        "an unfinished build keeps its verb — only completion retires it"
+    );
+
+    run_turns_with_forage(&mut app, 1);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field(),
+        "fixture: this is the completing turn"
+    );
+    let allocation = app.world.get::<LaborAllocation>(band).unwrap();
+    assert_eq!(
+        allocation.assignments.len(),
+        1,
+        "the retire rewrites a row, it never adds or drops one"
+    );
+    let assignment = &allocation.assignments[0];
+    assert_eq!(
+        assignment.workers, FORAGE_WORKERS,
+        "the crew stays on the ground it sowed"
+    );
+    let LaborTarget::Forage {
+        tile: retired_tile,
+        policy,
+        species,
+    } = &assignment.target
+    else {
+        panic!("the retire must not change the target's KIND: {assignment:?}");
+    };
+    assert_eq!(
+        *policy,
+        FollowPolicy::Sustain,
+        "a finished Field hands its crew to the harvest rung"
+    );
+    assert_eq!(*retired_tile, coord, "the same ground");
+    assert_eq!(
+        species.as_deref(),
+        Some(crop.as_str()),
+        "the crop the crew committed the build to survives the handoff"
+    );
+}
+
 /// **An abandoned Field goes feral — one rule for the whole plant web.** Walk away and it reverts to
 /// a wild gather patch after a single untended turn (exactly as an abandoned tended patch does), then
 /// bleeds to nothing over ~`1 / decay_per_turn` turns, ownership lapsing at zero. It does *not* step
