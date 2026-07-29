@@ -2718,9 +2718,8 @@ func _ready() -> void:
 	# ring itself carries a rotating sweep arc in the accent (NOT the calm pulse, which would say
 	# "nothing needs you" mid-turn), the face is dimmed and the `TURN` word is gone with the number.
 	# The clock is frozen, so the phase is STEPPED to a chosen point rather than raced.
-	_hud.turn_orb._advance_resolve_animation(TurnOrb.RESOLVE_SCATTER_SEC)
-	_hud.turn_orb._advance_resolve_animation(
-		TurnOrb.RESOLVE_ORBIT_PERIOD * TURN_ORB_ORBIT_CAPTURE_FRACTION)
+	_step_turn_orb_anim(TurnOrb.RESOLVE_SCATTER_SEC
+		+ TurnOrb.RESOLVE_ORBIT_PERIOD * TURN_ORB_ORBIT_CAPTURE_FRACTION)
 	await _settle()
 	await _save("turn_orb_resolving")
 
@@ -3968,9 +3967,11 @@ func _guard_frame_herd_fields(state: String) -> void:
 
 ## A 4-digit turn — the widest the face has to hold, and the case a fixed font size would clip.
 const TURN_ORB_FOUR_DIGIT_TURN := 1200
-## The slice the frozen clock is stepped by when driving the orb's resolve animation. Small enough
-## that a phase boundary lands where it would live, coarse enough that a full cycle is a few frames.
-const TURN_ORB_ANIM_STEP_SEC := 0.05
+## The slice the frozen clock is stepped by when driving the orb's resolve animation. It IS the orb's
+## own per-frame clamp, and taking it from there is load-bearing rather than tidy: the orb caps how
+## much of the animation ONE call may advance, so a harness stepping in bigger slices would silently
+## advance less than it asked for and capture the wrong phase.
+const TURN_ORB_ANIM_STEP_SEC := TurnOrb.RESOLVE_MAX_STEP_SEC
 ## Enough steps for the WORST path — the fail-open timeout, then a full scatter and re-form — plus a
 ## margin, so the cap only trips on an animation that genuinely cannot terminate.
 const TURN_ORB_RESOLVE_MAX_STEPS := int((TurnOrb.RESOLVE_TIMEOUT_SEC + TurnOrb.RESOLVE_SCATTER_SEC \
@@ -4029,6 +4030,15 @@ func _assert_turn_word_clears() -> void:
 	await _settle_turn_orb_resolve(restore_turn + 1)
 	_hud.update_overlay(restore_turn, {})
 	await _settle()
+
+## Advance the orb's resolve animation by `seconds` of frozen-clock time, in slices the orb will
+## actually honour. One big call would be clamped to `RESOLVE_MAX_STEP_SEC` and quietly under-advance.
+func _step_turn_orb_anim(seconds: float) -> void:
+	var remaining: float = seconds
+	while remaining > 0.0:
+		var slice: float = minf(remaining, TURN_ORB_ANIM_STEP_SEC)
+		_hud.turn_orb._advance_resolve_animation(slice)
+		remaining -= slice
 
 ## Drive the turn orb out of its resolving gate the way a server answer does — a `set_turn` with a
 ## DIFFERENT value — and prove the animation actually terminates.

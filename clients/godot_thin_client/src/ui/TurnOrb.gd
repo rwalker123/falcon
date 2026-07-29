@@ -182,7 +182,21 @@ const HINT_BASELINE_FRACTION := 0.89
 ## real turn. The timeout is NOT a special case — it re-forms the UNCHANGED number in place through
 ## the same path, i.e. "the answer was: nothing moved".
 const RESOLVE_TIMEOUT_SEC := 8.0
+## Longest frame `delta` allowed to DRIVE the animation clocks. A frame longer than this was a hitch,
+## not motion — a full snapshot, a world reveal, the window losing focus — and feeding its raw delta
+## in makes the animation TELEPORT: a single 2s frame consumes the whole re-form in one step and the
+## digits jump to their resting places. Clamped, a hitch plays as one step and the motion is merely
+## slower, never skipped. At a genuine sustained 20fps the clamp IS `delta`, so nothing changes.
+## NOT applied to `_resolve_elapsed` — see `_advance_resolve_animation`.
+const RESOLVE_MAX_STEP_SEC := 0.05
 ## The old number flies apart onto the orbit ring. Short: it is the acknowledgement of the click.
+##
+## **It is always seen in full.** A healthy turn answers in 0–57ms (measured, live stack), i.e. two
+## or three frames in, so an answer that started the re-form the instant it landed made the flight
+## imperceptible — and an acknowledgement too brief to perceive is not an acknowledgement. The answer
+## is therefore HELD (`_resolve_answered`) until the scatter completes, which spends this whole
+## duration on a fast turn. **This constant is the lever for that cost**: shorten it and the orb
+## acknowledges sooner, at the price of a fainter break-apart.
 const RESOLVE_SCATTER_SEC := 0.30
 ## The NEW number flies back in. Slightly longer than the scatter because the arrival IS the
 ## information (the turn advanced), so it settles rather than snaps.
@@ -286,6 +300,12 @@ var _resolve_from_turn: int = 0
 ## Seconds spent AWAITING the answer (scatter + orbit). Not accumulated during the re-form, which is
 ## the answer already landing.
 var _resolve_elapsed: float = 0.0
+## The answer landed while the digits were still flying OUT. The re-form cannot start from there —
+## it begins at `k = 1.0` (fully on the ring), so entering it mid-scatter teleports the glyphs the
+## rest of the way. Instead the answer is held here and the scatter's own completion branch routes
+## to `ANIM_REFORM` rather than `ANIM_ORBIT`, so the re-form is only ever entered from a state where
+## the digits genuinely ARE on the ring and no start-`k` bookkeeping is needed.
+var _resolve_answered: bool = false
 var _anim_phase: int = ANIM_NONE
 var _anim_time: float = 0.0
 var _orbit_phase: float = 0.0
@@ -412,14 +432,19 @@ func set_attention(entries: Array) -> void:
 
 ## The turn number the face carries — and, while the gate is up, THE ANSWER the orb is waiting for.
 ## A `set_turn` with a value different from `_resolve_from_turn` is the only thing that says the
-## server resolved the turn, so it starts the re-form toward the NEW number. The gate lifts when that
-## re-form COMPLETES, not here: one flag, one lifetime, one exit.
+## server resolved the turn. The gate lifts when the re-form COMPLETES, not here: one flag, one
+## lifetime, one exit.
 func set_turn(turn: int) -> void:
 	_turn = turn
 	if _resolving and turn != _resolve_from_turn and _anim_phase != ANIM_REFORM:
 		# Already re-forming? Leave it running — `_digits_text()` reads `_turn` live, so a newer turn
 		# arriving mid-flight is absorbed by the same animation instead of throwing the glyphs back out.
-		_begin_reform()
+		if _anim_phase == ANIM_SCATTER:
+			# Mid-flight OUT: record the answer and let the scatter finish. Its completion branch
+			# routes to the re-form. See `_resolve_answered`.
+			_resolve_answered = true
+		else:
+			_begin_reform()
 		return
 	_refresh_face_text()
 
@@ -516,6 +541,7 @@ func _begin_resolving() -> void:
 	_resolving = true
 	_resolve_from_turn = _turn
 	_resolve_elapsed = 0.0
+	_resolve_answered = false
 	_anim_phase = ANIM_SCATTER
 	_anim_time = 0.0
 	# Start every cycle at a known angle. The animation is then a pure function of its OWN elapsed
@@ -541,6 +567,7 @@ func _finish_resolving() -> void:
 	_anim_time = 0.0
 	_resolving = false
 	_resolve_elapsed = 0.0
+	_resolve_answered = false
 	_recompute()
 	if _popover_open:
 		_rebuild_popover()
@@ -551,21 +578,36 @@ func _finish_resolving() -> void:
 func _advance_resolve_animation(delta: float) -> void:
 	if _anim_phase == ANIM_NONE:
 		return
+	# TWO clocks are driven from here by TWO DIFFERENT deltas, and that split is the subtle part.
+	# The ANIMATION clocks take the CLAMPED step (`RESOLVE_MAX_STEP_SEC`): a hitch must play as one
+	# frame of motion rather than teleport through a whole phase.
+	var step: float = minf(delta, RESOLVE_MAX_STEP_SEC)
 	# ONE angular clock for the flying glyphs AND the ring's sweep arc, so they cannot drift apart.
-	_orbit_phase = fposmod(_orbit_phase + delta * TAU / RESOLVE_ORBIT_PERIOD, TAU)
-	_anim_time += delta
+	_orbit_phase = fposmod(_orbit_phase + step * TAU / RESOLVE_ORBIT_PERIOD, TAU)
+	_anim_time += step
 	match _anim_phase:
 		ANIM_SCATTER:
 			if _anim_time >= RESOLVE_SCATTER_SEC:
 				# Carry the remainder so a coarse step cannot lose motion at the seam.
-				_anim_time -= RESOLVE_SCATTER_SEC
-				_anim_phase = ANIM_ORBIT
+				var overshoot: float = _anim_time - RESOLVE_SCATTER_SEC
+				if _resolve_answered:
+					# The answer arrived while the digits were still flying OUT and was held until
+					# now (see `_resolve_answered`). They are on the ring, so the re-form is entered
+					# truthfully at `k = 1.0` instead of teleporting the rest of the way.
+					_begin_reform()
+				else:
+					_anim_phase = ANIM_ORBIT
+				_anim_time = overshoot
 		ANIM_REFORM:
 			if _anim_time >= RESOLVE_REFORM_SEC:
 				_finish_resolving()
 				return
 	# The timeout counts only while AWAITING the answer. During the re-form the answer has already
 	# landed, so a slow frame there must not restart the flight.
+	#
+	# IT TAKES THE RAW `delta`, NOT `step`. This is a WALL-CLOCK safety net, not motion: clamping it
+	# would make a stalled client's dead orb sit far past the real 8s before failing open — the
+	# longer the stall, the later the rescue, which is exactly backwards.
 	if _anim_phase != ANIM_REFORM:
 		_resolve_elapsed += delta
 		if _resolve_elapsed >= RESOLVE_TIMEOUT_SEC:

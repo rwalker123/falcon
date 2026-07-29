@@ -136,6 +136,29 @@ when the snapshot lands** — one flag, one lifetime, one exit (`_finish_resolvi
 arriving mid-re-form is absorbed rather than restarting the flight, because `_digits_text()` reads
 `_turn` live.
 
+**THE RE-FORM IS ONLY EVER ENTERED FROM THE RING**, and that is what makes its `k` honest. The
+re-form starts at `k = 1.0` (`1.0 - _ease_in_out(0)`) — fully out on the orbit — so entering it from
+a scatter still in flight teleports the glyphs the rest of the way, and that fired on **every healthy
+turn**: measured live, the server answers **0–57 ms** after the click, i.e. two or three frames into
+the 0.30 s scatter, at `k ≈ 0.35`. So an answer arriving mid-scatter is HELD on `_resolve_answered`
+and the scatter's own completion branch routes to `ANIM_REFORM` instead of `ANIM_ORBIT`. Structural,
+not a patched start-`k`: there is no state from which the re-form can begin anywhere but the ring, so
+no start-`k` bookkeeping exists to get wrong. The flag is cleared at both ends of the lifetime
+(`_begin_resolving` / `_finish_resolving`). **A consequence worth stating: the break-apart is always
+seen in full** — an acknowledgement too brief to perceive is not an acknowledgement — and on a fast
+turn that spends the whole of `RESOLVE_SCATTER_SEC`, which is the lever for the trade.
+
+**Two clocks, two deltas — `RESOLVE_MAX_STEP_SEC` (0.05).** The animation clocks (`_orbit_phase`,
+`_anim_time`) take the **clamped** step, because a frame longer than that was a hitch, not motion: a
+single 2 s frame — a world reveal, a full snapshot, the window losing focus — otherwise consumes the
+entire 0.34 s re-form in one step and the digits jump to their resting places. Clamped, a hitch plays
+as one step; at a genuine sustained 20 fps the clamp IS `delta` and nothing changes.
+**`_resolve_elapsed` keeps the RAW delta** — it is a wall-clock safety net, and clamping it would push
+the fail-open past the real 8 s in proportion to how badly the client was stalling, i.e. latest
+exactly when it is needed most. `tools/ui_preview.gd` takes its step slice FROM this constant
+(`TURN_ORB_ANIM_STEP_SEC`), or a harness stepping in bigger slices would silently under-advance and
+capture the wrong phase.
+
 **`RESOLVE_TIMEOUT_SEC` (8s) FAILS OPEN, and that is the point.** A rejected or dropped advance
 (server down, command never applied) produces no new snapshot *ever*, and a permanently dead orb is
 unrecoverable for the player. A measured turn round-trip is ~10ms of sim plus tens of ms of client
