@@ -115,8 +115,8 @@ pub fn spawn_initial_world(
     }
 
     let _global_id = culture.ensure_global();
-    let fallback_region = culture.upsert_regional(0);
-    if let Some(region_layer) = culture.regional_layer_mut_by_region(0) {
+    let fallback_region = culture.upsert_regional(FALLBACK_CULTURE_REGION_ID);
+    if let Some(region_layer) = culture.regional_layer_mut_by_region(FALLBACK_CULTURE_REGION_ID) {
         let modifiers = region_layer.traits.modifier_mut();
         modifiers[CultureTraitAxis::OpenClosed.index()] = scalar_from_f32(0.12);
         modifiers[CultureTraitAxis::TraditionalistRevisionist.index()] = scalar_from_f32(-0.08);

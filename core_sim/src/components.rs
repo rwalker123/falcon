@@ -643,8 +643,9 @@ pub struct ResidentBand;
 /// [`crate::resources::BandIdAllocator`], which is itself checkpoint state — restoring the counter
 /// is what stops a replay from re-issuing an id that is already in use.
 ///
-/// This is **identity only**. Bands carrying their own culture layer is issue #407 and is additive
-/// on top of this; nothing here anticipates it.
+/// It is also the key a band's **culture layer** is filed under
+/// (`CultureOwner::from_band`) — which only works because the id survives a restore; an entity-bit
+/// key would orphan every band's culture on a rollback, exactly as it did for tiles.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BandId(pub u64);
 

@@ -1886,7 +1886,11 @@ pub fn capture_snapshot(
         });
     }
     for tile in tile_states.iter_mut() {
-        let owner = CultureOwner(tile.entity);
+        // Keyed on the tile's POSITION, because that is what `attach_local` files a local layer
+        // under (`CultureOwner::from_tile`). Keying on `tile.entity` — the entity bits — looks up a
+        // disjoint range (`from_tile` always sets bit 63), so it missed on every tile of every
+        // snapshot and `culture_layer` shipped as a uniform `0`.
+        let owner = CultureOwner::from_tile(UVec2::new(tile.x, tile.y));
         if let Some(layer) = culture.local_layer_by_owner(owner) {
             tile.culture_layer = layer.id;
         }

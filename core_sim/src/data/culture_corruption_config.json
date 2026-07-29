@@ -23,6 +23,14 @@
         "soft_trigger_ticks": 1,
         "hard_trigger_ticks": 1
       },
+      "band": {
+        "elasticity": 0.2,
+        "soft_threshold": 0.6,
+        "hard_threshold": 1.2,
+        "soft_trigger_ticks": 3,
+        "hard_trigger_ticks": 5
+      },
+      "band_character_amplitude": 0.2,
       "resonance_response": 0.08
     },
     "drift_warning": {

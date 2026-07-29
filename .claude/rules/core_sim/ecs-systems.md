@@ -32,11 +32,32 @@ Power is **not** a `TurnStage` of its own — `simulate_power` is registered in 
 **Telemetry**: `CrisisTelemetryState` with EMA-smoothed gauges, trend deltas, warn/critical bands.
 
 ### Culture Simulation
-`CultureLayer` resources at faction/region/settlement scope. Each stores normalized trait vector (15 axes per manual).
+`CultureManager` holds culture layers at four scopes — **global**, **regional** (one per province), **local** (one per tile), and **band** — each storing a normalized trait vector (15 axes per manual).
 
-**Flow**: `reconcile_culture_layers` copies global baselines down, blends with local deltas. `CultureDivergence` tracks deviation; crossing thresholds emits `CultureTensionEvent` / `CultureSchismEvent`.
+**Flow**: `reconcile_culture_layers` copies global baselines down, blends with per-layer modifiers. `CultureDivergence` tracks deviation from the parent; crossing thresholds emits `CultureTensionEvent` / `CultureSchismEvent`.
 
-**Config**: `culture_corruption_config.json` governs elasticity, `soft_threshold`/`hard_threshold`, trigger tick counts.
+**Config**: `culture_corruption_config.json` governs elasticity, `soft_threshold`/`hard_threshold`, trigger tick counts, per scope.
+
+#### An owner key is a natural key, never an `Entity` — and the READERS have to agree
+
+`CultureOwner` encodes **what owns a layer**: `0` for global, the region id for a province, `TILE_OWNER_TAG | y<<32 | x` for a tile, `BandId.0` for a band. A restore renumbers entities, so an entity-bit key orphans every layer — which is why the tile key moved to position.
+
+**Moving the writer is only half of it.** `attach_local` was re-keyed to `CultureOwner::from_tile` while both snapshot readers still asked for `CultureOwner(tile.entity)`. The two key spaces are disjoint (`from_tile` always sets bit 63, and a bevy 0.13 generation would have to reach 2³¹ to collide), so **every lookup missed silently**: `tiles[].culture_layer` shipped as a uniform `0` and `culture_raster` as all zeroes, on every frame of every game, for as long as the mismatch stood. The guard is snapshot-level (`core_sim/tests/band_culture_layers.rs`), because keying **at the call site** is exactly what broke — a test against `CultureManager` would have passed throughout.
+
+#### Bands carry their own culture
+
+A **resident** band (`ResidentBand` — an expedition is detached and deliberately owns nothing) has a layer in `CultureManager::bands`, parented to the **regional layer of the province it currently stands in**. `reconcile_band_culture_layers` runs in `TurnStage::Influence` ahead of `reconcile_culture_layers` and reconciles three cases per turn: no layer → `attach_band`, band gone/no longer resident → `detach_band`, province changed → `set_band_parent`. Worldgen-spawned bands therefore get layers on the first `Update`, before capture, so no worldgen hook is needed.
+
+- **`bands` is a separate map from `locals`**, which is what makes it impossible for a band layer to be returned by the tile lookups or walked as a tile.
+- **`attach_band` seeds from the parent province's *current* values**, not neutral: a band born into a long-diverged province starts assimilated rather than schisming for existing.
+- **`set_band_parent` leaves traits alone.** That is the whole point of parenting on the province — a migrating band keeps the culture it arrived with and chases the new one at the band scope's elasticity, so a move **lags** instead of snapping.
+- **Bands take no direct influencer resonance** (`resolve_against(parent, None)`). It reaches them through their province. A fourth channel would mean changing how influencers *attribute* resonance, which is a different arc.
+- **`seeded_modifiers_for_band` is load-bearing.** Without a per-band character offset every band converges on its province and they are all identical — the faction rollup would degenerate into a population-weighted average of provinces and no band could ever diverge enough to schism. Its amplitude is the config lever `band_character_amplitude`, because it sets how far bands drift and therefore how often schism fires.
+- **`faction_trait_average` reads the band map** — the population-weighted rollup `The Telling`'s `culture.axis.*` signals sample, falling through to the global layer only for a faction whose bands carry no layers.
+- **Band layers ride `CultureManagerCheckpoint`**, so they survive a rollback without a `Resource`/`Component` of their own (and so need no new row in `tests/sim_state_coverage.rs`).
+- **Band layers are not on the wire.** `sim_schema`'s `CultureLayerScope` has no `Band` member, the capture walks global/regional/local only, and `active_tensions` skips bands for the same reason; a band's tensions still reach the sim through `take_tension_events`.
+
+**Config** (`culture_corruption_config.json` → `culture.propagation`): a `band` block beside `global`/`regional`/`local` — `elasticity` **0.20** (half the tile scope's 0.40, because a band carries cultural memory across a move), `soft_threshold` 0.6, `hard_threshold` 1.2, and, uniquely among the scopes, trigger ticks **> 1** (`soft` 3 / `hard` 5) so a band passing briefly through a foreign province does not read as a schism. Plus `band_character_amplitude` **0.2**.
 
 ### Knowledge & Espionage
 `KnowledgeLedger` tracks per-discovery secrecy posture, leak cadence, espionage pressure.

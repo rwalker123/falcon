@@ -116,6 +116,11 @@ pub(crate) fn map_layer_scope(scope: SimCultureLayerScope) -> sim_runtime::Cultu
         SimCultureLayerScope::Global => sim_runtime::CultureLayerScope::Global,
         SimCultureLayerScope::Regional => sim_runtime::CultureLayerScope::Regional,
         SimCultureLayerScope::Local => sim_runtime::CultureLayerScope::Local,
+        // The wire enum has no `Band` member, and nothing published walks the band map — capture
+        // reads `global_layer`/`regional_layers`/`local_layers`, and `active_tensions` skips bands
+        // for exactly this reason. `Local` is the nearest sub-regional scope should a band layer
+        // ever reach here; a real wire member is a schema + client change.
+        SimCultureLayerScope::Band => sim_runtime::CultureLayerScope::Local,
     }
 }
 
@@ -199,7 +204,10 @@ pub(crate) fn culture_raster_from_layers(
         if idx >= samples.len() {
             continue;
         }
-        let owner = CultureOwner(tile.entity);
+        // Same keying rule as the per-tile `culture_layer` stamp in `capture.rs`: a local layer is
+        // filed under its tile's POSITION, never its entity bits, so the raster has to ask for it
+        // that way or every sample reads zero.
+        let owner = CultureOwner::from_tile(UVec2::new(tile.x, tile.y));
         let Some(layer) = culture.local_layer_by_owner(owner) else {
             continue;
         };
