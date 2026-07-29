@@ -577,6 +577,21 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_mixed_hex")
 
+	# State — THE OVERFLOW CHIP CARRIES WHAT IT HIDES (issue #412). Same crowded hex, but now the band
+	# WORKS the herd and the food site standing on it, and the three wonders take every visible slot —
+	# so both worked sources fall past the cap and have no marker to ring. Without the roll-up the chip
+	# would read a bare `+2` over a hex where two sources are staffed and one can climb a rung, which
+	# is precisely the "silent cap reads as nothing here" failure this feature exists to fix.
+	_map.display_snapshot(_snapshot_mixed_worked())
+	_map.set_faction_knowledge({
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+	})
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_overflow_worked")
+	_map.set_faction_knowledge({})
+
 	# State "riverine split" — the terrain-aware riverine_delta food glyph. Two riverine_delta food
 	# sites on different terrains in one frame: the LEFT marker sits on an open navigable river (🐟),
 	# the RIGHT marker on a dry alluvial-plain floodplain (🎋). Proof that FoodIcons.for_site splits
@@ -1976,6 +1991,31 @@ func _snapshot_mixed() -> Dictionary:
 			],
 		}],
 	}
+	return snap
+
+## The crowded hex again, with its herd and its food site both WORKED and both pushed past the visible
+## marker cap by the three wonders. The herd is fully tamed on a "pen" ceiling, so one of the two
+## hidden sources is also READY — which is what makes the chip's `⌃` mark mean something here.
+func _snapshot_mixed_worked() -> Dictionary:
+	var snap := _snapshot_mixed()
+	var herds: Array = snap["herds"]
+	var herd: Dictionary = herds[0]
+	herd["domestication"] = 1.0
+	herd["husbandry_ceiling"] = "pen"
+	snap["populations"] = [_band([
+		{"kind": "forage", "workers": 3, "target_x": BAND_X, "target_y": BAND_Y, "policy": "sustain",
+			"actual_yield": 0.31, "sustainable_yield": 0.31, "overdraws": false},
+		{"kind": "hunt", "workers": 2, "fauna_id": String(herd.get("id", "")), "policy": "sustain",
+			"target_x": BAND_X, "target_y": BAND_Y,
+			"actual_yield": 0.22, "sustainable_yield": 0.22, "overdraws": false},
+	], 2, 0)]
+	snap["forage_patches"] = [{
+		"x": BAND_X, "y": BAND_Y,
+		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+		"sow_site_refusal": "too_dry",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
 	return snap
 
 ## Four separate bands on adjacent hexes → the ⛺ / 🛖 / 🏘️ glyph tokens side by side for a direct

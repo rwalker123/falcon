@@ -1495,6 +1495,9 @@ func _draw() -> void:
 		_secondary_markers.draw_food_site(site, radius, origin)
 	for wsite in discovered_sites:
 		_secondary_markers.draw_discovered_site(wsite, radius, origin)
+	# The chip reports what the cap hid, so it needs the mark pass's roll-up (threaded across here so
+	# neither renderer holds the other).
+	_secondary_markers.set_hidden_source_state(_band_overlays.hidden_source_state())
 	_secondary_markers.draw_secondary_overflow(radius, origin)
 
 	_secondary_markers.draw_harvest_markers(radius, origin)

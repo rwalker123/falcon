@@ -16,6 +16,13 @@ var _view: MapView = null
 #   _secondary_overflow:    tile -> count of entries past SECONDARY_VISIBLE_CAP
 var _secondary_slot_lookup: Dictionary = {}
 var _secondary_overflow: Dictionary = {}
+## Per-tile roll-up of the worked sources the cap hid — see `set_hidden_source_state`.
+var _hidden_source_state: Dictionary = {}
+# Marks the `+N` chip appends for what it hides, severity-ordered. They deliberately reuse the
+# vocabulary the badges and the work rows already use, so the chip needs no legend of its own.
+const OVERFLOW_WARN_MARK := "⚠"
+const OVERFLOW_READY_MARK := "⌃"
+const OVERFLOW_WORKED_MARK := "⚒"
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -131,13 +138,40 @@ func _draw_distress_badge(icon_center: Vector2, icon_size: int) -> void:
 		badge_r * _view.HERD_DISTRESS_BANG_DOT_RADIUS, _view.HERD_DISTRESS_BANG_COLOR)
 
 ## Per-tile `+N` overflow chip pass (secondaries beyond _view.SECONDARY_VISIBLE_CAP).
+## THE CHIP CARRIES WHAT IT HIDES (docs/plan_worked_source_marks.md §2.3). Three slots is the right
+## budget — six badges on a hex is not a map — but a cap that drops state silently reads as "nothing
+## here", the very failure the worked-source marks exist to fix at a different scale. So the `+N` chip
+## rolls up the hidden sources' state in SEVERITY ORDER and at most two marks wide: `⚠` if any hidden
+## source is in trouble, `⌃` if any can climb a rung, `⚒` if any is merely worked.
+##
+## Reaching a hidden source is NOT this chip's job: re-clicking the hex cycles the whole occupant stack
+## (issue #429). The chip's job is to say there is something in there worth the click.
 func draw_secondary_overflow(radius: float, origin: Vector2) -> void:
 	if _view.SECONDARY_VISIBLE_CAP >= _view.SECONDARY_SLOT_OFFSETS.size():
 		return
 	for tile in _secondary_overflow:
 		var tile_center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
 		var chip_center := slot_center(tile_center, _view.SECONDARY_VISIBLE_CAP, radius)
-		_view._draw_count_pill(chip_center, "+%d" % int(_secondary_overflow[tile]))
+		_view._draw_count_pill(chip_center, "+%d%s" % [int(_secondary_overflow[tile]), _hidden_marks(tile)])
+
+## The rolled-up marks for one tile's hidden sources, "" when it hides nothing worked.
+func _hidden_marks(tile: Vector2i) -> String:
+	var state: Dictionary = _hidden_source_state.get(tile, {})
+	if state.is_empty() or not bool(state.get("worked", false)):
+		return ""
+	var marks := ""
+	if bool(state.get("warn", false)):
+		marks += OVERFLOW_WARN_MARK
+	if bool(state.get("ready", false)):
+		marks += OVERFLOW_READY_MARK
+	if marks == "":
+		marks = OVERFLOW_WORKED_MARK
+	return " " + marks
+
+## Pushed each frame by `MapView._draw` from `BandOverlayRenderer.hidden_source_state()` — threaded
+## across rather than held, so neither renderer depends on the other.
+func set_hidden_source_state(state: Dictionary) -> void:
+	_hidden_source_state = state if state is Dictionary else {}
 
 func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	var herd_id := String(herd.get("id", ""))

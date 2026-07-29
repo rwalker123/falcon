@@ -191,6 +191,10 @@ var _deferred_yield_labels: Array[Dictionary] = []
 ## Per-source BADGES, deferred for the same reason the labels are: they annotate the map and would
 ## otherwise be painted over by the marker glyphs, rings and pending overlays drawn after this pass.
 var _deferred_source_badges: Array[Dictionary] = []
+## Per-tile roll-up of the worked sources the marker cap HID this frame: `Vector2i → {worked, ready,
+## warn}`. A cap that hides state silently reads as "nothing here", which is the very failure this
+## feature exists to fix at a different scale — so the `+N` chip reports what it is covering.
+var _hidden_source_state: Dictionary = {}
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -209,6 +213,7 @@ func reset_world_state() -> void:
 	_labor_pending = {}
 	_deferred_yield_labels.clear()
 	_deferred_source_badges.clear()
+	_hidden_source_state.clear()
 
 ## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
 ##
@@ -228,6 +233,7 @@ func reset_world_state() -> void:
 ## `slot_of == -1`) has nothing to ring, and the outline is what still says work happens here.
 func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 	_deferred_source_badges.clear()
+	_hidden_source_state.clear()
 	# CREW IS AGGREGATED PER SOURCE, NOT PER BAND — two bands can work one patch, and two badges on one
 	# marker would be a lie about a single number. Keyed by the source's own slot key, the same identity
 	# the ring docks to.
@@ -264,6 +270,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
 					String(entry.get("policy", "")), int(crew[fkey]), radius, origin)
+				_note_if_hidden(fkey, Vector2i(tx, trow), LABOR_KIND_FORAGE,
+					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
+					String(entry.get("policy", "")), bool(entry.get("overdraws", false)))
 			elif kind == LABOR_KIND_HUNT:
 				# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
 				# target is only the fallback for a herd that left the visible fauna set.
@@ -282,6 +291,31 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
 					String(entry.get("policy", "")), int(crew[hkey]), radius, origin)
+				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
+					String(entry.get("policy", "")), bool(entry.get("overdraws", false)))
+
+## Fold a worked source the marker cap HID into its tile's roll-up, so the `+N` chip can report it.
+## A source with a visible slot returns immediately — its own badge already says everything.
+##
+## NOT called at far zoom in any meaningful sense: `compute_slots` returns early there, so every key
+## answers -1 but `_secondary_overflow` is empty too and no chip draws. The roll-up is therefore only
+## ever read where a chip exists, which is exactly what it describes.
+func _note_if_hidden(key: String, tile: Vector2i, kind: String, source: Dictionary, policy: String,
+		overdraws: bool) -> void:
+	if _view.secondary_slot_of(key) >= 0:
+		return
+	var state: Dictionary = _hidden_source_state.get(tile, {"worked": false, "ready": false, "warn": false})
+	state["worked"] = true
+	if overdraws:
+		state["warn"] = true
+	if not source.is_empty() and not RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge).is_empty():
+		state["ready"] = true
+	_hidden_source_state[tile] = state
+
+## The per-tile roll-up of what the marker cap hid, for `SecondaryMarkerRenderer.draw_secondary_overflow`.
+## MapView threads it across, so neither renderer holds the other.
+func hidden_source_state() -> Dictionary:
+	return _hidden_source_state
 
 ## Queue this source's badge for the deferred flush. A source can be reached by more than one band, so
 ## the LAST queue for a key wins and carries the running crew total — cheaper and simpler than a second
