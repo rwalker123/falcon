@@ -143,11 +143,14 @@ const FLORA_COMPOSITION_ROW := "What grows here"
 # own rows with it too (beside the `· N.N×` payoff term the picker adds).
 const FLORA_SHARE_FORMAT := "%s %d%%"
 
-# Tile card "Crop" row (flora roster S1) — the row FLORA_COMPOSITION_ROW becomes once a band commits
-# the patch to one species under Cultivate/Sow. The basket is displaced (that is the cost of tending
-# — docs/plan_flora_roster.md §4.3), so the two rows are mutually exclusive: a committed tile is one
-# plant, and showing the wild mix beside it would state what no longer grows there. Kept well under
-# `DetailFormat`'s 16-char key limit so it aligns as a normal table row, like the row it replaces.
+# Tile card "Crop" row (flora roster S1) — the row that appears ABOVE FLORA_COMPOSITION_ROW once a
+# band commits the patch to one species under Cultivate/Sow. The two are NOT mutually exclusive and
+# never were after issue #433: a commitment REWEIGHTS the basket over the build (a Tended Patch weeds
+# the favored share up toward `min(1, share x tended_weeding_gain)`, a Field forces it to 1.0) instead
+# of displacing it, and the species is recorded on the first worked turn — ~25 turns before any of
+# that lands. So this row says WHAT WAS COMMITTED TO and the section below says WHAT IS GROWING, which
+# are different facts for most of a build. Kept well under `DetailFormat`'s 16-char key limit so it
+# aligns as a normal table row.
 const FLORA_CROP_ROW := "Crop"
 
 # THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of

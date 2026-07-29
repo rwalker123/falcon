@@ -654,15 +654,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
-	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow (flora roster S1).
-	# The "What grows here" basket row is REPLACED by a single `Crop: Wild Emmer` row: committing
-	# displaces the rest of the basket, so the tile is one plant now and stating both would name
-	# plants that no longer grow here. Compare side by side with `food_tile.png`, which is the
-	# uncommitted basket (and the 101%-rounding test) — the two frames differ in exactly that row.
+	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
+	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
+	# and the basket is UNCHANGED (45 / 30 / 25, identical to `food_tile.png`), because the species is
+	# recorded on the first worked turn — ~25 turns before any weeding happens. Wild Grain's 🌿 row is
+	# marked in SIGNAL, which is what joins the two rows by eye. THREE FRAMES ARE THE TEST, in order:
+	# `food_tile` (wild) -> here (committed, nothing grown yet) -> `food_tile_crop_tended` (weeded).
+	# A "committed" frame alone would pass while the client still collapsed the basket on commit.
 	_hud.show_tile_selection(_committed_crop_tile_fixture())
 	_compose_forage(_committed_crop_tile_fixture())
 	await _settle()
 	await _save("food_tile_crop")
+
+	# State 2-crop-tended — the third frame: the SAME commitment once the Tended Patch lands and the
+	# basket finally REWEIGHTS (Wild Grain 45% -> 68%, Oak Mast 25% -> 2%, Ground Nut untouched, the
+	# increase coming off the least abundant member first). The Cultivation row reads "🌾 Tended Patch"
+	# beside it, so the frame states the cause and the effect together.
+	_hud.show_tile_selection(_weeded_crop_tile_fixture())
+	_compose_forage(_weeded_crop_tile_fixture())
+	await _settle()
+	await _save("food_tile_crop_tended")
 
 	# State 2-growing — the "What grows here" SECTION on the bare tile card (no compose sheet): a header
 	# then one 🌿 row per realized plant, name + share%, in wire order (share DESC). The pair is TWO
@@ -963,12 +974,22 @@ func _ready() -> void:
 
 	# State 2-crop-committed — the patch has already committed, and commitment is one-way until it
 	# lapses: the picker is replaced by a locked READOUT naming the crop, so the UI cannot imply a
-	# switch the sim will refuse.
+	# switch the sim will refuse. The double-open is the same one the two states above spell out — the
+	# `reset_forage_source()` just above makes the first open a SOURCE CHANGE, which re-seeds the policy
+	# from the band's standing assignment (Sustain) and threw the `cultivate` away. This state had been
+	# silently rendering the Sustain sheet, which carries no crop block at all, so the readout it exists
+	# to judge was not in the frame.
 	_hud.show_tile_selection(_committed_crop_tile_fixture())
+	_compose_forage(_committed_crop_tile_fixture())
 	_hud._compose.set_forage_policy("cultivate")
 	_compose_forage(_committed_crop_tile_fixture())
 	await _settle()
 	await _save("forage_crop_committed")
+	# `alloc_section_label` upper-cases its text, so the header is matched in the case it RENDERS in.
+	_assert_hud("a committed patch's picker is a locked readout naming the crop",
+		_has_label_containing(_hud._drawercompose._compose_sheet,
+				HudFloraVocab.FLORA_CROP_COMMITTED_HEADER.to_upper())
+			and _has_label_containing(_hud._drawercompose._compose_sheet, "Wild Grain"))
 
 	_hud._compose.set_forage_policy("cultivate")
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -4916,14 +4937,44 @@ func _climate_tile_fixture(temperature: float, terrain_label: String) -> Diction
 	return tile
 
 
-## A patch a band has COMMITTED to one crop (flora roster S1) — the `_food_tile_fixture` basket, plus
-## the two committed fields the sim sets when Cultivate/Sow takes. It deliberately KEEPS the
-## composition list: the wire still carries the biome's basket, and the card must choose the Crop row
-## over it rather than merely fall back to it when the basket is absent.
+## STAGE 2 of the commitment — a band has COMMITTED this patch to Wild Grain and the build is STILL
+## RUNNING (`_food_tile_fixture` carries `cultivation_progress` 0.6, `is_cultivated` false). The
+## commitment is recorded on the FIRST worked turn, so the basket underneath it is the wild one,
+## UNCHANGED — 45 / 30 / 25, byte-for-byte what `food_tile` shows. The card must therefore render the
+## `Crop: Wild Grain` row AND the whole basket, with Wild Grain marked in SIGNAL; collapsing to the
+## crop row alone claimed a mixed tile was already pure the instant the order was given (issue #433).
+## The committed species is a MEMBER of the basket on purpose — the mark has nothing to land on
+## otherwise, and the sim can only ever commit to a plant the tile actually realizes.
 func _committed_crop_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
-	tile["patch_committed_species"] = "wild_emmer"
-	tile["patch_committed_display_name"] = "Wild Emmer"
+	tile["patch_committed_species"] = "wild_grain"
+	tile["patch_committed_display_name"] = "Wild Grain"
+	return tile
+
+## STAGE 3 — the same commitment once the Tended Patch COMPLETES, which is when the basket finally
+## moves. Weeding lifts the favored share to `min(1, share x tended_weeding_gain)` (0.455 x 1.5 =
+## 0.6825) and takes the increase off the LEAST abundant members first, so Oak Mast (0.25) absorbs all
+## 0.2275 of it and Ground Nut is untouched: 68 / 30 / 2. Read against `food_tile_crop` — same tile,
+## same crop, one build later — this pair is the whole point of showing the basket beside the Crop
+## row: you can watch Oak Mast fall 25% -> 2% as the work lands.
+func _weeded_crop_tile_fixture() -> Dictionary:
+	var tile := _committed_crop_tile_fixture()
+	tile["cultivation_progress"] = 1.0
+	tile["is_cultivated"] = true
+	var basket: Array = []
+	for entry_variant in tile["patch_composition"]:
+		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
+		match String(entry["species"]):
+			"wild_grain": entry["share"] = 0.6825
+			"oak_mast": entry["share"] = 0.0225
+		basket.append(entry)
+	tile["patch_composition"] = basket
+	# A tended patch reports every policy ceiling == per_worker_yield (see `_tended_tile_fixture`), so
+	# the stepper caps at 1 worker and the frame does not also change the forecast under test.
+	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return tile
 
 ## The LONGEST basket the sim can produce — a navigable hex blends the valley's basket with the

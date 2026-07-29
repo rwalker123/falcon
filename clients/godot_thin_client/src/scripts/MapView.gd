@@ -2648,16 +2648,20 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
 		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
-		# server-side; never re-sorted here). Deliberately NOT in FOW_DISCOVERED_HIDDEN_KEYS: it is
-		# a pure function of the BIOME, like the terrain label or the river edges, so a remembered
-		# tile still knows what grows there. Never-seen tiles are covered by the `unexplored`
-		# redaction, and nothing on the patch can change it.
+		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
+		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the
+		# favored share up, a Field takes the tile whole). Deliberately NOT in
+		# FOW_DISCOVERED_HIDDEN_KEYS: what a tile grows is ground knowledge like the terrain label or
+		# the river edges, so a remembered tile still knows it — at worst it remembers the mix as it
+		# last stood. Never-seen tiles are covered by the `unexplored` redaction.
 		info["patch_composition"] = patch.get("composition", [])
-		# THE COMMITTED CROP — "" while the patch is the wild mixed basket above, else the single
-		# species this patch was committed to by Cultivate/Sow. Unlike the composition it IS patch
-		# state (a band's doing), but it rides beside it because the tile card renders exactly one of
-		# the two rows; the Forage line it sits under is already past the discovered early-return, so
-		# a remembered tile never reports it and it needs no FOW_DISCOVERED_HIDDEN_KEYS entry.
+		# THE COMMITTED CROP — "" while nothing has been committed here, else the single species this
+		# patch was committed to by Cultivate/Sow. It rides BESIDE the composition rather than
+		# replacing it: the commitment is recorded on the first worked turn, ~25 turns before the
+		# basket above it moves at all, so the two answer different questions and the tile card renders
+		# both rows. Unlike the composition it IS patch state (a band's doing), but the Forage line it
+		# sits under is already past the discovered early-return, so a remembered tile never reports it
+		# and it needs no FOW_DISCOVERED_HIDDEN_KEYS entry.
 		info["patch_committed_species"] = String(patch.get("committed_species", ""))
 		info["patch_committed_display_name"] = String(patch.get("committed_display_name", ""))
 	var units_here := _units_on_tile(col, row)
