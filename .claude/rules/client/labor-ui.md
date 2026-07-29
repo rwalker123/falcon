@@ -974,3 +974,102 @@ and a trade-only wolf row on one board; the inspector sentence reads `⇄ +0.22 
 sole hunt pays trade: header `2 sources +0.15 /turn ⇄ +0.22`, chip `🦌 1 · ⇄ 0.22` with the food term
 suppressed).
 `map_preview`: `map_band_work` (the hunted wolf labels `⇄+0.22 ⇊` beside the deer's `+0.20`).
+
+---
+
+## The work row carries TWO axes — the standing RUNG and the verb in flight
+
+A board row's mark column used to carry one glyph, `FoodIcons.for_policy(policy)`, and a policy is
+**what the band is doing right now**. It is not what the source **is**. The two come apart the moment
+a ladder rung completes: a patch under construction wears 🌱 Cultivate, and the turn the build lands
+the policy reverts to `sustain`, the glyph reverts to ♻, and a ~25-turn investment leaves no trace on
+the board where labor is managed. `Forage (14, 11) +0.97 ♻` on a Tended Patch and
+`Forage (11, 9) +0.61 ♻` on plain wild ground were the same row, distinguishable only by a yield
+number — which is exactly what cannot be read back as a rung.
+
+So the row carries a **SOURCE-RUNG mark** as its own reserved slot, left of the policy/⚠ marks:
+
+| Rung | Mark | Where the glyph already lives |
+|---|---|---|
+| wild (plant or animal) | *(none)* | — |
+| Tended Patch | 🌾 | `DetailFormat.CULTIVATION_GLYPH` (also `cultivation_label`'s) |
+| Field | ▦ | `DetailFormat.field_glyph()` → `FoodIcons.POLICY_ICONS[sow]` |
+| pastoral (tamed, unpenned) | ◎ | `DetailFormat.pastoral_glyph()` → `FoodIcons.POLICY_ICONS[tame]` |
+| penned (corralled) | 🐄 | `DetailFormat.CORRAL_GLYPH` (also `corral_label`'s) |
+
+**BOTH marks stay on the row.** A Tended Patch being Sustained and one being Depleted are different
+situations, and collapsing them into a single glyph loses the more dangerous one.
+
+**WILD IS THE ABSENCE OF A MARK.** Rung 1 is where every source starts, so glyphing it would put a
+mark on every row in the game to say nothing has happened yet.
+
+**THE HIGHER RUNG WINS, and the test order is what enforces it.** A Field is *also* `is_cultivated`
+and a penned herd is *also* fully domesticated, so `BandPanelController._work_source_rung` tests
+`is_field` before `is_cultivated` and `corralled` before `domestication` — reversed, every rung-3
+source would wear its rung-2 mark, which is the one distinction the mark exists to draw.
+
+**The animal side BORROWS the `tame` verb's ◎ because it has no rung glyph of its own.**
+`DetailFormat.husbandry_label` (Domesticated) and `corral_label` (Corralled) both wear 🐄, so reusing
+that for the pastoral rung would make pastoral and penned indistinguishable. `FoodIcons.gd`'s own
+design note — each verb wears the glyph of THE RUNG IT BUILDS — is what makes ◎ the pastoral herd's
+mark rather than a new invention.
+
+**The glyph-only accessors exist because the labels weld glyph to words.** `cultivation_label`
+returns `"🌾 Tended Patch"`, which a one-glyph column cannot take, and slicing that string would make
+the mark a function of the wording. `DetailFormat` therefore exposes the four marks on their own
+(`CULTIVATION_GLYPH` / `field_glyph()` / `pastoral_glyph()` / `CORRAL_GLYPH`) and the labels are
+written *in terms of them* — one home per glyph, in both directions.
+
+### Reading the rung off the wire
+
+- **Forage** — `_band_labor.forage_patch_lookup()[Vector2i(x, y)]`, keys **BARE**: `is_cultivated`,
+  `is_field`, `committed_display_name`. The `patch_`-prefixed spellings belong to the `tile_info`
+  cross-ref MapView stamps on, and reaching for them here silently reads nothing (`hud_compose_vocab.gd`
+  → `BARE_FORECAST_PREFIX` carries the long form of that trap).
+- **Hunt** — `_band_labor.find_world_herd(herd_id)`, keys `corralled` and `domestication`
+  (`>= DetailFormat.HUSBANDRY_PROGRESS_COMPLETE` is tamed). The LIVE herd, never the assignment's
+  launch-time target: herds migrate, and the rung travels with the animals.
+
+No new snapshot field was needed — `_work_source_models` already read both dicts for the worker cap
+and threw the rung fields away.
+
+### The row's width budget
+
+The mark is a **third fixed slot** (`HudWorkVocab.WORK_ROW_RUNG_WIDTH`, 16px + one
+`WORK_ROW_SEPARATION`) in a row whose every non-label element is fixed-width, so the label absorbs it:
+at `WORK_COLUMN_MIN_WIDTH` (380) the label keeps ~156px, which still holds the longest real label
+(`Hunt Woolly Mammoth`) un-ellipsised. `WORK_ROW_MARKS_WIDTH` is **unchanged at 20** — the rung has
+its own slot rather than being crowded into the policy/⚠ one, because two glyph families at one
+weight in one column is the axis collision `HudWidgets`' two-line rung face was built to remove.
+
+**The slot is reserved on EVERY row, wild ones included.** The label is the only `SIZE_EXPAND_FILL`
+child, so everything after it is effectively right-anchored: a slot that appeared only on tended rows
+would shift the rate column row-to-row and the board would read ragged.
+
+**The mark is `HudStyle.SIGNAL`-tinted** — a standing rung is a completed investment, the same
+treatment `cultivation_value_hex` / `field_value_hex` / `corral_value_hex` give it in the detail
+readouts. That colour is also the second thing separating the two glyph families at 13px. It reaches
+▦ and ◎ (text-presentation symbols inherit `font_color`) and **not** 🌾 or 🐄, which carry their own
+emoji colours — the same asymmetry `FoodIcons.gd` documents for the picker.
+
+**The mark Label is `MOUSE_FILTER_PASS`, deliberately not `HudWidgets.set_label_tooltip`.** A Label
+defaults to `IGNORE`, which makes `tooltip_text` a silent no-op; the shared helper's fix is `STOP`,
+which would turn the slot into a dead hole in a row whose whole body is a click target. PASS shows the
+tooltip *and* lets the press bubble to the row's `gui_input`. It carries
+`HudWorkVocab.WORK_ROW_RUNG_META` as its stable handle — `FoodIcons.SITE_ICONS` already spends 🌾 on
+`savanna_grassland`, so a harness that found the mark by its glyph would find the row's SOURCE icon
+instead.
+
+### Frames
+
+`band_panel_preview`: **`band_panel_work_rungs`** (the board the marks are judged on — five rows, one
+per rung, on ONE band, every row on ♻ Sustain so the frame cannot be passed by the verb, and a wild
+forage row present as the control that absence reads as wild rather than as a missing glyph) ·
+**`band_panel_work_rungs_wide`** (the same five in the wide shell). `_assert_work_row_rungs` pins the
+glyph on all five INCLUDING the wild row's empty one, and `_assert_rung_labels_are_hoverable` pins the
+tooltip + PASS pair that a rendered frame structurally cannot show. The paged board's patches
+(`_many_source_patch_fixtures`) carry rungs on a stride, so `band_panel_work_page` /
+`band_panel_work_wide` / `band_panel_shell_{below,at}_threshold` show the marks at real density and at
+the narrowest legal column. Those fixtures carry **rung fields only** — no `per_worker_yield` /
+`ceiling_*` — so `max_useful_workers` stays unbounded and the steppers gate exactly as they did before
+patches were pushed into those frames at all.
