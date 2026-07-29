@@ -436,9 +436,11 @@ func set_attention(entries: Array) -> void:
 ## lifetime, one exit.
 func set_turn(turn: int) -> void:
 	_turn = turn
+	# WHY `ANIM_REFORM` IS EXCLUDED FROM THE GUARD: a re-form already in flight is left running.
+	# `_digits_text()` reads `_turn` live, so a newer turn arriving mid-re-form is absorbed by the same
+	# animation instead of throwing the glyphs back out. Everything below is therefore the
+	# NOT-re-forming case.
 	if _resolving and turn != _resolve_from_turn and _anim_phase != ANIM_REFORM:
-		# Already re-forming? Leave it running — `_digits_text()` reads `_turn` live, so a newer turn
-		# arriving mid-flight is absorbed by the same animation instead of throwing the glyphs back out.
 		if _anim_phase == ANIM_SCATTER:
 			# Mid-flight OUT: record the answer and let the scatter finish. Its completion branch
 			# routes to the re-form. See `_resolve_answered`.
