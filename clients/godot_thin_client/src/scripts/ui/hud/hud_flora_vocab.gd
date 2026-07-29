@@ -185,27 +185,65 @@ const FLORA_CROP_MODEST_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this 
 
 const FLORA_CROP_STRONG_TOOLTIP_FORMAT := "%s yields %.1f× what gathering this tile wild does — strong ground for it."
 
-# THE PAYOFF, beside the share — `cultivate_yield_ratio` / `sow_yield_ratio`: what committing this tile
-# to this plant yields RELATIVE to gathering it wild. The sim folds the share AND the species'
-# conversion rate into it, so the client only formats. `Wild Emmer 34% · 1.35×` — one decimal, because
-# the decision is "better or worse than wild", not a second significant figure.
-const FLORA_CROP_ROW_FORMAT := "%s %d%% · %.1f×"
+# ---- THE ROW FACE: ONE PLANT, EVERY ACCOUNT IT PAYS (issue #419) ---------------------------------
+# A crop row is BUILT, not picked from a menu of whole-row formats. It used to be three mutually
+# exclusive ones (`FLORA_CROP_ROW_FORMAT` / `_FODDER_ROW_FORMAT` / `_TRADE_ROW_FORMAT`) chosen by an
+# if/elif chain, so a row could state exactly ONE account — and the chain tested "is the trade payoff
+# > 0" to detect a cash crop. EVERY staple carries `trade_goods_per_biomass: 0.005`, so that test
+# fired on all 27 of them and printed every crop as trade-only: `Wild Emmer 39% · 0.4 trade`, with the
+# ratio the rung exists to compare nowhere on the row.
+#
+# So the row states each account that is actually THERE, in the shared render-only-when-non-zero
+# shape (`.claude/rules/client/labor-ui.md` → "A hunt pays TWO products"), gated by the ONE
+# `SourceForecast.has_component` — the same gate the hunt faces use, never a bespoke threshold:
+#
+#   Wild Emmer 39% · 1.4× · 0.11 trade      a staple: food ratio LEADS, its trade token trails
+#   Cotton Fields 26% · 0.1× · 4.28 trade   a cash crop: both real, and the food ratio is a LOSS
+#   Hay Grass 30% · 1.80 hay                fodder only — no provisions ratio to state
+#   Oak Mast 12%                            greyed by the ceiling flags: no account at all
+#
+# THE COMPARISON IS THE POINT. Cotton pays ~38x the staple's trade and costs most of its calories; a
+# row stating one account cannot say that, whichever one it picks. And a cash crop's food ratio being
+# a WARN-inked loss is the honest reading of the land-use tension, not a bug to suppress: rung 2
+# *weeds* rather than replaces, so a tended cotton patch really does keep paying its volunteers'
+# calories at a rate below gathering the tile wild.
+#
+# The row's BASE is `FLORA_SHARE_FORMAT` above — the same `Wild Grain 45%` the tile card's basket rows
+# use, which is what keeps the two surfaces quoting one plant identically; the clauses below append to
+# it. A row with no account at all IS that bare base.
+#
+# The RATIO clause — `cultivate_yield_ratio` / `sow_yield_ratio`, what committing this tile to this
+# plant yields RELATIVE to gathering it wild. The sim folds the share AND the species' conversion rate
+# into it, so the client only formats. ONE decimal, because the decision is "better or worse than
+# wild", not a second significant figure.
+const FLORA_CROP_RATIO_CLAUSE_FORMAT := " · %.1f×"
 
-# A FODDER crop (hay) pays HAY, not provisions, so its provisions ratio is 0 and the `N.N×` row would
-# read it as worthless (Flora roster F3). When `sow_fodder_payoff > 0` the row instead states the hay
-# value in its own account — `Hay Grass 30% · 1.8 hay` — so a valuable feed crop never reads as a loss.
-const FLORA_CROP_FODDER_ROW_FORMAT := "%s %d%% · %.1f hay"
+# The two NON-FOOD clauses — absolute per-turn rates, so TWO decimals: unlike the ratio these span two
+# orders of magnitude across one basket (0.11 trade for a staple's token beside 4.28 for cotton on the
+# same ground), and one decimal would flatten the small end to `0.1` and lose exactly the distinction
+# the row is for. It is also the precision the shared two-product joiner already uses
+# (`SourceForecast.picker_products` → `0.96 food · 0.24 trade`).
+const FLORA_CROP_HAY_CLAUSE_FORMAT := " · %.2f hay"
+const FLORA_CROP_TRADE_CLAUSE_FORMAT := " · %.2f trade"
 
-const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.1f fodder/turn as a sown field — feed for penned animals, not food for people."
+# ---- THE TOOLTIP CLAUSES, same composition, same per-rung wording -------------------------------
+# `%s` is the RUNG's own noun, because these payoffs are per-rung: a tended patch and a sown field pay
+# different amounts from different baskets, and a tooltip naming the wrong one is how the Cultivate
+# row came to quote a Field's trade. Fed by FLORA_CROP_RUNG_NOUNS.
+const FLORA_CROP_FODDER_TOOLTIP_FORMAT := "%s pays %.2f fodder/turn as %s — feed for penned animals, not food for people."
 
-# A CASH crop pays TRADE, not provisions or fodder, so both its provisions ratio and its hay payoff are
-# 0 and the `N.N×` row would read it as worthless (Flora roster F4). When `sow_trade_payoff > 0` the row
-# instead states the trade value in its own account — `Flax 30% · 2.4 trade` — so a valuable cash crop
-# never reads as a loss. Detected the same way hay is: purely from the payoff being > 0 (the client
-# holds no roster and `role` is not on the wire).
-const FLORA_CROP_TRADE_ROW_FORMAT := "%s %d%% · %.1f trade"
+const FLORA_CROP_TRADE_TOOLTIP_FORMAT := "%s pays %.2f trade/turn as %s — goods for your stockpile, not food for people."
 
-const FLORA_CROP_TRADE_TOOLTIP_FORMAT := "%s pays %.1f trade/turn as a sown field — goods for your stockpile, not food for people."
+# The rung's noun for the tooltips above, keyed by the composing policy. A payoff quoted on the
+# Cultivate rung describes A TENDED PATCH; only the Sow rung describes a sown field.
+const FLORA_CROP_RUNG_NOUNS := {
+    HudConst.LABOR_POLICY_CULTIVATE: "a tended patch",
+    HudConst.LABOR_POLICY_SOW: "a sown field",
+}
+
+# The fallback noun for a policy absent from the table above — the rungs that commit nothing quote no
+# payoff at all, so this is defensive rather than reachable.
+const FLORA_CROP_RUNG_NOUN_FALLBACK := "this rung"
 
 # The break-even: at or above this, committing beats gathering wild; below it the rung is a LOSS and
 # the row is inked as one — while staying fully pressable, because a marginal crop is a legal bad idea

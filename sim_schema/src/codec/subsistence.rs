@@ -294,6 +294,9 @@ fn create_flora_shares<'a>(
                 sowFodderPayoff: share.sow_fodder_payoff,
                 // The trade goods a cash Field would pay — appended last (append-only wire, F4).
                 sowTradePayoff: share.sow_trade_payoff,
+                // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
+                cultivateFodderPayoff: share.cultivate_fodder_payoff,
+                cultivateTradePayoff: share.cultivate_trade_payoff,
             },
         );
         entries.push(entry);

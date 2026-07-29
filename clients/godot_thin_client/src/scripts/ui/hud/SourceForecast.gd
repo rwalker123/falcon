@@ -876,6 +876,12 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # Cash crops pay trade, not provisions or fodder — carried through so the picker row can
             # show the trade value in place of the 0× provisions ratio a cash crop would otherwise read.
             "sow_trade_payoff": float(entry.get("sow_trade_payoff", 0.0)),
+            # THE TENDED-RUNG TWINS of the two above (#419). The `sow_*` pair are Field payoffs, so a
+            # Cultivate row that read them stated rung 3's number on rung 2 — `10.2 trade` for cotton
+            # beside a rung that pays a fraction of it. Both rungs ride the entry; the picker reads the
+            # pair its policy names, exactly as it already does for the ratio and the food payoff.
+            "cultivate_fodder_payoff": float(entry.get("cultivate_fodder_payoff", 0.0)),
+            "cultivate_trade_payoff": float(entry.get("cultivate_trade_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries

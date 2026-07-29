@@ -448,8 +448,32 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
   unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five
   of the six fail against the pre-fix code; the wild-market pin passes both sides, which is its job.
-- **Not yet quoted anywhere.** `tended_provisions` (the wire's `ForagePatchState.tendedYield`),
-  `project_realized_forage`/`project_arrivals_forage`, and the crop picker's `commit_fodder_payoff` /
-  `commit_trade_payoff` (`FloraShareInfo.sowFodderPayoff` / `sowTradePayoff`) are all **provisions-only or
-  Field-rung-only**. A tended cash crop is therefore *paid* correctly and *previewed* as `0`.
+- **The CROP PICKER quotes rung 2's other two accounts** (issue #419) — `commit_fodder_payoff` /
+  `commit_trade_payoff` take a **`RungKey`**, exactly as `commit_payoff` does, and dispatch through
+  `rung_fodder_payoff` / `rung_trade_payoff`: `field_fodder`/`field_trade_goods` at rung 3, the new
+  **`tended_fodder`/`tended_trade_goods`** at rung 2, `0` below. On the wire as
+  `FloraShareInfo.cultivateFodderPayoff` / `cultivateTradePayoff`, the tended twins of the two `sow*`
+  fields. Until then both seams hardcoded `RungKey::PlantField`, so a tended cash crop was *paid*
+  correctly (above) and *previewed* with a **Field's** number — a managed rate on the full standing crop
+  standing in for an MSY skim off a merely-weeded basket, on the rung the player was about to spend 25
+  turns on. **Two fields per account per rung, for `cultivatePayoff`/`sowPayoff`'s reason**: the rungs
+  differ in basket, conversion gain *and* the SHAPE of the harvest, so one number cannot answer both.
+  - **All three rung-2 accounts ride ONE take**, `tended_msy_take` — the Sustain skim on the tended
+    curve, extracted so `tended_provisions` and the two new quotes cannot describe different harvests
+    (the `patch_ecology` no-second-copy rule, applied to the take). The non-food quotes are
+    **policy-blind** with no `market.trade_goods_multiplier`: the markup is a `Deplete`-policy concept
+    applied at the credit site, and a crop-picker row states what the *crop* pays on this ground — the
+    same rule `field_trade_goods` states one rung up. Under `Sustain` on a patch at `K/2` the quote and
+    the credit therefore coincide exactly, which is how they are pinned:
+    `forage_tended_vector::the_published_cultivate_{trade,fodder}_quote_is_the_{trade,fodder}_a_tended_patch_actually_credits`
+    run a real turn and assert the published quote against what the turn credited (the §4.3 rule).
+  - **A rung-2 cash crop's FOOD payoff is non-zero, and the picker states it.** Weeding raises cotton's
+    share but leaves the volunteers standing, so `cultivate_payoff` is their calories — measured 0.149
+    on the fixture's richest cotton tile against 4.28 trade, and a *loss* against gathering the same
+    tile wild. Only a sown **Field** is 100% crop and pays exactly `0` food. Pinned by
+    `a_staples_cultivate_trade_quote_is_the_flat_token_not_zero_and_not_a_cash_crops`, which also pins
+    the other half of #419: **every staple's rung-2 trade quote is non-zero** (the flat 0.005 token —
+    measured 0.112 for wild_emmer), which is why no client surface may treat "trade > 0" as "cash crop".
+- **Still provisions-only:** `project_realized_forage` / `project_arrivals_forage` — the forward
+  projection reports food, so a cash Field's contribution to it is its calories and nothing else.
 

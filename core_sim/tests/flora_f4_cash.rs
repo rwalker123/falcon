@@ -105,6 +105,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
+            RungKey::PlantField,
         );
         let trade = commit_trade_payoff(
             tile,
@@ -114,6 +115,7 @@ fn the_yield_vector_routes_by_account_with_no_role_branch() {
             &flora,
             forage,
             QUOTE_MULTIPLIER,
+            RungKey::PlantField,
         );
         (food, fodder, trade)
     };
@@ -206,6 +208,7 @@ fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
         &flora,
         forage,
         QUOTE_MULTIPLIER,
+        RungKey::PlantField,
     );
     assert!(
         (quoted - expected).abs() <= EPSILON * expected.max(1.0),
@@ -444,6 +447,7 @@ fn the_picker_trade_payoff_matches_the_credited_stockpile() {
         &flora,
         &labor.forage,
         QUOTE_MULTIPLIER,
+        RungKey::PlantField,
     );
     assert!(quoted > 0.0, "the fixture must quote a real cash payoff");
     assert_eq!(
