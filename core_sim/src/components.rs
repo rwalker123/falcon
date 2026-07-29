@@ -1442,10 +1442,15 @@ impl FollowPolicy {
     // as `matches!(policy, FollowPolicy::Eradicate)` at their two sites in `systems::expeditions`,
     // where they read as what they are.
 
-    /// Does an expedition under this policy **relaunch** for repeated trips after each delivery,
-    /// rather than folding home after one? Only `Deplete` relaunches — see the `relaunch` arm of
-    /// `advance_expeditions` (Population). Stated here as the single source so the snapshot's
-    /// in-flight delivery forecast can't drift from the phase machine.
+    /// Is an expedition under this policy a **series of trips** — repeated full-cap runs to the band
+    /// and back until the herd is stripped — rather than one raid? Only `Deplete` is; see the
+    /// `relaunch` arm of `advance_expeditions` (Population). Stated here as the single source so the
+    /// snapshot's in-flight delivery forecast can't drift from the phase machine.
+    ///
+    /// **Not the same question as "does it ever pass through `Delivering`"** (issue #441): a Sustain
+    /// or Surplus party whose herd wanders within `hunt.drop_off_within_tiles` of camp drops its load
+    /// off and resumes hunting too. That is an incident *inside* one raid, not a new trip, so this
+    /// still reads `false` for it.
     pub fn expedition_recurring(&self) -> bool {
         matches!(self, FollowPolicy::Deplete)
     }
