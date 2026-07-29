@@ -148,3 +148,64 @@ with `FoodIcons.TRADE_GOODS_GLYPH`. A hunted wolf pack reads `⇄+0.22 ⇊` inst
 `YIELD_LABEL_COMPONENT_MIN` is the map twin of `SourceForecast.FOOD_FLOW_MIN` and is the test that
 decides which. Frame: `map_preview` `map_band_work` (the wolf label beside the deer's `+0.20`); the
 general render-only-when-non-zero rule lives in `labor-ui.md`.
+
+
+---
+
+## Worked-source marks — one ring grammar for both food webs
+
+`docs/plan_worked_source_marks.md` (issue #412). Two passes, and the split between them is the whole
+design: **`draw_worked_source_marks` is always on, `draw_band_work_highlights` is what SELECTION
+buys.**
+
+**THE MARK BELONGS TO THE SOURCE, NOT THE HEX.** A hex holds a forage patch and several herds at once,
+worked by different bands at different rungs, so a tile-level mark has to pick one answer out of four.
+Each mark docks to the ring of the source's OWN secondary marker, via the slot
+`SecondaryMarkerRenderer.compute_slots` assigned it — which is why `MapView._draw` **hoists
+`compute_slots()` above the overlay pass**. That hoist is safe because it is a pure computation over
+`discovered_sites` / `food_sites` / `herds` / `last_hex_radius`, none of which mutate during `_draw`.
+
+- **The ring: green = we forage this, red = we hunt this**, at two weights — thin
+  (`WORKED_RING_OTHER_ALPHA`) for any player band, bold plus a faint disc for the selected one.
+  `FORAGE_WORKED_FILL`, the old whole-hex green tint, is **retired**: a fill belongs to a hex and a hex
+  has no single answer. Radius `WORKED_RING_FACTOR` (0.34) sits deliberately INSIDE
+  `MapView.FOOD_HARVEST_RING_FACTOR` (0.42) — the harvest ring is a different statement about the same
+  marker and the two must read apart.
+- **The badge** (`_queue_source_badge` / `_draw_source_badge`): ONE plate per source under its marker,
+  carrying `⚒N` crew and, when the source can climb, a `⌃` chevron + the verb glyph. One plate rather
+  than two because three sources × two elements is six things in forty pixels. **Below the icon,
+  never upper-right** — `HERD_DISTRESS_BADGE_OFFSET_FACTOR` owns that corner, and a herd can be both
+  penned-and-starving and ready-to-something. Ready rides the plate's BORDER as well as its glyph
+  (`HudStyle.SIGNAL`), so an offer reads without resolving a small glyph. **Cyan, not amber**: amber is
+  trouble here, and an opportunity in the trouble channel teaches the player to misread good news.
+- **CREW IS AGGREGATED PER SOURCE, NOT PER BAND** — two bands can work one patch, and two plates on
+  one marker would be a lie about a single number.
+- **A HUNTING EXPEDITION'S QUARRY IS A WORKED SOURCE.** It rides the COHORT
+  (`expedition_target_herd`), not a `labor_assignments` row, so a pass that only walks assignments
+  misses it — which is how the first cut shipped, with parties crossing the map and nothing saying
+  what they walked to. Marked at **every** phase, `outbound` included: "this herd is already claimed"
+  is what the player needs before committing a second crew.
+- **The tile outline takes the SOURCE's colour**, never a fixed green. A hunted herd's hex outlined in
+  the gather colour is a different claim and a wrong one. It is the only tile-level mark left, and it
+  earns its place as the LOD/overflow fallback: `compute_slots` returns early below
+  `ICON_MIN_DETAIL_RADIUS` and answers `-1` for an overflowed source, and in both cases there is no
+  marker to ring.
+- **Badges are DEFERRED into `flush_yield_labels`**, the same batch and the same reason as the yield
+  labels: they annotate the map, and drawn inline they are painted over by the marker glyphs, rings
+  and pending overlays that follow.
+- **A yield label anchors to its source's SLOT** (`_label_anchor`), not the hex centre. The hex centre
+  alone was a co-location bug: two hunted herds on one hex drew two rates at the identical point, and
+  a herd standing on a worked patch did the same.
+
+**MapView holds one new input and no derived model.** It already has `forage_patch_lookup`, `herds`
+and every band's `labor_assignments`; the only thing missing was faction knowledge, so
+`Hud.faction_knowledge_changed` → `Main` → `MapView.set_faction_knowledge` pushes the raw
+`{track: progress}` row and the renderer asks `RungGates` itself. Pushing the row rather than a
+digested mark model keeps ONE derivation for the map, the work board and the compose sheet.
+`faction_knowledge` is cleared in `reset_world_state` — pushed in from another surface, keyed by
+tracks a new world reuses (`.claude/rules/core_sim/world-handoff.md`).
+
+Frames: `map_band_work` (both webs ringed, badges, the green/red outline split),
+`map_worked_ready` (the ⌃ contrast — a tended patch offers Sow, a tamed pen-ceiling deer offers
+Corral, a wild-ceiling wolf offers nothing), `map_hunt_expedition_quarry`, `map_overflow_worked`,
+`map_band_label_overlap` (the slot-anchored labels).

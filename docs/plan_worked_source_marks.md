@@ -1,6 +1,6 @@
 # Worked-Source Marks — making the ladder visible from the map
 
-**Status:** design approved (UX prototype, 2026-07-29), implementation in progress. Issue #412.
+**Status:** design approved (UX prototype, 2026-07-29); the map half and the work board both **landed**. Issue #412.
 Sits on `docs/plan_intensification_ladder.md` (the rungs and their gates) and composes with the
 select-then-cycle work merged as PR #432 (issue #429).
 
@@ -113,15 +113,21 @@ source with no chevron has nothing to offer, so a chevron always means "you can 
 
 ## 4. Where the derivation lives
 
-**The mark model is derived ONCE in HUD-land and pushed to `MapView`**, mirroring `set_labor_pending`
-exactly (HUD signal → `Main` → `MapView`). Every input already lives together on the HUD side —
-`HudBandLaborState.player_bands()` and their `labor_assignments`, `forage_patch_lookup()`,
-`world_herds()`, `TopBarReadouts.faction_knowledge` — and `MapView` has none of them. Pushing the
-*derived answer* rather than the raw knowledge keeps one derivation instead of two, and keeps the
-renderer free of any dependency on the HUD's models.
+**Only the KNOWLEDGE is pushed; the derivation stays in `RungGates`.** The plan here originally called
+for deriving a per-source mark model in HUD-land and pushing that to `MapView`. Measured against the
+code, `MapView` was missing far less than assumed: it already holds `forage_patch_lookup`, `herds` and
+every band's `labor_assignments`, so the one input it lacks is **faction knowledge**. It therefore
+takes the raw `{track: progress}` row (`Hud.faction_knowledge_changed` → `Main` →
+`set_faction_knowledge`, mirroring the `labor_pending_changed` path) and asks `RungGates` itself.
 
-It is a dict pushed in from another surface keyed by ids a new world reuses, so it is cleared in
-`reset_world_state` — the third shape named in `.claude/rules/core_sim/world-handoff.md`.
+That is strictly better than the model push: one derivation instead of two, no per-frame dict of
+digested state, and the rung rules stay in exactly one place for all three surfaces. `RungGates` being
+all-`static` and stateless is what makes a renderer calling it fine — the rule a renderer must obey is
+"hold no HUD controller or state model", not "call no shared logic".
+
+The knowledge row is still a dict pushed in from another surface keyed by tracks a new world reuses,
+so it is cleared in `reset_world_state` — the third shape named in
+`.claude/rules/core_sim/world-handoff.md`.
 
 The gate functions themselves move out of `DrawerComposeController` into a new all-`static`,
 stateless `ui/hud/RungGates.gd`, with faction knowledge threaded in as a parameter. The map layer,
@@ -157,12 +163,30 @@ visible by marks that point at a specific source, and both are fixed as part of 
 - **Yield labels stack.** `_queue_yield_label` anchors every label at the *hex centre* for both webs,
   so two hunted herds on one hex draw two rates at the identical point. Labels move to the slot their
   source drew in, falling back to the hex centre when the source has no visible slot.
-- **The forage jump names no subject.** `BandPanelController.focus_labor_source` names the herd
+- **The forage jump named no subject.** `BandPanelController.focus_labor_source` names the herd
   exactly for a hunt row (`roster_occupant_selected("herd", herd_id)`), but the forage branch only
-  focuses the tile and lets the hex's auto-pick decide — so on a shared hex it opens a band or a herd
-  instead of the patch. `SelectionCardController` already supports the third subject kind
-  (`roster_occupant_selected("land", LAND_SUBJECT_ID)`), and `MapView` gained `OCCUPANT_KIND_LAND`
-  with #432; the forage branch uses it.
+  focused the tile and let the hex's auto-pick decide — so on a shared hex it opened a band or a herd
+  instead of the patch, jumping to a place but not to a thing. It now names the LAND, the patch's own
+  subject, through the same third `(kind, id)` kind the panel's land row and the map's
+  select-then-cycle already use.
+- **A third, found while marking expedition quarries:** the tile outline under every mark was
+  hardcoded to the forage green, so a HUNTED herd's hex was outlined in the gather colour. It takes
+  the source's own colour now, like the ring above it.
+
+## 6a. A hunting expedition's quarry
+
+A hunt **expedition** carries its target on the COHORT (`expedition_target_herd`), not in a
+`labor_assignments` row — a detached party follows one herd, so the sim puts the quarry on the party
+itself. A mark pass that only walks assignments therefore misses it entirely, which is how the first
+cut shipped: the party crossed the map and nothing said what it was walking to.
+
+Its quarry takes the same red ring and crew badge a locally-hunted herd wears, because **the mark
+describes the source, not who reached it**. The party's people sum into that source's crew alongside
+any resident band hunting it — one source, one number.
+
+**Marked at every phase, `outbound` included.** "This herd is already claimed" is exactly what the
+player needs before committing a second crew, and a party three turns out has claimed it as surely as
+one standing on it.
 
 ## 7. Deliberately out of scope
 
