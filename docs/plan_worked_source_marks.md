@@ -1,0 +1,183 @@
+# Worked-Source Marks — making the ladder visible from the map
+
+**Status:** design approved (UX prototype, 2026-07-29), implementation in progress. Issue #412.
+Sits on `docs/plan_intensification_ladder.md` (the rungs and their gates) and composes with the
+select-then-cycle work merged as PR #432 (issue #429).
+
+## 1. The problem
+
+Advanced rung verbs — `Cultivate`, `Sow`, `Tame`, `Corral` — are reachable only by selecting the
+right band and opening the work tab. Two separate failures produce that:
+
+- **Everything the player knows about their own work is selection-gated.**
+  `BandOverlayRenderer.draw_band_work_highlights` returns immediately when `selected_unit_id < 0`,
+  so every worked-tile fill, hunted-herd ring and yield label vanishes on deselect. Even while
+  selected, only *one* band's work is on screen — the map can answer "what is this band doing",
+  never "what are my people doing".
+- **A source that can climb looks exactly like one that cannot.** The moment that makes many
+  sources upgradable at once — a faction knowledge track completing — happens in the top bar,
+  nowhere near the sources it changed.
+
+## 2. The unit is the SOURCE, not the hex
+
+A hex can hold a forage patch and several herds at once, worked by different bands at different
+rungs. A tile-level mark has to pick one answer out of four, so it cannot be right.
+
+The map already solves co-location: `SecondaryMarkerRenderer.compute_slots` assigns each wonder,
+food site and herd on a hex a fixed edge slot (`_secondary_slot_lookup[key] → 0..2`, or `-1`),
+caps the visible set at `SECONDARY_VISIBLE_CAP` (3), and puts a `+N` chip on the right flank for
+the rest; bands own the centre as a card stack. **The marks ride that system rather than
+introducing a placement scheme of their own.**
+
+### 2.1 One ring grammar for both food webs
+
+Today a hunted herd gets a red ring on *its own marker* while a foraged patch tints the whole hex
+green — the same fact in two visual languages, only one of which survives co-location. So forage
+takes the ring too, in the green it already owns:
+
+| | mark | any player band | the selected band |
+|---|---|---|---|
+| **Forage** | ring on the food-site marker | thin, `FORAGE_WORKED_OUTLINE` at reduced alpha | bold ring + faint fill glow |
+| **Hunt** | ring on the herd marker | thin, `HUNT_WORKED_COLOR` at reduced alpha | bold ring + the band→herd link |
+
+The band→herd link and the per-source yield labels stay **selection-only**: N bands of links is
+spaghetti, and those are what selection buys.
+
+**The whole-hex green fill is retired.** `FORAGE_WORKED_FILL` / `FORAGE_WORKED_OUTLINE` had exactly
+two call sites, both inside `draw_band_work_highlights`; nothing else in the client read them.
+
+A **thin hex outline** survives as the only tile-level mark, on one argument: `compute_slots`
+returns early below `ICON_MIN_DETAIL_RADIUS`, so at far zoom there are no markers to ring. The
+outline is what remains there, and the fallback whenever a worked source is overflowed out of a
+visible slot.
+
+### 2.2 One badge per source
+
+Under each ringed marker sits **one badge** carrying the two remaining facts:
+
+- **Crew** — `⚒N`, total workers on *that* source across all bands, its border in the owning band's
+  faction colour (ink-dim when two factions share it).
+- **Ready** — when that source's next rung is available, the border turns `HudStyle.SIGNAL` and the
+  badge gains a `⌃` chevron plus the verb glyph: `⌃▦ ⚒3`.
+
+One plate, not two: with three sources on a hex, two elements each is six things competing for the
+same forty pixels.
+
+**It docks below the icon, never upper-right** — the starving-pen distress badge already owns that
+corner (`HERD_DISTRESS_BADGE_OFFSET_FACTOR`), and a herd can be both penned-and-starving and
+ready-to-something.
+
+### 2.3 The overflow chip carries what it hides
+
+Three slots and a chip is the right budget, but a cap that hides state silently reads as "nothing
+here" — the same failure this feature exists to fix at a different scale. So the `+N` chip **rolls
+up** everything it hides, in severity order and at most two marks wide: `⚠` if a hidden source is in
+trouble, `⌃` if one is ready, `⚒` if one is merely worked. Its tooltip names them in full.
+
+**A ready source is deliberately NOT promoted into a visible slot.** Slot fill is sequential
+precisely so icons never jump between frames; reordering on a state change would make a herd swap
+corners the turn a knowledge track completes. The chip plus the re-click cycle covers the same need
+without breaking that invariant.
+
+## 3. "Ready" is the compose sheet's own test, reused
+
+A worked source is **ready** when its next rung's verb would be selectable right now — the test
+`_forage_policy_gates` / `_hunt_policy_gates` already run to decide whether the compose sheet greys
+a rung, plus the ceiling and crop-legality passes beside them:
+
+1. **Offered** — hunt: the husbandry ceiling (`wild` / `pastoral` / `pen`) admits the rung. Forage:
+   at least one composition entry with `can_cultivate` / `can_sow`, and for `Sow` an empty
+   `sow_site_refusal`.
+2. **Ungated** — the gate function returns no reason for that rung: knowledge complete, the
+   per-source prerequisite met, the rung not already finished.
+3. **Not already running** — the source's current policy is not that verb. Mid-`Cultivate` is
+   progress, not opportunity.
+
+One mark per source, **highest rung first** — the ordering `_work_source_rung` already depends on,
+and for the same reason: a herd that can be corralled can also technically be re-tamed, and marking
+the lower rung would erase the distinction the mark exists to draw.
+
+### 3.1 The mark needs its own chrome, not its own glyph
+
+The verb glyphs and the standing-rung glyphs collide: `▦` is both "Sow" and "this is a Field", `🐄`
+is both "Corral" and "this is a Pen". A bare `▦` on a marker would read as **done**, the opposite of
+the message. So the `⌃` chevron is the new word and the glyph only names the rung.
+
+**Cyan, not amber.** `HudStyle.WARN` is trouble in this HUD (overdraw, understaffing, starving pen);
+`HudStyle.SIGNAL` is live-and-worth-your-attention. Colouring an opportunity amber trains the player
+to read good news as a warning.
+
+**Absent, never greyed**, inheriting the compose sheet's own ceiling rule: greying implies a
+reachable prerequisite, and no amount of knowledge pens an animal whose ceiling is `pastoral`. A
+source with no chevron has nothing to offer, so a chevron always means "you can do this now".
+
+## 4. Where the derivation lives
+
+**The mark model is derived ONCE in HUD-land and pushed to `MapView`**, mirroring `set_labor_pending`
+exactly (HUD signal → `Main` → `MapView`). Every input already lives together on the HUD side —
+`HudBandLaborState.player_bands()` and their `labor_assignments`, `forage_patch_lookup()`,
+`world_herds()`, `TopBarReadouts.faction_knowledge` — and `MapView` has none of them. Pushing the
+*derived answer* rather than the raw knowledge keeps one derivation instead of two, and keeps the
+renderer free of any dependency on the HUD's models.
+
+It is a dict pushed in from another surface keyed by ids a new world reuses, so it is cleared in
+`reset_world_state` — the third shape named in `.claude/rules/core_sim/world-handoff.md`.
+
+The gate functions themselves move out of `DrawerComposeController` into a new all-`static`,
+stateless `ui/hud/RungGates.gd`, with faction knowledge threaded in as a parameter. The map layer,
+the work board and the compose sheet all need the same answer, and a renderer must not depend on a
+compose controller — shared-layers-first, per `.claude/rules/client/hud-modules.md`. One definition,
+so the three surfaces cannot disagree about what is climbable.
+
+## 5. The work board
+
+Co-location costs the board nothing: its rows are already per-source (a forage row per tile, a hunt
+row per herd, through `effective_worker_map`), so four sources on one hex are four rows and always
+were. It needs the third mark:
+
+- The row already separates `marks` (the verb in flight) from `rung_glyph` (the standing rung).
+  **Ready is the third axis — the rung on offer** — and takes the same chevron, right-aligned before
+  the rate so the eye finds a column of them.
+- **The severity stripe is untouched.** It means WARN (overdrawing, overstaffed) or SIGNAL (pending
+  edit); folding an opportunity in would give the one control for finding trouble two meanings.
+- The zone head gains a `⌃N ready` filter chip beside the attention chip — separate count, same
+  mechanism. It is what makes the knowledge-completion moment legible: eleven rows light up at once
+  and the chip says `⌃11`.
+
+## 6. Reaching the source — how this composes with #429 / #432
+
+**This feature SIGNALS; the select-then-cycle work REACHES.** PR #432 made a re-click on a selected
+hex advance through `_selection_cycle_on_tile` — every band, then every herd, then the **land** —
+derived from the selected occupant's identity and wrapping around. The overflow chip is where the two
+meet: the chip says *something is in here*, the cycle is how the player gets to it.
+
+Two co-location defects surfaced while designing this. Neither is introduced here; both are made
+visible by marks that point at a specific source, and both are fixed as part of this work:
+
+- **Yield labels stack.** `_queue_yield_label` anchors every label at the *hex centre* for both webs,
+  so two hunted herds on one hex draw two rates at the identical point. Labels move to the slot their
+  source drew in, falling back to the hex centre when the source has no visible slot.
+- **The forage jump names no subject.** `BandPanelController.focus_labor_source` names the herd
+  exactly for a hunt row (`roster_occupant_selected("herd", herd_id)`), but the forage branch only
+  focuses the tile and lets the hex's auto-pick decide — so on a shared hex it opens a band or a herd
+  instead of the patch. `SelectionCardController` already supports the third subject kind
+  (`roster_occupant_selected("land", LAND_SUBJECT_ID)`), and `MapView` gained `OCCUPANT_KIND_LAND`
+  with #432; the forage branch uses it.
+
+## 7. Deliberately out of scope
+
+- **Clicking a badge to select its source.** `_secondary_slot_lookup` now makes per-slot hit-testing
+  derivable, and it would supersede #432's known gap (`_herd_at_point` hit-tests every herd against
+  the hex *centre*, so it always returns `herds[0]` whichever slot the sprite drew in). But the
+  re-click cycle already reaches every source including the land, so this is an improvement rather
+  than a requirement.
+- **Marks on unworked sources.** A sowable tile nobody stands on is arguably the most valuable thing
+  to surface — 46 of 4160 tiles are sowable on the standard map — but that is *prospecting*, and it
+  wants an overlay channel, not a badge on every hex.
+
+## 8. See also
+
+- `docs/plan_intensification_ladder.md` — the rungs, their knowledge gates and the site requirement.
+- `.claude/rules/client/overlay-channels.md` — the selected-band overlay pass these marks extend.
+- `.claude/rules/client/map-markers.md` — the slot system the marks ride.
+- `.claude/rules/client/map-renderers.md` — select-then-cycle (#432).
