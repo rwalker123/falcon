@@ -130,6 +130,8 @@ func append_entry(entry: String, level: String = "INFO", target: String = "inspe
 	var normalized_level: String = _normalize_level(level)
 	var formatted: String = "[%s] %s" % [_format_timestamp(resolved_timestamp), trimmed]
 	_record(formatted, normalized_level, target, trimmed, resolved_timestamp, {}, true)
+	# One line per call, so this render IS the once-per-batch render.
+	_render()
 
 func _initialize_filters() -> void:
 	if _level_dropdown != null:
@@ -255,6 +257,9 @@ func _poll_stream(delta: float) -> void:
 				_update_status("Reconnecting to log stream (%s:%d)..." % [_host, _port])
 		return
 
+	# INGEST PER ENTRY, RENDER ONCE. A poll drains the whole backlog (~145 entries on a steady-state
+	# turn), and `_render()` re-shapes the entire buffer, so rendering per entry cost ~2s of blocked
+	# main thread per turn — measured. The ingest stays per-entry: a dropped log line is gone forever.
 	var updated: bool = false
 	for entry in entries:
 		if typeof(entry) != TYPE_DICTIONARY:
@@ -262,6 +267,7 @@ func _poll_stream(delta: float) -> void:
 		_ingest_stream_entry(entry)
 		updated = true
 	if updated:
+		_render()
 		_update_sparkline()
 
 func _update_status(message: String) -> void:
@@ -533,8 +539,9 @@ func _record(formatted: String, level: String, target: String, message: String, 
 			var removed: Dictionary = removed_variant
 			var removed_key: String = _normalize_target(String(removed.get("target", "")))
 			_register_target(removed_key, -1)
+	# Marks dirty but does NOT render: `_render()` re-shapes the whole buffer, so a caller that
+	# records in a loop must render ONCE afterwards. See `_poll_stream`.
 	_mark_dirty()
-	_render()
 
 func _level_color(level: String) -> String:
 	match level:

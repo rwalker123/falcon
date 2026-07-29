@@ -2675,7 +2675,7 @@ func _ready() -> void:
 	# The curved `TURN` word above the number rides the same face. Its geometry is number-independent, so
 	# one arithmetic check covers every probe; the 4-digit frame saved above is where the CLEARANCE between
 	# the word and the widest number is judged by eye, at true size.
-	_assert_turn_word_clears()
+	await _assert_turn_word_clears()
 	await _save("turn_orb_turn_4digit")
 	# Back to the state the following orb states describe.
 	_hud.update_overlay(42, {})
@@ -2685,14 +2685,51 @@ func _ready() -> void:
 	# from the orb, so with nothing to triage the click ADVANCES the turn directly and opens NO
 	# popover (the old bug opened a tall blank box whose Advance affordance was pushed off-screen,
 	# trapping the player). Assert the emitted advance signal (the harness can't run a real turn)
-	# and that no popover opened; the saved frame must show the calm pulse with no blank box.
+	# and that no popover opened. THE CLICK NOW ALSO RAISES THE RESOLVING GATE, so the saved frame
+	# shows the gate at t=0: a dimmed face, the number just beginning to break apart, and the ring's
+	# rotating sweep arc where the calm pulse was.
 	var advance_hits := [0]
 	var advance_cb := func() -> void: advance_hits[0] += 1
 	_hud.turn_orb.advance_requested.connect(advance_cb)
 	_hud.turn_orb._on_face_pressed()
 	await _settle()
 	_assert_turn_orb("empty click advances", advance_hits[0] == 1 and not _hud.turn_orb._popover_open)
+	# THE BUG THE GATE EXISTS FOR, and the one thing a PNG can never show: mashing the face used to
+	# queue N advances while the server was still resolving turn 1. A second press must emit NOTHING.
+	_hud.turn_orb._on_face_pressed()
+	await _settle()
+	_assert_turn_orb("a second click while resolving emits no advance",
+		advance_hits[0] == 1 and _hud.turn_orb.is_resolving())
+	# The footer is the SECOND way to advance, so it wears the second block reason: `_advance_block_label`
+	# returns "Resolving…" here where a fork would make it "Answer first to advance". Opened
+	# programmatically (the face click is gated) and closed again, so the frame below is orb-only.
+	_hud.turn_orb.open_popover()
+	await _settle()
+	var resolving_footer := _turn_orb_advance_button()
+	_assert_turn_orb("the popover's Advance wears the resolving reason and is disabled",
+		resolving_footer != null and resolving_footer.disabled
+		and resolving_footer.text == TurnOrb.ADVANCE_RESOLVING_LABEL)
+	_hud.turn_orb.toggle_popover()
+	await _settle()
 	await _save("turn_orb_clear_click_advances")
+
+	# State 6b-resolving — THE IN-PROGRESS FRAME, mid-orbit on the very gate State 6b just raised:
+	# the old number has broken apart into evenly-spaced glyphs riding a ring inside the face, the
+	# ring itself carries a rotating sweep arc in the accent (NOT the calm pulse, which would say
+	# "nothing needs you" mid-turn), the face is dimmed and the `TURN` word is gone with the number.
+	# The clock is frozen, so the phase is STEPPED to a chosen point rather than raced.
+	_step_turn_orb_anim(TurnOrb.RESOLVE_SCATTER_SEC
+		+ TurnOrb.RESOLVE_ORBIT_PERIOD * TURN_ORB_ORBIT_CAPTURE_FRACTION)
+	await _settle()
+	await _save("turn_orb_resolving")
+
+	# Answer the turn the way the server does and let the re-form finish, so the gate is DOWN for the
+	# states below (6c clicks the face again and expects the popover) — then restore turn 42.
+	await _settle_turn_orb_resolve(43)
+	_assert_turn_orb("the gate lifts once the re-formed number lands",
+		not _hud.turn_orb.is_resolving() and _hud.turn_orb._face.text == "43")
+	_hud.update_overlay(42, {})
+	await _settle()
 
 	# State 6c — turn orb, NON-EMPTY registry: the click opens the reasons popover, and the
 	# popover's `Advance ▸` footer button emits advance_requested (unchanged behavior). Seed one
@@ -2712,7 +2749,45 @@ func _ready() -> void:
 	await _settle()
 	_assert_turn_orb("non-empty popover + footer advances",
 		opened and had_footer and advance_hits[0] == 1 and not _hud.turn_orb._popover_open)
+	# The footer is the OTHER advance emitter, so it raises the same gate — lower it before anything
+	# below renders the orb, and put the turn back where the following states describe it.
+	await _settle_turn_orb_resolve(43)
+	_hud.update_overlay(42, {})
+	await _settle()
 	_hud.turn_orb.advance_requested.disconnect(advance_cb)
+
+	# State 6d — THE HOVER HINT, both halves of it. The turn NUMBER never leaves the face, so the
+	# affordance is a small glyph BELOW it that appears on hover and names what the click will do —
+	# and the two clicks are different, so the two glyphs are different. Here the registry is still
+	# State 6c's (one idle-workers row), so hovering must show the up-caret `▴`: the reasons popover
+	# opens ABOVE the orb, and promising `‣‣` would promise an advance this click does not perform.
+	_hud.turn_orb._set_face_hovered(true)
+	await _settle()
+	_assert_turn_orb("hovering a non-empty orb hints review, not advance",
+		_hud.turn_orb._hint_glyph == TurnOrb.HINT_GLYPH_REVIEW and _hud.turn_orb._face.text == "42")
+	await _save("turn_orb_hint_review")
+
+	# ...and with an EMPTY registry the same hover shows `‣‣`, because THAT click does advance. The
+	# number stays on the face in both frames — that is the whole change.
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 501, "size": 40, "turns_of_food": 999.0, "activity": "forage",
+			"current_x": 30, "current_y": 20, "idle_workers": 0},
+	])
+	await _settle()
+	_assert_turn_orb("hovering an all-clear orb hints advance",
+		_hud.turn_orb._hint_glyph == TurnOrb.HINT_GLYPH_ADVANCE and _hud.turn_orb._face.text == "42")
+	await _save("turn_orb_hint_advance")
+
+	# ...and the same hover at the WIDEST number, which is the tight case for the stack: the face is
+	# 74px and now carries the curved `TURN`, a number and this hint. Turn 1200 steps the number down
+	# to 23px, so it is the frame where the hint has the MOST room below it; `turn_orb_hint_advance`
+	# above (turn 42, a 30px number) is the least. Both clearances are judged here, at true size.
+	_hud.update_overlay(TURN_ORB_FOUR_DIGIT_TURN, {})
+	await _settle()
+	await _save("turn_orb_hint_4digit")
+	_hud.update_overlay(42, {})
+	_hud.turn_orb._set_face_hovered(false)
+	await _settle()
 
 	# State 7 — turn orb, ALL THREE ATTENTION KINDS (the folded-in Alerts panel): a first
 	# snapshot seeds prior band sizes so "losing population" has a baseline, then the live
@@ -3892,6 +3967,18 @@ func _guard_frame_herd_fields(state: String) -> void:
 
 ## A 4-digit turn — the widest the face has to hold, and the case a fixed font size would clip.
 const TURN_ORB_FOUR_DIGIT_TURN := 1200
+## The slice the frozen clock is stepped by when driving the orb's resolve animation. It IS the orb's
+## own per-frame clamp, and taking it from there is load-bearing rather than tidy: the orb caps how
+## much of the animation ONE call may advance, so a harness stepping in bigger slices would silently
+## advance less than it asked for and capture the wrong phase.
+const TURN_ORB_ANIM_STEP_SEC := TurnOrb.RESOLVE_MAX_STEP_SEC
+## Enough steps for the WORST path — the fail-open timeout, then a full scatter and re-form — plus a
+## margin, so the cap only trips on an animation that genuinely cannot terminate.
+const TURN_ORB_RESOLVE_MAX_STEPS := int((TurnOrb.RESOLVE_TIMEOUT_SEC + TurnOrb.RESOLVE_SCATTER_SEC \
+	+ TurnOrb.RESOLVE_REFORM_SEC) / TURN_ORB_ANIM_STEP_SEC) * 2
+## Where in a revolution `turn_orb_resolving` is captured: far enough past the scatter that the digits
+## are unmistakably OFF their resting places and the sweep arc is unmistakably rotated.
+const TURN_ORB_ORBIT_CAPTURE_FRACTION := 0.15
 
 ## GUARD: the turn number on the orb face must BE the turn, be sized inside the declared band, and fit
 ## the face's usable chord. Measured against the button's own font, exactly as `_turn_font_size` does —
@@ -3911,9 +3998,9 @@ func _assert_turn_face_fits(expected_turn: int) -> void:
 		expected_turn, text, size, width, budget], ok)
 
 ## GUARD: the curved `TURN` word inside the face must not wrap around the circle, must not cross the
-## face's edge, and must vanish when the face swaps the number out for the advance glyph. Drawn pixels
-## cannot be asserted, so assert the ARITHMETIC — via the SAME `turn_word_metrics()` the draw reads, so
-## this cannot pass while the renderer computes something else.
+## face's edge, and must draw exactly when there IS a number for it to label. Drawn pixels cannot be
+## asserted, so assert the ARITHMETIC — via the SAME `turn_word_metrics()` the draw reads, so this
+## cannot pass while the renderer computes something else.
 func _assert_turn_word_clears() -> void:
 	var orb := _hud.turn_orb
 	var metrics: Dictionary = orb.turn_word_metrics()
@@ -3925,13 +4012,53 @@ func _assert_turn_word_clears() -> void:
 		arc_angle > 0.0 and arc_angle < TurnOrb.TURN_WORD_MAX_ARC_ANGLE)
 	_assert_turn_orb("curved '%s' reaches %.1f of the face's %.1f radius" % [
 			TurnOrb.TURN_WORD, outer_reach, face_radius], outer_reach <= face_radius)
-	# The hover rule: with an EMPTY registry the face swaps to `GLYPH`, and the word must go with it.
+	# THE VISIBILITY RULE CHANGED, so these two state the new one. Hovering used to swap the number out
+	# for the advance glyph and take the word with it; the number now NEVER leaves the face (the hint
+	# glyph carries the affordance instead), so hover must not hide the word...
 	var was_hovered: bool = orb._face_hovered
 	orb._set_face_hovered(true)
-	var hidden_on_glyph := not orb._show_turn_word()
+	var shown_on_hover := orb._show_turn_word()
 	orb._set_face_hovered(was_hovered)
-	_assert_turn_orb("curved '%s' hides while the face shows the advance glyph" % TurnOrb.TURN_WORD,
-		hidden_on_glyph)
+	_assert_turn_orb("curved '%s' stays while the face is hovered" % TurnOrb.TURN_WORD, shown_on_hover)
+	# ...and the ONE case where there is no number to label is the resolve animation, which scatters it
+	# onto the orbit ring. Driven through the REAL gate (a face click), then settled back.
+	var restore_turn: int = orb._turn
+	orb._on_face_pressed()
+	var hidden_while_scattered := not orb._show_turn_word()
+	_assert_turn_orb("curved '%s' hides while the number is scattered" % TurnOrb.TURN_WORD,
+		hidden_while_scattered)
+	await _settle_turn_orb_resolve(restore_turn + 1)
+	_hud.update_overlay(restore_turn, {})
+	await _settle()
+
+## Advance the orb's resolve animation by `seconds` of frozen-clock time, in slices the orb will
+## actually honour. One big call would be clamped to `RESOLVE_MAX_STEP_SEC` and quietly under-advance.
+func _step_turn_orb_anim(seconds: float) -> void:
+	var remaining: float = seconds
+	while remaining > 0.0:
+		var slice: float = minf(remaining, TURN_ORB_ANIM_STEP_SEC)
+		_hud.turn_orb._advance_resolve_animation(slice)
+		remaining -= slice
+
+## Drive the turn orb out of its resolving gate the way a server answer does — a `set_turn` with a
+## DIFFERENT value — and prove the animation actually terminates.
+##
+## THE CLOCK IS FROZEN HERE (`Engine.time_scale = 0`), so the orb's `_process` sees `delta == 0` and
+## the re-form would never finish on its own: the same hazard `_flush_tweens` handles for the one Tween
+## in the client. Step the phase machine by a fixed slice instead — deterministic, and it is the REAL
+## `_advance_resolve_animation`, so a phase that cannot terminate fails right here instead of hanging
+## the orb in the game.
+func _settle_turn_orb_resolve(answer_turn: int) -> void:
+	var orb := _hud.turn_orb
+	_hud.update_overlay(answer_turn, {})
+	for _i in range(TURN_ORB_RESOLVE_MAX_STEPS):
+		if not orb.is_resolving():
+			await _settle()
+			return
+		orb._advance_resolve_animation(TURN_ORB_ANIM_STEP_SEC)
+		await get_tree().process_frame
+	push_error("ui_preview: FAIL turn-orb — the resolve gate never lifted in %d steps of %.2fs" % [
+		TURN_ORB_RESOLVE_MAX_STEPS, TURN_ORB_ANIM_STEP_SEC])
 
 func _assert_turn_orb(label: String, ok: bool) -> void:
 	if ok:

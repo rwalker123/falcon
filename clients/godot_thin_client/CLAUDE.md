@@ -180,7 +180,7 @@ Server (FlatBuffers) -> SnapshotStream.gd -> parsed snapshot
 ## Typography & Theming
 
 **There is no typography system.** Set font sizes directly with
-`add_theme_font_size_override`, as `TurnOrb.gd` does (`GLYPH_FONT_SIZE`, `BADGE_FONT_SIZE`) and
+`add_theme_font_size_override`, as `TurnOrb.gd` does (`HINT_FONT_SIZE`, `BADGE_FONT_SIZE`) and
 `NarrativeForkPanel.gd` does for its prose. `Typography.gd` is a **no-op shim** — styling
 through it fails *silently* — and the autopsy is in `.claude/rules/client/sprites-widgets.md`.
 
