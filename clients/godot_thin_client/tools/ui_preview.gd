@@ -972,9 +972,11 @@ func _ready() -> void:
 	_hud._compose.reset_forage_source()
 	_hud._compose.set_forage_count(1)
 
-	# State 2-crop-committed — the patch has already committed, and commitment is one-way until it
-	# lapses: the picker is replaced by a locked READOUT naming the crop, so the UI cannot imply a
-	# switch the sim will refuse. The double-open is the same one the two states above spell out — the
+	# State 2-crop-committed — the patch has already committed. The commitment is one-way until it
+	# lapses, so the picker becomes a LOCKED READOUT — but a readout OF THE WHOLE BASKET, with the
+	# committed row marked, not a lone crop name: a bare name beside a tile card listing three plants
+	# had the two panels of one tile disagreeing about what grows there, and read as "this tile is Wild
+	# Grain now" (issue #433 deleted exactly that belief). The double-open is the same one the two states above spell out — the
 	# `reset_forage_source()` just above makes the first open a SOURCE CHANGE, which re-seeds the policy
 	# from the band's standing assignment (Sustain) and threw the `cultivate` away. This state had been
 	# silently rendering the Sustain sheet, which carries no crop block at all, so the readout it exists
@@ -986,10 +988,30 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_crop_committed")
 	# `alloc_section_label` upper-cases its text, so the header is matched in the case it RENDERS in.
-	_assert_hud("a committed patch's picker is a locked readout naming the crop",
+	_assert_hud("a committed patch's picker is a locked readout under the committed-crop header",
 		_has_label_containing(_hud._drawercompose._compose_sheet,
 				HudFloraVocab.FLORA_CROP_COMMITTED_HEADER.to_upper())
-			and _has_label_containing(_hud._drawercompose._compose_sheet, "Wild Grain"))
+			and _has_label_containing(_hud._drawercompose._compose_sheet,
+				HudFloraVocab.FLORA_CROP_COMMITTED_HINT))
+	# THE BUG THIS STATE NOW GUARDS: the readout lists the WHOLE basket, in the tile card's own order.
+	# Asserting the committed name alone passed while the other two plants were being suppressed.
+	var committed_rows: Array[Button] = []
+	for basket_crop in ["Wild Grain", "Ground Nut", "Oak Mast"]:
+		committed_rows.append(_find_crop_row(_hud._drawercompose._compose_sheet, basket_crop))
+	_assert_hud("…listing every plant in the basket, not just the committed one",
+		not committed_rows.has(null))
+	var committed_all_locked := true
+	for row in committed_rows:
+		committed_all_locked = committed_all_locked and row != null and row.disabled
+	_assert_hud("…with every row locked (the commitment is one-way until it lapses)", committed_all_locked)
+	# `_rung_is_selected` reads the `normal` stylebox's fill, which `apply_button` writes from the
+	# VARIANT — the one mark of selection that survives the disabled treatment, which is the whole
+	# reason `selected_when_disabled` is passed here. Written for policy rungs, true of any
+	# `apply_button`-styled button, and the only reading that can tell marked-and-locked from locked.
+	_assert_hud("…and the committed crop marked as the standing choice",
+		committed_rows[0] != null and _rung_is_selected(committed_rows[0]))
+	_assert_hud("…while the rest of the basket is not",
+		committed_rows[1] != null and not _rung_is_selected(committed_rows[1]))
 
 	_hud._compose.set_forage_policy("cultivate")
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -3759,6 +3781,21 @@ func _find_button_by_text(root: Node, text: String) -> Button:
 		return root as Button
 	for child in root.get_children():
 		var found := _find_button_by_text(child, text)
+		if found != null:
+			return found
+	return null
+
+## A CROP-PICKER ROW by the plant it names. A row's face is `<name> <share>% · <payoff>×`, whose share
+## and payoff digits are the fixture's business and change whenever a basket is retuned, so the row is
+## found by its NAME PREFIX — never by full text, which would make every crop assertion a duplicate of
+## the fixture. Returns null when the basket carries no such plant.
+func _find_crop_row(root: Node, crop_name: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).text.begins_with(crop_name + " "):
+		return root as Button
+	for child in root.get_children():
+		var found := _find_crop_row(child, crop_name)
 		if found != null:
 			return found
 	return null

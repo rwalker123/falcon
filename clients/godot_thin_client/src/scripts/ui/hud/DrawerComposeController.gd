@@ -1008,28 +1008,35 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 
 ## The crop picker — one row per plant in the tile's basket, in wire order, `Wild Emmer 56%`. An
 ## illegal entry is greyed WITH ITS REASON but never hidden (see FLORA_CROP_NO_CULTIVATE_FORMAT); a
-## legal-but-marginal one is fully pressable. A patch that has already committed gets a locked
-## READOUT instead, since the commitment is one-way until it lapses. Returns null when there is
-## nothing to render (a biome that carries no named forage), so no empty block appears.
+## legal-but-marginal one is fully pressable. Returns null when there is nothing to render (a biome
+## that carries no named forage), so no empty block appears.
+##
+## A COMMITTED PATCH SHOWS THE SAME BASKET, LOCKED — never a lone crop name. The commitment is still
+## one-way until it lapses, so every row is non-interactive and the `Already committed …` line stays;
+## what changed is that the rows are no longer REPLACED by the name. A bare readout beside a tile card
+## listing three plants had the two panels of one tile disagreeing about what grows there, and it read
+## as "this tile is Wild Emmer now" — the belief issue #433 deleted, since a commitment REWEIGHTS the
+## basket over the build rather than emptying it (and moves it not at all until the build lands).
+## The committed row renders SELECTED-and-locked via `selected_when_disabled`, the same treatment the
+## policy picker gives a standing-but-gated rung — plain disabled styling fades the border and the ink
+## to `INK_FAINT`, erasing the one mark of which crop is current. It is the basket's twin of the
+## `HudStyle.SIGNAL` mark the tile card puts on the same species, so the two panels read as one fact.
 func _build_crop_picker(
     entries: Array[Dictionary],
     policy: String,
     selected: String,
-    committed_name: String,
+    committed_species: String,
     on_pick: Callable) -> Control:
+    var committed := committed_species.strip_edges()
+    var is_committed := committed != ""
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudFloraVocab.FLORA_CROP_BLOCK_SEPARATION)
-    if committed_name != "":
-        block.add_child(HudWidgets.alloc_section_label(HudFloraVocab.FLORA_CROP_COMMITTED_HEADER))
-        var committed_label := Label.new()
-        committed_label.text = committed_name
-        committed_label.add_theme_color_override("font_color", HudStyle.SIGNAL)
-        block.add_child(committed_label)
-        block.add_child(HudWidgets.alloc_hint_label(HudFloraVocab.FLORA_CROP_COMMITTED_HINT))
-        return block
-    if entries.is_empty():
+    # A committed patch keeps its block even on the (theoretical) empty basket, so the standing
+    # commitment is still stated; an uncommitted one with nothing to pick has nothing to say at all.
+    if entries.is_empty() and not is_committed:
         return null
-    block.add_child(HudWidgets.alloc_section_label(HudFloraVocab.FLORA_CROP_PICKER_HEADER))
+    block.add_child(HudWidgets.alloc_section_label(
+        HudFloraVocab.FLORA_CROP_COMMITTED_HEADER if is_committed else HudFloraVocab.FLORA_CROP_PICKER_HEADER))
     var rows := VBoxContainer.new()
     rows.add_theme_constant_override("separation", HudFloraVocab.FLORA_CROP_BLOCK_SEPARATION)
     rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1060,12 +1067,19 @@ func _build_crop_picker(
         else:
             btn.text = HudFloraVocab.FLORA_SHARE_FORMAT % [crop_name, percent]
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        HudStyle.apply_button(btn, "primary" if legal and species == selected else "ghost")
+        # WHICH ROW IS MARKED depends on which question the block is asking: an open picker marks the
+        # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
+        # already on, whose legality at this rung is moot — the commitment is already made.
+        var marked := (species == committed) if is_committed else (legal and species == selected)
+        # A committed block is a READOUT: every row locked, including the marked one. `selected_when_disabled`
+        # is what keeps the mark visible through the disabled treatment (see the header note).
+        HudStyle.apply_button(btn, "primary" if marked else "ghost", marked)
         # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
         # wearing the default button chrome would silently break that maths (the work board's rule).
         HudWidgets.compact(btn, HudFloraVocab.FLORA_CROP_ROW_FONT_SIZE, HudFloraVocab.FLORA_CROP_ROW_PADDING_V)
         btn.custom_minimum_size = Vector2(0.0, HudFloraVocab.FLORA_CROP_ROW_HEIGHT)
-        btn.disabled = not legal
+        # A committed patch locks EVERY row — a pressable one would imply a switch the sim will refuse.
+        btn.disabled = is_committed or not legal
         if legal:
             any_legal = true
             # A fodder crop is valuable in the FODDER account and a cash crop in the TRADE account, not
@@ -1085,7 +1099,10 @@ func _build_crop_picker(
                 btn.tooltip_text = HudFloraVocab.FLORA_CROP_STRONG_TOOLTIP_FORMAT % [crop_name, ratio]
             elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
                 btn.tooltip_text = HudFloraVocab.FLORA_CROP_MODEST_TOOLTIP_FORMAT % [crop_name, ratio]
-            btn.pressed.connect(func() -> void: on_pick.call(species))
+            # The tooltips above still earn their keep on a locked row (what the plant pays is a fact
+            # about the plant), but a committed row gets no handler at all — not merely a dead one.
+            if not is_committed:
+                btn.pressed.connect(func() -> void: on_pick.call(species))
         else:
             var reason_format := HudFloraVocab.FLORA_CROP_NO_SOW_FORMAT if policy == HudConst.LABOR_POLICY_SOW \
                 else HudFloraVocab.FLORA_CROP_NO_CULTIVATE_FORMAT
@@ -1106,9 +1123,13 @@ func _build_crop_picker(
         block.add_child(scroll)
     else:
         block.add_child(rows)
-    # The ONLY standing line under the list is the one that REPLACES content rather than adding to it:
-    # a basket with nothing this rung can take has no pressable row to carry the explanation.
-    if not any_legal:
+    # ONE standing line under the list, and only where the rows cannot carry the fact themselves.
+    # A COMMITTED block states why nothing here is pressable — the line that used to stand in place of
+    # the rows now stands under them. The rung-legality hint is moot there (the choice is behind you),
+    # so the two are mutually exclusive rather than stacked.
+    if is_committed:
+        block.add_child(HudWidgets.alloc_hint_label(HudFloraVocab.FLORA_CROP_COMMITTED_HINT))
+    elif not any_legal:
         block.add_child(HudWidgets.alloc_hint_label(HudFloraVocab.FLORA_CROP_NONE_LEGAL_HINT))
     return block
 
@@ -1195,14 +1216,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # so the composed crop can never name a plant this tile+rung cannot take — and "" always
     # remains valid, meaning "take the sim's default".
     var basket := SourceForecast.flora_basket_entries(tile_info.get("patch_composition", []))
-    var committed_crop := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
-    var is_committed := String(tile_info.get("patch_committed_species", "")).strip_edges() != "" \
-        and committed_crop != ""
+    # The SPECIES KEY, not the display name: the picker marks the committed row by matching the wire
+    # key its entries carry, exactly as the tile card's basket does — one identity, two panels.
+    var committed_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
+    var is_committed := committed_species != "" \
+        and String(tile_info.get("patch_committed_display_name", "")).strip_edges() != ""
     _compose.resolve_forage_species(func(current: String) -> String:
         return _resolve_crop_selection(basket, _compose.forage_policy(), is_committed, current))
     if _compose.forage_policy() in HudFloraVocab.FLORA_COMMITTING_POLICIES:
         var crop_picker := _build_crop_picker(basket, _compose.forage_policy(), _compose.forage_species(),
-            committed_crop if is_committed else "",
+            committed_species if is_committed else "",
             func(species: String) -> void:
                 _compose.set_forage_species(species)
                 _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))

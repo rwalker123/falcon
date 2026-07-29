@@ -249,7 +249,7 @@ const FLORA_CROP_NONE_LEGAL_HINT := "Nothing growing here can climb this rung."
 # control here would imply a switch the sim will refuse.
 const FLORA_CROP_COMMITTED_HEADER := "Committed crop"
 
-const FLORA_CROP_COMMITTED_HINT := "Already committed — this patch stays this crop until it lapses back to wild."
+const FLORA_CROP_COMMITTED_HINT := "Already committed — the crop cannot be changed until the patch lapses back to wild."
 
 # Herd drawer "Herders" row — a MANAGED herd's staffing (intensification ladder). A domesticated herd
 # needs `herders_needed` herders every turn to HOLD the herd; understaffed it SHEDS whole animals over

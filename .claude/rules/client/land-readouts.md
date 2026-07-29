@@ -111,8 +111,17 @@ paths:
   — the player's pick while it is still legal on this tile+rung, else the **highest-share legal** entry,
   which is the sim's own `default_species_for_rung`, so picking nothing and accepting the default behave
   identically. `""` is always a valid thing to send (non-committing rung, nothing legal, or an
-  **already-committed** patch, which gets a locked read-only readout instead of an editable picker, since
-  the commitment is one-way until it lapses). It rides the existing emit path: `_emit_assign_labor` gained
+  **already-committed** patch, which gets a **locked** picker instead of an editable one, since the
+  commitment is one-way until it lapses). **A locked picker still lists the WHOLE basket** — same rows,
+  same order, every one disabled, the committed species marked with `HudStyle.apply_button(btn,
+  "primary", true)`, i.e. the policy picker's `selected_when_disabled` idiom, and the
+  `FLORA_CROP_COMMITTED_HINT` line *beneath* the rows rather than in place of them. It collapsed to a
+  lone crop name until #433 and that was a bug (playtest): the tile card two panels away listed
+  `56% / 25% / 19%` while the sheet showed `Wild Emmer` alone, so the two surfaces disagreed about
+  whether the tile grew one plant or three. **The test a surface has to pass is not "does this code
+  reason about the basket" but "can this panel be READ as claiming the tile grows one plant"** — the
+  first test is what let this site through the initial sweep. Both surfaces show the **standing**
+  basket, never the projected weeded one, so they cannot drift apart mid-build. It rides the existing emit path: `_emit_assign_labor` gained
   a trailing `species` (defaulted `""`, so no other caller changed) → the payload → `Main` →
   `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>` — the **second** optional token,
   worker count always last, omitted entirely when empty.
