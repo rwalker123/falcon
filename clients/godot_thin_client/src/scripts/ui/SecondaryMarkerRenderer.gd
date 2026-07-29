@@ -46,19 +46,35 @@ func compute_slots() -> void:
 		var fy := int((site as Dictionary).get("y", -1))
 		if fx < 0 or fy < 0 or not _view._is_tile_visible(fx, fy):
 			continue
-		_append_secondary(per_tile, Vector2i(fx, fy), _food_key(fx, fy))
+		_append_secondary(per_tile, Vector2i(fx, fy), food_key(fx, fy))
 	for herd in _view.herds:
 		var hx := int((herd as Dictionary).get("x", -1))
 		var hy := int((herd as Dictionary).get("y", -1))
 		if hx < 0 or hy < 0 or not _view._is_tile_visible(hx, hy):
 			continue
-		_append_secondary(per_tile, Vector2i(hx, hy), _herd_key(String((herd as Dictionary).get("id", ""))))
+		_append_secondary(per_tile, Vector2i(hx, hy), herd_key(String((herd as Dictionary).get("id", ""))))
 	for tile in per_tile:
 		var keys: Array = per_tile[tile]
 		for i in range(keys.size()):
 			_secondary_slot_lookup[keys[i]] = i if i < _view.SECONDARY_VISIBLE_CAP else -1
 		if keys.size() > _view.SECONDARY_VISIBLE_CAP:
 			_secondary_overflow[tile] = keys.size() - _view.SECONDARY_VISIBLE_CAP
+
+## Which edge slot a source's marker drew in this frame: `0..SECONDARY_VISIBLE_CAP-1`, or **-1** for
+## "not drawn" — either overflowed past the cap or LOD-suppressed (`compute_slots` returns early below
+## `ICON_MIN_DETAIL_RADIUS`, leaving the lookup empty, so every key answers -1 at far zoom).
+##
+## PUBLIC because the worked-source marks (`BandOverlayRenderer.draw_worked_source_marks`) dock a ring
+## to the SOURCE's own marker rather than to its hex — a hex holds a patch and several herds at once,
+## so a tile-level mark cannot say which of them is worked. A -1 answer is the caller's cue to fall
+## back to the tile-level outline.
+func slot_of(key: String) -> int:
+	return int(_secondary_slot_lookup.get(key, -1))
+
+## How many sources on this tile were pushed past the visible cap (0 when none were). PUBLIC for the
+## same reason as `slot_of`: what the `+N` chip hides still has state worth reporting.
+func overflow_at(tile: Vector2i) -> int:
+	return int(_secondary_overflow.get(tile, 0))
 
 func _append_secondary(per_tile: Dictionary, tile: Vector2i, key: String) -> void:
 	var list: Array = per_tile.get(tile, [])
@@ -81,16 +97,16 @@ func _wonder_key(wsite: Dictionary) -> String:
 	var fallback := "%d,%d" % [int(wsite.get("x", -1)), int(wsite.get("y", -1))]
 	return "wonder:%s" % String(wsite.get("site_id", fallback))
 
-func _food_key(x: int, y: int) -> String:
+func food_key(x: int, y: int) -> String:
 	return "food:%d,%d" % [x, y]
 
-func _herd_key(herd_id: String) -> String:
+func herd_key(herd_id: String) -> String:
 	return "herd:%s" % herd_id
 
 func _secondary_icon_size(radius: float) -> int:
 	return int(maxf(_view.SECONDARY_ICON_MIN_SIZE, radius * _view.SECONDARY_ICON_SIZE_FACTOR))
 
-func _secondary_slot_center(tile_center: Vector2, slot: int, radius: float) -> Vector2:
+func slot_center(tile_center: Vector2, slot: int, radius: float) -> Vector2:
 	return tile_center + _view.SECONDARY_SLOT_OFFSETS[slot] * radius
 
 ## The starving-pen distress badge: a filled DANGER disc with a dark rim and a HAND-DRAWN white "!",
@@ -120,7 +136,7 @@ func draw_secondary_overflow(radius: float, origin: Vector2) -> void:
 		return
 	for tile in _secondary_overflow:
 		var tile_center: Vector2 = _view._hex_center_wrapped(tile.x, tile.y, radius, origin)
-		var chip_center := _secondary_slot_center(tile_center, _view.SECONDARY_VISIBLE_CAP, radius)
+		var chip_center := slot_center(tile_center, _view.SECONDARY_VISIBLE_CAP, radius)
 		_view._draw_count_pill(chip_center, "+%d" % int(_secondary_overflow[tile]))
 
 func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
@@ -131,7 +147,7 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _view._is_tile_visible(x, y):
 		return
-	var slot: int = _secondary_slot_lookup.get(_herd_key(herd_id), -1)
+	var slot: int = _secondary_slot_lookup.get(herd_key(herd_id), -1)
 	if slot < 0:
 		return   # far-zoom LOD or overflowed into the +N chip
 	# Herd trail stays centered on the hex path (a route, not a marker), but only
@@ -139,7 +155,7 @@ func draw_herd(herd: Dictionary, radius: float, origin: Vector2) -> void:
 	# overflowed herd (its slot is gone).
 	_view._draw_herd_trail(herd_id, radius, origin)
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
+	var icon_center := slot_center(tile_center, slot, radius)
 	var herd_label := String(herd.get("label", herd.get("id", "Herd")))
 	# Bundled PNG art where we have it (identical on every OS), OS emoji for the species that
 	# don't have art yet — FaunaSprites returns null for those and we fall through unchanged.
@@ -180,11 +196,11 @@ func draw_food_site(site: Dictionary, radius: float, origin: Vector2) -> void:
 		return
 	if not _view._is_tile_visible(x, y):
 		return
-	var slot: int = _secondary_slot_lookup.get(_food_key(x, y), -1)
+	var slot: int = _secondary_slot_lookup.get(food_key(x, y), -1)
 	if slot < 0:
 		return
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
+	var icon_center := slot_center(tile_center, slot, radius)
 	var module_key := String(site.get("module", ""))
 	var kind := String(site.get("kind", ""))
 	var is_hunt := kind == "game_trail"
@@ -223,7 +239,7 @@ func draw_discovered_site(site: Dictionary, radius: float, origin: Vector2) -> v
 	var site_sprite := WonderSprites.for_site_id(String(site.get("site_id", "")))
 	var glyph := String(site.get("glyph", ""))
 	var tile_center: Vector2 = _view._hex_center_wrapped(x, y, radius, origin)
-	var icon_center := _secondary_slot_center(tile_center, slot, radius)
+	var icon_center := slot_center(tile_center, slot, radius)
 	if site_sprite != null:
 		_view._draw_marker_sprite(icon_center, site_sprite, _secondary_icon_size(radius))
 	else:

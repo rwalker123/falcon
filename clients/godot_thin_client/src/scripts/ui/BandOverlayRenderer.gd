@@ -57,15 +57,39 @@ const RANGE_BORDER_EDGE_AXIAL: Array[Vector2i] = [
 	Vector2i(1, -1),  # 4 NE
 	Vector2i(1, 0),   # 5 E
 ]
-# Worked forage tiles: strong green fill + bold outline (the tiles actually being harvested).
-const FORAGE_WORKED_FILL := Color(0.30, 0.80, 0.30, 0.34)
-const FORAGE_WORKED_OUTLINE := Color(0.46, 0.96, 0.46, 0.95)
-const FORAGE_WORKED_OUTLINE_WIDTH := 3.0
-# Hunted herds: red ring on the herd tile + a thin band→herd link (the herd can sit well
-# outside the work-range ring — hunt reach = work_range + leash).
+# WORKED-SOURCE MARKS — one ring grammar for both food webs (docs/plan_worked_source_marks.md §2.1).
+# A hunted herd always wore a ring on its own marker while a foraged patch tinted the WHOLE HEX green:
+# the same fact in two visual languages, and only one of them survives co-location. A hex holds a
+# patch and several herds at once, so a tile-level fill cannot say WHICH of them is worked. Forage
+# therefore takes the ring too, in the green it already owned, and the fill is retired.
+#
+# TWO WEIGHTS, not two shapes: THIN for any player band (persistent, no selection needed — the whole
+# point of the mark) and BOLD for the SELECTED band, so selection still wins the eye. The band→herd
+# link and the per-source yield labels stay selection-only — N bands of links is spaghetti.
+const FORAGE_WORKED_COLOR := Color(0.46, 0.96, 0.46, 0.95)
 const HUNT_WORKED_COLOR := Color(0.92, 0.34, 0.30, 0.95)
-const HUNT_WORKED_RING_FACTOR := 0.62   # of hex radius
-const HUNT_WORKED_RING_WIDTH := 3.0
+# Ring radius as a factor of the hex radius. A secondary marker is drawn at SECONDARY_ICON_SIZE_FACTOR
+# (0.55) of the hex, so the ring sits just outside its glyph — and deliberately INSIDE the food-harvest
+# ring (MapView.FOOD_HARVEST_RING_FACTOR 0.42 measured from the same centre), which is a different
+# statement about the same marker and has to read apart from this one.
+const WORKED_RING_FACTOR := 0.34
+const WORKED_RING_WIDTH_SELECTED := 3.0
+const WORKED_RING_WIDTH_OTHER := 1.6
+# The selected band's ring gets a faint disc behind it — the one thing carried over from the retired
+# whole-hex fill, at the source's own scale instead of the tile's.
+const WORKED_RING_GLOW_ALPHA := 0.16
+# Alpha applied to an unselected band's ring, so the persistent layer reads as ambient rather than
+# competing with the selected band's.
+const WORKED_RING_OTHER_ALPHA := 0.5
+# The ONE tile-level mark left: a faint hex outline meaning "some work happens on this hex". It is an
+# aggregate by design (it does not multiply with source count) and it earns its place on one argument —
+# `compute_slots` returns early below ICON_MIN_DETAIL_RADIUS, so at far zoom there are no markers to
+# ring and no slots to dock to. This is what survives there, and the fallback whenever a worked source
+# is overflowed past the visible cap.
+const WORKED_TILE_OUTLINE := Color(0.46, 0.96, 0.46, 0.35)
+const WORKED_TILE_OUTLINE_WIDTH := 1.4
+# Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
+# work-range ring — hunt reach = work_range + leash).
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
 const HUNT_WORKED_LINK_WIDTH := 2.5
 # Selected-herd GRAZING RANGE (Grazing Phase 2b-iii): the tiles within `graze_range_radius` of the herd
@@ -158,6 +182,88 @@ func reset_world_state() -> void:
 	_labor_pending = {}
 	_deferred_yield_labels.clear()
 
+## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
+##
+## THE MARK BELONGS TO THE SOURCE, NOT THE HEX. A hex can hold a forage patch and several herds at
+## once, worked by different bands at different rungs, so a tile-level mark has to pick one answer out
+## of four and cannot be right. Each mark therefore docks to the ring of the source's OWN secondary
+## marker, via the slot `SecondaryMarkerRenderer.compute_slots` already assigned it — which is why
+## MapView hoists that call above this one.
+##
+## ONE GRAMMAR, TWO WEIGHTS: green ring = we forage this, red ring = we hunt this; BOLD (plus a faint
+## disc) for the selected band, THIN for every other. What SELECTION still buys is drawn by
+## `draw_band_work_highlights` on top of this — the range borders, the band→herd links, the yield
+## labels and the pending overlay.
+##
+## The faint hex OUTLINE is the one tile-level mark, and it is the fallback: a source whose marker did
+## not draw (overflowed past `SECONDARY_VISIBLE_CAP`, or LOD-suppressed at far zoom, both reported as
+## `slot_of == -1`) has nothing to ring, and the outline is what still says work happens here.
+func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
+	for unit_variant in _view.units:
+		if not (unit_variant is Dictionary):
+			continue
+		var band: Dictionary = unit_variant
+		if not _view._is_player_unit(band):
+			continue
+		var pos: Array = Array(band.get("pos", []))
+		if pos.size() != 2:
+			continue
+		var band_col := int(pos[0])
+		var eff_col := _view._band_effective_col(band_col, radius, origin)
+		# The SELECTED band's own sources read louder — selection still wins the eye.
+		var selected := int(band.get("entity", -1)) == _view.selected_unit_id
+		for entry_variant in _labor_assignments_of_marker(band):
+			if not (entry_variant is Dictionary):
+				continue
+			var entry: Dictionary = entry_variant
+			if int(entry.get("workers", 0)) <= 0:
+				continue
+			var kind := String(entry.get("kind", "")).strip_edges().to_lower()
+			if kind == LABOR_KIND_FORAGE:
+				var tx := int(entry.get("target_x", -1))
+				var trow := int(entry.get("target_y", -1))
+				if tx < 0 or trow < 0 or trow >= _view.grid_height:
+					continue
+				var tcol := eff_col + _view._wrapped_col_delta(band_col, tx)
+				_draw_worked_mark(tcol, trow, _view.secondary_food_key(tx, trow),
+					FORAGE_WORKED_COLOR, selected, radius, origin)
+			elif kind == LABOR_KIND_HUNT:
+				# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
+				# target is only the fallback for a herd that left the visible fauna set.
+				var herd_id := String(entry.get("fauna_id", ""))
+				var herd := _view._herd_by_id(herd_id)
+				var hx := int(entry.get("target_x", -1))
+				var hrow := int(entry.get("target_y", -1))
+				if not herd.is_empty():
+					hx = int(herd.get("x", hx))
+					hrow = int(herd.get("y", hrow))
+				if hx < 0 or hrow < 0 or hrow >= _view.grid_height:
+					continue
+				var hcol := eff_col + _view._wrapped_col_delta(band_col, hx)
+				_draw_worked_mark(hcol, hrow, _view.secondary_herd_key(herd_id),
+					HUNT_WORKED_COLOR, selected, radius, origin)
+
+## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.
+## `slot_of(key) == -1` means the marker did not draw at all (overflowed or far zoom), so only the
+## outline renders — the mark degrades to the aggregate rather than landing somewhere arbitrary.
+func _draw_worked_mark(col: int, row: int, key: String, color: Color, selected: bool,
+		radius: float, origin: Vector2) -> void:
+	_view._outline_hex(col, row, radius, origin, WORKED_TILE_OUTLINE, WORKED_TILE_OUTLINE_WIDTH)
+	var slot := _view.secondary_slot_of(key)
+	if slot < 0:
+		return
+	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	var ring_radius := radius * WORKED_RING_FACTOR
+	var ring_color := color
+	if selected:
+		var glow := color
+		glow.a = WORKED_RING_GLOW_ALPHA
+		_view.draw_circle(center, ring_radius, glow)
+	else:
+		ring_color.a = color.a * WORKED_RING_OTHER_ALPHA
+	var width := WORKED_RING_WIDTH_SELECTED if selected else WORKED_RING_WIDTH_OTHER
+	_view.draw_arc(center, ring_radius, 0, TAU, 28, ring_color, width)
+
 ## When a player band is selected, surface what it is working (Early-Game Labor slice 3b):
 ##  - three RANGE BORDERS: a clean perimeter outline of each reach's hex disk (traced
 ##    edge-by-edge via _draw_range_border, using the sim's true **odd-r hex distance** so the
@@ -223,8 +329,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			var trow := int(entry.get("target_y", -1))
 			if trow < 0 or trow >= _view.grid_height:
 				continue
-			_view._fill_hex(tcol, trow, radius, origin, FORAGE_WORKED_FILL)
-			_view._outline_hex(tcol, trow, radius, origin, FORAGE_WORKED_OUTLINE, FORAGE_WORKED_OUTLINE_WIDTH)
+			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
 			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
 			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
 			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
@@ -249,7 +354,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# Link the band to the herd it is hunting (skip a wrap-spanning artifact).
 			if absf(band_center.x - hc.x) <= _view.last_map_size.x * 0.4:
 				_view.draw_line(band_center, hc, HUNT_WORKED_LINK_COLOR, HUNT_WORKED_LINK_WIDTH)
-			_view.draw_arc(hc, radius * HUNT_WORKED_RING_FACTOR, 0, TAU, 28, HUNT_WORKED_COLOR, HUNT_WORKED_RING_WIDTH)
+			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
 			# Depletable herd: HEADLINE the STEADY realized average (`realized_yield`), NOT the
 			# kill-credit PULSE (`actual_yield` is 0 on a wait turn, a spike on a kill turn) — mirrors
 			# the Band panel's hunt-headline rule in `SourceForecast.source_yield_readout` (which now reads

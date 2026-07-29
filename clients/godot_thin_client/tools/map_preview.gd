@@ -1771,7 +1771,17 @@ func _snapshot_work() -> Dictionary:
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
 	# frame: green R2 innermost, azure R4, red hunt R5 outermost (the deer sits on the hunt border).
-	return _base_snapshot(_band(assignments, 2, 4), [_deer_herd(), _pelt_only_wolf_herd()])
+	var snap := _base_snapshot(_band(assignments, 2, 4), [_deer_herd(), _pelt_only_wolf_herd()])
+	# BOTH worked forage tiles carry a FOOD SITE, and that is load-bearing rather than dressing: the
+	# worked mark is a ring on the SOURCE's own marker (docs/plan_worked_source_marks.md §2.1), so a
+	# forage assignment on a tile with no site has nothing to ring and degrades to the bare tile
+	# outline. Without these two the frame could not show the green ring at all — which is exactly how
+	# the first cut of this state rendered, and why the fallback is visible here as well as the ring.
+	snap["food_modules"] = [
+		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
+		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
+	]
+	return snap
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so
 ## its secondary glyph is drawn over that tile's yield label (the reported failure).
