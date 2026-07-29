@@ -34,7 +34,10 @@ const HARVEST_POLICY_AFTER_BUILD: FollowPolicy = FollowPolicy::Sustain;
 /// - **Forage** `{ tile }`: within `band_work_range` of the band and carrying a `FoodModuleTag` →
 ///   draws down the tile's depletable forage patch (§0-ii) via the shared `forage_take` primitive
 ///   (Sustain gather = the regrowth skim; `sustainable` = one turn's net patch regrowth), the plant
-///   mirror of the Hunt take. Out of range / module-less / unseeded → 0 this turn, assignment kept.
+///   mirror of the Hunt take. Module-less / unseeded → 0 this turn, assignment kept (source
+///   conditions that recover in place). **Out of range lapses** the assignment and returns its
+///   workers to the pool (feed entry), the plant twin of the hunt leash: a patch is fixed, so
+///   out-of-range can only mean the band walked away.
 /// - **Hunt** `{ fauna_id, policy }`: reuses the per-policy ecology ceiling; the take is
 ///   `min(workers × per_worker_biomass_capacity, policy_ceiling)`, so under-hunting a Sustain herd
 ///   (`worker_cap < regrowth`) lets it GROW. Tracks a roaming herd out to `band_work_range +
@@ -172,15 +175,33 @@ pub fn advance_labor_allocation(
                     policy,
                     species,
                 } => {
-                    // Out of range this turn → no yield, but keep the assignment (the band may
-                    // move back into range).
-                    if crate::grid_utils::hex_distance_wrapped(
+                    // **Out of range → the assignment is ABANDONED**, the plant twin of the hunt
+                    // leash lapse. A patch cannot move, so beyond `band_work_range` the band walked
+                    // away from it — a decision, not a drift, and there is nothing to follow. Keeping
+                    // the assignment would pay a correct `+0.00` forever while the tile still renders
+                    // as worked and its workers stay booked, so the workers return to the pool and the
+                    // player is told which tile was given up.
+                    let distance = crate::grid_utils::hex_distance_wrapped(
                         band_pos,
                         *tile,
                         grid_width,
                         wrap_horizontal,
-                    ) > work_range
-                    {
+                    );
+                    if distance > work_range {
+                        lapsed.push(idx);
+                        event_log.push(CommandEventEntry::new(
+                            tick.0,
+                            CommandEventKind::Forage,
+                            faction,
+                            format!(
+                                "foragers abandoned ({}, {}) — out of the band's work range",
+                                tile.x, tile.y
+                            ),
+                            Some(format!(
+                                "status=lapsed reason=out_of_range x={} y={} distance={} range={}",
+                                tile.x, tile.y, distance, work_range
+                            )),
+                        ));
                         continue;
                     }
                     let Some(tile_entity) = tile_registry.index(tile.x, tile.y) else {
@@ -1374,7 +1395,8 @@ pub fn advance_labor_allocation(
                 LaborTarget::Scout | LaborTarget::Warrior => {}
             }
         }
-        // Drop lapsed hunts (reverse order to keep indices valid); workers return to the pool.
+        // Drop lapsed sources — Forage (tile out of work range) or Hunt (herd past the leash or
+        // gone) — in reverse order to keep indices valid; workers return to the pool.
         // Remove the matching telemetry rows too so `last_yields` stays index-aligned with the
         // surviving assignments (lapsed rows carry a 0 yield anyway).
         for idx in lapsed.into_iter().rev() {

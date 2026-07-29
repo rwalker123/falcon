@@ -2194,8 +2194,9 @@ fn handle_assign_labor(
 }
 
 /// Order a band to travel toward a target tile at `band_move_tiles_per_turn`/turn (Early-Game
-/// Labor). In-range sources update as the band moves; Forage assignments naturally read 0 while
-/// out of range. Text form: `move_band <faction> <band> <x> <y>`.
+/// Labor). In-range sources update as the band moves; a Forage assignment the move carries out of
+/// `band_work_range` is abandoned that same turn (workers back to the pool, feed entry naming the
+/// tile). Text form: `move_band <faction> <band> <x> <y>`.
 fn handle_move_band(
     app: &mut bevy::prelude::App,
     faction: FactionId,
