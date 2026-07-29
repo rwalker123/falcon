@@ -72,6 +72,15 @@ const STICKY_TERRAIN_ID := 11
 # click there resolves as bare land).
 const DESELECT_HERD_TILE := Vector2i(30, 16)
 const DESELECT_LAND_TILE := Vector2i(34, 16)
+# The occupant-cycle state's hex, on the same grid and clear of the other two fixtures' hexes. ONE
+# band and TWO herds share it, which is the smallest stack that can prove BOTH halves of issue #429:
+# a herd under a band is reachable at all (a band-only prefix used to end the cycle), and a
+# multi-herd hex is not stuck on `herds[0]`. The expected cycle order is bands-then-herds, so:
+# the band, herd A, herd B, and back to the band.
+const CYCLE_TILE := Vector2i(12, 8)
+const CYCLE_BAND_ENTITY := 401
+const CYCLE_HERD_FIRST_ID := "game_aurochs_429a"
+const CYCLE_HERD_SECOND_ID := "game_boar_429b"
 # Park the OS cursor over empty canvas before rendering. The HUD drops its hovered-hex record (and
 # with it the targeting banner's hunt forecast) whenever the pointer sits over an interactive HUD
 # control — see Hud._suppress_tooltip_over_ui. Wherever the cursor happened to be when the harness
@@ -2418,6 +2427,63 @@ func _ready() -> void:
 	deselect_map.herd_selected.disconnect(_hud.show_herd_selection)
 	deselect_map.selection_cleared.disconnect(_hud.clear_selection)
 	deselect_map.queue_free()
+	await get_tree().process_frame
+
+	# tile_panel_occupant_cycle — THE BEHAVIOURAL ASSERTION for issue #429: re-clicking a hex cycles
+	# through ALL of its occupants, not just its bands. `_handle_entity_selection` used to take
+	# `herds_here[0]` and only when the hex held no units at all, so a multi-herd hex always opened on
+	# the same herd and a herd sharing a hex with ANY band was unreachable from the map at any number of
+	# clicks. A PNG cannot carry that claim — the frames differ only in which name the card is showing —
+	# so it is asserted on state through the real click path, the `tile_panel_land_sticky` idiom: a real
+	# MapView, Main's signal wiring, real `handle_hex_click` calls.
+	var cycle_map: Node2D = MAP_VIEW_SCRIPT.new()
+	cycle_map.visible = false   # data only — a visible map renders behind the HUD in every later frame
+	add_child(cycle_map)
+	# FoW OFF, stated explicitly (the harness rule): `_fow_enabled` fails closed to `true` and
+	# `_herds_on_tile` gates on `_is_tile_visible`, so a fogged hex presents a ZERO-occupant stack and
+	# every assertion below would pass vacuously on a cycle with nothing in it.
+	cycle_map.set_fow_enabled(false)
+	cycle_map.display_snapshot(_cycle_map_snapshot())
+	# Main's wiring, verbatim — INCLUDING the roster relay, because the HUD's fresh-hex auto-pick
+	# re-enters `select_occupant` through it mid-click (tile_selected → show_tile_selection → render →
+	# the auto-pick → roster_occupant_selected → here), rewriting `cycle_index` to the FIRST occupant.
+	# Without this connection the harness would not exercise the re-entrancy the cycle has to survive.
+	cycle_map.tile_selected.connect(_hud.show_tile_selection)
+	cycle_map.unit_selected.connect(_hud.show_unit_selection)
+	cycle_map.herd_selected.connect(_hud.show_herd_selection)
+	_hud.roster_occupant_selected.connect(cycle_map.select_occupant)
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("click 1 of the occupant cycle lands on the band (bands still win the first click)",
+		cycle_map.selected_unit_id == CYCLE_BAND_ENTITY and cycle_map.selected_herd_id == "")
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("click 2 advances PAST the band to the first herd (#429: unreachable before)",
+		cycle_map.selected_herd_id == CYCLE_HERD_FIRST_ID and cycle_map.selected_unit_id == -1)
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("click 3 advances to the SECOND herd (a multi-herd hex is not stuck on herds[0])",
+		cycle_map.selected_herd_id == CYCLE_HERD_SECOND_ID)
+	# The cycled herd has to survive the next snapshot, which is where the HUD's sticky-choice guard
+	# could undo it: Main asks MapView what is selected and replays whatever it answers.
+	var cycle_payload: Dictionary = cycle_map.refresh_selection_payload()
+	_hud.reapply_selection(String(cycle_payload.get("kind", "none")), cycle_payload.get("data", {}))
+	await _settle()
+	_assert_hud("the cycled herd survives the next snapshot (the HUD auto-pick does not steal it back)",
+		String(_hud._selection._selected_herd.get("id", "")) == CYCLE_HERD_SECOND_ID)
+	await _save("tile_panel_occupant_cycle")
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("click 4 WRAPS to the top of the stack",
+		cycle_map.selected_unit_id == CYCLE_BAND_ENTITY and cycle_map.selected_herd_id == "")
+	# A PANEL roster-row click re-anchors the cycle: the next map click continues from THAT row, which
+	# is what deriving the advance from the selected occupant's IDENTITY (rather than from the stored
+	# index) buys. Picking the first herd from the list must make the next map click give the second.
+	_hud._selectioncard._on_roster_row_selected("herd", CYCLE_HERD_FIRST_ID)
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("a map re-click continues from the herd picked in the PANEL, not the stored index",
+		cycle_map.selected_herd_id == CYCLE_HERD_SECOND_ID)
+	cycle_map.tile_selected.disconnect(_hud.show_tile_selection)
+	cycle_map.unit_selected.disconnect(_hud.show_unit_selection)
+	cycle_map.herd_selected.disconnect(_hud.show_herd_selection)
+	_hud.roster_occupant_selected.disconnect(cycle_map.select_occupant)
+	cycle_map.queue_free()
 	await get_tree().process_frame
 
 	# tile_panel_unseen — a REMEMBERED hex. Chips + the land row render (geography is remembered
@@ -5707,6 +5773,55 @@ func _deselect_map_snapshot() -> Dictionary:
 			"graze_range_radius": 1,
 			"x": DESELECT_HERD_TILE.x, "y": DESELECT_HERD_TILE.y,
 		}],
+	}
+
+## The MapView snapshot behind `tile_panel_occupant_cycle` — ONE band and TWO herds on a single hex,
+## the smallest stack that exercises both kinds and a plural one of the second kind. Same grid as the
+## sticky fixture; fog is turned off by the caller. The herds carry neither `herders_needed` half, so
+## the field-pair guard skips them (they are wild, and nothing here opens a compose sheet on them).
+func _cycle_map_snapshot() -> Dictionary:
+	var terrain: Array = []
+	terrain.resize(STICKY_GRID_W * STICKY_GRID_H)
+	terrain.fill(STICKY_TERRAIN_ID)
+	return {
+		"grid": {"width": STICKY_GRID_W, "height": STICKY_GRID_H, "wrap_horizontal": false},
+		"overlays": {"terrain": terrain},
+		"populations": [
+			{"id": "Band Wold", "entity": CYCLE_BAND_ENTITY, "faction": 0, "size": 94,
+				"pos": [CYCLE_TILE.x, CYCLE_TILE.y],
+				"current_x": CYCLE_TILE.x, "current_y": CYCLE_TILE.y,
+				"working_age": 48, "idle_workers": 6, "work_range": 2, "hunt_reach": 4,
+				"turns_of_food": 11.0, "morale": 0.64, "activity": "idle",
+				"stores": {"provisions": 120.0}, "labor_assignments": []},
+		],
+		"herds": [
+			{
+				"id": CYCLE_HERD_FIRST_ID,
+				"label": "Aurochs (%s)" % CYCLE_HERD_FIRST_ID,
+				"species": "Aurochs",
+				"size_class": "big",
+				"huntable": true,
+				"ecology_phase": "thriving",
+				"domestication": 0.0,
+				"biomass": 1620.0,
+				"carrying_capacity": 2400.0,
+				"graze_range_radius": 1,
+				"x": CYCLE_TILE.x, "y": CYCLE_TILE.y,
+			},
+			{
+				"id": CYCLE_HERD_SECOND_ID,
+				"label": "Wild Boar (%s)" % CYCLE_HERD_SECOND_ID,
+				"species": "Wild Boar",
+				"size_class": "medium",
+				"huntable": true,
+				"ecology_phase": "stressed",
+				"domestication": 0.0,
+				"biomass": 780.0,
+				"carrying_capacity": 1360.0,
+				"graze_range_radius": 1,
+				"x": CYCLE_TILE.x, "y": CYCLE_TILE.y,
+			},
+		],
 	}
 
 ## A hex with an occupant stack: 3 player bands + 1 herd, for the Occupants roster.
