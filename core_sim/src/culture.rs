@@ -1258,6 +1258,14 @@ pub fn reconcile_band_culture_layers(
 ) {
     let mut live: Vec<u64> = Vec::with_capacity(bands.iter().len());
     for (band, cohort) in bands.iter() {
+        // Liveness is decided by the query alone, ahead of the tile resolve: a band left out of
+        // `live` is read by the stale sweep below as a dead band and has its layer detached, and
+        // re-attachment reseeds traits from the province rather than restoring the drift, timers
+        // and divergence the band had accumulated. A band whose tile does not resolve is therefore
+        // simply not re-homed this turn — its layer is left exactly as it stands. The reverse
+        // order is harmless: the sweep only removes layers that exist, so a live band with no
+        // layer yet costs nothing.
+        live.push(band.0);
         let Ok(tile) = tiles.get(cohort.current_tile) else {
             continue;
         };
@@ -1266,7 +1274,6 @@ pub fn reconcile_band_culture_layers(
             .and_then(|map| map.province_at(tile.position.x, tile.position.y))
             .unwrap_or(FALLBACK_CULTURE_REGION_ID);
         let parent = manager.upsert_regional(region_id);
-        live.push(band.0);
 
         let current_parent = manager
             .band_layer_by_owner(CultureOwner::from_band(*band))

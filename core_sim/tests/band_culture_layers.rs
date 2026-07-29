@@ -12,11 +12,17 @@
 //! Plus the snapshot-level guard for the tile-key defect: `tiles[].culture_layer` and the culture
 //! raster were both keyed on `tile.entity` while `attach_local` files layers under
 //! `CultureOwner::from_tile`, so every lookup missed and both shipped empty on every frame.
+//!
+//! And the reconcile pass's own guard: a resident band is live whether or not its tile resolves, so
+//! an unresolvable `current_tile` never routes the band through the stale sweep.
 
+use bevy::ecs::system::RunSystemOnce;
+use bevy::prelude::{Entity, With};
 use core_sim::{
-    build_headless_app, recapture_snapshot_in_place, scalar_from_f32, BandId,
-    CultureCorruptionConfig, CultureLayerScope, CultureManager, CultureOwner, CultureTensionKind,
-    InfluencerCultureResonance, SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
+    build_headless_app, recapture_snapshot_in_place, reconcile_band_culture_layers,
+    scalar_from_f32, BandId, CultureCorruptionConfig, CultureLayerScope, CultureManager,
+    CultureOwner, CultureTensionKind, InfluencerCultureResonance, PopulationCohort, ResidentBand,
+    SimulationTick, SnapshotHistory, CULTURE_TRAIT_AXES,
 };
 
 /// The axis every test below writes; any single axis would do, the rollup is per-axis.
@@ -323,6 +329,93 @@ fn resident_bands_own_culture_layers_after_the_first_update() {
             "a band layer is always parented to the province it stands in"
         );
     }
+}
+
+/// **A band's liveness does not depend on its tile resolving.** `reconcile_band_culture_layers`
+/// builds the live set from the resident-band query and then sweeps every layer whose band is not
+/// in it, so a band skipped because its `current_tile` no longer resolves reads to the sweep as a
+/// *dead* band and is detached. That is silent state loss rather than a skipped turn: `attach_band`
+/// reseeds from the parent province, so the band returns the following turn with its accumulated
+/// drift, divergence and trigger timers replaced by a fresh layer.
+///
+/// The assertion is therefore on the layer's **identity and trait value**, not on its existence —
+/// a detach-then-reattach leaves a layer standing, and only the numbers show it is not the same
+/// culture. The marker value is set a full unit away from the province the band would be reseeded
+/// from, so the two outcomes cannot be confused.
+#[test]
+fn a_band_whose_tile_cannot_be_resolved_keeps_its_layer_and_its_traits() {
+    let mut app = build_headless_app();
+    app.update();
+
+    let (band_entity, band) = {
+        let mut bands = app
+            .world
+            .query_filtered::<(Entity, &BandId), With<ResidentBand>>();
+        let (entity, band) = bands
+            .iter(&app.world)
+            .next()
+            .expect("worldgen spawns at least one resident band");
+        (entity, *band)
+    };
+
+    let (layer_id, parent, marker) = {
+        let manager = app.world.resource::<CultureManager>();
+        let layer = manager
+            .band_layer_by_owner(CultureOwner::from_band(band))
+            .expect("the band owns a culture layer after the first update");
+        let parent = layer
+            .parent
+            .expect("a band layer is parented to the province it stands in");
+        let parent_axis = manager
+            .regional_layers()
+            .find(|regional| regional.id == parent)
+            .expect("the parent province layer exists")
+            .traits
+            .values()[AXIS]
+            .to_f32();
+        (layer.id, parent, parent_axis + 1.0)
+    };
+    {
+        let mut manager = app.world.resource_mut::<CultureManager>();
+        manager
+            .band_layer_mut_by_owner(CultureOwner::from_band(band))
+            .expect("the band owns a culture layer")
+            .traits
+            .update_value(AXIS, scalar_from_f32(marker));
+    }
+
+    // Point the band at an entity that is not a tile — what a despawned tile leaves behind.
+    let orphan = app.world.spawn_empty().id();
+    app.world
+        .entity_mut(band_entity)
+        .get_mut::<PopulationCohort>()
+        .expect("a resident band carries a cohort")
+        .current_tile = orphan;
+
+    app.world.run_system_once(reconcile_band_culture_layers);
+
+    let manager = app.world.resource::<CultureManager>();
+    let layer = manager
+        .band_layer_by_owner(CultureOwner::from_band(band))
+        .expect(
+            "a band whose tile failed to resolve keeps its layer — the stale sweep must not \
+                 read an unresolvable tile as a dead band",
+        );
+    assert_eq!(
+        layer.id, layer_id,
+        "the layer must be the same one, not a replacement from a detach-then-reattach"
+    );
+    assert_eq!(
+        layer.parent,
+        Some(parent),
+        "a band that was not re-homed this turn keeps the province it was parented to"
+    );
+    let held = layer.traits.values()[AXIS].to_f32();
+    assert!(
+        (held - marker).abs() < 1e-3,
+        "the band's accumulated traits must survive untouched (expected {marker}, got {held}); \
+         a value near its province means the layer was reseeded"
+    );
 }
 
 /// **The tile lookup is keyed on POSITION** — the Part 1 defect, asserted on the shipped snapshot
