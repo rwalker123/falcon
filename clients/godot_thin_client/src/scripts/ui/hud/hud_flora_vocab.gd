@@ -213,9 +213,10 @@ const FLORA_CROP_TRADE_TOOLTIP_FORMAT := "%s pays %.1f trade/turn as a sown fiel
 const FLORA_CROP_BREAK_EVEN_RATIO := 1.0
 
 # THE LIST SCROLLS WITHIN ITSELF so a long basket can never push the commit button below the sheet's
-# fold. The sheet's own `CARD_MAX_HEIGHT` is deliberately NOT raised — that cap belongs to every
-# compose card, not just this one — so the picker has to live inside the room the sheet has left, and
-# the budget is TIGHT: a Cultivate compose already spends most of the card on the rung gates. Hence
+# fold. The sheet grows to fit its content and is bounded only by the room left in the VIEWPORT
+# (`ComposeSheet.refit`), so a basket long enough to matter would otherwise walk the card down the
+# screen — the picker instead lives inside the room the sheet has left, and the budget is TIGHT: a
+# Cultivate compose already spends most of the card on the rung gates. Hence
 # the work-board's compact row idiom rather than default button chrome (which pads 9px top AND bottom,
 # making a row ~37px and the whole picker unaffordable), and hence a cap DERIVED from the rows it
 # shows rather than a picked pixel height: `rows × (row + separation)`, with a partial row deliberately
