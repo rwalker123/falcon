@@ -374,3 +374,43 @@ land-use tension.
   (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was deliberately omitted for parity with fodder —
   no role-badge mechanism exists for either.
 
+### The vector routes at RUNG 2 as well — a Tended Patch pays all three accounts
+
+§3's spine is unconditional: *a harvest* of `B` biomass pays `B × yield.*` into three accounts. F3 and F4
+implemented it only inside the `is_field()` branch of `advance_labor_allocation`'s Forage arm, so a
+**completed Tended Patch** routed provisions alone and dropped its crop's fodder and trade on the floor —
+a rung-2 cash crop (`provisions_per_biomass: 0`) produced **nothing in any currency** while being drawn
+down at full MSY every turn (issue #427). The same take now feeds all three accounts at rung 2:
+
+- **`tended_take_fodder` / `tended_take_trade_goods`** (`forage.rs`) — the take-driven twins of
+  `field_fodder` / `field_trade_goods`, resolving their rates through `patch_fodder_per_biomass` /
+  `patch_trade_per_biomass`, the fodder and trade twins of the `patch_provisions_per_biomass`
+  conversion seam. Both read `committed_species`, so all three accounts switch on together the turn
+  the rung completes, and all three read `0` for a crop whose vector does not pay them — commodity-generic,
+  no `role` branch. `FODDER` credits the working band's `LocalStore` (feeding `band_fodder_inflow` as the
+  Field arm does); `TRADE_GOODS` credits the **faction** stockpile.
+- **TAKE-driven, not a managed rate — the deliberate difference from the Field arm.** A Field is never
+  drawn down, so its harvest collapses the policy axis and is quoted as a rate on the standing crop. A
+  tended patch *is* drawn down, so its non-food accounts ride the same take its food account does:
+  `Deplete` on a tended cash crop earns more trade than `Sustain` because it takes more, and the
+  over-farm ⚠ covers the whole vector. **A Sustain harvest of a tended cash crop therefore does pay
+  trade** — that is the #427 fix, not a leak.
+- **No second collection cap.** `forage_take` already caps the take by `workers × per_worker_biomass ×
+  seasonal`, so unlike the Field arm's `managed_per_worker_fodder`/`_trade` there is nothing further to
+  cap: the crop the crew carries home *is* the take it made.
+- **The crop's rate REPLACES the flat `Deplete` market sale, never stacks with it.** The Forage arm
+  branches on `patch_commitment_in_effect` (the public face of `committed_species`, so the branch and the
+  rate resolve through one seam): committed → the crop's `trade_goods_per_biomass`; uncommitted (wild, or
+  an improvement still building) → the unchanged species-blind `forage.market.*` sale on `Deplete` only.
+  The roster stays economy-neutral until you commit. **No `trade_goods_multiplier` on the committed
+  route**, matching `field_trade_goods` — that markup is a `Deplete`-*policy* concept for wild commercial
+  gathering; here the policy axis reaches the number through the *size of the take* instead.
+- **Pinned by `core_sim/tests/forage_tended_vector.rs`**: the #427 grapevine-under-Sustain regression, hay
+  crediting `FODDER`, a staple keeping its food *and* gaining its token trade, the wild `Deplete` sale
+  unchanged, no double credit under `Deplete`, and `Deplete > Sustain` on the same tended cash crop. Five
+  of the six fail against the pre-fix code; the wild-market pin passes both sides, which is its job.
+- **Not yet quoted anywhere.** `tended_provisions` (the wire's `ForagePatchState.tendedYield`),
+  `project_realized_forage`/`project_arrivals_forage`, and the crop picker's `commit_fodder_payoff` /
+  `commit_trade_payoff` (`FloraShareInfo.sowFodderPayoff` / `sowTradePayoff`) are all **provisions-only or
+  Field-rung-only**. A tended cash crop is therefore *paid* correctly and *previewed* as `0`.
+

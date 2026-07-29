@@ -473,6 +473,20 @@ pub fn advance_labor_allocation(
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
+                    // **The FODDER account at rung 2** (issue #427). *A harvest* of `B` biomass pays
+                    // `B × yield.*` into all three accounts (`docs/plan_flora_roster.md` §3) — that is
+                    // unconditional, not a Field-only rule. So the SAME take `forage_take` just paid
+                    // food from is routed through the committed crop's fodder component here, exactly
+                    // as the Field arm routes its managed harvest. `0` for an uncommitted patch or a
+                    // crop whose vector pays no hay, so this is commodity-generic with no `role`
+                    // branch. **No second collection cap**: unlike a Field's managed rate, the take is
+                    // already worker-capped inside `forage_take`, so the crop the crew carries home
+                    // *is* the take it made.
+                    let fodder = scalar_from_f32(tended_take_fodder(take, patch, &flora, mult_f));
+                    if fodder > scalar_zero() {
+                        cohort.stores.add(FODDER, fodder);
+                        band_fodder_inflow += fodder.to_f32();
+                    }
                     // **Cultivate — the investment policy.** The crew is clearing and planting, not
                     // gathering: `forage_take` above already paid only the reduced Cultivate ceiling
                     // (the rung's `yield_fraction_while_building × MSY` — the up-front cost), and here the patch
@@ -553,11 +567,28 @@ pub fn advance_labor_allocation(
                             retired.push(idx);
                         }
                     }
-                    // Deplete forage = gathered goods sold: convert the raw take to trade goods
-                    // (mirror of the Hunt-Deplete arm). Only Deplete sells — Sustain/Surplus/Eradicate
-                    // produce no trade goods (Eradicate is denial, not commerce). The `forage.market.*`
+                    // **The TRADE account — two routes, exactly one of which fires** (issue #427).
+                    //
+                    // A **committed** patch (rung 2 complete, so its crop's concentration and
+                    // conversion are both in effect) sells at its own `trade_goods_per_biomass`,
+                    // routed off the same take the food and fodder accounts read. This is what makes a
+                    // tended cash crop pay at all: `grapevine`/`cotton`/`flax`/`tobacco`/`tea` are
+                    // `provisions_per_biomass: 0`, so before this they produced nothing in any
+                    // currency while still being drawn down at full MSY. The crop's rate **replaces**
+                    // the flat market rate rather than stacking with it — never both — and carries no
+                    // `trade_goods_multiplier`, matching `field_trade_goods` (that markup is a
+                    // Deplete-*policy* concept for wild commercial gathering, not a managed harvest).
+                    // The policy axis still reaches the number through the *size* of the take, which
+                    // is the honest place for it on a rung that draws its stock down.
+                    //
+                    // An **uncommitted** patch — wild, or an improvement still building — keeps the
+                    // original path unchanged: only Deplete sells (Sustain/Surplus/Eradicate produce
+                    // no trade goods; Eradicate is denial, not commerce), at the species-blind
+                    // `forage.market.*` rate. The roster stays economy-neutral until you commit. That
                     // config block keeps its old name pending the plant-side pass.
-                    let forage_trade = if matches!(policy, FollowPolicy::Deplete) {
+                    let forage_trade = if patch_commitment_in_effect(patch, &flora) {
+                        tended_take_trade_goods(take, patch, &flora, mult_f)
+                    } else if matches!(policy, FollowPolicy::Deplete) {
                         let forage_market = &labor.forage.market;
                         take * forage_market.trade_goods_per_biomass
                             * forage_market.trade_goods_multiplier
@@ -620,8 +651,9 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
-                        // **The other currency this gather produced.** Only a `Deplete` gather sells,
-                        // so this is `0` on the other rungs. Never summed into `food_income`
+                        // **The other currency this gather produced** — the committed crop's trade
+                        // component on a tended patch, the flat market sale on a `Deplete` of wild
+                        // ground, and `0` otherwise. Never summed into `food_income`
                         // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
                         trade: forage_trade,
                         // The plant web's steady TRADE projection is #337's known gap — see

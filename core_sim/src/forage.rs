@@ -1543,6 +1543,102 @@ pub(crate) fn managed_per_worker_trade(
     )
 }
 
+/// **The rate an UNCOMMITTED patch converts biomass at in the two non-food accounts** — nothing. A
+/// wild stand is a mixed basket the sim prices with the single food number
+/// `forage.provisions_per_biomass`; it has no hay component and no cash component, and its only
+/// trade route is the `Deplete` policy's flat `market.*` sale. Named rather than a bare `0.0` because
+/// at these call sites the zero is a *statement about the wild basket*, not an absent value.
+const NO_UNCOMMITTED_YIELD_RATE: f32 = 0.0;
+
+/// **THE fodder conversion seam** — the fodder twin of [`patch_provisions_per_biomass`]: how well one
+/// unit of *this* patch's biomass turns into hay. Routed by the commitment that is **in effect**
+/// ([`committed_species`], so a patch still being cleared is still gathered as the wild basket it
+/// stands in), which is what makes the tended rung's fodder credit switch on together with its food
+/// conversion rather than one rung early. [`NO_UNCOMMITTED_YIELD_RATE`] for an uncommitted patch and
+/// for a committed crop whose vector pays no fodder — so a tended grain patch credits no hay with no
+/// `role` branch.
+fn patch_fodder_per_biomass(patch: &ForagePatch, flora: &FloraConfig) -> f32 {
+    committed_species(patch, flora).map_or(NO_UNCOMMITTED_YIELD_RATE, |def| {
+        def.yield_.fodder_per_biomass
+    })
+}
+
+/// **THE trade conversion seam** — the trade twin of [`patch_fodder_per_biomass`], routing the yield
+/// vector's `trade_goods_per_biomass` component. [`NO_UNCOMMITTED_YIELD_RATE`] for an uncommitted
+/// patch, which is load-bearing: a wild/still-building patch's only trade route stays the flat
+/// `Deplete`-policy market sale, so the roster remains economy-neutral until you commit
+/// (`docs/plan_flora_roster.md` §6).
+fn patch_trade_per_biomass(patch: &ForagePatch, flora: &FloraConfig) -> f32 {
+    committed_species(patch, flora).map_or(NO_UNCOMMITTED_YIELD_RATE, |def| {
+        def.yield_.trade_goods_per_biomass
+    })
+}
+
+/// **Is this patch's crop commitment IN EFFECT?** The public face of [`committed_species`] — `true`
+/// exactly when [`patch_provisions_per_biomass`] and its fodder/trade twins read the crop's own rate
+/// instead of the wild basket's.
+///
+/// Its one reader is the Forage arm's trade routing, and that is the reason it exists: a committed
+/// harvest sells at the crop's own `trade_goods_per_biomass` ([`tended_take_trade_goods`]), an
+/// uncommitted one at the flat `market.*` rate, and **never both**. Branching on the same seam the
+/// rate is resolved through is what makes the double credit unrepresentable.
+pub(crate) fn patch_commitment_in_effect(patch: &ForagePatch, flora: &FloraConfig) -> bool {
+    committed_species(patch, flora).is_some()
+}
+
+/// **The FODDER a completed Tended Patch (rung 2) harvest pays** into the working band's `FODDER`
+/// store — `take × the committed crop's fodder_per_biomass`, the fodder twin of the provisions
+/// conversion [`forage_take`] itself performs, through the same [`forage_provisions`] arithmetic.
+/// `0` for an uncommitted patch or a crop whose vector pays no fodder, so this is commodity-generic
+/// with **no `role` branch** — a harvest of `B` biomass pays `B × yield.*` into all three accounts
+/// (`docs/plan_flora_roster.md` §3), at every rung, not only at rung 3.
+///
+/// **Driven by the TAKE, not by a managed rate — the deliberate difference from [`field_fodder`].**
+/// A Field is never drawn down, so its harvest collapses the policy axis and is quoted as a rate on
+/// the standing crop. A tended patch *is* drawn down by the ordinary gather, so its non-food accounts
+/// must ride the same take the food account does: `Deplete` on a tended hay patch earns more fodder
+/// than `Sustain` because it takes more, and over-farming it shows up in the ⚠ exactly as it does for
+/// food. **The take is already worker-capped** by `forage_take`'s `workers × per_worker_biomass`
+/// term, so there is deliberately no second collection cap here — the crop the crew carries home is
+/// the take it made.
+pub fn tended_take_fodder(
+    take_biomass: f32,
+    patch: &ForagePatch,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        take_biomass,
+        patch_fodder_per_biomass(patch, flora),
+        output_multiplier,
+    )
+}
+
+/// **The TRADE GOODS a completed Tended Patch (rung 2) harvest credits** to the *faction*
+/// `trade_goods` stockpile — the exact trade twin of [`tended_take_fodder`], take-driven for the same
+/// reason, and the fix for a tended cash crop (`grapevine`/`cotton`/`flax`/`tobacco`/`tea`,
+/// `provisions_per_biomass: 0`) producing nothing in any currency while being drawn down at full MSY.
+///
+/// **The crop's rate REPLACES the flat `market.*` sale, it does not stack with it** — see
+/// [`patch_commitment_in_effect`], the seam the Forage arm branches on.
+///
+/// **No `market.trade_goods_multiplier`**, matching [`field_trade_goods`]: that markup is a
+/// `Deplete`-*policy* concept for wild commercial gathering, not a managed harvest
+/// (`docs/plan_flora_roster.md` §6). The policy axis still reaches this number — through the size of
+/// the take — which is the honest place for it on a rung that draws its stock down.
+pub fn tended_take_trade_goods(
+    take_biomass: f32,
+    patch: &ForagePatch,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        take_biomass,
+        patch_trade_per_biomass(patch, flora),
+        output_multiplier,
+    )
+}
+
 /// **The `plant:field` rung's investment dip**, resolved off the ladder — the fraction of what a
 /// patch would otherwise pay that it *does* pay while a crew sows a Field into it. One lookup, shared
 /// by `forage_policy_ceiling` (via the rung), the managed-patch forecast and the managed-patch payout,
