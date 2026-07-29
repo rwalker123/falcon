@@ -433,10 +433,21 @@ func _forage_workers_on_tile(x: int, y: int) -> int:
 ## restores the band, which made the land unselectable on any occupied hex. `subject_changed` drives
 ## HudLayer's re-render (close sheet → re-render the panel + drawer).
 func _on_land_row_selected() -> void:
-	_selection.note_choice_tile(_selected_tile_coords())
-	_selection.select_land()
+	select_land_subject()
 	emit_signal("subject_changed")
 	emit_signal("roster_occupant_selected", HudSelectionState.SUBJECT_LAND, HudConst.LAND_SUBJECT_ID)
+
+## The LAND is the DELIBERATELY chosen subject on this hex. Public because there are TWO ways to
+## choose it: the land row above, and the map's select-then-cycle reaching its LAND stop
+## (`MapView.land_selected` → `Main` → `Hud.show_land_selection`). Both must record the choice tile,
+## because `_resolve_auto_selected_subject` runs whenever both occupant dicts are empty — which is
+## exactly the land state — and would otherwise auto-pick the first band straight back. This is the
+## mirror image of the unit/herd path, where a non-empty occupant dict suppresses the auto-pick on
+## its own. It emits NO signal: each caller decides what to announce (the row click relays a
+## `roster_occupant_selected` so the map follows; the map click is already there).
+func select_land_subject() -> void:
+	_selection.note_choice_tile(_selected_tile_coords())
+	_selection.select_land()
 
 func _roster_group_header(title: String, count: int) -> Label:
 	var label := Label.new()

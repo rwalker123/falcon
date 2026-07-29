@@ -14,6 +14,13 @@ signal herd_selected(herd: Dictionary)
 signal herd_quick_hunt_requested(herd_id: String)
 signal tile_hovered(info: Dictionary)
 signal selection_cleared()
+## The select-then-cycle click reached the LAND stop of an OCCUPIED hex. Carries no payload: the
+## `_emit_tile_selection` one call earlier in the same click already handed the HUD this hex's
+## `tile_info` (the guarantee `selection_cleared` relies on too), so the land subject is fully
+## described by what the HUD already holds. Distinct from `selection_cleared` because the HUD must
+## treat it as a DELIBERATE choice — `Hud.show_land_selection` records the choice tile so
+## `SelectionCardController._resolve_auto_selected_subject` does not auto-pick the first band back.
+signal land_selected()
 signal next_turn_requested(steps: int)
 signal targeting_cancel_requested()
 ## Emitted whenever the map zoom factor changes (rail button, wheel, Q/E, or fit).
@@ -111,6 +118,9 @@ const OCCUPANT_KIND_LAND := "land"
 # The keys of an `_occupants_on_tile` entry: which kind it is, and the underlying marker dict.
 const OCCUPANT_KEY_KIND := "kind"
 const OCCUPANT_KEY_DATA := "data"
+# The LAND's cycle entry carries no marker dict — the hex IS its identity, and `selected_tile`
+# already names it — so it is the one entry whose `data` is empty by construction.
+const LAND_CYCLE_ENTRY := {OCCUPANT_KEY_KIND: OCCUPANT_KIND_LAND, OCCUPANT_KEY_DATA: {}}
 
 # Primary band token: a settlement-stage glyph over a faction-colored nameplate banner
 # (ownership cue). No faction ring or disc — the banner carries ownership; selection is
@@ -583,9 +593,9 @@ var faction_colors: Dictionary = {
 
 var selected_unit_id: int = -1
 var selected_herd_id: String = ""
-# Select-then-cycle: which OCCUPANT of the selected tile's stack is active — an index into
-# `_occupants_on_tile` (every band, then every herd), not into the bands alone. Advanced by
-# re-clicking the selected tile; reset to 0 (top card) on a fresh tile; synced from a
+# Select-then-cycle: which member of the selected tile's cycle is active — an index into
+# `_selection_cycle_on_tile` (every band, then every herd, then the LAND), not into the bands alone.
+# Advanced by re-clicking the selected tile; reset to 0 (top card) on a fresh tile; synced from a
 # roster selection via select_occupant so map cycling + roster stay coherent.
 var cycle_index: int = 0
 var biome_color_buffer: PackedColorArray = PackedColorArray()
@@ -2285,8 +2295,8 @@ func _rebuild_herd_markers(snapshot: Dictionary) -> void:
 ## herd, and picking the land clears both. Without it `refresh_selection_payload` still sees
 ## `selected_unit_id >= 0` and answers `kind: "unit"` every snapshot, which restores the band and
 ## silently steals a deliberately-chosen land selection back (the land was unselectable on any
-## occupied hex). `selected_tile` is deliberately untouched — the land IS that tile — and so is
-## `cycle_index`, so re-clicking the hex on the map still cycles the occupant stack from where it was.
+## occupied hex). `selected_tile` is deliberately untouched — the land IS that tile — while
+## `cycle_index` follows the pick, so re-clicking the hex on the map continues the cycle from it.
 func select_occupant(kind: String, id) -> void:
 	if kind == OCCUPANT_KIND_UNIT:
 		selected_unit_id = int(id)
@@ -2300,25 +2310,32 @@ func select_occupant(kind: String, id) -> void:
 	elif kind == OCCUPANT_KIND_LAND:
 		selected_unit_id = -1
 		selected_herd_id = ""
+		# The land is the cycle's LAST stop, so seeding from it makes the next map re-click advance
+		# to the top occupant — the same coherence a roster band/herd row already gets.
+		cycle_index = _occupant_cycle_index(kind, id)
 	queue_redraw()
 
-## The occupant's position within its own tile's occupant stack — so a roster selection shows it
-## as the active card and map re-click cycling continues from it. Covers BOTH kinds: a roster herd
-## click leaves `cycle_index` pointing at that herd, so the next map click on the hex advances to
-## the occupant after it rather than restarting at the top of the stack. Returns 0 if not found.
+## The subject's position within its own tile's selection cycle — so a roster selection shows it
+## as the active card and map re-click cycling continues from it. Covers ALL THREE kinds: a roster
+## herd click leaves `cycle_index` pointing at that herd, and a land-row click at the land, so the
+## next map click on the hex advances to the member after it rather than restarting at the top of
+## the cycle. Returns 0 if not found.
 func _occupant_cycle_index(kind: String, id) -> int:
 	var tile := _occupant_home_tile(kind, id)
 	if tile.x < 0 or tile.y < 0:
 		return 0
-	var occupants := _occupants_on_tile(tile.x, tile.y)
-	for i in range(occupants.size()):
-		if _occupant_matches(occupants[i] as Dictionary, kind, id):
+	var cycle := _selection_cycle_on_tile(tile.x, tile.y)
+	for i in range(cycle.size()):
+		if _occupant_matches(cycle[i] as Dictionary, kind, id):
 			return i
 	return 0
 
-## The hex an occupant stands on, read from the unfiltered source arrays (`units`/`herds`) so the
-## lookup works from an id alone. `(-1, -1)` when the occupant is unknown or carries no position.
+## The hex a selection subject sits on, read from the unfiltered source arrays (`units`/`herds`) so
+## the lookup works from an id alone. The LAND carries no id — it IS the selected hex — so it
+## answers `selected_tile`. `(-1, -1)` when the subject is unknown or carries no position.
 func _occupant_home_tile(kind: String, id) -> Vector2i:
+	if kind == OCCUPANT_KIND_LAND:
+		return selected_tile
 	if kind == OCCUPANT_KIND_UNIT:
 		for unit in units:
 			if int((unit as Dictionary).get("entity", -1)) != int(id):
@@ -2334,11 +2351,14 @@ func _occupant_home_tile(kind: String, id) -> Vector2i:
 			return Vector2i(int((herd as Dictionary).get("x", -1)), int((herd as Dictionary).get("y", -1)))
 	return Vector2i(-1, -1)
 
-## Does this `_occupants_on_tile` entry name the `(kind, id)` occupant? The one place the two
-## identity vocabularies (a band's int `entity`, a herd's String `id`) are compared.
+## Does this cycle entry name the `(kind, id)` subject? The one place the two identity vocabularies
+## (a band's int `entity`, a herd's String `id`) are compared. The LAND has NO id — a hex holds
+## exactly one land entry — so matching its kind is the whole test.
 func _occupant_matches(entry: Dictionary, kind: String, id) -> bool:
 	if String(entry.get(OCCUPANT_KEY_KIND, "")) != kind:
 		return false
+	if kind == OCCUPANT_KIND_LAND:
+		return true
 	var data: Dictionary = entry.get(OCCUPANT_KEY_DATA, {})
 	if kind == OCCUPANT_KIND_UNIT:
 		return int(data.get("entity", -1)) == int(id)
@@ -2390,26 +2410,38 @@ func refresh_selection_payload() -> Dictionary:
 		return {"kind": "tile", "data": info}
 	return {"kind": "none"}
 
-## Select ONE of the hex's occupants — `occupant_index` picks which of `occupants`, and becomes the
-## stored `cycle_index`. BOTH the stack and the index are PARAMETERS rather than reads of
-## `_occupants_on_tile`/`cycle_index`, because the caller's `_emit_tile_selection` runs first and can
-## re-enter `select_occupant` synchronously (the HUD's fresh-hex auto-pick relays
-## `roster_occupant_selected` → `Main` → `select_occupant`), which rewrites `cycle_index` to the
-## FIRST occupant mid-click. Carrying the click's own stack and index through the call makes the
-## selection immune to that re-entrancy, and guarantees the index is applied to the very list it was
-## computed against.
+## Select ONE member of the hex's cycle — `occupant_index` picks which of `occupants` (bands, then
+## herds, then the LAND), and becomes the stored `cycle_index`. BOTH the list and the index are
+## PARAMETERS rather than reads of `_selection_cycle_on_tile`/`cycle_index`, because the caller's
+## `_emit_tile_selection` runs first and can re-enter `select_occupant` synchronously (the HUD's
+## fresh-hex auto-pick relays `roster_occupant_selected` → `Main` → `select_occupant`), which
+## rewrites `cycle_index` to the FIRST occupant mid-click. Carrying the click's own list and index
+## through the call makes the selection immune to that re-entrancy, and guarantees the index is
+## applied to the very list it was computed against.
 func _handle_entity_selection(col: int, row: int, occupants: Array, occupant_index: int) -> void:
 	if not occupants.is_empty():
-		# Select-then-cycle: the index picks which occupant of the stack is active.
+		# Select-then-cycle: the index picks which member of the cycle is active.
 		cycle_index = clampi(occupant_index, 0, occupants.size() - 1)
 		var entry: Dictionary = occupants[cycle_index]
 		var data: Dictionary = entry.get(OCCUPANT_KEY_DATA, {})
+		var kind := String(entry.get(OCCUPANT_KEY_KIND, ""))
+		if kind == OCCUPANT_KIND_LAND:
+			# The LAND stop of an occupied hex. It emits NEITHER occupant signal — there is no
+			# occupant — and clears both ids, which is what makes the next snapshot's
+			# `refresh_selection_payload` answer `kind: "tile"`. `land_selected` is what tells the HUD
+			# this was CHOSEN rather than merely emptied; without it the HUD's fresh-hex auto-pick
+			# takes the selection straight back to the first band and the land stop is invisible.
+			selected_unit_id = -1
+			selected_herd_id = ""
+			emit_signal("land_selected")
+			queue_redraw()
+			return
 		# The payload IS the entry's data, uncopied: `_units_on_tile`/`_herds_on_tile` already made
 		# each entry a private deep copy, and `occupants` is a click-local temporary discarded when
 		# the click returns. So stamping `tile_info` below mutates nothing the decoder or any other
 		# surface holds — the "never write into a held snapshot sub-tree" rule is satisfied by that
 		# first copy.
-		if String(entry.get(OCCUPANT_KEY_KIND, "")) == OCCUPANT_KIND_UNIT:
+		if kind == OCCUPANT_KIND_UNIT:
 			selected_unit_id = int(data.get("entity", -1))
 			selected_herd_id = ""
 			var unit_payload: Dictionary = data
@@ -2694,9 +2726,11 @@ func _herds_on_tile(col: int, row: int) -> Array:
 
 ## EVERYTHING standing on a hex, as one ordered stack of `{kind, data}` entries: every band first,
 ## then every herd. That order is the click contract — bands still win the first click on a shared
-## hex — and the stack is what re-clicking cycles through, so a herd under a band is reachable.
-## Built from `_units_on_tile` + `_herds_on_tile` rather than re-matching coordinates, so BOTH fog
-## gates (a foreign band under fog, a herd on an unseen hex) hold here by construction.
+## hex — and the stack is the OCCUPANT half of what re-clicking cycles through, so a herd under a
+## band is reachable. Built from `_units_on_tile` + `_herds_on_tile` rather than re-matching
+## coordinates, so BOTH fog gates (a foreign band under fog, a herd on an unseen hex) hold here by
+## construction. Occupant-only on purpose — the land is not an occupant, and adding it here would
+## falsify both the name and the fog claim; `_selection_cycle_on_tile` is where it joins.
 func _occupants_on_tile(col: int, row: int) -> Array:
 	var occupants: Array = []
 	for unit in _units_on_tile(col, row):
@@ -2705,19 +2739,46 @@ func _occupants_on_tile(col: int, row: int) -> Array:
 		occupants.append({OCCUPANT_KEY_KIND: OCCUPANT_KIND_HERD, OCCUPANT_KEY_DATA: herd})
 	return occupants
 
-## Where the CURRENT selection sits in this occupant stack — the anchor a re-click advances from.
+## The full select-then-cycle ring for a hex: every occupant (bands, then herds), then the LAND
+## LAST. Membership is exactly what the tile panel lists, so re-clicking reaches every row of it —
+## on a one-animal hex the click toggles herd ↔ land, on a band + two herds hex it runs
+## band → herd A → herd B → land → band.
+##
+## The land goes LAST so the FIRST click on a fresh hex still lands on the top occupant, which is
+## also the HUD's own fresh-hex precedence (`_resolve_auto_selected_subject`: first unit → first
+## herd → land). And it joins ONLY when the hex has an occupant: on a bare hex the cycle would
+## otherwise be `[land]`, which would route the click through the land branch instead of
+## `_handle_entity_selection`'s clear branch and retire the `selection_cleared` path that
+## `tile_panel_deselect_keeps_tile` guards. An empty hex has an EMPTY cycle, exactly as before.
+func _selection_cycle_on_tile(col: int, row: int) -> Array:
+	var cycle := _occupants_on_tile(col, row)
+	if not cycle.is_empty():
+		cycle.append(LAND_CYCLE_ENTRY)
+	return cycle
+
+## Where the CURRENT selection sits in this cycle — the anchor a re-click advances from.
 ## Derived from the selected ids rather than read straight off `cycle_index` for two reasons: it
 ## keeps the map click coherent with a panel roster-row click (pick Wildlife row 3 in the panel,
 ## re-click the hex, get row 4 — not row 1), and it survives the occupant array reordering between
 ## snapshots. Falls back to the stored `cycle_index` when nothing on the hex is selected.
-func _selected_occupant_index(occupants: Array) -> int:
-	for i in range(occupants.size()):
-		var entry: Dictionary = occupants[i]
+##
+## NEITHER id set means the LAND is what is selected, and this only ever runs for the ALREADY
+## selected tile (its one caller is inside `handle_hex_click`'s `== selected_tile` guard), so that
+## state names the land stop of THIS hex. Answering the land's own index is what makes the next
+## click advance OFF the land to the first occupant instead of falling back to `cycle_index`.
+func _selected_cycle_index(cycle: Array) -> int:
+	var land_selected := selected_unit_id < 0 and selected_herd_id == ""
+	for i in range(cycle.size()):
+		var entry: Dictionary = cycle[i]
+		if land_selected:
+			if String(entry.get(OCCUPANT_KEY_KIND, "")) == OCCUPANT_KIND_LAND:
+				return i
+			continue
 		if selected_unit_id >= 0 and _occupant_matches(entry, OCCUPANT_KIND_UNIT, selected_unit_id):
 			return i
 		if selected_herd_id != "" and _occupant_matches(entry, OCCUPANT_KIND_HERD, selected_herd_id):
 			return i
-	return clampi(cycle_index, 0, maxi(occupants.size() - 1, 0))
+	return clampi(cycle_index, 0, maxi(cycle.size() - 1, 0))
 
 func _nearest_unit_sample(col: int, row: int) -> Dictionary:
 	if units.is_empty():
@@ -4095,23 +4156,23 @@ func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	if col < 0 or col >= grid_width or row < 0 or row >= grid_height:
 		return
 
-	# Select-then-cycle: re-clicking the current tile with >1 OCCUPANT (bands and herds alike)
-	# advances the active occupant through the stack; any fresh tile resets to the top of it.
-	# Computed before _emit_tile_selection overwrites selected_tile — and held in a LOCAL rather
-	# than written to `cycle_index` here, because _emit_tile_selection can re-enter
+	# Select-then-cycle: re-clicking the current tile advances the selection through everything the
+	# tile panel lists — every band, every herd, then the LAND — and any fresh tile resets to the top
+	# of it. Computed before _emit_tile_selection overwrites selected_tile — and held in a LOCAL
+	# rather than written to `cycle_index` here, because _emit_tile_selection can re-enter
 	# select_occupant (see _handle_entity_selection) and clobber the member mid-click.
-	var occupants := _occupants_on_tile(col, row)
+	var cycle := _selection_cycle_on_tile(col, row)
 	var next_index := 0
-	if Vector2i(col, row) == selected_tile and occupants.size() > 1:
-		next_index = (_selected_occupant_index(occupants) + 1) % occupants.size()
+	if Vector2i(col, row) == selected_tile and cycle.size() > 1:
+		next_index = (_selected_cycle_index(cycle) + 1) % cycle.size()
 
 	var terrain_id: int = _terrain_id_at(col, row)
 	emit_signal("hex_selected", col, row, terrain_id)
 	_emit_tile_selection(col, row)
 
-	# The stack built above is passed through rather than rebuilt, so the index is applied to the
+	# The cycle built above is passed through rather than rebuilt, so the index is applied to the
 	# very list it was computed against (and each occupant is deep-copied once per click, not twice).
-	_handle_entity_selection(col, row, occupants, next_index)
+	_handle_entity_selection(col, row, cycle, next_index)
 
 ## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
 ## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the

@@ -910,6 +910,22 @@ func show_herd_selection(herd_data: Dictionary) -> void:
     _selection.select_herd(herd_data.duplicate(true))
     _render_selection_panel(tile_info, {}, _selection.herd())
 
+## The map's select-then-cycle reached the LAND stop of an occupied hex — the third map→HUD
+## selection entry point beside `show_unit_selection` / `show_herd_selection`. It takes no payload:
+## the `tile_selected` → `show_tile_selection` of the SAME click already seated this hex's
+## `tile_info`, which is the whole of the land subject.
+##
+## `select_land_subject` (not a bare `select_land`) is the load-bearing part — it records the CHOICE
+## TILE, so the re-render below and every later `reapply_selection("tile", …)` see a DECIDED hex
+## rather than a fresh one and leave the land alone. Without it the auto-pick inside
+## `SelectionCardController.render` takes the selection straight back to the first band and the
+## cycle's land stop is invisible.
+func show_land_selection() -> void:
+    # A selection change invalidates the subject being composed (§15).
+    close_compose_sheet()
+    _selectioncard.select_land_subject()
+    _render_selection_panel(_selection.tile_info(), {}, {})
+
 ## True when the currently-selected tile is the same hex the herd occupies, so it
 ## is safe to keep showing that tile's Harvest verb alongside the herd verbs.
 func _herd_matches_selected_tile(herd_data: Dictionary) -> bool:

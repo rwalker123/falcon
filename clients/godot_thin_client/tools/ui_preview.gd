@@ -72,6 +72,9 @@ const STICKY_TERRAIN_ID := 11
 # click there resolves as bare land).
 const DESELECT_HERD_TILE := Vector2i(30, 16)
 const DESELECT_LAND_TILE := Vector2i(34, 16)
+# The lone herd on `DESELECT_HERD_TILE`. Named because the land-toggle assertions re-use that same
+# one-occupant fixture and have to name the herd the cycle keeps coming back to.
+const DESELECT_HERD_ID := "game_deer_405"
 # The occupant-cycle state's hex, on the same grid and clear of the other two fixtures' hexes. ONE
 # band and TWO herds share it, which is the smallest stack that can prove BOTH halves of issue #429:
 # a herd under a band is reachable at all (a band-only prefix used to end the cycle), and a
@@ -2451,6 +2454,10 @@ func _ready() -> void:
 	cycle_map.tile_selected.connect(_hud.show_tile_selection)
 	cycle_map.unit_selected.connect(_hud.show_unit_selection)
 	cycle_map.herd_selected.connect(_hud.show_herd_selection)
+	# The FOURTH map→HUD selection signal, and the one the land stop lives or dies on: without it the
+	# land click reaches the HUD as nothing at all, the auto-pick sees two empty occupant dicts on a
+	# hex it has no recorded choice for, and the first band is selected straight back.
+	cycle_map.land_selected.connect(_hud.show_land_selection)
 	_hud.roster_occupant_selected.connect(cycle_map.select_occupant)
 	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
 	_assert_hud("click 1 of the occupant cycle lands on the band (bands still win the first click)",
@@ -2468,9 +2475,27 @@ func _ready() -> void:
 	await _settle()
 	_assert_hud("the cycled herd survives the next snapshot (the HUD auto-pick does not steal it back)",
 		String(_hud._selection._selected_herd.get("id", "")) == CYCLE_HERD_SECOND_ID)
+	# Click 4 reaches the LAND — the cycle is everything the tile PANEL lists, not just the occupants,
+	# and the land is its LAST stop so the first click on a fresh hex still opens on the top occupant.
+	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
+	await _settle()
+	_assert_hud("click 4 advances past the last herd to the LAND (the cycle lists what the panel lists)",
+		cycle_map.selected_unit_id == -1 and cycle_map.selected_herd_id == "" \
+			and _hud._selection._selected_subject == HudSelectionState.SUBJECT_LAND)
+	# THE STICKY HALF. `_resolve_auto_selected_subject` auto-picks the first band whenever BOTH
+	# occupant dicts are empty — which IS the land state — so a map-driven land pick that did not
+	# record the choice tile would be undone by the very next snapshot, silently and invisibly. This
+	# is the inverse of the herd case above, where a non-empty occupant dict suppresses the auto-pick
+	# on its own. Same idiom: ask MapView what the next frame carries and replay whatever it answers.
+	var cycle_land_payload: Dictionary = cycle_map.refresh_selection_payload()
+	_hud.reapply_selection(String(cycle_land_payload.get("kind", "none")), cycle_land_payload.get("data", {}))
+	await _settle()
+	_assert_hud("the cycled LAND survives the next snapshot (the HUD auto-pick does not steal the band back)",
+		_hud._selection._selected_subject == HudSelectionState.SUBJECT_LAND \
+			and _hud._selection._selected_unit.is_empty() and _hud._selection._selected_herd.is_empty())
 	await _save("tile_panel_occupant_cycle")
 	cycle_map.handle_hex_click(CYCLE_TILE.x, CYCLE_TILE.y, MOUSE_BUTTON_LEFT)
-	_assert_hud("click 4 WRAPS to the top of the stack",
+	_assert_hud("click 5 WRAPS past the land to the top of the stack",
 		cycle_map.selected_unit_id == CYCLE_BAND_ENTITY and cycle_map.selected_herd_id == "")
 	# A PANEL roster-row click re-anchors the cycle: the next map click continues from THAT row, which
 	# is what deriving the advance from the selected occupant's IDENTITY (rather than from the stored
@@ -2482,8 +2507,45 @@ func _ready() -> void:
 	cycle_map.tile_selected.disconnect(_hud.show_tile_selection)
 	cycle_map.unit_selected.disconnect(_hud.show_unit_selection)
 	cycle_map.herd_selected.disconnect(_hud.show_herd_selection)
+	cycle_map.land_selected.disconnect(_hud.show_land_selection)
 	_hud.roster_occupant_selected.disconnect(cycle_map.select_occupant)
 	cycle_map.queue_free()
+	await get_tree().process_frame
+
+	# The SMALLEST cycle with a land stop, and the one the change was asked for on: a hex with exactly
+	# ONE animal and no band, where re-clicking has to TOGGLE herd ↔ land. It re-uses the deselect
+	# fixture (one herd, no bands) because that is already that shape. No PNG — the frames it would
+	# produce are the herd card and the land card, both already captured elsewhere; what is unproven
+	# is the two-member cycle, which only state can carry. The roster relay is wired for the same
+	# reason it is above: with no band on the hex the auto-pick reaches for the first HERD, so a land
+	# stop that failed to record its choice tile would be pulled straight back to the animal.
+	var toggle_map: Node2D = MAP_VIEW_SCRIPT.new()
+	toggle_map.visible = false   # data only — a visible map renders behind the HUD in every later frame
+	add_child(toggle_map)
+	# FoW OFF, stated explicitly (the harness rule): `_fow_enabled` fails closed to `true`, and a
+	# fog-gated herd leaves a ZERO-occupant hex whose cycle has no land stop to reach.
+	toggle_map.set_fow_enabled(false)
+	toggle_map.display_snapshot(_deselect_map_snapshot())
+	toggle_map.tile_selected.connect(_hud.show_tile_selection)
+	toggle_map.herd_selected.connect(_hud.show_herd_selection)
+	toggle_map.land_selected.connect(_hud.show_land_selection)
+	_hud.roster_occupant_selected.connect(toggle_map.select_occupant)
+	toggle_map.handle_hex_click(DESELECT_HERD_TILE.x, DESELECT_HERD_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("a lone herd still wins the FIRST click on its hex (land is the cycle's LAST stop)",
+		toggle_map.selected_herd_id == DESELECT_HERD_ID)
+	toggle_map.handle_hex_click(DESELECT_HERD_TILE.x, DESELECT_HERD_TILE.y, MOUSE_BUTTON_LEFT)
+	await _settle()
+	_assert_hud("re-clicking a ONE-animal hex toggles to the land",
+		toggle_map.selected_herd_id == "" and toggle_map.selected_unit_id == -1 \
+			and _hud._selection._selected_subject == HudSelectionState.SUBJECT_LAND)
+	toggle_map.handle_hex_click(DESELECT_HERD_TILE.x, DESELECT_HERD_TILE.y, MOUSE_BUTTON_LEFT)
+	_assert_hud("a third click toggles back to the animal (a two-member cycle wraps)",
+		toggle_map.selected_herd_id == DESELECT_HERD_ID)
+	toggle_map.tile_selected.disconnect(_hud.show_tile_selection)
+	toggle_map.herd_selected.disconnect(_hud.show_herd_selection)
+	toggle_map.land_selected.disconnect(_hud.show_land_selection)
+	_hud.roster_occupant_selected.disconnect(toggle_map.select_occupant)
+	toggle_map.queue_free()
 	await get_tree().process_frame
 
 	# tile_panel_unseen — a REMEMBERED hex. Chips + the land row render (geography is remembered
@@ -5761,8 +5823,8 @@ func _deselect_map_snapshot() -> Dictionary:
 		"overlays": {"terrain": terrain},
 		"populations": [],
 		"herds": [{
-			"id": "game_deer_405",
-			"label": "Red Deer (game_deer_405)",
+			"id": DESELECT_HERD_ID,
+			"label": "Red Deer (%s)" % DESELECT_HERD_ID,
 			"species": "Red Deer",
 			"size_class": "big",
 			"huntable": true,
