@@ -259,18 +259,27 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
     # yield coefficient, meaningless to the player (it still drives the sim's yield math).
     lines.append(food_line)
-    # WHAT GROWS HERE / CROP — the named plants behind the Forage line above (flora roster F1/S1).
-    # It reads directly under the module because it says what that module's basket IS; the
-    # stock/ecology rows below then say how much of it there is and how it is faring. ONE row, two
-    # states: an UNCOMMITTED patch names the whole wild basket, a COMMITTED one names the single crop
-    # it was tended to — never both, since committing displaces the rest of the basket.
+    # CROP + WHAT GROWS HERE — the named plants behind the Forage line above (flora roster F1/S1).
+    # They read directly under the module because they say what that module's basket IS; the
+    # stock/ecology rows below then say how much of it there is and how it is faring.
+    #
+    # TWO ROWS THAT SAY DIFFERENT THINGS, AND BOTH ARE WANTED. `Crop:` is what the band COMMITTED
+    # to — recorded on the FIRST worked turn, ~25 turns before the build lands. The basket beneath it
+    # is what is actually GROWING right now. Committing no longer displaces the rest of the basket
+    # (issue #433): it REWEIGHTS it as the build completes — a Tended Patch lifts the favored share to
+    # `min(1, share x tended_weeding_gain)` off the least abundant members, a Field forces it to 1.0 —
+    # and until then the basket has not moved at all. Rendering only the crop row therefore claimed a
+    # 64/36 tile was 100% emmer the instant the order was given; showing both lets the player watch
+    # the weeded-out species fall as the work pays off.
+    var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     var crop_name := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
-    if String(tile_info.get("patch_committed_species", "")).strip_edges() != "" and crop_name != "":
+    if crop_species != "" and crop_name != "":
         lines.append("%s: %s" % [HudFloraVocab.FLORA_CROP_ROW, crop_name])
-    else:
-        # A header row + one indented 🌿 row per realized plant (its display name + share%). Renders
-        # nothing on a tile with no basket, so the "Forage: None" case stays a bare row.
-        lines.append_array(DetailFormat.flora_composition_lines(tile_info.get("patch_composition", [])))
+    # A header row + one indented 🌿 row per realized plant (its display name + share%), the committed
+    # member marked in SIGNAL so the eye joins it to the Crop row above. Renders nothing on a tile with
+    # no basket, so the "Forage: None" case stays a bare row.
+    lines.append_array(DetailFormat.flora_composition_lines(
+        tile_info.get("patch_composition", []), crop_species))
     # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
     # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
     # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot

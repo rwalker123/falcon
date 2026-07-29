@@ -482,22 +482,27 @@ pub struct ForagePatchState {
     /// nothing: it holds neither the per-biome capacity table nor the hydrology.
     #[serde(default)]
     pub sow_site_refusal: String,
-    /// **What grows here** — the named plants this tile's forage capacity is *made of*, as
+    /// **What is actually growing here** — the named plants *this patch's* biomass is made of, as
     /// normalized shares (`docs/plan_flora_roster.md` §2: naming decomposes, it does not add).
     ///
-    /// **Derived from the biome, not per-patch state**: a pure function of the tile's terrain and
-    /// the roster's affinity weights, so every tile of a biome reads the same composition and
-    /// nothing on the patch can change it. The shares sum to `1.0` on any forage-bearing tile, so
-    /// `share × forage_capacity` is that plant's own capacity and the parts always re-sum to the
-    /// whole. Empty on a biome that carries no forage. Deterministically sorted (share DESC, then
-    /// species key ASC).
+    /// **The TILE names the plants and the RUNG says how much of each** (#433). The tile's own
+    /// basket is a pure function of its terrain, the roster's affinity weights and its coordinate
+    /// (per-tile realization, §10); the patch then reweights it: a **tended** patch's favored crop
+    /// rises to `min(1, share × tended_weeding_gain)` at the expense of the least abundant members,
+    /// and a **Field** publishes a single 100% entry. That is the whole of what a rung below 4 does
+    /// — the tile's capacity itself never moves — so this list is where the client can *see* a
+    /// commitment take hold. Zero-share entries are filtered out. The shares sum to `1.0` on any
+    /// forage-bearing tile, so `share × forage_capacity` is that plant's own capacity and the parts
+    /// always re-sum to the whole. Empty on a biome that carries no forage. Deterministically sorted
+    /// (share DESC, then species key ASC).
     ///
-    /// **`Arc<[_]>`, not `Vec<_>`, because this basket belongs to the TILE and not to the patch or
-    /// to the turn.** It is derived once per tile per world into the capture's flora-quote memo
-    /// (`core_sim`'s `snapshot/flora_quotes.rs`, #410); a `Vec` here made every patch row deep-copy
-    /// it — two `String`s per named plant, ~5,984 plants at 80×52 — on every turn, and again on
-    /// every whole-section clone downstream. Shared, a row costs one refcount bump. Nothing mutates
-    /// a published basket, so sharing is invisible to every reader.
+    /// **`Arc<[_]>`, not `Vec<_>`, because a WILD patch's basket belongs to the TILE and not to the
+    /// patch or to the turn.** It is derived once per tile per world into the capture's flora-quote
+    /// memo (`core_sim`'s `snapshot/flora_quotes.rs`, #410); a `Vec` here made every patch row
+    /// deep-copy it — two `String`s per named plant, ~5,984 plants at 80×52 — on every turn, and
+    /// again on every whole-section clone downstream. Shared, a wild row costs one refcount bump;
+    /// only the few committed patches rebuild a list. Nothing mutates a published basket, so sharing
+    /// is invisible to every reader.
     #[serde(default)]
     pub composition: Arc<[FloraShareInfo]>,
     /// **Which ONE named plant this patch has been committed to** (Flora Roster S1) — the stable
@@ -547,8 +552,10 @@ pub struct FloraShareInfo {
     #[serde(default)]
     pub can_sow: bool,
     /// **What committing this tile to this plant pays, against just gathering it wild, at the tended
-    /// rung** — `min(1, share × tended_concentration_gain) × species_rate ÷
-    /// forage.provisions_per_biomass` (`docs/plan_flora_roster.md` §4.3).
+    /// rung** — the tended payoff over the wild payoff, where tending **weeds** the basket (the
+    /// favored share rises to `min(1, share × tended_weeding_gain)`, taken from the least abundant
+    /// first) and converts the favored term at `tended_conversion_gain`
+    /// (`docs/plan_flora_roster.md` §4.3).
     ///
     /// `> 1.0` committing beats gathering the whole basket; `< 1.0` it is a **loss the player stays
     /// free to choose**, which is the decision the rung exists to make — never clamped, never hidden.
@@ -560,9 +567,9 @@ pub struct FloraShareInfo {
     /// ratio of `0`, which cannot occur. Appended (append-only).
     #[serde(default)]
     pub cultivate_yield_ratio: f32,
-    /// The Field-rung twin of [`Self::cultivate_yield_ratio`] — same reading, on
-    /// `field_concentration_gain` and `allows_sow`. Its own field because the two rungs differ in
-    /// *both* gain and legality, so one number would be ambiguous about which rung it answers.
+    /// The Field-rung twin of [`Self::cultivate_yield_ratio`] — same reading, on a basket forced to
+    /// **100% the sown crop** and on `allows_sow`. Its own field because the two rungs differ in
+    /// *both* reweight and legality, so one number would be ambiguous about which rung it answers.
     /// Appended (append-only).
     #[serde(default)]
     pub sow_yield_ratio: f32,

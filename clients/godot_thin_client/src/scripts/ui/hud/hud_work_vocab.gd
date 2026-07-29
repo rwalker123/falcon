@@ -27,7 +27,8 @@ const POLICY_PICKER_COLUMNS := 3
 # The inset between a rung's box and its two-line face, vertical and horizontal. Sized well under
 # `HudStyle._button_stylebox`'s authored 9/11 — that pair was sized to give ONE line of text vertical
 # presence and to keep a lone word off the border, and a two-line face already has both. The height is
-# not free: the FORAGE compose card is capped at `ComposeSheet.CARD_MAX_HEIGHT` and already spends most
+# not free: the FORAGE compose card is capped by the room left below it in the VIEWPORT
+# (`ComposeSheet.refit` — there is no fixed pixel cap any more) and already spends most
 # of itself on the rung gates and the crop list, and the commit button below is what falls off the fold
 # when the picker grows (the `forage_crop_picker` guard in ui_preview asserts exactly that). The width
 # is not free either — the face's longest LINE sets the rung's width, so 22px of side chrome per button

@@ -662,16 +662,29 @@ static func field_value_hex(value: String) -> String:
 ## rounding remainder into the LARGEST share (the first entry), so a basket that naively rounds to
 ## 99/101 still decomposes to 100. Returns [] for a tile with no composition (a biome that carries no
 ## forage), so neither the header nor any row renders.
-static func flora_composition_lines(composition: Variant) -> Array[String]:
+##
+## `committed_species` is the patch's committed crop KEY (not its display name) — "" for an
+## uncommitted patch. That one member's row is marked in `HudStyle.SIGNAL`, the tint this HUD already
+## spends on a standing investment (`cultivation_value_hex` / `field_value_hex`, the work board's rung
+## mark), so the eye joins the `Crop:` row above to the share it currently holds in the basket. It is a
+## MARK, not a filter: every member still lists, because a commitment REWEIGHTS the basket over the
+## build rather than emptying it, and watching the other shares fall is the feedback. The tint rides
+## the row as inline BBCode, nested inside the neutral wrap `detail_bbcode` puts on every 🌿 row — so
+## it covers the NAME AND SHARE only, leaving the indent and the sprig outside the tag, because that
+## branch recognizes the row by `begins_with(MORALE_BREAKDOWN_INDENT)` + the literal glyph.
+static func flora_composition_lines(composition: Variant, committed_species: String = "") -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
     var lines: Array[String] = []
     if entries.is_empty():
         return lines
+    var committed := committed_species.strip_edges()
     lines.append(HudFloraVocab.FLORA_COMPOSITION_ROW)
     for entry in entries:
+        var share := HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])]
+        if committed != "" and String(entry["species"]) == committed:
+            share = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, share]
         lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [
-            MORALE_BREAKDOWN_INDENT, FLORA_COMPOSITION_GLYPH,
-            HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])],
+            MORALE_BREAKDOWN_INDENT, FLORA_COMPOSITION_GLYPH, share,
         ])
     return lines
 

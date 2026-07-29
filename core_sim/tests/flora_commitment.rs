@@ -1,20 +1,19 @@
-//! **The commit trade** (Flora Roster S1, `docs/plan_flora_roster.md` §4.3).
+//! **The commit trade** (Flora Roster S1, `docs/plan_flora_roster.md` §4.3; reframed by #433).
 //!
-//! Committing a patch to one named plant does two things and only two: it **redistributes** the
-//! tile's `K` toward that plant (concentration, bounded by the tile's own `K` — *the land owns `K`*)
-//! and it changes how well biomass **converts** to food (the species' own rate instead of the
-//! basket average). This file asserts the arithmetic of that trade against the **loaded** configs,
-//! never a literal, so a retune of either table fails the test instead of quietly agreeing with a
-//! stale copy of itself.
+//! Committing a patch to one named plant does two things and only two: it **reweights** the tile's
+//! basket toward that plant (weeding at rung 2, planting at rung 3 — *the land owns `K`, and no rung
+//! below 4 raises it or lowers it*) and it changes how well biomass **converts** to food (the
+//! favored term carries `tended_conversion_gain`). This file asserts the arithmetic of that trade
+//! against the **loaded** configs, never a literal, so a retune of either table fails the test
+//! instead of quietly agreeing with a stale copy of itself.
 //!
-//! Both rungs pay `MSY × rate`, and `MSY = r · K / 4` is linear in `K`, so at a **fixed rung** (same
-//! `r`) the whole trade reduces to the product `concentration × species_rate` against the wild
-//! `1.0 × forage.provisions_per_biomass`. That product is exactly what these tests compare.
+//! Both rungs pay `MSY × rate`, and `MSY = r · K / 4` is linear in `K` — and `K` is now the *same*
+//! at every rung — so at a **fixed rung** (same `r`) the whole trade reduces to the patch's basket
+//! rate against the wild basket's. That rate is exactly what these tests compare.
 
 use bevy::math::UVec2;
 use core_sim::{
-    FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG,
-    FULL_TILE_CONCENTRATION, NO_CONCENTRATION,
+    FloraConfig, FloraShare, ForagePatch, LaborConfig, RungKey, BUILTIN_LABOR_CONFIG, WHOLE_BASKET,
 };
 use sim_runtime::TerrainType;
 
@@ -62,49 +61,54 @@ fn tended_patch(terrain: TerrainType, species: Option<&str>, capacity: f32) -> F
     patch
 }
 
-/// What one unit of this patch's food-bearing land is worth per turn against `composition`, relative
-/// to the wild basket: `effective_capacity × conversion rate`. The rung's `r` is the same on both
-/// sides of every comparison below, so this product **is** the trade. Since §10 the composition is
-/// per-tile REALIZED (an uncommitted wild patch reads [`NO_CONCENTRATION`], so its value is
-/// composition-independent).
+/// What one unit of this patch's food-bearing land is worth per turn against `composition`:
+/// `tile capacity × the patch basket's conversion rate`. The rung's `r` **and** the tile's `K` are
+/// the same on both sides of every comparison below, so this product **is** the trade — which is
+/// exactly the #433 model: production is constant, only the composition moves.
 fn commit_value(patch: &ForagePatch, terrain: TerrainType, composition: &[FloraShare]) -> f32 {
     let labor = labor();
     let flora = FloraConfig::builtin();
     let tile_capacity = labor.forage.capacity_for(terrain);
-    core_sim::effective_forage_capacity(patch, tile_capacity, composition, &labor.forage)
-        * core_sim::patch_provisions_per_biomass(patch, &flora, &labor.forage)
+    tile_capacity
+        * core_sim::patch_provisions_per_biomass(patch, composition, &flora, &labor.forage)
 }
 
-/// **Rung 1 is untouched.** A patch with no commitment reads the tile's full `K` and the flat wild
-/// conversion rate — the same two numbers it read before the roster existed — so nothing about a
-/// wild gather can have moved.
+/// The share-weighted food rate of a raw basket — what a **wild** patch on it converts at. Stated
+/// here so the assertions below can name the wild baseline without re-deriving `basket_rate`.
+fn wild_basket_rate(flora: &FloraConfig, labor: &LaborConfig, composition: &[FloraShare]) -> f32 {
+    let wild = ForagePatch::new(UVec2::ZERO, 1.0);
+    core_sim::patch_provisions_per_biomass(&wild, composition, flora, &labor.forage)
+}
+
+/// **A wild patch is the WHOLE basket, and it is priced as one.** No commitment means the tile's own
+/// composition verbatim, and the food rate is that basket's share-weighted average — never the flat
+/// `provisions_per_biomass`, which since #433 survives only as the empty-basket fallback.
 #[test]
-fn an_uncommitted_patch_reads_the_full_tile_and_the_wild_rate() {
+fn an_uncommitted_patch_reads_the_tiles_whole_basket_and_its_average_rate() {
     let labor = labor();
     let flora = FloraConfig::builtin();
 
     for terrain in TerrainType::VALUES {
         let capacity = labor.forage.capacity_for(terrain);
+        let composition = flora.composition(terrain);
         let patch = tended_patch(terrain, None, capacity);
         assert_eq!(
-            core_sim::patch_concentration(&patch, flora.composition(terrain), &labor.forage),
-            NO_CONCENTRATION,
-            "{terrain:?}: an uncommitted patch holds the whole basket"
+            core_sim::patch_composition(&patch, composition, &labor.forage).as_ref(),
+            composition,
+            "{terrain:?}: an uncommitted patch holds the tile's basket verbatim"
         );
-        assert_eq!(
-            core_sim::patch_provisions_per_biomass(&patch, &flora, &labor.forage),
-            labor.forage.provisions_per_biomass,
-            "{terrain:?}: an uncommitted patch converts at the basket average"
-        );
-        assert_eq!(
-            core_sim::effective_forage_capacity(
-                &patch,
-                capacity,
-                flora.composition(terrain),
-                &labor.forage
-            ),
-            capacity,
-            "{terrain:?}: an uncommitted patch carries the tile's own K"
+        if composition.is_empty() {
+            continue; // a barren biome names no plants; the fallback is its own test.
+        }
+        let expected: f32 = composition
+            .iter()
+            .map(|entry| entry.share * flora.species[&entry.species].yield_.provisions_per_biomass)
+            .sum();
+        let actual =
+            core_sim::patch_provisions_per_biomass(&patch, composition, &flora, &labor.forage);
+        assert!(
+            (actual - expected).abs() <= EPSILON,
+            "{terrain:?}: a wild patch converts at its own basket's average ({actual} vs {expected})"
         );
     }
 }
@@ -119,49 +123,50 @@ fn a_commitment_takes_effect_only_when_the_improvement_completes() {
     let terrain = TerrainType::AlluvialPlain;
     let capacity = labor.forage.capacity_for(terrain);
 
+    let composition = flora.composition(terrain);
     let mut building = tended_patch(terrain, Some("wild_emmer"), capacity);
     building.cultivation_progress = 0.5;
     assert_eq!(
-        core_sim::patch_concentration(&building, flora.composition(terrain), &labor.forage),
-        NO_CONCENTRATION
+        core_sim::patch_composition(&building, composition, &labor.forage).as_ref(),
+        composition,
+        "a patch still being cleared is still the mixed stand it started as"
     );
     assert_eq!(
-        core_sim::patch_provisions_per_biomass(&building, &flora, &labor.forage),
-        labor.forage.provisions_per_biomass
+        core_sim::patch_provisions_per_biomass(&building, composition, &flora, &labor.forage),
+        wild_basket_rate(&flora, &labor, composition),
+        "and it converts at the wild basket's rate, with no conversion gain"
     );
 }
 
-/// **The land owns `K`.** However hard a rung concentrates, the patch can never carry more than the
-/// tile's own capacity — raising `K` itself is rung 4. Checked with the *field* gain (the higher of
-/// the two) on the biome where the committed plant is the entire basket, i.e. the case that would
-/// blow the bound if anything did.
+/// **A reweighted basket is still a WHOLE basket.** Weeding and planting move share *within* the
+/// tile's composition; neither may create or destroy any of it. Swept over every biome × plant ×
+/// both committed rungs, because a basket that stopped summing to 1 would silently rescale every
+/// rate derived from it.
 #[test]
-fn concentration_never_exceeds_the_tiles_own_capacity() {
+fn a_reweighted_basket_still_sums_to_the_whole_basket() {
     let labor = labor();
     let flora = FloraConfig::builtin();
 
     for terrain in TerrainType::VALUES {
         let capacity = labor.forage.capacity_for(terrain);
-        for share in flora.composition(terrain) {
-            let mut patch = tended_patch(terrain, Some(&share.species), capacity);
-            patch.field_progress = 1.0; // the higher (field) concentration gain
-            let concentration =
-                core_sim::patch_concentration(&patch, flora.composition(terrain), &labor.forage);
-            assert!(
-                concentration <= FULL_TILE_CONCENTRATION + EPSILON,
-                "{terrain:?}/{}: concentration {concentration} exceeded the tile's own K",
-                share.species
-            );
-            assert!(
-                core_sim::effective_forage_capacity(
-                    &patch,
-                    capacity,
-                    flora.composition(terrain),
-                    &labor.forage
-                ) <= capacity + EPSILON,
-                "{terrain:?}/{}: effective capacity exceeded the tile's own",
-                share.species
-            );
+        let composition = flora.composition(terrain);
+        for share in composition {
+            for field in [false, true] {
+                let mut patch = tended_patch(terrain, Some(&share.species), capacity);
+                patch.field_progress = if field { 1.0 } else { 0.0 };
+                let effective = core_sim::patch_composition(&patch, composition, &labor.forage);
+                let total: f32 = effective.iter().map(|entry| entry.share).sum();
+                assert!(
+                    (total - WHOLE_BASKET).abs() <= EPSILON,
+                    "{terrain:?}/{} (field={field}): the basket summed to {total}",
+                    share.species
+                );
+                assert!(
+                    effective.iter().all(|entry| entry.share > 0.0),
+                    "{terrain:?}/{} (field={field}): a weeded-out plant must be GONE, not zero",
+                    share.species
+                );
+            }
         }
     }
 }
@@ -194,10 +199,16 @@ fn committing_is_worth_it_where_a_crop_realizes_dominant_and_a_tile_is_not_alway
             })
             .fold(f32::MIN, f32::max)
     };
-    // A wild (uncommitted) patch reads NO_CONCENTRATION, so its value is composition-independent.
-    let wild = |terrain: TerrainType| -> f32 {
+    // The wild value a committed one must beat: the *same tile's* realized basket, gathered whole.
+    // Taken as the best over the sweep so both sides are answered on the tile a farmer would pick.
+    let best_wild = |terrain: TerrainType| -> f32 {
         let capacity = labor.forage.capacity_for(terrain);
-        commit_value(&tended_patch(terrain, None, capacity), terrain, &[])
+        sweep_tiles()
+            .map(|coord| {
+                let comp = flora.realized_composition(terrain, coord, SWEEP_SEED);
+                commit_value(&tended_patch(terrain, None, capacity), terrain, &comp)
+            })
+            .fold(f32::MIN, f32::max)
     };
 
     let dominant = TerrainType::AlluvialPlain;
@@ -205,11 +216,11 @@ fn committing_is_worth_it_where_a_crop_realizes_dominant_and_a_tile_is_not_alway
 
     // On its best country, some tile realizes wheat dominant enough to beat the wild basket.
     assert!(
-        best_realized(dominant) > wild(dominant),
+        best_realized(dominant) > best_wild(dominant),
         "{dominant:?}: wheat's best realization must beat the wild basket \
          ({} vs {})",
         best_realized(dominant),
-        wild(dominant)
+        best_wild(dominant)
     );
     // But not every alluvial tile is wheat — realization spreads the crops, so wheat is *absent* on
     // at least one sampled tile. That absence is what makes "which tile grows wheat" a real question.
@@ -253,19 +264,27 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
             continue;
         }
         let tile = bevy::math::UVec2::new(terrain as u32, 0);
-        let wild = core_sim::wild_payoff(tile, capacity, &flora, forage, QUOTE_MULTIPLIER);
+        let composition = flora.composition(terrain);
+        let wild = core_sim::wild_payoff(
+            tile,
+            capacity,
+            composition,
+            &flora,
+            forage,
+            QUOTE_MULTIPLIER,
+        );
         assert!(
             wild > 0.0,
             "{terrain:?}: a forage-bearing tile pays something wild"
         );
 
-        for share in flora.composition(terrain) {
+        for share in composition {
             for rung in [RungKey::PlantTended, RungKey::PlantField] {
                 let payoff = core_sim::commit_payoff(
                     tile,
                     capacity,
                     &share.species,
-                    share.share,
+                    composition,
                     &flora,
                     forage,
                     QUOTE_MULTIPLIER,
@@ -302,35 +321,62 @@ fn the_published_commit_ratio_is_the_sims_own_payoff_divided_by_the_wild_payoff(
     }
 }
 
-/// **Tending's payoff INCLUDES the regrowth gain** — stated as its own test because it is the exact
-/// term the first implementation dropped. A tended patch rides `tended_ecology`, so on a tile where
-/// concentration and conversion both come out neutral (`share × gain >= 1`, a plant at the wild
-/// rate) the ratio is the gain itself, not `1.0`.
+/// **Tending's published ratio carries BOTH gains and the regrowth curve** — stated as its own test
+/// because the regrowth term is the exact one the first implementation dropped, and the conversion
+/// term is the one #433 added. On a delta tile realizing reeds, the ratio must be exactly
+/// `tended_regrowth_gain × (the weeded basket's rate ÷ the wild basket's rate)`, re-derived here from
+/// the *config* rather than from the seam under test.
 #[test]
-fn the_cultivate_ratio_carries_the_tended_regrowth_gain() {
+fn the_cultivate_ratio_carries_the_regrowth_curve_and_both_tended_gains() {
     let labor = labor();
     let flora = FloraConfig::builtin();
     let forage = &labor.forage;
 
-    // On a delta tile that realizes reeds DOMINANT (§10), concentration saturates and the ratio is
-    // exactly `tended_regrowth_gain × the crop's conversion advantage`. Take reeds' most-dominant
-    // realized share over a tile sweep — the delta tile a reed farmer would pick.
+    // The delta tile a reed farmer would pick — reeds' most-dominant realized share over a sweep.
     let terrain = TerrainType::RiverDelta;
     let crop = "reed_and_root";
-    let share = sweep_tiles()
-        .map(|coord| realized_share(&flora, terrain, crop, coord))
-        .fold(f32::MIN, f32::max);
+    let (composition, share) = sweep_tiles()
+        .map(|coord| {
+            (
+                flora.realized_composition(terrain, coord, SWEEP_SEED),
+                realized_share(&flora, terrain, crop, coord),
+            )
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("the sweep samples at least one tile");
     assert!(
         share > 0.0,
         "reeds must realize on some delta tile — they are the delta's dominant crop"
     );
-    let expected = forage.cultivation.tended_regrowth_gain
-        * core_sim::concentration_for_share(
-            share,
-            core_sim::concentration_gain(forage, RungKey::PlantTended),
-        )
+
+    // The weeded basket, re-derived from the config: the favored share rises to `min(1, share ×
+    // weeding_gain)` off the least abundant first, and only the favored term takes the conversion
+    // gain.
+    let weeded_share = (share * forage.cultivation.tended_weeding_gain).min(WHOLE_BASKET);
+    let taken = weeded_share - share;
+    let mut others: Vec<FloraShare> = composition
+        .iter()
+        .filter(|entry| entry.species != crop)
+        .cloned()
+        .collect();
+    others.sort_by(|a, b| {
+        a.share
+            .total_cmp(&b.share)
+            .then_with(|| a.species.cmp(&b.species))
+    });
+    let mut owed = taken;
+    let mut tended_rate = weeded_share
         * flora.species[crop].yield_.provisions_per_biomass
-        / forage.provisions_per_biomass;
+        * forage.cultivation.tended_conversion_gain;
+    for entry in &others {
+        let give = entry.share.min(owed.max(0.0));
+        owed -= give;
+        tended_rate +=
+            (entry.share - give) * flora.species[&entry.species].yield_.provisions_per_biomass;
+    }
+    let wild_rate = wild_basket_rate(&flora, &labor, &composition);
+    let expected = forage.cultivation.tended_regrowth_gain * tended_rate / wild_rate;
+
     let capacity = forage.capacity_for(terrain);
     let tile = bevy::math::UVec2::new(terrain as u32, 0);
     let ratio = core_sim::commit_yield_ratio(
@@ -338,17 +384,25 @@ fn the_cultivate_ratio_carries_the_tended_regrowth_gain() {
             tile,
             capacity,
             crop,
-            share,
+            &composition,
             &flora,
             forage,
             QUOTE_MULTIPLIER,
             RungKey::PlantTended,
         ),
-        core_sim::wild_payoff(tile, capacity, &flora, forage, QUOTE_MULTIPLIER),
+        core_sim::wild_payoff(
+            tile,
+            capacity,
+            &composition,
+            &flora,
+            forage,
+            QUOTE_MULTIPLIER,
+        ),
     );
     assert!(
         (ratio - expected).abs() <= RATIO_EPSILON * expected,
-        "the Cultivate ratio must carry tended_regrowth_gain: {ratio} vs {expected}"
+        "the Cultivate ratio must carry the regrowth curve and both tended gains: {ratio} vs \
+         {expected}"
     );
     assert!(
         ratio > forage.cultivation.tended_regrowth_gain,

@@ -25,6 +25,13 @@ pub struct LaborConfigs<'w> {
 /// four rungs can only ever hand off to the same place.
 const HARVEST_POLICY_AFTER_BUILD: FollowPolicy = FollowPolicy::Sustain;
 
+/// **What a gather's trade credit is multiplied by when the policy is NOT `Deplete`** — the identity.
+/// A harvest pays its basket's trade component whatever the policy (you gathered the goods, so you
+/// have them); `Deplete` is a *markup* on that, `forage.market.trade_goods_multiplier`, and this is
+/// the "no markup" reading beside it (#433). Named because a bare `1.0` at that call site says
+/// nothing about which multiplier is being declined.
+const NO_DEPLETE_MARKUP: f32 = 1.0;
+
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
 /// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
 /// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
@@ -320,6 +327,17 @@ pub fn advance_labor_allocation(
                             forage_registry.patches.insert(*tile, patch);
                         }
                     }
+                    // **What is actually growing on this tile** — the realized basket, resolved once
+                    // per assignment through the one `tile_flora_composition` seam (never
+                    // `FloraConfig::composition` on a raw terrain). Every rate this arm pays is the
+                    // share-weighted average of the *patch's* basket, which `forage.rs` derives from
+                    // this one (#433) — so it is resolved *before* the registry is borrowed mutably.
+                    // A tile that is not on the map names no plants: the rates then fall back to the
+                    // empty-basket defaults, which is the honest reading of ground nobody can see.
+                    let tile_composition = tiles.get(tile_entity).map_or_else(
+                        |_| Cow::Owned(Vec::new()),
+                        |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
+                    );
                     // Depletable patch (Intensification §0-ii): draw the biomass down via the shared
                     // `forage_take` primitive (mirrors the Hunt arm). Every `FoodModuleTag` tile is
                     // seeded a patch at Startup; a missing one (a dynamically-tagged tile, or ground
@@ -331,7 +349,7 @@ pub fn advance_labor_allocation(
                     // **The commitment, recorded once and fixed until the patch goes feral.** This is
                     // the first turn a crew works this ground under Cultivate/Sow, so this is where
                     // the tile stops being a mixed basket and becomes one named crop. It takes effect
-                    // (concentration + conversion) when the improvement *completes* — while the crew
+                    // (weeding + conversion) when the improvement *completes* — while the crew
                     // is still clearing, the stand is still the basket it started as.
                     if let Some(chosen) = committing.as_deref() {
                         patch.commit_species(chosen);
@@ -359,6 +377,7 @@ pub fn advance_labor_allocation(
                     // and the drawn-down branches record this one value.
                     let forage_realized = crate::forage::project_realized_forage(
                         patch,
+                        &tile_composition,
                         &labor.forage,
                         &flora,
                         &ladder,
@@ -396,14 +415,26 @@ pub fn advance_labor_allocation(
                         // **Production**: what the Field offers this turn. Shared with the pre-commit
                         // forecast (`forage::forage_forecast`), so the client's "expected yield" is
                         // exactly what it is paid.
-                        let production = field_provisions(patch, &labor.forage, &flora, mult_f);
+                        let production = field_provisions(
+                            patch,
+                            &tile_composition,
+                            &labor.forage,
+                            &flora,
+                            mult_f,
+                        );
                         // **Collection**: what the crew can carry home — the *same* per-worker
                         // throughput a wild gather is capped by, at the seasonless managed weight (a
                         // Field's crop stands where you planted it). Rung 3 collapses the policy axis;
                         // it does NOT excuse you from the harvest. One worker used to collect the
                         // whole Field however rich it was.
                         let collection = workers as f32
-                            * managed_per_worker_yield(patch, &labor.forage, &flora, mult_f);
+                            * managed_per_worker_yield(
+                                patch,
+                                &tile_composition,
+                                &labor.forage,
+                                &flora,
+                                mult_f,
+                            );
                         let provisions = scalar_from_f32(production.min(collection));
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
@@ -417,9 +448,16 @@ pub fn advance_labor_allocation(
                         // same throughput it carries grain, so the collection cap is
                         // `managed_per_worker_fodder`. Credited to the same `FODDER` `LocalStore` key,
                         // which round-trips through the snapshot for free.
-                        let fodder_production = field_fodder(patch, &labor.forage, &flora, mult_f);
+                        let fodder_production =
+                            field_fodder(patch, &tile_composition, &labor.forage, &flora, mult_f);
                         let fodder_collection = workers as f32
-                            * managed_per_worker_fodder(patch, &labor.forage, &flora, mult_f);
+                            * managed_per_worker_fodder(
+                                patch,
+                                &tile_composition,
+                                &labor.forage,
+                                &flora,
+                                mult_f,
+                            );
                         let fodder = scalar_from_f32(fodder_production.min(fodder_collection));
                         if fodder > scalar_zero() {
                             cohort.stores.add(FODDER, fodder);
@@ -430,10 +468,21 @@ pub fn advance_labor_allocation(
                         // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
                         // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
                         // FactionInventory, exactly as the Deplete-forage arm's wild sale does.
-                        let trade_production =
-                            field_trade_goods(patch, &labor.forage, &flora, mult_f);
+                        let trade_production = field_trade_goods(
+                            patch,
+                            &tile_composition,
+                            &labor.forage,
+                            &flora,
+                            mult_f,
+                        );
                         let trade_collection = workers as f32
-                            * managed_per_worker_trade(patch, &labor.forage, &flora, mult_f);
+                            * managed_per_worker_trade(
+                                patch,
+                                &tile_composition,
+                                &labor.forage,
+                                &flora,
+                                mult_f,
+                            );
                         let trade_goods = (trade_production.min(trade_collection)).round() as i64;
                         if trade_goods > 0 {
                             inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
@@ -445,6 +494,7 @@ pub fn advance_labor_allocation(
                         // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
                         let arrivals = crate::forage::project_arrivals_forage(
                             patch,
+                            &tile_composition,
                             &labor.forage,
                             &flora,
                             &ladder,
@@ -471,7 +521,13 @@ pub fn advance_labor_allocation(
                             wasted: (production - paid).max(0.0),
                             workers_needed: workers_needed_for_take(
                                 paid,
-                                managed_per_worker_yield(patch, &labor.forage, &flora, mult_f),
+                                managed_per_worker_yield(
+                                    patch,
+                                    &tile_composition,
+                                    &labor.forage,
+                                    &flora,
+                                    mult_f,
+                                ),
                                 workers,
                             ),
                             // A managed rung-3 harvest cannot overdraw — no ⚠, whatever the policy.
@@ -482,6 +538,7 @@ pub fn advance_labor_allocation(
                     let biomass_before = patch.biomass;
                     let provisions = forage_take(
                         patch,
+                        &tile_composition,
                         workers,
                         *policy,
                         &labor.forage,
@@ -497,13 +554,39 @@ pub fn advance_labor_allocation(
                     // **The FODDER account at rung 2** (issue #427). *A harvest* of `B` biomass pays
                     // `B × yield.*` into all three accounts (`docs/plan_flora_roster.md` §3) — that is
                     // unconditional, not a Field-only rule. So the SAME take `forage_take` just paid
-                    // food from is routed through the committed crop's fodder component here, exactly
-                    // as the Field arm routes its managed harvest. `0` for an uncommitted patch or a
-                    // crop whose vector pays no hay, so this is commodity-generic with no `role`
-                    // branch. **No second collection cap**: unlike a Field's managed rate, the take is
-                    // already worker-capped inside `forage_take`, so the crop the crew carries home
-                    // *is* the take it made.
-                    let fodder = scalar_from_f32(tended_take_fodder(take, patch, &flora, mult_f));
+                    // food from is routed through the patch basket's fodder component here, exactly
+                    // as the Field arm routes its managed harvest. `0` for a basket with no fodder
+                    // crop in it, so this is commodity-generic with no `role` branch. **No second
+                    // collection cap**: unlike a Field's managed rate, the take is already
+                    // worker-capped inside `forage_take`, so the crop the crew carries home *is* the
+                    // take it made.
+                    //
+                    // **The WILD credit is gated on Foddering** (#433) — the same 2007 capability the
+                    // pen's own hay draw reads. Since every rate is now the basket's average, a wild
+                    // tile that happens to realize `hay_grass` pays hay on any harvest; banking it for
+                    // a faction that has not learned to hay a herd would hand out animal feed nobody
+                    // bid for. A **committed** patch (rung 2 or 3) is ungated: committing to
+                    // `hay_grass` *is* the bid. The gate lives here, at the credit site, so the rate
+                    // seam in `forage.rs` stays free of knowledge lookups.
+                    let fodder_permitted = patch.species.is_some()
+                        || knows(
+                            &discovery,
+                            faction,
+                            FODDERING_DISCOVERY_ID,
+                            knowledge_threshold,
+                        );
+                    let fodder = if fodder_permitted {
+                        scalar_from_f32(tended_take_fodder(
+                            take,
+                            patch,
+                            &tile_composition,
+                            &flora,
+                            &labor.forage,
+                            mult_f,
+                        ))
+                    } else {
+                        scalar_zero()
+                    };
                     if fodder > scalar_zero() {
                         cohort.stores.add(FODDER, fodder);
                         band_fodder_inflow += fodder.to_f32();
@@ -588,39 +671,35 @@ pub fn advance_labor_allocation(
                             retired.push(idx);
                         }
                     }
-                    // **The TRADE account — two routes, exactly one of which fires** (issue #427).
+                    // **The TRADE account — ONE rule at every drawn-down rung** (#433). The take's
+                    // trade credit is the patch basket's own `trade_goods_per_biomass` average, and
+                    // `Deplete` multiplies it by `market.trade_goods_multiplier`. That is all: the
+                    // species-blind flat `market.trade_goods_per_biomass` sale is retired, so the
+                    // committed-vs-wild branch that used to pick between two routes — and could
+                    // therefore have credited both — is gone with it, and a double credit is
+                    // unrepresentable because there is only one expression.
                     //
-                    // A **committed** patch (rung 2 complete, so its crop's concentration and
-                    // conversion are both in effect) sells at its own `trade_goods_per_biomass`,
-                    // routed off the same take the food and fodder accounts read. This is what makes a
-                    // tended cash crop pay at all: `grapevine`/`cotton`/`flax`/`tobacco`/`tea` are
-                    // `provisions_per_biomass: 0`, so before this they produced nothing in any
-                    // currency while still being drawn down at full MSY. The crop's rate **replaces**
-                    // the flat market rate rather than stacking with it — never both — and carries no
-                    // `trade_goods_multiplier`, matching `field_trade_goods` (that markup is a
-                    // Deplete-*policy* concept for wild commercial gathering, not a managed harvest).
-                    // The policy axis still reaches the number through the *size* of the take, which
-                    // is the honest place for it on a rung that draws its stock down.
+                    // **The markup is a POLICY concept, not a rung concept** — *sell harder*, a
+                    // markup on goods you were already producing — so it now applies at rung 2 as
+                    // well as rung 1. Every other policy carries the goods home at the basket's
+                    // plain rate, which is why a `Sustain` gather of wild ground that happens to
+                    // realize grapevine returns trade goods: **you gathered them**. Every staple
+                    // carries the same 0.005 token, so a staple-only basket's wild `Deplete` sale is
+                    // numerically what it always was; only baskets holding a cash crop move.
                     //
-                    // An **uncommitted** patch — wild, or an improvement still building — keeps the
-                    // original path unchanged: only Deplete sells (Sustain/Surplus/Eradicate produce
-                    // no trade goods; **on this flat wild-ground sale** Eradicate is denial, not
-                    // commerce), at the species-blind `forage.market.*` rate. That ruling is about
-                    // the market sale alone and never about goods carried off a committed stand: the
-                    // branch above is policy-blind because an Eradicate already pays **food** out of
-                    // its take, so refusing trade from that same take would be the inconsistent case
-                    // — the vector routes whatever was actually harvested, in every currency. The
-                    // roster stays economy-neutral until you commit. That config block keeps its old
-                    // name pending the plant-side pass.
-                    let forage_trade = if patch_commitment_in_effect(patch, &flora) {
-                        tended_take_trade_goods(take, patch, &flora, mult_f)
-                    } else if matches!(policy, FollowPolicy::Deplete) {
-                        let forage_market = &labor.forage.market;
-                        take * forage_market.trade_goods_per_biomass
-                            * forage_market.trade_goods_multiplier
-                            * mult_f
+                    // (Rung 3 keeps its own no-markup rule in `field_trade_goods` — a Field is never
+                    // drawn down and has no policy axis to mark up.)
+                    let forage_trade = tended_take_trade_goods(
+                        take,
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                        mult_f,
+                    ) * if matches!(policy, FollowPolicy::Deplete) {
+                        labor.forage.market.trade_goods_multiplier
                     } else {
-                        0.0
+                        NO_DEPLETE_MARKUP
                     };
                     {
                         let trade_goods = forage_trade.round() as i64;
@@ -640,8 +719,12 @@ pub fn advance_labor_allocation(
                         biomass_before,
                         patch.carrying_capacity,
                         &patch_ecology(patch, &labor.forage),
-                    ) * labor.forage.provisions_per_biomass
-                        * mult_f;
+                    ) * patch_provisions_per_biomass(
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                    ) * mult_f;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the take
                     // by the **effective** per-worker throughput this turn (`per_worker_biomass_capacity
                     // × seasonal`, matching `forage_take`'s worker cap) so a labor-bound low-season
@@ -666,6 +749,7 @@ pub fn advance_labor_allocation(
                     // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
                     let arrivals = crate::forage::project_arrivals_forage(
                         patch,
+                        &tile_composition,
                         &labor.forage,
                         &flora,
                         &ladder,
@@ -677,10 +761,10 @@ pub fn advance_labor_allocation(
                     );
                     yields[idx] = SourceYield {
                         actual: provisions.to_f32(),
-                        // **The other currency this gather produced** — the committed crop's trade
-                        // component on a tended patch, the flat market sale on a `Deplete` of wild
-                        // ground, and `0` otherwise. Never summed into `food_income`
-                        // (`docs/plan_hunt_yield_model.md` §9) — that would break the larder identity.
+                        // **The other currency this gather produced** — the patch basket's trade
+                        // component on the take, at the `Deplete` markup if that was the policy.
+                        // Never summed into `food_income` (`docs/plan_hunt_yield_model.md` §9) —
+                        // that would break the larder identity.
                         trade: forage_trade,
                         // The plant web's steady TRADE projection is #337's known gap — see
                         // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`. The trade a gather
@@ -692,7 +776,12 @@ pub fn advance_labor_allocation(
                         arrivals,
                         wasted: forage_provisions(
                             (production - take).max(0.0),
-                            patch_provisions_per_biomass(patch, &flora, &labor.forage),
+                            patch_provisions_per_biomass(
+                                patch,
+                                &tile_composition,
+                                &flora,
+                                &labor.forage,
+                            ),
                             mult_f,
                         ),
                         workers_needed,
@@ -3110,9 +3199,11 @@ mod labor_yield_tests {
                     .patch(SOURCE)
                     .cloned()
                     .expect("seeded patch");
+                let composition = source_tile_composition(&world);
                 let labor = world.resource::<LaborConfigHandle>().get();
                 let forecast = forage_forecast(
                     &patch,
+                    &composition,
                     &labor.forage,
                     &FloraConfig::builtin(),
                     &LadderConfig::builtin(),
@@ -3272,9 +3363,11 @@ mod labor_yield_tests {
             .patch(SOURCE)
             .cloned()
             .expect("seeded patch");
+        let composition = source_tile_composition(&world);
         let labor = world.resource::<LaborConfigHandle>().get();
         let patch_forecast = forage_forecast(
             &patch,
+            &composition,
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
@@ -3404,8 +3497,8 @@ mod labor_yield_tests {
     ///
     /// **The intensification incentive moved to the committed crop.** It was once a flat managed rate (no
     /// draw-down), then a boosted MSY curve; S2 retired the boost because, with S1 making
-    /// competitor-removal explicit as *concentration*, a growth boost double-counted it. So "tended
-    /// beats wild" now lives entirely in a committed crop — **concentration + conversion** (§4.3) — and
+    /// competitor-removal explicit as a *composition* term, a growth boost double-counted it. So
+    /// "tended beats wild" now lives entirely in a committed crop — **weeding + conversion** (§4.3) — and
     /// is pinned by the roster's own bar (`core_sim/tests/flora_roster.rs`) and `flora_commitment.rs`,
     /// which see the crop this scale-free rung mechanic cannot.
     #[test]
@@ -3415,9 +3508,20 @@ mod labor_yield_tests {
         let forage = cfg.forage.clone();
         let patch_cap = forage.capacity_for(SOURCE_BIOME);
         let biomass = patch_cap;
-        let wild_msy =
-            sustainable_yield(biomass, patch_cap, &forage.ecology) * forage.provisions_per_biomass;
         drop(cfg);
+        // **The wild rate is this tile's own basket average** (#433), not the flat
+        // `provisions_per_biomass` — the point of "bare tended is neutral" is that a patch with no
+        // crop committed reads exactly what the same ground reads wild, whatever that ground grows.
+        let composition = source_tile_composition(&world);
+        let wild_rate = {
+            let cfg = world.resource::<LaborConfigHandle>().get();
+            let flora = world
+                .resource::<crate::flora_config::FloraConfigHandle>()
+                .get();
+            let wild = ForagePatch::new(SOURCE, patch_cap);
+            crate::forage::patch_provisions_per_biomass(&wild, &composition, &flora, &cfg.forage)
+        };
+        let wild_msy = sustainable_yield(biomass, patch_cap, &forage.ecology) * wild_rate;
         cultivate_source_patch(&mut world, biomass);
 
         let band = spawn_band(
@@ -3452,7 +3556,7 @@ mod labor_yield_tests {
         assert!(
             (paid - wild_msy).abs() < 1e-3,
             "with the boost retired and no crop committed, a bare tended patch pays exactly wild — \
-             the payoff moved to concentration + conversion: {paid} vs {wild_msy}"
+             the payoff moved to weeding + conversion: {paid} vs {wild_msy}"
         );
         // **It draws down** — the correction. A tended patch is a wild stand, so gathering it takes
         // biomass out of it, which is what makes over-farming it possible at all.
@@ -3684,6 +3788,13 @@ mod labor_yield_tests {
             .cultivation_progress
     }
 
+    /// **A map seed whose realization of the source tile is worth tending.** Per-tile realization
+    /// (§10) draws a different basket per `(map_seed, tile)`, and under the default seed 0 the
+    /// harness tile realizes its staple at a diluted ~0.40 share — correct behaviour, but not the
+    /// "a crop is at home here" ground a *payoff* test needs. Seed 3 realizes `seed_grasses` at
+    /// ~0.77, so weeding saturates and the tended payoff clears wild by a visible margin.
+    const WORTH_TENDING_SEED: u64 = 3;
+
     /// Grant the harness faction full knowledge of a discovery (the Rung 1b/1c ledger gate that the
     /// Cultivate / Corral investment policies check).
     fn grant_knowledge(world: &mut World, discovery: u32) {
@@ -3699,6 +3810,11 @@ mod labor_yield_tests {
     #[test]
     fn cultivate_policy_pays_the_dip_then_the_tended_yield() {
         let (mut world, tile) = world_with_source(CAP);
+        // **Both halves of this test must stand on the SAME ground.** The dip is a fraction of the
+        // Sustain yield, and since #433 that yield is the tile's own basket average — so the Sustain
+        // baseline and the Cultivate run have to share the seed that decides the tile's realization
+        // (see the note on the Cultivate world below), or the comparison is between two baskets.
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
         let (fraction, progress_per_turn) = {
             let ladder = world.resource::<LadderConfigHandle>().get();
@@ -3733,12 +3849,11 @@ mod labor_yield_tests {
 
         // Cultivate on a fresh patch: the take is the dip, and progress accrues.
         let (mut world, tile) = world_with_source(CAP);
-        // Seat this world on a map seed where the source tile's per-tile realization (§10) concentrates
-        // its dominant staple — with F5's fuller PrairieSteppe basket, tile (0,0) realizes a diluted
+        // Seat this world on a map seed where the source tile's per-tile realization (§10) puts its
+        // dominant staple high — with F5's fuller PrairieSteppe basket, tile (0,0) realizes a diluted
         // slice under the default seed 0 (seed_grasses at share ~0.40, not worth tending), which is
-        // *correct* realization behaviour but not the "worth-tending tile" this yield test needs. Seed
-        // 3 realizes seed_grasses at share ~0.77 → concentration caps and the tended payoff clears wild.
-        world.resource_mut::<SimulationConfig>().map_seed = 3;
+        // *correct* realization behaviour but not the "worth-tending tile" this yield test needs.
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
         let band = spawn_band(
             &mut world,
@@ -3975,9 +4090,11 @@ mod labor_yield_tests {
             .patch(SOURCE)
             .cloned()
             .expect("seeded patch");
+        let composition = source_tile_composition(world);
         let labor = world.resource::<LaborConfigHandle>().get();
         let forecast = forage_forecast(
             &patch,
+            &composition,
             &labor.forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
@@ -3985,6 +4102,20 @@ mod labor_yield_tests {
             NEUTRAL_OUTPUT_MULT,
         );
         expected_yield(&forecast, workers, policy)
+    }
+
+    /// **What the source tile grows** — the realized basket, through the one `tile_flora_composition`
+    /// seam the labor arm reads, so a test forecast is priced off exactly the composition the turn
+    /// will pay from (#433).
+    fn source_tile_composition(world: &World) -> Vec<crate::flora_config::FloraShare> {
+        let labor = world.resource::<LaborConfigHandle>().get();
+        let flora = world
+            .resource::<crate::flora_config::FloraConfigHandle>()
+            .get();
+        let map_seed = world.resource::<SimulationConfig>().map_seed;
+        let tile_entity = world.resource::<TileRegistry>().tiles[0];
+        let ground = world.get::<Tile>(tile_entity).expect("the source tile");
+        crate::forage::tile_flora_composition(&flora, &labor.forage, ground, map_seed).into_owned()
     }
 
     /// The plant the source tile's realized basket auto-picks for `rung` — the same

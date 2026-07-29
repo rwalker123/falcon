@@ -42,7 +42,7 @@ signal closed
 
 const CARD_WIDTH := 340.0
 const CARD_MIN_HEIGHT := 120.0
-const CARD_MAX_HEIGHT := 560.0
+## THERE IS DELIBERATELY NO `CARD_MAX_HEIGHT` — see `refit`, which declares the ceiling per fit.
 ## Clearance kept between the card and the viewport edges (top/bottom margin, and the gap between
 ## the anchor card and this sheet).
 const VIEWPORT_MARGIN := 16.0
@@ -88,7 +88,7 @@ func _ready() -> void:
 	_card.name = "ComposeCard"
 	_card.target_width = CARD_WIDTH
 	_card.min_height = CARD_MIN_HEIGHT
-	_card.max_height = CARD_MAX_HEIGHT
+	# `max_height` is declared per fit, from the live viewport — see `refit`.
 	_card.bottom_margin = VIEWPORT_MARGIN
 	add_child(_card)
 
@@ -194,6 +194,18 @@ func refit() -> void:
 		+ _header.get_combined_minimum_size().y + HEADER_SEPARATION + CARD_EXTRA_PADDING
 	_sync_to_viewport()
 	_place_card()
+	# THE CARD'S ONLY CEILING IS THE VIEWPORT. `fit_to_content` already clamps to `min(max_height,
+	# viewport height - global_position.y - bottom_margin)`, so a FIXED pixel `max_height` can only ever
+	# bite EARLIER than the real bound — and a sheet that stops growing with several hundred px of empty
+	# viewport beneath it is not capped, it is clipped. A 560px constant did exactly that once the
+	# COMMITTED crop block became one row per basket member instead of one line: a 4-species basket
+	# (`realized_species_max` = 4, the WORST case rather than an outlier) took the body past it, and the
+	# sheet scrolled internally with the `Now N` line off the top and the Forage button sliced in half.
+	# Declaring it from the live viewport leaves `max_available` as the sole bound, which is what makes
+	# the internal scroll mean "genuinely taller than the room below the card" — its actual purpose, and
+	# still reachable on a short window. Re-read every fit because the window can be resized while a
+	# sheet is open. `size.y` IS the viewport height: `_sync_to_viewport` above pins this catcher to it.
+	_card.max_height = size.y
 	_card.fit_to_content(_body.get_combined_minimum_size().y, chrome, _scroll)
 	_place_card()
 

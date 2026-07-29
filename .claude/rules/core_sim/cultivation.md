@@ -74,11 +74,13 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   - **Marks the patch `tended_this_turn`**, so `advance_cultivation` spares a patch under active
     preparation — the investment accrues at the **full** `progress_per_turn` (25 turns at the default),
     not net-of-decay.
-  - **Break-even** (defaults `fraction` 0.25, `progress_per_turn` 0.04): the dip costs ~75% of that
-    patch's Sustain yield for ~25 turns ≈ `0.75 × 0.375 × 25` ≈ **7 prov** forgone; the tended patch
-    then out-pays wild Sustain by `1.2 − 0.375` = **0.825 prov/turn**, recouping the investment ~8–9
-    turns after completion. Cultivating is correct only if you intend to stay — the decision the free
-    auto-accrual erased.
+  - **Break-even, and it is now a CROP choice** (defaults `fraction` 0.25, `progress_per_turn` 0.04).
+    Measured on the reference basket below: the dip forgoes **0.527 prov/turn × 25 = 13.19 prov**
+    across the build; favoring the basket's **best** staple then out-pays wild Sustain by
+    **+0.625/turn** and recoups in **21.1 turns**, while favoring a **marginal** member of the same
+    basket pays **+0.213/turn** and takes **61.8** — nearly 3× as long on the same tile for the same
+    25 turns of work. *That spread is the decision the rung exists to make.* Cultivating is still
+    correct only if you intend to stay — the decision the free auto-accrual erased.
   - `ForagePatch` methods: `is_cultivated`/`accrue_cultivation`/`decay_cultivation` (the early-claim
     `claim_cultivation` is **removed**).
 - **Tended yield — a WILD STAND, gathered place-local** (slice 7 — the rung-2 correction). A tended
@@ -86,17 +88,29 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   (`cultivation.tended_regrowth_gain`, folded in by **`forage::patch_ecology`** — the plant twin of
   `fauna::herd_ecology`, and the one seam every consumer resolves a patch's ecology through). **Flora
   Roster S2 retired the regrowth boost to a NEUTRAL 1.0** (`docs/plan_flora_roster.md` §4.3): once S1
-  made concentration explicit, a growth boost double-counted competitor-removal, so tending now pays
-  through **concentration + conversion** (a committed crop), not the curve. It is gathered by the
+  made competitor-removal explicit, a growth boost double-counted it, so tending pays through the
+  **composition + conversion** of a committed crop, not the curve. **#433 fixed what "composition"
+  means**: rung 2 **weeds** the tile's basket (the favored share rises to `min(1, share ×
+  tended_weeding_gain)`, taken from the least abundant first) and **never touches `K`** — the retired
+  concentration term cut a committed tile's capacity and discarded the remainder — and it pays
+  `tended_conversion_gain` on the **favored species' term only**, which is the debt S2 recorded and
+  left unpaid when it retired the regrowth boost with nothing in its place. It is gathered by the
   **ordinary `forage_take` path**, exactly like rung 1: **policy-live**
   (Sustain/Surplus/Deplete/Eradicate), **worker-capped**, and **drawn down** — so a tended patch **can
   be over-farmed** and the overdraw ⚠ fires on it. This is the exact shape a **pastoral** herd already
   had; the plant web used to collapse a rung *earlier* than the animal web, and that asymmetry was the
   bug. **A committed crop still out-yields the same patch's wild Sustain** on good ground — the
-  intensification incentive, now carried by concentration + conversion (guaranteed by the roster's bar,
-  `core_sim/tests/flora_roster.rs`) rather than the retired boost. A *bare* tended patch (no crop) now
-  pays exactly wild (measured on `AlluvialPlain`, K = 195: wild **0.61** = bare tended **0.61**
-  prov/turn; a committed Wild Emmer rises above it via conversion).
+  intensification incentive, now carried by composition + conversion (guaranteed by the roster's bar,
+  `core_sim/tests/flora_roster.rs`) rather than the retired boost. A *bare* tended patch (no crop)
+  still pays **exactly** wild — no commitment means no weeding and no conversion gain, and
+  `tended_regrowth_gain` is neutral, so every term is the identity.
+  > **THE REFERENCE BASKET the measured figures in this file are taken on** — `AlluvialPlain`,
+  > `K = 195`, the realization of tile `(0,0)` under seed `0xF10A_5EED_C011_0010` (the one the shipped
+  > `sweep_tiles` fixtures use): `wild_emmer` 0.375 / `wild_tubers` 0.292 / `tobacco` 0.208 /
+  > `wild_rice` 0.125, giving a wild basket rate of **0.0577** food and **0.0415** trade per biomass,
+  > MSY 12.19 biomass/turn. Best staple `wild_emmer`, marginal member `wild_rice`. **Quote the basket
+  > whenever you quote a number** — since #433 a per-tile figure means nothing without the
+  > realization it came from.
   Working a completed improvement at either rung marks it `tended_this_turn` (a per-turn flag, off the
   client wire, carried across the turn boundary by the Population→Logistics lag) so the decay pass can
   tell tended from abandoned. The old
@@ -155,10 +169,17 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
   in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.0 —
   NEUTRAL since Flora Roster S2: a tended patch's stock regrows exactly as fast as wild. It began as
-  the plant twin of `husbandry.pastoral_gain`, but S1 made competitor-removal explicit as concentration,
-  so a growth boost double-counted it; tending now pays through concentration + conversion and the
-  rung-2 "wild < tended" guarantee moved to the roster. Kept as a playtest dial; only a gain *below* 1.0
-  is rejected), plus the
+  the plant twin of `husbandry.pastoral_gain`, but S1 made competitor-removal explicit, so a growth
+  boost double-counted it; tending pays through composition + conversion and the rung-2 "wild <
+  tended" guarantee moved to the roster. Kept as a playtest dial; only a gain *below* 1.0 is
+  rejected), **`tended_weeding_gain`** (1.5 — how far rung 2 can push the favored species' share,
+  `min(1, share × gain)`; the renamed `tended_concentration_gain`, which used to multiply `K` and now
+  moves *composition*) and **`tended_conversion_gain`** (2.0 — rung 2's conversion multiplier on the
+  **favored species' whole yield vector**, #433; the term that makes a 25-turn Cultivate pay back in
+  the teens of turns instead of the eighties, and the reason a marginal favorite barely moves the
+  number while a dominant one pays twice). Both validated finite and `>= 1.0`.
+  **`field_concentration_gain` is RETIRED** — a Field forces the favored share to 1.0, so there is no
+  gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
   per Sustain-forage-Thriving turn, ~20 turns to know) and `knowledge_completion_threshold` (1.0 = the
   ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
@@ -169,9 +190,12 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   ladder with those dials in slice 4. **The levers homed here are now validated on every load path**
   (slice 7 — the old "asserted over the *builtin* only, so a `LABOR_CONFIG_PATH` override that breaks it
   is accepted silently" gap is **closed**): `LaborConfig::validate()` enforces the **plant ladder's
-  monotonicity** — `field_provisions_per_biomass > gain × regrowth_rate/4 × provisions_per_biomass`
-  (tended < field, scale-free in `K`, the payoff twin of `FaunaConfig::validate`'s `pen_gain >
-  pastoral_gain > 1`). The `tended_regrowth_gain` check is now a **coherence floor only** — `>= 1.0`,
+  monotonicity** — `field_provisions_per_biomass > tended_regrowth_gain × regrowth_rate/4 ×
+  provisions_per_biomass × tended_conversion_gain` (tended < field, the payoff twin of
+  `FaunaConfig::validate`'s `pen_gain > pastoral_gain > 1`). **It is evaluated at tending's SATURATED
+  best case** — weeding pushed to 100% of the favored crop — because there the tended basket is the
+  crop alone and the crop's own rate cancels from both sides, which is what keeps the check
+  scale-free in `K` *and* independent of which species it is asked about. The `tended_regrowth_gain` check is now a **coherence floor only** — `>= 1.0`,
   not `> 1.0` — since S2 retired the "wild < tended" guarantee to the roster (`flora_roster.rs`); it
   forbids only the incoherent case of tending growing a stand *slower* than wild.
 - **Intensification display snapshot (on the wire, consumed by the client-dev rendering slice next).**
@@ -259,17 +283,23 @@ herd has one appetite).
   would otherwise pay: the MSY dip on a wild patch (via `forage_policy_ceiling`), and the **managed**
   dip on a tended patch being upgraded (0.25 × its tended harvest — `forage_forecast` and the labor
   arm both read the one shared `field_yield_fraction_while_building`). On **bare** ground that is a
-  fraction of nothing, so a bare-ground sow is near-pure investment: **~0.13 prov/turn across its
-  25-turn build against the 2.1/turn the Field then pays** (measured, `forage_field.rs`).
+  fraction of nothing, so a bare-ground sow is near-pure investment. `forage_field.rs` pins that as a
+  **relation, not a pair of literals** — the whole build is a trickle beside the Field it buys
+  (`while_building_per_turn < BUILD_TRICKLE_FRACTION × field_yield`) — because since #433 the Field's
+  payout scales with the committed crop's own rate, so any literal would be true of one crop only.
 - **The payout — rung 3 out-yields rung 2, or the rung is pointless.** A completed Field pays its
   workers `biomass × cultivation.field_provisions_per_biomass` (**0.02**, `labor_config.json`), the
   tended patch's *shape* at **2×** its rate, place-local and without drawing biomass down.
   `sustainable == actual` (no ⚠). **But the collection cap still binds** (slice 7): rung 3 collapses the
   *policy* axis, never the worker cap — you always carry the harvest home — so the actual take is
   `min(production, workers × per-worker throughput)`, `workers_needed` is derived, and the crop the crew
-  could not carry is reported as `wasted`. **Measured production/turn on `AlluvialPlain` (K 195):**
-  wild Sustain **0.61** → tended **1.22** → Field **3.90**, needing **2 / 4 / 10** gatherers
-  respectively at 0.40 prov/worker.
+  could not carry is reported as `wasted`. **Measured production/turn on the reference basket** (see
+  "Cultivation" → the callout; `AlluvialPlain`, K 195), committed to `wild_emmer`: wild Sustain
+  **0.703** → tended **1.328** → Field **6.240**, needing **2 / 2 / 10** gatherers. The rung-2 crew is
+  unchanged from rung 1 and that is not a typo — the gather cap is in **biomass**, and rung 2 changes
+  the *rate* a take converts at, not the size of the take, so the same two people carry home nearly
+  twice the food. Per-worker throughput is now **crop-dependent** (`8.0 biomass × the basket's rate`),
+  so it is no longer the single 0.40 prov/worker figure this line used to quote.
 - **Feral if abandoned — one rule for the whole plant web.** `advance_cultivation` bleeds **both**
   improvement meters at their own rung's `decay_per_turn` on any untended turn, so an abandoned Field
   reverts to a **wild** gather patch (after the pass's deliberate one-turn lag) and both meters lapse

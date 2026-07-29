@@ -67,21 +67,31 @@ paths:
   to 101%, so those frames ARE the rounding test), `tile_growing_here` + `tile_growing_here_variant` (TWO
   Alluvial Plain tiles with DIFFERENT baskets — Wild Emmer 70%/Flax 30% vs Cotton 55%/Flax 45% — the visible
   per-tile-realization proof on the card), and `tile_panel_no_forage` (no list → no section).
-  **ONE ROW, TWO STATES — the COMMITTED crop** (Flora Roster S1, `docs/plan_flora_roster.md` §4.3;
-  `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
+  **TWO ROWS, TWO QUESTIONS — the COMMITTED crop BESIDE the standing basket** (`docs/plan_flora_roster.md`
+  §4.3, issue #433; `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
   `forage_patches_to_array` as `committed_species` / `committed_display_name`, cross-refed by
-  `_tile_info_at` as `patch_committed_species` / `patch_committed_display_name`). Once a band works
-  the patch under `Cultivate`/`Sow` it **commits to a single crop and the rest of the basket is
-  displaced** — so the same row slot renders `Crop: Wild Emmer` (`FLORA_CROP_ROW`) **instead of** the
-  basket, never beside it: the tile is one plant now, and listing the wild mix would name plants that
-  no longer grow there. `committedSpecies == ""` means **the wild mixed basket**, not "unknown", so
-  the row switches on it rather than treating it as missing data. `Crop` is well under
-  `_split_detail_kv`'s 16-char key limit, so it aligns as a table row exactly like the key it
-  replaces. The composition list stays on the wire either way — the card CHOOSES, it does not fall
-  back. Committed-ness is patch STATE (unlike the biome-derived basket), but it needs no
-  `FOW_DISCOVERED_HIDDEN_KEYS` entry: the row sits under `Forage:`, past the discovered early-return,
-  so a remembered tile never reaches it. ui_preview: `food_tile_crop` (the committed twin of
-  `food_tile` — the two frames differ in exactly that row).
+  `_tile_info_at` as `patch_committed_species` / `patch_committed_display_name`). `Crop: Wild Emmer`
+  (`FLORA_CROP_ROW`) answers **what you committed to**; the basket beneath it answers **what is actually
+  growing right now**. They are different facts and both render, the committed member marked in
+  `HudStyle.SIGNAL` inside the list so the eye connects them.
+  > **This row was an either/or until #433, and that was a real bug** (caught in playtest). It rendered
+  > `Crop:` **instead of** the basket on the reasoning that "committing displaces the rest of the basket"
+  > — which the reweight model deleted, and which was never true *during the build* anyway: the species
+  > is recorded on the **first worked turn**, ~25 turns before the rung completes, so picking a crop made
+  > a 64/36 tile read as 100% that crop while nothing in the sim had moved. Showing both rows is also
+  > what makes weeding legible — you watch the losing member fall (36% → 4%) as the build lands.
+  `committedSpecies == ""` means **the wild mixed basket**, not "unknown", so the row switches on it
+  rather than treating it as missing data. `Crop` is well under `_split_detail_kv`'s 16-char key limit,
+  so it aligns as a table row like any other. Committed-ness is patch STATE (unlike the biome-derived
+  basket), but it needs no `FOW_DISCOVERED_HIDDEN_KEYS` entry: the row sits under `Forage:`, past the
+  discovered early-return, so a remembered tile never reaches it. **The SIGNAL mark is nested inside the
+  neutral wrap `detail_bbcode` puts on every 🌿 row, and the indent + sprig stay OUTSIDE it** — that
+  renderer branch matches on `begins_with(MORALE_BREAKDOWN_INDENT)` plus the literal glyph, so wrapping
+  either one hides the row from its own formatter. ui_preview: `food_tile` (uncommitted) /
+  `food_tile_crop` (committed, still building — the basket unchanged beside the Crop row, the bug's own
+  frame) / `food_tile_crop_tended` (the completed Tended Patch, the basket visibly weeded). **All three
+  states are needed:** a fixture covering only "committed" passes without ever testing the
+  building-vs-complete distinction, which is the whole defect.
 - **The CROP PICKER — committing is a DECISION, not a server default** (Flora Roster S1,
   `Hud._build_crop_picker` inside `_build_forage_assign_controls`; `FloraShareInfo.canCultivate` /
   `canSow` → decoded beside `share` as `can_cultivate` / `can_sow`). It renders **only under the two
@@ -101,8 +111,17 @@ paths:
   — the player's pick while it is still legal on this tile+rung, else the **highest-share legal** entry,
   which is the sim's own `default_species_for_rung`, so picking nothing and accepting the default behave
   identically. `""` is always a valid thing to send (non-committing rung, nothing legal, or an
-  **already-committed** patch, which gets a locked read-only readout instead of an editable picker, since
-  the commitment is one-way until it lapses). It rides the existing emit path: `_emit_assign_labor` gained
+  **already-committed** patch, which gets a **locked** picker instead of an editable one, since the
+  commitment is one-way until it lapses). **A locked picker still lists the WHOLE basket** — same rows,
+  same order, every one disabled, the committed species marked with `HudStyle.apply_button(btn,
+  "primary", true)`, i.e. the policy picker's `selected_when_disabled` idiom, and the
+  `FLORA_CROP_COMMITTED_HINT` line *beneath* the rows rather than in place of them. It collapsed to a
+  lone crop name until #433 and that was a bug (playtest): the tile card two panels away listed
+  `56% / 25% / 19%` while the sheet showed `Wild Emmer` alone, so the two surfaces disagreed about
+  whether the tile grew one plant or three. **The test a surface has to pass is not "does this code
+  reason about the basket" but "can this panel be READ as claiming the tile grows one plant"** — the
+  first test is what let this site through the initial sweep. Both surfaces show the **standing**
+  basket, never the projected weeded one, so they cannot drift apart mid-build. It rides the existing emit path: `_emit_assign_labor` gained
   a trailing `species` (defaulted `""`, so no other caller changed) → the payload → `Main` →
   `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>` — the **second** optional token,
   worker count always last, omitted entirely when empty.

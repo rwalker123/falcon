@@ -654,15 +654,26 @@ func _ready() -> void:
 	await _settle()
 	await _save("food_tile")
 
-	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow (flora roster S1).
-	# The "What grows here" basket row is REPLACED by a single `Crop: Wild Emmer` row: committing
-	# displaces the rest of the basket, so the tile is one plant now and stating both would name
-	# plants that no longer grow here. Compare side by side with `food_tile.png`, which is the
-	# uncommitted basket (and the 101%-rounding test) — the two frames differ in exactly that row.
+	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
+	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
+	# and the basket is UNCHANGED (45 / 30 / 25, identical to `food_tile.png`), because the species is
+	# recorded on the first worked turn — ~25 turns before any weeding happens. Wild Grain's 🌿 row is
+	# marked in SIGNAL, which is what joins the two rows by eye. THREE FRAMES ARE THE TEST, in order:
+	# `food_tile` (wild) -> here (committed, nothing grown yet) -> `food_tile_crop_tended` (weeded).
+	# A "committed" frame alone would pass while the client still collapsed the basket on commit.
 	_hud.show_tile_selection(_committed_crop_tile_fixture())
 	_compose_forage(_committed_crop_tile_fixture())
 	await _settle()
 	await _save("food_tile_crop")
+
+	# State 2-crop-tended — the third frame: the SAME commitment once the Tended Patch lands and the
+	# basket finally REWEIGHTS (Wild Grain 45% -> 68%, Oak Mast 25% -> 2%, Ground Nut untouched, the
+	# increase coming off the least abundant member first). The Cultivation row reads "🌾 Tended Patch"
+	# beside it, so the frame states the cause and the effect together.
+	_hud.show_tile_selection(_weeded_crop_tile_fixture())
+	_compose_forage(_weeded_crop_tile_fixture())
+	await _settle()
+	await _save("food_tile_crop_tended")
 
 	# State 2-growing — the "What grows here" SECTION on the bare tile card (no compose sheet): a header
 	# then one 🌿 row per realized plant, name + share%, in wire order (share DESC). The pair is TWO
@@ -961,14 +972,117 @@ func _ready() -> void:
 	_hud._compose.reset_forage_source()
 	_hud._compose.set_forage_count(1)
 
-	# State 2-crop-committed — the patch has already committed, and commitment is one-way until it
-	# lapses: the picker is replaced by a locked READOUT naming the crop, so the UI cannot imply a
-	# switch the sim will refuse.
-	_hud.show_tile_selection(_committed_crop_tile_fixture())
+	# State 2-crop-committed — the patch has already committed. The commitment is one-way until it
+	# lapses, so the picker becomes a LOCKED READOUT — but a readout OF THE WHOLE BASKET, with the
+	# committed row marked, not a lone crop name: a bare name beside a tile card listing three plants
+	# had the two panels of one tile disagreeing about what grows there, and read as "this tile is Wild
+	# Grain now" (issue #433 deleted exactly that belief). The double-open is the same one the two states above spell out — the
+	# `reset_forage_source()` just above makes the first open a SOURCE CHANGE, which re-seeds the policy
+	# from the band's standing assignment (Sustain) and threw the `cultivate` away. This state had been
+	# silently rendering the Sustain sheet, which carries no crop block at all, so the readout it exists
+	# to judge was not in the frame.
+	#
+	# IT IS ALSO THE SIZING CASE FOR BOTH SURFACES, which is why it runs on the 4-species basket and on
+	# a band that WORKS the tile: `realized_species_max` is 4, and the 3-species tile is one row short
+	# of the caps the committed block used to blow — the compose sheet's fixed 560px ceiling and the
+	# drawer's cap against the dock. A committed patch's block went from ONE line to FOUR rows, so both
+	# surfaces gained ~66px at once, and neither fixture in the shipped set could reach them.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
+	# The Stockpiles card sits BELOW the tile card in the same dock and is hidden until a faction
+	# carries stock, so without this the drawer's cap is measured against a dock with nothing reserved
+	# below it — i.e. not the layout the player has. `DockScrollFit` subtracts the visible siblings'
+	# minimum heights, so pushing real stock is what puts that term in the measurement at all.
+	_hud.update_stockpiles(_stockpile_inventory_fixture())
+	# WHAT THE COMMITTED BLOCK COSTS THE DRAWER, measured rather than reasoned about: the SAME tile
+	# with the commitment stripped, so the printed pair is the before/after of one change on one
+	# layout. Both surfaces grew at once, and a sizing claim about either is worth only its number.
+	var uncommitted_twin := _four_species_committed_tile_fixture()
+	uncommitted_twin.erase("patch_committed_species")
+	uncommitted_twin.erase("patch_committed_display_name")
+	_hud.show_tile_selection(uncommitted_twin)
+	await _settle()
+	print("ui_preview: uncommitted drawer body=%.1f" % _hud.subject_body.get_combined_minimum_size().y)
+	# …and what it cost against the OLD render, which showed the `Crop:` row INSTEAD of the basket. A
+	# basket-less committed patch cannot occur (the sim only commits to a member of the basket), so
+	# this is a measurement fixture and never a saved frame — it exists to put a number on the growth.
+	var old_render_twin := _four_species_committed_tile_fixture()
+	old_render_twin.erase("patch_composition")
+	_hud.show_tile_selection(old_render_twin)
+	await _settle()
+	print("ui_preview: pre-change (crop row, no basket) drawer body=%.1f"
+		% _hud.subject_body.get_combined_minimum_size().y)
+	_hud.show_tile_selection(_four_species_committed_tile_fixture())
+	_compose_forage(_four_species_committed_tile_fixture())
 	_hud._compose.set_forage_policy("cultivate")
-	_compose_forage(_committed_crop_tile_fixture())
+	_compose_forage(_four_species_committed_tile_fixture())
 	await _settle()
 	await _save("forage_crop_committed")
+	# `alloc_section_label` upper-cases its text, so the header is matched in the case it RENDERS in.
+	_assert_hud("a committed patch's picker is a locked readout under the committed-crop header",
+		_has_label_containing(_hud._drawercompose._compose_sheet,
+				HudFloraVocab.FLORA_CROP_COMMITTED_HEADER.to_upper())
+			and _has_label_containing(_hud._drawercompose._compose_sheet,
+				HudFloraVocab.FLORA_CROP_COMMITTED_HINT))
+	# THE BUG THIS STATE NOW GUARDS: the readout lists the WHOLE basket, in the tile card's own order.
+	# Asserting the committed name alone passed while the other two plants were being suppressed.
+	var committed_rows: Array[Button] = []
+	for basket_crop in ["Wild Emmer", "Flax Fields", "Hay Grass", "Wild Grapevine"]:
+		committed_rows.append(_find_crop_row(_hud._drawercompose._compose_sheet, basket_crop))
+	_assert_hud("…listing every plant in the basket, not just the committed one",
+		not committed_rows.has(null))
+	var committed_all_locked := true
+	for row in committed_rows:
+		committed_all_locked = committed_all_locked and row != null and row.disabled
+	_assert_hud("…with every row locked (the commitment is one-way until it lapses)", committed_all_locked)
+	# `_rung_is_selected` reads the `normal` stylebox's fill, which `apply_button` writes from the
+	# VARIANT — the one mark of selection that survives the disabled treatment, which is the whole
+	# reason `selected_when_disabled` is passed here. Written for policy rungs, true of any
+	# `apply_button`-styled button, and the only reading that can tell marked-and-locked from locked.
+	_assert_hud("…and the committed crop marked as the standing choice",
+		committed_rows[0] != null and _rung_is_selected(committed_rows[0]))
+	_assert_hud("…while the rest of the basket is not",
+		committed_rows[1] != null and not _rung_is_selected(committed_rows[1]))
+	# ---- BOTH SURFACES MUST FIT THE 4-ROW BLOCK -------------------------------------------------
+	# Printed as well as asserted: when one of these fails, the numbers say WHICH ceiling bit (the
+	# sheet's own cap, the viewport, or the dock's remaining room), which a bare false cannot.
+	var committed_sheet: ComposeSheet = _hud._drawercompose._compose_sheet
+	var committed_sheet_scroll: ScrollContainer = committed_sheet._scroll
+	var committed_sheet_overflow: float = committed_sheet_scroll.get_v_scroll_bar().max_value \
+		- committed_sheet_scroll.size.y
+	print("ui_preview: committed sheet card=%.1f body=%.1f overflow=%.1f viewport=%.1f" % [
+		committed_sheet._card.size.y, committed_sheet._body.get_combined_minimum_size().y,
+		committed_sheet_overflow, get_viewport().get_visible_rect().size.y])
+	_assert_hud("a 4-species committed block does not make the compose sheet scroll internally",
+		committed_sheet_overflow <= 1.0)
+	# Clipping is the SYMPTOM the player reported (the `Now 1` line off the top, the Forage button
+	# sliced), and a scroll-extent check alone would not see a control sitting outside the card, so
+	# the two ends of the sheet are measured against the card's own rect.
+	var committed_now_line := _label_node_containing(committed_sheet, HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [1, ""])
+	_assert_hud("…and the staffing line the sheet opens with is inside the card",
+		_rect_contains(committed_sheet._card.get_global_rect(), committed_now_line))
+	_assert_hud("…and so is the Forage button it ends with",
+		_rect_contains(committed_sheet._card.get_global_rect(),
+			_find_button_by_text(committed_sheet, "Forage")))
+	# The TILE CARD's drawer is the other surface the same 4 rows pushed past its cap. Internal
+	# scrolling is BY DESIGN here (a crowded hex must scroll inside the drawer rather than drag the
+	# dock), so the assertion is not "never scrolls" — it is that THIS content, which fits the room
+	# the dock has left, is not being capped short of it.
+	var drawer_scroll: ScrollContainer = _hud.subject_scroll
+	var drawer_overflow: float = drawer_scroll.get_v_scroll_bar().max_value - drawer_scroll.size.y
+	# The same three terms `DockScrollFit.fit_height` caps against, printed so a failure says WHICH
+	# ran out — the dock's height, the rows above the drawer, or the cards reserved below it.
+	var drawer_top_in_dock: float = drawer_scroll.global_position.y - _hud.left_dock_scroll.global_position.y
+	var drawer_reserved_below := _dock_height_reserved_below(_hud.tile_panel)
+	print("ui_preview: committed drawer cap=%.1f body=%.1f overflow=%.1f dock=%.1f top=%.1f reserved=%.1f available=%.1f" % [
+		drawer_scroll.custom_minimum_size.y, _hud.subject_body.get_combined_minimum_size().y,
+		drawer_overflow, _hud.left_dock_scroll.size.y, drawer_top_in_dock, drawer_reserved_below,
+		_hud.left_dock_scroll.size.y - drawer_top_in_dock - drawer_reserved_below])
+	_assert_hud("…nor does it make the tile card's drawer scroll, with dock room to spare",
+		drawer_overflow <= 1.0)
+	# Restore the unstaffed near band + the 3-species tile for the frames that follow.
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._compose.reset_forage_source()
+	_hud._compose.set_forage_count(1)
 
 	_hud._compose.set_forage_policy("cultivate")
 	_hud.show_tile_selection(_food_tile_fixture())
@@ -3862,6 +3976,9 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 const FORECAST_THEN_NEEDLE := "→ then"
 ## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
 const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
+## Slack allowed when asserting a control sits INSIDE its card (`_rect_contains`): a control laid out
+## flush against the card's inner edge can land a sub-pixel over it and is not what "clipped" means.
+const CLIP_TOLERANCE_PX := 1.0
 ## The two remedies a STANDING-but-gated Cultivate must still spell out (issue #420). Each is the tail
 ## of its `HudFloraVocab` reason, so the assertion reads the sentence the player reads and not just the
 ## rung's presence: the paused build's ease-off advice, and the finished patch's harvest advice.
@@ -3872,6 +3989,50 @@ const TAMED_HERD_REMEDY_NEEDLE := "Already fully tamed"
 ## The herder crew on the fully-tamed herd: the herd's `herders_needed` pair AND the workers the
 ## standing Tame assignment staffs, so the two cannot disagree about how many hands are on it.
 const TAMED_HERD_CREW := 4
+
+## The Label NODE carrying `needle`, for the assertions that measure WHERE a row sits rather than
+## what it says. `_label_text_containing` answers the text; a clipping check needs the rect.
+func _label_node_containing(root: Node, needle: String) -> Label:
+	if root == null:
+		return null
+	if root is Label and (root as Label).text.contains(needle):
+		return root as Label
+	for child in root.get_children():
+		var found := _label_node_containing(child, needle)
+		if found != null:
+			return found
+	return null
+
+## What the VISIBLE cards stacked below `card` reserve in its dock — the harness's read-only echo of
+## `DockScrollFit._height_reserved_below`, so a sizing failure can be attributed to a term rather than
+## guessed at. Read-only on purpose: it must not become a second implementation the real one drifts
+## from, which is why it is only ever printed, never asserted on.
+func _dock_height_reserved_below(card: Control) -> float:
+	var stack := card.get_parent() as VBoxContainer
+	if stack == null:
+		return 0.0
+	var separation := float(stack.get_theme_constant("separation"))
+	var reserved := 0.0
+	var below := false
+	for child in stack.get_children():
+		if child == card:
+			below = true
+			continue
+		var sibling := child as Control
+		if not below or sibling == null or not sibling.visible:
+			continue
+		reserved += sibling.get_combined_minimum_size().y + separation
+	return reserved
+
+## Is `control` fully inside `rect` (both global)? Null control = false — an assertion about where a
+## row sits must FAIL when the row is missing entirely, never pass vacuously. A one-pixel tolerance,
+## because a control flush against the card's inner edge is not clipped.
+func _rect_contains(rect: Rect2, control: Control) -> bool:
+	if control == null:
+		return false
+	var inner := control.get_global_rect()
+	return inner.position.y >= rect.position.y - CLIP_TOLERANCE_PX \
+		and inner.end.y <= rect.end.y + CLIP_TOLERANCE_PX
 
 func _label_text_containing(root: Node, needle: String) -> String:
 	if root == null:
@@ -3901,6 +4062,21 @@ func _find_button_by_text(root: Node, text: String) -> Button:
 		return root as Button
 	for child in root.get_children():
 		var found := _find_button_by_text(child, text)
+		if found != null:
+			return found
+	return null
+
+## A CROP-PICKER ROW by the plant it names. A row's face is `<name> <share>% · <payoff>×`, whose share
+## and payoff digits are the fixture's business and change whenever a basket is retuned, so the row is
+## found by its NAME PREFIX — never by full text, which would make every crop assertion a duplicate of
+## the fixture. Returns null when the basket carries no such plant.
+func _find_crop_row(root: Node, crop_name: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).text.begins_with(crop_name + " "):
+		return root as Button
+	for child in root.get_children():
+		var found := _find_crop_row(child, crop_name)
 		if found != null:
 			return found
 	return null
@@ -5131,14 +5307,92 @@ func _climate_tile_fixture(temperature: float, terrain_label: String) -> Diction
 	return tile
 
 
-## A patch a band has COMMITTED to one crop (flora roster S1) — the `_food_tile_fixture` basket, plus
-## the two committed fields the sim sets when Cultivate/Sow takes. It deliberately KEEPS the
-## composition list: the wire still carries the biome's basket, and the card must choose the Crop row
-## over it rather than merely fall back to it when the basket is absent.
+## STAGE 2 of the commitment — a band has COMMITTED this patch to Wild Grain and the build is STILL
+## RUNNING (`_food_tile_fixture` carries `cultivation_progress` 0.6, `is_cultivated` false). The
+## commitment is recorded on the FIRST worked turn, so the basket underneath it is the wild one,
+## UNCHANGED — 45 / 30 / 25, byte-for-byte what `food_tile` shows. The card must therefore render the
+## `Crop: Wild Grain` row AND the whole basket, with Wild Grain marked in SIGNAL; collapsing to the
+## crop row alone claimed a mixed tile was already pure the instant the order was given (issue #433).
+## The committed species is a MEMBER of the basket on purpose — the mark has nothing to land on
+## otherwise, and the sim can only ever commit to a plant the tile actually realizes.
 func _committed_crop_tile_fixture() -> Dictionary:
+	var tile := _food_tile_fixture()
+	tile["patch_committed_species"] = "wild_grain"
+	tile["patch_committed_display_name"] = "Wild Grain"
+	return tile
+
+## STAGE 3 — the same commitment once the Tended Patch COMPLETES, which is when the basket finally
+## moves. Weeding lifts the favored share to `min(1, share x tended_weeding_gain)` (0.455 x 1.5 =
+## 0.6825) and takes the increase off the LEAST abundant members first, so Oak Mast (0.25) absorbs all
+## 0.2275 of it and Ground Nut is untouched: 68 / 30 / 2. Read against `food_tile_crop` — same tile,
+## same crop, one build later — this pair is the whole point of showing the basket beside the Crop
+## row: you can watch Oak Mast fall 25% -> 2% as the work lands.
+func _weeded_crop_tile_fixture() -> Dictionary:
+	var tile := _committed_crop_tile_fixture()
+	tile["cultivation_progress"] = 1.0
+	tile["is_cultivated"] = true
+	var basket: Array = []
+	for entry_variant in tile["patch_composition"]:
+		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
+		match String(entry["species"]):
+			"wild_grain": entry["share"] = 0.6825
+			"oak_mast": entry["share"] = 0.0225
+		basket.append(entry)
+	tile["patch_composition"] = basket
+	# A tended patch reports every policy ceiling == per_worker_yield (see `_tended_tile_fixture`), so
+	# the stepper caps at 1 worker and the frame does not also change the forecast under test.
+	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
+	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
+	return tile
+
+## A player faction carrying real stock, so the left dock's Stockpiles card is VISIBLE and reserves
+## its own height beneath the tile card (`DockScrollFit._height_reserved_below`). Five items, the
+## spread an established band has — enough that the card is a real term in the drawer's cap rather
+## than a title bar.
+func _stockpile_inventory_fixture() -> Array:
+	return [{
+		"faction": 0,
+		"inventory": [
+			{"item": "provisions", "quantity": 148},
+			{"item": "dried_fish", "quantity": 36},
+			{"item": "hay", "quantity": 22},
+			{"item": "trade_goods", "quantity": 14},
+			{"item": "flax", "quantity": 9},
+		],
+	}]
+
+## THE SIZING CASE FOR A COMMITTED PATCH — `realized_species_max` is 4, so a 4-plant basket is the
+## WORST CASE both surfaces must fit, not an outlier, and the 3-plant reference tile is one row short
+## of reaching either cap. Taken from the playtest hex that broke them: Wild Emmer 47 / Flax Fields 21
+## / Hay Grass 21 / Wild Grapevine 11, committed to the emmer with the build barely started, worked by
+## a band (so the sheet also carries its `Now 1` line — the row that was clipped off the top).
+## The mixed accounts are deliberate: a provisions crop, two cash crops and a fodder crop put all
+## three row formats in one frame at the length where the height is tightest.
+func _four_species_committed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["patch_committed_species"] = "wild_emmer"
 	tile["patch_committed_display_name"] = "Wild Emmer"
+	tile["cultivation_progress"] = 0.04
+	tile["patch_composition"] = [
+		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.47,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
+			"cultivate_payoff": 1.39, "sow_payoff": 2.40},
+		{"species": "flax_fields", "display_name": "Flax Fields", "share": 0.21,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 11.7},
+		{"species": "hay_grass", "display_name": "Hay Grass", "share": 0.21,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_fodder_payoff": 15.6},
+		{"species": "wild_grapevine", "display_name": "Wild Grapevine", "share": 0.11,
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 12.5},
+	]
 	return tile
 
 ## The LONGEST basket the sim can produce — a navigable hex blends the valley's basket with the

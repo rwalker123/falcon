@@ -186,11 +186,13 @@ terrain.
 - **rung 1 — a mix.** The wild patch holds the tile's basket: `Vec<(species, biomass, capacity)>`,
   or (cheaper) one biomass scalar plus the derived share table, since nothing draws the components
   down independently at rung 1.
-- **rung 2+ — a single species.** `Cultivate`/`Sow` commit the patch to one `species_id`. The rest
-  of the basket is displaced — *that is the cost of tending*, and it is why committing a rich mixed
-  tile to one crop is a real trade rather than a free upgrade. **How** it is priced is §4.3, which
-  corrects the sketch this bullet originally carried ("capacity becomes share × the rung's
-  multiplier" — that model is wrong, and §4.3 shows why).
+- **rung 2+ — one FAVORED species, not a single one.** `Cultivate`/`Sow` commit the patch to one
+  `species_id`, and that commitment **reweights the basket** rather than replacing it: Tended weeds
+  the favored plant's share upward, Field forces it to 100%. The rest of the basket is displaced
+  only as far as the rung actually displaces it, and the tile's `K` never moves. **How** it is
+  priced is §4.3, which corrects two sketches this bullet carried in turn — first "capacity becomes
+  share × the rung's multiplier", then the shipped concentration term that cut a committed tile's
+  `K` outright and discarded the remainder.
 
 **Recommendation: the cheap shape.** Store one `Option<FloraSpeciesId>` on `ForagePatch` (`None` =
 wild mix) and derive the mix for display from the affinity table. A wild patch's biomass stays one
@@ -205,67 +207,112 @@ can exercise. F1 derives composition from the biome alone and adds no per-patch 
 
 ---
 
-### 4.3 What committing costs and what it buys — **K belongs to the land**
+### 4.3 What a rung changes — **the land owns `K`, and no rung lowers it either**
 
-Settled during F2 planning, after the §4.2 sketch was worked through and found wrong. This is the
+Settled during F2 planning, corrected in full after the S1/S2 model was measured (#433). This is the
 plant-side statement of the principle the animal side already rests on
 (`plan_grazing_foundation.md` §2: *"K is not a property of the species. It is a property of the
 range."*), which the plant ladder never had:
 
-> **The land owns `K`. Rungs 1–3 redistribute it; only rung 4 (Worked Land) may raise it.**
+> **A tile's production is CONSTANT across rungs 1–3.** The land owns `K`. No rung below 4 raises it
+> — raising it is clearing, irrigation and manuring, i.e. Worked Land, by definition — and **no rung
+> lowers it.** A tile always produces its full capacity, always made up of every plant its
+> composition currently holds.
 
-Farming does not make ground more productive — clearing, weeding and sowing *point the ground's
-existing productivity at you*. Raising `K` itself is irrigation, terracing, manuring: rung 4, by
-definition. This finally gives rung 4 a mechanical identity instead of "a later, bigger step".
+What a rung changes is only **which plants that constant production is made of**. A Field is not a
+smaller patch growing one crop; it is the same tile producing the same amount, all of it one crop —
+the degenerate case of the same basket, with a single member at 100%. Wild, Tended and Field are one
+representation — a weighted composition over the tile's full `K` — at three settings, not three
+different things.
 
-**Two terms, and only the second can pay.**
+**The three settings.**
 
-- **Concentration** — committing pushes one species toward monopolising the tile's human-edible `K`,
-  bounded by how suited it is: `concentration = min(1.0, share × concentration_gain(rung))`.
-  A plant that is already most of the basket can fill the tile; a marginal one cannot without
-  inputs — which is, again, rung 4.
-- **Conversion** — the rung's *real* payoff. A tended stand of one known plant is more edible and
-  more harvestable per unit biomass: `provisions_per_biomass` rises. This is the yield vector §3
-  already ships.
+- **Wild** — the basket as realized (§10). Every rate is the share-weighted average of the members'
+  yield vectors.
+- **Tended — weeding.** The favored species' share rises to `min(1.0, share × tended_weeding_gain)`.
+  The increase is taken from the **least abundant remaining species first**, which may drive one to
+  0%. Every surviving member still produces, at its own rate. `K` unchanged.
+- **Field — planting.** The favored share is forced to `1.0` regardless of what it started at; the
+  rest go to 0%. `K` unchanged — the tile's whole production is now that one crop.
 
-**Why concentration alone cannot be a rung payoff** (the error §4.2 originally encoded): it is
-capped at `K`, and a *wild* patch already yields the **whole basket** — the full `K`. So committing
-an alluvial tile to Wild Emmer (share 0.56) at any concentration gain yields `≤ 1.0 K` against
-wild's `1.0 K`, and tending would be a strict **downgrade**. Concentration can only ever redistribute
-what wild already gave you. **Tending must pay in conversion, or it does not pay.**
+> **Tended weeds what is already there. Field plants what isn't.**
 
-So the trade is:
+That is the whole distinction, and it is what finally gives Tended a meaning of its own: it is
+bounded by the tile's existing composition, where Field ignores it.
 
-```
-tended pays   tended_regrowth_gain × concentration × species_rate    vs.   wild pays   1.0 × base_rate
-```
+**Least abundant first, deliberately not lowest yielding.** Ranking the weeds by yield would require
+the sim to compare a food rate against a trade rate — an exchange rate that does not exist in this
+codebase (it is the Market arc's) and would be silently hardcoded here. `hay_grass` (0 food, 0
+trade, 0.2 fodder) has no non-arbitrary rank at all. Abundance is currency-free, deterministic from
+the composition alone, and independent of which crop was favored, so it survives the Market arc
+unchanged.
 
-**The `tended_regrowth_gain` term is not decoration — it dominates, and omitting it was a real bug.**
-S1 first shipped this inequality *without* it (and a sweep test that "verified" the published ratio on
-a **capacity** basis, where `r` cancels — so the test shared the code's wrong assumption and passed
-vacuously). Every Cultivate ratio on screen was understated by exactly the gain (2.0): a delta tile
-showed `Sustain +0.64` / `Cultivate +1.28` in its policy chips while the crop row for the same tile
-claimed `0.9×`, i.e. that tending *loses*. Corrected, that crop is `1.8×`.
+**The invariant reaches rung 1, and that is the point.** A wild patch pays the share-weighted average
+of **its own realized basket**, in every currency. It did not before: `patch_provisions_per_biomass`
+fell back to the flat `forage.provisions_per_biomass` (0.05) for any uncommitted patch and never read
+the tile's composition, and trade reached a wild patch only through `Deplete`'s equally species-blind
+`market.trade_goods_per_biomass`. So *what was growing there* had no bearing on what the tile paid.
+A single constant cannot be the average of a per-tile basket: the worked basket below averages
+**0.0654** food/biomass (under-paid by 31%) while the full AlluvialPlain host table averages
+**0.0378** (a tile realizing the other end was over-paid by 32%). Under the invariant,
+`Sustain`-foraging wild ground that happens to hold cash crops **does** return trade goods — you
+gathered them. `forage.provisions_per_biomass` survives as the empty-basket fallback and as the
+rung-3 quality normalization baseline; it is no longer the wild rate.
 
-The rule this produced, now in `core_sim/CLAUDE.md`: **assert a published quote against the payoff
-functions themselves, never against a re-derivation of their arithmetic** — and a test for a
-correctness bug must be shown to *fail* against the unfixed code before it is trusted.
+**Two terms, and both of them pay.**
 
-**What the corrected numbers say — and it is a finding for S2, not a crisis.** With the gain in,
-*almost everything is worth tending*: best-country ratios run 2.3–2.7×, and only two rows lose
-anywhere at all (berry_scrub 0.70 and wild_tubers 0.97, both on RollingHills). So the claim above —
-that a minor-share commitment is a **structural loss** — is **too strong as stated**: the gain swamps
-the concentration penalty. What survives is weaker but still real: *within one tile* the spread is
-large and the ranking matters (RollingHills offers hazel 1.35, wild_emmer 1.20, wild_tubers 0.97,
-berry_scrub 0.70 — best to worst is nearly 2×, and the bottom of the list does lose).
+- **Weeding** changes *which plants* grow there — the composition above. It can only ever move share
+  between the members of a basket the tile already holds, so on its own it is bounded by *the tile
+  becomes 100% of its best plant* and **saturates there**: past that point no setting of
+  `tended_weeding_gain` moves anything.
+- **Conversion** — the rung's other half. A tended stand of a *known* plant is more edible and more
+  harvestable per unit biomass, so the favored species' whole yield vector is multiplied by
+  `tended_conversion_gain`. This is the debt correction 2 below recorded and S2 left unpaid.
 
-This is precisely the double-count §4.3 predicted and handed to **S2**, now measured rather than
-suspected: `tended_regrowth_gain` 2.0 was carrying weight that concentration now carries explicitly.
-S2 decides whether the gain comes down until a marginal commitment genuinely loses again, or whether
-"every crop pays, but some pay far better" is the honest model. Do **not** settle that here — S1
-deliberately moves no payoff dial. `forage.provisions_per_biomass` (0.05) stays the **wild**
-rate — you gather the whole basket at the basket's average — so **rung 1 remains exactly as F1
-shipped it**, and the roster stays economy-neutral until you actually commit a patch.
+**The conversion gain is on the FAVORED species' term only, and that is load-bearing.** Tending is
+knowing *your* crop; the volunteers still standing in the field are still wild. A blanket multiplier
+over the whole basket would pay ~`gain` for *any* commitment regardless of what was favored, which
+erases the crop choice and with it the "committing must sometimes be worse" bar (§9). On the favored
+term it **compounds** with weeding — favoring a plant that already dominates pays twice, favoring a
+marginal one barely moves the number. It multiplies food, fodder and trade alike; no `role` branch.
+
+**Why weeding alone could never have carried the rung.** Measured on the worked basket against
+Cultivate's real cost (25 turns at `yield_fraction_while_building` 0.25, i.e. 0.75 × wild forgone per
+turn), with no conversion gain the payback is **113 turns** at weeding gain 1.5 and **84 turns** at
+gain 2.0 — where it **saturates**, so 3.0 and 4.0 buy nothing further. Nobody pays a 25-turn
+investment for an 84-turn payback. That is not an argument against the model; it is this section's
+own older conclusion arriving again — **"tending must pay in conversion, or it does not pay"** — and
+it is why the two terms ship together.
+
+**What the model buys, measured.** Realized basket `wild_emmer 0.50 / wild_tubers 0.39 / grapevine
+0.11`, capacity 195 throughout, `tended_weeding_gain` 1.5, `tended_conversion_gain` 2.0:
+
+| state | food/biomass | trade/biomass |
+|---|---|---|
+| wild, as it grows | 0.0654 | 0.0221 |
+| Tended, favoring wild emmer | 0.1363 | 0.0088 |
+| Tended, favoring wild tubers | 0.1093 | 0.0079 |
+| Tended, favoring grapevine | 0.0618 | 0.0570 |
+| Field of wild emmer | 0.0800 | 0.0050 |
+| Field of grapevine | 0.0000 | 0.1600 |
+
+Same tile, same turn, opposite directions: tending toward grain roughly doubles the food and gives
+up 60% of the trade; tending toward the cash crop costs 5% of the food and pays **2.6×** the trade.
+The grain commitment's payback is ~17 turns against a 25-turn build. Before this, that decision did
+not exist — every commitment was a capacity cut.
+
+**The consequence worth naming: cash and calories now compete INSIDE one tile's basket, not only
+across tiles.** On a realization holding both a staple and a cash crop, weeding the staple upward
+eats the cash crop — so tending a grain tile *lowers* its trade income, measurably. A tile that grows
+both is no longer a tile that gives you both; it is a tile you have to point one way or the other.
+That is the §6 land-use tension arriving a rung earlier than F4 could put it, and it is the reason
+the rung-2 decision survives losing the old "tending might be worse than wild" trade.
+
+**What the model costs: rung 2 is no longer sometimes-worse-than-wild in food terms.** The
+conversion gain applies to whatever you favored, so a commitment to a plant with any real share
+pays. The trade the player is making is no longer *wild vs. tended* — it is **which currency**, plus
+the 25 turns and the place-pinning the build costs. §9's bar moved with it: the thing that must
+sometimes be worse is a *crop choice*, not the rung.
 
 **Two corrections to the shipped payoff model, both settled here rather than deferred:**
 
@@ -274,24 +321,39 @@ shipped it**, and the roster stays economy-neutral until you actually commit a p
    unifying it; **that was wrong and is withdrawn.** At rung 3 you control reproduction, so there is
    no wild stock left to over-skim, the policy axis honestly collapses, and a flat managed rate on
    the standing crop is correct. The `labor_config.rs` monotonicity guard is therefore policing a
-   *legitimate* difference between two currencies, not an inconsistency — it stays.
-2. **`tended_regrowth_gain` (2.0) is half right and needs a retune, not a deletion.** Freed from
-   competitors a stand genuinely does regrow faster toward its own ceiling, so the lever is not
-   fake — but once concentration is modelled *explicitly*, part of what the 2.0 was silently
-   standing in for is double-counted. **S2** retunes it, and restores a rung-2 conversion gain.
-   Note `tended_provisions_per_biomass` was tried and retired before, for a reason that does **not**
-   apply here: it turned rung 2 into a flat *managed rate*, collapsing the policy axis a rung before
-   the animal side does. A conversion gain and a managed rate are separable — rung 2 can pay a
-   better rate while still drawing its stock down and still being over-farmable.
+   *legitimate* difference between two currencies, not an inconsistency — it stays, and it gains the
+   conversion gain as a factor, evaluated at tending's saturated best case so the crop's own rate
+   cancels from both sides and the check stays scale-free.
+2. **The rung-2 conversion gain, recorded as a debt in S2 and paid here.** `tended_regrowth_gain`
+   was retired to a neutral 1.0 on the correct reasoning that a growth boost double-counts
+   competitor-removal — but nothing replaced it, and rung 2 was left with concentration alone, which
+   this section had already proved could not pay. `tended_conversion_gain` is what should have
+   landed then. Note `tended_provisions_per_biomass` was tried and retired before, for a reason that
+   does **not** apply here: it turned rung 2 into a flat *managed rate*, collapsing the policy axis a
+   rung before the animal side does. A conversion gain and a managed rate are separable — rung 2 pays
+   a better rate while still drawing its stock down and still being over-farmable.
 
-**Staging** (each slice measured before the next):
+**`Deplete`'s markup is a policy, not a rung.** With every drawn-down harvest paying the basket's
+trade vector, `market.trade_goods_multiplier` stops being *the* way a wild patch sells and becomes
+what its name always implied — **sell harder**, a markup on goods you were already producing. It
+therefore applies at rung 1 and rung 2 alike, so trade is credited once and from one rule at every
+drawn-down rung. Rung 3 keeps its no-markup rule: a Field is never drawn down and has no policy axis.
+`market.trade_goods_per_biomass` is retired — the basket vector is the rate. Every staple carries
+`trade_goods_per_biomass` 0.005, so a staple-only basket's wild `Deplete` sale is numerically
+unchanged; only baskets holding a cash crop move.
 
-- **S1** — species commitment + concentration + the yield vector as the conversion rate. Rung payoff
-  dials **untouched**, so any balance movement is attributable to the roster alone.
-- **S2** — retune rung 2 with competitor-removal now explicit (`tended_regrowth_gain` down; restore
-  a conversion gain without collapsing the drawdown axis).
-- **S3** — *a question, not a task.* Revisit rung 3's currency only if S1/S2 data says it is wrong;
-  the expectation after correction 1 is that this slice never happens.
+**Fodder at rung 1 is gated at the consumer.** The invariant reaches fodder too — a wild tile
+realizing `hay_grass` pays hay on any harvest — but crediting it to a band with nowhere to put it
+would hand out animal feed nobody bid for. So the **uncommitted** patch's fodder credit is gated on
+the faction knowing **Foddering**, the same gate the pen's draw already reads, at the credit site
+rather than in the rate seam. Rungs 2 and 3 stay ungated: committing a patch to `hay_grass` *is* the
+bid.
+
+**Where Tended and Field coincide, they are allowed to.** On a tile whose favored crop is already
+dominant, weeding reaches 1.0 and the two rungs' compositions become identical. What still separates
+them is real — a Tended Patch draws its stock down, is policy-live and can be over-farmed, while a
+Field pays a flat managed rate and never depletes — and the ladder does not owe every tile a distinct
+rung-3 story. Sowing such a tile buys stability and a higher rate, not composition.
 
 ---
 
@@ -527,9 +589,13 @@ The lesson of PR #119 and of grazing 2b: levers that pass every unit test can st
    at the tile cards, not the table.
 2. **F1 moved nothing.** Map-wide and per-start food capacity identical to pre-arc. If it moved, the
    normalization is wrong.
-3. **Committing a patch is a real trade** (F2) — tending a rich mixed tile to one crop must
-   sometimes be *worse* than leaving it wild. If it is always an upgrade, the displaced basket is
-   priced too cheaply and rung 2 is a free lunch again.
+3. **A crop choice is a real trade** (#433) — *which* plant you favor must sometimes be worse than
+   favoring another, and tending toward cash must cost real food. What is **no longer** the bar is
+   "tending must sometimes be worse than wild": with §4.3's conversion gain, any commitment with a
+   real share pays, and the decision the player makes at rung 2 is which currency plus whether the
+   25-turn build and the place-pinning are worth it. If instead *every crop on a tile* pays about
+   the same, the conversion gain has leaked off the favored term onto the whole basket and the crop
+   picker is decorative.
 4. **Fodder does not become the strategy** (F3). A fed pen must cost a field. Re-measure the herd
    ladder: `K_pen` gains a term, so every penned species' equilibrium moves.
 5. **Cash crops are refused on thin ground** (F4) — if they are worth sowing everywhere they are
@@ -538,6 +604,16 @@ The lesson of PR #119 and of grazing 2b: levers that pass every unit test can st
    identical to the pre-realization uniform basket (a tile's realized shares still sum to 1). And
    **two tiles of one biome show different baskets** — look at the tile cards, the point of the whole
    slice. The map-wide realized species mix must still track the affinity table within tolerance.
+7. **Rung 1 stops being economy-neutral, within a bound** (#433). Once a wild patch pays its own
+   basket's average instead of a flat constant, per-tile wild income moves in **both** directions —
+   roughly −32% to +31% on the sampled baskets — and those deviations should very largely cancel in
+   aggregate. So: **map-wide wild food income within ±5%** of the flat-rate total on the standard
+   map, and the per-tile spread **recorded, not bounded**. A figure outside ±5% means the basket
+   averages are wrong, not that the balance needs tuning — do not dial anything to hit the bar.
+   **The bar needs a liveness assertion beside it or it passes when the feature is dead:** a
+   `basket_rate` that silently fell through to the `0.05` fallback everywhere would score a *perfect*
+   1.00 ratio. So the same measurement asserts the spread is non-degenerate — most food-bearing tiles
+   differ from the flat rate by more than 1%, and the map's max/min basket rate is well above 1.
 
 ---
 

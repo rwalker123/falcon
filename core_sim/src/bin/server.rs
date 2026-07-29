@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -1594,8 +1595,17 @@ fn seed_source_yield(
             };
             let ladder = app.world.resource::<LadderConfigHandle>().get();
             let flora = app.world.resource::<FloraConfigHandle>().get();
+            // **What is growing on this tile** — the same realized basket the labor arm and the
+            // snapshot read, so the assign-time seed is priced off the identical composition the
+            // turn will pay from (#433). Absent ground names no plants.
+            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+            let tile_composition = app.world.get::<Tile>(tile_entity).map_or_else(
+                || Cow::Owned(Vec::new()),
+                |ground| tile_flora_composition(&flora, &labor.forage, ground, map_seed),
+            );
             forage_source_yield_preview(
                 patch,
+                &tile_composition,
                 &labor.forage,
                 &flora,
                 &ladder,
@@ -8205,8 +8215,14 @@ mod tests {
         let patch = app.world.resource::<ForageRegistry>().patch(coord).unwrap();
         let ladder = app.world.resource::<LadderConfigHandle>().get();
         let flora = app.world.resource::<FloraConfigHandle>().get();
+        // The same realized basket the seed path reads — every forage rate is its share-weighted
+        // average now (#433), so the expectation has to be priced off it too.
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let ground = app.world.get::<Tile>(tile).expect("the source tile");
+        let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
         let expected = forage_source_yield_preview(
             patch,
+            &composition,
             &labor.forage,
             &flora,
             &ladder,

@@ -124,22 +124,25 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
                 else {
                     return false;
                 };
-                let share = composition
-                    .iter()
-                    .find(|entry| entry.species == species)
-                    .map_or(0.0, |entry| entry.share);
                 let capacity = tile_forage_capacity(&labor.forage, tile);
                 let payoff = commit_payoff(
                     tile.position,
                     capacity,
                     &species,
-                    share,
+                    &composition,
                     &flora,
                     &labor.forage,
                     1.0,
                     RungKey::PlantTended,
                 );
-                let wild = wild_payoff(tile.position, capacity, &flora, &labor.forage, 1.0);
+                let wild = wild_payoff(
+                    tile.position,
+                    capacity,
+                    &composition,
+                    &flora,
+                    &labor.forage,
+                    1.0,
+                );
                 commit_yield_ratio(payoff, wild) > 1.0
             })
             .map(|(tile, _)| tile.position)
@@ -427,9 +430,25 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         patch.carrying_capacity, capacity_before,
         "a patch still being prepared carries the tile's full K — nothing is displaced yet"
     );
+    // The tile's own basket, resolved the way the sim does: a patch under construction has weeded
+    // nothing, so it must still read the whole thing and convert at its plain average.
+    let map_seed = app.world.resource::<core_sim::SimulationConfig>().map_seed;
+    let tile_entity = app
+        .world
+        .resource::<TileRegistry>()
+        .index(coord.x, coord.y)
+        .expect("tile entity resolves");
+    let ground = app.world.get::<Tile>(tile_entity).expect("the tile");
+    let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
     assert_eq!(
-        core_sim::patch_provisions_per_biomass(&patch, &flora, &labor.forage),
-        labor.forage.provisions_per_biomass,
+        core_sim::patch_composition(&patch, &composition, &labor.forage).as_ref(),
+        composition.as_ref(),
+        "and it is still the mixed basket it started as"
+    );
+    let wild = core_sim::ForagePatch::new(coord, patch.carrying_capacity);
+    assert_eq!(
+        core_sim::patch_provisions_per_biomass(&patch, &composition, &flora, &labor.forage),
+        core_sim::patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage),
         "and it still converts at the wild basket average"
     );
 }

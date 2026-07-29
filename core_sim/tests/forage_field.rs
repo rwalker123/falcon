@@ -527,7 +527,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
 fn the_plant_ladder_climbs_wild_then_tended_then_field() {
     /// One turn's Sustain harvest from the same primed patch, standing on the given rung, plus the
     /// `(biomass, capacity)` it was taken from.
-    fn rung_yield(rung: Option<bool>) -> (f32, f32, f32) {
+    fn rung_yield(rung: Option<bool>) -> (f32, f32, f32, f32) {
         let mut app = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut app);
         let (biomass, capacity) = {
@@ -543,14 +543,25 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
             }
             (patch.biomass, patch.carrying_capacity)
         };
+        // **The tile's own basket rate** (#433) — with no crop committed, every rung on this patch
+        // converts at it, so it is the one term all three expectations below share.
+        let basket_rate = {
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+            let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+            let ground = app.world.get::<Tile>(tile).expect("the primed tile");
+            let composition = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+            let wild = core_sim::ForagePatch::new(coord, capacity);
+            core_sim::patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage)
+        };
         spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
         app.world.run_system_once(advance_labor_allocation);
-        (provisions_f32(&mut app), biomass, capacity)
+        (provisions_f32(&mut app), biomass, capacity, basket_rate)
     }
 
-    let (wild, biomass, capacity) = rung_yield(None);
-    let (tended, _, _) = rung_yield(Some(false));
-    let (field, _, _) = rung_yield(Some(true));
+    let (wild, biomass, capacity, basket_rate) = rung_yield(None);
+    let (tended, _, _, _) = rung_yield(Some(false));
+    let (field, _, _, _) = rung_yield(Some(true));
 
     let forage = &LaborConfig::builtin().forage;
     let gain = forage.cultivation.tended_regrowth_gain;
@@ -569,11 +580,15 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
          S2's gain of {gain}: {tended} vs {}",
         gain * wild
     );
-    // Rung 3 is *managed*: a flat rate on the standing crop, drawn from no curve at all.
+    // Rung 3 is *managed*: a flat rate on the standing crop, drawn from no curve at all — scaled by
+    // the projected basket's quality against the wild baseline. With **no crop committed** that
+    // basket is the tile's own, so the factor is this ground's own richness rather than a crop's
+    // (a *sown* Field's basket is 100% its crop, and `flora_f4_cash.rs` pins that arm).
+    let field_quality = basket_rate / forage.provisions_per_biomass;
+    let expected_field = biomass * forage.cultivation.field_provisions_per_biomass * field_quality;
     assert!(
-        (field - biomass * forage.cultivation.field_provisions_per_biomass).abs() < 1e-3,
-        "a Field pays its managed rate on the standing crop: {field} vs {}",
-        biomass * forage.cultivation.field_provisions_per_biomass
+        (field - expected_field).abs() < 1e-3,
+        "a Field pays its managed rate on the standing crop: {field} vs {expected_field}"
     );
 
     // **And the ladder climbs.** This is the claim; the three pins above are how it is bought. Since S2
