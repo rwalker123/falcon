@@ -1147,7 +1147,7 @@ func _ready() -> void:
 		_has_label_containing(_hud._drawercompose._compose_sheet, PAUSED_CULTIVATE_REMEDY_NEEDLE))
 
 	# State 6b-cultivate-done-standing — the DEFENSIVE twin: the same standing Cultivate on a patch
-	# whose build has FINISHED. `_forage_policy_gates` retires the rung ("Already a Tended Patch — ♻
+	# whose build has FINISHED. `RungGates.forage_gates` retires the rung ("Already a Tended Patch — ♻
 	# Sustain-forage it to harvest") and it still renders selected + gated, so the sheet, the stepper
 	# and the `Now N` header all speak about ONE policy — the "Now 2 over a cap of 1" incoherence was
 	# two numbers computed for two different rungs. The sim retires a completed rung onto Sustain, so
@@ -5371,7 +5371,7 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 ## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
 ## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which is the
 ## point the husbandry-ceiling pass RETIRES ◎ Tame from the picker (its per-source meter is full and
-## 🐄 Corral is what comes next) and `_hunt_policy_gates` answers "Already fully tamed …" for it. It is
+## 🐄 Corral is what comes next) and `RungGates.hunt_gates` answers "Already fully tamed …" for it. It is
 ## managed at that point, so it carries a real herder crew through `_set_managed_herders` — the field
 ## pair every herd fixture owes the frame guard.
 func _fully_tamed_herd_fixture() -> Dictionary:

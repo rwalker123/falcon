@@ -306,7 +306,7 @@ func _discoveries_glyph_label(entry: Dictionary, site_name: String) -> Label:
 ## They are different KINDS of thing, so they never share a surface: no knowledge percentage is ever
 ## rendered into a herd's or a patch's stat grid, where it would read as one more number about that
 ## animal. The two are related in exactly one place — a gated verb's reason line under the policy
-## picker (`_hunt_policy_gates` / `_forage_policy_gates`), which names the knowledge, its live
+## picker (`RungGates.hunt_gates` / `forage_gates`), which names the knowledge, its live
 ## percent, and the practice that fills it. That line is what teaches the ladder.
 ##
 ## All FOUR tracks render (slice 4 added Seed Selection + Penning), in `KNOWLEDGE_TRACK_LABELS` order
@@ -396,11 +396,20 @@ func _announce_knowledge_unlock(faction: int, track: String) -> void:
 	_command_feed.note(String(KNOWLEDGE_UNLOCK_LABELS[track]), String(KNOWLEDGE_UNLOCK_NOTES[track]))
 
 ## A faction's progress (0..1) on one intensification track; 0 when the faction has not begun it
-## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the HudLayer policy-gate
-## reasons (`_forage_policy_gates` / `_hunt_policy_gates`) read this cluster's knowledge back.
+## (the snapshot row is sparse) or no snapshot has arrived yet. PUBLIC because the rung-gate reasons
+## (`RungGates.forage_gates` / `hunt_gates`) read this cluster's knowledge back.
 func faction_knowledge(faction: int, track: String) -> float:
-	var tracks: Dictionary = _intensification_knowledge.get(faction, {})
-	return float(tracks.get(track, 0.0))
+	return float(faction_tracks(faction).get(track, 0.0))
+
+## The WHOLE `{track: progress}` row for a faction — the value `faction_knowledge` reads one key out
+## of, and the shape `RungGates` takes as its `knowledge` parameter. Public so a gate caller threads
+## the row in ONCE instead of calling `faction_knowledge` per track (four tracks × two webs), and so
+## the map's mark model can be derived against the same value the compose sheet gates on.
+##
+## Returned BY REFERENCE, matching this HUD's accessor convention. Every reader is read-only; the
+## ingest in `_ingest_intensification` is the sole writer.
+func faction_tracks(faction: int) -> Dictionary:
+	return _intensification_knowledge.get(faction, {})
 
 ## One knowledge track's readout: a compact block-glyph bar + the live percent while in progress, a
 ## "✔ known" badge once complete. `progress` is 0..1.

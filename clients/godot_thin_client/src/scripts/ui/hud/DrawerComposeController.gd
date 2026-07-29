@@ -99,6 +99,12 @@ func _init(compose: ComposeState, band_labor: HudBandLaborState, selection: HudS
 
 ## The band an assignment targets — the selected player band, else the faction's single band. Retained
 ## on HudLayer because move-band, quick-assign and the targeting flows resolve the same band.
+## The player faction's `{track: progress}` knowledge row, threaded into every `RungGates` call.
+## `_topbar` is the only place the HUD holds it, and `RungGates` is stateless by design — so the
+## sheet reads the row here and passes it as a value rather than the gate layer reaching back.
+func _player_knowledge() -> Dictionary:
+    return _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID)
+
 func _resolve_assign_band() -> Dictionary:
     return _resolve_assign_band_fn.call()
 
@@ -591,7 +597,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # hidden, since greying it would still imply a reachable prerequisite. This can never widen the
     # picker beyond what the SIM allows: the sim refuses to put a band on a rung its species' ceiling
     # forbids, so a rung can only be re-admitted here if the band is genuinely working under it. It is
-    # re-admitted GATED (`_hunt_policy_gates` answers "Already fully tamed …" at a full meter), so the
+    # re-admitted GATED (`RungGates.hunt_gates` answers "Already fully tamed …" at a full meter), so the
     # rung reads as the dead end it is and clearing it stays the player's act.
     if not is_expedition and standing_hunt != "" and not (standing_hunt in hunt_options):
         var offered := hunt_options
@@ -599,7 +605,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # rung order instead of after Corral.
         hunt_options = HudBandLaborState.HUNT_POLICY_OPTIONS.filter(func(policy: String) -> bool:
             return policy in offered or policy == standing_hunt)
-    var hunt_gates := {} if is_expedition else _hunt_policy_gates(herd)
+    var hunt_gates := {} if is_expedition else RungGates.hunt_gates(herd, _player_knowledge())
     # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A gated rung is normally not a legal
     # composition (the herd may have finished taming under a standing Corral selection, or left the
     # option set entirely), so re-validate every render — but a gated rung that IS the standing
@@ -806,109 +812,8 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
             takes[policy] = _payoff_take(payoff, 0.0)
     return takes
 
-## Unmet prerequisites for the FORAGE investment rungs (Cultivate = rung 2, Sow = rung 3), keyed
-## policy → Array[String] of reasons (each already carrying its own remedy). Empty when every rung is
-## available. Mirrors the sim's `assign_labor` validation.
-##
-## The two rungs gate on DIFFERENT things, which is the ladder made legible:
-##   • Cultivate — Cultivation knowledge + a Thriving patch (you improve what is already there).
-##   • Sow — Seed Selection knowledge + ground that will take seed. It needs NO prior patch and no
-##     Thriving gate (seed travels, and sown ground starts at the reseed floor — i.e. Collapsing — so
-##     a health gate would forbid the very case the rung exists for). What it needs instead is the
-##     LAND: `patch_sow_site_refusal` is the sim's verdict on this ground, and it is the only gate
-##     reason on either web that the player answers by MOVING rather than by working.
-func _forage_policy_gates(tile_info: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
-    var gates := {}
-    var cultivate_reasons: Array[String] = []
-    var cultivation := _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION)
-    if cultivation < HudConst.KNOWLEDGE_COMPLETE:
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(cultivation), sustain_icon])
-    var phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
-    if phase != HudFloraVocab.ECOLOGY_PHASE_THRIVING:
-        var phase_label := phase.capitalize() if phase != "" else HudFloraVocab.GATE_PHASE_UNKNOWN_LABEL
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
-    # A finished patch retires Cultivate outright: the build is DONE (Sustain harvests it, and Sow is the
-    # next rung if unlocked). This SUPERSEDES the prep prerequisites — a tended patch's Thriving/knowledge
-    # gates are moot — so it replaces the reason list rather than piling on.
-    if bool(tile_info.get("is_cultivated", false)):
-        cultivate_reasons.clear()
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_TENDED_FORMAT % sustain_icon)
-    if not cultivate_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_CULTIVATE] = cultivate_reasons
-    var sow_reasons: Array[String] = []
-    var seed_selection := _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION)
-    if seed_selection < HudConst.KNOWLEDGE_COMPLETE:
-        sow_reasons.append(HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(seed_selection), sustain_icon])
-    var refusal := _sow_site_refusal_reason(tile_info)
-    if refusal != "":
-        sow_reasons.append(refusal)
-    # A finished Field retires Sow, same as a finished patch retires Cultivate.
-    if bool(tile_info.get("patch_is_field", false)):
-        sow_reasons.clear()
-        sow_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_FIELD_FORMAT % sustain_icon)
-    if not sow_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_SOW] = sow_reasons
-    return gates
-
-## WHY this ground will not take seed, in the manual's voice — "" when it will. Reads the sim's
-## `patch_sow_site_refusal` verdict; the client never re-derives it (it has neither the per-biome
-## capacity table nor the hydrology). An unknown key still refuses: the sim gates the command on the
-## same seam, so offering the button anyway would only produce a failure the player cannot read.
-func _sow_site_refusal_reason(tile_info: Dictionary) -> String:
-    var key := String(tile_info.get("patch_sow_site_refusal", "")).strip_edges()
-    if key == "":
-        return ""
-    return String(HudFloraVocab.SOW_REFUSAL_REASONS.get(key, HudFloraVocab.SOW_REFUSAL_FALLBACK))
-
-## Unmet prerequisites for the HUNT investment rungs (Tame = rung 2, Corral = rung 3), keyed policy →
-## Array[String] of reasons. The herd twin of `_forage_policy_gates`.
-##
-## The §4.3 GATE RESHUFFLE is what this function encodes: ONE knowledge per transition. **Herding
-## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
-## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
-##
-## Deliberately NOT gated: the herd being Thriving. Taming a herd whose phase swings under hunting
-## would be un-actionable, so the sim just PAUSES the meter instead — see `_tame_stalled_hint`, which
-## is how the player is told rather than left to guess.
-##
-## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
-## ANOTHER faction reads as available here while the sim rejects the assign.
-func _hunt_policy_gates(herd: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
-    var gates := {}
-    var domestication := float(herd.get("domestication", 0.0))
-    var tame_reasons: Array[String] = []
-    var herding := _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, HudFloraVocab.KNOWLEDGE_TRACK_HERDING)
-    if herding < HudConst.KNOWLEDGE_COMPLETE:
-        tame_reasons.append(HudFloraVocab.GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(herding), sustain_icon])
-    # A fully tamed herd retires Tame, exactly as a finished patch retires Cultivate — the build is
-    # DONE, and re-running the verb would only pay its prep rate forever. It SUPERSEDES the knowledge
-    # prerequisite (moot once the meter is full), so it replaces the reason list rather than piling on.
-    # The rung is normally HIDDEN at this point (`_build_herd_assign_controls`'s ceiling pass), so this
-    # reason is read only when a band standing on Tame has it re-admitted so it can be seen and cleared.
-    if domestication >= SourceForecast.DOMESTICATION_COMPLETE:
-        tame_reasons.clear()
-        tame_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_TAMED_FORMAT % sustain_icon)
-    if not tame_reasons.is_empty():
-        gates[HudConst.LABOR_POLICY_TAME] = tame_reasons
-    var corral_reasons: Array[String] = []
-    var penning := _topbar.faction_knowledge(HudConst.PLAYER_FACTION_ID, HudFloraVocab.KNOWLEDGE_TRACK_PENNING)
-    if penning < HudConst.KNOWLEDGE_COMPLETE:
-        corral_reasons.append(HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
-            HudFormat.progress_percent(penning), sustain_icon])
-    if domestication < SourceForecast.DOMESTICATION_COMPLETE:
-        corral_reasons.append(HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-            HudFormat.progress_percent(domestication), FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)])
-    if not corral_reasons.is_empty():
-        gates[SourceForecast.LABOR_POLICY_CORRAL] = corral_reasons
-    return gates
-
 ## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
-## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`_hunt_policy_gates`): a
+## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`RungGates.hunt_gates`): a
 ## herd's phase swings as it is hunted, so refusing the verb would be un-actionable churn. The sim
 ## instead just PAUSES the meter — progress is neither lost nor switched — and resumes when the herd
 ## recovers.
@@ -1164,7 +1069,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Forage take policy (Sustain/Surplus/Deplete/Eradicate, default Sustain) — reuses the hunt policy
     # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
     # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
-    var forage_gates := _forage_policy_gates(tile_info)
+    var forage_gates := RungGates.forage_gates(tile_info, _player_knowledge())
     # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A composed rung that is gated or not in the
     # option set falls back to the default — but a gated rung that IS the standing assignment renders
     # SELECTED AND GATED with its remedy instead. The case this exists for is the one the sim
