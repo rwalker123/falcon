@@ -396,6 +396,18 @@ const ROUTE_DEGENERATE_PATH := [[5, 11]]
 # base) yet immune to float drift.
 const MAX_ZOOM_RADIUS_EPSILON := 0.01
 
+# The zoom-rail LADDER guard (`_assert_zoom_ladder`), in RUNGS above MIN_ZOOM_FACTOR so the probes
+# follow ZOOM_BUTTON_STEP rather than restating it. The on-rung probe sits clear of both limits, so
+# a click in either direction is a real move and not a clamp. The off-grid probe sits MID-WAY
+# between two rungs — far enough from both that neither a round-up nor a round-down bug can land on
+# the expected answer by luck, which a probe near either neighbour would let happen.
+const LADDER_ON_RUNG := 2.0
+const LADDER_PROBE_RUNG := 4.0
+const LADDER_OFF_RUNG_FRACTION := 0.54
+# Clicks in the printed ladder walk: enough to run MIN_ZOOM_FACTOR to the clamp at MAX_ZOOM_FACTOR
+# and show the short final step, so the whole rail reads in one line of the log.
+const LADDER_WALK_CLICKS := 13
+
 var _map: Node2D
 # Where _snapshot_rivers put the MINOR-only navigable head (see RIVER_BRANCH_TERMINUS_CORNER). Reported
 # back rather than recomputed, because the placement walks the trunk and has to dodge it; (-1, -1) if the
@@ -457,6 +469,15 @@ func _ready() -> void:
 	# prefs file, the contamination `band_panel_preview` isolates its config paths to avoid.
 	ClientSettings.zoom_speed_multiplier = ClientSettings.ZOOM_SPEED_DEFAULT
 	ClientSettings.pan_speed_multiplier = ClientSettings.PAN_SPEED_DEFAULT
+	# And STATE THE INPUT CONDITION — the third of the same family, the treatment `blend_probe` already
+	# carries. This harness renders in a REAL window, so `MapView._unhandled_input` picks up the OS
+	# cursor and draws a faint HOVER hex outline into whichever frame happens to be rendering when the
+	# pointer is over the window. Measured here: `map_riverine_split` came back with a brightened hex
+	# outline on ~1 run in 5 — 319 pixels at a max delta of 37, on a DIFFERENT hex each time (hence a
+	# different hash each time), which is far too small to notice by eye and easily large enough to
+	# defeat the byte-diff this frame set exists to support. No state here is driven by input, so drop
+	# input entirely rather than trying to park the pointer.
+	_map.set_process_unhandled_input(false)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	# Warm-up: the FIRST captured state came back all-black — the window is still sizing on the opening
@@ -1281,7 +1302,72 @@ func _ready() -> void:
 		push_warning("map_preview: max-zoom radius %.2f != base %.2f × MAX_ZOOM_FACTOR %.1f (= %.2f) — this state no longer sits at the zoom cap and stops guarding it" % [_map.last_hex_radius, _map.base_hex_radius, MAP_VIEW.MAX_ZOOM_FACTOR, max_zoom_radius])
 	await _save("map_max_zoom")
 
+	_assert_zoom_ladder()
+
 	get_tree().quit()
+
+## The zoom rail's LADDER, asserted rather than photographed — it SAVES NO PNG, deliberately, so the
+## frame set stays a 62-frame bit-identity reference and this guard cannot re-baseline anything.
+## A picture could never carry these claims anyway: every rung renders as a plausible map, so the
+## difference between a correct ladder and a drifting one is invisible in a frame.
+##
+## It exists because the rail shipped SCALED by `ClientSettings.zoom_speed_multiplier`: at the
+## slider's max each click was 1.5, so the rail ran 1.0 → 2.5 → 4.0 → 5.5 → 7.0 with no 6.0 or 6.5,
+## and a different ladder again from the startup zoom. `zoom_step` now snaps to rungs and ignores the
+## slider (the harness pins that slider anyway, so ONLY an assertion can see a regression here).
+func _assert_zoom_ladder() -> void:
+	var step: float = MAP_VIEW.ZOOM_BUTTON_STEP
+	var floor_zoom: float = MAP_VIEW.MIN_ZOOM_FACTOR
+	var ceil_zoom: float = MAP_VIEW.MAX_ZOOM_FACTOR
+
+	# ON a rung: one click must move exactly one rung, in both directions. The epsilon inside
+	# `zoom_step` is what this catches if it is wrong — too small and float drift makes the click a
+	# near-zero no-op, too large and it skips a rung.
+	var on_rung: float = floor_zoom + LADDER_ON_RUNG * step
+	_map.set_zoom_factor(on_rung)
+	_map.zoom_step(1)
+	_assert_ladder("on-rung +1 from %.2f" % on_rung, _map.zoom_factor, on_rung + step)
+	_map.zoom_step(-1)
+	_assert_ladder("on-rung -1 back to %.2f" % on_rung, _map.zoom_factor, on_rung)
+
+	# OFF the ladder — where the wheel and pinch leave it. One click must SNAP to the adjacent rung in
+	# the direction of travel, never add a step to the off-grid value. The probe sits mid-way between
+	# two rungs so neither a round-up nor a round-down bug can pass by luck.
+	var below_rung: float = floor_zoom + LADDER_PROBE_RUNG * step
+	var off_grid: float = below_rung + LADDER_OFF_RUNG_FRACTION * step
+	_map.set_zoom_factor(off_grid)
+	_map.zoom_step(1)
+	_assert_ladder("off-grid %.2f +1 snaps up" % off_grid, _map.zoom_factor, below_rung + step)
+	_map.set_zoom_factor(off_grid)
+	_map.zoom_step(-1)
+	_assert_ladder("off-grid %.2f -1 snaps down" % off_grid, _map.zoom_factor, below_rung)
+
+	# Both limits: the delta comes out 0 and `_apply_zoom`'s `is_zero_approx` early-out makes the
+	# click a clean no-op (no wrap, no crawl past the clamp, no spurious `zoom_changed`).
+	_map.set_zoom_factor(ceil_zoom)
+	_map.zoom_step(1)
+	_assert_ladder("+1 at MAX_ZOOM_FACTOR is a no-op", _map.zoom_factor, ceil_zoom)
+	_map.set_zoom_factor(floor_zoom)
+	_map.zoom_step(-1)
+	_assert_ladder("-1 at MIN_ZOOM_FACTOR is a no-op", _map.zoom_factor, floor_zoom)
+
+	# The ladder as a player walks it, printed so the rungs can be read at a glance in the run log.
+	_map.set_zoom_factor(floor_zoom)
+	var walk := PackedStringArray([("%.1f" % _map.zoom_factor)])
+	for _i in range(LADDER_WALK_CLICKS):
+		_map.zoom_step(1)
+		walk.append("%.1f" % _map.zoom_factor)
+	print("map_preview: zoom ladder = ", " → ".join(walk))
+
+## Same shape as `ui_preview`'s `_assert_hud`: PASS prints, FAIL prints AND raises, so a regression is
+## visible in the run log next to the neighbouring states' `push_warning`s rather than needing a diff.
+func _assert_ladder(label: String, actual: float, expected: float) -> void:
+	if is_equal_approx(actual, expected):
+		print("map_preview: PASS zoom-ladder — %s (%.2f)" % [label, actual])
+	else:
+		var message := "map_preview: FAIL zoom-ladder — %s: got %.4f, expected %.4f" % [label, actual, expected]
+		print(message)
+		push_warning(message)
 
 func _settle() -> void:
 	await _ensure_canvas()

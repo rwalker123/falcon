@@ -159,6 +159,34 @@ icons never crossed the icon-LOD threshold) was **removed**; map zoom is now sol
 `MapView._apply_zoom`. Interface scale returns later via an Options menu. See
 `docs/plan_hud_nav_turn_orb.md`.
 
+**The rail is a SNAPPED LADDER, and it is the one zoom path the speed slider does not touch.**
+Rungs sit every `ZOOM_BUTTON_STEP` from `MIN_ZOOM_FACTOR`; a click moves to the ADJACENT rung and
+clamps to `[MIN_ZOOM_FACTOR, MAX_ZOOM_FACTOR]`. It still expresses that move as a delta through
+`_apply_zoom`, so "one map-zoom code path" is unchanged — this is the `set_zoom_factor` idiom, not a
+second path. Two decisions:
+
+- **Unscaled by `ClientSettings.zoom_speed_multiplier`.** That slider means *speed*, and speed
+  belongs to the CONTINUOUS inputs — wheel, pinch, `Q`/`E` — which still read it. The rail is a
+  DISCRETE, deliberate step, which is what `ZOOM_BUTTON_STEP`'s own comment says it is for. Scaling
+  it made the ladder unpredictable and its offset depend on where you last were: at the slider's max
+  (3.0) each click became 1.5, so the rail ran 1.0 → 2.5 → 4.0 → 5.5 → 7.0 with **no 6.0 or 6.5**,
+  and from `Main.STARTUP_ZOOM_FACTOR` (2.0) it ran a different ladder again (2.0 → 3.5 → 5.0 → 6.5)
+  — which is why it appeared to behave differently on the huge map. Same precedent as mouse-drag
+  pan, which is deliberately 1:1.
+- **Snapped, not accumulated.** The wheel and pinch use their own step and leave `zoom_factor`
+  off-grid; without snapping the readout could never get back onto the ladder. From 3.27 a `+1` goes
+  to 3.5 and a `-1` to 3.0 — the adjacent rung in the direction of travel — so one click always
+  restores a round readout. `ZOOM_RUNG_EPSILON` (in RUNGS) absorbs the float drift `_apply_zoom`'s
+  pivot math leaves, so a value a hair below a rung still counts as ON it and advances a whole rung
+  instead of degenerating into a near-zero step.
+
+`MAX_ZOOM_FACTOR` need not lie on the ladder; the clamp merely makes the topmost click a short one
+(at today's 7.0 it does lie on it, exactly 12 rungs up). At either limit the delta is 0 and
+`_apply_zoom`'s `is_zero_approx` early-out makes the click a clean no-op with no spurious
+`zoom_changed`. **The ladder is guarded behaviourally, not by a picture** — `map_preview`'s
+`_assert_zoom_ladder` (see `test-harnesses.md`), because every rung renders as a plausible map and
+the harness pins the speed slider anyway, so only an assertion can see a regression here.
+
 The map view displays this minimap showing the full map with a viewport indicator rectangle.
 
 ### Component (`ui/MinimapPanel.gd`)
