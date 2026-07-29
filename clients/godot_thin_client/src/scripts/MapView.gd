@@ -287,7 +287,14 @@ const FOW_MAX_SOFTNESS := 2.0
 const FOW_MAX_NOISE_AMOUNT := 1.0
 const HEIGHTFIELD_CONFIG_PATH := "res://src/data/heightfield_config.json"
 const MIN_ZOOM_FACTOR := 1.0
-const MAX_ZOOM_FACTOR := 4.0
+# `zoom_factor` is a MULTIPLE OF THE COVER FIT, not an absolute hex size: `_update_layout_metrics`
+# sizes `base_hex_radius` so the map COVERS the viewport and MIN_ZOOM_FACTOR (1.0) is that fit. So
+# this cap says "how close a single hex can get", and what it buys depends on the panel — on a
+# hi-DPI / high-resolution display the cover fit already yields a small `base_hex_radius`, so at the
+# old 4.0 hexes stayed small even at full zoom-in (issue #375). 7.0 adds six more ZOOM_BUTTON_STEP
+# (0.5) clicks; terrain, labels and markers were checked to still read at the new maximum
+# (`map_preview`'s `map_max_zoom` state, which asserts it is sitting at this const).
+const MAX_ZOOM_FACTOR := 7.0
 const MOUSE_ZOOM_STEP := 0.2
 # One click of the on-screen zoom rail. Deliberately larger than MOUSE_ZOOM_STEP
 # (0.2) so a button press feels like a deliberate step, not a nudge; promote to a
