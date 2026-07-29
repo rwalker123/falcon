@@ -242,6 +242,8 @@ func _ready() -> void:
             map_view.connect("unit_selected", Callable(self, "_on_map_unit_selected"))
         if map_view.has_signal("herd_selected") and not map_view.is_connected("herd_selected", Callable(self, "_on_map_herd_selected")):
             map_view.connect("herd_selected", Callable(self, "_on_map_herd_selected"))
+        if map_view.has_signal("land_selected") and not map_view.is_connected("land_selected", Callable(self, "_on_map_land_selected")):
+            map_view.connect("land_selected", Callable(self, "_on_map_land_selected"))
         if map_view.has_signal("herd_quick_hunt_requested") and not map_view.is_connected("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt")):
             map_view.connect("herd_quick_hunt_requested", Callable(self, "_on_map_herd_quick_hunt"))
         if map_view.has_signal("selection_cleared") and not map_view.is_connected("selection_cleared", Callable(self, "_on_map_selection_cleared")):
@@ -650,6 +652,12 @@ func _on_map_unit_selected(unit: Dictionary) -> void:
 
 func _on_map_herd_selected(herd: Dictionary) -> void:
     _hud_invoke("show_herd_selection", [herd])
+
+## The select-then-cycle click reached the LAND stop of an occupied hex. Distinct from
+## `selection_cleared` (an empty hex) because the HUD must record it as a DELIBERATE choice —
+## otherwise its fresh-hex auto-pick puts the first band straight back.
+func _on_map_land_selected() -> void:
+    _hud_invoke("show_land_selection")
 
 ## Roster-row selection in the HUD Occupants card drives the map selection ring to
 ## the chosen band/herd (no hex click).
