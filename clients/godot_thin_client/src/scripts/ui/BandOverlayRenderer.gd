@@ -317,6 +317,19 @@ func _note_if_hidden(key: String, tile: Vector2i, kind: String, source: Dictiona
 func hidden_source_state() -> Dictionary:
 	return _hidden_source_state
 
+## Where a source's yield label hangs: its MARKER's slot when it drew in one, the hex centre otherwise.
+##
+## THE HEX CENTRE ALONE WAS A CO-LOCATION BUG. Every label used to anchor there for both webs, so two
+## hunted herds on one hex drew two rates at the identical point, one exactly on top of the other — and
+## a herd sharing a hex with a worked patch did the same. The rates belong to different sources, so
+## they hang off the sources. The hex-centre fallback covers a source with no visible marker.
+func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vector2) -> Vector2:
+	var center := _view._hex_center(col, row, radius, origin)
+	var slot := _view.secondary_slot_of(key)
+	if slot < 0:
+		return center
+	return _view.secondary_slot_center(center, slot, radius)
+
 ## Queue this source's badge for the deferred flush. A source can be reached by more than one band, so
 ## the LAST queue for a key wins and carries the running crew total — cheaper and simpler than a second
 ## aggregation pass, and correct because `crew[key]` is accumulated before this is called.
@@ -470,7 +483,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
-				var fcenter := _view._hex_center(tcol, trow, radius, origin)
+				var fcenter := _label_anchor(tcol, trow, _view.secondary_food_key(int(entry.get("target_x", -1)), trow), radius, origin)
 				var forage_overdraw := bool(entry.get("overdraws", false))
 				# The trade component rides along for the one-slot rule in `_draw_yield_label`; a
 				# forage patch normally pays food, so it changes nothing here.
@@ -498,12 +511,14 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# overhunt ⚠ flag is the sim-answered `overdraws` bool (policy-driven, false for Sustain) —
 			# NOT `actual > sustainable`, which false-positives on a kill turn when a banked animal spikes.
 			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
+				var hlabel := _label_anchor(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row,
+					_view.secondary_herd_key(String(entry.get("fauna_id", ""))), radius, origin)
 				var overhunt := bool(entry.get("overdraws", false))
 				var hunt_rate := float(entry["realized_yield"]) if entry.has("realized_yield") \
 					else float(entry.get("sustainable_yield", 0.0))
 				# An INEDIBLE quarry's steady food rate is honestly 0 (issue #337), so the label falls
 				# through to its trade rate rather than announcing the pack is worth nothing.
-				_queue_yield_label(hc, hunt_rate, overhunt, radius, String(entry.get("policy", "")),
+				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, String(entry.get("policy", "")),
 					_entry_realized_trade(entry))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
