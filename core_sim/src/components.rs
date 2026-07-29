@@ -807,8 +807,11 @@ pub fn available_workers(working: Scalar) -> u32 {
 #[derive(Debug, Clone, PartialEq)]
 pub enum LaborTarget {
     /// Gather food from a food-module tile within `band_work_range` under a take policy. Stored as
-    /// coordinates (not an entity) so a moving band re-resolves the tile each turn — an out-of-range
-    /// tile simply yields 0 that turn without dropping the assignment. The `policy`
+    /// coordinates (not an entity) so a moving band re-resolves the tile each turn — and a tile that
+    /// re-resolves out of range is **abandoned**, the plant twin of the Hunt leash lapse: the
+    /// assignment drops and its workers return to the pool. The asymmetry is deliberate — a herd
+    /// moves, so `hunt_leash_tiles` buys the band time to follow it, but a patch is fixed, so
+    /// out-of-range can only mean the band walked away from it. The `policy`
     /// (Sustain/Surplus/Deplete/Eradicate) sizes the per-turn draw on the tile's depletable forage
     /// patch, the plant mirror of the Hunt policy (§0-iii, parity with hunting).
     Forage {

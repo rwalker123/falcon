@@ -10,13 +10,13 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventLog,
-    CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
-    FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
-    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
+    CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
+    FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -550,6 +550,69 @@ fn hunt_lapses_beyond_leash() {
     assert_eq!(
         assignments, 0,
         "an out-of-leash Hunt assignment should lapse and return its workers to the pool"
+    );
+}
+
+/// (c') The plant twin of the leash lapse: a Forage assignment whose tile falls outside
+/// `band_work_range` is **abandoned**, not parked at `+0.00`. A patch cannot move, so out of range
+/// means the band walked away from it — keeping the assignment would book workers on a tile that
+/// still renders as worked while paying a correct-but-indistinguishable zero forever. The in-range
+/// band in the same run pins that "lapse" has not widened into "always drop".
+#[test]
+fn forage_lapses_when_the_band_walks_out_of_work_range() {
+    let mut app = spawn_world();
+    let (patch_pos, patch_tile) = food_tile(&mut app);
+    let grid = app.world.resource::<SimulationConfig>().grid_size;
+    // A camp at least 5 tiles away on X (> band_work_range 2), clamped into the grid.
+    let far_x = if patch_pos.x + 5 < grid.x {
+        patch_pos.x + 5
+    } else {
+        patch_pos.x.saturating_sub(5)
+    };
+    let far_tile = app
+        .world
+        .resource::<TileRegistry>()
+        .index(far_x, patch_pos.y)
+        .expect("far tile resolves");
+    let walked_away = spawn_band(&mut app, far_tile, 10, forage_alloc(patch_pos, 3));
+    // A second band camped on the patch itself — same system run, same source, still in range.
+    let still_there = spawn_band(&mut app, patch_tile, 10, forage_alloc(patch_pos, 3));
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    let abandoned = app
+        .world
+        .get::<LaborAllocation>(walked_away)
+        .expect("the walked-away band keeps its allocation component");
+    assert!(
+        abandoned.assignments.is_empty(),
+        "an out-of-range Forage assignment should lapse and return its workers to the pool"
+    );
+    assert!(
+        abandoned.last_yields.is_empty(),
+        "the lapsed assignment's telemetry row must go with it so `last_yields` stays index-aligned"
+    );
+
+    let kept = app
+        .world
+        .get::<LaborAllocation>(still_there)
+        .expect("the in-range band keeps its allocation component");
+    assert_eq!(
+        kept.assignments.len(),
+        1,
+        "an in-range Forage assignment must be untouched by the out-of-range lapse"
+    );
+
+    let told = app.world.resource::<CommandEventLog>().iter().any(|entry| {
+        matches!(entry.kind, CommandEventKind::Forage)
+            && entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("reason=out_of_range"))
+    });
+    assert!(
+        told,
+        "abandoning a tile must push a Forage feed entry naming why, not vanish silently"
     );
 }
 

@@ -236,5 +236,31 @@ client's compose-time "Expected yield" row promises. Shape:
   `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
 
+### An out-of-range source is ABANDONED, not parked at `+0.00`
+
+A Forage assignment whose tile falls outside `band_work_range` **lapses**: `advance_labor_allocation`
+drops the assignment, removes its `last_yields` row with it, and the workers return to the pool — the
+plant twin of the Hunt leash lapse. It fires the same turn the move takes the band out of range, because
+`advance_band_movement` runs earlier in the Population stage, so labor reads the fresh position.
+
+Keeping it was the other half of the `+0.00` story. A kept assignment reads a *correct* `+0.00` forever
+while the tile still renders as worked and its workers stay booked — indistinguishable from a barren
+source, and the labor is silently dead. **`+0.00` must mean "this source is barren", never "your band is
+elsewhere".**
+
+**A patch gets no leash and a herd does, for a reason.** A herd MOVES, so `hunt_leash_tiles` buys the
+band time to follow it; a patch is fixed, so out of range can only mean the band walked away — a
+decision, not a drift.
+
+Every other zero-yield forage path — no food module, a dead season, an unseeded patch — still **keeps**
+its assignment: those are source conditions that can recover in place.
+
+The abandonment pushes a `CommandEventKind::Forage` feed entry (`status=lapsed reason=out_of_range
+x=… y=…`) naming the tile, so the player is told rather than discovering a dead row. Surfacing that log
+player-facing is issue #272's notification system.
+
+Guarded by `labor_allocation::forage_lapses_when_the_band_walks_out_of_work_range`, which asserts in the
+same run that an in-range band's assignment survives, so "lapse" cannot silently widen to "always drop".
+
 ---
 
