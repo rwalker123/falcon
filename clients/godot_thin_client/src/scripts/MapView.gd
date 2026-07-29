@@ -2390,23 +2390,29 @@ func refresh_selection_payload() -> Dictionary:
 		return {"kind": "tile", "data": info}
 	return {"kind": "none"}
 
-## Select ONE of the hex's occupants — `occupant_index` picks which, and becomes the stored
-## `cycle_index`. The index is a PARAMETER rather than a read of `cycle_index` because the caller's
-## `_emit_tile_selection` runs first and can re-enter `select_occupant` synchronously (the HUD's
-## fresh-hex auto-pick relays `roster_occupant_selected` → `Main` → `select_occupant`), which
-## rewrites `cycle_index` to the FIRST occupant mid-click. Carrying the click's own index through
-## the call makes the selection immune to that re-entrancy.
-func _handle_entity_selection(col: int, row: int, occupant_index: int) -> void:
-	var occupants := _occupants_on_tile(col, row)
+## Select ONE of the hex's occupants — `occupant_index` picks which of `occupants`, and becomes the
+## stored `cycle_index`. BOTH the stack and the index are PARAMETERS rather than reads of
+## `_occupants_on_tile`/`cycle_index`, because the caller's `_emit_tile_selection` runs first and can
+## re-enter `select_occupant` synchronously (the HUD's fresh-hex auto-pick relays
+## `roster_occupant_selected` → `Main` → `select_occupant`), which rewrites `cycle_index` to the
+## FIRST occupant mid-click. Carrying the click's own stack and index through the call makes the
+## selection immune to that re-entrancy, and guarantees the index is applied to the very list it was
+## computed against.
+func _handle_entity_selection(col: int, row: int, occupants: Array, occupant_index: int) -> void:
 	if not occupants.is_empty():
 		# Select-then-cycle: the index picks which occupant of the stack is active.
 		cycle_index = clampi(occupant_index, 0, occupants.size() - 1)
 		var entry: Dictionary = occupants[cycle_index]
 		var data: Dictionary = entry.get(OCCUPANT_KEY_DATA, {})
+		# The payload IS the entry's data, uncopied: `_units_on_tile`/`_herds_on_tile` already made
+		# each entry a private deep copy, and `occupants` is a click-local temporary discarded when
+		# the click returns. So stamping `tile_info` below mutates nothing the decoder or any other
+		# surface holds — the "never write into a held snapshot sub-tree" rule is satisfied by that
+		# first copy.
 		if String(entry.get(OCCUPANT_KEY_KIND, "")) == OCCUPANT_KIND_UNIT:
 			selected_unit_id = int(data.get("entity", -1))
 			selected_herd_id = ""
-			var unit_payload: Dictionary = data.duplicate(true)
+			var unit_payload: Dictionary = data
 			var pos := Array(unit_payload.get("pos", []))
 			var unit_col := col
 			var unit_row := row
@@ -2418,7 +2424,7 @@ func _handle_entity_selection(col: int, row: int, occupant_index: int) -> void:
 		else:
 			selected_unit_id = -1
 			selected_herd_id = String(data.get("id", ""))
-			var herd_payload: Dictionary = data.duplicate(true)
+			var herd_payload: Dictionary = data
 			var herd_col: int = int(herd_payload.get("x", col))
 			var herd_row: int = int(herd_payload.get("y", row))
 			herd_payload["tile_info"] = _tile_info_at(herd_col, herd_row)
@@ -4103,7 +4109,9 @@ func handle_hex_click(col: int, row: int, button_index: int) -> void:
 	emit_signal("hex_selected", col, row, terrain_id)
 	_emit_tile_selection(col, row)
 
-	_handle_entity_selection(col, row, next_index)
+	# The stack built above is passed through rather than rebuilt, so the index is applied to the
+	# very list it was computed against (and each occupant is deep-copied once per click, not twice).
+	_handle_entity_selection(col, row, occupants, next_index)
 
 ## The single shared hex-grid-line drawer for MapView's own canvas — called by BOTH the shader-terrain
 ## branch (base terrain is the behind-quad) and _draw_terrain_direct (blend-off per-hex path), so the

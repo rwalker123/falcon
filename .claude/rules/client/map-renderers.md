@@ -55,6 +55,16 @@ the member mid-click.** `handle_hex_click` computes the next index into a LOCAL,
 after that re-entrancy pins every re-click on the top of the stack; `ui_preview`'s
 `tile_panel_occupant_cycle` fails on exactly that mutation.
 
+**The click builds the stack ONCE and passes it down.** `handle_hex_click` calls
+`_occupants_on_tile` and hands the resulting array to `_handle_entity_selection` alongside the
+index, so the index is applied to the very list it was computed against rather than to a rebuild
+that merely happens to match, and each occupant is deep-copied once per click instead of twice.
+Those copies are also why the selected entry's `data` becomes the emitted payload **uncopied**:
+`_units_on_tile`/`_herds_on_tile` already handed back private deep copies, and the stack is a
+click-local temporary, so stamping `tile_info` onto one mutates nothing the decoder holds (the
+"never write into a held snapshot sub-tree" rule of `turn-profiling.md` is satisfied by that first
+copy).
+
 `cycle_index` remains the stored per-world state (cleared with the selection triplet — see
 `../core_sim/world-handoff.md`), and `select_occupant` keeps it in sync for BOTH kinds through
 `_occupant_cycle_index`, so a roster herd click leaves it pointing at that herd.
