@@ -42,6 +42,8 @@ signal extend_pen_requested(payload: Dictionary)
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
 signal labor_pending_changed(pending: Dictionary)
+## The player faction's {track: progress} row, pushed to MapView for the worked-source ready marks.
+signal faction_knowledge_changed(knowledge: Dictionary)
 signal next_turn_requested(steps: int)
 ## Emitted whenever the active command-targeting state changes. Carries a dict
 ## ({} when inactive) that Main forwards to MapView so the map can draw the
@@ -543,6 +545,12 @@ func update_demographics(demographics_variant: Variant) -> void:
 
 func update_intensification(intensification_variant: Variant) -> void:
     _topbar.update_intensification(intensification_variant)
+    # PUSH the player's knowledge row to MapView, which needs it to decide whether a worked source
+    # wears the ⌃ ready mark and holds none of it itself. The knowledge is the ONLY input the map
+    # lacks — it already has `forage_patch_lookup` and `herds` — so the push is one small dict rather
+    # than a derived mark model, and the derivation stays in `RungGates` where all three surfaces
+    # reach it. Mirrors the `labor_pending_changed` → `Main` → `set_labor_pending` path exactly.
+    emit_signal("faction_knowledge_changed", _topbar.faction_tracks(HudConst.PLAYER_FACTION_ID))
 
 func update_discoveries(discovered_variant: Variant) -> void:
     _topbar.update_discoveries(discovered_variant)

@@ -468,6 +468,23 @@ func _ready() -> void:
 	await _settle()
 	await _save("map_band_label_overlap")
 	_map.set_labor_pending({})  # leave the pending overlay clear for the following states
+	# State A-ready — THE ⌃ READY MARK (issue #412). Same band, but now the sources can climb: a
+	# TENDED patch on sowable ground offers Sow, a fully TAMED "pen"-ceiling herd offers Corral, and a
+	# third source (the wolf pack, ceiling "wild") offers nothing however much we know. The contrast is
+	# the point — a chevron on every marker would prove nothing.
+	#
+	# Faction knowledge is PUSHED, not inherited: `map_preview` has no HUD, so the row that
+	# `Hud.faction_knowledge_changed` normally supplies is set here directly. Without it every source
+	# reads "not ready", which is the correct degradation but an unreadable frame.
+	_map.display_snapshot(_snapshot_work_ready())
+	_map.set_faction_knowledge({
+		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0,
+	})
+	_map.selected_unit_id = BAND_ENTITY
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_worked_ready")
+	_map.set_faction_knowledge({})  # leave the following states on the honest "knows nothing" default
 
 	# State A-far — the SAME worked band on a large grid so fitted hexes go tiny (radius <
 	# ICON_MIN_DETAIL_RADIUS): the per-source yield labels + ⚠ must LOD-SUPPRESS so far zoom stays a
@@ -1781,6 +1798,27 @@ func _snapshot_work() -> Dictionary:
 		{"x": FORAGE_A_X, "y": FORAGE_A_Y, "module": "berry_patch", "kind": "forage"},
 		{"x": 9, "y": 8, "module": "berry_patch", "kind": "forage"},
 	]
+	return snap
+
+## State A-ready fixture: the same worked band, with its sources standing one rung short of the top so
+## the ⌃ mark has something to offer. The deer is fully tamed with a "pen" ceiling (→ Corral); the
+## first forage tile is a tended patch on willing ground (→ Sow); the wolf pack keeps its "wild"
+## ceiling, so it stays unmarked and proves the mark is selective.
+func _snapshot_work_ready() -> Dictionary:
+	var snap := _snapshot_work()
+	snap["forage_patches"] = [{
+		"x": FORAGE_A_X, "y": FORAGE_A_Y,
+		"ecology_phase": "thriving",
+		"is_cultivated": true, "is_field": false,
+		"sow_site_refusal": "",
+		"composition": [{"species": "wild_wheat", "display_name": "Wild Wheat",
+			"share": 1.0, "can_cultivate": true, "can_sow": true}],
+	}]
+	for herd_variant in snap["herds"]:
+		var herd: Dictionary = herd_variant
+		if String(herd.get("id", "")) == "game_deer_07":
+			herd["domestication"] = 1.0
+			herd["husbandry_ceiling"] = "pen"
 	return snap
 
 ## State A-overlap fixture: the worked band, plus a herd standing ON the first worked forage tile so

@@ -497,6 +497,8 @@ var scout_sites: Dictionary = {}
 # Forage patches (cultivation/tended state, decoded from ForagePatchState), keyed by
 # Vector2i(x, y); read by `_tile_info_at` for the Tile-card cultivation/tended readout.
 var forage_patch_lookup: Dictionary = {}
+## Player faction knowledge, pushed from the HUD — see `set_faction_knowledge`.
+var faction_knowledge: Dictionary = {}
 var tile_lookup: Dictionary = {}
 # Per-tile habitability (band-independent morale drain, decoded from TileState),
 # keyed by Vector2i(x, y); read by `_tile_info_at` for the Tile-card Habitability row.
@@ -1853,6 +1855,10 @@ func set_labor_pending(pending: Dictionary) -> void:
 ## Not cleared, deliberately: `active_overlay_key`, the trade-overlay toggle, the terrain highlight id
 ## and the texture/grid toggles are VIEW preferences (or keyed on stable terrain ids), not world data.
 func reset_world_state() -> void:
+	# PUSHED IN from the HUD and keyed by tracks the new world reuses — the third shape
+	# `.claude/rules/core_sim/world-handoff.md` names as needing a clear. A new world knows nothing,
+	# and stale knowledge here would mark its wild sources as ready to climb.
+	faction_knowledge.clear()
 	herd_trails.clear()
 	culture_layer_map.clear()
 	selected_unit_id = -1
@@ -4004,6 +4010,14 @@ func set_targeting(info: Dictionary) -> void:
 ## source's marker drew in, and a renderer reaches its siblings through MapView rather than holding
 ## one another (the same convention as `_hex_center` / `_herd_by_id` / `_fill_hex`). The KEY builders
 ## come through too, so a mark and the marker it rides can never disagree about a source's identity.
+## The player faction's {track: progress} knowledge row (`Hud.faction_knowledge_changed` → `Main`).
+## MapView holds the patches and the herds already; this is the one input the ready mark needs that it
+## cannot see, and it is deliberately the RAW row rather than a derived answer, so `RungGates` stays
+## the single place the rung rules are written.
+func set_faction_knowledge(knowledge: Dictionary) -> void:
+	faction_knowledge = knowledge if knowledge is Dictionary else {}
+	queue_redraw()
+
 func secondary_slot_of(key: String) -> int:
 	return _secondary_markers.slot_of(key)
 

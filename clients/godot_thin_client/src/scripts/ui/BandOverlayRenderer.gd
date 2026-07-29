@@ -88,6 +88,30 @@ const WORKED_RING_OTHER_ALPHA := 0.5
 # is overflowed past the visible cap.
 const WORKED_TILE_OUTLINE := Color(0.46, 0.96, 0.46, 0.35)
 const WORKED_TILE_OUTLINE_WIDTH := 1.4
+# THE SOURCE BADGE — one plate per worked source, docked UNDER its marker, carrying the two facts the
+# ring cannot: how many people work it, and whether it can climb a rung. One plate rather than two,
+# because with three sources on a hex two elements each is six things competing for the same forty
+# pixels (docs/plan_worked_source_marks.md §2.2).
+#
+# BELOW the icon, never upper-right: `MapView.HERD_DISTRESS_BADGE_OFFSET_FACTOR` already owns that
+# corner, and a herd can be both penned-and-starving and ready-to-something.
+const BADGE_CREW_GLYPH := "⚒"
+# The chevron is what makes the mark read "available" rather than "done". It has to be the carrier
+# because the verb and standing-rung glyphs COLLIDE — ▦ is both "Sow" and "this is a Field", 🐄 both
+# "Corral" and "this is a Pen" — so a bare verb glyph on a marker would say the opposite of the truth.
+const BADGE_READY_CHEVRON := "⌃"
+const BADGE_OFFSET_FACTOR := 0.42        # of hex radius, below the slot centre
+const BADGE_FONT_SIZE_FACTOR := 0.26     # of hex radius
+const BADGE_FONT_SIZE_MIN := 9
+const BADGE_FONT_SIZE_MAX := 14
+const BADGE_PAD_FACTOR := 0.34           # of the font size, per side
+const BADGE_BG := Color(0.04, 0.05, 0.07, 0.88)
+const BADGE_CREW_COLOR := Color(0.616, 0.690, 0.678, 1.0)   # HudStyle.INK_DIM
+# READY wears SIGNAL cyan, NOT amber: amber is trouble in this HUD (overdraw, understaffing, a
+# starving pen), and colouring an opportunity amber trains the player to read good news as a warning.
+const BADGE_READY_COLOR := Color(0.310, 0.878, 0.812, 1.0)  # HudStyle.SIGNAL
+const BADGE_BORDER_WIDTH := 1.2
+const BADGE_BORDER_IDLE := Color(0.149, 0.212, 0.235, 1.0)  # HudStyle.LINE
 # Hunted herds: a thin band→herd link for the SELECTED band (the herd can sit well outside the
 # work-range ring — hunt reach = work_range + leash).
 const HUNT_WORKED_LINK_COLOR := Color(0.92, 0.34, 0.30, 0.60)
@@ -164,6 +188,9 @@ var _labor_pending: Dictionary = {}
 # annotation ON TOP OF the map, so they must be the LAST thing drawn: collected during the
 # work-highlight pass, flushed at the very end of MapView's _draw.
 var _deferred_yield_labels: Array[Dictionary] = []
+## Per-source BADGES, deferred for the same reason the labels are: they annotate the map and would
+## otherwise be painted over by the marker glyphs, rings and pending overlays drawn after this pass.
+var _deferred_source_badges: Array[Dictionary] = []
 
 func _init(view: MapView) -> void:
 	_view = view
@@ -181,6 +208,7 @@ func set_labor_pending(pending: Dictionary) -> void:
 func reset_world_state() -> void:
 	_labor_pending = {}
 	_deferred_yield_labels.clear()
+	_deferred_source_badges.clear()
 
 ## EVERY player band's worked sources, drawn whatever is selected (docs/plan_worked_source_marks.md).
 ##
@@ -199,6 +227,11 @@ func reset_world_state() -> void:
 ## not draw (overflowed past `SECONDARY_VISIBLE_CAP`, or LOD-suppressed at far zoom, both reported as
 ## `slot_of == -1`) has nothing to ring, and the outline is what still says work happens here.
 func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
+	_deferred_source_badges.clear()
+	# CREW IS AGGREGATED PER SOURCE, NOT PER BAND — two bands can work one patch, and two badges on one
+	# marker would be a lie about a single number. Keyed by the source's own slot key, the same identity
+	# the ring docks to.
+	var crew: Dictionary = {}
 	for unit_variant in _view.units:
 		if not (unit_variant is Dictionary):
 			continue
@@ -225,8 +258,12 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				if tx < 0 or trow < 0 or trow >= _view.grid_height:
 					continue
 				var tcol := eff_col + _view._wrapped_col_delta(band_col, tx)
-				_draw_worked_mark(tcol, trow, _view.secondary_food_key(tx, trow),
-					FORAGE_WORKED_COLOR, selected, radius, origin)
+				var fkey := _view.secondary_food_key(tx, trow)
+				crew[fkey] = int(crew.get(fkey, 0)) + int(entry.get("workers", 0))
+				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
+				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
+					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
+					String(entry.get("policy", "")), int(crew[fkey]), radius, origin)
 			elif kind == LABOR_KIND_HUNT:
 				# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
 				# target is only the fallback for a herd that left the visible fauna set.
@@ -240,8 +277,72 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				if hx < 0 or hrow < 0 or hrow >= _view.grid_height:
 					continue
 				var hcol := eff_col + _view._wrapped_col_delta(band_col, hx)
-				_draw_worked_mark(hcol, hrow, _view.secondary_herd_key(herd_id),
-					HUNT_WORKED_COLOR, selected, radius, origin)
+				var hkey := _view.secondary_herd_key(herd_id)
+				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
+				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
+				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
+					String(entry.get("policy", "")), int(crew[hkey]), radius, origin)
+
+## Queue this source's badge for the deferred flush. A source can be reached by more than one band, so
+## the LAST queue for a key wins and carries the running crew total — cheaper and simpler than a second
+## aggregation pass, and correct because `crew[key]` is accumulated before this is called.
+##
+## Skipped entirely when the source's marker did not draw (`slot_of == -1`: overflowed past the visible
+## cap, or LOD-suppressed at far zoom). What the chip hides is the chip's job to report, not a badge's
+## to draw somewhere arbitrary.
+func _queue_source_badge(col: int, row: int, key: String, kind: String, source: Dictionary,
+		policy: String, crew: int, radius: float, origin: Vector2) -> void:
+	var slot := _view.secondary_slot_of(key)
+	if slot < 0:
+		return
+	var ready: Dictionary = {}
+	if not source.is_empty():
+		ready = RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge)
+	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
+	# One entry per source key: a later band working the same source replaces the earlier queue rather
+	# than stacking a second plate on the same marker.
+	for i in range(_deferred_source_badges.size()):
+		if String(_deferred_source_badges[i].get("key", "")) == key:
+			_deferred_source_badges.remove_at(i)
+			break
+	_deferred_source_badges.append({
+		"key": key, "center": center, "crew": crew, "radius": radius,
+		"ready_glyph": String(ready.get("glyph", "")),
+	})
+
+## Render (and drain) the deferred badge batch — the crew count, and the ⌃ chevron when the source can
+## climb. Drawn in `flush_yield_labels` alongside the yield labels, i.e. LAST in `_draw`.
+func _draw_source_badge(entry: Dictionary) -> void:
+	var radius := float(entry.get("radius", 0.0))
+	var crew := int(entry.get("crew", 0))
+	if crew <= 0:
+		return
+	var ready_glyph := String(entry.get("ready_glyph", ""))
+	# MapView is a Node2D, so there is no theme to ask — `ThemeDB.fallback_font` is what every
+	# other map-side text draw uses (`_draw_yield_label`, the count pills).
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	var font_size := int(clampf(radius * BADGE_FONT_SIZE_FACTOR, BADGE_FONT_SIZE_MIN, BADGE_FONT_SIZE_MAX))
+	var crew_text := "%s%d" % [BADGE_CREW_GLYPH, crew]
+	var ready_text := "" if ready_glyph == "" else "%s%s " % [BADGE_READY_CHEVRON, ready_glyph]
+	var text := ready_text + crew_text
+	var run: Vector2 = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	var pad := font_size * BADGE_PAD_FACTOR
+	var center: Vector2 = entry["center"] + Vector2(0.0, radius * BADGE_OFFSET_FACTOR)
+	var box := Rect2(center - Vector2(run.x * 0.5 + pad, run.y * 0.5 + pad * 0.5),
+		Vector2(run.x + pad * 2.0, run.y + pad))
+	_view.draw_rect(box, BADGE_BG, true)
+	# THE BORDER carries the ready state, so the plate reads as an offer at a glance without the eye
+	# having to resolve a small glyph: SIGNAL cyan when a rung is on offer, the quiet line colour when
+	# the source is merely worked.
+	_view.draw_rect(box, BADGE_READY_COLOR if ready_text != "" else BADGE_BORDER_IDLE, false, BADGE_BORDER_WIDTH)
+	var baseline := center + Vector2(-run.x * 0.5, run.y * 0.5 - font.get_descent(font_size))
+	if ready_text != "":
+		var ready_run: Vector2 = font.get_string_size(ready_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		_view.draw_string(font, baseline, ready_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, BADGE_READY_COLOR)
+		baseline.x += ready_run.x
+	_view.draw_string(font, baseline, crew_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, BADGE_CREW_COLOR)
 
 ## One source's worked mark: the ring on its marker's slot, plus the tile-level outline underneath.
 ## `slot_of(key) == -1` means the marker did not draw at all (overflowed or far zoom), so only the
@@ -644,6 +745,9 @@ func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radi
 ## Render (and drain) the deferred yield-label batch. Called LAST in `_draw` — after the markers,
 ## rings, links, pending overlays and targeting — so nothing paints over the labels.
 func flush_yield_labels() -> void:
+	for badge in _deferred_source_badges:
+		_draw_source_badge(badge)
+	_deferred_source_badges.clear()
 	for label in _deferred_yield_labels:
 		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
 			label["policy"], float(label.get("trade", 0.0)))
