@@ -687,8 +687,8 @@ pub fn advance_expeditions(
                 }
             }
             ExpeditionPhase::Delivering => {
-                // Run carried food to the band's live tile; on arrival deposit it and auto-relaunch to
-                // Hunting. **Every extractive delivering policy passes through here** (issue #441),
+                // Run carried food to the band's live tile; once within comm range of it, deposit and
+                // auto-relaunch to Hunting. **Every extractive delivering policy passes through here** (issue #441),
                 // not Deplete alone: Deplete arrives on each FULL pack of its repeated trips, and any
                 // policy arrives on a near-band drop-off. What differs between them is only *what ends
                 // the trip* (the `Hunting` arm's `done`) — Deplete's series ends on surplus-spent,

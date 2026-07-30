@@ -1464,8 +1464,19 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
 }
 
 /// Home-band distance from the herd for the near-band drop-off test: **inside**
-/// `hunt.drop_off_within_tiles` (3, so the gate fires) but **outside** `hunt.reach_tiles` (1, so the
-/// party genuinely walks the load in and back out to the herd rather than delivering from its kill).
+/// `hunt.drop_off_within_tiles` (3), so the near-band gate fires, **and** within
+/// `effective_comm_range()` (2) of the party — which spawns *at* the herd — so the drop-off deposits
+/// from where the party is standing.
+///
+/// **Three distinct radii, easily conflated** (this const's doc claimed the wrong one before): the
+/// take radius `hunt.reach_tiles` (1, party → herd), the drop-off gate `hunt.drop_off_within_tiles`
+/// (3, herd → home band), and the delivery proximity `effective_comm_range()` (2, party → home band,
+/// what `near_home` in `advance_expeditions` tests). Only the last two are geometry this test
+/// depends on.
+///
+/// The test does **not** depend on a carry-in: `near_home` is already true on turn 1, so no walking
+/// happens between the kill and the deposit. What it pins is that the party **survives** the
+/// drop-off and resumes hunting, which is independent of how far the load travels.
 const NEAR_BAND_TILES: u32 = 2;
 
 /// A pack a `PARTY_WORKERS` party needs **several turns** to load past the drop-off's worthwhile-load
@@ -1532,8 +1543,8 @@ fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
     let home = spawn_home_band_near_herd(&mut app, herd_pos, NEAR_BAND_TILES);
     let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
 
-    // The geometry this test exists for: the herd is inside the drop-off radius, and the band is
-    // beyond the party's hunting reach.
+    // The geometry this test exists for: the herd is inside the drop-off radius, and the party (which
+    // spawned at the herd) is inside comm range of the band.
     let cfg = expedition_config(&app);
     assert!(
         NEAR_BAND_TILES <= cfg.hunt.drop_off_within_tiles,
@@ -1541,8 +1552,11 @@ fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
         cfg.hunt.drop_off_within_tiles
     );
     assert!(
-        NEAR_BAND_TILES > cfg.hunt.reach_tiles,
-        "the band must sit beyond hunting reach so the load is genuinely carried in"
+        NEAR_BAND_TILES <= cfg.effective_comm_range(),
+        "the band must sit within comm range ({}) of the party's kill site, which is what puts it in \
+         delivery range from where it stands ({NEAR_BAND_TILES} tiles) — retuning `comm_range_tiles` \
+         below that turns this fixture into a carry-in, which `NEAR_BAND_TILES`'s doc denies",
+        cfg.effective_comm_range()
     );
 
     let pack_cap = PARTY_WORKERS as f32 * cfg.hunt.per_worker_carry;
