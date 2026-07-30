@@ -46,12 +46,18 @@ pub struct HuntPolicyCeilingState {
     /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
     #[serde(default)]
     pub provisions_per_turn: f32,
-    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row is a
-    /// [`crate::YieldAccounts`]-shaped pair, not a food scalar: every harvesting policy sells the species'
-    /// trade component, and an **inedible** species (a wolf) reads `provisions_per_turn == 0` with
-    /// this strictly positive — a food-only row could not express its yield at all. Render a trade
-    /// line **only when this is `> 0`**, the rule flora's cash-crop line already uses, so a source
-    /// with no trade shows no line rather than a false "0".
+    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row states an ACCOUNT
+    /// VECTOR, not a food scalar: every harvesting policy sells the species' trade component, and an
+    /// **inedible** species (a wolf) reads `provisions_per_turn == 0` with this strictly positive —
+    /// a food-only row could not express its yield at all. Render a trade line **only when this is
+    /// `> 0`**, the rule flora's cash-crop line already uses, so a source with no trade shows no line
+    /// rather than a false "0".
+    ///
+    /// **This herd row carries TWO of the three accounts, and the missing one is structural.** The
+    /// plant twin (`ForagePolicyCeiling`) carries a third, fodder, because a crop can be grown as
+    /// feed; `fauna_config::YieldAccounts` fills a zero there for every species, since no animal is
+    /// harvested for fodder. So do not "finish" this row by appending a `fodder_per_turn` — there is
+    /// nothing on the sim side to put in it.
     pub trade_goods_per_turn: f32,
 }
 
