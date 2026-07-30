@@ -56,13 +56,27 @@ current branch:
 gh pr view --json number,headRefName,url --jq '{number, headRefName, url}'
 ```
 
-Also capture repo slug and HEAD SHA — the eval agent and the side-effect calls
-both need them:
+Also capture repo slug and HEAD SHA — the review agents and the side-effect
+calls both need them:
 
 ```bash
 gh repo view --json owner,name --jq '.owner.login + "/" + .name'
 gh pr view {PR_NUMBER} --json headRefOid --jq '.headRefOid'
 ```
+
+**Then confirm the working tree is at that SHA** — both agents Read local files
+to assess findings, and `gh pr diff` will happily hand back a diff for a PR that
+isn't checked out:
+
+```bash
+git rev-parse HEAD
+```
+
+If it doesn't match `headRefOid`, **stop and ask the user** before going further:
+reviewing PR #N's diff against a different branch's file contents produces
+findings about code the PR doesn't contain and misses the code it does. Offer
+`gh pr checkout {PR_NUMBER}` or a worktree — but never switch branches yourself;
+this repo's branch topology is the user's call (see the root `CLAUDE.md`).
 
 ## Step 2: Delegate the review to two `general-purpose` agents, in parallel
 
@@ -76,7 +90,13 @@ the file reads land in the orchestrator.
   comments; its value is that it looks at the diff without knowing what the bots
   already flagged.
 
-Instruct each agent to do the following, verbatim in spirit:
+Instruct each agent to do **only its own sections** below — A gets 2a–2e, B gets
+2f — verbatim in spirit. Handing B any part of 2a–2e defeats the independence
+that is the entire reason there are two agents.
+
+Both agents number their findings from `n: 1` independently; **the orchestrator
+renumbers on merge** (Step 3). Do not ask either agent to guess an offset — they
+run in parallel and neither knows the other's count.
 
 ### 2a: Fetch Copilot + human inline review comments
 
@@ -195,7 +215,7 @@ subsystem `CLAUDE.md` (`core_sim/CLAUDE.md`,
     "title": "...",
     "description": "...",
     "comment_id": 123,               // database id of the source comment
-    "comment_type": "pulls|issues",  // which reactions/reply path applies
+    "comment_type": "pulls|issues",  // which reactions/reply path applies; null for local
     "thread_id": "PRRT_...",         // GraphQL node id, or null if no thread yet
     "in_reply_to_id": 123,           // for threaded replies
     "needs_inline_comment": true     // true for Claude findings with file+line and no thread yet
@@ -227,9 +247,17 @@ context: a hunk can be correct in isolation and wrong against its caller, and
 the diff never shows the caller.
 
 Ground the review in `.github/copilot-instructions.md`, `CLAUDE.md`, and the
-`.claude/rules/**` files whose `paths:` frontmatter matches the changed code —
+`.claude/rules/**` files whose `paths:` frontmatter matches the changed files —
 those rules are this repo's real invariants, and a violation of one is a finding
-even when the code compiles and passes tests. Look hardest at:
+even when the code compiles and passes tests.
+
+**First decide what kind of PR this is**, because the two checklists below are
+different and a PR can be both. This repo lands code-free changes routinely —
+`.claude/rules/*.md`, `docs/plan_*.md`, hub `CLAUDE.md` files, `.claude/skills/**`,
+`core_sim/src/data/*.json` presets, `.github/workflows`. A doc- or config-only PR
+is **not** an automatic empty review; it just moves the review to the second list.
+
+For **code** changes, look hardest at:
 
 - **Correctness**: off-by-one and boundary hexes, integer/float division and
   truncation, sign and unit errors, `unwrap()`/`expect()`/`panic!` on paths that
@@ -249,24 +277,61 @@ even when the code compiles and passes tests. Look hardest at:
 - **Dead ends**: code added but never called, a config key added but never read,
   a snapshot field populated but never consumed
 
-Report only defects that would change the code, and state each as a concrete
-failure — *given this input, this happens* — not as a preference. If it can't
-name what goes wrong, it's a nit; drop it. Do not report the diff back as a
+For **docs, rules, skills, agent definitions, configs, and workflows**, the
+failure mode is "someone — human or agent — follows this and does the wrong
+thing". Look hardest at:
+
+- **Stale leftovers**: a paragraph the change should have updated but didn't, so
+  the file now describes both the old and the new behavior. Renaming a concept
+  in one place and not the others is the same defect
+- **Contradictions**: two instructions that cannot both be followed, or a new one
+  that contradicts an older paragraph left in place, or the repo's own doctrine
+  (the hub-vs-rule-file rule, the worktree/branch/commit rules, no magic numbers,
+  no back-compat)
+- **Broken cross-references**: step numbers, section labels, file paths, skill
+  names, and `paths:` frontmatter globs that no longer resolve or now point at
+  the wrong thing after a renumber or a move
+- **Procedure correctness**: shell/`gh`/jq/GraphQL snippets that would error,
+  target the wrong endpoint, or perform a mutation the surrounding prose says not
+  to perform
+- **Contracts between steps**: does every field one step emits get consumed by
+  the step that reads it? A field introduced and never handled, or read and never
+  set, is a defect even in prose
+- **Dead ends**: an instruction nothing downstream acts on; a config key added but
+  never read; an output section nothing consumes
+
+Report only defects that would change the changed files, and state each as a
+concrete failure — *given this input, this happens* — not as a preference. If it
+can't name what goes wrong, it's a nit; drop it. Do not report the diff back as a
 summary, and do not restate what the PR does well.
 
 Agent B returns the same two things as Agent A — a report section and a JSON
 manifest — using `"source": "local"`, `"severity"` of
-`Critical|Important|Nice-to-have`, `"assessment": "fix-needed"` (or `style-nit`),
-and `null` for `comment_id`, `thread_id`, and `in_reply_to_id`, with
-`needs_inline_comment: false`. It is read-only: no comments, no reactions, no
-edits to the working tree.
+`Critical|Important|Nice-to-have`, `"assessment": "fix-needed"`, and `null` for
+`comment_id`, `comment_type`, `thread_id`, and `in_reply_to_id`, with
+`needs_inline_comment: false`. `fix-needed` is its only assessment: it was told
+to drop anything it can't state as a failure, so a local `style-nit` would be a
+finding it should not have reported at all. It is read-only: no comments, no
+reactions, no edits to the working tree.
 
 ## Step 3: Present the merged report and get approval (orchestrator)
 
-Merge both agents' reports into one, de-duplicating where a local finding and a
-posted comment describe the same defect (keep the posted one — it has a thread —
-and note that the local review independently found it). Add a section for the
-local findings:
+**Concatenate the two manifests into one and renumber `n` sequentially across the
+merged list.** Both agents number from 1, so the raw manifests collide — two #1s
+in the report make "fix 1,3,5" unanswerable and dispatch the wrong findings in
+Step 4. Everything downstream (Steps 4 and 5) reads this single merged manifest.
+
+Then **de-duplicate** where a local finding and a posted comment describe the same
+defect. Keep the posted entry's `comment_id` / `comment_type` / `thread_id` — the
+side-effects in Step 5 need them — but take the **more severe of the two
+assessments**, and say in the report that the local review found it
+independently. Two passes converging on the same defect is the strongest evidence
+available that it's real; a rule that let Agent A's `disagree` or `style-nit`
+silently outrank Agent B's `fix-needed` would discard exactly the signal the
+second pass exists to produce.
+
+Add a section for the local-only findings (numbering continues from the merged
+list — the example below assumes six posted findings came first):
 
 ```
 ### Found by Local Review (X items — not filed by any reviewer)
@@ -288,6 +353,10 @@ and local review alike — and dispatch in parallel:
   FlatBuffers) → **`server-dev`**
 - **Godot / GDScript / native extension** (`clients/godot_thin_client`) →
   **`client-dev`**
+- **Docs, rules, skills, agent definitions, workflows** (`docs/**`,
+  `.claude/rules/**`, `.claude/skills/**`, `CLAUDE.md`, `.github/**`) → **the
+  orchestrator, inline**. There is no coder agent for prose and no build to run,
+  and the edits need the judgment that produced the finding.
 
 Give each agent the specific findings (file, line, description, the fix intent)
 for its area. Both agents self-verify before returning:
@@ -307,7 +376,7 @@ handle it inline — but that should be the exception.
 ## Step 5: GitHub side-effects (orchestrator)
 
 These are small `gh` calls; keep them in the orchestrator so mutations stay under
-the user's eye. Drive them from the JSON manifest.
+the user's eye. Drive them from the merged JSON manifest built in Step 3.
 
 **Local findings (`"source": "local"`) have no GitHub side-effects** — no
 thread to reply to, nothing to resolve, no reaction to add. They live in the
@@ -372,12 +441,12 @@ gh api repos/:owner/:repo/issues/comments/{COMMENT_ID}/reactions -f content=eyes
   list is not evidence the diff is covered; the two passes look for different
   things. Equally, an empty local-review section is a fine result — report it in
   one line rather than padding it with nits.
-- Re-running on the same PR re-runs the local review from scratch (there is no
-  `eyes` marker for it). Findings the user already declined stay declined —
-  don't re-litigate them; the comment triage half is what dedupes via reactions.
+- **Re-running on the same PR is not a no-op.** The `eyes` marker dedupes the
+  comment half only, so triage surfaces just the NEW unprocessed comments — but
+  the local review re-runs from scratch every time, and a PR whose comments are
+  all marked processed still gets a full second pass. Findings the user already
+  declined stay declined; don't re-litigate them.
 - Use exact file paths from the PR diff (not guessed paths) when creating inline
   comments. If a Claude finding names multiple files, comment on the primary one.
 - Handle pagination — PRs can have many comments across pages.
 - The `eyes` reaction is the "processed" marker — do not use other reactions.
-- Re-running `/review-pr` on the same PR should surface only NEW unprocessed
-  comments.
