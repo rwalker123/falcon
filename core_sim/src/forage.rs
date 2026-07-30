@@ -1168,7 +1168,9 @@ fn rung_fodder_payoff(
 /// §4.3 "assert the quote against the payoff function" rule), so the picker's cash-crop row and the
 /// payout cannot drift. `cultivatePayoff`/`sowPayoff` read `0` for a cash crop — it is worthless as
 /// food — so this is the number that lets the picker show its real value instead of a bare `0×`.
-/// `0.0` for a staple/hay (whose vector pays only the flat token) or a plant that cannot climb `rung`.
+/// `0.0` for HAY — whose vector pays no trade at all — or a plant that cannot climb `rung`. A
+/// STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0`, which is exactly
+/// why no surface may read "trade > 0" as "cash crop".
 ///
 /// **The rung parameter closes a real hole, not a symmetry gap.** #433 made a tended cash crop *pay*
 /// trade ([`tended_take_trade_goods`]); this is what makes it *quote* it. Until now the Cultivate row

@@ -342,7 +342,8 @@ fn derive_tile_quotes(
                 // **What a cash-crop Field of this plant would pay into the TRADE account** (F4) —
                 // the exact trade twin, through the same `commit_trade_payoff` seam the sim's
                 // `field_trade_goods` pays with, so the picker can show a cash crop's value where
-                // `sow_yield_ratio` reads 0×. `0` for a staple/hay or a plant that cannot Sow here.
+                // `sow_yield_ratio` reads 0×. `0` for hay (no trade in its vector) or a plant that
+                // cannot Sow here — a staple reads the small flat token, never `0`.
                 sow_trade_payoff: trade_payoff(RungKey::PlantField),
                 // **The same two accounts one rung down** (#419) — what a completed TENDED PATCH of
                 // this plant would pay, through `tended_fodder`/`tended_trade_goods`. The Cultivate

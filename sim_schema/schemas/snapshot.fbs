@@ -1243,9 +1243,10 @@ table FloraShareInfo {
   // this tile, in the same convention as `sowFodderPayoff` but routed to the TRADE account. A cash
   // crop's payoff is NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as
   // food) — this is the number that lets the picker show a cash crop's real value instead of a bare
-  // 0x. `0` for a staple/hay (its yield vector pays no trade beyond the flat token) or a plant that
-  // cannot climb to the Field rung here. Produced by the same `field_trade_goods` payoff function the
-  // sim pays with, so the quote and the payout cannot drift.
+  // 0x. `0` for hay (its yield vector pays no trade at all) or a plant that cannot climb to the Field
+  // rung here. A STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0` — so no
+  // client surface may treat `trade > 0` as "cash crop". Produced by the same `field_trade_goods`
+  // payoff function the sim pays with, so the quote and the payout cannot drift.
   sowTradePayoff:float = 0;
   // --- WHAT A TENDED PATCH WOULD PAY IN THE TWO NON-FOOD ACCOUNTS (appended, issue #419) ---
   // The rung-2 twins of `sowFodderPayoff`/`sowTradePayoff`: fodder and trade goods per turn a
