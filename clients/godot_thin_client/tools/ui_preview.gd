@@ -117,6 +117,20 @@ const PELT_FRAME_HUNTERS := 2
 ## both; the pre-fix face was the food clause alone.
 const BOAR_TAME_PAYOFF_FACE := "→ 1.48 food · 0.37 trade"
 const BOAR_CORRAL_PAYOFF_FACE := "→ 2.95 food · 0.74 trade"
+## The three forage-rung faces `_hay_meadow_tile_fixture` / `_dead_season_tile_fixture` are judged on
+## (issue #426), spelled out as literals for the same reason as the boar pair above. The first two are
+## the THREE-account line the plant web grew a column for, in wire order (provisions · trade goods ·
+## fodder) and ascending on food and fodder between them. The third is the one surviving zero: a rung
+## whose ceiling EXISTS and is empty says so, which is the whole difference between "pays nothing this
+## season" and "the wire never described this patch".
+const HAY_SUSTAIN_FACE := "0.60 food · 0.01 trade · 0.20 fodder"
+const HAY_ERADICATE_FACE := "2.10 food · 0.05 trade · 1.00 fodder"
+const DEAD_SEASON_FACE := "0.00 food"
+## The crew the hay meadow's overdraw frame is composed at — the smallest that puts the FODDER take
+## past its Sustain ceiling (3 × 0.13 = 0.39 against 0.20) while the FOOD take (0.24) is still inside
+## the patch's 0.60. One forager overdraws nothing at all, so a smaller crew would pass that state's
+## claim vacuously.
+const HAY_OVERDRAW_FORAGERS := 3
 ## Which line of a rung's two-line face carries the metric: line 0 is the rung NAME
 ## (`HudFormat.policy_face`), line 1 the products (`HudWidgets._policy_rung_cell` builds them in that
 ## order). A rung with no metric wears line 0 alone.
@@ -1254,6 +1268,92 @@ func _ready() -> void:
 	_compose_forage(_field_tile_fixture())
 	await _settle()
 	await _save("forage_sow_done")
+
+	# ---- ALL THREE ACCOUNTS ON A FORAGE FACE (issue #426, face treatment A) -----------------------
+	# State forage_three_accounts — THE FRAME THIS PASS IS JUDGED ON. Every other forage fixture pays
+	# provisions alone, so the picker's three-account face had no frame at all and a hay meadow was
+	# indistinguishable from barren prairie. The extractive rungs must now read
+	# `0.24 food · 0.01 trade · 0.40 fodder` and ascend on food and fodder — while TRADE does not,
+	# `Deplete` alone carrying the ×4 market markup, which is the sim's ladder and not a fixture typo.
+	# **THE PICKER STAYS THREE ABREAST, and this frame is why that is a measurement and not a guess.**
+	# A wide-face column ceiling of 2 was built for exactly this face and then refuted here: at three
+	# columns the sheet comes out 555px — against the deer hunt picker's long-standing 546 — nothing
+	# clips, and 3 + 3 reads better than the 2 + 2 + 2 the ceiling produced. The frame is what a future
+	# change to that ceiling has to argue with.
+	var hay_meadow := _hay_meadow_tile_fixture()
+	_hud.show_tile_selection(hay_meadow)
+	_compose_forage(hay_meadow)   # settle the source key first (it changed)
+	_hud._compose.set_forage_policy("sustain")
+	_hud._compose.set_forage_species("")
+	_compose_forage(hay_meadow)
+	await _settle()
+	await _save("forage_three_accounts")
+	_assert_hud("a forage rung names all three accounts, in wire order",
+		_policy_rung_metric(_hud._drawercompose._compose_sheet, "sustain") == HAY_SUSTAIN_FACE)
+	_assert_hud("the fodder account ascends with the rung, like food",
+		_policy_rung_metric(_hud._drawercompose._compose_sheet, "eradicate") == HAY_ERADICATE_FACE)
+	_assert_hud("a three-account picker still wraps at the shared three columns",
+		_policy_picker_columns(_hud._drawercompose._compose_sheet)
+			== HudWorkVocab.POLICY_PICKER_COLUMNS)
+
+	# State forage_three_accounts_overdraw — THE SAME meadow, Eradicate, THREE foragers: the frame that
+	# pins the overdraw verdict as per-account. At this crew the food take (3 × 0.08 = 0.24) sits well
+	# inside the patch's own 0.60 food regrowth, while the hay take (3 × 0.13 = 0.39) is nearly double
+	# its 0.20 — so the crew is stripping the meadow through the fodder account ALONE. The line must
+	# read WARN-amber. A food-against-food comparison, which is what this shipped as, calls it green
+	# and green is the wrong answer: the patch really is being drawn down.
+	#
+	# The crew size is load-bearing and deliberately not the auto-max: at ONE forager labor binds far
+	# below every ceiling and the honest verdict IS renewable, so a 1-worker frame would pass this
+	# state's claim vacuously by never overdrawing anything.
+	_hud._compose.set_forage_policy("eradicate")
+	_hud._compose.set_forage_count(HAY_OVERDRAW_FORAGERS)
+	_compose_forage(hay_meadow)
+	await _settle()
+	await _save("forage_three_accounts_overdraw")
+	_assert_hud("a take inside the food ceiling still overdraws on fodder alone",
+		_hud._drawercompose._local_forage_preview_bbcode(
+			_hud._band_labor.player_band(), hay_meadow, "eradicate", HAY_OVERDRAW_FORAGERS)
+			.contains(HudStyle.WARN_HEX))
+	_assert_hud("the same crew on the rung that protects the patch reads renewable",
+		not _hud._drawercompose._local_forage_preview_bbcode(
+			_hud._band_labor.player_band(), hay_meadow, "sustain", HAY_OVERDRAW_FORAGERS)
+			.contains(HudStyle.WARN_HEX))
+
+	# State forage_dead_season — THE STATE THE ISSUE IS NAMED FOR. A patch the wire fully DESCRIBES
+	# and whose every cell is zero: deep winter on the same meadow. It must not be confused with
+	# `tile_panel_no_forage` (no food module at all, hence no patch and correctly no compose block) —
+	# here the sim has answered, and the answer is "nothing this season". So the sheet stays LOUD: the
+	# rungs render, they state their zeros as `0.00 food` (the one surviving zero — an empty ceiling
+	# that EXISTS is a fact worth reading), and the worker cap stays live rather than switching off.
+	var dead_season := _dead_season_tile_fixture()
+	_hud.show_tile_selection(dead_season)
+	_compose_forage(dead_season)   # settle the source key first (it changed)
+	_hud._compose.set_forage_policy("sustain")
+	_compose_forage(dead_season)
+	await _settle()
+	await _save("forage_dead_season")
+	# THE "GOES SILENT" HALF OF THE ISSUE, and it needs the PREVIEW line rather than the rungs: a rung
+	# renders whether or not it has a metric (name-only is a legal face), so asserting the picker
+	# exists passes even with the bug restored. The preview line is what actually disappeared — it
+	# returns "" on an unknown forecast — so it is the only witness that can testify here.
+	_assert_hud("a fully-zero forecast still states its take rather than going silent",
+		_hud._drawercompose._local_forage_preview_bbcode(
+			_hud._band_labor.player_band(), dead_season, "sustain", 1) != "")
+	_assert_hud("a zero rung states its zero rather than going blank",
+		_policy_rung_metric(_hud._drawercompose._compose_sheet, "sustain") == DEAD_SEASON_FACE)
+	# The cap is the half a PNG cannot testify to: `known` is a PRESENCE test, so a described-but-empty
+	# patch is capped at `MAX_USEFUL_BARREN` (1) — NOT left UNBOUNDED, which is what an undescribed one
+	# gets and what the old rate-based `known` wrongly handed this state.
+	_assert_hud("a described-but-empty patch caps workers rather than going unbounded",
+		SourceForecast.max_useful_workers(SourceForecast.forecast_inputs(
+			dead_season, SourceForecast.SOURCE_KIND_FORAGE,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, "sustain"))
+			== SourceForecast.MAX_USEFUL_BARREN)
+
+	# Reset so the states after this render their usual staple patch + Sustain rung.
+	_hud._compose.set_forage_policy("sustain")
+	_hud._compose.set_forage_species("")
 
 	# ---- THE SHEET RENDERS THE POLICY THE BAND IS ON (issue #420) --------------------------------
 	# State 6b-cultivate-paused — THE PRIMARY FRAME. This is the case the sim deliberately leaves
@@ -4125,6 +4225,18 @@ func _rung_is_selected(btn: Button) -> bool:
 	return box is StyleBoxFlat \
 		and (box as StyleBoxFlat).bg_color.is_equal_approx(HudStyle.BUTTON_PRIMARY_BG)
 
+## How many rungs the picker under `root` puts abreast — its `GridContainer.columns`. Reached from a
+## rung rather than by searching for a GridContainer: the sheet holds several grids, and the one that
+## matters is by definition the one a rung is in. The rung's own parent is its CELL (a
+## `MarginContainer`), so the grid is one further up. 0 when there is no picker to measure, which
+## fails an equality assertion rather than passing it vacuously.
+func _policy_picker_columns(root: Node) -> int:
+	var btn := _find_policy_rung(root, "sustain")
+	if btn == null or btn.get_parent() == null:
+		return 0
+	var grid := btn.get_parent().get_parent()
+	return (grid as GridContainer).columns if grid is GridContainer else 0
+
 func _find_policy_rung(root: Node, policy: String) -> Button:
 	if root == null:
 		return null
@@ -5866,6 +5978,101 @@ func _field_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return _seed_forage_rows(tile)
+
+## **A TILE THAT PAYS ALL THREE ACCOUNTS — the frame face treatment A is judged on (#426).** A hay
+## meadow: thin human food, a token of trade, and real FODDER, which is the account the whole plant
+## web grew a third column for. Every other forage fixture pays provisions alone, so until this one
+## existed the picker's three-account face and the column ceiling it triggers had NO frame at all.
+##
+## **The rows are written out rather than derived.** `_seed_forage_rows` seeds trade and fodder to 0
+## by design (so a reseeding pass leaves every existing frame byte-identical), which is exactly the
+## thing under test here — so this fixture overwrites the three account dicts afterwards, the
+## "genuinely non-derivable row" case that helper's docstring names.
+##
+## **The trade ladder is NOT monotone, and that is the sim's shape, not a typo.** `Deplete` alone
+## carries `market.trade_goods_multiplier` (×4) — a POLICY markup on stripping the patch for sale —
+## so its 0.12 sits above Eradicate's 0.05. Food and fodder ascend normally. A fixture that quietly
+## sorted the trade column would misrepresent the ladder the player actually reads.
+func _hay_meadow_tile_fixture() -> Dictionary:
+	var tile := _fodder_basket_tile_fixture()
+	tile["x"] = 65
+	tile["y"] = 9
+	tile["terrain_label"] = "Prairie Steppe"
+	tile["food_module"] = "savanna_grassland"
+	tile["food_module_label"] = "Savanna Grassland"
+	tile["site_name"] = ""
+	# **THE TWO ACCOUNTS BIND DIFFERENTLY, and that is the fixture's real job.** Human food is slow to
+	# GATHER (0.08/worker) off ground that carries plenty of it (0.60 Sustain ceiling), so labor binds
+	# on provisions; hay comes in fast (0.13/worker) off a meadow that regrows little of it (0.20), so
+	# the CEILING binds on fodder. A crew can therefore sit comfortably inside the patch's food
+	# regrowth while stripping its hay — which is only expressible because `min(w × per_worker,
+	# ceiling)` and the overdraw verdict are both applied PER ACCOUNT.
+	tile["patch_per_worker_yield"] = 0.08
+	tile["patch_ceiling_sustain"] = 0.60
+	tile["patch_ceiling_surplus"] = 0.90
+	tile["patch_ceiling_deplete"] = 1.35
+	tile["patch_ceiling_eradicate"] = 2.10
+	tile["patch_ceiling_cultivate"] = 0.06
+	tile["patch_ceiling_sow"] = 0.02
+	# The species-BLIND patch payoffs. A crop the player picks substitutes its own three (Hay Grass
+	# pays 0.72 fodder at rung 2, 1.80 at rung 3), so these are what a COMMITTED patch quotes.
+	tile["patch_tended_yield"] = 0.30
+	tile["patch_tended_trade"] = 0.02
+	tile["patch_tended_fodder"] = 0.72
+	tile["patch_field_yield"] = 0.60
+	tile["patch_field_trade"] = 0.04
+	tile["patch_field_fodder"] = 1.80
+	tile = _seed_forage_rows(tile)
+	tile["patch_forage_policy_trade_ceilings"] = {
+		"sustain": 0.01, "surplus": 0.02, "deplete": 0.12, "eradicate": 0.05,
+		"cultivate": 0.002, "sow": 0.001,
+	}
+	tile["patch_forage_policy_fodder_ceilings"] = {
+		"sustain": 0.20, "surplus": 0.40, "deplete": 0.60, "eradicate": 1.00,
+		"cultivate": 0.10, "sow": 0.03,
+	}
+	# The per-worker terms ride the row too — the plant web has no patch-level scalar to fall back on,
+	# a policy-blind number being unable to state a policy-dependent rate. Trade's Deplete cell carries
+	# the same ×4 markup its ceiling does, because the sim applies the markup to the final take and
+	# labor is what binds here.
+	tile["patch_forage_policy_per_worker_trade"] = {
+		"sustain": 0.003, "surplus": 0.003, "deplete": 0.012, "eradicate": 0.003,
+		"cultivate": 0.001, "sow": 0.001,
+	}
+	tile["patch_forage_policy_per_worker_fodder"] = {
+		"sustain": 0.13, "surplus": 0.13, "deplete": 0.13, "eradicate": 0.13,
+		"cultivate": 0.03, "sow": 0.01,
+	}
+	return tile
+
+## **A DESCRIBED PATCH THAT PAYS NOTHING — the state issue #426 is named after.** Deep winter on the
+## same meadow: the wire carries a full per-policy row for every rung and every cell in it is zero.
+##
+## This is NOT `_barren_tile_fixture`, and the difference is the whole issue: that tile has no food
+## module, so there is no patch to forecast and the sheet correctly shows no compose block at all.
+## Here there IS a patch, the sim HAS answered, and the answer is "nothing this season". The forecast
+## must therefore read as KNOWN — the sheet stays loud, states the zeros, and keeps the worker cap
+## live at `MAX_USEFUL_BARREN` — rather than falling through the "the wire said nothing" branch, which
+## went silent and switched the cap off entirely.
+func _dead_season_tile_fixture() -> Dictionary:
+	var tile := _hay_meadow_tile_fixture()
+	tile["x"] = 66
+	tile["y"] = 9
+	tile["patch_ecology_phase"] = "collapsing"
+	tile["patch_biomass"] = 0.0
+	# Nothing grows, so nothing is worth committing to either — the investment rungs' payoffs go with
+	# the harvest. The basket stays: which plants LIVE here is not a seasonal fact.
+	tile["patch_tended_yield"] = 0.0
+	tile["patch_tended_trade"] = 0.0
+	tile["patch_tended_fodder"] = 0.0
+	tile["patch_field_yield"] = 0.0
+	tile["patch_field_trade"] = 0.0
+	tile["patch_field_fodder"] = 0.0
+	tile["patch_per_worker_yield"] = 0.0
+	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
+		tile["patch_ceiling_%s" % policy] = 0.0
+	tile = _seed_forage_rows(tile)
+	return tile
 
 ## A herd mid-TAME on a pen-ceiling species: the 🐾 Tame rung is available and selected, the herd's
 ## OWN meter reads 40% (`domestication`), and Corral is still gated on Penning. This is the frame the

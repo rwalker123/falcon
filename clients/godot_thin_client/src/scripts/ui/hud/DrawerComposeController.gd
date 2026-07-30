@@ -271,21 +271,28 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
 
 ## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led product line on the
 ## button face's second row (`→ 1.48 food · 0.37 trade`), the "builds toward X/turn" wording in the
-## tooltip. Shared by hunt + forage. The payoff is a PAIR like every other yield in this model, and
+## tooltip. Shared by hunt + forage. The payoff is a VECTOR like every other yield in this model, and
 ## obeys the same render-only-when-non-zero rule as `SourceForecast.extractive_take_pair`: a pure-meat
-## species reads `→ 1.48 food`, an inedible one `→ 0.37 trade`, and a component the species never pays
-## is never printed as a zero. The plant rungs pass 0.0 trade (no plant trade rate). The face names
-## its products in words; the ARROW — not a currency word — is what keeps it from reading as a take
-## the source pays today rather than one the preparation builds toward.
-func _payoff_take(payoff: float, payoff_trade: float) -> Dictionary:
+## species reads `→ 1.48 food`, an inedible one `→ 0.37 trade`, a hay crop `→ 1.80 fodder`, and a
+## component the source never pays is never printed as a zero. **The fodder term is plant-only and
+## the herd callers leave it defaulted** — no animal pays fodder, so this is a structural zero rather
+## than an unfinished one. The face names its products in words; the ARROW — not a currency word — is
+## what keeps it from reading as a take the source pays today rather than one the preparation builds
+## toward.
+func _payoff_take(payoff: float, payoff_trade: float, payoff_fodder: float = 0.0) -> Dictionary:
+    var has_non_food := SourceForecast.has_component(payoff_trade) \
+        or SourceForecast.has_component(payoff_fodder)
     var full_parts: Array[String] = []
-    if SourceForecast.has_component(payoff) or not SourceForecast.has_component(payoff_trade):
+    if SourceForecast.has_component(payoff) or not has_non_food:
         full_parts.append(HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % SourceForecast.format_signed(payoff))
     if SourceForecast.has_component(payoff_trade):
         full_parts.append(SourceForecast.POLICY_CAP_TRADE_FORMAT % [
             FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_signed(payoff_trade)])
+    if SourceForecast.has_component(payoff_fodder):
+        full_parts.append(SourceForecast.POLICY_CAP_FODDER_FORMAT % SourceForecast.format_signed(payoff_fodder))
     return {
-        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(payoff, payoff_trade),
+        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(
+            payoff, payoff_trade, payoff_fodder),
         "full": SourceForecast.TRADE_COMPONENT_SEPARATOR.join(full_parts),
     }
 
@@ -345,11 +352,24 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
     return body
 
 ## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
-## Forage is SMOOTH food (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
+## Forage is SMOOTH (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
 ## per-turn take + a sustainability verdict: income-green `+2.74 /turn · renewable` when the take is
 ## within the patch's Sustain ceiling, WARN-amber `⚠ … — overdraws the patch` when a Surplus/Deplete/
 ## Eradicate policy draws it down. Both scaled by the acting band's output multiplier, like the hunt
 ## line. "" (no line) when the forecast levers are unknown, so the panel degrades gracefully.
+##
+## **THE WHOLE VECTOR, EACH ACCOUNT ONLY WHEN NON-ZERO (#426).** This read the food account alone,
+## which is the same lie the picker face above it told: a flax patch previewed `+0.00 /turn ·
+## renewable` — "staff this and get nothing, sustainably" — for a rung that pays real trade goods, and
+## a hay meadow said the same of its fodder. `SourceForecast.yield_components` is the joiner the worked
+## rows already use, so the composed preview and the row it becomes next turn word the vector alike.
+##
+## **The overdraw verdict is likewise PER ACCOUNT, and ANY account overdrawing carries the line.** The
+## comparison used to be food-against-food, so a fodder crop's Eradicate rung — which strips the
+## meadow bare — read green: both sides of the test were 0. The accounts have independent ceilings and
+## a take can sit inside one while blowing through another, so a single scalar cannot answer this; ANY
+## rather than ALL, because the warning is about the patch, and one account drawn past its regrowth
+## draws down the same patch.
 func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
     # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
     # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
@@ -360,10 +380,16 @@ func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, polic
     if not bool(forecast["known"]):
         return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var sustainable := float(sustain["ceiling"]) * output
     var actual := SourceForecast.expected_yield(forecast, workers, band)
-    var text := SourceForecast.format_yield(actual)
-    if _is_overdraw(actual, sustainable):
+    var actual_trade := SourceForecast.expected_yield_account(
+        forecast, workers, band, "per_worker_trade", "ceiling_trade")
+    var actual_fodder := SourceForecast.expected_yield_account(
+        forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
+    var text := SourceForecast.yield_components(actual, actual_trade, actual_fodder)
+    var overdraws := _is_overdraw(actual, float(sustain["ceiling"]) * output) \
+        or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
+        or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)
+    if overdraws:
         return "[color=#%s]%s %s%s[/color]" % [
             HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, text, HudComposeVocab.LOCAL_FORAGE_OVERDRAW_SUFFIX]
     return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
@@ -785,9 +811,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 
 
 ## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared
-## `SourceForecast.forecast_inputs` (food/turn at output 1.0, like the hunt band ceiling), for the FORAGE picker's
-## ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three pickers wear the
-## same "+X /turn" button metric. Empty entries (dead-season patch / older snapshot) are skipped.
+## `SourceForecast.forecast_inputs` (per turn at output 1.0, like the hunt band ceiling), for the
+## FORAGE picker's ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three
+## pickers wear the same button metric. Empty entries (dead-season patch / older snapshot) are skipped.
+##
+## **ALL THREE ACCOUNTS (#426).** This used to hand the shared joiner an explicit `0.0` for trade, on
+## the standing claim that the plant web projected no trade rate — so a flax patch, which pays trade
+## and no food, rendered `0.00 food` on every rung and read exactly like the worthless-source lie
+## #337 removed from the hunt picker. A patch's per-policy ROW now carries provisions, trade goods and
+## fodder, and each is rendered only when non-zero, so a staple reads `0.96 food`, flax `0.24 trade`,
+## and hay ground `0.08 food · 0.40 fodder`.
 func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_committed: bool,
         picked: String) -> Dictionary:
     var takes := {}
@@ -795,7 +828,10 @@ func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_c
         var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, String(policy))
         if not bool(forecast["known"]):
             continue
-        takes[String(policy)] = SourceForecast.extractive_take(float(forecast["ceiling"]))
+        takes[String(policy)] = SourceForecast.extractive_take_pair(
+            float(forecast["ceiling"]),
+            maxf(float(forecast["ceiling_trade"]), 0.0),
+            maxf(float(forecast["ceiling_fodder"]), 0.0))
     # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
     # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
     # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
@@ -816,21 +852,31 @@ func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_c
         # OWN `species`, so they already quote the standing commitment.
         var rung_species := _resolve_crop_selection(basket, policy, is_committed, picked)
         var payoff := float(forecast["payoff"])
-        # Trade is REAL on both plant rungs since #433 (a cash crop's whole point), so the face renders
-        # both products through the same `_payoff_take` the herd rungs use — food only where the crop
-        # pays food, trade only where it pays trade, both where both (the render-only-when-non-zero
-        # rule). It was hardcoded `0.0` on the argument that "the plant web projects no trade rate at
-        # all", which stopped being true when the per-crop trade payoffs reached the wire.
-        var trade := 0.0
+        # Trade is REAL on both plant rungs since #433 (a cash crop's whole point) and FODDER since
+        # #426, so the face renders every account through the same `_payoff_take` the herd rungs use —
+        # food only where the crop pays food, fodder only where it pays fodder, all three where all
+        # three (the render-only-when-non-zero rule). Both were hardcoded `0.0` on the argument that
+        # "the plant web projects no trade rate at all", which stopped being true when the per-crop
+        # payoffs reached the wire.
+        #
+        # The species-BLIND patch quotes are the starting point (`forecast["payoff*"]`, which is the
+        # right answer for a COMMITTED patch — the sim takes those against the patch's own species);
+        # a resolved crop substitutes ITS OWN three, together, so the face can never mix one crop's
+        # food with another's fodder.
+        var trade := float(forecast["payoff_trade"])
+        var fodder := float(forecast["payoff_fodder"])
         if rung_species != "":
             for entry in basket:
                 if String(entry["species"]) != rung_species:
                     continue
                 payoff = _flora_entry_payoff(entry, policy)
                 trade = _flora_entry_trade_payoff(entry, policy)
+                fodder = _flora_entry_fodder_payoff(entry, policy)
                 break
-        if payoff > 0.0 or SourceForecast.has_component(trade):
-            takes[policy] = _payoff_take(payoff, trade)
+        # EITHER-account emit gate, one level up from `_payoff_take`'s own rule: a rung whose payoff is
+        # fodder-only (hay ground) must still get a face rather than falling back to a bare glyph+name.
+        if payoff > 0.0 or SourceForecast.has_component(trade) or SourceForecast.has_component(fodder):
+            takes[policy] = _payoff_take(payoff, trade, fodder)
     return takes
 
 ## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
