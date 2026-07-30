@@ -47,7 +47,7 @@ pub struct HuntPolicyCeilingState {
     #[serde(default)]
     pub provisions_per_turn: f32,
     /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row is a
-    /// [`crate::YieldPair`]-shaped pair, not a food scalar: every harvesting policy sells the species'
+    /// [`crate::YieldAccounts`]-shaped pair, not a food scalar: every harvesting policy sells the species'
     /// trade component, and an **inedible** species (a wolf) reads `provisions_per_turn == 0` with
     /// this strictly positive — a food-only row could not express its yield at all. Render a trade
     /// line **only when this is `> 0`**, the rule flora's cash-crop line already uses, so a source
@@ -167,7 +167,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_yield: f32,
     /// **The Corral rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of
-    /// the same `managed_yield` `YieldPair` [`Self::corral_yield`] reads its provisions from. Read
+    /// the same `managed_yield` `YieldAccounts` [`Self::corral_yield`] reads its provisions from. Read
     /// the two as one vector, rendering each component only when non-zero.
     /// **Gross** like its food sibling: the pen's feed (`pen_upkeep`) is a *provisions* debit and
     /// never touches this. `0` on a herd that never offers Corral.
@@ -291,7 +291,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pastoral_yield: f32,
     /// **The Tame rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of the
-    /// same `pastoral_yield` `YieldPair` [`Self::pastoral_yield`] reads its provisions from. Read the
+    /// same `pastoral_yield` `YieldAccounts` [`Self::pastoral_yield`] reads its provisions from. Read the
     /// two as one vector, rendering each component only when non-zero. `0` on a herd that never
     /// offers Tame (already penned, or a `wild`-ceiling species).
     #[serde(default)]

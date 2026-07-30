@@ -489,7 +489,7 @@ pub(crate) fn snapshot_forage_patches(
                 //
                 // **The two non-food accounts are still the `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
                 // gap**, because `forage_forecast` does not project them yet — that is the remaining
-                // half of #426 and it needs `YieldPair` to carry a third account (see the issue). They
+                // half of #426 and it needs `YieldAccounts` to carry a third account (see the issue). They
                 // are written explicitly rather than defaulted so the sentinel is visible at the site
                 // a reader will look, exactly as the food-only comment below has been since #337.
                 forage_policy_ceilings: [

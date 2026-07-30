@@ -66,7 +66,7 @@ use crate::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
-    fauna_config::{EcologyConfig, YieldPair},
+    fauna_config::{EcologyConfig, YieldAccounts},
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
@@ -2041,7 +2041,7 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
 /// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
 /// harvest grain by the handful. The two food webs quantise differently because *their products
 /// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
-const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
+const PLANTS_DO_NOT_QUANTISE: YieldAccounts = YieldAccounts::ZERO;
 
 /// **The plant web's forecast trade component — a KNOWN GAP, not a claim that plants sell nothing**
 /// (`docs/plan_hunt_yield_model.md` §8, issue #337).
@@ -2058,11 +2058,18 @@ const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
 pub(crate) const PLANT_TRADE_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
 
 /// A plant source's provisions-only forecast component: the food number the plant web computes, with
-/// its trade component the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
-fn plant_food_only(provisions: f32) -> YieldPair {
-    YieldPair {
+/// its trade **and fodder** components the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
+///
+/// **This helper is the remaining half of #426 and is meant to disappear.** Projecting the other two
+/// accounts needs each component built from the rung's *biomass* ceiling times that rung's own rate
+/// (`rung_provisions_per_biomass` / `rung_trade_per_biomass` / `rung_fodder_per_biomass`), which is a
+/// restructure of [`forage_forecast`] rather than a wider return type here: this signature takes an
+/// already-converted food number and so has nothing left to convert the other accounts *from*.
+fn plant_food_only(provisions: f32) -> YieldAccounts {
+    YieldAccounts {
         provisions,
         trade_goods: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+        fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
     }
 }
 

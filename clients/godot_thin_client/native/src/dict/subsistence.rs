@@ -68,7 +68,7 @@ pub(crate) fn herds_to_array(
         }
         let _ = dict.insert("domestication", herd.domestication());
         // Per-policy BAND / local-hunt take ceilings for this herd's CURRENT state, in BOTH of the
-        // hunt's products (issue #337 — a hunt pays a `YieldPair`, not a food scalar). Surfaced as TWO
+        // hunt's products (issue #337 — a hunt pays a `YieldAccounts`, not a food scalar). Surfaced as TWO
         // Dictionaries keyed by the SAME policy strings, filled in ONE pass so they cannot drift:
         //   `hunt_policy_ceilings`       -> provisionsPerTurn (food/turn)
         //   `hunt_policy_trade_ceilings` -> tradeGoodsPerTurn (trade goods/turn)

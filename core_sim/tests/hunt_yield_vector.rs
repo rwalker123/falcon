@@ -647,7 +647,7 @@ fn exported_ceilings(app: &App, id: &str) -> Vec<(String, f32, f32)> {
 /// **The arc's load-bearing test.** The pre-commit forecast, the assign-time seed and the resolved
 /// take all read the same helpers, so what the client is shown before committing must be exactly what
 /// the sim then pays — *per component*. A food-only forecast could not even state a wolf's yield (all
-/// its food ceilings are `0`), which is precisely why `SourceYieldForecast` is a `YieldPair` rather
+/// its food ceilings are `0`), which is precisely why `SourceYieldForecast` is a `YieldAccounts` rather
 /// than a scalar with a bolted-on sibling: two halves can drift, one pair cannot.
 ///
 /// Asserted on the **exported snapshot** (`laborAssignments[].actualYield` / `.tradeYield`), not on

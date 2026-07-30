@@ -864,30 +864,46 @@ impl HuntYield {
     /// **Do NOT invert this to count animals.** Whole-animal quantisation stays in *biomass* space —
     /// see [`crate::fauna::quantise_animal_take`], which spells out why (`provisions_per_biomass ==
     /// 0` makes `floor(food_ceiling / food_per_animal)` a `0/0`).
-    pub fn apply(self, biomass_take: f32, output_multiplier: f32) -> YieldPair {
-        YieldPair {
+    pub fn apply(self, biomass_take: f32, output_multiplier: f32) -> YieldAccounts {
+        YieldAccounts {
             provisions: biomass_take * self.provisions_per_biomass * output_multiplier,
             trade_goods: biomass_take * self.trade_goods_per_biomass * output_multiplier,
+            // **An animal pays no fodder.** The third account is the PLANT web's (`hay_grass` pays
+            // fodder and nothing else); no species' `HuntYield` has a fodder rate to apply, so this is
+            // a structural zero rather than an unprojected gap.
+            fodder: 0.0,
         }
     }
 }
 
-/// **What one take actually pays, in both currencies.** The return of [`HuntYield::apply`] — food
-/// (fully fractional, banked on the larder's `Scalar` grid) and trade goods (rounded to an integer
-/// faction stockpile by the caller).
+/// **What one take actually pays, in every account.** The return of [`HuntYield::apply`] — food
+/// (fully fractional, banked on the larder's `Scalar` grid), trade goods (rounded to an integer
+/// faction stockpile by the caller), and fodder (the plant web's animal feed, `FODDER` on a band's
+/// `LocalStore`).
+///
+/// **Three accounts, not two, since #426.** A harvest of `B` biomass pays `B × yield.*` into all
+/// three, and `forage_take` already credits all three — so a two-component forecast could not pin
+/// the third, and `forecast == actual` is an invariant this model rests on *per component*. Widening
+/// is bit-identical for the animal web: no `HuntYield` carries a fodder rate, so every animal reads
+/// `fodder == 0` and every existing answer is unchanged.
+///
+/// **Not to be confused with [`crate::flora_config::YieldVector`]**, which is the per-*biomass* RATE
+/// triple (`provisions_per_biomass` / `fodder_per_biomass` / `trade_goods_per_biomass`). This type is
+/// a per-turn AMOUNT — the rate times a biomass take. The field names are the tell.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct YieldPair {
+pub struct YieldAccounts {
     pub provisions: f32,
     pub trade_goods: f32,
+    pub fodder: f32,
 }
 
-/// **Which component of a [`YieldPair`] a RATIO is counted on.**
+/// **Which component of a [`YieldAccounts`] a RATIO is counted on.**
 ///
 /// Every whole-animal count in the yield model is a *ratio* — `floor(ceiling / one animal)` — and a
 /// ratio is unit-free: taken on any component whose per-biomass rate is **positive**, it gives the
 /// same animal count, because that component is a positive linear image of biomass. Taken on a
 /// component whose rate is `0` it is a `0/0`. So a ratio never picks a component by convention; it
-/// asks [`YieldPair::ratio_axis`] which one is legal.
+/// asks [`YieldAccounts::ratio_axis`] which one is legal.
 ///
 /// This is the operational form of `quantise_animal_take`'s warning: **never divide by a food number
 /// you have not established is positive.** A wolf counts its animals on `TradeGoods`; every edible
@@ -896,42 +912,50 @@ pub struct YieldPair {
 pub enum YieldAxis {
     Provisions,
     TradeGoods,
+    /// **Plant-only in practice** — no animal pays fodder, so this is never selected on the hunt
+    /// path. It exists because [`YieldAccounts::is_zero`] is defined through [`YieldAccounts::ratio_axis`],
+    /// and a hay-only patch (food `0`, trade `0`, fodder `> 0`) must not read as paying nothing.
+    Fodder,
 }
 
-impl YieldPair {
-    /// A source that pays nothing in either currency.
+impl YieldAccounts {
+    /// A source that pays nothing in any account.
     pub const ZERO: Self = Self {
         provisions: 0.0,
         trade_goods: 0.0,
+        fodder: 0.0,
     };
 
-    /// Both components scaled by the same factor — worker counts, output multipliers, and the
+    /// Every component scaled by the same factor — worker counts, output multipliers, and the
     /// carried/killed share of a quantised take are all scalar, so they never touch the *mix*.
     pub fn scale(self, factor: f32) -> Self {
         Self {
             provisions: self.provisions * factor,
             trade_goods: self.trade_goods * factor,
+            fodder: self.fodder * factor,
         }
     }
 
     /// Component-wise sum — accumulating a projection turn by turn. (Named `plus`, not `add`, so it
     /// cannot be confused with `std::ops::Add::add`, which this type deliberately does not implement:
-    /// a yield pair is a pair of *rates in different currencies*, and blanket arithmetic on it invites
-    /// summing food into trade.)
+    /// these are *amounts in different currencies*, and blanket arithmetic on them invites summing
+    /// food into trade.)
     pub fn plus(self, other: Self) -> Self {
         Self {
             provisions: self.provisions + other.provisions,
             trade_goods: self.trade_goods + other.trade_goods,
+            fodder: self.fodder + other.fodder,
         }
     }
 
     /// Component-wise `min` — the continuous take's `min(collection, ceiling)`. Sound because both
-    /// operands are the same biomass put through the same rates, so the two components agree on
+    /// operands are the same biomass put through the same rates, so every component agrees on
     /// which side binds.
     pub fn min(self, other: Self) -> Self {
         Self {
             provisions: self.provisions.min(other.provisions),
             trade_goods: self.trade_goods.min(other.trade_goods),
+            fodder: self.fodder.min(other.fodder),
         }
     }
 
@@ -940,18 +964,26 @@ impl YieldPair {
         match axis {
             YieldAxis::Provisions => self.provisions,
             YieldAxis::TradeGoods => self.trade_goods,
+            YieldAxis::Fodder => self.fodder,
         }
     }
 
-    /// **The axis a ratio against this pair may be counted on** — the first component with a
+    /// **The axis a ratio against these accounts may be counted on** — the first component with a
     /// strictly positive value, preferring `Provisions` so every edible species keeps *exactly* the
-    /// arithmetic it had before this arc (bit-identical, not merely equivalent). `None` when the pair
-    /// is empty in both currencies: nothing to count, and nothing may divide by it.
+    /// arithmetic it had before this arc (bit-identical, not merely equivalent). `None` when every
+    /// account is empty: nothing to count, and nothing may divide by it.
+    ///
+    /// **`Fodder` is tested LAST, and that ordering is load-bearing.** Inserting it ahead of
+    /// `TradeGoods` would re-point any source paying both — so appending it preserves every answer
+    /// this function gave before #426, exactly as preferring `Provisions` preserved every answer from
+    /// before #337.
     pub fn ratio_axis(self) -> Option<YieldAxis> {
         if self.provisions > 0.0 {
             Some(YieldAxis::Provisions)
         } else if self.trade_goods > 0.0 {
             Some(YieldAxis::TradeGoods)
+        } else if self.fodder > 0.0 {
+            Some(YieldAxis::Fodder)
         } else {
             None
         }
@@ -981,10 +1013,17 @@ impl YieldPair {
             YieldAxis::Provisions => Self {
                 provisions: value,
                 trade_goods: self.trade_goods * share,
+                fodder: self.fodder * share,
             },
             YieldAxis::TradeGoods => Self {
                 provisions: self.provisions * share,
                 trade_goods: value,
+                fodder: self.fodder * share,
+            },
+            YieldAxis::Fodder => Self {
+                provisions: self.provisions * share,
+                trade_goods: self.trade_goods * share,
+                fodder: value,
             },
         }
     }
@@ -2774,7 +2813,7 @@ mod tests {
         let paid = hy.apply(100.0, 2.0);
         assert!((paid.provisions - 4.0).abs() < 1e-6, "{paid:?}");
         assert!((paid.trade_goods - 1.0).abs() < 1e-6, "{paid:?}");
-        assert_eq!(hy.apply(0.0, 1.0), YieldPair::default());
+        assert_eq!(hy.apply(0.0, 1.0), YieldAccounts::default());
     }
 
     /// `tiles_per_herd` is a **divisor** (`area / tiles_per_herd`), so a `0` is the one value with no

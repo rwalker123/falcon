@@ -39,7 +39,7 @@ mod tests {
     /// (append-only discipline), and the client renders the feed as a negative row against the
     /// **gross** `corralYield`. The two investment rungs' payoffs are **pairs**, so their trade
     /// halves (`pastoralTrade` / `corralTrade`) ride the same fixture — the sim held both on a
-    /// `YieldPair` while the wire carried only the provisions half. Encode → decode with the
+    /// `YieldAccounts` while the wire carried only the provisions half. Encode → decode with the
     /// generated reader, so a field that silently failed to serialize cannot pass.
     #[test]
     fn herd_pen_upkeep_and_fed_fraction_round_trip_on_the_wire() {

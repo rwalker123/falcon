@@ -13,7 +13,7 @@ use crate::{
     components::{FollowPolicy, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
-        HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldAxis, YieldPair,
+        HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldAccounts, YieldAxis,
         DEFAULT_HUSBANDRY_DENSITY, NO_GRAZE_CAPACITY,
     },
     food::{classify_food_module, FoodModule},
@@ -3660,7 +3660,7 @@ fn starve_underfed_pen(
 /// duplicate the formulas, or the UI will lie.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SourceYieldForecast {
-    /// **Every field is a [`YieldPair`] — food AND trade goods per turn, never a food scalar**
+    /// **Every field is a [`YieldAccounts`] — food AND trade goods per turn, never a food scalar**
     /// (`docs/plan_hunt_yield_model.md`, issue #337).
     ///
     /// **Why vectorised rather than sibling `*_trade` scalars.** A wolf's food ceilings are all `0`,
@@ -3678,23 +3678,23 @@ pub struct SourceYieldForecast {
     /// Food/turn one worker contributes at this source (throughput → provisions), before the policy
     /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
     /// weight) — consumers must not divide by it; ask [`SourceYieldForecast::ratio_axis`] instead.
-    pub per_worker_yield: YieldPair,
+    pub per_worker_yield: YieldAccounts,
     /// Yield/turn cap under **Sustain** (the MSY skim).
-    pub ceiling_sustain: YieldPair,
+    pub ceiling_sustain: YieldAccounts,
     /// Yield/turn cap under **Surplus**.
-    pub ceiling_surplus: YieldPair,
+    pub ceiling_surplus: YieldAccounts,
     /// Yield/turn cap under **Deplete**.
-    pub ceiling_deplete: YieldPair,
+    pub ceiling_deplete: YieldAccounts,
     /// Yield/turn cap under **Eradicate** — the whole standing stock. **No longer zeroed**: since
     /// #337 denial is the END STATE, not a promise the carcasses were thrown away, so this row is the
     /// windfall the take path actually pays (`hunt_credit_ceiling` already returned the whole stock).
-    pub ceiling_eradicate: YieldPair,
+    pub ceiling_eradicate: YieldAccounts,
     /// Food/turn cap under the source's **top investment** policy — `Cultivate` for a forage patch,
     /// `Corral` for a herd. This is the **preparing** yield: `yield_fraction_while_building × the
     /// Sustain (MSY) ceiling`, the up-front cost of the improvement. Crosses the wire as
     /// `ForagePatchState.ceilingCultivate` / the `corral` row of
     /// `HerdTelemetryState.huntPolicyCeilings`.
-    pub ceiling_prepare: YieldPair,
+    pub ceiling_prepare: YieldAccounts,
     /// Food/turn cap under **`Tame`** — the animal rung-2 dip (the `animal:pastoral` rung's
     /// `yield_fraction_while_building × MSY`). `0` on a forage patch, where `Tame` is not a legal
     /// policy.
@@ -3707,7 +3707,7 @@ pub struct SourceYieldForecast {
     /// "two copies agreeing with each other while both disagree with the take" failure this
     /// codebase has already paid for once. Reaches the client through the free-form
     /// `huntPolicyCeilings` list (no schema change), not a scalar field.
-    pub ceiling_tame: YieldPair,
+    pub ceiling_tame: YieldAccounts,
     /// Food/turn cap under **`Sow`** — the plant rung-3 dip (the `plant:field` rung's
     /// `yield_fraction_while_building × MSY`). `0` on a herd, where `Sow` is not a legal policy.
     ///
@@ -3719,7 +3719,7 @@ pub struct SourceYieldForecast {
     ///
     /// **Not on the wire yet** — the client's patch card is slice 6, which needs a `ceilingSow` (and
     /// a `fieldYield`) beside today's `ceilingCultivate`/`tendedYield`.
-    pub ceiling_sow: YieldPair,
+    pub ceiling_sow: YieldAccounts,
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`), or, for an **un-penned** herd, the pen's **sustained MSY** projected on
     /// the pen ecology (`sustainable_yield` at the pen `r`, the long-run rate that shows the ladder).
@@ -3727,7 +3727,7 @@ pub struct SourceYieldForecast {
     /// via the `is_corralled()` early-return in `hunt_forecast`), so forecast == actual there. Lets
     /// the client show the payoff ("preparing X → then Y") *before* the player commits to the dip.
     /// Crosses the wire as `ForagePatchState.tendedYield` / `HerdTelemetryState.corralYield`.
-    pub managed_yield: YieldPair,
+    pub managed_yield: YieldAccounts,
     /// Food/turn a herd pays **once tamed** — the **Tame rung's payoff**: the pastoral **sustained
     /// MSY** at the herd's current biomass (`sustainable_yield` at the pastoral `r`). The pastoral
     /// analog of [`SourceYieldForecast::managed_yield`]/`corralYield`: `ceiling_tame` is Tame's
@@ -3735,9 +3735,9 @@ pub struct SourceYieldForecast {
     /// client can render Tame as `→ +Y` (like Cultivate/Sow/Corral) instead of quoting only the dip.
     /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
     /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
-    pub pastoral_yield: YieldPair,
+    pub pastoral_yield: YieldAccounts,
     /// **One animal's worth of yield** — `body_mass` through the same species vector every other
-    /// field here uses — or **[`YieldPair::ZERO`] for a source that does not quantise**
+    /// field here uses — or **[`YieldAccounts::ZERO`] for a source that does not quantise**
     /// (intensification ladder slice 8).
     ///
     /// It is what makes the *preview* lumpy in the same places the take is: [`forecast_expected_take`]
@@ -3760,13 +3760,13 @@ pub struct SourceYieldForecast {
     /// the handful; you cannot half-kill a deer. Quantisation is animal-only because *the products
     /// differ* — the same reason seed travels and a herd doesn't. Do not "fix" this into a plant body
     /// mass.
-    pub body_mass_yield: YieldPair,
+    pub body_mass_yield: YieldAccounts,
 }
 
 /// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
 /// patch, or a herd already penned/forage-tended. `0` = *no Tame payoff to advertise*, the pastoral
 /// twin of `PLANTS_DO_NOT_QUANTISE`.
-pub(crate) const NO_PASTORAL_YIELD: YieldPair = YieldPair::ZERO;
+pub(crate) const NO_PASTORAL_YIELD: YieldAccounts = YieldAccounts::ZERO;
 
 impl SourceYieldForecast {
     /// A **rung-3 managed source** — a corralled herd (a Pen) or a sown Field. The source is *yours*:
@@ -3782,9 +3782,9 @@ impl SourceYieldForecast {
     /// says how many. **The policy axis collapses at rung 3; the worker cap never does — you always
     /// have to carry the harvest home.**
     pub(crate) fn managed(
-        production: YieldPair,
-        per_worker_yield: YieldPair,
-        body_mass_yield: YieldPair,
+        production: YieldAccounts,
+        per_worker_yield: YieldAccounts,
+        body_mass_yield: YieldAccounts,
     ) -> Self {
         Self {
             per_worker_yield,
@@ -3819,7 +3819,7 @@ impl SourceYieldForecast {
     /// improvement *completes*
     /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
     /// lookup covers both sides of every investment without a second formula.
-    pub fn ceiling_for(&self, policy: FollowPolicy) -> YieldPair {
+    pub fn ceiling_for(&self, policy: FollowPolicy) -> YieldAccounts {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
             FollowPolicy::Surplus => self.ceiling_surplus,
@@ -3874,7 +3874,7 @@ pub fn forecast_expected_take(
     forecast: &SourceYieldForecast,
     workers: u32,
     policy: FollowPolicy,
-) -> YieldPair {
+) -> YieldAccounts {
     forecast_production_and_take(forecast, workers, policy).1
 }
 
@@ -3917,10 +3917,10 @@ pub fn project_realized_hunt(
     workers: u32,
     policy: FollowPolicy,
     horizon: u32,
-) -> YieldPair {
+) -> YieldAccounts {
     if horizon == 0 {
         // `LaborConfig::validate` pins `horizon > 0`; belt-and-braces against /0.
-        return YieldPair::ZERO;
+        return YieldAccounts::ZERO;
     }
     // The projection runs on a private copy — the caller's live herd is never touched. Ecology and
     // capacity cannot change under the projected take (the quarry is never tamed/penned mid-run), so
@@ -3932,7 +3932,7 @@ pub fn project_realized_hunt(
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
     let corralled = quarry.is_corralled();
     let collection = workers as f32 * per_worker_biomass_capacity;
-    let mut total = YieldPair::ZERO;
+    let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
     // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
     // `horizon` — so the reported rate is what the player gets *while the source lasts*, never diluted
@@ -3972,7 +3972,7 @@ pub fn project_realized_hunt(
     if turns > 0 {
         total.scale(1.0 / turns as f32)
     } else {
-        YieldPair::ZERO
+        YieldAccounts::ZERO
     }
 }
 
@@ -4095,7 +4095,7 @@ fn forecast_production_and_take(
     forecast: &SourceYieldForecast,
     workers: u32,
     policy: FollowPolicy,
-) -> (YieldPair, YieldPair) {
+) -> (YieldAccounts, YieldAccounts) {
     let collection = forecast.per_worker_yield.scale(workers as f32);
     let ceiling = forecast.ceiling_for(policy);
     // **The animal count is taken on ONE axis and then valued in both.** `quantise_animal_take`
@@ -4601,7 +4601,11 @@ pub fn herd_hunt_yield(herd: &Herd, fauna: &FaunaConfig) -> HuntYield {
 ///
 /// Shared by the corral-tend branch of `advance_labor_allocation` (the payout) and [`hunt_forecast`]
 /// (the forecast + the "what will this herd pay once penned?" projection), so forecast == actual.
-pub(crate) fn corral_yield(herd: &Herd, fauna: &FaunaConfig, output_multiplier: f32) -> YieldPair {
+pub(crate) fn corral_yield(
+    herd: &Herd,
+    fauna: &FaunaConfig,
+    output_multiplier: f32,
+) -> YieldAccounts {
     herd_hunt_yield(herd, fauna).apply(pen_yield_biomass(herd, fauna), output_multiplier)
 }
 
@@ -4654,7 +4658,7 @@ pub(crate) fn hunt_forecast(
     // **The species' yield vector, resolved ONCE for the whole forecast** — the product half of
     // `yield = product × intensity` (`docs/plan_hunt_yield_model.md`). Every ceiling below is a
     // biomass rate put through it, so a wolf's food ceilings are honestly `0` on every rung *and* its
-    // trade ceilings carry the real number — which is exactly why the forecast is a `YieldPair` and
+    // trade ceilings carry the real number — which is exactly why the forecast is a `YieldAccounts` and
     // not a food scalar with a sibling.
     let hunt_yield = herd_hunt_yield(herd, fauna);
     if herd.is_corralled() {
