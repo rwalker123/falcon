@@ -1202,6 +1202,25 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_crop_picker_cash_variant")
 
+	# Issue #419 — THE SAME CASH BASKET ONE RUNG DOWN, which had no frame at all before this. Two
+	# defects were invisible without it:
+	#   1. Every row printed as trade-only (`Wild Emmer 70% · 0.4 trade`), because "cash crop" was
+	#      detected from `trade_payoff > 0` and EVERY staple carries the flat 0.005 trade token.
+	#   2. The row quoted `sow_*` — a FIELD payoff — on the Cultivate rung, so flax advertised the
+	#      2.4 trade a sown field pays instead of the 0.95 a tended patch does.
+	# It must now read `Wild Emmer 70% · 2.7× · 0.11 trade` and `Flax 30% · 0.3× · 0.95 trade`: the
+	# ratio the rung exists to compare is back on every row, each row states BOTH accounts it pays,
+	# and the numbers are the tended rung's own. Flax's food ratio is a warn-inked LOSS and that is
+	# correct — rung 2 weeds rather than replaces, so committing to flax really does surrender
+	# calories, which is the cost its trade clause is the benefit of.
+	_hud.show_tile_selection(_cash_basket_tile_fixture())
+	_compose_forage(_cash_basket_tile_fixture())   # settle the source key first (it changed)
+	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_species("")
+	_compose_forage(_cash_basket_tile_fixture())
+	await _settle()
+	await _save("forage_crop_picker_cash_cultivate")
+
 	# State 6b-sowing — the rung-3 BUILD meter: the Field row reads "Sowing 45%", following the pen's
 	# "Building 40%" / the fence's "Fencing 60%" convention. It sits BESIDE the "Cultivation 🌾 Tended
 	# Patch" row: the patch carries TWO independent meters, and both are the SOURCE's own.
@@ -5405,11 +5424,13 @@ func _long_basket_tile_fixture() -> Dictionary:
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.34,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
-			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
+			"cultivate_payoff": 1.35, "sow_payoff": 2.10,
+			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
 		{"species": "hazel", "display_name": "Hazel", "share": 0.24,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.34, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.67, "sow_payoff": 0.0},
+			"cultivate_payoff": 0.67, "sow_payoff": 0.0,
+			"cultivate_trade_payoff": 0.06, "sow_trade_payoff": 0.0},
 		{"species": "river_fish", "display_name": "River Fish", "share": 0.18,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
@@ -5417,7 +5438,8 @@ func _long_basket_tile_fixture() -> Dictionary:
 		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
+			"cultivate_payoff": 0.45, "sow_payoff": 0.0,
+			"cultivate_trade_payoff": 0.04, "sow_trade_payoff": 0.0},
 		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.10,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
@@ -5505,31 +5527,44 @@ func _sowable_long_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = _long_basket_tile_fixture()["patch_composition"]
 	return tile
 
-## A basket with a FODDER crop (Flora roster F3): Hay Grass pays HAY, not provisions, so its provisions
-## payoff/ratio read 0 and the `N.N×` row would call it worthless. `sow_fodder_payoff` (1.8) is >0, so
-## the picker shows "Hay Grass 30% · 1.8 hay" — valuable in its own account — while the provisions crop
-## beside it (Wild Emmer, `sow_yield_ratio` 3.2) keeps its unchanged "70% · 3.2×" ratio. On sowable
-## ground so both rows are `can_sow`-legal and pressable — a fodder crop is a legal, valuable choice.
+## A basket with a FODDER crop (Flora roster F3): Hay Grass is fodder-dominant, so a `N.N×` row alone
+## would call it worthless. Under Sow the picker reads `Hay Grass 30% · 1.80 hay` beside the staple's
+## `Wild Emmer 70% · 3.2× · 0.16 trade` — each row stating every account it pays. On sowable ground so
+## both rows are legal and pressable: a fodder crop is a legal, valuable choice.
+##
+## **Hay `can_cultivate` too (issue #419)** — its `cultivation_ceiling` is `field`, so the Cultivate rung
+## reaches it, and its rung-2 hay is its own number (0.72), not the Field's 1.8. This fixture greyed it
+## and shipped only the Field figure, so a Cultivate row here quoted a sown field's hay.
 func _fodder_basket_tile_fixture() -> Dictionary:
 	var tile := _sowable_tile_fixture()
 	tile["patch_composition"] = [
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.70,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
-			"cultivate_payoff": 1.35, "sow_payoff": 1.60, "sow_fodder_payoff": 0.0},
+			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
 		{"species": "hay_grass", "display_name": "Hay Grass", "share": 0.30,
-			"can_cultivate": false, "can_sow": true,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_fodder_payoff": 1.8},
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.25, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.12, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.72, "sow_fodder_payoff": 1.8,
+			"cultivate_trade_payoff": 0.0, "sow_trade_payoff": 0.0},
 	]
 	return tile
 
-## A basket with a CASH crop (Flora roster F4): Flax pays TRADE, not provisions or fodder, so its
-## provisions payoff/ratio AND its fodder payoff read 0 and the `N.N×` row would call it worthless.
-## `sow_trade_payoff` (2.4) is >0, so the picker shows "Flax 30% · 2.4 trade" — valuable in its own
-## account — while the provisions crop beside it (Wild Emmer, `sow_yield_ratio` 3.2) keeps its unchanged
-## "70% · 3.2×" ratio. On sowable ground so both rows are `can_sow`-legal and pressable — a cash crop is
-## a legal, valuable choice. Field-rung only, exactly like fodder.
+## A basket with a CASH crop (Flora roster F4): Flax is trade-dominant, so its provisions payoff is a
+## fraction of the staple's and the `N.N×` row alone would call it worthless. Both rows state every
+## account they pay — `Wild Emmer 70% · 3.2× · 0.16 trade` beside `Flax 30% · 2.40 trade` under Sow.
+##
+## **BOTH RUNGS ARE POPULATED, and flax `can_cultivate` (issue #419).** This fixture had
+## `can_cultivate: false` on the cash crop and no `cultivate_*_payoff` at all, which is a fiction: every
+## cash crop's `cultivation_ceiling` is `field`, so `allows_cultivate()` passes and the row is fully
+## pressable on the Cultivate rung. Greying it here meant the Cultivate rung of a cash basket had **no
+## frame in the harness**, which is how the picker came to print a *sown Field's* trade on the Cultivate
+## row unseen. The rung-2 numbers are the shape the sim actually ships (measured: cotton at rung 2 pays
+## ~1/3 of its Field trade, and still pays the volunteers' calories at a rate BELOW gathering wild —
+## #433 weeds rather than replaces, so the food ratio is a real, warn-inked loss and not a 0).
 func _cash_basket_tile_fixture() -> Dictionary:
 	var tile := _sowable_tile_fixture()
 	tile["patch_composition"] = [
@@ -5537,12 +5572,14 @@ func _cash_basket_tile_fixture() -> Dictionary:
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
-			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 0.0},
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
 		{"species": "flax", "display_name": "Flax", "share": 0.30,
-			"can_cultivate": false, "can_sow": true,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
-			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 2.4},
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_trade_payoff": 0.95, "sow_trade_payoff": 2.4},
 	]
 	return tile
 
@@ -5558,15 +5595,17 @@ func _cash_variant_basket_tile_fixture() -> Dictionary:
 	tile["y"] = 12
 	tile["patch_composition"] = [
 		{"species": "cotton", "display_name": "Cotton", "share": 0.55,
-			"can_cultivate": false, "can_sow": true,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
-			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 3.6},
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.28, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.14, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_trade_payoff": 1.42, "sow_trade_payoff": 3.6},
 		{"species": "flax", "display_name": "Flax", "share": 0.45,
-			"can_cultivate": false, "can_sow": true,
-			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
-			"cultivate_payoff": 0.0, "sow_payoff": 0.0,
-			"sow_fodder_payoff": 0.0, "sow_trade_payoff": 2.4},
+			"can_cultivate": true, "can_sow": true,
+			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
+			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
+			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
+			"cultivate_trade_payoff": 0.95, "sow_trade_payoff": 2.4},
 	]
 	return tile
 

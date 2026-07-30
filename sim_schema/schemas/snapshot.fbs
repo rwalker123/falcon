@@ -1243,10 +1243,30 @@ table FloraShareInfo {
   // this tile, in the same convention as `sowFodderPayoff` but routed to the TRADE account. A cash
   // crop's payoff is NOT in provisions, so `sowYieldRatio`/`sowPayoff` read `0` for it (worthless as
   // food) — this is the number that lets the picker show a cash crop's real value instead of a bare
-  // 0x. `0` for a staple/hay (its yield vector pays no trade beyond the flat token) or a plant that
-  // cannot climb to the Field rung here. Produced by the same `field_trade_goods` payoff function the
-  // sim pays with, so the quote and the payout cannot drift.
+  // 0x. `0` for hay (its yield vector pays no trade at all) or a plant that cannot climb to the Field
+  // rung here. A STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0` — so no
+  // client surface may treat `trade > 0` as "cash crop". Produced by the same `field_trade_goods`
+  // payoff function the sim pays with, so the quote and the payout cannot drift.
   sowTradePayoff:float = 0;
+  // --- WHAT A TENDED PATCH WOULD PAY IN THE TWO NON-FOOD ACCOUNTS (appended, issue #419) ---
+  // The rung-2 twins of `sowFodderPayoff`/`sowTradePayoff`: fodder and trade goods per turn a
+  // completed TENDED PATCH of this plant would pay on this tile. `0` where the plant's vector pays
+  // that account nothing, or where it cannot climb to the tended rung here.
+  //
+  // TWO FIELDS PER ACCOUNT PER RUNG, for exactly the reason `cultivatePayoff`/`sowPayoff` are two
+  // fields: the rungs differ in their basket, their conversion gain AND the SHAPE of their harvest
+  // (rung 2 is a drawn-down MSY skim, rung 3 a managed rate on the standing crop), so one number
+  // cannot answer both. Shipping only the Sow half is what made the Cultivate row of the crop picker
+  // quote a sown Field's trade — `10.2 trade` for cotton, on a rung that pays a fraction of it.
+  //
+  // Produced by the same `tended_fodder`/`tended_trade_goods` quote functions the sim's own rung-2
+  // payout rides (`tended_take_fodder`/`tended_take_trade_goods`, which coincide with these under
+  // `Sustain`), off the ONE `tended_msy_take` — so all three accounts of a rung-2 harvest describe the
+  // same harvest. Quoted POLICY-BLIND with no `market.trade_goods_multiplier`: the markup is a
+  // `Deplete`-policy concept applied at the credit site, and a crop row states what the CROP pays on
+  // this ground. The same rule `sowTradePayoff` states one rung up.
+  cultivateFodderPayoff:float = 0;
+  cultivateTradePayoff:float = 0;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

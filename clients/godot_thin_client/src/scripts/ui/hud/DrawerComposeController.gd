@@ -788,7 +788,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## `SourceForecast.forecast_inputs` (food/turn at output 1.0, like the hunt band ceiling), for the FORAGE picker's
 ## ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three pickers wear the
 ## same "+X /turn" button metric. Empty entries (dead-season patch / older snapshot) are skipped.
-func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
+func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_committed: bool,
+        picked: String) -> Dictionary:
     var takes := {}
     for policy in SourceForecast.LABOR_HUNT_POLICIES:
         var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, String(policy))
@@ -803,13 +804,33 @@ func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
         var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, policy)
         if not bool(forecast["known"]) or not bool(forecast["investment"]):
             continue
+        # **EACH RUNG'S FACE QUOTES THE CROP THAT RUNG WOULD COMMIT TO** (issue #419) — resolved through
+        # the same `_resolve_crop_selection` the picker's mark and the emitted command use, PER RUNG: the
+        # player's pick where it is legal there, else that rung's own highest-share legal crop. So the
+        # face states what pressing THIS button would actually buy. `forecast["payoff"]` alone is the
+        # species-BLIND patch quote, which read the same number whichever crop was lit — the "nothing
+        # above the list moves" defect, the rung-face twin of the `→ then` line's own substitution.
+        # `""` — a committed patch, or a basket with nothing legal at this rung — keeps the
+        # species-blind `forecast["payoff"]` below, and for a COMMITTED patch that is not a fallback but
+        # the right answer: the sim's per-patch `tendedYield`/`fieldYield` are taken against the patch's
+        # OWN `species`, so they already quote the standing commitment.
+        var rung_species := _resolve_crop_selection(basket, policy, is_committed, picked)
         var payoff := float(forecast["payoff"])
-        if payoff > 0.0:
-            # Trade is passed 0.0 EXPLICITLY: the plant web projects no trade rate at all, so a
-            # cultivated/sown patch's payoff is food-only and renders as one product. Stated at the
-            # call site rather than defaulted in `_payoff_take`, so no future caller can drop a real
-            # trade payoff by forgetting the argument.
-            takes[policy] = _payoff_take(payoff, 0.0)
+        # Trade is REAL on both plant rungs since #433 (a cash crop's whole point), so the face renders
+        # both products through the same `_payoff_take` the herd rungs use — food only where the crop
+        # pays food, trade only where it pays trade, both where both (the render-only-when-non-zero
+        # rule). It was hardcoded `0.0` on the argument that "the plant web projects no trade rate at
+        # all", which stopped being true when the per-crop trade payoffs reached the wire.
+        var trade := 0.0
+        if rung_species != "":
+            for entry in basket:
+                if String(entry["species"]) != rung_species:
+                    continue
+                payoff = _flora_entry_payoff(entry, policy)
+                trade = _flora_entry_trade_payoff(entry, policy)
+                break
+        if payoff > 0.0 or SourceForecast.has_component(trade):
+            takes[policy] = _payoff_take(payoff, trade)
     return takes
 
 ## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
@@ -851,18 +872,54 @@ func _flora_entry_ratio(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
     return float(entry.get("cultivate_yield_ratio", SourceForecast.FLORA_CROP_RATIO_NONE))
 
-## The FODDER (hay) this entry would pay per turn as a sown field — >0 marks a fodder crop, whose
-## provisions ratio reads 0. Routed to the fodder account, so the picker shows it in place of the 0×
-## ratio. `FLORA_CROP_RATIO_NONE` (0) for a normal provisions crop. Fodder is a Field payoff only.
-func _flora_entry_fodder_payoff(entry: Dictionary) -> float:
-    return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+## The FODDER (hay) this entry would pay per turn under `policy` — >0 marks a crop whose vector feeds
+## animals. `FLORA_CROP_RATIO_NONE` (0) where the vector pays no fodder or the plant cannot climb this
+## rung.
+##
+## **PER RUNG, exactly like `_flora_entry_ratio` above** (#419). It read `sow_fodder_payoff`
+## unconditionally — a *Field* payoff — so the Cultivate row stated what a sown field would pay, on a
+## rung that pays a drawn-down MSY skim off a merely-weeded basket. The sim ships both rungs' figures.
+func _flora_entry_fodder_payoff(entry: Dictionary, policy: String) -> float:
+    if policy == HudConst.LABOR_POLICY_SOW:
+        return float(entry.get("sow_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(entry.get("cultivate_fodder_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
 
-## The TRADE this entry would credit to the faction trade_goods stockpile per turn as a sown field —
-## >0 marks a CASH crop, whose provisions ratio AND fodder payoff both read 0. Routed to the trade
-## account, so the picker shows it in place of the 0× ratio. `FLORA_CROP_RATIO_NONE` (0) for a normal
-## provisions or fodder crop. Trade is a Field payoff only. (Flora roster F4, twin of fodder above.)
-func _flora_entry_trade_payoff(entry: Dictionary) -> float:
-    return float(entry.get("sow_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+## The TRADE this entry would credit to the faction trade_goods stockpile per turn under `policy` —
+## the exact twin of the fodder payoff above, per rung for the same reason. `FLORA_CROP_RATIO_NONE` (0)
+## where the vector pays no trade or the plant cannot climb this rung.
+##
+## **A NON-ZERO VALUE HERE DOES NOT MEAN "CASH CROP".** Every staple carries the flat
+## `trade_goods_per_biomass: 0.005` token, so all 27 of them quote a small real number — which is why
+## the row states each account it finds rather than branching on one of them to pick a single account.
+func _flora_entry_trade_payoff(entry: Dictionary, policy: String) -> float:
+    if policy == HudConst.LABOR_POLICY_SOW:
+        return float(entry.get("sow_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+    return float(entry.get("cultivate_trade_payoff", SourceForecast.FLORA_CROP_RATIO_NONE))
+
+## The rung noun the payoff tooltips name — "a tended patch" under Cultivate, "a sown field" under Sow.
+## These payoffs are per-rung, so a tooltip that named the wrong rung would restate the very bug the
+## per-rung split fixed.
+func _flora_rung_noun(policy: String) -> String:
+    return String(HudFloraVocab.FLORA_CROP_RUNG_NOUNS.get(
+        policy, HudFloraVocab.FLORA_CROP_RUNG_NOUN_FALLBACK))
+
+## **The row face for one basket entry: every account this plant actually pays, none it does not.**
+## The base share row, then a ratio / hay / trade clause each gated by whether its component is really
+## there — food leading, the shared render-only-when-non-zero rule (`SourceForecast.has_component` is
+## THE gate, so the two non-food accounts are judged exactly as the hunt faces judge trade).
+##
+## The ratio keeps its own `> FLORA_CROP_RATIO_NONE` test rather than `has_component`: `0` there is the
+## **cannot-climb sentinel**, not a small rate, and the sentinel must never print as `0.0×`.
+func _flora_row_face(crop_name: String, percent: int, ratio: float, fodder: float,
+        trade: float) -> String:
+    var face := HudFloraVocab.FLORA_SHARE_FORMAT % [crop_name, percent]
+    if ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
+        face += HudFloraVocab.FLORA_CROP_RATIO_CLAUSE_FORMAT % ratio
+    if SourceForecast.has_component(fodder):
+        face += HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT % fodder
+    if SourceForecast.has_component(trade):
+        face += HudFloraVocab.FLORA_CROP_TRADE_CLAUSE_FORMAT % trade
+    return face
 
 ## Provisions/turn this rung pays once complete, committed to THIS species — the sim's own number, in
 ## the same units and output-multiplier convention as the forecast `payoff` it replaces. 0 (never
@@ -876,7 +933,13 @@ func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
 ## "→ then" term quotes one number no matter which crop is picked, so the picker appears to change
 ## nothing above it — the player commits to Reeds and is shown Wild Emmer's payoff. A SUBSTITUTION,
 ## not a calculation: the client does no arithmetic on the sim's figure. Returns the forecast untouched
-## when nothing is committed (no selection, a non-committing rung, or a species with no payoff on it).
+## only when nothing is being committed at all (no selection, or a non-committing rung).
+##
+## **A ZERO PAYOFF IS SUBSTITUTED, NOT SKIPPED** (#419). This used to bail out on `payoff <= 0.0` and
+## leave the *previous* crop's number standing — so picking a crop that pays no food on this rung left
+## the `→ then` line asserting food it will never deliver. The case is real: a **sown Field** is 100%
+## its crop, so a cash crop's `sow_payoff` is exactly `0`. Zero is the honest answer there and the line
+## must say so; quoting a different crop is the one thing it must never do.
 func _forecast_for_selected_crop(forecast: Dictionary, entries: Array[Dictionary], policy: String,
         species: String) -> Dictionary:
     if species == "" or not (policy in HudFloraVocab.FLORA_COMMITTING_POLICIES):
@@ -884,11 +947,8 @@ func _forecast_for_selected_crop(forecast: Dictionary, entries: Array[Dictionary
     for entry in entries:
         if String(entry["species"]) != species:
             continue
-        var payoff := _flora_entry_payoff(entry, policy)
-        if payoff <= 0.0:
-            return forecast
         var adjusted := forecast.duplicate()
-        adjusted["payoff"] = payoff
+        adjusted["payoff"] = _flora_entry_payoff(entry, policy)
         return adjusted
     return forecast
 
@@ -952,25 +1012,17 @@ func _build_crop_picker(
         var percent := int(entry["percent"])
         var legal := _flora_entry_allows(entry, policy)
         var ratio := _flora_entry_ratio(entry, policy)
-        # A fodder crop pays hay and a cash crop pays trade, not provisions: their ratio is 0, so each
-        # face states the value in its own account instead of a worthless-looking "0.0×".
-        var fodder_payoff := _flora_entry_fodder_payoff(entry)
-        var is_fodder := fodder_payoff > SourceForecast.FLORA_CROP_RATIO_NONE
-        var trade_payoff := _flora_entry_trade_payoff(entry)
-        var is_cash := trade_payoff > SourceForecast.FLORA_CROP_RATIO_NONE
+        # ALL THREE ACCOUNTS OF THIS RUNG, read per rung. A plant pays into as many of them as its
+        # yield vector has components — a staple food AND its trade token, a cash crop trade AND (at
+        # rung 2, which weeds rather than replaces) the volunteers' calories — so nothing here picks
+        # one account to state.
+        var fodder_payoff := _flora_entry_fodder_payoff(entry, policy)
+        var trade_payoff := _flora_entry_trade_payoff(entry, policy)
         var btn := Button.new()
-        # The payoff rides the face ONLY where there is one: a fodder crop shows its hay value, a cash
-        # crop its trade value, a provisions crop its ratio, and a row greyed by the climbability flags
-        # carries the 0 sentinel (printing "0.0×" there would read as "a crop worth nothing" rather than
-        # "not a crop at this rung").
-        if is_fodder:
-            btn.text = HudFloraVocab.FLORA_CROP_FODDER_ROW_FORMAT % [crop_name, percent, fodder_payoff]
-        elif is_cash:
-            btn.text = HudFloraVocab.FLORA_CROP_TRADE_ROW_FORMAT % [crop_name, percent, trade_payoff]
-        elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
-            btn.text = HudFloraVocab.FLORA_CROP_ROW_FORMAT % [crop_name, percent, ratio]
-        else:
-            btn.text = HudFloraVocab.FLORA_SHARE_FORMAT % [crop_name, percent]
+        # The face states each account that is really there and nothing else — so a row greyed by the
+        # climbability flags is a bare `Name 12%` (printing "0.0×" there would read as "a crop worth
+        # nothing" rather than "not a crop at this rung").
+        btn.text = _flora_row_face(crop_name, percent, ratio, fodder_payoff, trade_payoff)
         btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         # WHICH ROW IS MARKED depends on which question the block is asking: an open picker marks the
         # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
@@ -987,23 +1039,33 @@ func _build_crop_picker(
         btn.disabled = is_committed or not legal
         if legal:
             any_legal = true
-            # A fodder crop is valuable in the FODDER account and a cash crop in the TRADE account, not
-            # the provisions one, so neither takes the loss-warn ink its 0 provisions ratio would
-            # otherwise earn: its tooltip names the hay or trade it pays instead.
-            if is_fodder:
-                btn.tooltip_text = HudFloraVocab.FLORA_CROP_FODDER_TOOLTIP_FORMAT % [crop_name, fodder_payoff]
-            elif is_cash:
-                btn.tooltip_text = HudFloraVocab.FLORA_CROP_TRADE_TOOLTIP_FORMAT % [crop_name, trade_payoff]
+            # THE TOOLTIP IS COMPOSED THE SAME WAY THE FACE IS: the food verdict (which is about the
+            # ratio) and then a clause per non-food account, each only where the component exists. It
+            # used to be a five-way elif in which a hay or trade payoff SUPPRESSED the food verdict
+            # entirely — the tooltip half of the one-account-per-row defect.
+            var tooltip_lines: Array[String] = []
             # A LOSS-MAKING but legal crop: warn ink, FULLY pressable. Never hidden, clamped, sorted
             # by, or disabled — the ratio is there to stop a bad idea being invisible, not to forbid it.
-            elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE and ratio < HudFloraVocab.FLORA_CROP_BREAK_EVEN_RATIO:
+            # **A cash crop earns this ink honestly at rung 2** and must not be exempted: weeding
+            # cotton up through the basket really does pay less food than gathering the tile wild, and
+            # that surrendered calorie is the cost the trade clause below is the benefit of.
+            if ratio > SourceForecast.FLORA_CROP_RATIO_NONE and ratio < HudFloraVocab.FLORA_CROP_BREAK_EVEN_RATIO:
                 btn.add_theme_color_override("font_color", HudStyle.WARN)
                 btn.add_theme_color_override("font_hover_color", HudStyle.WARN)
-                btn.tooltip_text = HudFloraVocab.FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio]
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_LOSS_TOOLTIP_FORMAT % [crop_name, ratio])
             elif ratio >= HudFloraVocab.FLORA_CROP_STRONG_RATIO:
-                btn.tooltip_text = HudFloraVocab.FLORA_CROP_STRONG_TOOLTIP_FORMAT % [crop_name, ratio]
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_STRONG_TOOLTIP_FORMAT % [crop_name, ratio])
             elif ratio > SourceForecast.FLORA_CROP_RATIO_NONE:
-                btn.tooltip_text = HudFloraVocab.FLORA_CROP_MODEST_TOOLTIP_FORMAT % [crop_name, ratio]
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_MODEST_TOOLTIP_FORMAT % [crop_name, ratio])
+            var rung_noun := _flora_rung_noun(policy)
+            if SourceForecast.has_component(fodder_payoff):
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_FODDER_TOOLTIP_FORMAT
+                    % [crop_name, fodder_payoff, rung_noun])
+            if SourceForecast.has_component(trade_payoff):
+                tooltip_lines.append(HudFloraVocab.FLORA_CROP_TRADE_TOOLTIP_FORMAT
+                    % [crop_name, trade_payoff, rung_noun])
+            if not tooltip_lines.is_empty():
+                btn.tooltip_text = "\n".join(tooltip_lines)
             # The tooltips above still earn their keep on a locked row (what the plant pays is a fact
             # about the plant), but a committed row gets no handler at all — not merely a dead one.
             if not is_committed:
@@ -1102,10 +1164,21 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
             or (not HudWidgets.gate_reasons(forage_gates, _compose.forage_policy()).is_empty() \
                 and _compose.forage_policy() != standing_forage):
         _compose.set_forage_policy(SourceForecast.DEFAULT_HUNT_POLICY)
+    # THE BASKET IS RESOLVED BEFORE THE RUNG FACES, because the two committing rungs' faces quote the
+    # crop they would commit to (issue #419) — a face computed off a species-blind patch reads the same
+    # number whichever crop is lit, which is the "nothing above the list moves" half of that issue.
+    var basket := SourceForecast.flora_basket_entries(tile_info.get("patch_composition", []))
+    # The SPECIES KEY, not the display name: the picker marks the committed row by matching the wire
+    # key its entries carry, exactly as the tile card's basket does — one identity, two panels.
+    var committed_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
+    var is_committed := committed_species != "" \
+        and String(tile_info.get("patch_committed_display_name", "")).strip_edges() != ""
+    _compose.resolve_forage_species(func(current: String) -> String:
+        return _resolve_crop_selection(basket, _compose.forage_policy(), is_committed, current))
     # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
-    # "+X /turn" button metric the local-hunt picker does (the investment rungs Cultivate/Sow carry none,
-    # like Corral — their dip→payoff is stated by the forecast row below).
-    var forage_takes := _forage_policy_takes(tile_info)
+    # "+X /turn" button metric the local-hunt picker does; the investment rungs Cultivate/Sow wear the
+    # PAYOFF they build toward, now for the crop each rung would actually commit to.
+    var forage_takes := _forage_policy_takes(tile_info, basket, is_committed, _compose.forage_species())
     target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
         _compose.set_forage_policy(policy)
         # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
@@ -1120,14 +1193,6 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # it; the selection is re-resolved every render (a policy switch changes which plants are legal),
     # so the composed crop can never name a plant this tile+rung cannot take — and "" always
     # remains valid, meaning "take the sim's default".
-    var basket := SourceForecast.flora_basket_entries(tile_info.get("patch_composition", []))
-    # The SPECIES KEY, not the display name: the picker marks the committed row by matching the wire
-    # key its entries carry, exactly as the tile card's basket does — one identity, two panels.
-    var committed_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
-    var is_committed := committed_species != "" \
-        and String(tile_info.get("patch_committed_display_name", "")).strip_edges() != ""
-    _compose.resolve_forage_species(func(current: String) -> String:
-        return _resolve_crop_selection(basket, _compose.forage_policy(), is_committed, current))
     if _compose.forage_policy() in HudFloraVocab.FLORA_COMMITTING_POLICIES:
         var crop_picker := _build_crop_picker(basket, _compose.forage_policy(), _compose.forage_species(),
             committed_species if is_committed else "",

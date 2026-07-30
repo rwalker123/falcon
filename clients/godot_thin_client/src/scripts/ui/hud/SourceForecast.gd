@@ -870,12 +870,21 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # payoff; without these the row renders a correct ratio above a forecast that ignores it.
             "cultivate_payoff": float(entry.get("cultivate_payoff", 0.0)),
             "sow_payoff": float(entry.get("sow_payoff", 0.0)),
-            # Fodder crops pay hay, not provisions — carried through so the picker row can show the
-            # hay value in place of the 0× provisions ratio a fodder crop would otherwise read.
+            # A sown FIELD of a fodder crop pays hay, not provisions — carried through so the picker row
+            # can show the hay value in place of the 0× provisions ratio it would otherwise read.
             "sow_fodder_payoff": float(entry.get("sow_fodder_payoff", 0.0)),
-            # Cash crops pay trade, not provisions or fodder — carried through so the picker row can
-            # show the trade value in place of the 0× provisions ratio a cash crop would otherwise read.
+            # A sown FIELD of a cash crop pays trade, not provisions or fodder — same shape, the trade
+            # account. **Both are scoped to the FIELD rung deliberately**: a sown Field is 100% its crop,
+            # so there a cash crop's `sow_payoff` really is exactly 0. One rung down it is not — a TENDED
+            # patch only WEEDS, so it keeps paying the volunteers' calories (#433), which is why the
+            # `cultivate_*` pair below is a separate quote and not a scaled copy of these.
             "sow_trade_payoff": float(entry.get("sow_trade_payoff", 0.0)),
+            # THE TENDED-RUNG TWINS of the two above (#419). The `sow_*` pair are Field payoffs, so a
+            # Cultivate row that read them stated rung 3's number on rung 2 — `10.2 trade` for cotton
+            # beside a rung that pays a fraction of it. Both rungs ride the entry; the picker reads the
+            # pair its policy names, exactly as it already does for the ratio and the food payoff.
+            "cultivate_fodder_payoff": float(entry.get("cultivate_fodder_payoff", 0.0)),
+            "cultivate_trade_payoff": float(entry.get("cultivate_trade_payoff", 0.0)),
         })
     if entries.is_empty():
         return entries

@@ -377,7 +377,9 @@
         {
           "can_cultivate": true,
           "can_sow": true,
+          "cultivate_fodder_payoff": 67.110001,
           "cultivate_payoff": 18.76,
+          "cultivate_trade_payoff": 38.880001,
           "cultivate_yield_ratio": 71.150002,
           "display_name": "forage_patches[0].composition[0].display_name",
           "share": 4.84,
@@ -390,7 +392,9 @@
         {
           "can_cultivate": true,
           "can_sow": true,
+          "cultivate_fodder_payoff": 108.559998,
           "cultivate_payoff": 42.560001,
+          "cultivate_trade_payoff": 42.290001,
           "cultivate_yield_ratio": 12.23,
           "display_name": "forage_patches[0].composition[1].display_name",
           "share": 84.0,
@@ -430,7 +434,9 @@
         {
           "can_cultivate": true,
           "can_sow": true,
+          "cultivate_fodder_payoff": 53.099998,
           "cultivate_payoff": 15.93,
+          "cultivate_trade_payoff": 65.269997,
           "cultivate_yield_ratio": 106.290001,
           "display_name": "forage_patches[1].composition[0].display_name",
           "share": 72.419998,
@@ -443,7 +449,9 @@
         {
           "can_cultivate": true,
           "can_sow": true,
+          "cultivate_fodder_payoff": 22.51,
           "cultivate_payoff": 50.290001,
+          "cultivate_trade_payoff": 111.720001,
           "cultivate_yield_ratio": 48.369999,
           "display_name": "forage_patches[1].composition[1].display_name",
           "share": 38.57,

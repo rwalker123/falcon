@@ -1109,12 +1109,17 @@ pub fn commit_payoff(
     rung_payoff(&patch, composition, forage, flora, output_multiplier, rung)
 }
 
-/// **The FODDER (hay) a sown Field of THIS plant would pay per turn on this tile** (Flora Roster F3,
-/// §5, Part D) — the fodder twin of [`commit_payoff`]'s Field arm, so the crop picker can show a hay
-/// crop's real value instead of the bare `0×` its provisions ratio reads. Built through the *same*
-/// `hypothetical_patch` construction and the *same* `field_fodder` the sim pays with (the §4.3 "assert
-/// the quote against the payoff function" rule), so the published number and the payout cannot drift.
-/// `0.0` for a plant that pays no fodder or cannot climb to the Field rung here.
+/// **The FODDER (hay) committing this tile to THIS plant would pay per turn, on `rung`** (Flora Roster
+/// F3, §5, Part D) — the fodder twin of [`commit_payoff`], so the crop picker can show a hay crop's
+/// real value instead of the bare `0×` its provisions ratio reads. Built through the *same*
+/// `hypothetical_patch` construction and the *same* payoff functions the sim pays with (the §4.3
+/// "assert the quote against the payoff function" rule), so the published number and the payout cannot
+/// drift. `0.0` for a plant that pays no fodder or cannot climb `rung` here.
+///
+/// **It takes a `rung` for the reason [`commit_payoff`] does**, and it did not always: F3 quoted the
+/// Field arm alone, so the Cultivate row of the picker had nothing to state but a *sown Field's* hay.
+/// The two rungs pay different amounts off different baskets, so one number cannot answer both.
+#[allow(clippy::too_many_arguments)]
 pub fn commit_fodder_payoff(
     tile: UVec2,
     tile_capacity: f32,
@@ -1123,28 +1128,55 @@ pub fn commit_fodder_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
+    rung: RungKey,
 ) -> f32 {
-    if !species_climbs(
-        species,
-        share_of(composition, species),
-        flora,
-        RungKey::PlantField,
-    ) {
+    if !species_climbs(species, share_of(composition, species), flora, rung) {
         return 0.0;
     }
-    let patch = hypothetical_patch(tile, tile_capacity, Some(species), RungKey::PlantField);
-    field_fodder(&patch, composition, forage, flora, output_multiplier)
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), rung);
+    rung_fodder_payoff(&patch, composition, forage, flora, output_multiplier, rung)
 }
 
-/// **The TRADE GOODS a sown Field of THIS plant would credit per turn on this tile** (Flora Roster
-/// F4, §6) — the exact trade twin of [`commit_fodder_payoff`], routing the yield vector's
+/// **What a patch pays in FODDER, standing on `rung`** — the fodder arm of [`rung_payoff`], dispatching
+/// to the *same* helpers the sim pays each rung with: [`field_fodder`] at rung 3 (a managed rate on the
+/// standing crop) and [`tended_fodder`] at rung 2 (the MSY skim, because rung 2 is drawn down). Rung 1
+/// pays no *committed* fodder quote — a wild gather's hay is not a commitment's payoff — so it is `0`,
+/// the same "cannot climb this rung" sentinel the ratios use.
+fn rung_fodder_payoff(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> f32 {
+    match rung {
+        RungKey::PlantField => {
+            field_fodder(patch, tile_composition, forage, flora, output_multiplier)
+        }
+        RungKey::PlantTended => {
+            tended_fodder(patch, tile_composition, forage, flora, output_multiplier)
+        }
+        _ => 0.0,
+    }
+}
+
+/// **The TRADE GOODS committing this tile to THIS plant would credit per turn, on `rung`** (Flora
+/// Roster F4, §6) — the exact trade twin of [`commit_fodder_payoff`], routing the yield vector's
 /// `trade_goods_per_biomass` component instead of its `fodder_per_biomass` one. Built through the
-/// *same* `hypothetical_patch` construction and the *same* `field_trade_goods` the sim pays with (the
+/// *same* `hypothetical_patch` construction and the *same* payoff functions the sim pays with (the
 /// §4.3 "assert the quote against the payoff function" rule), so the picker's cash-crop row and the
-/// payout cannot drift. `sowYieldRatio`/`sowPayoff` read `0` for a cash crop — it is worthless as
+/// payout cannot drift. `cultivatePayoff`/`sowPayoff` read `0` for a cash crop — it is worthless as
 /// food — so this is the number that lets the picker show its real value instead of a bare `0×`.
-/// `0.0` for a staple/hay (its vector pays no trade) or a plant that cannot climb to the Field rung
-/// here.
+/// `0.0` for HAY — whose vector pays no trade at all — or a plant that cannot climb `rung`. A
+/// STAPLE reads the small flat token (`trade_goods_per_biomass` 0.005), never `0`, which is exactly
+/// why no surface may read "trade > 0" as "cash crop".
+///
+/// **The rung parameter closes a real hole, not a symmetry gap.** #433 made a tended cash crop *pay*
+/// trade ([`tended_take_trade_goods`]); this is what makes it *quote* it. Until now the Cultivate row
+/// of the picker printed the Field number — off by the whole difference between a managed rate and an
+/// MSY skim, on a rung the player was about to commit 25 turns to.
+#[allow(clippy::too_many_arguments)]
 pub fn commit_trade_payoff(
     tile: UVec2,
     tile_capacity: f32,
@@ -1153,17 +1185,35 @@ pub fn commit_trade_payoff(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
     output_multiplier: f32,
+    rung: RungKey,
 ) -> f32 {
-    if !species_climbs(
-        species,
-        share_of(composition, species),
-        flora,
-        RungKey::PlantField,
-    ) {
+    if !species_climbs(species, share_of(composition, species), flora, rung) {
         return 0.0;
     }
-    let patch = hypothetical_patch(tile, tile_capacity, Some(species), RungKey::PlantField);
-    field_trade_goods(&patch, composition, forage, flora, output_multiplier)
+    let patch = hypothetical_patch(tile, tile_capacity, Some(species), rung);
+    rung_trade_payoff(&patch, composition, forage, flora, output_multiplier, rung)
+}
+
+/// **What a patch pays in TRADE GOODS, standing on `rung`** — the trade arm of [`rung_payoff`], the
+/// exact twin of [`rung_fodder_payoff`]: [`field_trade_goods`] at rung 3, [`tended_trade_goods`] at
+/// rung 2, `0` below.
+fn rung_trade_payoff(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+    rung: RungKey,
+) -> f32 {
+    match rung {
+        RungKey::PlantField => {
+            field_trade_goods(patch, tile_composition, forage, flora, output_multiplier)
+        }
+        RungKey::PlantTended => {
+            tended_trade_goods(patch, tile_composition, forage, flora, output_multiplier)
+        }
+        _ => 0.0,
+    }
 }
 
 /// **What this tile pays per turn left WILD** — the denominator of [`commit_yield_ratio`], and the
@@ -1552,17 +1602,78 @@ pub(crate) fn tended_provisions(
     output_multiplier: f32,
 ) -> f32 {
     forage_provisions(
-        sustainable_yield(
-            patch.biomass,
-            patch.carrying_capacity,
-            &tended_ecology(forage),
-        )
-        .clamp(0.0, patch.biomass),
+        tended_msy_take(patch, forage),
         // The rate this patch converts at **on the TENDED rung** — asked about rung 2 by name, so a
         // patch mid-Cultivate quotes the weeded basket it is planting rather than the one it is
         // still in, and a patch that has already climbed to a Field still answers what rung 2 pays
         // here rather than borrowing rung 3's.
         rung_provisions_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
+        output_multiplier,
+    )
+}
+
+/// **THE take a rung-2 quote is priced on** — the Sustain (MSY) skim on the *tended* curve, clamped to
+/// the standing crop. Stated once because rung 2 pays **three** accounts off one take
+/// ([`tended_provisions`], [`tended_fodder`], [`tended_trade_goods`]), and a second copy of this
+/// expression is exactly how the food quote and the trade quote would start describing different
+/// harvests — the `patch_ecology` lesson, applied to the take instead of the curve.
+///
+/// It is the **quote's** take, not a policy's: worker-unconstrained and policy-blind, the same
+/// convention `tendedYield` has always been published under. What the sim actually credits rides
+/// `forage_take`'s policy ceiling and worker cap ([`tended_take_fodder`] /
+/// [`tended_take_trade_goods`]), and under `Sustain` the two coincide.
+fn tended_msy_take(patch: &ForagePatch, forage: &ForageLaborConfig) -> f32 {
+    sustainable_yield(
+        patch.biomass,
+        patch.carrying_capacity,
+        &tended_ecology(forage),
+    )
+    .clamp(0.0, patch.biomass)
+}
+
+/// **What a patch would pay in FODDER as a TENDED patch** — the rung-2 quote twin of
+/// [`tended_provisions`], routing the yield vector's fodder component instead of its provisions one.
+/// The hay counterpart of [`field_fodder`] one rung down, and the number the crop picker's Cultivate
+/// rung needs: before this, the picker had only `sowFodderPayoff` and therefore quoted a *sown Field's*
+/// hay on the Cultivate row.
+///
+/// **Priced on [`tended_msy_take`], the same take the food quote uses**, and converted through the
+/// same [`rung_rate`] seam at `PlantTended` — so the three accounts of one rung-2 harvest are one
+/// harvest, split three ways, and cannot disagree about its size. `0` for a crop whose vector pays no
+/// fodder, with no `role` branch.
+pub(crate) fn tended_fodder(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        tended_msy_take(patch, forage),
+        rung_fodder_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
+        output_multiplier,
+    )
+}
+
+/// **What a patch would pay in TRADE GOODS as a TENDED patch** — the exact trade twin of
+/// [`tended_fodder`], and the quote a rung-2 **cash crop** never had. A tended cotton patch has been
+/// *paid* trade since #433 ([`tended_take_trade_goods`]) while being *previewed* as `0`, because the
+/// only trade quote on the wire was `sowTradePayoff`, a Field number.
+///
+/// **No `market.trade_goods_multiplier`.** That markup is a `Deplete`-*policy* concept applied at the
+/// credit site; a crop-picker row states what the *crop* pays on this ground, so it is quoted
+/// policy-blind at the Sustain skim — the same rule [`field_trade_goods`] states one rung up, and the
+/// same convention [`tended_provisions`] already answers the food question under.
+pub(crate) fn tended_trade_goods(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    output_multiplier: f32,
+) -> f32 {
+    forage_provisions(
+        tended_msy_take(patch, forage),
+        rung_trade_per_biomass(patch, tile_composition, flora, forage, RungKey::PlantTended),
         output_multiplier,
     )
 }
@@ -1794,12 +1905,26 @@ fn patch_fodder_per_biomass(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> f32 {
+    rung_fodder_per_biomass(patch, tile_composition, flora, forage, standing_rung(patch))
+}
+
+/// The fodder rate this patch would convert at **standing on `rung`** — [`patch_fodder_per_biomass`]
+/// asked about a rung by name, the fodder twin of [`rung_provisions_per_biomass`]. A *quote* must ask
+/// by name: a patch mid-Cultivate has to be told what the rung it is building pays, not what the wild
+/// stand it still is does.
+fn rung_fodder_per_biomass(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    rung: RungKey,
+) -> f32 {
     rung_rate(
         patch,
         tile_composition,
         flora,
         forage,
-        standing_rung(patch),
+        rung,
         |def| def.yield_.fodder_per_biomass,
         NO_UNCOMMITTED_YIELD_RATE,
     )
@@ -1816,12 +1941,25 @@ fn patch_trade_per_biomass(
     flora: &FloraConfig,
     forage: &ForageLaborConfig,
 ) -> f32 {
+    rung_trade_per_biomass(patch, tile_composition, flora, forage, standing_rung(patch))
+}
+
+/// The trade rate this patch would convert at **standing on `rung`** — the exact trade twin of
+/// [`rung_fodder_per_biomass`], and what lets a rung-2 quote price a cash crop the Cultivate rung
+/// really will pay for.
+fn rung_trade_per_biomass(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    flora: &FloraConfig,
+    forage: &ForageLaborConfig,
+    rung: RungKey,
+) -> f32 {
     rung_rate(
         patch,
         tile_composition,
         flora,
         forage,
-        standing_rung(patch),
+        rung,
         |def| def.yield_.trade_goods_per_biomass,
         NO_UNCOMMITTED_YIELD_RATE,
     )

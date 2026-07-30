@@ -129,8 +129,8 @@ paths:
   `sow_yield_ratio`, read per rung by `_flora_entry_ratio`): a row reads `Wild Emmer 34% · 2.7×` —
   what committing this tile to this plant yields **relative to gathering it wild**. The sim folds the
   share AND the species' conversion rate into it through the same seams the real payout uses, so the
-  client only **formats** it (`FLORA_CROP_ROW_FORMAT`, one decimal — the question is "better or worse
-  than wild", not a second significant figure); **never do arithmetic on it here**, and note the raw
+  client only **formats** it (`FLORA_CROP_RATIO_CLAUSE_FORMAT`, one decimal — the question is "better or
+  worse than wild", not a second significant figure); **never do arithmetic on it here**, and note the raw
   per-species rate is deliberately unpublished (meaningless alone, and it would put the payoff formula
   in two places). Below `FLORA_CROP_BREAK_EVEN_RATIO` the row is **WARN-inked and fully pressable** —
   the ratio exists to stop a bad idea being invisible, never to forbid it, so nothing is hidden,
@@ -155,7 +155,37 @@ paths:
   frames' forecast lines **differ** (`+1.35` vs `+0.45`); asserting the line merely *exists* would pass
   against a hardcoded one. **Carrying the payoff through `SourceForecast.flora_basket_entries` is the load-bearing
   half** — the substitution silently no-ops if the basket entry drops the field, which is exactly how it
-  first failed.
+  first failed. **A ZERO payoff is SUBSTITUTED, not skipped** (#419): the substitution used to bail on
+  `payoff <= 0.0` and leave the *previous* crop's number standing, so picking a crop that pays no food on
+  this rung left the `→ then` line asserting food it never delivers. The case is real — a sown Field is
+  100% its crop, so a cash crop's `sow_payoff` is exactly `0` — and zero is the honest answer there.
+  **A ROW STATES EVERY ACCOUNT IT PAYS, NOT ONE** (issue #419; `.claude/rules/client/labor-ui.md` → "A
+  hunt pays TWO products" is the shared rule, and `SourceForecast.has_component` the shared gate). The
+  face is COMPOSED — `FLORA_SHARE_FORMAT` base plus a ratio / hay / trade clause each rendered only where
+  its component exists (`_flora_row_face`), and the tooltip composed the same way — so a staple reads
+  `Wild Emmer 70% · 2.7× · 0.11 trade` and a cash crop `Flax 30% · 0.3× · 0.95 trade`.
+  - **It was three mutually exclusive whole-row formats picked by an if/elif chain**, so a row could
+    state exactly ONE account, and the chain detected "cash crop" from `trade_payoff > 0`. **Every
+    staple carries `trade_goods_per_biomass: 0.005`**, so that test fired on all 27 of them and printed
+    every crop as trade-only — `Wild Emmer 39% · 0.4 trade`, with the ratio the rung exists to compare
+    nowhere on the row. There is deliberately **no `role` on the wire and no threshold**: the components
+    self-route, which is the client twin of the sim's own "the vector is the behaviour, the role is a
+    display tag never branched on" (`flora_config.rs`). A payoff being non-zero says an account is
+    *paid*, never which account *dominates*.
+  - **THE TWO NON-FOOD PAYOFFS ARE PER RUNG** — `_flora_entry_fodder_payoff` / `_flora_entry_trade_payoff`
+    take the `policy` and read `cultivate_*` or `sow_*`, exactly as `_flora_entry_ratio` already did.
+    They read `sow_*` unconditionally before, so the Cultivate row quoted a *sown Field's* number. The
+    tooltips name the rung's own noun (`FLORA_CROP_RUNG_NOUNS`) for the same reason.
+  - **TWO decimals on the absolute accounts, one on the ratio.** The ratio's single decimal is the
+    deliberate "no second significant figure" choice; the non-food clauses are absolute rates spanning
+    two orders of magnitude within one basket (0.11 trade for a staple's token beside 4.28 for cotton on
+    the same ground), and one decimal flattens the small end to `0.1` and loses exactly the comparison
+    the row exists for. It is also `SourceForecast.picker_products`' precision.
+  - **A cash crop's food ratio is a WARN-inked LOSS at rung 2, and must not be exempted.** The old chain
+    let a trade payoff suppress the food verdict entirely; but rung 2 *weeds* rather than replaces, so a
+    tended cotton patch really does keep paying its volunteers' calories at a rate below gathering the
+    tile wild. That surrendered calorie is the cost its trade clause is the benefit of — the land-use
+    tension, rendered.
   **SIZING — the picker's LIST scrolls within itself, and the cap is MEASURED**
   (`FLORA_CROP_LIST_MAX_HEIGHT`, derived as `FLORA_CROP_LIST_VISIBLE_ROWS × row + separations`, with the
   rows on the work board's compact idiom via `HudWidgets.compact` — default button chrome pads 9px top AND

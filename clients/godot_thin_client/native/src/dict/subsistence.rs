@@ -390,6 +390,12 @@ pub(crate) fn forage_patches_to_array(
                 // place of the 0× provisions ratio so a cash crop does not read as a loss. 0 for a
                 // normal or fodder crop.
                 let _ = share_dict.insert("sow_trade_payoff", share.sowTradePayoff());
+                // The same two accounts AT THE TENDED RUNG (#419). The two `sow_*` payoffs above are
+                // Field figures, so a Cultivate row that read them quoted rung 3's managed rate for a
+                // rung that pays an MSY skim off a merely-weeded basket. Which one a row states is the
+                // POLICY's question, so both ride the entry and the picker picks by rung.
+                let _ = share_dict.insert("cultivate_fodder_payoff", share.cultivateFodderPayoff());
+                let _ = share_dict.insert("cultivate_trade_payoff", share.cultivateTradePayoff());
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

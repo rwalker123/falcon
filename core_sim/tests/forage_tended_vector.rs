@@ -20,14 +20,15 @@ use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
 use core_sim::{
-    advance_labor_allocation, patch_provisions_per_biomass, scalar_from_f32, scalar_one,
-    scalar_zero, spawn_initial_forage, spawn_initial_world, tended_take_fodder,
-    tended_take_trade_goods, tile_flora_composition, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
-    FloraShare, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    advance_labor_allocation, commit_fodder_payoff, commit_trade_payoff,
+    patch_provisions_per_biomass, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_world, tended_take_fodder, tended_take_trade_goods, tile_flora_composition,
+    tile_forage_capacity, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FloraConfig, FloraShare, FollowPolicy, FoodModuleTag,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
     BUILTIN_LABOR_CONFIG, FODDER, FOOD,
@@ -662,5 +663,206 @@ fn a_tended_cash_crop_earns_more_trade_under_deplete_than_sustain() {
     assert!(
         sustain > 0.0,
         "a Sustain harvest of a cash crop still sells"
+    );
+}
+
+/// **THE QUOTE IS THE PAYOUT, at rung 2, in the trade account** (issue #419) — the §4.3 rule applied
+/// to the crop picker's Cultivate row.
+///
+/// #427/#433 made a tended cash crop *pay* trade; nothing *quoted* it. `FloraShareInfo` carried only
+/// `sowTradePayoff`, a **Field** number, so the picker's Cultivate row advertised a managed rate on the
+/// full standing crop for a rung that pays an MSY skim off a merely-weeded basket — cotton read
+/// `10.2 trade` beside a rung that pays a fraction of it. `cultivateTradePayoff` is that rung's own
+/// number, and this pins it against what the turn actually credits.
+///
+/// **Why the two are exactly equal here:** the fixture seats the patch at [`MSY_STANDING_CROP`] (`K/2`,
+/// the MSY operating point) and staffs it past any worker cap, so a `Sustain` take *is* the MSY skim on
+/// the tended curve — which is the take `tended_msy_take` prices the quote on. Anywhere else the two
+/// legitimately differ (that is what the policy axis *is*); here they must agree to the float.
+#[test]
+fn the_published_cultivate_trade_quote_is_the_trade_a_tended_patch_actually_credits() {
+    let mut app = spawn_world();
+    let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
+    seat_tended_patch(&mut app, coord, "grapevine");
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let composition = tile_composition(&app, coord);
+    let flora = FloraConfig::builtin();
+    let forage = &labor().forage;
+    let capacity = {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("tile entity resolves");
+        let ground = app.world.get::<Tile>(entity).expect("the tile");
+        tile_forage_capacity(forage, ground)
+    };
+
+    // The picker's Cultivate-row quote, through the same public seam the snapshot builds it with.
+    let quoted = commit_trade_payoff(
+        coord,
+        capacity,
+        "grapevine",
+        &composition,
+        &flora,
+        forage,
+        NEUTRAL_MULTIPLIER,
+        RungKey::PlantTended,
+    );
+    assert!(
+        quoted > 0.0,
+        "a rung-2 cash crop must QUOTE trade, not preview as 0 while being paid"
+    );
+
+    app.world.run_system_once(advance_labor_allocation);
+    let paid = published_trade(&app, band);
+    assert!(
+        (quoted - paid).abs() <= EPSILON,
+        "the Cultivate row must state what the rung pays: quoted {quoted} vs credited {paid}"
+    );
+
+    // **The defect this replaces, named:** the Field figure is a materially different number, so a
+    // picker that kept quoting `sowTradePayoff` on this row was not merely imprecise.
+    let field_quote = commit_trade_payoff(
+        coord,
+        capacity,
+        "grapevine",
+        &composition,
+        &flora,
+        forage,
+        NEUTRAL_MULTIPLIER,
+        RungKey::PlantField,
+    );
+    assert!(
+        field_quote > quoted,
+        "rung 3 must out-pay rung 2 in trade as it does in food, or the Sow rung is pointless: \
+         field {field_quote} vs tended {quoted}"
+    );
+}
+
+/// **The fodder twin of the above** — a tended hay patch's `cultivateFodderPayoff` is the fodder the
+/// turn credits, for the same reason and on the same MSY-seated fixture. Guards the half of #419 that
+/// has no cash crop to make it visible: `hay_grass` climbs to `field`, so its Cultivate row was
+/// quoting a hay Field's managed rate too.
+#[test]
+fn the_published_cultivate_fodder_quote_is_the_fodder_a_tended_patch_actually_credits() {
+    let mut app = spawn_world();
+    let (tile, coord) = richest_tile_growing(&mut app, "hay_grass");
+    seat_tended_patch(&mut app, coord, "hay_grass");
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let composition = tile_composition(&app, coord);
+    let flora = FloraConfig::builtin();
+    let forage = &labor().forage;
+    let capacity = {
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("tile entity resolves");
+        let ground = app.world.get::<Tile>(entity).expect("the tile");
+        tile_forage_capacity(forage, ground)
+    };
+
+    let quoted = commit_fodder_payoff(
+        coord,
+        capacity,
+        "hay_grass",
+        &composition,
+        &flora,
+        forage,
+        NEUTRAL_MULTIPLIER,
+        RungKey::PlantTended,
+    );
+    assert!(quoted > 0.0, "a rung-2 hay patch must QUOTE its fodder");
+
+    app.world.run_system_once(advance_labor_allocation);
+    let paid = app
+        .world
+        .get::<PopulationCohort>(band)
+        .expect("the band forages")
+        .stores
+        .get(FODDER)
+        .to_f32();
+    assert!(
+        (quoted - paid).abs() <= EPSILON,
+        "the Cultivate row must state the hay the rung pays: quoted {quoted} vs credited {paid}"
+    );
+}
+
+/// **A staple's rung-2 trade quote is small but REAL, and that is why the client cannot threshold on
+/// it** (issue #419's first fault). Every staple carries `trade_goods_per_biomass: 0.005`, so the
+/// "detect a cash crop purely from the payoff being > 0" test the picker used fired on all 27 of them
+/// and printed every row as trade-only. The quote must stay non-zero — it is honest income — while
+/// being a different order of magnitude from a cash crop's on comparable ground, which is what makes
+/// rendering *both* accounts the readable answer rather than picking one.
+#[test]
+fn a_staples_cultivate_trade_quote_is_the_flat_token_not_zero_and_not_a_cash_crops() {
+    let mut app = spawn_world();
+    let flora = FloraConfig::builtin();
+    let forage = &labor().forage;
+    let quote_for = |app: &mut App, species: &str, rung: RungKey| {
+        let (_, coord) = richest_tile_growing(app, species);
+        let composition = tile_composition(app, coord);
+        let entity = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .expect("tile entity resolves");
+        let ground = app.world.get::<Tile>(entity).expect("the tile");
+        let capacity = tile_forage_capacity(forage, ground);
+        let food = core_sim::commit_payoff(
+            coord,
+            capacity,
+            species,
+            &composition,
+            &flora,
+            forage,
+            NEUTRAL_MULTIPLIER,
+            rung,
+        );
+        let trade = commit_trade_payoff(
+            coord,
+            capacity,
+            species,
+            &composition,
+            &flora,
+            forage,
+            NEUTRAL_MULTIPLIER,
+            rung,
+        );
+        (food, trade)
+    };
+
+    let (staple_food, staple_trade) = quote_for(&mut app, "wild_emmer", RungKey::PlantTended);
+    assert!(
+        staple_trade > 0.0,
+        "a staple's flat trade token is real income, so the picker cannot treat >0 as 'cash crop'"
+    );
+    assert!(
+        staple_food > 0.0,
+        "and a staple is a FOOD crop — both accounts are non-zero on the same row"
+    );
+
+    let (cash_food, cash_trade) = quote_for(&mut app, "cotton", RungKey::PlantTended);
+    assert!(
+        cash_trade > staple_trade,
+        "the cash crop's trade must dominate the staple's token, or the row comparison says nothing: \
+         cotton {cash_trade} vs emmer {staple_trade}"
+    );
+
+    // **A rung-2 cash crop still pays FOOD, and the row has to say so** — #433's weeding model, on the
+    // quote. Tending raises cotton's share to `min(1, share × tended_weeding_gain)` and leaves the
+    // volunteers standing, so the basket keeps paying whatever *they* pay. It is only a sown **Field**
+    // that is 100% crop and therefore pays exactly zero calories. So at rung 2 BOTH accounts are live
+    // even for a cash crop, and a row that states one of them is wrong whichever one it picks.
+    assert!(
+        cash_food > 0.0,
+        "a tended cash crop keeps its volunteers' calories (#433), so its Cultivate row has a food \
+         term too: {cash_food}"
+    );
+    let (field_food, _) = quote_for(&mut app, "cotton", RungKey::PlantField);
+    assert_eq!(
+        field_food, 0.0,
+        "a sown cotton Field is 100% cotton — THAT is the rung with no food number at all"
     );
 }

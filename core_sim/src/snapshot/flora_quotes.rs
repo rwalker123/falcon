@@ -288,6 +288,34 @@ fn derive_tile_quotes(
             };
             let cultivate = payoff(RungKey::PlantTended);
             let sow = payoff(RungKey::PlantField);
+            // The two non-food accounts, per rung, through the same rung-parameterized seams — so the
+            // Cultivate row of the crop picker states what a TENDED patch of this plant pays rather
+            // than borrowing the Field's number (issue #419). Same closure shape as `payoff` above,
+            // and for the same reason: the rung is an argument, never a hardcoded arm.
+            let fodder_payoff = |rung| {
+                commit_fodder_payoff(
+                    tile.position,
+                    tile_capacity,
+                    &share.species,
+                    &composition,
+                    flora,
+                    forage,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                    rung,
+                )
+            };
+            let trade_payoff = |rung| {
+                commit_trade_payoff(
+                    tile.position,
+                    tile_capacity,
+                    &share.species,
+                    &composition,
+                    flora,
+                    forage,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                    rung,
+                )
+            };
             FloraShareInfo {
                 species: share.species.clone(),
                 display_name: def.display_name.clone(),
@@ -310,28 +338,19 @@ fn derive_tile_quotes(
                 // through the same `commit_fodder_payoff` seam the sim's `field_fodder` pays with,
                 // so the picker can show hay's value where `sow_yield_ratio` reads 0×. `0` for a
                 // staple (no fodder in its vector) or a plant that cannot Sow here.
-                sow_fodder_payoff: commit_fodder_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                ),
+                sow_fodder_payoff: fodder_payoff(RungKey::PlantField),
                 // **What a cash-crop Field of this plant would pay into the TRADE account** (F4) —
                 // the exact trade twin, through the same `commit_trade_payoff` seam the sim's
                 // `field_trade_goods` pays with, so the picker can show a cash crop's value where
-                // `sow_yield_ratio` reads 0×. `0` for a staple/hay or a plant that cannot Sow here.
-                sow_trade_payoff: commit_trade_payoff(
-                    tile.position,
-                    tile_capacity,
-                    &share.species,
-                    &composition,
-                    flora,
-                    forage,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                ),
+                // `sow_yield_ratio` reads 0×. `0` for hay (no trade in its vector) or a plant that
+                // cannot Sow here — a staple reads the small flat token, never `0`.
+                sow_trade_payoff: trade_payoff(RungKey::PlantField),
+                // **The same two accounts one rung down** (#419) — what a completed TENDED PATCH of
+                // this plant would pay, through `tended_fodder`/`tended_trade_goods`. The Cultivate
+                // row of the picker had only the Field figures above and quoted those, which is a
+                // managed rate standing in for an MSY skim on a rung the player commits 25 turns to.
+                cultivate_fodder_payoff: fodder_payoff(RungKey::PlantTended),
+                cultivate_trade_payoff: trade_payoff(RungKey::PlantTended),
             }
         })
         .collect();

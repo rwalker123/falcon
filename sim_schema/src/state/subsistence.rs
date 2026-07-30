@@ -605,6 +605,19 @@ pub struct FloraShareInfo {
     /// for a staple/hay or a plant that cannot climb to the Field rung here. Appended (append-only).
     #[serde(default)]
     pub sow_trade_payoff: f32,
+    /// The **tended-rung** twin of [`Self::sow_fodder_payoff`] — fodder/turn a completed tended patch
+    /// of this plant would pay here (issue #419). Its own field for the reason
+    /// [`Self::cultivate_payoff`] is: rung 2 is a drawn-down MSY skim and rung 3 a managed rate, so one
+    /// number cannot answer both rungs, and quoting the Sow figure on the Cultivate row overstated it.
+    /// `0` where the vector pays no fodder or the plant cannot climb to the tended rung here. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub cultivate_fodder_payoff: f32,
+    /// The **tended-rung** twin of [`Self::sow_trade_payoff`] — trade goods/turn a completed tended
+    /// patch of this plant would credit here (issue #419). The quote a rung-2 cash crop never had: it
+    /// has been *paid* trade since #433 while being *previewed* as `0`. Appended (append-only).
+    #[serde(default)]
+    pub cultivate_trade_payoff: f32,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
