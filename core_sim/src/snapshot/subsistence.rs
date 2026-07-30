@@ -454,12 +454,7 @@ pub(crate) fn snapshot_forage_patches(
                 // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` (a known gap, #337), so these
                 // project the provisions component rather than shipping a false `0` trade line.
                 per_worker_yield: forecast.per_worker_yield.provisions,
-                ceiling_sustain: forecast.ceiling_sustain.provisions,
-                ceiling_surplus: forecast.ceiling_surplus.provisions,
-                ceiling_deplete: forecast.ceiling_deplete.provisions,
-                ceiling_eradicate: forecast.ceiling_eradicate.provisions,
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
-                ceiling_cultivate: forecast.ceiling_prepare.provisions,
                 tended_yield: forecast.managed_yield.provisions,
                 // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
                 // Field may stand on ground that was never tended — and its own preparing/payoff
@@ -467,7 +462,6 @@ pub(crate) fn snapshot_forage_patches(
                 // client's "then Y" is the number the sim will hand over.
                 field_progress: patch.field_progress,
                 is_field: patch.is_field(),
-                ceiling_sow: forecast.ceiling_sow.provisions,
                 field_yield: field_provisions(
                     patch,
                     tile_composition,

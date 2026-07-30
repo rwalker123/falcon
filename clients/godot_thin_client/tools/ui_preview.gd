@@ -5353,16 +5353,27 @@ func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
 ##
 ## Trade and fodder default to 0 — the render-only-when-non-zero rule means every existing frame is
 ## then byte-identical, which is exactly what a reseeding pass must not disturb.
+##
+## **THE `patch_ceiling_*` KEYS IT READS ARE A FIXTURE-AUTHORING SHORTHAND, NOT WIRE KEYS, AND THIS
+## ERASES THEM** (#426). The six flat scalars they are named after are retired `(deprecated)` wire
+## slots that `MapView` no longer cross-refs and `SourceForecast` no longer reads — so a tile dict
+## left carrying them would be a wire-shaped key with no wire behind it, and the next fixture author
+## to reach for one would get silence rather than an error. Consuming them here keeps ~30 fixtures
+## naming their numbers once, in the readable form their comments explain, while guaranteeing no
+## fixture can hand the HUD a representation the sim stopped sending.
 func _seed_forage_rows(tile: Dictionary) -> Dictionary:
 	var per_worker := float(tile.get("patch_per_worker_yield", 0.0))
-	var ceilings := {
-		"sustain": float(tile.get("patch_ceiling_sustain", 0.0)),
-		"surplus": float(tile.get("patch_ceiling_surplus", 0.0)),
-		"deplete": float(tile.get("patch_ceiling_deplete", 0.0)),
-		"eradicate": float(tile.get("patch_ceiling_eradicate", 0.0)),
-		"cultivate": float(tile.get("patch_ceiling_cultivate", 0.0)),
-		"sow": float(tile.get("patch_ceiling_sow", 0.0)),
-	}
+	# **A RE-SEED FALLS BACK TO THE ROW ALREADY THERE**, and that is what makes the layered fixtures
+	# work: most of them are `_food_tile_fixture()` (already seeded, hence already erased) plus a few
+	# overrides plus a second `_seed_forage_rows`. Reading only the scalars would silently zero every
+	# rung the second caller did NOT restate — `_tended_tile_fixture` overrides the four extractive
+	# ceilings and inherits Cultivate's, so Cultivate's dip would collapse to 0 and the sheet's worker
+	# cap would move under a state that says nothing about either.
+	var standing: Dictionary = tile.get("patch_forage_policy_ceilings", {})
+	var ceilings := {}
+	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
+		ceilings[policy] = float(tile.get("patch_ceiling_%s" % policy,
+			standing.get(policy, 0.0)))
 	var zeros := {}
 	var per_worker_rows := {}
 	for policy in ceilings:
@@ -5374,6 +5385,8 @@ func _seed_forage_rows(tile: Dictionary) -> Dictionary:
 	tile["patch_forage_policy_per_worker"] = per_worker_rows
 	tile["patch_forage_policy_per_worker_trade"] = zeros.duplicate()
 	tile["patch_forage_policy_per_worker_fodder"] = zeros.duplicate()
+	for policy in ceilings:
+		tile.erase("patch_ceiling_%s" % policy)
 	return tile
 
 func _food_tile_fixture() -> Dictionary:

@@ -306,15 +306,10 @@ pub(crate) fn forage_patches_to_array(
         // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
         // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
         let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
-        let _ = dict.insert("ceiling_sustain", patch.ceilingSustain());
-        let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
-        let _ = dict.insert("ceiling_deplete", patch.ceilingDeplete());
-        let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
         // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
         // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once
         // cultivated. MapView cross-refs both onto `tile_info` (as `patch_*`) for the pre-commit
         // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
-        let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
         let _ = dict.insert("tended_yield", patch.tendedYield());
         // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
         // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
@@ -329,7 +324,6 @@ pub(crate) fn forage_patches_to_array(
         // `ceiling_sow` is the dip WHILE the ground is being sown (honestly ~0 on bare ground — there
         // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
         // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
-        let _ = dict.insert("ceiling_sow", patch.ceilingSow());
         let _ = dict.insert("field_yield", patch.fieldYield());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`

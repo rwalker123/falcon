@@ -814,11 +814,16 @@ paths:
     were wasted. The sim now streams, on `ForagePatchState` and `HerdTelemetryState` alike, a
     `perWorkerYield` plus one take ceiling per policy — all food/turn at the source's **current
     biomass**, exported at `output_multiplier = 1.0` — enough to compute the take *while composing*.
-    **The two source kinds carry the ceilings differently, and that asymmetry is load-bearing:** the
-    PATCH has flat scalars (`ceilingSustain` / `ceilingSurplus` / `ceilingDeplete` / `ceilingEradicate`,
-    plus `ceilingCultivate` / `ceilingSow`) because it has no policy list; the HERD has ONLY the
-    `huntPolicyCeilings` list (its identically-named scalars are deprecated slots — a new policy costs
-    the herd no schema change).
+    **BOTH SOURCE KINDS NOW CARRY THEIR CEILINGS AS A PER-POLICY LIST, and the asymmetry that used to
+    be load-bearing is gone** (#426). The HERD has `huntPolicyCeilings`; the PATCH has
+    `foragePolicyCeilings`, one row per rung carrying BOTH halves of `min(w × per_worker, ceiling)` in
+    all three accounts. The patch's six flat `ceiling*` scalars are retired `(deprecated)` wire slots
+    with no reader — the same treatment the herd's identically-named scalars already had — so a new
+    policy costs neither kind a schema change, and `SourceForecast.FORECAST_CEILING_KEYS` (the table
+    that mapped a forage policy to one of those scalars) is DELETED. **A patch's per-worker term rides
+    the row too**, deliberately, and only the FOOD one survives as a patch-level scalar
+    (`perWorkerYield`): a policy-blind number cannot state a policy-dependent rate, and `Deplete`'s
+    market markup makes the trade rate exactly that.
     `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
     already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
     ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`

@@ -2353,13 +2353,31 @@ func _cap_demo_herd_fixtures() -> Array:
 			"hunt_policy_ceilings": {"sustain": 0.20}},
 	]
 
+## Give a RAW wire patch the per-policy ROWS the decoder now builds — the six policy-keyed dicts that
+## are a patch's only ceiling representation (#426). Every rung gets the same ceiling and per-worker
+## term, which is all these cap fixtures need; the two non-food accounts stay absent, so the
+## render-only-when-non-zero rule leaves every frame unchanged. The ui_preview twin is
+## `_seed_forage_rows`, which derives its numbers from `patch_`-prefixed tile_info keys instead.
+func _wire_patch_rows(patch: Dictionary, ceiling: float) -> Dictionary:
+	var ceilings := {}
+	var per_worker := {}
+	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
+		ceilings[policy] = ceiling
+		per_worker[policy] = float(patch.get("per_worker_yield", 0.0))
+	patch["forage_policy_ceilings"] = ceilings
+	patch["forage_policy_per_worker"] = per_worker
+	return patch
+
 ## Forage patches for the per-source-cap verify state (shape `update_forage_patches` consumes — the RAW
 ## wire dict with BARE forecast keys). (71,18): max-useful = ceil(0.30 / 0.10) = 3. (60,20): max-useful
 ## = ceil(0.50 / 0.10) = 5.
 func _cap_demo_patch_fixtures() -> Array:
 	return [
-		{"x": 71, "y": 18, "per_worker_yield": 0.10, "ceiling_sustain": 0.30},
-		{"x": 60, "y": 20, "per_worker_yield": 0.10, "ceiling_sustain": 0.50},
+		# The per-policy ROW, not the retired flat `ceiling_sustain` scalar (#426): these are RAW wire
+		# patches (bare keys, no `patch_` prefix), and the row is the only ceiling representation the
+		# wire carries now — a flat scalar here would leave the work rows' `+` uncapped.
+		_wire_patch_rows({"x": 71, "y": 18, "per_worker_yield": 0.10}, 0.30),
+		_wire_patch_rows({"x": 60, "y": 20, "per_worker_yield": 0.10}, 0.50),
 	]
 
 ## The per-source-cap verify band: idle workers to spare (4), one Forage row AT its patch max-useful

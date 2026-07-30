@@ -433,34 +433,23 @@ pub struct ForagePatchState {
     pub carrying_capacity: f32,
     #[serde(default)]
     pub ecology_phase: String,
-    /// **Pre-commit yield forecast** at the patch's current biomass (food/turn, captured at
+    /// **Pre-commit yield forecast** at the patch's current biomass (per turn, captured at
     /// `output_multiplier = 1.0` — the client scales by the band's `outputMultiplier`). Lets the
-    /// client show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
-    /// composing an assignment*, before anything is committed:
-    /// `expected(workers, policy) = min(workers × per_worker_yield, ceiling_<policy>)` and
-    /// `max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)`.
-    /// Food/turn one forager contributes (this tile's seasonal weight folded in, as the take does);
-    /// `0.0` in a dead season — do not divide by it.
+    /// client state the take and cap its worker stepper *while the player is composing an
+    /// assignment*, before anything is committed:
+    /// `expected(workers, policy) = min(workers × per_worker, ceiling)` and
+    /// `max_useful_workers(policy) = ceil(ceiling / per_worker)`, **per account**, both terms read
+    /// off [`ForagePolicyCeiling`] — the per-policy ROW that is now the patch's only wire
+    /// representation of a ceiling, the six flat `ceiling_*` scalars it replaced having been removed
+    /// (#426). This field survives as the FOOD per-worker term only, because a patch-level scalar
+    /// cannot state a policy-dependent rate and the non-food accounts genuinely have one.
+    /// Provisions/turn one forager contributes (this tile's seasonal weight folded in, as the take
+    /// does); `0.0` in a dead season — do not divide by it, and **do not read it as "the wire said
+    /// nothing"**: whether a patch was DESCRIBED is the row's presence, not this number's size.
     #[serde(default)]
     pub per_worker_yield: f32,
-    /// Food/turn ceiling under Sustain (MSY), already clamped to the patch's remaining biomass.
-    #[serde(default)]
-    pub ceiling_sustain: f32,
-    /// Food/turn ceiling under Surplus, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_surplus: f32,
-    /// Food/turn ceiling under **Deplete**, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_deplete: f32,
-    /// Food/turn ceiling under Eradicate, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_eradicate: f32,
-    /// Food/turn under the **Cultivate** policy — what the patch pays *while it is being prepared*
-    /// (`cultivating_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
-    #[serde(default)]
-    pub ceiling_cultivate: f32,
     /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
-    /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
+    /// crop). With `forage_policy_ceilings`' `cultivate` row, the client's "preparing X → then Y".
     #[serde(default)]
     pub tended_yield: f32,
     /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
@@ -472,13 +461,8 @@ pub struct ForagePatchState {
     /// `field_progress`.
     #[serde(default)]
     pub is_field: bool,
-    /// Food/turn under the **Sow** policy — what the ground pays *while it is being sown* (the
-    /// `plant:field` rung's `yield_fraction_while_building ×` whatever it would otherwise pay). Its
-    /// own field, not `ceiling_cultivate`'s: the two plant investment rungs are independently tunable.
-    #[serde(default)]
-    pub ceiling_sow: f32,
     /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
-    /// 2× `tended_yield` on the shipped dials). With `ceiling_sow`, Sow's "preparing X → then Y" pair.
+    /// 2× `tended_yield` on the shipped dials). With the `sow` row, Sow's "preparing X → then Y" pair.
     #[serde(default)]
     pub field_yield: f32,
     /// **Why this ground will not take seed** ([`SiteRefusal::as_str`]: `"too_poor"` / `"too_dry"` /

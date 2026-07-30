@@ -7294,11 +7294,18 @@ mod tests {
 
         // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
         // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
+        // The dip is read off the per-policy ROW — a patch's only ceiling representation since #426,
+        // the flat `ceiling_sow` scalar it replaced now being a retired `(deprecated)` wire slot.
         assert!(patch.tended_yield > 0.0);
+        let sow_dip = patch
+            .forage_policy_ceilings
+            .iter()
+            .find(|row| row.policy == FollowPolicy::Sow.as_str())
+            .map(|row| row.provisions_per_turn)
+            .expect("the Sow rung is on the wire");
         assert!(
-            patch.ceiling_sow > 0.0 && patch.ceiling_sow < patch.tended_yield,
-            "sowing a tended patch pays a fraction of what it would otherwise hand you: {} vs {}",
-            patch.ceiling_sow,
+            sow_dip > 0.0 && sow_dip < patch.tended_yield,
+            "sowing a tended patch pays a fraction of what it would otherwise hand you: {sow_dip} vs {}",
             patch.tended_yield
         );
         assert!(

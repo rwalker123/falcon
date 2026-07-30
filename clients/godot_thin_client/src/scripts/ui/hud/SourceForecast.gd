@@ -205,34 +205,19 @@ const FORECAST_PER_WORKER_KEY := "per_worker_yield"
 const FORECAST_PER_WORKER_TRADE_KEY := "per_worker_trade"
 const FORECAST_FOOD_PER_ANIMAL_KEY := "food_per_animal"
 const FORECAST_TRADE_PER_ANIMAL_KEY := "trade_per_animal"
-const FORECAST_CEILING_KEYS := {
-    "sustain": "ceiling_sustain",
-    "surplus": "ceiling_surplus",
-    "deplete": "ceiling_deplete",
-    "eradicate": "ceiling_eradicate",
-    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
-    # same expected(workers, policy) math shows the cost of the investment while composing.
-    "cultivate": "ceiling_cultivate",
-    # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
-    # are independently tunable, and folding them onto one number would pass every forecast==actual
-    # test by coincidence and lie the moment either rung is retuned.
-    "sow": "ceiling_sow",
-    # NOTE — this dict is the FORAGE PATCH's ceiling map, and ONLY that. A patch carries no policy
-    # list, so a scalar field per rung is its whole representation. Every HERD policy — the four
-    # extractive rungs plus `tame` and `corral` — resolves instead through the `hunt_policy_ceilings`
-    # LIST via `hunt_policy_ceiling`; the herd's matching scalars are deprecated schema slots and are
-    # no longer decoded. That's why `tame` and `corral` are absent here (their payoffs, `pastoral_yield`
-    # / `corral_yield`, ARE real scalars and live in FORECAST_PAYOFF_KEYS). Adding a herd rung here
-    # would read a field the wire no longer carries and quote a 0 dip.
-}
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
 #
 # `tame` → `pastoral_yield`: the sim now exports the Tame rung's payoff (the pastoral MSY once the herd
 # is tamed), the pastoral twin of `corral_yield`, so Tame renders the same dip→payoff pair as its three
 # siblings. Tame's DURING-BUILDING dip has no scalar ceiling field (there is no `ceilingTame`); it rides
-# the `hunt_policy_ceilings` LIST, so `forecast_inputs` resolves Tame's dip through `hunt_policy_ceiling`
-# rather than a `FORECAST_CEILING_KEYS` scalar (adding a key there would silently quote Sustain's ceiling).
+# the `hunt_policy_ceilings` LIST, so `forecast_inputs` resolves Tame's dip through `hunt_policy_ceiling`.
+#
+# **THERE IS NO CEILING-KEY TABLE ANY MORE, on either web** (#426). `FORECAST_CEILING_KEYS` mapped a
+# forage policy to one of six flat `ceiling_*` scalars; those are retired `(deprecated)` wire slots
+# now, and a patch resolves every rung through its per-policy ROW exactly as a herd resolves every
+# rung through its list. So the two webs finally answer "what does this rung cap at?" the same way,
+# and neither has a scalar a new rung could be wired to by mistake.
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
@@ -672,9 +657,10 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         # `ceiling*` scalars it replaced are deprecated slots, exactly as the herd's were. Read through
         # the row so the food half and its two non-food siblings below cannot come from different places.
         ceiling = maxf(forage_row_cell(src, prefix, FORAGE_ROW_CEILING, policy), 0.0)
-    # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —
-    # is still recognized as the investment rung it is. For every other rung `policy` IS its ceiling key,
-    # so this is identical to the old `policy_key in …` test.
+    # "Is this an investment rung?" is asked of the PAYOFF table and nothing else — the one table that
+    # names exactly the four rungs that build toward something. It used to be asked of a Sustain-
+    # fallback ceiling key, which silently answered "no" for `tame` (the one investment rung with no
+    # ceiling scalar), and that whole class of question disappeared with the ceiling table.
     var investment: bool = policy in FORECAST_PAYOFF_KEYS
     var payoff := 0.0
     if investment:
