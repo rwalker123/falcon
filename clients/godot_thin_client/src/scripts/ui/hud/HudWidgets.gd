@@ -563,6 +563,11 @@ static func build_policy_picker(
     # creature from the local hunt beside it, and set the widest compose card's width off a row that never
     # needed to be that wide. The lone rung is not stretched — a GridContainer gives it its COLUMN's
     # width, so it sits under the first cell above at exactly that cell's width, which reads deliberate.
+    # **THE THREE-ACCOUNT FACE DOES NOT LOWER IT, and that was MEASURED rather than reasoned** (#426):
+    # a wide-face ceiling of 2 was built on the assumption that `0.60 food · 0.01 trade · 0.20 fodder`
+    # three abreast would overrun the sheet, and the rendered frame says otherwise — the picker comes
+    # out 555px against the deer hunt picker's long-standing 546, nothing clips, and 3 + 3 reads
+    # better than the 2 + 2 + 2 the ceiling produced. Do not re-add it without a frame that overruns.
     var grid := GridContainer.new()
     # `columns > 0` CLAMPS the default DOWN, never up: a zone is a FIXED-width box, and a picker whose
     # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column

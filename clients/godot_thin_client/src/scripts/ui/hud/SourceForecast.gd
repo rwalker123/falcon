@@ -92,8 +92,15 @@ const TOOLTIP_LINE_SEPARATOR := "\n"
 # WARN-amber overstaff note. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
 const WASTED_NOTE_FORMAT := " · %s wasted"
 const WASTED_TOOLTIP := "Under-crewed — this source offered %s the party couldn't carry home. Add workers to collect it."
-# Band food flow gate: a rate below this reads as absent rather than as a zero.
+# Band food flow gate: a rate below this reads as absent rather than as a zero. A claim about the
+# SIM — is this band moving food at all — and deliberately NOT the gate a rendered component goes
+# through; see `has_component` and `COMPONENT_RENDER_MIN` for why the two are different numbers.
 const FOOD_FLOW_MIN := 0.001
+# HALF OF THE SMALLEST QUANTITY A READOUT CAN SHOW — `YIELD_DECIMALS` is 2, so anything under 0.005
+# rounds to `0.00` and is indistinguishable on screen from the component's absence. It is therefore
+# the floor `has_component` uses: a gate whose threshold is finer than its formatter's resolution
+# admits values it then prints as zeros, which is the one thing that gate exists to prevent.
+const COMPONENT_RENDER_MIN := 0.005
 # An EXTRACTIVE rung's policy-button metric: the bare signed rate on the one-line button face, this
 # wording in the tooltip so it reads as the ceiling it is (and the four rungs read as ASCENDING).
 const POLICY_CAP_FORMAT := "up to %s/turn"
@@ -121,6 +128,10 @@ const TRADE_COMPONENT_FORMAT := "%s %s"
 # trade-rate clause: it is bare wording with no "up to" in it (unlike `POLICY_CAP_FORMAT`), so the
 # INVESTMENT rungs' payoff tooltip ("builds toward …") reuses it rather than duplicating the phrasing.
 const POLICY_CAP_TRADE_FORMAT := "%s %s trade goods/turn"
+# The FODDER half of the same tooltip. No glyph in it, unlike the trade clause: fodder has no mark of
+# its own (`FoodIcons` spends no glyph on it), and borrowing another account's would say the wrong
+# thing. Like the trade clause it carries no "up to", so the investment payoff tooltip reuses it.
+const POLICY_CAP_FODDER_FORMAT := "%s fodder/turn"
 # The trade half of a worked row's tooltip, beside "Actual +0.31 /turn".
 const TRADE_TOOLTIP_FORMAT := "Trade goods %s %s/turn"
 
@@ -140,17 +151,32 @@ const PICKER_FOOD_PRODUCT_FORMAT := "%s food"
 
 const PICKER_TRADE_PRODUCT_FORMAT := "%s trade"
 
-## The picker face's product line for a food/trade pair — `0.96 food · 0.24 trade`, `2.70 trade`
-## (inedible quarry), `0.15 food` (forage patch). Same food-leads order and same
-## render-only-when-non-zero rule as `yield_components`, in words instead of glyphs and without the
-## sign; when BOTH components are absent the food zero survives, because a rung whose ceiling is
-## honestly empty is a fact worth reading.
-static func picker_products(food: float, trade: float) -> String:
+# THE THIRD ACCOUNT (#426), plant-only. **The word is the ACCOUNT's, not the commodity's** — its two
+# neighbours on this line are `food` and `trade`, the names of the accounts a yield routes to, so a
+# commodity noun here would read as a fourth kind of thing rather than a third account. That is why
+# this says `fodder` while the crop-basket rows two lines below say `hay`
+# (`HudFloraVocab.FLORA_CROP_HAY_CLAUSE_FORMAT`): a row there names one PLANT and what that plant
+# pays, and hay is what hay grass pays.
+const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
+
+## The picker face's product line for a source's yield VECTOR — `0.96 food · 0.24 trade`, `2.70 trade`
+## (inedible quarry), `0.15 food` (a wild patch of a staple), `0.62 food · 0.01 trade · 0.40 fodder`
+## (a tended patch carrying a hay crop). Same food-leads order and same render-only-when-non-zero rule
+## as `yield_components`, in words instead of glyphs and without the sign; when EVERY component is
+## absent the food zero survives, because a rung whose ceiling is honestly empty is a fact worth
+## reading.
+##
+## **The account order is the wire's, not a ranking** — provisions, trade goods, fodder — so a tile
+## that pays two of the three reads the same left-to-right whichever two they are, and the eye can
+## find an account by position rather than by re-reading the words.
+static func picker_products(food: float, trade: float, fodder: float = 0.0) -> String:
     var parts: Array[String] = []
-    if has_component(food) or not has_component(trade):
+    if has_component(food) or not (has_component(trade) or has_component(fodder)):
         parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(food))
     if has_component(trade):
         parts.append(PICKER_TRADE_PRODUCT_FORMAT % format_magnitude(trade))
+    if has_component(fodder):
+        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
     return TRADE_COMPONENT_SEPARATOR.join(parts)
 
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
@@ -179,34 +205,19 @@ const FORECAST_PER_WORKER_KEY := "per_worker_yield"
 const FORECAST_PER_WORKER_TRADE_KEY := "per_worker_trade"
 const FORECAST_FOOD_PER_ANIMAL_KEY := "food_per_animal"
 const FORECAST_TRADE_PER_ANIMAL_KEY := "trade_per_animal"
-const FORECAST_CEILING_KEYS := {
-    "sustain": "ceiling_sustain",
-    "surplus": "ceiling_surplus",
-    "deplete": "ceiling_deplete",
-    "eradicate": "ceiling_eradicate",
-    # The INVESTMENT rungs' ceiling is the DIP yield paid while the patch is being prepared — so the
-    # same expected(workers, policy) math shows the cost of the investment while composing.
-    "cultivate": "ceiling_cultivate",
-    # Plant rung 3. Its OWN field rather than reusing `ceiling_cultivate`: the two plant rungs' dips
-    # are independently tunable, and folding them onto one number would pass every forecast==actual
-    # test by coincidence and lie the moment either rung is retuned.
-    "sow": "ceiling_sow",
-    # NOTE — this dict is the FORAGE PATCH's ceiling map, and ONLY that. A patch carries no policy
-    # list, so a scalar field per rung is its whole representation. Every HERD policy — the four
-    # extractive rungs plus `tame` and `corral` — resolves instead through the `hunt_policy_ceilings`
-    # LIST via `hunt_policy_ceiling`; the herd's matching scalars are deprecated schema slots and are
-    # no longer decoded. That's why `tame` and `corral` are absent here (their payoffs, `pastoral_yield`
-    # / `corral_yield`, ARE real scalars and live in FORECAST_PAYOFF_KEYS). Adding a herd rung here
-    # would read a field the wire no longer carries and quote a 0 dip.
-}
 # The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
 # Only the investment rungs have one; an extractive rung's forecast is a single number.
 #
 # `tame` → `pastoral_yield`: the sim now exports the Tame rung's payoff (the pastoral MSY once the herd
 # is tamed), the pastoral twin of `corral_yield`, so Tame renders the same dip→payoff pair as its three
 # siblings. Tame's DURING-BUILDING dip has no scalar ceiling field (there is no `ceilingTame`); it rides
-# the `hunt_policy_ceilings` LIST, so `forecast_inputs` resolves Tame's dip through `hunt_policy_ceiling`
-# rather than a `FORECAST_CEILING_KEYS` scalar (adding a key there would silently quote Sustain's ceiling).
+# the `hunt_policy_ceilings` LIST, so `forecast_inputs` resolves Tame's dip through `hunt_policy_ceiling`.
+#
+# **THERE IS NO CEILING-KEY TABLE ANY MORE, on either web** (#426). `FORECAST_CEILING_KEYS` mapped a
+# forage policy to one of six flat `ceiling_*` scalars; those are retired `(deprecated)` wire slots
+# now, and a patch resolves every rung through its per-policy ROW exactly as a herd resolves every
+# rung through its list. So the two webs finally answer "what does this rung cap at?" the same way,
+# and neither has a scalar a new rung could be wired to by mistake.
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
@@ -214,13 +225,25 @@ const FORECAST_PAYOFF_KEYS := {
     "tame": "pastoral_yield",
 }
 # The TRADE half of that same payoff (issue #337's render-only-when-non-zero rule, reaching the
-# investment rungs): a prepared herd pays a PAIR, so a boar's Tame reads `→ food · trade`.
-# HERD RUNGS ONLY, deliberately — the plant web projects no trade rate at all, so `cultivate` and
-# `sow` have no twin here and their payoff trade resolves to 0.0, exactly as the forage picker's
-# `extractive_take` stays food-only.
+# investment rungs): a prepared source pays a VECTOR, so a boar's Tame reads `→ food · trade`.
+# **ALL FOUR RUNGS, both webs** — the plant pair joined the herd pair in #426. The claim that gated
+# them out ("the plant web projects no trade rate at all") described a wire that no longer exists: a
+# tended patch of flax pays trade and no food, and quoting it as `→ 0.00 food` said the rung was
+# worthless. These are the patch's SPECIES-BLIND quotes, which is the right answer for a committed
+# patch and the fallback for an uncommitted one — the per-crop substitution is the caller's
+# (`DrawerComposeController._flora_entry_trade_payoff`).
 const FORECAST_PAYOFF_TRADE_KEYS := {
     "corral": "corral_trade",
     "tame": "pastoral_trade",
+    "cultivate": "tended_trade",
+    "sow": "field_trade",
+}
+# The FODDER half. **PLANT RUNGS ONLY, and that asymmetry is structural rather than pending work:**
+# fodder is feed grown for penned animals, and no animal pays it (`fauna_config::YieldAccounts` fills
+# a structural zero there), so `tame` and `corral` have no twin here and never will.
+const FORECAST_PAYOFF_FODDER_KEYS := {
+    "cultivate": "tended_fodder",
+    "sow": "field_fodder",
 }
 # The RUNNING COST the payoff is paid against. Only the pen has one: a corralled herd is a managed
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
@@ -229,12 +252,29 @@ const FORECAST_PAYOFF_TRADE_KEYS := {
 const FORECAST_FEED_KEYS := {
     "corral": "pen_upkeep",
 }
-# Below this a worker produces nothing here (a dead-season forage tile with no forecast fields).
-# Dividing by it would blow max-useful up to infinity, so instead: no forecast row,
-# and the stepper keeps its plain idle-worker cap.
+# Below this a component's rate is zero — nothing to divide by. NOT the same question as "did the wire
+# carry a forecast", which `known` now answers separately (see `forecast_inputs`).
 const FORECAST_MIN_PER_WORKER := 0.0001
 # Sentinel for "no forecast data" → the stepper is not forecast-capped.
 const MAX_USEFUL_UNBOUNDED := -1
+# **A source the wire DOES describe, which pays nothing in any account** — a dead-season patch. Its cap
+# is 1: one worker is enough to prove the source is barren, and more is pure waste. It is deliberately
+# NOT 0 (that would gate the stepper dead and take the choice away — the sim allows the assignment, and
+# "a loss the player stays free to choose" is this codebase's stated stance) and deliberately NOT
+# UNBOUNDED, which is what issue #426 was: an unknown forecast REMOVES the ceiling in both cap twins,
+# so the one guard against parking a crew on a worthless source was switched off by a worthless source.
+const MAX_USEFUL_BARREN := 1
+# THE per-policy forage rows (#426), keyed by the same policy strings and decoded in one pass from the
+# single wire list, so no two accounts can drift. The row carries BOTH halves of
+# `min(workers × per_worker, ceiling)` because on the plant web `Deplete` marks trade up and the sim
+# applies that markup AFTER the worker cap — so a per-worker term without it reads low by the full
+# multiplier the moment labor binds. The markup is already folded in server-side; nothing here applies one.
+const FORAGE_ROW_CEILING := "forage_policy_ceilings"
+const FORAGE_ROW_CEILING_TRADE := "forage_policy_trade_ceilings"
+const FORAGE_ROW_CEILING_FODDER := "forage_policy_fodder_ceilings"
+const FORAGE_ROW_PER_WORKER := "forage_policy_per_worker"
+const FORAGE_ROW_PER_WORKER_TRADE := "forage_policy_per_worker_trade"
+const FORAGE_ROW_PER_WORKER_FODDER := "forage_policy_per_worker_fodder"
 # A whole-animal hunt's kill-credit bank accumulates the smoothed take, then discharges a WHOLE animal
 # when it holds a full body. Worst case the turn's rate lands with just under one body already banked,
 # so one extra whole animal drops that turn beyond floor(rate / body) — this is that +1.
@@ -351,34 +391,46 @@ static func format_signed(value: float) -> String:
 static func format_yield(value: float) -> String:
     return format_signed(value) + YIELD_PER_TURN_SUFFIX
 
-## A `{compact, full}` metric pair for an EXTRACTIVE rung's per-turn cap — the named-product line on
-## the button face's second row (`0.15 food`), the "up to X/turn" wording in the tooltip. The
-## FOOD-ONLY form, kept for the forage picker (the plant web projects no trade rate yet); a hunt rung
-## goes through `extractive_take_pair`.
-static func extractive_take(rate: float) -> Dictionary:
-    return {"compact": picker_products(rate, 0.0), "full": POLICY_CAP_FORMAT % format_signed(rate)}
-
 ## The bare trade rate with its glyph — `⇄ +0.35`. The ONE way this client writes a trade number.
 static func format_trade(value: float) -> String:
     return TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_signed(value)]
 
 ## True when a rate is a real quantity rather than the absence of one. The gate every
 ## render-only-when-non-zero decision goes through, so "is this component present?" is answered
-## identically for food and trade and by every surface.
+## identically for food, trade and fodder and by every surface.
+##
+## **ITS FLOOR IS THE DISPLAY'S, NOT THE MODEL'S** (#426), and the two are different numbers. This
+## used to read `>= FOOD_FLOW_MIN` (0.001) — the *food-flow* floor, which is a claim about the
+## simulation — while every caller renders at `YIELD_DECIMALS` (2). A rate in between therefore
+## PASSED the gate and then printed as `0.00`: a single forager on a staple patch earns ~0.003 trade
+## goods a turn, and the preview line duly read `+0.08 /turn · ⇄ +0.00 · 0.13 fodder`. That zero is
+## exactly the false precision the render-only-when-non-zero rule exists to remove — the gate was
+## letting through the very thing it was written to stop, because it was measuring in different units
+## from the formatter it gates.
+##
+## `FOOD_FLOW_MIN` stays where it is and keeps its own job: whether the BAND has a food flow at all
+## is a question about the sim, not about how many decimals a label shows.
 static func has_component(rate: float) -> bool:
-    return rate >= FOOD_FLOW_MIN
+    return rate >= COMPONENT_RENDER_MIN
 
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn · ⇄ +0.12` (both),
-## `+0.31 /turn` (food only), `⇄ +0.12` (trade only — a wolf). One definition, so every surface that
-## states a source's per-turn products states them the same way and none of them can print a zero for
-## a component the species does not produce. Food leads. When BOTH are absent the food zero survives
-## ("+0.00 /turn"): a worked source that produced nothing this turn is a fact worth reading.
-static func yield_components(food: float, trade: float) -> String:
+## `+0.31 /turn` (food only), `⇄ +0.12` (trade only — a wolf), `+0.08 /turn · 0.40 fodder` (a hay
+## meadow). One definition, so every surface that states a source's per-turn products states them the
+## same way and none of them can print a zero for a component the source does not produce. Food leads.
+## When EVERY component is absent the food zero survives ("+0.00 /turn"): a worked source that
+## produced nothing this turn is a fact worth reading.
+##
+## The fodder term wears the WORD, not a glyph, because fodder has none — the same reason
+## `picker_products` names its accounts. It is plant-only, so every hunt-side caller leaves it
+## defaulted and reads exactly as it did.
+static func yield_components(food: float, trade: float, fodder: float = 0.0) -> String:
     var parts: Array[String] = []
-    if has_component(food) or not has_component(trade):
+    if has_component(food) or not (has_component(trade) or has_component(fodder)):
         parts.append(format_yield(food))
     if has_component(trade):
         parts.append(format_trade(trade))
+    if has_component(fodder):
+        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
     return TRADE_COMPONENT_SEPARATOR.join(parts)
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
@@ -396,23 +448,32 @@ static func magnitude_components(food: float, trade: float) -> String:
         parts.append(TRADE_COMPONENT_FORMAT % [FoodIcons.TRADE_GOODS_GLYPH, format_magnitude(trade)])
     return COMPACT_COMPONENT_SEPARATOR.join(parts)
 
-## A `{compact, full}` metric pair for an EXTRACTIVE rung that pays BOTH products — the hunt picker's
-## button metric. Food leads; each component appears only when it is non-zero, so a wolf's four rungs
-## read as four ascending TRADE numbers (never four zeros) and a deer's read food-then-trade. When the
-## rung pays nothing at all the food zero is still printed: `0.00 food` is the honest reading of a
-## ceiling that exists and is empty, as opposed to a component the species never had. The compact half
-## is the face's product LINE (`picker_products`, named in words); the tooltip keeps the signed
-## "up to …" ceiling wording.
-static func extractive_take_pair(food: float, trade: float) -> Dictionary:
-    var show_food := has_component(food) or not has_component(trade)
+## A `{compact, full}` metric pair for an EXTRACTIVE rung, over the source's whole yield VECTOR — the
+## metric on every one of the three pickers. Food leads; each component appears only when it is
+## non-zero, so a wolf's four rungs read as four ascending TRADE numbers (never four zeros), a deer's
+## read food-then-trade, and a hay-bearing patch's read food-trade-fodder. When the rung pays nothing
+## at all the food zero is still printed: `0.00 food` is the honest reading of a ceiling that exists
+## and is empty, as opposed to a component the source never had. The compact half is the face's
+## product LINE (`picker_products`, named in words); the tooltip keeps the signed "up to …" ceiling
+## wording.
+##
+## **The forage picker comes through here too now** (#426). It used to call a food-only
+## `extractive_take`, on the standing claim that the plant web projected no non-food rate — which
+## stopped being true the turn the per-policy row reached the wire carrying all three accounts. That
+## food-only twin is deleted rather than left as an alias: one joiner is what keeps the three pickers
+## wearing one face.
+static func extractive_take_pair(food: float, trade: float, fodder: float = 0.0) -> Dictionary:
+    var show_food := has_component(food) or not (has_component(trade) or has_component(fodder))
     var full_parts: Array[String] = []
     if show_food:
         full_parts.append(POLICY_CAP_FORMAT % format_signed(food))
     if has_component(trade):
         full_parts.append(POLICY_CAP_TRADE_FORMAT % [
             FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade)])
+    if has_component(fodder):
+        full_parts.append(POLICY_CAP_FODDER_FORMAT % format_signed(fodder))
     return {
-        "compact": picker_products(food, trade),
+        "compact": picker_products(food, trade, fodder),
         "full": TRADE_COMPONENT_SEPARATOR.join(full_parts),
     }
 
@@ -545,6 +606,33 @@ static func herd_axis_rates(herd: Dictionary, policy: String) -> Dictionary:
 ## `_forecast_yield_row` can state the deal instead of one number.
 ## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the scalar keys (the two are
 ## independent — a forage patch reaches here under either forage prefix).
+## One cell out of a per-policy FORAGE row dict — the plant twin of `hunt_policy_ceiling`, and the one
+## place the `patch_`-prefix question is asked for these six keys.
+##
+## Falls back to the DEFAULT policy's cell for an unrecognized policy (as the herd side does), then to
+## `0.0`. Returns `HUNT_RATE_UNAVAILABLE` (< 0) when the row dict is **absent or empty**, which is how a
+## caller tells "this snapshot carries no forage forecast" from "every rung honestly pays zero" — the
+## distinction issue #426 exists to restore, and one a per-worker scalar could never express.
+static func forage_row_cell(
+        src: Dictionary, prefix: String, dict_key: String, policy: String) -> float:
+    var rows: Dictionary = src.get(prefix + dict_key, {})
+    if rows.is_empty():
+        return HUNT_RATE_UNAVAILABLE
+    return float(rows.get(policy, rows.get(DEFAULT_HUNT_POLICY, 0.0)))
+
+## Does the wire describe this source's forecast **at all**? A PRESENCE test, not a rate test.
+##
+## For a FORAGE patch the per-policy row is the witness: present ⇒ described (even if every account is
+## zero), absent ⇒ an older snapshot or a harness fixture that seeded no forecast. For a HERD it stays
+## the per-worker pair, whose `or` clause already handles the inedible-species case correctly — the
+## plant web's failure was that a patch has no `perWorkerTrade` for that `or` to rescue it with.
+static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> bool:
+    if kind == SOURCE_KIND_HERD:
+        return float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0)) >= FORECAST_MIN_PER_WORKER \
+            or float(src.get(prefix + FORECAST_PER_WORKER_TRADE_KEY, 0.0)) >= FORECAST_MIN_PER_WORKER
+    var rows: Dictionary = src.get(prefix + FORAGE_ROW_CEILING, {})
+    return not rows.is_empty()
+
 static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
@@ -564,22 +652,28 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         if ceiling < 0.0:
             ceiling = hunt_policy_ceiling(src, DEFAULT_HUNT_POLICY)
         ceiling = maxf(ceiling, 0.0)
-    elif policy in FORECAST_CEILING_KEYS:
-        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[policy]), 0.0))
     else:
-        ceiling = float(src.get(prefix + String(FORECAST_CEILING_KEYS[DEFAULT_HUNT_POLICY]), 0.0))
-    # Keyed off `policy` (not a Sustain-fallback key) so `tame` — absent from FORECAST_CEILING_KEYS —
-    # is still recognized as the investment rung it is. For every other rung `policy` IS its ceiling key,
-    # so this is identical to the old `policy_key in …` test.
+        # FORAGE: the per-policy ROW is the ceiling's only wire representation now (#426) — the six flat
+        # `ceiling*` scalars it replaced are deprecated slots, exactly as the herd's were. Read through
+        # the row so the food half and its two non-food siblings below cannot come from different places.
+        ceiling = maxf(forage_row_cell(src, prefix, FORAGE_ROW_CEILING, policy), 0.0)
+    # "Is this an investment rung?" is asked of the PAYOFF table and nothing else — the one table that
+    # names exactly the four rungs that build toward something. It used to be asked of a Sustain-
+    # fallback ceiling key, which silently answered "no" for `tame` (the one investment rung with no
+    # ceiling scalar), and that whole class of question disappeared with the ceiling table.
     var investment: bool = policy in FORECAST_PAYOFF_KEYS
     var payoff := 0.0
     if investment:
         payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy]), 0.0))
-    # The payoff's TRADE component — a pair like every other yield in this model. Only the herd rungs
-    # have one (see FORECAST_PAYOFF_TRADE_KEYS); a tended patch's stays 0.0 and renders as nothing.
+    # The payoff's non-food components — a VECTOR like every other yield in this model. Trade reaches
+    # all four rungs; fodder is plant-only (see the two key tables). A rung with no twin in a table
+    # resolves to 0.0 and renders as nothing, which is the rule, not a gap.
     var payoff_trade := 0.0
     if investment and policy in FORECAST_PAYOFF_TRADE_KEYS:
         payoff_trade = float(src.get(prefix + String(FORECAST_PAYOFF_TRADE_KEYS[policy]), 0.0))
+    var payoff_fodder := 0.0
+    if investment and policy in FORECAST_PAYOFF_FODDER_KEYS:
+        payoff_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[policy]), 0.0))
     # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
     # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
     # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
@@ -593,20 +687,36 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
     # forage patch (no food_per_animal), an investment rung (Tame/Corral collapse to 1), or a corralled
     # herd (managed `worker_tend` harvest, whose forecast already collapses every ceiling to per_worker).
     var food_per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
-    # THE SECOND PRODUCT (issue #337). A herd carries a per-worker TRADE rate, a per-policy trade
-    # ceiling and a per-animal trade quantum beside the food ones; a forage patch carries none of the
-    # three, so its axis resolves to provisions and everything below is unchanged for plants.
+    # THE SECOND PRODUCT (issue #337) and THE THIRD (#426). A herd carries a per-worker TRADE rate, a
+    # per-policy trade ceiling and a per-animal trade quantum beside the food ones; a **forage patch now
+    # carries its own per-policy trade AND fodder**, read off the same row the food ceiling came from.
     # The AXIS is what the whole-animal arithmetic divides by: for an INEDIBLE species the food
     # quantum is honestly 0, so deriving a cadence or a carry cap from food alone divides by zero and
-    # yields nothing at all. `known` accepts EITHER component — a wolf has real forecast data.
+    # yields nothing at all.
     var per_worker_trade := float(src.get(prefix + FORECAST_PER_WORKER_TRADE_KEY, 0.0))
     var trade_per_animal := float(src.get(prefix + FORECAST_TRADE_PER_ANIMAL_KEY, 0.0))
     var ceiling_trade := 0.0
+    var ceiling_fodder := 0.0
+    var per_worker_fodder := 0.0
     if kind == SOURCE_KIND_HERD:
         ceiling_trade = hunt_policy_trade_ceiling(src, policy)
         if ceiling_trade < 0.0:
             ceiling_trade = hunt_policy_trade_ceiling(src, DEFAULT_HUNT_POLICY)
         ceiling_trade = maxf(ceiling_trade, 0.0)
+    else:
+        # FORAGE: every account comes off the per-policy row, INCLUDING the per-worker terms — which is
+        # why they are read here rather than from a patch-level scalar. `Deplete`'s trade markup is
+        # already folded into both halves server-side, so `min(w × per_worker, ceiling)` is honest per
+        # component and nothing here knows a markup exists. **The plant web has no third patch-level
+        # per-worker scalar to fall back on, deliberately: a policy-blind scalar cannot state a
+        # policy-dependent rate.**
+        ceiling_trade = maxf(forage_row_cell(src, prefix, FORAGE_ROW_CEILING_TRADE, policy), 0.0)
+        ceiling_fodder = maxf(forage_row_cell(src, prefix, FORAGE_ROW_CEILING_FODDER, policy), 0.0)
+        per_worker = maxf(forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER, policy), per_worker)
+        per_worker_trade = maxf(
+            forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_TRADE, policy), 0.0)
+        per_worker_fodder = maxf(
+            forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_FODDER, policy), 0.0)
     var trade_axis: bool = not has_component(per_worker) and has_component(per_worker_trade)
     var axis_per_worker := per_worker_trade if trade_axis else per_worker
     var axis_ceiling := ceiling_trade if trade_axis else ceiling
@@ -618,12 +728,17 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         "ceiling": ceiling,
         "payoff": payoff,
         "payoff_trade": payoff_trade,
+        "payoff_fodder": payoff_fodder,
         "investment": investment,
         "feed_rung": feed_rung,
         "feed": feed,
         "food_per_animal": food_per_animal,
         "per_worker_trade": per_worker_trade,
         "ceiling_trade": ceiling_trade,
+        # THE THIRD ACCOUNT (#426) — plant-only: no animal pays fodder, so a herd reads 0 here and every
+        # hunt-side answer is unchanged.
+        "per_worker_fodder": per_worker_fodder,
+        "ceiling_fodder": ceiling_fodder,
         "trade_per_animal": trade_per_animal,
         # The axis triple every divide-by-a-quantum consumer reads (`max_useful_workers` and the local
         # preview), so no caller has to know which product this species pays.
@@ -632,13 +747,24 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         "axis_ceiling": axis_ceiling,
         "axis_per_animal": axis_per_animal,
         "whole_animal": whole_animal,
-        "known": per_worker >= FORECAST_MIN_PER_WORKER \
-            or per_worker_trade >= FORECAST_MIN_PER_WORKER,
+        # **A PRESENCE test, not a rate test** (#426). It used to be `per_worker >= ε`, which conflated
+        # "the wire carried no forecast" with "the rate is genuinely zero" — and its own docstring said it
+        # meant the former. A zero-conversion crop makes the latter real, so the two came apart and the
+        # compose sheet answered by going silent on the one state it most needed to report.
+        "known": forecast_is_known(src, kind, prefix),
     }
 
 ## Workers beyond this produce nothing at this source under the selected policy —
-## ceil(ceiling / per_worker). MAX_USEFUL_UNBOUNDED when there's no forecast data. A tended patch /
-## corralled herd reports every ceiling == per_worker, so this collapses to 1 (policy irrelevant).
+## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
+## this collapses to 1 (policy irrelevant).
+##
+## **Three outcomes, and telling them apart IS issue #426:**
+## - `MAX_USEFUL_UNBOUNDED` — the wire describes no forecast, so there is no ceiling to impose.
+## - `MAX_USEFUL_BARREN` (1) — described, and it pays nothing in the account it is counted on. The cap
+##   stays LIVE, which is the fix: unbounded here let a worthless source absorb the whole idle crew
+##   (measured at 7 workers on a source that can use 1), because both cap twins read unbounded as
+##   "no ceiling".
+## - a real `ceil(ceiling / per_worker)`.
 static func max_useful_workers(forecast: Dictionary) -> int:
     if not bool(forecast.get("known", false)):
         return MAX_USEFUL_UNBOUNDED
@@ -648,7 +774,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     var per_worker := float(forecast.get("axis_per_worker", forecast.get("per_worker", 0.0)))
     var ceiling := float(forecast.get("axis_ceiling", forecast.get("ceiling", 0.0)))
     if per_worker < FORECAST_MIN_PER_WORKER:
-        return MAX_USEFUL_UNBOUNDED
+        # **Described, and barren on every account it could be counted on** — a dead-season patch. Not
+        # unbounded: we know what this source pays, and it is nothing, so the honest ceiling is one
+        # worker. Returning UNBOUNDED here was the second half of #426 — it did not merely drop the
+        # "max N useful" note, it removed the ceiling from both cap twins, so the guard against parking
+        # a crew on a worthless source was disabled by precisely the sources it exists for.
+        return MAX_USEFUL_BARREN
     # WHOLE-ANIMAL HUNT: the cap is the carriers needed to HAUL the animals that drop on the worst turn,
     # not ceil(smoothed-rate / per_worker). An 80-biomass aurochs drops all at once; one hunter carrying
     # <per_worker> food wastes the rest, so the smoothed rate under-counts. Worst case the kill-credit
@@ -713,8 +844,18 @@ static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: in
 ## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
 ## acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
-    var raw := minf(float(workers) * float(forecast.get("per_worker", 0.0)),
-        float(forecast.get("ceiling", 0.0)))
+    return expected_yield_account(forecast, workers, band, "per_worker", "ceiling")
+
+## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
+## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose
+## labor binds on food can be ceiling-bound on fodder in the same turn. The account keys are
+## `forecast_inputs`' own (`per_worker`/`ceiling`, `per_worker_trade`/`ceiling_trade`,
+## `per_worker_fodder`/`ceiling_fodder`) — passed in rather than switched on here, so adding a fourth
+## account is a call site, not an edit to this function.
+static func expected_yield_account(forecast: Dictionary, workers: int, band: Dictionary,
+        per_worker_key: String, ceiling_key: String) -> float:
+    var raw := minf(float(workers) * float(forecast.get(per_worker_key, 0.0)),
+        float(forecast.get(ceiling_key, 0.0)))
     return raw * float(band.get("output_multiplier", OUTPUT_FULL))
 
 ## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:

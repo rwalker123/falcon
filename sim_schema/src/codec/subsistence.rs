@@ -230,6 +230,35 @@ fn create_forage_patches<'a>(
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
         let committed_display_name = builder.create_string(patch.committed_display_name.as_str());
+        // The TILE's per-rung vector (#426) — one row per rung, all three accounts on each. Built the
+        // same way `hunt_policy_ceilings` is, so the two webs' ceiling lists cannot drift in shape.
+        // `None` on an empty list rather than an empty vector: an absent list is how a reader tells
+        // "this snapshot carries no forecast" from "every rung pays zero", which is the whole
+        // distinction #426 exists to restore.
+        let forage_policy_ceilings = if patch.forage_policy_ceilings.is_empty() {
+            None
+        } else {
+            let rows: Vec<_> = patch
+                .forage_policy_ceilings
+                .iter()
+                .map(|ceiling| {
+                    let policy = builder.create_string(ceiling.policy.as_str());
+                    fb::ForagePolicyCeiling::create(
+                        builder,
+                        &fb::ForagePolicyCeilingArgs {
+                            policy: Some(policy),
+                            provisionsPerTurn: ceiling.provisions_per_turn,
+                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
+                            fodderPerTurn: ceiling.fodder_per_turn,
+                            perWorkerProvisions: ceiling.per_worker_provisions,
+                            perWorkerTradeGoods: ceiling.per_worker_trade_goods,
+                            perWorkerFodder: ceiling.per_worker_fodder,
+                        },
+                    )
+                })
+                .collect();
+            Some(builder.create_vector(&rows))
+        };
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -243,21 +272,21 @@ fn create_forage_patches<'a>(
                 carryingCapacity: patch.carrying_capacity,
                 ecologyPhase: Some(ecology_phase),
                 perWorkerYield: patch.per_worker_yield,
-                ceilingSustain: patch.ceiling_sustain,
-                ceilingSurplus: patch.ceiling_surplus,
-                ceilingDeplete: patch.ceiling_deplete,
-                ceilingEradicate: patch.ceiling_eradicate,
-                ceilingCultivate: patch.ceiling_cultivate,
                 tendedYield: patch.tended_yield,
                 fieldProgress: patch.field_progress,
                 isField: patch.is_field,
-                ceilingSow: patch.ceiling_sow,
                 fieldYield: patch.field_yield,
                 sowSiteRefusal: Some(sow_site_refusal),
                 composition: Some(composition),
                 // The committed crop — appended last (append-only wire).
                 committedSpecies: Some(committed_species),
                 committedDisplayName: Some(committed_display_name),
+                // The TILE's yield vector — appended last (append-only wire, #426).
+                foragePolicyCeilings: forage_policy_ceilings,
+                tendedTrade: patch.tended_trade,
+                tendedFodder: patch.tended_fodder,
+                fieldTrade: patch.field_trade,
+                fieldFodder: patch.field_fodder,
             },
         );
         entries.push(entry);

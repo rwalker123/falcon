@@ -66,7 +66,7 @@ use crate::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
     },
-    fauna_config::{EcologyConfig, YieldPair},
+    fauna_config::{EcologyConfig, YieldAccounts},
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
@@ -2041,7 +2041,7 @@ pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 
 /// is rounded down to whole animals because you cannot half-kill a deer; a gather is not, because you
 /// harvest grain by the handful. The two food webs quantise differently because *their products
 /// differ* — the same reason seed travels and a herd doesn't (`docs/plan_intensification_ladder.md`).
-const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
+const PLANTS_DO_NOT_QUANTISE: YieldAccounts = YieldAccounts::ZERO;
 
 /// **The plant web's forecast trade component — a KNOWN GAP, not a claim that plants sell nothing**
 /// (`docs/plan_hunt_yield_model.md` §8, issue #337).
@@ -2058,12 +2058,155 @@ const PLANTS_DO_NOT_QUANTISE: YieldPair = YieldPair::ZERO;
 pub(crate) const PLANT_TRADE_FORECAST_NOT_YET_PROJECTED: f32 = 0.0;
 
 /// A plant source's provisions-only forecast component: the food number the plant web computes, with
-/// its trade component the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
-fn plant_food_only(provisions: f32) -> YieldPair {
-    YieldPair {
+/// its trade **and fodder** components the [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`] gap.
+///
+/// **This helper is the remaining half of #426 and is meant to disappear.** Projecting the other two
+/// accounts needs each component built from the rung's *biomass* ceiling times that rung's own rate
+/// (`rung_provisions_per_biomass` / `rung_trade_per_biomass` / `rung_fodder_per_biomass`), which is a
+/// restructure of [`forage_forecast`] rather than a wider return type here: this signature takes an
+/// already-converted food number and so has nothing left to convert the other accounts *from*.
+fn plant_food_only(provisions: f32) -> YieldAccounts {
+    YieldAccounts {
         provisions,
         trade_goods: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+        fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
     }
+}
+
+/// **One rung's complete forecast on one patch, in every account the tile's basket pays** (#426) —
+/// the plant twin of a `HuntPolicyCeiling` row, and the wire's `ForagePolicyCeiling`.
+///
+/// It carries the **per-worker vector as well as the ceiling**, because the client composes
+/// `min(workers × per_worker, ceiling)` and on the plant web one account's rate is *policy-dependent*:
+/// `Deplete` marks trade up. Both terms therefore have to be stated under the same policy or the
+/// `min` is wrong per component — see [`plant_policy_forecasts`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlantPolicyForecast {
+    pub policy: FollowPolicy,
+    pub ceiling: YieldAccounts,
+    pub per_worker: YieldAccounts,
+}
+
+/// **What a gather's trade credit is multiplied by when the policy is NOT `Deplete`** — the identity.
+/// A harvest pays its basket's trade component whatever the policy (you gathered the goods, so you
+/// have them); `Deplete` is a *markup* on that. Named because a bare `1.0` at a call site says nothing
+/// about which multiplier is being declined.
+const NO_DEPLETE_MARKUP: f32 = 1.0;
+
+/// **`Deplete`'s trade markup, or none** — the ONE place the "sell harder" rule is read for a
+/// *forecast*, mirroring the credit site in `systems::labor`'s Forage arm exactly.
+///
+/// The markup is a **policy** concept applied to the *final take* (after the worker cap), which is why
+/// it cannot live in the rate seams (`patch_trade_per_biomass` and friends do not know the policy) and
+/// why it must be folded into **both** the ceiling and the per-worker term here: the sim's take is
+/// `markup × min(ceiling_biomass, workers × throughput) × rate`, and a positive constant only factors
+/// out of a `min` if it is present on both sides.
+pub(crate) fn deplete_trade_markup(policy: FollowPolicy, forage: &ForageLaborConfig) -> f32 {
+    if matches!(policy, FollowPolicy::Deplete) {
+        forage.market.trade_goods_multiplier
+    } else {
+        NO_DEPLETE_MARKUP
+    }
+}
+
+/// **The whole per-rung forecast table for one patch** — the plant twin of
+/// `snapshot::hunt_policy_ceiling_entries`, walking [`FollowPolicy::FORAGE_POLICIES`].
+///
+/// **Every account, at every rung, projected through the SAME helpers the take path pays with**, so
+/// `forecast == actual` holds *per component* rather than on food alone (the
+/// `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` gap this closes):
+/// - the **extractive** rungs and the two **investment dips** convert at the patch's **standing**
+///   rung's rates — a crew still clearing has displaced nothing, so a patch being prepared reads
+///   exactly like the wild stand it still is;
+/// - a **Field** (rung 3) is *yours*, so the policy axis collapses: every row is the managed
+///   production and the managed per-worker throughput, and it takes **no markup** (a Field is never
+///   drawn down and has no policy axis — the rule [`field_trade_goods`] already states).
+pub fn plant_policy_forecasts(
+    patch: &ForagePatch,
+    tile_composition: &[FloraShare],
+    forage: &ForageLaborConfig,
+    flora: &FloraConfig,
+    ladder: &LadderConfig,
+    seasonal: f32,
+    output_multiplier: f32,
+) -> Vec<PlantPolicyForecast> {
+    // A Field's harvest is biomass-based and **seasonless** (the crop stands where you built it), so
+    // it must not read the gather season — `MANAGED_HARVEST_SEASON`, folded in by the managed helpers.
+    if patch.is_field() {
+        let ceiling = YieldAccounts {
+            provisions: field_provisions(patch, tile_composition, forage, flora, output_multiplier),
+            trade_goods: field_trade_goods(
+                patch,
+                tile_composition,
+                forage,
+                flora,
+                output_multiplier,
+            ),
+            fodder: field_fodder(patch, tile_composition, forage, flora, output_multiplier),
+        };
+        let per_worker = YieldAccounts {
+            provisions: managed_per_worker_yield(
+                patch,
+                tile_composition,
+                forage,
+                flora,
+                output_multiplier,
+            ),
+            trade_goods: managed_per_worker_trade(
+                patch,
+                tile_composition,
+                forage,
+                flora,
+                output_multiplier,
+            ),
+            fodder: managed_per_worker_fodder(
+                patch,
+                tile_composition,
+                forage,
+                flora,
+                output_multiplier,
+            ),
+        };
+        return FollowPolicy::FORAGE_POLICIES
+            .iter()
+            .map(|&policy| PlantPolicyForecast {
+                policy,
+                ceiling,
+                per_worker,
+            })
+            .collect();
+    }
+    let ecology = patch_ecology(patch, forage);
+    // The patch's IN-EFFECT rates — the same three seams `forage_take` and the credit site pay with.
+    let provisions_rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
+    let trade_rate = patch_trade_per_biomass(patch, tile_composition, flora, forage);
+    let fodder_rate = patch_fodder_per_biomass(patch, tile_composition, flora, forage);
+    let throughput = forage_per_worker_biomass(forage, seasonal);
+    FollowPolicy::FORAGE_POLICIES
+        .iter()
+        .map(|&policy| {
+            let markup = deplete_trade_markup(policy, forage);
+            let accounts = |biomass: f32| YieldAccounts {
+                provisions: forage_provisions(biomass, provisions_rate, output_multiplier),
+                trade_goods: forage_provisions(biomass, trade_rate, output_multiplier) * markup,
+                fodder: forage_provisions(biomass, fodder_rate, output_multiplier),
+            };
+            let ceiling_biomass = forage_policy_ceiling(
+                policy,
+                patch.biomass,
+                patch.carrying_capacity,
+                &ecology,
+                forage,
+                ladder,
+            )
+            .clamp(0.0, patch.biomass);
+            PlantPolicyForecast {
+                policy,
+                ceiling: accounts(ceiling_biomass),
+                per_worker: accounts(throughput),
+            }
+        })
+        .collect()
 }
 
 /// Pre-commit yield forecast for foraging `patch` at this tile's `seasonal` weight (its

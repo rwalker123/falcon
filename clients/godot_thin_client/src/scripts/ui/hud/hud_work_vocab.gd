@@ -24,6 +24,11 @@ const WORKER_STEPPER_SEPARATION := 6
 # width off a row that never needed to be that wide.
 const POLICY_PICKER_COLUMNS := 3
 
+# **A THIRD ACCOUNT ON LINE 2 DID NOT MOVE THIS** (#426), and that is a measurement rather than an
+# assumption: a wide-face ceiling of 2 was written for the three-account forage face and the rendered
+# frame refuted it — `0.60 food · 0.01 trade · 0.20 fodder` three abreast comes out 555px against the
+# deer hunt picker's long-standing 546, with nothing clipped, and 3 + 3 reads better than 2 + 2 + 2.
+
 # The inset between a rung's box and its two-line face, vertical and horizontal. Sized well under
 # `HudStyle._button_stylebox`'s authored 9/11 — that pair was sized to give ONE line of text vertical
 # presence and to keep a lone word off the border, and a two-line face already has both. The height is

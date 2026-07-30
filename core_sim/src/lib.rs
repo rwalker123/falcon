@@ -159,7 +159,7 @@ pub use fauna::{
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
     FaunaConfigMetadata, GrazeConfig, HuntYield, HuntYieldDef, HusbandryCeiling,
-    MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldPair,
+    MigratoryAbundanceConfig, ShoreRequirement, SizeClass, SpeciesDef, YieldAccounts,
     BUILTIN_FAUNA_CONFIG, NO_GRAZE_CAPACITY,
 };
 pub use flora_config::{
@@ -174,12 +174,12 @@ pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_payoff,
     commit_trade_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
     forage_source_yield_preview, patch_composition, patch_provisions_per_biomass,
-    patch_species_quality, project_arrivals_forage, project_realized_forage,
-    resolve_committed_species, rung_payoff, rung_site_refusal, spawn_initial_forage,
-    species_is_legal_here, tended_take_fodder, tended_take_trade_goods, tile_flora_composition,
-    tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch, ForageRegistry,
-    SpeciesRefusal, CANNOT_CLIMB_RATIO, CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON,
-    SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
+    patch_species_quality, plant_policy_forecasts, project_arrivals_forage,
+    project_realized_forage, resolve_committed_species, rung_payoff, rung_site_refusal,
+    spawn_initial_forage, species_is_legal_here, tended_take_fodder, tended_take_trade_goods,
+    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
+    ForageRegistry, PlantPolicyForecast, SpeciesRefusal, CANNOT_CLIMB_RATIO,
+    CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
 pub use graze::{advance_graze_regrowth, spawn_initial_graze, GrazePatch, GrazeRegistry};

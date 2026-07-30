@@ -1314,6 +1314,21 @@ impl FollowPolicy {
         FollowPolicy::Corral,
     ];
 
+    /// Every policy a **Forage** assignment accepts — the four extractive rungs **plus the two plant
+    /// investment rungs `Cultivate` (rung 2) and `Sow` (rung 3)**; `Tame`/`Corral` are animal-only.
+    /// The plant twin of [`FollowPolicy::HUNT_POLICIES`], and the single source for "iterate a patch's
+    /// policies": the snapshot's per-patch `forage_policy_ceilings` export walks this, so the picker
+    /// the client draws and the picker the sim accepts cannot become two lists. Keep in sync with
+    /// [`FollowPolicy::valid_for_forage`].
+    pub const FORAGE_POLICIES: [FollowPolicy; 6] = [
+        FollowPolicy::Sustain,
+        FollowPolicy::Surplus,
+        FollowPolicy::Deplete,
+        FollowPolicy::Eradicate,
+        FollowPolicy::Cultivate,
+        FollowPolicy::Sow,
+    ];
+
     /// **Is this an INVESTMENT rung — a rung-transition verb rather than a way of taking?**
     ///
     /// **THE definition, and the one place any site may ask.** "Investment" is defined as *the

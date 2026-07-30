@@ -1,5 +1,9 @@
 use super::*;
 use crate::fauna_config::HuntYield;
+use crate::forage::{
+    field_fodder, field_trade_goods, plant_policy_forecasts, tended_fodder, tended_trade_goods,
+};
+use sim_schema::ForagePolicyCeilingState;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
@@ -450,12 +454,7 @@ pub(crate) fn snapshot_forage_patches(
                 // `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` (a known gap, #337), so these
                 // project the provisions component rather than shipping a false `0` trade line.
                 per_worker_yield: forecast.per_worker_yield.provisions,
-                ceiling_sustain: forecast.ceiling_sustain.provisions,
-                ceiling_surplus: forecast.ceiling_surplus.provisions,
-                ceiling_deplete: forecast.ceiling_deplete.provisions,
-                ceiling_eradicate: forecast.ceiling_eradicate.provisions,
                 // The Cultivate investment rung: the preparing dip + the payoff once cultivated.
-                ceiling_cultivate: forecast.ceiling_prepare.provisions,
                 tended_yield: forecast.managed_yield.provisions,
                 // The Sow rung (plant 3): its own two meters — independent of cultivation's, since a
                 // Field may stand on ground that was never tended — and its own preparing/payoff
@@ -463,7 +462,6 @@ pub(crate) fn snapshot_forage_patches(
                 // client's "then Y" is the number the sim will hand over.
                 field_progress: patch.field_progress,
                 is_field: patch.is_field(),
-                ceiling_sow: forecast.ceiling_sow.provisions,
                 field_yield: field_provisions(
                     patch,
                     tile_composition,
@@ -479,6 +477,70 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
+                // **THE TILE'S PER-RUNG VECTOR** (#426) — the same six rungs as the flat `ceiling_*`
+                // fields above, as rows, so a future rung costs no schema change (the migration
+                // `hunt_policy_ceilings` already made). The FOOD axis is live and is the identical
+                // number its flat twin carries, read from the one `forecast` above so the two
+                // representations cannot disagree while both are on the wire.
+                //
+                // **The two non-food accounts are still the `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
+                // gap**, because `forage_forecast` does not project them yet — that is the remaining
+                // half of #426 and it needs `YieldAccounts` to carry a third account (see the issue). They
+                // are written explicitly rather than defaulted so the sentinel is visible at the site
+                // a reader will look, exactly as the food-only comment below has been since #337.
+                forage_policy_ceilings: plant_policy_forecasts(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    ladder,
+                    seasonal,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                )
+                .into_iter()
+                .map(|rung| ForagePolicyCeilingState {
+                    policy: rung.policy.as_str().to_string(),
+                    provisions_per_turn: rung.ceiling.provisions,
+                    trade_goods_per_turn: rung.ceiling.trade_goods,
+                    fodder_per_turn: rung.ceiling.fodder,
+                    per_worker_provisions: rung.per_worker.provisions,
+                    per_worker_trade_goods: rung.per_worker.trade_goods,
+                    per_worker_fodder: rung.per_worker.fodder,
+                })
+                .collect(),
+                // The two investment rungs' PAYOFF twins — each projected at **its own** rung
+                // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
+                // stand on. That is the #433 rule, and getting it wrong is the exact defect #433
+                // fixed: a Sow quote that inherited the tended basket's conversion gain overstated by
+                // 10% on the reference tile and by the full 2× wherever weeding saturates.
+                tended_trade: tended_trade_goods(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
+                tended_fodder: tended_fodder(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
+                field_trade: field_trade_goods(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
+                field_fodder: field_fodder(
+                    patch,
+                    tile_composition,
+                    forage,
+                    flora,
+                    FORECAST_OUTPUT_MULTIPLIER,
+                ),
                 // **What is growing here — as this PATCH has it** (#433). The tile names the
                 // plants (§2, per-tile realization §10) and the patch's rung then says how much of
                 // each: a tended patch's basket visibly collapses toward its crop and a Field

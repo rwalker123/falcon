@@ -46,12 +46,18 @@ pub struct HuntPolicyCeilingState {
     /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
     #[serde(default)]
     pub provisions_per_turn: f32,
-    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row is a
-    /// [`crate::YieldPair`]-shaped pair, not a food scalar: every harvesting policy sells the species'
-    /// trade component, and an **inedible** species (a wolf) reads `provisions_per_turn == 0` with
-    /// this strictly positive — a food-only row could not express its yield at all. Render a trade
-    /// line **only when this is `> 0`**, the rule flora's cash-crop line already uses, so a source
-    /// with no trade shows no line rather than a false "0".
+    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row states an ACCOUNT
+    /// VECTOR, not a food scalar: every harvesting policy sells the species' trade component, and an
+    /// **inedible** species (a wolf) reads `provisions_per_turn == 0` with this strictly positive —
+    /// a food-only row could not express its yield at all. Render a trade line **only when this is
+    /// `> 0`**, the rule flora's cash-crop line already uses, so a source with no trade shows no line
+    /// rather than a false "0".
+    ///
+    /// **This herd row carries TWO of the three accounts, and the missing one is structural.** The
+    /// plant twin (`ForagePolicyCeiling`) carries a third, fodder, because a crop can be grown as
+    /// feed; `fauna_config::YieldAccounts` fills a zero there for every species, since no animal is
+    /// harvested for fodder. So do not "finish" this row by appending a `fodder_per_turn` — there is
+    /// nothing on the sim side to put in it.
     pub trade_goods_per_turn: f32,
 }
 
@@ -167,7 +173,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub corral_yield: f32,
     /// **The Corral rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of
-    /// the same `managed_yield` `YieldPair` [`Self::corral_yield`] reads its provisions from. Read
+    /// the same `managed_yield` `YieldAccounts` [`Self::corral_yield`] reads its provisions from. Read
     /// the two as one vector, rendering each component only when non-zero.
     /// **Gross** like its food sibling: the pen's feed (`pen_upkeep`) is a *provisions* debit and
     /// never touches this. `0` on a herd that never offers Corral.
@@ -291,7 +297,7 @@ pub struct HerdTelemetryState {
     #[serde(default)]
     pub pastoral_yield: f32,
     /// **The Tame rung's payoff in TRADE GOODS/turn** (appended, issue #397) — the trade half of the
-    /// same `pastoral_yield` `YieldPair` [`Self::pastoral_yield`] reads its provisions from. Read the
+    /// same `pastoral_yield` `YieldAccounts` [`Self::pastoral_yield`] reads its provisions from. Read the
     /// two as one vector, rendering each component only when non-zero. `0` on a herd that never
     /// offers Tame (already penned, or a `wild`-ceiling species).
     #[serde(default)]
@@ -427,34 +433,23 @@ pub struct ForagePatchState {
     pub carrying_capacity: f32,
     #[serde(default)]
     pub ecology_phase: String,
-    /// **Pre-commit yield forecast** at the patch's current biomass (food/turn, captured at
+    /// **Pre-commit yield forecast** at the patch's current biomass (per turn, captured at
     /// `output_multiplier = 1.0` — the client scales by the band's `outputMultiplier`). Lets the
-    /// client show "Expected yield: +X.XX /turn" and cap its worker stepper *while the player is
-    /// composing an assignment*, before anything is committed:
-    /// `expected(workers, policy) = min(workers × per_worker_yield, ceiling_<policy>)` and
-    /// `max_useful_workers(policy) = ceil(ceiling_<policy> / per_worker_yield)`.
-    /// Food/turn one forager contributes (this tile's seasonal weight folded in, as the take does);
-    /// `0.0` in a dead season — do not divide by it.
+    /// client state the take and cap its worker stepper *while the player is composing an
+    /// assignment*, before anything is committed:
+    /// `expected(workers, policy) = min(workers × per_worker, ceiling)` and
+    /// `max_useful_workers(policy) = ceil(ceiling / per_worker)`, **per account**, both terms read
+    /// off [`ForagePolicyCeiling`] — the per-policy ROW that is now the patch's only wire
+    /// representation of a ceiling, the six flat `ceiling_*` scalars it replaced having been removed
+    /// (#426). This field survives as the FOOD per-worker term only, because a patch-level scalar
+    /// cannot state a policy-dependent rate and the non-food accounts genuinely have one.
+    /// Provisions/turn one forager contributes (this tile's seasonal weight folded in, as the take
+    /// does); `0.0` in a dead season — do not divide by it, and **do not read it as "the wire said
+    /// nothing"**: whether a patch was DESCRIBED is the row's presence, not this number's size.
     #[serde(default)]
     pub per_worker_yield: f32,
-    /// Food/turn ceiling under Sustain (MSY), already clamped to the patch's remaining biomass.
-    #[serde(default)]
-    pub ceiling_sustain: f32,
-    /// Food/turn ceiling under Surplus, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_surplus: f32,
-    /// Food/turn ceiling under **Deplete**, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_deplete: f32,
-    /// Food/turn ceiling under Eradicate, biomass-clamped.
-    #[serde(default)]
-    pub ceiling_eradicate: f32,
-    /// Food/turn under the **Cultivate** policy — what the patch pays *while it is being prepared*
-    /// (`cultivating_yield_fraction × the Sustain/MSY ceiling`, the investment dip).
-    #[serde(default)]
-    pub ceiling_cultivate: f32,
     /// Food/turn the patch will pay **once cultivated** (the tended harvest on its current standing
-    /// crop). With `ceiling_cultivate`, lets the client show "preparing X → then Y" pre-commit.
+    /// crop). With `forage_policy_ceilings`' `cultivate` row, the client's "preparing X → then Y".
     #[serde(default)]
     pub tended_yield: f32,
     /// The per-patch **`plant:field` build meter**, `0..1` — the plant rung-3 twin of a herd's
@@ -466,13 +461,8 @@ pub struct ForagePatchState {
     /// `field_progress`.
     #[serde(default)]
     pub is_field: bool,
-    /// Food/turn under the **Sow** policy — what the ground pays *while it is being sown* (the
-    /// `plant:field` rung's `yield_fraction_while_building ×` whatever it would otherwise pay). Its
-    /// own field, not `ceiling_cultivate`'s: the two plant investment rungs are independently tunable.
-    #[serde(default)]
-    pub ceiling_sow: f32,
     /// Food/turn the patch will pay **once sown** (the Field harvest on its current standing crop —
-    /// 2× `tended_yield` on the shipped dials). With `ceiling_sow`, Sow's "preparing X → then Y" pair.
+    /// 2× `tended_yield` on the shipped dials). With the `sow` row, Sow's "preparing X → then Y" pair.
     #[serde(default)]
     pub field_yield: f32,
     /// **Why this ground will not take seed** ([`SiteRefusal::as_str`]: `"too_poor"` / `"too_dry"` /
@@ -521,6 +511,72 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
+    /// **The per-policy ceilings as rows**, one per rung, each carrying all three accounts — the
+    /// plant twin of [`HerdTelemetryState::hunt_policy_ceilings`] and the replacement for the six
+    /// flat `ceiling_*` scalars above.
+    ///
+    /// A list rather than scalars for the reason the herd's is: the rung set grows (rung 4, Worked
+    /// Land, is planned), and a row costs no schema change where a scalar triple would cost three
+    /// fields per rung forever.
+    #[serde(default)]
+    pub forage_policy_ceilings: Vec<ForagePolicyCeilingState>,
+    /// Trade goods/turn a **completed tended patch** would pay — the twin of [`Self::tended_yield`],
+    /// as `pastoral_trade` is of `pastoral_yield`. Rung 2 is drawn down, so this rides the take.
+    #[serde(default)]
+    pub tended_trade: f32,
+    /// Fodder/turn a **completed tended patch** would pay. `0` unless its basket holds a fodder crop.
+    #[serde(default)]
+    pub tended_fodder: f32,
+    /// Trade goods/turn a **completed Field** would pay — the twin of [`Self::field_yield`]. A Field
+    /// is one plant at 100% share, so this is that crop's own rate; for a cash crop it is the whole
+    /// yield and [`Self::field_yield`] is `0`.
+    #[serde(default)]
+    pub field_trade: f32,
+    /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
+    #[serde(default)]
+    pub field_fodder: f32,
+}
+
+/// **One rung's ceiling on one tile, in every account that tile's basket pays** (issue #426) — the
+/// plant twin of [`HuntPolicyCeilingState`], deliberately the same shape.
+///
+/// `policy` names the rung (`sustain`/`surplus`/`deplete`/`eradicate`/`cultivate`/`sow`); each
+/// component is that rung's per-turn ceiling in one account, already biomass-clamped and captured at
+/// `output_multiplier = 1.0`. **Render a component only when it is non-zero** — the rule
+/// [`HuntPolicyCeilingState::trade_goods_per_turn`] already states.
+///
+/// **This is the TILE's vector, not a plant's.** Rungs 1 and 2 are baskets (rung 2 only *weeds*), so
+/// they routinely pay two or three accounts; only a sown Field is a single plant. `FloraShareInfo`'s
+/// `cultivate*`/`sow*` payoffs answer the different question "what would *this plant* pay here".
+///
+/// **The row is SELF-CONTAINED — it carries the per-worker vector too.** The client composes
+/// `min(workers × per_worker, ceiling)`, so both terms must be in the same units; on the plant web the
+/// trade rate is **policy-dependent** (`Deplete` marks it up at the credit site, *after* the worker
+/// cap), so a policy-blind per-worker scalar could not state it and a ceiling-only markup would
+/// understate every labor-bound Deplete take. Hence one row per rung, each stating its own per-worker
+/// contribution with the markup folded in server-side.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ForagePolicyCeilingState {
+    pub policy: String,
+    #[serde(default)]
+    pub provisions_per_turn: f32,
+    #[serde(default)]
+    pub trade_goods_per_turn: f32,
+    /// **No herd counterpart** — the animal web has two accounts, the plant web three.
+    #[serde(default)]
+    pub fodder_per_turn: f32,
+    /// Provisions/turn ONE forager contributes under this policy. Invariant across the rows (the food
+    /// rate carries no policy markup) and repeated on each deliberately, so the `min` above can be
+    /// taken per component without the client knowing which accounts vary by policy.
+    #[serde(default)]
+    pub per_worker_provisions: f32,
+    /// Trade goods/turn one forager contributes **under this policy** — the one component that really
+    /// does vary, carrying `Deplete`'s markup.
+    #[serde(default)]
+    pub per_worker_trade_goods: f32,
+    /// Fodder/turn one forager contributes under this policy. Invariant like the food rate.
+    #[serde(default)]
+    pub per_worker_fodder: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

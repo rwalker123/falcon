@@ -715,6 +715,10 @@ fn seed_snapshot() -> WorldSnapshot {
         // Shared on the state struct (a tile's basket, not a frame's), so the fixture's rows are
         // handed over as one — the encoded bytes are identical either way.
         patch.composition = rows::<sim_schema::FloraShareInfo>().into();
+        // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
+        // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
+        // guard cannot exercise, which is how four appended fields reached the client as zeros.
+        patch.forage_policy_ceilings = rows();
     }
     s.intensification_knowledge = rows();
 

@@ -1063,27 +1063,38 @@ table ForagePatchState {
   // Computed at capture with an output_multiplier of 1.0: multiply every field below by the acting
   // band's `PopulationCohortState.outputMultiplier` (a linear factor, so `maxUsefulWorkers` is
   // unaffected by it). Compose:
-  //   expected(workers, policy) = min(workers * perWorkerYield, ceiling<Policy>)
-  //   maxUsefulWorkers(policy)  = ceil(ceiling<Policy> / perWorkerYield)   [perWorkerYield > 0]
-  // Each ceiling is already clamped to the patch's remaining biomass, so that min IS the take the
-  // sim pays (`forage_take` and the forecast share the ceiling/conversion helpers — forecast ==
-  // actual is an invariant, see core_sim/CLAUDE.md).
+  //   expected(workers, policy) = min(workers * perWorker, ceiling)
+  //   maxUsefulWorkers(policy)  = ceil(ceiling / perWorker)   [perWorker > 0]
+  // PER ACCOUNT, both terms read off `foragePolicyCeilings` — the per-policy ROW that is the patch's
+  // ONLY wire representation of a ceiling now (#426). Each ceiling is already clamped to the patch's
+  // remaining biomass, so that min IS the take the sim pays (`forage_take` and the forecast share the
+  // ceiling/conversion helpers — forecast == actual is an invariant, see core_sim/CLAUDE.md).
   // A CULTIVATED (tended) patch reports its tended yield as every ceiling, with perWorkerYield equal
   // to it — one worker suffices (maxUsefulWorkers = 1); the policy is irrelevant to a tended patch.
+  //
+  // THE SIX FLAT `ceiling*` SCALARS ARE RETIRED `(deprecated)` SLOTS (#426) — the treatment the herd's
+  // own per-policy scalars got when `huntPolicyCeilings` replaced them. They had no reader left once
+  // the row landed, and a live-looking duplicate of a policy-keyed table is how a future consumer
+  // comes to read one representation while the sim pays the other. **`(deprecated)` rather than
+  // deleted, and that distinction is load-bearing**: FlatBuffers assigns vtable slots by declaration
+  // order, so removing a field silently re-seats every field after it — including the ones a
+  // concurrent branch appended. The keyword drops the accessors and keeps the slot. `perWorkerYield`
+  // survives as the FOOD per-worker term alone, because a patch-level scalar cannot state a
+  // policy-dependent rate and the two non-food accounts genuinely have one — theirs ride the row.
   // perWorkerYield folds in this tile's seasonal weight (as `forage_take` does); it can be 0 in a
-  // dead season — do not divide by it.
+  // dead season — do not divide by it, and **do not read it as "no forecast was sent"**: whether a
+  // patch was DESCRIBED is `foragePolicyCeilings`' presence, never this number's size.
   perWorkerYield:float = 0;
-  ceilingSustain:float = 0;
-  ceilingSurplus:float = 0;
-  ceilingDeplete:float = 0;
-  ceilingEradicate:float = 0;
+  ceilingSustain:float = 0 (deprecated);
+  ceilingSurplus:float = 0 (deprecated);
+  ceilingDeplete:float = 0 (deprecated);
+  ceilingEradicate:float = 0 (deprecated);
   // --- The Cultivate investment rung (appended) ---
-  // `ceilingCultivate` = food/turn WHILE the patch is being prepared under the Cultivate policy
-  // (= cultivating_yield_fraction × ceilingSustain — the deliberate yield dip that buys the tended
-  // patch). `tendedYield` = food/turn the patch will pay ONCE cultivated (maintenance labor: one
-  // worker suffices). Together they let the client show "preparing X → then Y" before the player
-  // commits to the investment. Cultivate is FORAGE-ONLY (the herd twin is Corral).
-  ceilingCultivate:float = 0;
+  // The DIP — what the patch pays while it is being prepared — rides `foragePolicyCeilings`' own
+  // `cultivate` row like every other rung. `tendedYield` = food/turn the patch will pay ONCE
+  // cultivated (maintenance labor: one worker suffices); with that row it is the client's
+  // "preparing X → then Y" pre-commit pair. Cultivate is FORAGE-ONLY (the herd twin is Corral).
+  ceilingCultivate:float = 0 (deprecated);
   tendedYield:float = 0;
   // --- The Sow investment rung + the Field (appended, slice 5/6a) --- plant RUNG 3, the twin of the
   // herd's Corral block. `fieldProgress` is the per-patch `plant:field` build meter 0..1 (the mirror
@@ -1094,18 +1105,19 @@ table ForagePatchState {
   // tended.
   fieldProgress:float = 0;
   isField:bool = false;
-  // `ceilingSow` = food/turn WHILE the ground is being sown under the Sow policy (the rung's
+  // Sow's DIP — what the ground pays while it is being sown (the rung's
   // `yield_fraction_while_building` × what the ground would otherwise pay — the MSY dip on a wild
-  // patch, the *tended-harvest* dip on a tended one being upgraded). On ground the crew has only just
-  // seeded that is honestly ~0: there is no standing crop to take a fraction of, so a bare-ground sow
-  // is pure investment. `fieldYield` = food/turn the patch will pay ONCE sown (maintenance labor: one
-  // worker suffices), the Field's rate on its current standing crop — 2× `tendedYield` on the shipped
-  // dials. Together they are Sow's "preparing X → then Y" pre-commit pair, exactly as
-  // `ceilingCultivate`/`tendedYield` are Cultivate's. Its OWN field rather than reusing
-  // `ceilingCultivate`: the plant branch has two investment rungs whose dips are independently
-  // tunable, and folding them onto one number would pass every forecast==actual test by coincidence
-  // and lie the moment either rung is retuned (the `ceilingTame` lesson).
-  ceilingSow:float = 0;
+  // patch, the *tended-harvest* dip on a tended one being upgraded) — likewise rides its OWN `sow`
+  // row. On ground the crew has only just seeded that is honestly ~0: there is no standing crop to
+  // take a fraction of, so a bare-ground sow is pure investment. `fieldYield` = food/turn the patch
+  // will pay ONCE sown (maintenance labor: one worker suffices), the Field's rate on its current
+  // standing crop — 2× `tendedYield` on the shipped dials. Together they are Sow's
+  // "preparing X → then Y" pre-commit pair, exactly as the `cultivate` row and `tendedYield` are
+  // Cultivate's. A row PER RUNG rather than one shared dip: the plant branch has two investment rungs
+  // whose dips are independently tunable, and folding them onto one number would pass every
+  // forecast==actual test by coincidence and lie the moment either rung is retuned (the `ceilingTame`
+  // lesson).
+  ceilingSow:float = 0 (deprecated);
   fieldYield:float = 0;
   // **WHY this ground will not take seed** — "" when it will (and on a rung with no site requirement).
   // Otherwise the verdict of the `plant:field` rung's `site_requirement`, as a stable key:
@@ -1155,6 +1167,81 @@ table ForagePatchState {
   // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
+  // --- THE TILE'S YIELD VECTOR (appended, issue #426) --------------------------------------------
+  // Every field above this line is PROVISIONS. But a harvest of `B` biomass pays `B × yield.*` into
+  // THREE accounts, and a patch's rate for each is the share-weighted average over its own basket
+  // (`patch_provisions_per_biomass` / `patch_trade_per_biomass` / `patch_fodder_per_biomass`) — so
+  // the food-only forecast under-reported almost every tile in the game, not merely the cash crops.
+  // Every staple carries the flat `trade_goods_per_biomass` token (0.005), so essentially NO tile is
+  // single-account; a tobacco Field was just the case where the missing account was the WHOLE yield
+  // and `perWorkerYield == 0` made the client read "no forecast data".
+  //
+  // THIS IS THE **TILE's** VECTOR, NOT A PLANT'S — do not confuse it with `FloraShareInfo`'s
+  // `cultivate*`/`sow*` payoffs, which answer "what would THIS PLANT pay if I committed to it".
+  // Rungs 1 and 2 are baskets (rung 2 only WEEDS), so they routinely pay 2–3 accounts; only a sown
+  // Field is one plant. The two surfaces are answering different questions and must stay separate.
+  //
+  // Read each beside its provisions sibling as ONE vector and render a component **only when it is
+  // non-zero** — the rule `HuntPolicyCeiling.tradeGoodsPerTurn` already states. In particular
+  // `trade > 0` does **NOT** mean "cash crop": every staple pays the token.
+  //
+  // **There is deliberately NO patch-level `perWorkerTrade`/`perWorkerFodder`.** The plant web's
+  // trade rate is POLICY-DEPENDENT (`Deplete` marks it up), and a policy-blind per-worker scalar
+  // cannot express that — so the per-worker vector lives on the per-policy ROW below, where it can be
+  // stated correctly. `perWorkerYield` above stays as the shipped food throughput.
+  //
+  // The per-policy ceilings as ROWS rather than scalars — one per rung, each carrying all three
+  // accounts. This replaces the six flat `ceiling*` fields above (now deprecated slots), mirroring
+  // the migration `HerdTelemetryState` already made to `huntPolicyCeilings`: a future rung (rung 4,
+  // Worked Land) costs no schema change, where the flat shape would have cost three more fields per
+  // rung forever.
+  foragePolicyCeilings:[ForagePolicyCeiling];
+  // The non-food halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
+  // `fieldYield`, exactly as `pastoralTrade`/`corralTrade` are of `pastoralYield`/`corralYield`. A
+  // tended patch is drawn down, so its accounts ride the take; a Field is a managed rate. Two fields
+  // per account per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
+  // conversion gain AND the shape of the harvest, so one number cannot answer both.
+  tendedTrade:float = 0;
+  tendedFodder:float = 0;
+  fieldTrade:float = 0;
+  fieldFodder:float = 0;
+}
+
+// One rung's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
+// twin of [HuntPolicyCeiling], and deliberately the same shape: `policy` names the rung
+// (`sustain`/`surplus`/`deplete`/`eradicate`/`cultivate`/`sow`), and the three components are that
+// rung's per-turn ceiling in each account, already biomass-clamped, captured at
+// `output_multiplier = 1.0`.
+//
+// A LIST, not flat scalars, for the reason the herd's is: the set of rungs grows (rung 4 is planned),
+// and a row costs no schema change where a scalar triple costs three fields per rung forever.
+//
+// **`fodderPerTurn` has no herd counterpart** — the animal web has two accounts, the plant web three
+// (`hay_grass` pays fodder and nothing else). Render a component only when it is non-zero.
+//
+// **THE ROW IS SELF-CONTAINED: it carries the per-worker vector too, and that is load-bearing.** The
+// client composes `expected(workers, policy) = min(workers × perWorker, ceiling)`, so BOTH terms must
+// be in the same units — and on the plant web the trade rate is POLICY-DEPENDENT, because `Deplete`
+// applies `market.trade_goods_multiplier` ("sell harder") at the credit site. The sim applies that
+// markup to the **final take**, i.e. after the worker cap, so a markup folded into the ceiling alone
+// would understate a **labor-bound** Deplete take by the full multiplier — and a forage Deplete
+// ceiling is `0.20 × biomass`, so labor is usually the binding term, making that the common case
+// rather than the rare one.
+//
+// So each row states the per-worker contribution **under its own policy**, with the markup already
+// folded in server-side. The client does `min(w × row.perWorker*, row.ceiling*)` per component and
+// never learns what a markup is — the same "the sim answers, the client renders" discipline as
+// `penFeedUpkeep` and `huntTripEstimates`. `perWorkerProvisions`/`perWorkerFodder` repeat an
+// invariant number across the rows; that redundancy is the price of the `min` being honest per
+// component, and it is cheap.
+table ForagePolicyCeiling {
+  policy:string;
+  provisionsPerTurn:float = 0;
+  tradeGoodsPerTurn:float = 0;
+  fodderPerTurn:float = 0;
+  perWorkerProvisions:float = 0;
+  perWorkerTradeGoods:float = 0;
+  perWorkerFodder:float = 0;
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.

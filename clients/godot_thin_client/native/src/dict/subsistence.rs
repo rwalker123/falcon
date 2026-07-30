@@ -68,7 +68,7 @@ pub(crate) fn herds_to_array(
         }
         let _ = dict.insert("domestication", herd.domestication());
         // Per-policy BAND / local-hunt take ceilings for this herd's CURRENT state, in BOTH of the
-        // hunt's products (issue #337 — a hunt pays a `YieldPair`, not a food scalar). Surfaced as TWO
+        // hunt's products (issue #337 — a hunt pays a `YieldAccounts`, not a food scalar). Surfaced as TWO
         // Dictionaries keyed by the SAME policy strings, filled in ONE pass so they cannot drift:
         //   `hunt_policy_ceilings`       -> provisionsPerTurn (food/turn)
         //   `hunt_policy_trade_ceilings` -> tradeGoodsPerTurn (trade goods/turn)
@@ -306,15 +306,10 @@ pub(crate) fn forage_patches_to_array(
         // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
         // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
         let _ = dict.insert("per_worker_yield", patch.perWorkerYield());
-        let _ = dict.insert("ceiling_sustain", patch.ceilingSustain());
-        let _ = dict.insert("ceiling_surplus", patch.ceilingSurplus());
-        let _ = dict.insert("ceiling_deplete", patch.ceilingDeplete());
-        let _ = dict.insert("ceiling_eradicate", patch.ceilingEradicate());
         // The Cultivate INVESTMENT rung (forage-only): `ceiling_cultivate` is the food/turn the patch
         // pays WHILE it is being prepared (the deliberate dip), `tended_yield` what it pays once
         // cultivated. MapView cross-refs both onto `tile_info` (as `patch_*`) for the pre-commit
         // "Preparing: +X → then +Y" forecast on %ForageAssignControls.
-        let _ = dict.insert("ceiling_cultivate", patch.ceilingCultivate());
         let _ = dict.insert("tended_yield", patch.tendedYield());
         // The Sow INVESTMENT rung + the FIELD — plant RUNG 3, the twin of the herd's Corral block
         // (docs/plan_intensification_ladder.md §2). The plant branch carries TWO build meters on ONE
@@ -329,7 +324,6 @@ pub(crate) fn forage_patches_to_array(
         // `ceiling_sow` is the dip WHILE the ground is being sown (honestly ~0 on bare ground — there
         // is no standing crop to take a fraction of, so a bare-ground sow is pure investment);
         // `field_yield` is what the Field pays once sown (2× `tended_yield` on the shipped dials).
-        let _ = dict.insert("ceiling_sow", patch.ceilingSow());
         let _ = dict.insert("field_yield", patch.fieldYield());
         // WHY this ground will not take seed — "" when it will. "too_poor" / "too_dry" /
         // "too_poor_and_too_dry", resolved server-side through the SAME `RungSiteRequirement::refusal`
@@ -411,6 +405,50 @@ pub(crate) fn forage_patches_to_array(
         if let Some(committed_display_name) = patch.committedDisplayName() {
             let _ = dict.insert("committed_display_name", committed_display_name);
         }
+        // **THE TILE'S PER-RUNG YIELD VECTOR** (#426) — the plant twin of `hunt_policy_ceilings`
+        // above, and surfaced the same way: **SIX Dictionaries keyed by the SAME policy strings,
+        // filled in ONE pass**, so no two accounts can drift apart. A harvest pays three accounts, and
+        // every staple carries the flat trade token, so essentially no tile is single-account — a
+        // food-only view under-reported almost every patch, not merely the cash crops.
+        //
+        // **Both halves of the client's `min(workers × per_worker, ceiling)` are per-POLICY here, and
+        // that is the point.** On the plant web `Deplete` marks trade up, and the sim applies that
+        // markup to the FINAL take — after the worker cap — so the markup has to be present on the
+        // per-worker term too or a labor-bound Deplete take reads low by the full multiplier. The
+        // server folded it in; the client just takes the `min` per component and never sees a markup.
+        //
+        // `trade > 0` does **NOT** mean "cash crop": every staple pays the token (flora.md).
+        if let Some(rungs) = patch.foragePolicyCeilings() {
+            let mut ceiling = VarDictionary::new();
+            let mut ceiling_trade = VarDictionary::new();
+            let mut ceiling_fodder = VarDictionary::new();
+            let mut per_worker = VarDictionary::new();
+            let mut per_worker_trade = VarDictionary::new();
+            let mut per_worker_fodder = VarDictionary::new();
+            for rung in rungs {
+                if let Some(policy) = rung.policy() {
+                    let _ = ceiling.insert(policy, f64::from(rung.provisionsPerTurn()));
+                    let _ = ceiling_trade.insert(policy, f64::from(rung.tradeGoodsPerTurn()));
+                    let _ = ceiling_fodder.insert(policy, f64::from(rung.fodderPerTurn()));
+                    let _ = per_worker.insert(policy, f64::from(rung.perWorkerProvisions()));
+                    let _ = per_worker_trade.insert(policy, f64::from(rung.perWorkerTradeGoods()));
+                    let _ = per_worker_fodder.insert(policy, f64::from(rung.perWorkerFodder()));
+                }
+            }
+            let _ = dict.insert("forage_policy_ceilings", &ceiling);
+            let _ = dict.insert("forage_policy_trade_ceilings", &ceiling_trade);
+            let _ = dict.insert("forage_policy_fodder_ceilings", &ceiling_fodder);
+            let _ = dict.insert("forage_policy_per_worker", &per_worker);
+            let _ = dict.insert("forage_policy_per_worker_trade", &per_worker_trade);
+            let _ = dict.insert("forage_policy_per_worker_fodder", &per_worker_fodder);
+        }
+        // The two investment rungs' PAYOFF twins — the non-food halves of `tended_yield`/`field_yield`,
+        // as `pastoral_trade`/`corral_trade` are of their food siblings. Each is quoted at **its own**
+        // rung (#433), never at the rung the patch happens to stand on.
+        let _ = dict.insert("tended_trade", patch.tendedTrade());
+        let _ = dict.insert("tended_fodder", patch.tendedFodder());
+        let _ = dict.insert("field_trade", patch.fieldTrade());
+        let _ = dict.insert("field_fodder", patch.fieldFodder());
         array.push(&dict.to_variant());
     }
     array
