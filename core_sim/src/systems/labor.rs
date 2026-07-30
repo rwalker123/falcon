@@ -25,13 +25,6 @@ pub struct LaborConfigs<'w> {
 /// four rungs can only ever hand off to the same place.
 const HARVEST_POLICY_AFTER_BUILD: FollowPolicy = FollowPolicy::Sustain;
 
-/// **What a gather's trade credit is multiplied by when the policy is NOT `Deplete`** — the identity.
-/// A harvest pays its basket's trade component whatever the policy (you gathered the goods, so you
-/// have them); `Deplete` is a *markup* on that, `forage.market.trade_goods_multiplier`, and this is
-/// the "no markup" reading beside it (#433). Named because a bare `1.0` at that call site says
-/// nothing about which multiplier is being declined.
-const NO_DEPLETE_MARKUP: f32 = 1.0;
-
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
 /// single-task systems (`advance_harvest_assignments` / `advance_scout_assignments` /
 /// `advance_fauna_pursuits`): a band now draws subsistence from *many* in-range sources at once,
@@ -689,18 +682,15 @@ pub fn advance_labor_allocation(
                     //
                     // (Rung 3 keeps its own no-markup rule in `field_trade_goods` — a Field is never
                     // drawn down and has no policy axis to mark up.)
-                    let forage_trade = tended_take_trade_goods(
-                        take,
-                        patch,
-                        &tile_composition,
-                        &flora,
-                        &labor.forage,
-                        mult_f,
-                    ) * if matches!(policy, FollowPolicy::Deplete) {
-                        labor.forage.market.trade_goods_multiplier
-                    } else {
-                        NO_DEPLETE_MARKUP
-                    };
+                    let forage_trade =
+                        tended_take_trade_goods(
+                            take,
+                            patch,
+                            &tile_composition,
+                            &flora,
+                            &labor.forage,
+                            mult_f,
+                        ) * crate::forage::deplete_trade_markup(*policy, &labor.forage);
                     {
                         let trade_goods = forage_trade.round() as i64;
                         if trade_goods > 0 {

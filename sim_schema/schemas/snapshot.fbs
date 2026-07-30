@@ -1172,8 +1172,12 @@ table ForagePatchState {
   // Read each beside its provisions sibling as ONE vector and render a component **only when it is
   // non-zero** — the rule `HuntPolicyCeiling.tradeGoodsPerTurn` already states. In particular
   // `trade > 0` does **NOT** mean "cash crop": every staple pays the token.
-  perWorkerTrade:float = 0;
-  perWorkerFodder:float = 0;
+  //
+  // **There is deliberately NO patch-level `perWorkerTrade`/`perWorkerFodder`.** The plant web's
+  // trade rate is POLICY-DEPENDENT (`Deplete` marks it up), and a policy-blind per-worker scalar
+  // cannot express that — so the per-worker vector lives on the per-policy ROW below, where it can be
+  // stated correctly. `perWorkerYield` above stays as the shipped food throughput.
+  //
   // The per-policy ceilings as ROWS rather than scalars — one per rung, each carrying all three
   // accounts. This replaces the six flat `ceiling*` fields above (now deprecated slots), mirroring
   // the migration `HerdTelemetryState` already made to `huntPolicyCeilings`: a future rung (rung 4,
@@ -1202,11 +1206,30 @@ table ForagePatchState {
 //
 // **`fodderPerTurn` has no herd counterpart** — the animal web has two accounts, the plant web three
 // (`hay_grass` pays fodder and nothing else). Render a component only when it is non-zero.
+//
+// **THE ROW IS SELF-CONTAINED: it carries the per-worker vector too, and that is load-bearing.** The
+// client composes `expected(workers, policy) = min(workers × perWorker, ceiling)`, so BOTH terms must
+// be in the same units — and on the plant web the trade rate is POLICY-DEPENDENT, because `Deplete`
+// applies `market.trade_goods_multiplier` ("sell harder") at the credit site. The sim applies that
+// markup to the **final take**, i.e. after the worker cap, so a markup folded into the ceiling alone
+// would understate a **labor-bound** Deplete take by the full multiplier — and a forage Deplete
+// ceiling is `0.20 × biomass`, so labor is usually the binding term, making that the common case
+// rather than the rare one.
+//
+// So each row states the per-worker contribution **under its own policy**, with the markup already
+// folded in server-side. The client does `min(w × row.perWorker*, row.ceiling*)` per component and
+// never learns what a markup is — the same "the sim answers, the client renders" discipline as
+// `penFeedUpkeep` and `huntTripEstimates`. `perWorkerProvisions`/`perWorkerFodder` repeat an
+// invariant number across the rows; that redundancy is the price of the `min` being honest per
+// component, and it is cheap.
 table ForagePolicyCeiling {
   policy:string;
   provisionsPerTurn:float = 0;
   tradeGoodsPerTurn:float = 0;
   fodderPerTurn:float = 0;
+  perWorkerProvisions:float = 0;
+  perWorkerTradeGoods:float = 0;
+  perWorkerFodder:float = 0;
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.

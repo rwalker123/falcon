@@ -521,19 +521,6 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
-    /// **Trade goods/turn one forager contributes** — the trade twin of [`Self::per_worker_yield`]
-    /// (issue #426). Read the two as ONE vector and render each component only when it is non-zero.
-    ///
-    /// **`> 0` does NOT mean "cash crop".** Every staple carries the flat `trade_goods_per_biomass`
-    /// token (0.005), so essentially no tile in the game is single-account — which is precisely why
-    /// the food-only forecast under-reported almost every patch rather than only the cash crops.
-    #[serde(default)]
-    pub per_worker_trade: f32,
-    /// **Fodder/turn one forager contributes** — the third account, which the animal web has no
-    /// counterpart for (`hay_grass` pays fodder and nothing else). `0` on a basket holding no fodder
-    /// crop, which is most of them.
-    #[serde(default)]
-    pub per_worker_fodder: f32,
     /// **The per-policy ceilings as rows**, one per rung, each carrying all three accounts — the
     /// plant twin of [`HerdTelemetryState::hunt_policy_ceilings`] and the replacement for the six
     /// flat `ceiling_*` scalars above.
@@ -571,6 +558,13 @@ pub struct ForagePatchState {
 /// **This is the TILE's vector, not a plant's.** Rungs 1 and 2 are baskets (rung 2 only *weeds*), so
 /// they routinely pay two or three accounts; only a sown Field is a single plant. `FloraShareInfo`'s
 /// `cultivate*`/`sow*` payoffs answer the different question "what would *this plant* pay here".
+///
+/// **The row is SELF-CONTAINED — it carries the per-worker vector too.** The client composes
+/// `min(workers × per_worker, ceiling)`, so both terms must be in the same units; on the plant web the
+/// trade rate is **policy-dependent** (`Deplete` marks it up at the credit site, *after* the worker
+/// cap), so a policy-blind per-worker scalar could not state it and a ceiling-only markup would
+/// understate every labor-bound Deplete take. Hence one row per rung, each stating its own per-worker
+/// contribution with the markup folded in server-side.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ForagePolicyCeilingState {
     pub policy: String,
@@ -581,6 +575,18 @@ pub struct ForagePolicyCeilingState {
     /// **No herd counterpart** — the animal web has two accounts, the plant web three.
     #[serde(default)]
     pub fodder_per_turn: f32,
+    /// Provisions/turn ONE forager contributes under this policy. Invariant across the rows (the food
+    /// rate carries no policy markup) and repeated on each deliberately, so the `min` above can be
+    /// taken per component without the client knowing which accounts vary by policy.
+    #[serde(default)]
+    pub per_worker_provisions: f32,
+    /// Trade goods/turn one forager contributes **under this policy** — the one component that really
+    /// does vary, carrying `Deplete`'s markup.
+    #[serde(default)]
+    pub per_worker_trade_goods: f32,
+    /// Fodder/turn one forager contributes under this policy. Invariant like the food rate.
+    #[serde(default)]
+    pub per_worker_fodder: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

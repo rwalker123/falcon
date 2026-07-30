@@ -250,6 +250,9 @@ fn create_forage_patches<'a>(
                             provisionsPerTurn: ceiling.provisions_per_turn,
                             tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
                             fodderPerTurn: ceiling.fodder_per_turn,
+                            perWorkerProvisions: ceiling.per_worker_provisions,
+                            perWorkerTradeGoods: ceiling.per_worker_trade_goods,
+                            perWorkerFodder: ceiling.per_worker_fodder,
                         },
                     )
                 })
@@ -285,8 +288,6 @@ fn create_forage_patches<'a>(
                 committedSpecies: Some(committed_species),
                 committedDisplayName: Some(committed_display_name),
                 // The TILE's yield vector — appended last (append-only wire, #426).
-                perWorkerTrade: patch.per_worker_trade,
-                perWorkerFodder: patch.per_worker_fodder,
                 foragePolicyCeilings: forage_policy_ceilings,
                 tendedTrade: patch.tended_trade,
                 tendedFodder: patch.tended_fodder,
