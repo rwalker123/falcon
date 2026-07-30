@@ -18,6 +18,7 @@ use core_sim::{
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 fn spawn_world() -> App {
@@ -123,6 +124,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> Labor
                 species: None,
             },
             workers,
+            improvement: None,
         }],
         ..Default::default()
     }
@@ -259,6 +261,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
                     policy: FollowPolicy::Sustain,
                 },
                 workers: 1,
+                improvement: None,
             }],
             ..Default::default()
         },
@@ -338,6 +341,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
                     policy: FollowPolicy::Sustain,
                 },
                 workers: 2,
+                improvement: None,
             }],
             ..Default::default()
         },
@@ -463,6 +467,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
                     policy: FollowPolicy::Sustain,
                 },
                 workers: 4,
+                improvement: None,
             }],
             ..Default::default()
         },
@@ -535,6 +540,7 @@ fn hunt_lapses_beyond_leash() {
                     policy: FollowPolicy::Sustain,
                 },
                 workers: 3,
+                improvement: None,
             }],
             ..Default::default()
         },
@@ -848,6 +854,7 @@ fn stage_hunt(
                     policy: FollowPolicy::Sustain,
                 },
                 workers,
+                improvement: None,
             }],
             ..Default::default()
         },
@@ -973,6 +980,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         1.0,
         4,
         FollowPolicy::Sustain,
+        NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
     let schedule = core_sim::project_arrivals_hunt(
@@ -983,6 +991,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         1.0,
         4,
         FollowPolicy::Sustain,
+        NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
 
@@ -1019,6 +1028,7 @@ fn a_spent_source_schedules_nothing() {
         1.0,
         4,
         FollowPolicy::Sustain,
+        NO_IMPROVEMENT_UNDERWAY,
         labor.arrivals_horizon_turns,
     );
     assert_eq!(

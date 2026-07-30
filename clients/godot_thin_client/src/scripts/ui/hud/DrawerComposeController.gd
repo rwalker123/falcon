@@ -37,9 +37,19 @@ extends RefCounted
 
 # --- The controller's OWN signals (HudLayer connects + relays each; see the class header) ---
 # A hunting party was dispatched — relayed to HudLayer.send_hunt_expedition_requested.
+# The deal line's FIRST term is the stance's own take, undipped — the baseline the dip is measured
+# against. Named rather than a bare `1.0` beside `deal["build_fraction"]`, so the two arguments to
+# `_account_products` read as what they are: no dip, and this rung's dip.
+const DEAL_STANCE_UNDIPPED := 1.0
+
 signal send_hunt_expedition_requested(payload: Dictionary)
 # Another ring was fenced around a pen — relayed to HudLayer.extend_pen_requested.
 signal extend_pen_requested(payload: Dictionary)
+
+## The SECOND AXIS's command (issue #442) — `cultivate` / `sow` / `tame` / `corral`. A signal like
+## `extend_pen_requested` rather than a HudLayer callable, for the same reason: this controller is its
+## only emitter. `HudLayer` relays it to `Main`, which formats the verb.
+signal improvement_requested(payload: Dictionary)
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 var _compose: ComposeState = null
@@ -117,8 +127,41 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## the optimistic pending-labor write and `_after_pending_change()` — so this stays INDIRECT rather
 ## than becoming a third signal on this controller.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
-        policy: String, species: String = "") -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species)
+        policy: String, species: String = "",
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species, improvement)
+
+## Send the improvement command when the composed second axis differs from what the source is already
+## building — the SET verb (`cultivate` / `sow` / `tame` / `corral`) when one is composed, and
+## `abandon_improvement` when the player has unchecked a running build. Either way it is its OWN
+## command, never a token on `assign_labor` — that is what lets a crew-size edit stop re-asserting the
+## improvement, and with it the re-staffing gap where changing the crew of a PAUSED build re-ran the
+## build's own gates and was refused (issue #442 §6).
+##
+## **The two commands name their target DIFFERENTLY, and the payload carries both spellings for that
+## reason.** A set verb is targeted by the VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a
+## tile — `corral` is the case that proves it, a herd's rung addressed by the pen's place), while
+## `abandon_improvement` is targeted by the WEB (`forage` → tile, `hunt` → herd), because it names a
+## SOURCE rather than a verb. `Main` keeps the two grammars in separate builders; nothing here
+## flattens them into one.
+##
+## **The abandon is UNGATED and is never suppressed.** It is legal on a stalled build, on unhealthy
+## ground and at any knowledge level — that is the case it exists for. The only thing that stops it is
+## the source not building anything, which `standing` already answers.
+func _emit_improvement(band: Dictionary, kind: String, composed: String, standing: String,
+        x: int, y: int, herd_id: String) -> void:
+    if composed == standing:
+        return
+    emit_signal("improvement_requested", {
+        "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
+        # "" here IS the abandon — the wire's own spelling of "building nothing", so the formatter
+        # branches on the same value the compose state holds rather than on a second flag.
+        "improvement": composed,
+        "kind": kind,
+        "x": x,
+        "y": y,
+        "herd_id": herd_id,
+    })
 
 ## The per-turn take `workers` from `band` get off `herd` under `policy` — the sim's LOCAL/band hunt
 ## take before the output multiplier, `min(workers × per-worker, band_ceiling)`, ON THE COMPONENT THE
@@ -224,18 +267,14 @@ func _format_animal_rate(value: float) -> String:
 ## Each hunt policy's button metric, keyed policy → a `{compact, full}` pair (compact for the one-line
 ## button face, full for the tooltip). The plant twin of this is `_forage_policy_takes`; both wear the
 ## same shape, only the metric differs:
-##   EXTRACTIVE (Sustain/Surplus/Deplete/Eradicate) → the herd's worker-independent CAP for the policy
-##       (`hunt_policy_ceilings`): a bare signed rate on the face, framed "up to X/turn" in the tooltip
-##       — the ceiling it is, distinct from the crew's carry-aware delivered line below the picker. Read
-##       straight off the sim; never re-derived.
-##   INVESTMENT (Tame/Corral) → the PAYOFF the rung builds toward, a PAIR like the caps above
-##       (`pastoral_yield`+`pastoral_trade` / `corral_yield`+`corral_trade`): `→ Y food · Z trade` on
-##       the face / "builds toward Y/turn · ⇄ +Z trade goods/turn" in the tooltip, each component only
-##       when non-zero. NOT the during-building dip: that dip
-##       reads BELOW Sustain and is identical
-##       for both rungs, so quoting it made taming/penning look strictly worse than hunting. Shown even
-##       when the rung is gated/greyed — informative — with the gate-reason line explaining the lock; a
-##       0/absent payoff leaves the button bare.
+##   the herd's worker-independent CAP for the stance (`hunt_policy_ceilings`): a bare signed rate on
+##   the face, framed "up to X/turn" in the tooltip — the ceiling it is, distinct from the crew's
+##   carry-aware delivered line below the picker. Read straight off the sim; never re-derived.
+##
+## **The build verbs' PAYOFF faces left this function with them** (issue #442). Tame and Corral were a
+## second loop here, wearing `→ 1.48 food · 0.37 trade` because a build verb was a rung of this picker;
+## the improvement control states the same payoff as its own terms now, and the list this reads is
+## exactly the four stances.
 ## Empty when the herd carries no ceilings (older snapshot / non-huntable).
 func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
     var takes := {}
@@ -243,10 +282,6 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
     if not (ceilings_variant is Dictionary):
         return takes
     for policy in (ceilings_variant as Dictionary):
-        # The INVESTMENT rungs are skipped here — their during-build dip rides this list too, but they
-        # wear the PAYOFF (the second loop), not the dip. Mirrors `_forage_policy_takes`.
-        if String(policy) in HudComposeVocab.INVESTMENT_POLICIES:
-            continue
         var rate := float((ceilings_variant as Dictionary)[policy])
         if rate < 0.0:
             continue
@@ -255,46 +290,8 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         # `+0.00`s — the false reading that said an inedible species was worth nothing on every rung.
         var trade_rate := SourceForecast.hunt_policy_trade_ceiling(herd, String(policy))
         takes[String(policy)] = SourceForecast.extractive_take_pair(rate, maxf(trade_rate, 0.0))
-    for policy in [HudConst.LABOR_POLICY_TAME, SourceForecast.LABOR_POLICY_CORRAL]:
-        var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, policy)
-        if not bool(forecast["known"]) or not bool(forecast["investment"]):
-            continue
-        var payoff := float(forecast["payoff"])
-        # BOTH products on the payoff too (issue #397, extending #337's rule): a prepared herd pays a pair, so the emit gate
-        # accepts EITHER component. A rung whose payoff is trade-only must still get a face rather
-        # than falling back to a bare glyph+name — the same rule one level up from `_payoff_take`.
-        var payoff_trade := float(forecast["payoff_trade"])
-        if payoff > 0.0 or payoff_trade > 0.0:
-            takes[policy] = _payoff_take(payoff, payoff_trade)
     return takes
 
-
-## A `{compact, full}` metric pair for an INVESTMENT rung's PAYOFF — the arrow-led product line on the
-## button face's second row (`→ 1.48 food · 0.37 trade`), the "builds toward X/turn" wording in the
-## tooltip. Shared by hunt + forage. The payoff is a VECTOR like every other yield in this model, and
-## obeys the same render-only-when-non-zero rule as `SourceForecast.extractive_take_pair`: a pure-meat
-## species reads `→ 1.48 food`, an inedible one `→ 0.37 trade`, a hay crop `→ 1.80 fodder`, and a
-## component the source never pays is never printed as a zero. **The fodder term is plant-only and
-## the herd callers leave it defaulted** — no animal pays fodder, so this is a structural zero rather
-## than an unfinished one. The face names its products in words; the ARROW — not a currency word — is
-## what keeps it from reading as a take the source pays today rather than one the preparation builds
-## toward.
-func _payoff_take(payoff: float, payoff_trade: float, payoff_fodder: float = 0.0) -> Dictionary:
-    var has_non_food := SourceForecast.has_component(payoff_trade) \
-        or SourceForecast.has_component(payoff_fodder)
-    var full_parts: Array[String] = []
-    if SourceForecast.has_component(payoff) or not has_non_food:
-        full_parts.append(HudComposeVocab.POLICY_PAYOFF_FULL_FORMAT % SourceForecast.format_signed(payoff))
-    if SourceForecast.has_component(payoff_trade):
-        full_parts.append(SourceForecast.POLICY_CAP_TRADE_FORMAT % [
-            FoodIcons.TRADE_GOODS_GLYPH, SourceForecast.format_signed(payoff_trade)])
-    if SourceForecast.has_component(payoff_fodder):
-        full_parts.append(SourceForecast.POLICY_CAP_FODDER_FORMAT % SourceForecast.format_signed(payoff_fodder))
-    return {
-        "compact": HudComposeVocab.POLICY_PAYOFF_COMPACT % SourceForecast.picker_products(
-            payoff, payoff_trade, payoff_fodder),
-        "full": SourceForecast.TRADE_COMPONENT_SEPARATOR.join(full_parts),
-    }
 
 ## The LOCAL hunt's live per-turn yield preview, or "" when the snapshot lacks the levers/ceilings
 ## (graceful degrade — no line, panel otherwise unchanged). A resident band applies its
@@ -454,48 +451,218 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## The live INVESTMENT-rung forecast row on the assign controls — it states the DEAL: "Preparing:
-## +0.09 /turn → then +1.20 /turn", so the up-front dip AND the payoff are visible BEFORE the player
-## commits. Both halves scaled by the acting band's output multiplier. This row is INVESTMENT-only now:
-## every extractive rung (hunt AND forage) renders its own bare-rate + verdict preview
-## (`_local_hunt_preview_bbcode` / `_local_forage_preview_bbcode`) instead, so the old non-investment
-## "Expected yield:" branch was unreachable and was removed. Callers gate on the investment rung.
+## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its three states
+## this source is in, plus the deal it offers. Shared verbatim by both webs: the plant ladder
+## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same three states
+## and the same forecast, because they are the same decision about different stock.
 ##
-## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its row
-## never shows the payoff bare — it subtracts the herd's own exported `pen_upkeep` (which the sim now
-## projects for an un-penned herd too, on the same biomass basis). The feed is NEVER folded away, and
-## a **zero payoff is rendered, loudly** (see INVESTMENT_FORECAST_DEPLETED_NOTE) — a depleted herd
-## below the escapement point pays nothing, and that is the row's most important reading.
-func _forecast_yield_row(forecast: Dictionary, workers: int, band: Dictionary,
-        crew_label: String = HudComposeVocab.FORAGE_CREW_LABEL) -> Label:
-    var row := Label.new()
-    var expected := SourceForecast.format_yield(SourceForecast.expected_yield(forecast, workers, band))
-    var hex := HudStyle.HEALTHY
+## The three states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
+##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries the
+##       meter, and a WARN pause line appears when the source has left Thriving, which is the ONE
+##       silent rule on this axis: the meter accrues only while the source is Thriving, and that is
+##       deliberately NOT a gate (a source's phase swings as it is worked, so refusing the verb would
+##       be un-actionable churn). The sim just PAUSES, losing nothing — and saying nothing here would
+##       recreate exactly the hidden rule this whole arc exists to kill. It was animal-only
+##       (`_tame_stalled_hint`) because the plant web had no control to hang it on.
+##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
+##       rung's checkbox renders beneath it if there is one.
+##   OFFERED last — an unchecked box naming the next rung and its terms, its gate reasons beneath it
+##       when it has any (shown, unchecked, explained — a greyed control alone does not teach).
+##
+## `payoff_face` is the caller's per-rung terms Callable (`improvement -> String`), because the plant
+## web substitutes the CROP the rung would commit to and the animal web quotes the herd. `extra_rows`
+## is the same idea for whole controls: the plant web drops its CROP PICKER between the box and the
+## deal, since which crop this rung commits to is part of the same decision. Passing both in rather
+## than branching keeps this function free of flora knowledge.
+func _build_improvement_control(kind: String, source: Dictionary, prefix: String, stance: String,
+        composed: String, band: Dictionary, workers: int, crew_label: String,
+        on_toggle: Callable, target: VBoxContainer,
+        payoff_face: Callable = Callable(), extra_rows: Callable = Callable()) -> void:
+    # RUNNING — a composed improvement that is not yet built. `composed` covers both the wire's
+    # standing value and a box the player just ticked, so a fresh commitment reads as running
+    # immediately rather than waiting a turn to stop looking like an offer.
+    if composed != SourceForecast.IMPROVEMENT_NONE \
+            and not SourceForecast.improvement_is_done(source, prefix, composed):
+        var percent := HudFormat.progress_percent(
+            SourceForecast.improvement_progress(source, prefix, composed))
+        var running_face := HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
+            FoodIcons.for_policy(composed),
+            String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS.get(composed, composed.capitalize())),
+            percent]
+        var paused := _improvement_paused_note(source, prefix)
+        target.add_child(HudWidgets.build_improvement_control(composed,
+            HudWidgets.IMPROVEMENT_STATE_RUNNING, running_face,
+            _improvement_running_tooltip(kind, composed), on_toggle, paused, true))
+        if extra_rows.is_valid():
+            extra_rows.call(composed, target)
+        _build_improvement_deal(source, kind, prefix, stance, composed, band, workers, crew_label,
+            payoff_face, target)
+        return
+    # DONE — the highest rung this source has actually built, as a state label. Highest first, for the
+    # reason the work board's rung mark tests highest first: a Field is ALSO cultivated and a penned
+    # herd is ALSO fully tamed, so testing the lower rung first would collapse the distinction.
+    var ladder: Array = SourceForecast.FORAGE_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_FORAGE \
+        else SourceForecast.HUNT_IMPROVEMENTS
+    for i in range(ladder.size() - 1, -1, -1):
+        var rung := String(ladder[i])
+        if not SourceForecast.improvement_is_done(source, prefix, rung):
+            continue
+        target.add_child(HudWidgets.build_improvement_control(rung,
+            HudWidgets.IMPROVEMENT_STATE_DONE, _improvement_done_face(source, prefix, rung, band),
+            String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle))
+        break
+    # OFFERED — the ONE rung on offer, ordered by `RungGates` so the sheet, the work board and the map
+    # can never disagree about which rung is next. Renders BENEATH a done label when there is one.
+    var offer := RungGates.next_rung_offered(kind, source, composed, _player_knowledge(), prefix)
+    if offer.is_empty():
+        return
+    var rung := String(offer["policy"])
+    var terms := String(payoff_face.call(rung)) if payoff_face.is_valid() \
+        else _improvement_payoff_terms(source, kind, prefix, rung, band)
+    var offer_face := HudComposeVocab.IMPROVEMENT_OFFER_FORMAT % [
+        FoodIcons.for_policy(rung),
+        String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize())), terms] \
+        if terms != "" else HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
+            FoodIcons.for_policy(rung),
+            String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    target.add_child(HudWidgets.build_improvement_control(rung,
+        HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
+        RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)))
+    if extra_rows.is_valid():
+        extra_rows.call(rung, target)
+
+## The RUNNING control's tooltip: the rung's own hint ("what does this buy?") plus what UNCHECKING
+## does ("what happens if I stop?"). Two different questions, so two lines rather than one run-on.
+##
+## The abandon clause is PER WEB because the sim's answer is: a plant meter bleeds away once nobody is
+## improving the patch, an animal meter is kept. Neither promises progress BACK — the command does not
+## touch the meter at all, it hands the source to the rule that already governs an unimproved one.
+## Putting it in the tooltip rather than in a note or a confirm is the judgement call: unchecking is
+## always legal and, on the animal web, fully reversible, so a modal would be ceremony over a
+## decision the player can simply re-make.
+func _improvement_running_tooltip(kind: String, improvement: String) -> String:
+    return HudComposeVocab.IMPROVEMENT_TOOLTIP_SEPARATOR.join([
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(improvement, "")),
+        String(HudComposeVocab.IMPROVEMENT_ABANDON_HINTS.get(kind, "")),
+    ])
+
+## The WARN pause line for a running build, as the note array the control renders beneath its box —
+## empty when the source is Thriving (nothing to explain). Both webs read the same `ecology_phase`.
+func _improvement_paused_note(source: Dictionary, prefix: String) -> Array:
+    var phase := String(source.get(prefix + "ecology_phase", "")).strip_edges().to_lower()
+    if phase == "" or phase == HudFloraVocab.ECOLOGY_PHASE_THRIVING:
+        return []
+    return [HudComposeVocab.IMPROVEMENT_PAUSED_FORMAT % phase.capitalize()]
+
+## The done-state label's face. **The Corral rung carries the pen's per-turn upkeep and the Tame rung
+## does not, and that asymmetry is deliberate and permanent** (spec §4): a penned herd cannot graze,
+## so someone feeds it every turn, and a standing obligation belongs with the standing state. Do not
+## make the two webs match here.
+func _improvement_done_face(source: Dictionary, prefix: String, rung: String,
+        band: Dictionary) -> String:
+    var glyph := FoodIcons.for_policy(rung)
+    var noun := String(HudComposeVocab.IMPROVEMENT_DONE_LABELS.get(rung, rung.capitalize()))
+    if SourceForecast.FORECAST_FEED_KEYS.has(rung):
+        var feed := float(source.get(prefix + String(SourceForecast.FORECAST_FEED_KEYS[rung]), 0.0)) \
+            * float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+        if feed >= SourceForecast.FOOD_FLOW_MIN:
+            return HudComposeVocab.IMPROVEMENT_DONE_UPKEEP_FORMAT % [
+                glyph, noun, SourceForecast.format_magnitude(feed)]
+    return HudComposeVocab.IMPROVEMENT_DONE_FORMAT % [glyph, noun]
+
+## The "then <X>" terms on an offered box — the payoff VECTOR the built rung pays, each account only
+## when non-zero, so a hay meadow reads `1.80 fodder` and a pelt species `0.37 trade`. "" when the
+## wire quotes no payoff at all, which the caller renders as the bare verb rather than "· then +0.00".
+##
+## Quoted at SUSTAIN, because a payoff is a property of the finished rung and not of the stance the
+## crew happens to hold while building it — only the DIP rides the stance.
+func _improvement_payoff_terms(source: Dictionary, kind: String, prefix: String, rung: String,
+        band: Dictionary) -> String:
+    var deal := SourceForecast.improvement_forecast(source,
+        SourceForecast.source_kind_for_labor(kind), prefix, SourceForecast.DEFAULT_HUNT_POLICY, rung)
+    if deal.is_empty():
+        return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var payoff := float(forecast.get("payoff", 0.0)) * output
-    var feed := float(forecast.get("feed", 0.0)) * output
-    var has_feed := bool(forecast.get("feed_rung", false)) and feed >= SourceForecast.FOOD_FLOW_MIN
-    # UNSTAFFED: state the payoff as a condition, never as a sequence already under way — see
-    # INVESTMENT_FORECAST_UNSTAFFED_FORMAT. The depleted-payoff note below still applies either way.
-    var crew := crew_label.to_lower()
+    return SourceForecast.picker_products(float(deal["payoff"]) * output,
+        float(deal["payoff_trade"]) * output, float(deal["payoff_fodder"]) * output)
+
+## **THE WHOLE DEAL, in three terms** — `+0.96 → +0.24 while building → +1.20 /turn`, the middle term
+## WARN-amber because it is the dip. Every term is scaled by the acting band's output multiplier.
+##
+## The FIRST term is what the two-term "Preparing: +X → then +Y" line structurally could not show: a
+## build verb WAS the policy, so committing vacated the stance and there was no baseline left to
+## quote. It is also the number that makes the trade legible — the dip only means something against
+## what you are giving up.
+##
+## The Corral payoff is GROSS (the pen's feed is a separate debit on the keeper's larder), so its line
+## subtracts the herd's own exported `pen_upkeep` — which the sim projects for an un-penned herd too,
+## on the same biomass basis, so the row quotes the real running cost at the moment the player
+## decides. The feed is NEVER folded away, and a **zero payoff is rendered, loudly** (see
+## `IMPROVEMENT_DEAL_DEPLETED_NOTE`): a depleted herd below the escapement point pays nothing, and
+## that is the line's most important reading.
+func _build_improvement_deal(source: Dictionary, kind: String, prefix: String, stance: String,
+        improvement: String, band: Dictionary, workers: int, crew_label: String,
+        payoff_face: Callable, target: VBoxContainer) -> void:
+    # `kind` here is the LABOR kind (`hunt`/`forage`); the forecast layer speaks SOURCE kinds
+    # (`herd`/`forage`). They differ on the animal web, so this conversion is not optional.
+    var deal := SourceForecast.improvement_forecast(
+        source, SourceForecast.source_kind_for_labor(kind), prefix, stance, improvement)
+    if deal.is_empty():
+        return
+    var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    # The payoff terms follow the CROP on the plant web, exactly as the offered box's do — one
+    # Callable, both places, so the box and the line beneath it can never quote different crops.
+    var payoff_terms := String(payoff_face.call(improvement)) if payoff_face.is_valid() \
+        else SourceForecast.picker_products(float(deal["payoff"]) * output,
+            float(deal["payoff_trade"]) * output, float(deal["payoff_fodder"]) * output)
+    var feed := float(deal["feed"]) * output
+    var has_feed := bool(deal["feed_rung"]) and feed >= SourceForecast.FOOD_FLOW_MIN
+    var row := HudWidgets.forecast_label("")
+    var hex := HudStyle.HEALTHY
     if workers <= 0:
-        if has_feed:
-            row.text = HudComposeVocab.INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT % [
-                crew, SourceForecast.format_yield(payoff), SourceForecast.format_magnitude(feed)]
-        else:
-            row.text = HudComposeVocab.INVESTMENT_FORECAST_UNSTAFFED_FORMAT % [crew, SourceForecast.format_yield(payoff)]
-    elif has_feed:
-        row.text = HudComposeVocab.INVESTMENT_FORECAST_FEED_FORMAT % [
-            expected, SourceForecast.format_yield(payoff), SourceForecast.format_magnitude(feed)]
+        # UNSTAFFED: state the payoff as a CONDITION, never as a sequence already under way. Both the
+        # stance term and the dip are staffing-scaled while the payoff is not, so an unstaffed deal
+        # would otherwise read as a plan the player is emphatically not on track for.
+        var crew := crew_label.to_lower()
+        row.text = HudComposeVocab.IMPROVEMENT_DEAL_UNSTAFFED_FEED_FORMAT % [
+            crew, payoff_terms, SourceForecast.format_magnitude(feed)] if has_feed \
+            else HudComposeVocab.IMPROVEMENT_DEAL_UNSTAFFED_FORMAT % [crew, payoff_terms]
     else:
-        row.text = HudComposeVocab.INVESTMENT_FORECAST_FORMAT % [expected, SourceForecast.format_yield(payoff)]
-    # A prepared source that pays NOTHING is a trap, and one that pays nothing while EATING every
-    # turn is a net loss. Say so — amber, in words, without hiding the zeros that prove it.
-    if has_feed and payoff < SourceForecast.FOOD_FLOW_MIN:
-        row.text += "\n%s" % HudComposeVocab.INVESTMENT_FORECAST_DEPLETED_NOTE
+        # Each of the three terms is a full account VECTOR capped per account against its own ceiling,
+        # never a scalar — the render-only-when-non-zero rule reaching the deal line.
+        var stance_terms := _account_products(deal, workers, band, DEAL_STANCE_UNDIPPED)
+        var preparing_terms := _account_products(deal, workers, band, float(deal["build_fraction"]))
+        var warn_hex := HudStyle.WARN.to_html(false)
+        row.text = HudComposeVocab.IMPROVEMENT_DEAL_FEED_FORMAT % [
+            stance_terms, warn_hex, preparing_terms, payoff_terms,
+            SourceForecast.format_magnitude(feed)] if has_feed \
+            else HudComposeVocab.IMPROVEMENT_DEAL_FORMAT % [
+                stance_terms, warn_hex, preparing_terms, payoff_terms]
+    if has_feed and float(deal["payoff"]) * output < SourceForecast.FOOD_FLOW_MIN:
+        row.text += "\n%s" % HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE
         hex = HudStyle.WARN
-    row.add_theme_color_override("font_color", hex)
-    return row
+    row.add_theme_color_override("default_color", hex)
+    target.add_child(row)
+
+## One of the deal's terms as a products string, CLAMPED BY THE CREW. The deal carries CEILINGS, and a
+## crew below max-useful does not reach them — so each account is priced through
+## `SourceForecast.expected_yield_account`, the same `min(workers x per_worker, ceiling)` the sim
+## applies per component, and only then scaled by `dip` (1.0 for the stance term, the rung's build
+## fraction for the "while building" one). Scaling the CAPPED take rather than the ceiling is what
+## keeps the two terms in exact proportion at every crew size.
+##
+## Each account renders only when non-zero (`picker_products`), so a staple reads `+0.96 food`, flax
+## `+0.24 trade`, and hay ground both plus its fodder.
+func _account_products(deal: Dictionary, workers: int, band: Dictionary, dip: float) -> String:
+    var stance_forecast: Dictionary = deal["stance_forecast"]
+    return SourceForecast.picker_products(
+        SourceForecast.expected_yield_account(
+            stance_forecast, workers, band, "per_worker", "ceiling") * dip,
+        SourceForecast.expected_yield_account(
+            stance_forecast, workers, band, "per_worker_trade", "ceiling_trade") * dip,
+        SourceForecast.expected_yield_account(
+            stance_forecast, workers, band, "per_worker_fodder", "ceiling_fodder") * dip)
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
 ## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
@@ -565,9 +732,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # Sustain — and the reset below would then never fire on a genuinely stale composition.
     var standing_hunt := _band_labor.policy_for_hunt(band, herd_id) \
         if _band_labor.workers_for_hunt(band, herd_id) > 0 else ""
+    # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING here. It seeds
+    # the improvement control so a herd mid-Tame opens with its box checked rather than looking
+    # untouched, and it is what the commit compares against to decide whether a verb needs sending.
+    var standing_improvement := _band_labor.improvement_for_hunt(band, herd_id)
     if source_changed:
         var staffed := _band_labor.workers_for_hunt(band, herd_id)
-        _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP, _band_labor.policy_for_hunt(band, herd_id))
+        _compose.seed_hunt(staffed if staffed > 0 else HudConst.WORKER_STEP,
+            _band_labor.policy_for_hunt(band, herd_id), standing_improvement)
     # Show the effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _band_labor.effective_hunt_workers(band, herd_id)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, herd_id))
@@ -597,51 +769,15 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_expedition := distance >= 0 and distance > reach
     # Local hunt caps at the band's assignable hunt workers; an expedition caps at the party ceiling.
     var assignable := SourceForecast.expedition_party_cap(band) if is_expedition else _band_labor.assignable_hunt_workers(band, herd_id)
-    # Policy options: the Corral INVESTMENT rung is offered on a LOCAL hunt only — a detached party
-    # follows the herd and hauls food home; it builds no pen. An expedition keeps the extractive four.
-    var hunt_options: Array = SourceForecast.LABOR_HUNT_POLICIES if is_expedition else HudBandLaborState.HUNT_POLICY_OPTIONS
-    # Grazing 2d-δ + the ladder's rung-2 verb: BOTH husbandry rungs are husbandry-ceiling affordances,
-    # and the ceiling says how far up the ladder THIS SPECIES can climb ("wild" hunt-only / "pastoral"
-    # tameable-but-never-pennable / "pen" the full ladder). An out-of-ceiling rung is HIDDEN OUTRIGHT,
-    # never greyed: greying it would imply a reachable prerequisite, and no amount of knowledge or
-    # work will ever let you pen an aurochs whose ceiling is "pastoral". Knowledge = "I know how";
-    # ceiling = "this animal allows it" — decoupled (§4.2), so the gates above are orthogonal to this.
-    #   • Corral needs a "pen" ceiling.
-    #   • Tame needs anything ABOVE "wild" — and is pointless once the herd is fully tamed, so it
-    #     retires from the picker at that point (its per-source meter is full; Corral is what's next).
-    # `.filter` copies, so the HUNT_POLICY_OPTIONS const is untouched.
-    if not is_expedition:
-        var ceiling := SourceForecast.husbandry_ceiling(herd)
-        if ceiling != SourceForecast.HUSBANDRY_CEILING_PEN:
-            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != SourceForecast.LABOR_POLICY_CORRAL)
-        if ceiling == SourceForecast.HUSBANDRY_CEILING_WILD \
-                or float(herd.get("domestication", 0.0)) >= SourceForecast.DOMESTICATION_COMPLETE:
-            hunt_options = hunt_options.filter(func(policy: String) -> bool: return policy != HudConst.LABOR_POLICY_TAME)
-    # RE-ADMIT THE STANDING RUNG THE CEILING PASS JUST HID — and only ever that one. A band standing on
-    # Tame when its herd finishes taming is the one case the "hidden outright, never greyed" rule above
-    # would otherwise erase the player's own order from the sheet; every other out-of-ceiling rung stays
-    # hidden, since greying it would still imply a reachable prerequisite. This can never widen the
-    # picker beyond what the SIM allows: the sim refuses to put a band on a rung its species' ceiling
-    # forbids, so a rung can only be re-admitted here if the band is genuinely working under it. It is
-    # re-admitted GATED (`RungGates.hunt_gates` answers "Already fully tamed …" at a full meter), so the
-    # rung reads as the dead end it is and clearing it stays the player's act.
-    if not is_expedition and standing_hunt != "" and not (standing_hunt in hunt_options):
-        var offered := hunt_options
-        # Filter the canonical ladder rather than appending, so the re-admitted rung lands in its own
-        # rung order instead of after Corral.
-        hunt_options = HudBandLaborState.HUNT_POLICY_OPTIONS.filter(func(policy: String) -> bool:
-            return policy in offered or policy == standing_hunt)
-    var hunt_gates := {} if is_expedition else RungGates.hunt_gates(herd, _player_knowledge())
-    # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A gated rung is normally not a legal
-    # composition (the herd may have finished taming under a standing Corral selection, or left the
-    # option set entirely), so re-validate every render — but a gated rung that IS the standing
-    # assignment renders SELECTED AND GATED with its remedy instead of being silently swapped for
-    # Sustain: forcing the default here made the sheet display a policy the sim was not working the
-    # source under, and every number below (the rung faces, the max-useful cap, the stepper ceiling)
-    # was then computed for the displayed rung while the herd was worked under the real one.
-    if not (_compose.hunt_policy() in hunt_options) \
-            or (not HudWidgets.gate_reasons(hunt_gates, _compose.hunt_policy()).is_empty() \
-                and _compose.hunt_policy() != standing_hunt):
+    # **THE STANCE ROW IS THE SAME FOUR RUNGS ON BOTH BRANCHES NOW** (issue #442). It was six on a
+    # local hunt and four on an expedition, and every line of the ceiling-filtering, standing-rung
+    # re-admitting machinery that produced that difference existed to cram the build verbs in here.
+    # Corral being local-only is still true — it is an IMPROVEMENT, and the improvement control is
+    # simply not built on the expedition branch, because a detached party builds no pen.
+    var hunt_options: Array = SourceForecast.LABOR_HUNT_POLICIES
+    # THE SHEET NEVER RENDERS A STANCE THE BAND IS NOT ON. A stance is never gated and never retires,
+    # so this can now only fire on a malformed composition (a harness staging a bogus rung).
+    if not (_compose.hunt_policy() in hunt_options):
         _compose.set_hunt_policy(SourceForecast.DEFAULT_HUNT_POLICY)
     # Pre-commit forecast — LOCAL hunt only. An expedition travels for several turns and accumulates
     # toward a carry cap, so the herd's per-turn take ceiling is NOT the bound on its party size;
@@ -649,20 +785,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
     var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy())
-    # ONE yield row per rung — each rung gets the row that actually informs ITS decision:
-    #   INVESTMENT (Corral) → `_forecast_yield_row` states the DEAL ("Preparing: +0.23 → then +1.05"):
-    #       what you give up, for how long, to get what. That IS the Corral decision, and the local
-    #       preview below structurally cannot express it (a dip/payoff pair is not a single rate).
-    #       Corral draws sustainably by design, so no overdraw verdict is lost by using this row.
-    #   EXTRACTIVE (the four) → `_local_hunt_preview_bbcode` below, which carries the same per-turn
-    #       number PLUS the sustainability verdict (`· renewable` / `⚠ overdraws the herd`).
-    # Rendering both was the merge's mistake: the two paths are independently computed but agree
-    # numerically (verified — the flat `per_worker_yield`/`ceiling_*` scalars and the
-    # `hunt_policy_ceilings` list are two views of ONE sim hunt model, both yielding +0.54 on a Deplete
-    # take), so the second row added no information and, worse, argued with the first — a HEALTHY-green
-    # "Expected yield" sitting directly above a WARN-amber "⚠ overdraws the herd" for the same number.
-    var forecast_active := not is_expedition and bool(forecast["known"]) \
-        and bool(forecast["investment"])
+    # THE COMPOSED IMPROVEMENT — the second axis, LOCAL hunt only (a detached party builds no pen).
+    # The deal it states rides the SELECTED stance, which is the whole point of the split: a Deplete
+    # builder's dip is a fraction of Deplete's larger ceiling, and it defeats itself through the
+    # ecology (the meter accrues only while the herd is Thriving) rather than through a gate.
+    var composed_improvement := SourceForecast.IMPROVEMENT_NONE if is_expedition \
+        else _compose.hunt_improvement()
     # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
     # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
     # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
@@ -671,11 +799,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # max-useful knows nothing about — so the LOCAL-hunt cap's usefulness ceiling is floored on
     # `SourceForecast.herd_crew_floor`, the ONE definition of that number, shared with the Band panel's
     # worked-row twin (`source_worker_cap_state`) so the sheet and the board can never gate differently.
-    # It reads the forecast's own `investment` flag to pick the ownership-gated vs would-be crew field;
-    # the rationale for that split lives on the helper. The expedition party has no herding crew, so
+    # It reads the IMPROVEMENT axis to pick the ownership-gated vs would-be crew field; the rationale
+    # for that split lives on the helper. The expedition party has no herding crew, so
     # `SourceForecast.expedition_useful_cap` is left alone.
     var capped := SourceForecast.expedition_useful_cap(band, herd, _compose.hunt_policy(), assignable) if is_expedition \
-        else _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(herd, forecast))
+        else _forecast_worker_cap(forecast, assignable, SourceForecast.herd_crew_floor(
+            herd, composed_improvement != SourceForecast.IMPROVEMENT_NONE))
     var cap := int(capped["cap"])
     # Auto-max on policy select — "give me everything this herd sustains": the max-useful for the policy
     # (clamped to idle below), which guarantees zero waste + the full rate. Only ever set by a policy
@@ -685,7 +814,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     _compose.clamp_hunt_count(cap)
     # A managed herd's local crew are HERDERS/keepers (workersNeeded scales with the herd), not a hunt
     # party — so a pen needing several keepers doesn't read as a hunt-party bug (fix #6).
-    var crew_label := HudComposeVocab.HERD_CREW_LABEL if SourceForecast.is_managed_hunt_source(herd, _compose.hunt_policy()) \
+    var crew_label := HudComposeVocab.HERD_CREW_LABEL \
+        if SourceForecast.is_managed_hunt_source(herd, composed_improvement) \
         else HudComposeVocab.HUNT_CREW_LABEL
     target.add_child(HudWidgets.build_worker_stepper(
         "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
@@ -705,14 +835,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _compose.set_hunt_policy(policy)
         # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
         _compose.arm_hunt_autofill()
-        _build_herd_assign_controls(_live_herd(herd_id, herd), target), _compose.hunt_policy(), hunt_options, hunt_gates, policy_takes))
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target), _compose.hunt_policy(), hunt_options, policy_takes))
     # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
     # earn DIFFERENT payoffs from the same policy word (both trade the take since #337, but only the
     # band's Sustain builds husbandry — an expedition accrues none), so one shared hint line under the
     # picker would promise the expedition player a payoff the sim never pays.
-    if forecast_active:
-        target.add_child(
-            _forecast_yield_row(forecast, _compose.hunt_count(), band, crew_label))
     if is_expedition:
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
@@ -746,34 +873,33 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(HudWidgets.alloc_hint_label(
             String(HudComposeVocab.LOCAL_HUNT_POLICY_HINTS.get(_compose.hunt_policy(), ""))))
         # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
-        # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown on
-        # an extractive rung (an investment rung shows a dip→payoff, not an animal cadence, so it's
-        # skipped), as a STABLE herd-level statement: the span is keyed off the selected policy's flow
-        # ceiling (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never
-        # blinks out. Skipped only when the window is unknown (missing food_per_animal / ceiling).
-        if not (_compose.hunt_policy() in HudComposeVocab.INVESTMENT_POLICIES):
-            var window_turns := _hunt_avg_window_turns(herd, _compose.hunt_policy())
-            if window_turns > 0:
-                target.add_child(HudWidgets.alloc_hint_label(
-                    HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns))
-        # "Why isn't my Tame progressing?" — the ONE silent rule left on this rung, surfaced rather
-        # than left to be guessed. See `_tame_stalled_hint`.
-        var stalled := _tame_stalled_hint(herd)
-        if stalled != "":
-            var stalled_label := HudWidgets.alloc_hint_label(stalled)
-            stalled_label.add_theme_color_override("font_color", HudStyle.WARN)
-            target.add_child(stalled_label)
-        # LIVE per-turn yield for the standing assignment being composed (no carry cap on a local
-        # hunt, so turns-to-fill is meaningless — food/turn is the number that decides it).
-        # EXTRACTIVE rungs ONLY — an INVESTMENT rung is answered by the dip→payoff row above
-        # (`forecast_active`) or by Tame's row, and rendering both put two rows with the same number
-        # on the panel. See the ONE-yield-row-per-rung note there. Tested against the named rung set,
-        # NOT `forecast["investment"]` (which is really "has a payoff key" and so misses Tame).
-        if not (_compose.hunt_policy() in HudComposeVocab.INVESTMENT_POLICIES):
-            var yield_line := _local_hunt_preview_bbcode(
-                band, herd, _compose.hunt_policy(), _compose.hunt_count())
-            if yield_line != "":
-                target.add_child(HudWidgets.forecast_label(yield_line))
+        # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown, as
+        # a STABLE herd-level statement: the span is keyed off the selected stance's flow ceiling
+        # (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never blinks
+        # out. Skipped only when the window is unknown (missing food_per_animal / ceiling). It is no
+        # longer suppressed on a build rung: a stance is always a stance now, and the crew hauls whole
+        # animals whether or not a pen is going up beside them.
+        var window_turns := _hunt_avg_window_turns(herd, _compose.hunt_policy())
+        if window_turns > 0:
+            target.add_child(HudWidgets.alloc_hint_label(
+                HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns))
+        # LIVE per-turn yield for the STANCE being composed (no carry cap on a local hunt, so
+        # turns-to-fill is meaningless — food/turn is the number that decides it). Every stance renders
+        # it now: the "one yield row per rung" split existed because a build verb occupied the same
+        # control, and a dip→payoff pair and a bare rate cannot share one line. They no longer do —
+        # the stance states the take, the improvement control below states the deal.
+        var yield_line := _local_hunt_preview_bbcode(
+            band, herd, _compose.hunt_policy(), _compose.hunt_count())
+        if yield_line != "":
+            target.add_child(HudWidgets.forecast_label(yield_line))
+        # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies.
+        _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
+            HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy(), composed_improvement,
+            band, _compose.hunt_count(), crew_label,
+            func(improvement: String) -> void:
+                _compose.set_hunt_improvement(improvement)
+                _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+            target)
         assign_btn.text = HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
     if is_expedition:
@@ -799,8 +925,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             close_compose_sheet())
     else:
         assign_btn.pressed.connect(func() -> void:
+            # ORDER IS LOAD-BEARING: `assign_labor` first, the improvement verb second. The sim's
+            # improvement commands act on the bands ALREADY WORKING the source, so a verb sent to an
+            # unstaffed herd is rejected outright — the crew has to land first.
             _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, _compose.hunt_count(),
-                herd_x, herd_y, herd_id, _compose.hunt_policy())
+                herd_x, herd_y, herd_id, _compose.hunt_policy(), "", composed_improvement)
+            _emit_improvement(band, SourceForecast.LABOR_KIND_HUNT, composed_improvement,
+                standing_improvement, herd_x, herd_y, herd_id)
             close_compose_sheet())
     target.add_child(assign_btn)
 
@@ -810,10 +941,10 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 
 
 
-## Each extractive policy's per-turn take on this forage patch — the policy ceiling from the shared
+## Each STANCE's per-turn take on this forage patch — the stance ceiling from the shared
 ## `SourceForecast.forecast_inputs` (per turn at output 1.0, like the hunt band ceiling), for the
-## FORAGE picker's ascending per-policy readout. The plant twin of `_hunt_policy_takes`, so all three
-## pickers wear the same button metric. Empty entries (dead-season patch / older snapshot) are skipped.
+## FORAGE picker's ascending per-rung readout. The plant twin of `_hunt_policy_takes`, so both pickers
+## wear the same button metric. Empty entries (dead-season patch / older snapshot) are skipped.
 ##
 ## **ALL THREE ACCOUNTS (#426).** This used to hand the shared joiner an explicit `0.0` for trade, on
 ## the standing claim that the plant web projected no trade rate — so a flax patch, which pays trade
@@ -821,8 +952,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
 ## #337 removed from the hunt picker. A patch's per-policy ROW now carries provisions, trade goods and
 ## fodder, and each is rendered only when non-zero, so a staple reads `0.96 food`, flax `0.24 trade`,
 ## and hay ground `0.08 food · 0.40 fodder`.
-func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_committed: bool,
-        picked: String) -> Dictionary:
+##
+## **The Cultivate/Sow PAYOFF faces left with the build verbs** (issue #442): they were a second loop
+## here, wearing the crop-substituted payoff because a build verb was a rung of this picker. The
+## improvement control states the same terms now, against the same crop, through the same
+## `_crop_payoff_terms`.
+func _forage_policy_takes(tile_info: Dictionary) -> Dictionary:
     var takes := {}
     for policy in SourceForecast.LABOR_HUNT_POLICIES:
         var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, String(policy))
@@ -832,71 +967,7 @@ func _forage_policy_takes(tile_info: Dictionary, basket: Array[Dictionary], is_c
             float(forecast["ceiling"]),
             maxf(float(forecast["ceiling_trade"]), 0.0),
             maxf(float(forecast["ceiling_fodder"]), 0.0))
-    # The two forage INVESTMENT rungs wear the PAYOFF they build toward, not a per-turn take (the prep
-    # dip is lower than Sustain and would make Cultivate look strictly worse than idling). A locked rung
-    # may still show its payoff — informative ("this is what it'd give"), and the gate-reason line under
-    # the picker already explains the lock. Absent/zero payoff → no entry, so the button stays bare.
-    for policy in [HudConst.LABOR_POLICY_CULTIVATE, HudConst.LABOR_POLICY_SOW]:
-        var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, policy)
-        if not bool(forecast["known"]) or not bool(forecast["investment"]):
-            continue
-        # **EACH RUNG'S FACE QUOTES THE CROP THAT RUNG WOULD COMMIT TO** (issue #419) — resolved through
-        # the same `_resolve_crop_selection` the picker's mark and the emitted command use, PER RUNG: the
-        # player's pick where it is legal there, else that rung's own highest-share legal crop. So the
-        # face states what pressing THIS button would actually buy. `forecast["payoff"]` alone is the
-        # species-BLIND patch quote, which read the same number whichever crop was lit — the "nothing
-        # above the list moves" defect, the rung-face twin of the `→ then` line's own substitution.
-        # `""` — a committed patch, or a basket with nothing legal at this rung — keeps the
-        # species-blind `forecast["payoff"]` below, and for a COMMITTED patch that is not a fallback but
-        # the right answer: the sim's per-patch `tendedYield`/`fieldYield` are taken against the patch's
-        # OWN `species`, so they already quote the standing commitment.
-        var rung_species := _resolve_crop_selection(basket, policy, is_committed, picked)
-        var payoff := float(forecast["payoff"])
-        # Trade is REAL on both plant rungs since #433 (a cash crop's whole point) and FODDER since
-        # #426, so the face renders every account through the same `_payoff_take` the herd rungs use —
-        # food only where the crop pays food, fodder only where it pays fodder, all three where all
-        # three (the render-only-when-non-zero rule). Both were hardcoded `0.0` on the argument that
-        # "the plant web projects no trade rate at all", which stopped being true when the per-crop
-        # payoffs reached the wire.
-        #
-        # The species-BLIND patch quotes are the starting point (`forecast["payoff*"]`, which is the
-        # right answer for a COMMITTED patch — the sim takes those against the patch's own species);
-        # a resolved crop substitutes ITS OWN three, together, so the face can never mix one crop's
-        # food with another's fodder.
-        var trade := float(forecast["payoff_trade"])
-        var fodder := float(forecast["payoff_fodder"])
-        if rung_species != "":
-            for entry in basket:
-                if String(entry["species"]) != rung_species:
-                    continue
-                payoff = _flora_entry_payoff(entry, policy)
-                trade = _flora_entry_trade_payoff(entry, policy)
-                fodder = _flora_entry_fodder_payoff(entry, policy)
-                break
-        # EITHER-account emit gate, one level up from `_payoff_take`'s own rule: a rung whose payoff is
-        # fodder-only (hay ground) must still get a face rather than falling back to a bare glyph+name.
-        if payoff > 0.0 or SourceForecast.has_component(trade) or SourceForecast.has_component(fodder):
-            takes[policy] = _payoff_take(payoff, trade, fodder)
     return takes
-
-## The one silent rule left on the Tame rung, said out loud. Taming accrues only while the herd is
-## **Thriving**, but that is deliberately NOT a gate on selecting Tame (`RungGates.hunt_gates`): a
-## herd's phase swings as it is hunted, so refusing the verb would be un-actionable churn. The sim
-## instead just PAUSES the meter — progress is neither lost nor switched — and resumes when the herd
-## recovers.
-##
-## Saying nothing here would recreate the exact failure this whole arc exists to kill: a hidden rule
-## the player can only learn by being told. So whenever Tame is the composed policy on a herd that
-## is not Thriving, state the pause, name the cause (its live phase), and name the remedy — which is
-## the opposite of "work harder" (ease off and let it recover), the same shape as the patch-ecology
-## gate's advice. Returns "" when Tame is not selected or the herd is Thriving (nothing to explain).
-func _tame_stalled_hint(herd: Dictionary) -> String:
-    if _compose.hunt_policy() != HudConst.LABOR_POLICY_TAME:
-        return ""
-    var phase := String(herd.get("ecology_phase", "")).strip_edges().to_lower()
-    if phase == "" or phase == HudFloraVocab.ECOLOGY_PHASE_THRIVING:
-        return ""
-    return HudComposeVocab.TAME_STALLED_HINT_FORMAT % phase.capitalize()
 
 ## The tile "Assign foragers" controls (compose a count, then Assign). Shown only for a
 ## tile with a food module while a player band exists to staff it — and only on a hex the player can
@@ -975,35 +1046,46 @@ func _flora_entry_payoff(entry: Dictionary, policy: String) -> float:
         return float(entry.get("sow_payoff", 0.0))
     return float(entry.get("cultivate_payoff", 0.0))
 
-## The forecast, with its species-BLIND payoff replaced by the selected crop's own. Without this the
-## "→ then" term quotes one number no matter which crop is picked, so the picker appears to change
-## nothing above it — the player commits to Reeds and is shown Wild Emmer's payoff. A SUBSTITUTION,
-## not a calculation: the client does no arithmetic on the sim's figure. Returns the forecast untouched
-## only when nothing is being committed at all (no selection, or a non-committing rung).
+## The "then <X>" terms for a plant rung, with the patch's species-BLIND payoff replaced by the
+## SELECTED crop's own. Without this the deal's payoff term quotes one number no matter which crop is
+## picked, so the picker appears to change nothing above it — the player commits to Reeds and is shown
+## Wild Emmer's payoff. A SUBSTITUTION, not a calculation: the client does no arithmetic on the sim's
+## figures. Falls back to the patch quote when nothing is being committed (no selection, or an
+## already-committed patch, for which the patch quote IS the right answer — the sim takes
+## `tendedYield`/`fieldYield` against the patch's own species).
 ##
-## **A ZERO PAYOFF IS SUBSTITUTED, NOT SKIPPED** (#419). This used to bail out on `payoff <= 0.0` and
-## leave the *previous* crop's number standing — so picking a crop that pays no food on this rung left
-## the `→ then` line asserting food it will never deliver. The case is real: a **sown Field** is 100%
-## its crop, so a cash crop's `sow_payoff` is exactly `0`. Zero is the honest answer there and the line
-## must say so; quoting a different crop is the one thing it must never do.
-func _forecast_for_selected_crop(forecast: Dictionary, entries: Array[Dictionary], policy: String,
-        species: String) -> Dictionary:
-    if species == "" or not (policy in HudFloraVocab.FLORA_COMMITTING_POLICIES):
-        return forecast
-    for entry in entries:
-        if String(entry["species"]) != species:
-            continue
-        var adjusted := forecast.duplicate()
-        adjusted["payoff"] = _flora_entry_payoff(entry, policy)
-        return adjusted
-    return forecast
+## **A ZERO PAYOFF IS SUBSTITUTED, NOT SKIPPED** (#419). An earlier version bailed out on
+## `payoff <= 0.0` and left the *previous* crop's number standing — so picking a crop that pays no food
+## on this rung left the line asserting food it will never deliver. The case is real: a **sown Field**
+## is 100% its crop, so a cash crop's `sow_payoff` is exactly `0`. Zero is the honest answer there and
+## the line must say so; quoting a different crop is the one thing it must never do. Every account is
+## substituted TOGETHER, so the face can never mix one crop's food with another's fodder.
+func _crop_payoff_terms(tile_info: Dictionary, entries: Array[Dictionary], species: String,
+        band: Dictionary, rung: String) -> String:
+    var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
+    var deal := SourceForecast.improvement_forecast(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.DEFAULT_HUNT_POLICY, rung)
+    if deal.is_empty():
+        return ""
+    var payoff := float(deal["payoff"])
+    var trade := float(deal["payoff_trade"])
+    var fodder := float(deal["payoff_fodder"])
+    if species != "":
+        for entry in entries:
+            if String(entry["species"]) != species:
+                continue
+            payoff = _flora_entry_payoff(entry, rung)
+            trade = _flora_entry_trade_payoff(entry, rung)
+            fodder = _flora_entry_fodder_payoff(entry, rung)
+            break
+    return SourceForecast.picker_products(payoff * output, trade * output, fodder * output)
 
 ## The crop this compose will SEND: the player's pick while it is still legal on this tile+rung, else
 ## the HIGHEST-SHARE legal entry — which is the sim's own `default_species_for_rung`, so picking
 ## nothing and accepting the default behave identically. Returns "" (send nothing, still valid) for a
 ## non-committing rung, an already-committed patch, or a basket with no legal plant.
 func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committed: bool, picked: String) -> String:
-    if committed or not (policy in HudFloraVocab.FLORA_COMMITTING_POLICIES):
+    if committed or not (policy in SourceForecast.FORAGE_IMPROVEMENTS):
         return ""
     var default_species := ""
     for entry in entries:
@@ -1028,9 +1110,11 @@ func _resolve_crop_selection(entries: Array[Dictionary], policy: String, committ
 ## listing three plants had the two panels of one tile disagreeing about what grows there, and it read
 ## as "this tile is Wild Emmer now" — the belief issue #433 deleted, since a commitment REWEIGHTS the
 ## basket over the build rather than emptying it (and moves it not at all until the build lands).
-## The committed row renders SELECTED-and-locked via `selected_when_disabled`, the same treatment the
-## policy picker gives a standing-but-gated rung — plain disabled styling fades the border and the ink
-## to `INK_FAINT`, erasing the one mark of which crop is current. It is the basket's twin of the
+## The committed row renders SELECTED-and-locked via `HudStyle.apply_button`'s `selected_when_disabled`
+## — plain disabled styling fades the border and the ink to `INK_FAINT`, erasing the one mark of which
+## crop is current. **This is that flag's ONLY caller now**: the policy picker's standing-but-gated
+## rung, which it was originally written for (#420), went with the stance/improvement split (#442).
+## It is the basket's twin of the
 ## `HudStyle.SIGNAL` mark the tile card puts on the same species, so the two panels read as one fact.
 func _build_crop_picker(
     entries: Array[Dictionary],
@@ -1074,8 +1158,9 @@ func _build_crop_picker(
         # composed pick (and only if that pick is legal), a committed one marks the crop the patch is
         # already on, whose legality at this rung is moot — the commitment is already made.
         var marked := (species == committed) if is_committed else (legal and species == selected)
-        # A committed block is a READOUT: every row locked, including the marked one. `selected_when_disabled`
-        # is what keeps the mark visible through the disabled treatment (see the header note).
+        # A committed block is a READOUT: every row locked, including the marked one.
+        # `selected_when_disabled` is what keeps the mark visible through the disabled treatment
+        # (see the header note) — and this is the last surface in the client that needs it.
         HudStyle.apply_button(btn, "primary" if marked else "ghost", marked)
         # A row must be EXACTLY `FLORA_CROP_ROW_HEIGHT` — the list's cap is derived from it, so a row
         # wearing the default button chrome would silently break that maths (the work board's rule).
@@ -1175,11 +1260,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Sustain — and the reset below would then never fire on a genuinely stale composition.
     var standing_forage := _band_labor.policy_for_forage(band, x, y) \
         if _band_labor.workers_for_forage(band, x, y) > 0 else ""
+    # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING on this patch.
+    # Unlike the stance it needs no staffing test: `improvement_for_forage` reads the assignment's own
+    # field and answers "" when there is no assignment at all.
+    var standing_improvement := _band_labor.improvement_for_forage(band, x, y)
     if source_changed:
         # `seed_forage` also clears the crop: a crop pick belongs to the PATCH it was made on, and a
         # new tile has a different basket.
         var staffed := _band_labor.workers_for_forage(band, x, y)
-        _compose.seed_forage(staffed if staffed > 0 else HudConst.WORKER_STEP, _band_labor.policy_for_forage(band, x, y))
+        _compose.seed_forage(staffed if staffed > 0 else HudConst.WORKER_STEP,
+            _band_labor.policy_for_forage(band, x, y), standing_improvement)
     # Effective (pending-aware) staffing so re-selecting reflects a just-issued assign.
     var current := _band_labor.effective_forage_workers(band, x, y)
     var pending := _band_labor.pending_assigns_for(int(band.get("entity", -1))).has(_band_labor.pending_key(SourceForecast.LABOR_KIND_FORAGE, x, y, ""))
@@ -1195,20 +1285,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
         _compose.set_forage_band(int(picked.get("entity", -1)))
         _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)))
-    # Forage take policy (Sustain/Surplus/Deplete/Eradicate, default Sustain) — reuses the hunt policy
-    # radio + option set (LABOR_HUNT_POLICIES) but shows forage-appropriate behaviour hints. Persisted
-    # across re-renders like the hunt policy; re-seeded from current staffing when the tile changes.
-    var forage_gates := RungGates.forage_gates(tile_info, _player_knowledge())
-    # THE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON. A composed rung that is gated or not in the
-    # option set falls back to the default — but a gated rung that IS the standing assignment renders
-    # SELECTED AND GATED with its remedy instead. The case this exists for is the one the sim
-    # deliberately leaves alone: a patch that drops out of Thriving mid-build KEEPS its Cultivate
-    # assignment and merely pauses accrual, so repainting the sheet as Sustain claimed the band had
-    # been switched — and every number below it (the rung faces, the max-useful cap, the stepper
-    # ceiling) was then computed for Sustain while the sim worked the patch at the Cultivate prep dip.
-    if not (_compose.forage_policy() in HudBandLaborState.FORAGE_POLICY_OPTIONS) \
-            or (not HudWidgets.gate_reasons(forage_gates, _compose.forage_policy()).is_empty() \
-                and _compose.forage_policy() != standing_forage):
+    # Forage harvest STANCE (Sustain/Surplus/Deplete/Eradicate, default Sustain) — the SAME four rungs
+    # the hunt picker offers, with forage-appropriate behaviour hints. Persisted across re-renders;
+    # re-seeded from current staffing when the tile changes.
+    #
+    # THE SHEET NEVER RENDERS A STANCE THE BAND IS NOT ON. A stance is never gated and never retires,
+    # so this can now only fire on a malformed composition (a harness staging a bogus rung). The
+    # gate-and-standing-rung dance this replaced existed for exactly one case — a patch that dropped
+    # out of Thriving mid-Cultivate, whose build verb was its policy — and the improvement axis carries
+    # that case now, pausing rather than repainting the row.
+    if not (_compose.forage_policy() in SourceForecast.LABOR_HUNT_POLICIES):
         _compose.set_forage_policy(SourceForecast.DEFAULT_HUNT_POLICY)
     # THE BASKET IS RESOLVED BEFORE THE RUNG FACES, because the two committing rungs' faces quote the
     # crop they would commit to (issue #419) — a face computed off a species-blind patch reads the same
@@ -1219,50 +1305,38 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var committed_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     var is_committed := committed_species != "" \
         and String(tile_info.get("patch_committed_display_name", "")).strip_edges() != ""
+    # THE COMPOSED IMPROVEMENT — the second axis. The crop belongs to it, not to the stance, so the
+    # rung the crop is resolved against is the one the improvement control will render: the composed
+    # verb where one is in flight, else the rung on offer.
+    var composed_improvement := _compose.forage_improvement()
+    var crop_rung := composed_improvement if composed_improvement != SourceForecast.IMPROVEMENT_NONE \
+        else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+            composed_improvement, _player_knowledge(),
+            HudComposeVocab.FORAGE_FORECAST_PREFIX).get("policy", ""))
     _compose.resolve_forage_species(func(current: String) -> String:
-        return _resolve_crop_selection(basket, _compose.forage_policy(), is_committed, current))
-    # Ascending per-policy per-turn takes on the extractive buttons, so the forage picker wears the SAME
-    # "+X /turn" button metric the local-hunt picker does; the investment rungs Cultivate/Sow wear the
-    # PAYOFF they build toward, now for the crop each rung would actually commit to.
-    var forage_takes := _forage_policy_takes(tile_info, basket, is_committed, _compose.forage_species())
+        return _resolve_crop_selection(basket, crop_rung, is_committed, current))
+    # Ascending per-stance per-turn takes on the rung buttons, so the forage picker wears the SAME
+    # "+X /turn" button metric the local-hunt picker does. The two build verbs no longer ride this
+    # picker at all — they wear their payoff on the improvement control below (issue #442).
+    var forage_takes := _forage_policy_takes(tile_info)
     target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
         _compose.set_forage_policy(policy)
-        # Picking a policy auto-fills the foragers to that policy's max-useful (consumed next rebuild).
+        # Picking a stance auto-fills the foragers to that stance's max-useful (consumed next rebuild).
         _compose.arm_forage_autofill()
-        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target), _compose.forage_policy(), HudBandLaborState.FORAGE_POLICY_OPTIONS,
-        forage_gates, forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS,
-        # Collapse the OTHER rungs' reasons only while a committing rung is composed — that is the one
-        # card that also carries the crop picker, and the only place the height is not there.
-        _compose.forage_policy() in HudFloraVocab.FLORA_COMMITTING_POLICIES))
+        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+        _compose.forage_policy(), SourceForecast.LABOR_HUNT_POLICIES,
+        forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
     target.add_child(HudWidgets.alloc_hint_label(String(HudComposeVocab.FORAGE_POLICY_HINTS.get(_compose.forage_policy(), ""))))
-    # WHICH CROP this rung commits the patch to (flora roster S1). Only the two COMMITTING rungs show
-    # it; the selection is re-resolved every render (a policy switch changes which plants are legal),
-    # so the composed crop can never name a plant this tile+rung cannot take — and "" always
-    # remains valid, meaning "take the sim's default".
-    if _compose.forage_policy() in HudFloraVocab.FLORA_COMMITTING_POLICIES:
-        var crop_picker := _build_crop_picker(basket, _compose.forage_policy(), _compose.forage_species(),
-            committed_species if is_committed else "",
-            func(species: String) -> void:
-                _compose.set_forage_species(species)
-                _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
-        if crop_picker != null:
-            target.add_child(crop_picker)
-    # Pre-commit forecast: the patch's per-worker yield + the SELECTED policy's ceiling cap the
+    # Pre-commit forecast: the patch's per-worker yield + the SELECTED stance's ceiling cap the
     # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
-    # stepper and the policy picker re-render these controls, so the cap and the expected-yield row
-    # below recompute on every change (a Deplete/Eradicate ceiling is higher than Sustain's, so
-    # switching policy moves the cap).
+    # stepper and the stance picker re-render these controls, so the cap and the preview below
+    # recompute on every change (a Deplete/Eradicate ceiling is higher than Sustain's, so switching
+    # stance moves the cap).
     var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_policy())
-    # THE "→ then" TERM FOLLOWS THE CROP. `SourceForecast.forecast_inputs` answers for the patch, which is species-
-    # blind; once a crop is committed the payoff is that crop's. `basket` and the composed crop
-    # are resolved above, and the picker's own handler rebuilds these whole controls, so changing the
-    # selection moves this line on the same frame. Only `payoff` is substituted — the ceiling and the
-    # per-worker rate still describe the PATCH, which is what caps the stepper.
-    forecast = _forecast_for_selected_crop(forecast, basket, _compose.forage_policy(), _compose.forage_species())
     var capped := _forecast_worker_cap(forecast, _band_labor.assignable_forage_workers(band, x, y))
     var cap := int(capped["cap"])
-    # Auto-max on policy select — "give me everything this patch sustains": jump to the max-useful for
-    # the policy (clamped to available below). Only ever set by a policy click, never by a −/+ tick.
+    # Auto-max on stance select — "give me everything this patch sustains": jump to the max-useful for
+    # the stance (clamped to available below). Only ever set by a stance click, never by a −/+ tick.
     if _compose.consume_forage_autofill():
         _compose.set_forage_count(cap)
     _compose.clamp_forage_count(cap)
@@ -1278,30 +1352,48 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # for THIS band, so the two zero-worker cases are DIFFERENT SUBMITS, and the block below —
     # forecast line and button TOGETHER — has to read coherently for each:
     #   • 0 on a tile this band does NOT work → the command would do nothing. Dead button (still
-    #     "Forage"), and the forecast states the payoff as a CONDITION ("Assign foragers to begin…").
+    #     "Forage"), and the improvement deal states the payoff as a CONDITION ("Assign foragers…").
     #   • 0 on a tile it DOES work → the sim's unassign (server.rs: "Unassigning (workers == 0) is
     #     always allowed"). Live button, renamed, and NO "assign to begin" line — a panel whose button
     #     says Unassign above a line reading "assign to begin" tells the player two opposite things.
     # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
     var is_unassign := _compose.forage_count() <= 0 and current > 0
     var is_noop := _compose.forage_count() <= 0 and current <= 0
-    # ONE yield row per rung, mirroring the local hunt: an INVESTMENT rung (Cultivate/Sow) keeps
-    # `_forecast_yield_row`'s dip→payoff deal ("Preparing: +X → then +Y"), which a single rate can't
-    # express; an EXTRACTIVE rung renders the bare-rate + verdict preview (`+2.74 /turn · renewable` /
-    # `⚠ … — overdraws the patch`) at the same font as the hunt line — which also surfaces the overdraw
-    # warning an Eradicate/Deplete forage used to render silently.
-    if _compose.forage_policy() in HudComposeVocab.INVESTMENT_POLICIES:
-        # Nothing is forecast for an unassign — see is_unassign above. What abandoning costs is already
-        # on the card in the rung's own policy hint ("It must stay staffed or it goes feral"), so a
-        # second warning here would state one fact twice.
-        if bool(forecast["known"]) and not is_unassign:
-            target.add_child(
-                _forecast_yield_row(forecast, _compose.forage_count(), band, HudComposeVocab.FORAGE_CREW_LABEL))
-    else:
-        var yield_line := _local_forage_preview_bbcode(
-            band, tile_info, _compose.forage_policy(), _compose.forage_count())
-        if yield_line != "":
-            target.add_child(HudWidgets.forecast_label(yield_line))
+    # THE STANCE's live per-turn take + sustainability verdict (`+2.74 /turn · renewable` /
+    # `⚠ … — overdraws the patch`). EVERY stance renders it now: the "one yield row per rung" split
+    # existed because a build verb occupied this same control and a dip→payoff pair cannot share a line
+    # with a bare rate. They no longer share one — the improvement control states the deal below.
+    var yield_line := _local_forage_preview_bbcode(
+        band, tile_info, _compose.forage_policy(), _compose.forage_count())
+    if yield_line != "":
+        target.add_child(HudWidgets.forecast_label(yield_line))
+    # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for
+    # an UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
+    # staffed or it goes feral"), so a second warning here would state one fact twice.
+    if not is_unassign:
+        _build_improvement_control(SourceForecast.LABOR_KIND_FORAGE, tile_info,
+            HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_policy(), composed_improvement,
+            band, _compose.forage_count(), HudComposeVocab.FORAGE_CREW_LABEL,
+            func(improvement: String) -> void:
+                _compose.set_forage_improvement(improvement)
+                _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+            target,
+            # THE PAYOFF TERMS FOLLOW THE CROP, on the offered box AND the deal line alike — one
+            # Callable, both places, so the two can never quote different crops (issue #419).
+            func(rung: String) -> String:
+                return _crop_payoff_terms(tile_info, basket, _compose.forage_species(), band, rung),
+            # WHICH CROP this rung commits the patch to (flora roster S1), between the box and the
+            # deal because it is part of the same decision. Re-resolved every render (the rung can
+            # change), so the composed crop can never name a plant this tile+rung cannot take — and ""
+            # always remains valid, meaning "take the sim's default".
+            func(rung: String, host: VBoxContainer) -> void:
+                var crop_picker := _build_crop_picker(basket, rung, _compose.forage_species(),
+                    committed_species if is_committed else "",
+                    func(species: String) -> void:
+                        _compose.set_forage_species(species)
+                        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
+                if crop_picker != null:
+                    host.add_child(crop_picker))
     # Range-aware: foraging is stationary gathering (there is NO forage-expedition alternative), so a
     # tile beyond the SELECTED band's work_range DISABLES the button + shows an out-of-range hint,
     # rather than a fallback. Distance is wrap-aware from the picked band's OWN tile — distance,
@@ -1324,8 +1416,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range or is_noop
     assign_btn.pressed.connect(func() -> void:
+        # ORDER IS LOAD-BEARING: `assign_labor` first (it carries the crop), the improvement verb
+        # second. The sim's improvement commands act on the bands ALREADY WORKING the tile, so a verb
+        # sent to an unworked patch is rejected outright — the crew has to land first.
         _emit_assign_labor(band, SourceForecast.LABOR_KIND_FORAGE, _compose.forage_count(), x, y, "",
-            _compose.forage_policy(), _compose.forage_species())
+            _compose.forage_policy(), _compose.forage_species(), composed_improvement)
+        _emit_improvement(band, SourceForecast.LABOR_KIND_FORAGE, composed_improvement,
+            standing_improvement, x, y, "")
         close_compose_sheet())
     target.add_child(assign_btn)
 

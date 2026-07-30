@@ -97,10 +97,10 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
-    PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
-    FODDER, FOOD, TRADE_GOODS,
+    ExpeditionPhase, FollowPolicy, Improvement, KnowledgeFragment, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
+    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
+    TownCenter, TradeLink, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{
@@ -197,10 +197,10 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
+    knows, load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
     RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

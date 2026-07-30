@@ -87,17 +87,14 @@ pub(crate) fn hunt_trip_estimate_entries(
     expedition: &ExpeditionConfig,
 ) -> Vec<HuntTripEstimateState> {
     let mut entries =
-        Vec::with_capacity(FollowPolicy::EXTRACTIVE.len() * expedition.max_party_size as usize);
-    // The four **extractive** rungs only. The investment policies (Cultivate/Corral) are place-bound
+        Vec::with_capacity(FollowPolicy::ALL.len() * expedition.max_party_size as usize);
+    // The four **stances** only. The improvements (Cultivate/Sow/Tame/Corral) are place-bound
     // work a resident band does — `send_hunt_expedition` rejects them — so a trip estimate for one
     // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
     // Intersected with the species' offered ladder (`crate::fauna::hunt_policies_for`, the shared picker
     // seam), so a `yields_nothing` quarry estimates its one legal rung and no more.
     let offered = crate::fauna::hunt_policies_for(fauna.hunt_yield_for(&herd.species));
-    for &policy in FollowPolicy::EXTRACTIVE
-        .iter()
-        .filter(|p| offered.contains(p))
-    {
+    for &policy in FollowPolicy::ALL.iter().filter(|p| offered.contains(p)) {
         for party_workers in 1..=expedition.max_party_size {
             let forecast =
                 hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
@@ -249,8 +246,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // reads `0` food here and a positive trade rate, so the two components together are
                 // the honest throughput.
                 per_worker_trade: forecast.per_worker_yield.trade_goods,
-                // The Corral investment rung's (gross) payoff once penned; the preparing dip is the
-                // `corral` row of `hunt_policy_ceilings` below.
+                // The Corral investment rung's (gross) payoff once penned; the preparing dip is
+                // `hunt_policy_ceilings[stance] × corral_build_fraction` (issue #442).
                 corral_yield: forecast.managed_yield.provisions,
                 // The trade half of that same `managed_yield` pair — a rung's payoff is a vector.
                 corral_trade: forecast.managed_yield.trade_goods,
@@ -265,7 +262,8 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 pen_fed_fraction: herd
                     .map(|herd| herd.pen_fed_fraction)
                     .unwrap_or(PEN_FULLY_FED),
-                // The same forecast, projected as the per-policy BAND ceiling table (incl. Corral).
+                // The same forecast, projected as the per-STANCE band ceiling table — four rows; the
+                // build dips ride the `*_build_fraction` factors below.
                 hunt_policy_ceilings: herd
                     .map(|herd| {
                         hunt_policy_ceiling_entries(&forecast, fauna.hunt_yield_for(&herd.species))
@@ -373,10 +371,17 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // cap at it up front — before ownership is set in the Population stage, which is what
                 // leaves the ownership-gated `herders_needed` above reading 0 on the turn taming starts.
                 // A `wild`-ceiling species (mammoth/deer) never tames, so `would_be_herders_needed`
-                // returns 0; the same helper the labor arm reads for an investment policy — one seam.
+                // returns 0; the same helper the labor arm reads while a build runs — one seam.
                 herders_needed_if_managed: herd
                     .map(|herd| would_be_herders_needed(herd, fauna))
                     .unwrap_or(0),
+                // **The two animal build dips, as the fractions they are** (issue #442). They used to
+                // be extra `hunt_policy_ceilings` rows, each stating the dip against Sustain alone;
+                // the dip now multiplies whichever stance the crew holds, so the wire carries the
+                // factor and the client applies it to the selected row. Read off the *same*
+                // `SourceYieldForecast::build_dips` the take path prices a build with.
+                tame_build_fraction: forecast.build_dips.rung_two,
+                corral_build_fraction: forecast.build_dips.rung_three,
             }
         })
         .collect()
@@ -477,11 +482,9 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
-                // **THE TILE'S PER-RUNG VECTOR** (#426) — the same six rungs as the flat `ceiling_*`
-                // fields above, as rows, so a future rung costs no schema change (the migration
-                // `hunt_policy_ceilings` already made). The FOOD axis is live and is the identical
-                // number its flat twin carries, read from the one `forecast` above so the two
-                // representations cannot disagree while both are on the wire.
+                // **THE TILE'S PER-STANCE VECTOR** (#426) — four rows since issue #442 (the two build
+                // dips became the `*_build_fraction` factors below), so a future stance costs no
+                // schema change (the migration `hunt_policy_ceilings` already made).
                 //
                 // **The two non-food accounts are still the `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
                 // gap**, because `forage_forecast` does not project them yet — that is the remaining
@@ -508,6 +511,11 @@ pub(crate) fn snapshot_forage_patches(
                     per_worker_fodder: rung.per_worker.fodder,
                 })
                 .collect(),
+                // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
+                // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
+                // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
+                cultivate_build_fraction: forecast.build_dips.rung_two,
+                sow_build_fraction: forecast.build_dips.rung_three,
                 // The two investment rungs' PAYOFF twins — each projected at **its own** rung
                 // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433

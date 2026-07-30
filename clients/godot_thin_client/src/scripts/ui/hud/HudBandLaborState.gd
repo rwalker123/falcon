@@ -22,12 +22,11 @@ signal changed(reason: StringName)
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 
-# The policy rungs each source kind offers — the four extractive rungs plus the two kind-specific
-# INVESTMENT rungs (hunt: tame/corral, forage: cultivate/sow). Canonical here (the labor readers below
-# re-seed a compose picker against them); `HudLayer` re-exports both via `const X = HudBandLaborState.X`.
-# `DEFAULT_HUNT_POLICY` aliases SourceForecast's — one source of truth, shared by both files.
-const HUNT_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "tame", "corral"]
-const FORAGE_POLICY_OPTIONS := ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]
+# **THE PER-KIND OPTION LISTS ARE GONE** (issue #442). They existed only because the build verbs were
+# values of `policy`, so a hunt source offered six rungs and a forage source a different six; with the
+# improvement on its own axis both webs offer exactly the four harvest stances, and there is nothing
+# left to differ about. Every former reader now reads `SourceForecast.LABOR_HUNT_POLICIES` — the one
+# stance list — and `DEFAULT_HUNT_POLICY` still aliases SourceForecast's for the same reason.
 const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
 
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
@@ -234,7 +233,12 @@ func pending_assigns_for(entity: int) -> Dictionary:
 	var a: Variant = (e as Dictionary).get("assign", {})
 	return a if a is Dictionary else {}
 
-func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String) -> void:
+## `improvement` is what the source will be building once the edit lands — the composed improvement on
+## a sheet that just ticked one on, else whatever it was already building. It is recorded because
+## `assign_labor` deliberately does NOT touch that axis (issue #442), so an optimistic overlay that
+## dropped it would flash a running build off the board for one turn.
+func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String,
+		policy: String, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
@@ -242,6 +246,7 @@ func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: i
 	var assigns: Dictionary = entry.get("assign", {})
 	assigns[pending_key(kind, x, y, herd_id)] = {
 		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id, "policy": policy,
+		"improvement": improvement,
 	}
 	entry["assign"] = assigns
 	_pending_labor[entity] = entry
@@ -291,7 +296,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		merged[key] = {
 			"kind": kind, "workers": int(a.get("workers", 0)),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
-			"herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")), "pending": false,
+			"herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")),
+			# THE SECOND AXIS (issue #442) — what this crew is BUILDING, "" when nothing. Carried
+			# beside `policy` everywhere the map is read, so no consumer has to go back to the raw
+			# assignment for it.
+			"improvement": String(a.get("improvement", "")), "pending": false,
 			# Per-source yields (food/turn) for the row headline/tooltip/overhunt flag. `has_yield`
 			# gates the readout — a confirmed assignment carries them; a pending one (below) does not.
 			"actual_yield": float(a.get("actual_yield", 0.0)),
@@ -320,7 +329,11 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		merged[key] = {
 			"kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
 			"x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
-			"herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")), "pending": true,
+			"herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")),
+			# The improvement the edit LEAVES IN PLACE. `assign_labor` no longer re-asserts (or
+			# clears) an improvement — that is the whole point of the split — so a pending crew edit
+			# on a cultivating patch must keep showing the build, not blank it for one turn.
+			"improvement": String(pd.get("improvement", "")), "pending": true,
 			# A pending (optimistic) assign has no confirmed yield yet — render no yield number.
 			# Likewise no confirmed workers_needed, so 0 ⇒ "unknown" ⇒ no overstaffing note until
 			# the next snapshot resolves what the source actually used.
@@ -461,20 +474,32 @@ func workers_for_forage(band: Dictionary, x: int, y: int) -> int:
 func workers_for_hunt(band: Dictionary, herd_id: String) -> int:
 	return int(hunt_assignment_of(band, herd_id).get("workers", 0))
 
-## The take policy of the band's existing hunt on `herd_id`, else the default.
+## The harvest STANCE of the band's existing hunt on `herd_id`, else the default. Validated against the
+## four stances, which is now the whole of the `policy` axis — an assignment can no longer carry a
+## build verb here, so a re-seeded picker can no longer be shown a rung it has no button for.
 func policy_for_hunt(band: Dictionary, herd_id: String) -> String:
 	var policy := String(hunt_assignment_of(band, herd_id).get("policy", "")).strip_edges().to_lower()
-	# HUNT_POLICY_OPTIONS, not the extractive four: a herd already being Corralled must
-	# re-seed the compose picker as Corral, or re-staffing it would silently drop the pen.
-	return policy if policy in HUNT_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
+	return policy if policy in SourceForecast.LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
 
-## The take policy of the band's existing forage on (x,y), else the default.
+## The harvest STANCE of the band's existing forage on (x,y), else the default.
 func policy_for_forage(band: Dictionary, x: int, y: int) -> String:
 	var policy := String(forage_assignment_of(band, x, y).get("policy", "")).strip_edges().to_lower()
-	# FORAGE_POLICY_OPTIONS, not the extractive four: a patch already being Cultivated must
-	# re-seed the compose picker as Cultivate, or re-staffing it would silently drop the
-	# investment back to Sustain (and the patch would go feral).
-	return policy if policy in FORAGE_POLICY_OPTIONS else DEFAULT_HUNT_POLICY
+	return policy if policy in SourceForecast.LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+
+## **THE SECOND AXIS** (issue #442) — what the band's existing hunt on `herd_id` is BUILDING, or
+## `IMPROVEMENT_NONE` when it builds nothing. Validated against the animal ladder so a mis-spelled or
+## cross-web value reads as "building nothing" rather than driving a control the source cannot offer.
+func improvement_for_hunt(band: Dictionary, herd_id: String) -> String:
+	return _validated_improvement(hunt_assignment_of(band, herd_id), SourceForecast.HUNT_IMPROVEMENTS)
+
+## The plant twin: what the band's existing forage on (x,y) is building.
+func improvement_for_forage(band: Dictionary, x: int, y: int) -> String:
+	return _validated_improvement(
+		forage_assignment_of(band, x, y), SourceForecast.FORAGE_IMPROVEMENTS)
+
+func _validated_improvement(assignment: Dictionary, web: Array) -> String:
+	var improvement := String(assignment.get("improvement", "")).strip_edges().to_lower()
+	return improvement if improvement in web else SourceForecast.IMPROVEMENT_NONE
 
 ## Max workers a band can commit to ONE source: its idle workers plus any it already has on that
 ## source (the assign REPLACES that count, so re-editing an existing assignment isn't capped below its

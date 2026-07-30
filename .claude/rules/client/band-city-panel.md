@@ -275,24 +275,17 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   where their gates and payoff forecasts live) · **`Unassign`**. That is the per-source removal: a
   hover `✕` beside the `−` stepper would be a mis-click hazard, this is the labelled version. One row
   open at a time, and it COSTS board rows, which is why the capacity maths subtracts it.
-  **A source STANDING ON AN INVESTMENT RUNG is the case that picker cannot express, and it is handled
-  HERE rather than by widening the picker.** `model["policy"]` can legitimately be `corral`/`cultivate`/
-  `tame`/`sow`, none of which is in the offered four — so the radio highlighted **nothing** (reading as
-  an unset control on a very-much-set assignment) and a press silently re-sent `assign_labor` at an
-  extractive policy, **discarding a ~25-turn ladder build with no confirmation and no cue**. Two fixes,
-  both keyed on `policy in INVESTMENT_POLICIES`: (1) the strip renders a WARN line above the picker
-  naming the standing rung and what a pick costs (`WORK_INSPECT_STANDING_INVESTMENT_FORMAT`, built from
-  the shared `HudFormat.policy_face` glyph+name vocabulary — the picker's own gate-reason lines use it too, so a
-  rung cannot read one way beside the buttons and another in the dialog), and it reserves
-  `WORK_INSPECTOR_STANDING_LINE_HEIGHT` on top of `WORK_INSPECTOR_POLICY_HEIGHT` via the shared
-  **`_work_inspector_height(model)`** that BOTH `_work_board_capacity` and the strip itself measure from
-  (the work-board rule: every reserved height is what the element actually draws at); and (2) the pick
-  routes through the same **`_confirm_destructive`** behind "Unassign all work" / "Recall all parties"
-  (`_on_work_policy_picked` → `_commit_work_policy`), naming the rung being ended, the source, and the
-  rung replacing it. **The EXTRACTIVE path is byte-for-byte unchanged** — no confirm, immediate emit —
-  and `band_panel_preview`'s two CONTROL assertions exist to keep it that way. The strip does NOT show
-  the build's progress: the work model carries no `corral_progress`/`cultivation_progress`, and this is
-  not worth new plumbing (the source's own compose control has the meter).
+  **THAT WHOLE SPECIAL CASE IS GONE** (issue #442). `model["policy"]` could legitimately be
+  `corral`/`cultivate`/`tame`/`sow`, none of which the picker offered — so the radio highlighted
+  nothing and a press silently discarded a ~25-turn ladder build. The fix then was a WARN standing
+  line plus a `_confirm_destructive` on the pick; the fix now is that the state cannot arise. A
+  `policy` is always one of the four stances, and what a row is BUILDING rides its own
+  `improvement` field, which `assign_labor` does not touch — so a stance re-pick lights a rung like
+  any other row, emits immediately, and leaves the build alone. `WORK_INSPECT_STANDING_INVESTMENT_FORMAT`,
+  the two confirm strings and `WORK_INSPECTOR_STANDING_LINE_HEIGHT` (the taller reserved height that
+  line needed) are all deleted; `_work_inspector_height` has one open height again. The strip still
+  does NOT show a build's progress — the work model carries no meter, and the source's own compose
+  control has it.
 - **Zone `parties`** (`BandPanelController.build_parties_zone`): head + a `⋯` menu (`Recall all parties (n)`,
   behind the same confirm), one row per party (mission glyph · subject · phase · a **DANGER-red**
   recall `✕` — steady, full-opacity, reading as a destructive control like the Work inspector's
@@ -416,13 +409,15 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   may wear the ring) · `band_panel_no_idle` (both mission buttons disabled and their shared reason) ·
   `band_panel_clear_confirm` · the **work-inspector policy-picker** PAIR, which is the only coverage
   that control has ever had (`_work_policy_open` was never set true in either harness):
-  **`band_panel_work_policy_investment`** (a Hunt row standing on `corral` — no rung lit, the WARN
-  standing line above the picker) and **`band_panel_work_policy_extractive`** (the same picker on the
-  `sustain` row beside it). Four assertions, and which ones may move is the whole point: the two RED
-  ones ride the investment frame — the standing line is RENDERED, and pressing a real rung button
-  raises a `ConfirmationDialog` while `assign_labor_requested` does NOT fire (both verified to FAIL
-  before the fix, the second emitting immediately) — while the two CONTROLS ride the extractive frame
-  and must pass BEFORE and AFTER: a pick emits immediately with no dialog, and **exactly one** rung
+  **`band_panel_work_policy_investment`** (a Hunt row that is BUILDING a pen —
+  `improvement: "corral"` beside a `sustain` stance) and **`band_panel_work_policy_extractive`** (the
+  same picker on the row beside it, building nothing). Since issue #442 the two frames' assertions are
+  IDENTICAL, and that is now the claim: the picker cannot tell a building row from a non-building one,
+  because a stance pick no longer touches the build. Both rows light exactly one rung and both emit
+  immediately with no dialog. (The pair was written for the opposite claim — the investment frame
+  asserted a rendered WARN line and a `ConfirmationDialog` instead of an emit — and the rows are
+  opened BY HERD now rather than by rung, a rung no longer being an identity.) A pick emits
+  immediately with no dialog, and **exactly one** rung
   wears the `primary` variant, read back off the button's `normal` stylebox against
   `HudStyle.BUTTON_PRIMARY_BG` (there is no other marker of "this rung is lit", which is why that
   colour is now a named const rather than a literal inside `apply_button`). The harness also ASSERTS, per state, that **no

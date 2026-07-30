@@ -125,6 +125,7 @@ fn hunting_band(
             policy: FollowPolicy::Surplus,
         },
         workers: hunters,
+        improvement: None,
     }];
     app.world
         .spawn((

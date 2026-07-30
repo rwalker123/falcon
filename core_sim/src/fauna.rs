@@ -10,7 +10,10 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{FollowPolicy, PopulationCohort, ResidentBand, SourceYield, Tile},
+    components::{
+        FollowPolicy, Improvement, PopulationCohort, ResidentBand, SourceYield, Tile,
+        NO_IMPROVEMENT_UNDERWAY,
+    },
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
         HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldAccounts, YieldAxis,
@@ -23,7 +26,10 @@ use crate::{
         HEX_DIRECTION_COUNT,
     },
     hashing::FnvHasher,
-    intensification::{LadderConfig, LadderConfigHandle, RungDef, RungKey, RungMovement},
+    intensification::{
+        BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, RungMovement,
+        NO_BUILD_UNDERWAY_DIP,
+    },
     mapgen::WorldGenSeed,
     orders::FactionId,
     resources::{
@@ -320,8 +326,9 @@ pub struct Herd {
     /// (pastoralism travels with the band).
     pub corralled_at: Option<UVec2>,
     /// Pen-construction progress in `[0.0, 1.0]`; `1.0` = the pen is built (and `corralled_at` is set
-    /// that same turn). Accrues **only** while a band works this herd under the explicit
-    /// `FollowPolicy::Corral` policy (faction knows **Penning** + owns the *domesticated* herd), at
+    /// that same turn). Accrues **only** while a band works this herd with the
+    /// [`crate::components::Improvement::Corral`] verb in flight (faction knows **Penning** + owns the
+    /// *domesticated* herd), at
     /// `husbandry.corral_build_progress_per_turn`. The animal mirror of
     /// `ForagePatch::cultivation_progress`, and the investment the `corralling_yield_fraction` dip
     /// buys. Authoritative sim state — rewound by rollback with the cloned registry, so a rollback
@@ -589,7 +596,8 @@ impl Herd {
         self.husbandry_ceiling.allows_pen()
     }
 
-    /// Accrue taming progress for `faction` (the band working this herd under `FollowPolicy::Tame`).
+    /// Accrue taming progress for `faction` (the band working this herd with
+    /// [`crate::components::Improvement::Tame`] in flight).
     /// Sets ownership on the first accrual; only the owner makes progress. Clamped to 1.0
     /// (auto-domestication at [`crate::intensification::RUNG_COMPLETE`]). Mirrors
     /// `ForagePatch::accrue_cultivation`.
@@ -670,8 +678,9 @@ impl Herd {
         true
     }
 
-    /// Accrue pen-construction progress for `faction` (the keeper band, working the herd under
-    /// `FollowPolicy::Corral`); at `1.0` the pen is finished and the herd is penned at `tile`. Only
+    /// Accrue pen-construction progress for `faction` (the keeper band, working the herd with
+    /// [`crate::components::Improvement::Corral`] in flight); at `1.0` the pen is finished and the
+    /// herd is penned at `tile`. Only
     /// the herd's owner builds (a domesticated herd always has one). Returns `true` on the turn the
     /// pen completes, so the caller can announce it. The animal mirror of
     /// `ForagePatch::accrue_cultivation` (which latches via `is_cultivated`); called **after** the
@@ -1197,7 +1206,7 @@ pub struct HerdTelemetryEntry {
     /// place-bound corral indicator distinct from a mobile domesticated herd.
     pub corralled: bool,
     /// Pen-construction progress in `[0.0, 1.0]` (`Herd::corral_progress`) — the client's "pen
-    /// building N%" meter while a keeper works the herd under the Corral policy.
+    /// building N%" meter while a keeper works the herd with the `Corral` improvement in flight.
     pub corral_progress: f32,
     pub position: UVec2,
     pub biomass: f32,
@@ -3689,37 +3698,18 @@ pub struct SourceYieldForecast {
     /// #337 denial is the END STATE, not a promise the carcasses were thrown away, so this row is the
     /// windfall the take path actually pays (`hunt_credit_ceiling` already returned the whole stock).
     pub ceiling_eradicate: YieldAccounts,
-    /// Food/turn cap under the source's **top investment** policy — `Cultivate` for a forage patch,
-    /// `Corral` for a herd. This is the **preparing** yield: `yield_fraction_while_building × the
-    /// Sustain (MSY) ceiling`, the up-front cost of the improvement. Crosses the wire as
-    /// `ForagePatchState.ceilingCultivate` / the `corral` row of
-    /// `HerdTelemetryState.huntPolicyCeilings`.
-    pub ceiling_prepare: YieldAccounts,
-    /// Food/turn cap under **`Tame`** — the animal rung-2 dip (the `animal:pastoral` rung's
-    /// `yield_fraction_while_building × MSY`). `0` on a forage patch, where `Tame` is not a legal
-    /// policy.
+    /// **The two build dips of this source's web** — each rung's `yield_fraction_while_building`,
+    /// carried here so a reader can price a build without holding the ladder
+    /// ([`SourceYieldForecast::ceiling_under`]).
     ///
-    /// **Its own field, deliberately.** The animal branch now has *two* investment rungs, so
-    /// [`SourceYieldForecast::ceiling_prepare`] can no longer serve "the investment policy" — it is
-    /// Corral's. The two dips are *coincidentally* equal on today's shipped levers (both 0.50), and
-    /// folding Tame onto Corral's field would pass every forecast==actual test **by that
-    /// coincidence** while silently lying the moment either rung's dial is retuned — exactly the
-    /// "two copies agreeing with each other while both disagree with the take" failure this
-    /// codebase has already paid for once. Reaches the client through the free-form
-    /// `huntPolicyCeilings` list (no schema change), not a scalar field.
-    pub ceiling_tame: YieldAccounts,
-    /// Food/turn cap under **`Sow`** — the plant rung-3 dip (the `plant:field` rung's
-    /// `yield_fraction_while_building × MSY`). `0` on a herd, where `Sow` is not a legal policy.
-    ///
-    /// **Its own field, for [`SourceYieldForecast::ceiling_tame`]'s reason**, now on the plant side:
-    /// the plant branch has *two* investment rungs, so `ceiling_prepare` can no longer serve "the
-    /// investment policy" — it is Cultivate's. The two dips are *coincidentally* equal on today's
-    /// shipped levers (both 0.25); folding Sow onto Cultivate's field would pass every
-    /// forecast==actual test by that coincidence and lie the moment either rung is retuned.
-    ///
-    /// **Not on the wire yet** — the client's patch card is slice 6, which needs a `ceilingSow` (and
-    /// a `fieldYield`) beside today's `ceilingCultivate`/`tendedYield`.
-    pub ceiling_sow: YieldAccounts,
+    /// **This replaced the three flat `ceiling_prepare` / `ceiling_tame` / `ceiling_sow` fields**
+    /// (issue #442). Each of those was a *fifth ceiling row* — the rung's fraction applied to the
+    /// **Sustain** ceiling and nothing else — which was only expressible because a build verb *was*
+    /// the policy, so a builder could be in no other stance. With the axes split the dip is a factor
+    /// on whichever stance the player holds, so it is stored as the factor and applied to the four
+    /// rows that remain. Two rungs still keep two independently tunable numbers, which is the reason
+    /// `ceiling_tame` and `ceiling_sow` were split out in the first place.
+    pub build_dips: BuildDips,
     /// Food/turn the source pays **once the improvement completes** — the tended-patch harvest
     /// (`tended_provisions`), or, for an **un-penned** herd, the pen's **sustained MSY** projected on
     /// the pen ecology (`sustainable_yield` at the pen `r`, the long-run rate that shows the ladder).
@@ -3730,8 +3720,8 @@ pub struct SourceYieldForecast {
     pub managed_yield: YieldAccounts,
     /// Food/turn a herd pays **once tamed** — the **Tame rung's payoff**: the pastoral **sustained
     /// MSY** at the herd's current biomass (`sustainable_yield` at the pastoral `r`). The pastoral
-    /// analog of [`SourceYieldForecast::managed_yield`]/`corralYield`: `ceiling_tame` is Tame's
-    /// *during-building dip*, this is what a Sustain hunt pays *after* the herd is tamed — so the
+    /// analog of [`SourceYieldForecast::managed_yield`]/`corralYield`: `ceiling_under(stance, Tame)`
+    /// is Tame's *during-building dip*, this is what a Sustain hunt pays *after* the herd is tamed — so the
     /// client can render Tame as `→ +Y` (like Cultivate/Sow/Corral) instead of quoting only the dip.
     /// `0` on a source that never offers Tame: a forage patch (hunt-only verb), or a herd already
     /// penned or forage-tended. Crosses the wire as `HerdTelemetryState.pastoralYield`.
@@ -3793,13 +3783,11 @@ impl SourceYieldForecast {
             ceiling_surplus: production,
             ceiling_deplete: production,
             ceiling_eradicate: production,
-            // The improvement is already built — "preparing" and "once complete" are both just the
-            // managed yield it pays now. (A source at this rung is past taming too.) Honest *here*,
-            // unlike on a rung-2 source, because there is genuinely nothing left to build: the plant
-            // web's rung-2 patch takes the policy-live path instead (`forage::forage_forecast`).
-            ceiling_prepare: production,
-            ceiling_tame: production,
-            ceiling_sow: production,
+            // Nothing is left to build on a rung-3 source, so there is no dip to price — every
+            // ceiling, dipped or not, is the managed yield it pays now. Honest *here*, unlike on a
+            // rung-2 source, because there is genuinely nothing left to build: the plant web's
+            // rung-2 patch takes the policy-live path instead (`forage::forage_forecast`).
+            build_dips: BuildDips::UNDIPPED,
             managed_yield: production,
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
@@ -3807,28 +3795,39 @@ impl SourceYieldForecast {
         }
     }
 
-    /// The food/turn cap this source pays under `policy` — the `ceiling[policy]` lookup over the
-    /// exposed ceilings (wire: `ForagePatchState.ceilingSustain`/…, or a herd's `huntPolicyCeilings`
-    /// row). While an improvement is being prepared the source
-    /// pays that rung's reduced `yield_fraction_while_building` bite, and **every investment rung has
-    /// its own field**: `ceiling_prepare` is the one each branch already puts on the wire
-    /// (`Cultivate` → `ceilingCultivate` on a patch, `Corral` → the `corral` ceiling row on a herd — the two
-    /// are kind-exclusive, so one field serves both), while each branch's *other* investment rung
-    /// carries its own (`ceiling_tame`, `ceiling_sow`). Two rungs never share a field just because
-    /// today's levers agree — that coincidence is how a preview starts lying under a retune. Once an
-    /// improvement *completes*
-    /// the source is `tended()`, whose every ceiling already **is** `managed_yield` — so this one
-    /// lookup covers both sides of every investment without a second formula.
+    /// The yield/turn cap this source pays under `policy` **as a pure harvest** — the
+    /// `ceiling[policy]` lookup over the four stance rows the wire carries
+    /// (`ForagePatchState.foragePolicyCeilings` / `HerdTelemetryState.huntPolicyCeilings`).
+    ///
+    /// **This is the stance's whole ceiling.** A crew that is also building pays a fraction of it —
+    /// ask [`SourceYieldForecast::ceiling_under`], which is the lookup every take path and every
+    /// assign-time seed uses.
     pub fn ceiling_for(&self, policy: FollowPolicy) -> YieldAccounts {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
             FollowPolicy::Surplus => self.ceiling_surplus,
             FollowPolicy::Deplete => self.ceiling_deplete,
             FollowPolicy::Eradicate => self.ceiling_eradicate,
-            FollowPolicy::Tame => self.ceiling_tame,
-            FollowPolicy::Sow => self.ceiling_sow,
-            FollowPolicy::Cultivate | FollowPolicy::Corral => self.ceiling_prepare,
         }
+    }
+
+    /// **THE ceiling an assignment actually pays**: the selected stance's ceiling, dipped by the
+    /// rung the crew is building (`docs/plan_investment_rung_toggle.md` §2.2). `improvement: None` is
+    /// the identity, so a pure harvest reads exactly [`SourceYieldForecast::ceiling_for`].
+    ///
+    /// It replaced the per-verb `ceiling_prepare`/`ceiling_tame`/`ceiling_sow` fields, which could
+    /// only ever quote the dip against **Sustain** — true while a build verb *was* the policy, and
+    /// false the moment a builder could hold any stance. Once an improvement *completes* the source
+    /// is [`SourceYieldForecast::managed`], whose every ceiling already **is** `managed_yield` and
+    /// whose dips are the identity, so this one lookup covers both sides of every investment without
+    /// a second formula.
+    pub fn ceiling_under(
+        &self,
+        policy: FollowPolicy,
+        improvement: Option<Improvement>,
+    ) -> YieldAccounts {
+        self.ceiling_for(policy)
+            .scale(self.build_dips.of(improvement))
     }
 
     /// **Does this source pay in whole animals?** [`SourceYieldForecast::body_mass_yield`] carries the
@@ -3874,8 +3873,9 @@ pub fn forecast_expected_take(
     forecast: &SourceYieldForecast,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) -> YieldAccounts {
-    forecast_production_and_take(forecast, workers, policy).1
+    forecast_production_and_take(forecast, workers, policy, improvement).1
 }
 
 /// **The negligible-take floor (in biomass) that ends a `realized` forward projection.** Below this a
@@ -3916,6 +3916,7 @@ pub fn project_realized_hunt(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     horizon: u32,
 ) -> YieldAccounts {
     if horizon == 0 {
@@ -3952,6 +3953,7 @@ pub fn project_realized_hunt(
         } else {
             hunt_policy_rate(
                 policy,
+                improvement,
                 quarry.biomass_before_regrowth,
                 capacity,
                 &ecology,
@@ -4014,6 +4016,7 @@ pub fn project_arrivals_hunt(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     horizon: u32,
 ) -> Vec<f32> {
     // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
@@ -4055,13 +4058,20 @@ pub fn project_arrivals_hunt(
             // `systems::hunt_take` sequence, helper for helper.
             let rate = hunt_policy_rate(
                 policy,
+                improvement,
                 quarry.biomass_before_regrowth,
                 capacity,
                 &ecology,
                 fauna,
                 ladder,
             );
-            let ceiling = hunt_credit_ceiling(policy, quarry.biomass, quarry.hunt_credit, rate);
+            let ceiling = hunt_credit_ceiling(
+                policy,
+                ladder.build_dip(improvement),
+                quarry.biomass,
+                quarry.hunt_credit,
+                rate,
+            );
             let take = quantise_animal_take(ceiling, collection, quarry.body_mass);
             quarry.biomass -= take.killed_biomass();
             if !matches!(policy, FollowPolicy::Eradicate) {
@@ -4095,9 +4105,11 @@ fn forecast_production_and_take(
     forecast: &SourceYieldForecast,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) -> (YieldAccounts, YieldAccounts) {
     let collection = forecast.per_worker_yield.scale(workers as f32);
-    let ceiling = forecast.ceiling_for(policy);
+    // The stance's ceiling, dipped by whatever the crew is building (issue #442 §2.2).
+    let ceiling = forecast.ceiling_under(policy, improvement);
     // **The animal count is taken on ONE axis and then valued in both.** `quantise_animal_take`
     // divides by the quantum, so it must run on a component whose per-biomass rate is positive —
     // `Provisions` for every edible species (bit-identical to the pre-#337 arithmetic), `TradeGoods`
@@ -4156,11 +4168,12 @@ pub(crate) fn forecast_source_yield(
     herders_needed: u32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     realized: f32,
     realized_trade: f32,
     arrivals: Vec<f32>,
 ) -> SourceYield {
-    let (production, actual) = forecast_production_and_take(forecast, workers, policy);
+    let (production, actual) = forecast_production_and_take(forecast, workers, policy, improvement);
     SourceYield {
         actual: actual.provisions,
         // **Trade is telemetry, not larder income** — it never enters `food_income` (see
@@ -4187,7 +4200,7 @@ pub(crate) fn forecast_source_yield(
         // `0` on a wait turn for a slow breeder whose MSY < `body_mass` — so inverting it collapses
         // `workers_needed` and contradicts `wasted`; the steady peak-drop crew ([`hunt_haul_workers`],
         // off the policy's steady ceiling) equals the client's `_max_useful_workers`. The caller passes
-        // the herder term ownership-INDEPENDENTLY for an investment policy (`would_be_herders_needed`), so
+        // the herder term ownership-INDEPENDENTLY while an improvement is in flight (`would_be_herders_needed`), so
         // a not-yet-owned Tame source seeds its real crew; `0` for a wild herd, collapsing the `max` to
         // the haul side. A **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is
         // un-lumpy, so it keeps the ordinary overstaffing inversion (its herder term is `0`).
@@ -4198,7 +4211,7 @@ pub(crate) fn forecast_source_yield(
         // exactly the numbers it divided before #337.
         workers_needed: match forecast.ratio_axis() {
             Some(axis) if forecast.quantises() => herders_needed.max(hunt_haul_workers(
-                forecast.ceiling_for(policy).component(axis),
+                forecast.ceiling_under(policy, improvement).component(axis),
                 forecast.body_mass_yield.component(axis),
                 forecast.per_worker_yield.component(axis),
             )),
@@ -4230,6 +4243,7 @@ pub fn hunt_source_yield_preview(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
 ) -> SourceYield {
@@ -4260,6 +4274,7 @@ pub fn hunt_source_yield_preview(
         output_multiplier,
         workers,
         policy,
+        improvement,
         realized_horizon,
     );
     // The discrete twin, from the same herd state: when each of the next `arrivals_horizon` deliveries
@@ -4272,15 +4287,18 @@ pub fn hunt_source_yield_preview(
         output_multiplier,
         workers,
         policy,
+        improvement,
         arrivals_horizon,
     );
-    // **The herder term, ownership-INDEPENDENT for an investment policy** (taming-startup-lag fix): a
-    // Tame/Corral compose means the herd is being managed, but ownership is set only later in Population,
-    // so `herd_herders_needed` would read `0` on the compose turn and the seed's `workers_needed` would
-    // collapse to the haul crew ("1 of N" on a pending Tame). `would_be_herders_needed` is the real crew
-    // regardless of recorded ownership; an extractive policy stays ownership-gated (wild = 0). This is the
-    // SAME rule the resolved Hunt arm applies at its `managed_crew_needed`, so seed == resolved.
-    let herders_needed = if policy.is_investment() {
+    // **The herder term, ownership-INDEPENDENT while an improvement is in flight** (taming-startup-lag
+    // fix): a Tame/Corral compose means the herd is being managed, but ownership is set only later in
+    // Population, so `herd_herders_needed` would read `0` on the compose turn and the seed's
+    // `workers_needed` would collapse to the haul crew ("1 of N" on a pending Tame).
+    // `would_be_herders_needed` is the real crew regardless of recorded ownership; a pure harvest stays
+    // ownership-gated (wild = 0). This is the SAME rule the resolved Hunt arm applies at its
+    // `managed_crew_needed`, so seed == resolved. **The question is now "is a build running", asked of
+    // the improvement axis** — it used to be `policy.is_investment()`, which the split retires.
+    let herders_needed = if improvement.is_some() {
         would_be_herders_needed(herd, fauna)
     } else {
         herd_herders_needed(herd, fauna)
@@ -4292,6 +4310,7 @@ pub fn hunt_source_yield_preview(
         herders_needed,
         workers,
         policy,
+        improvement,
         realized.provisions,
         realized.trade_goods,
         arrivals,
@@ -4349,6 +4368,7 @@ pub fn hunt_source_yield_preview(
 /// [`herd_capacity`], never by the caller reaching for `fauna.ecology` or `herd.carrying_capacity`.
 pub fn hunt_policy_rate(
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     biomass: f32,
     carrying_capacity: f32,
     ecology: &EcologyConfig,
@@ -4356,54 +4376,51 @@ pub fn hunt_policy_rate(
     ladder: &LadderConfig,
 ) -> f32 {
     let msy = peak_regrowth(carrying_capacity, ecology);
-    let sustain = sustainable_yield(biomass, carrying_capacity, ecology);
-    let rate = match policy {
-        FollowPolicy::Sustain => sustain,
+    let stance = match policy {
+        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
         FollowPolicy::Surplus => fauna.hunt.surplus_multiplier * msy,
         FollowPolicy::Deplete => fauna.hunt.deplete_multiplier * msy,
         // Eradicate takes the whole standing stock (it bypasses the credit bank at the call sites); the
         // rate is `B` so the fill-bound and the forecast read it as "everything".
         FollowPolicy::Eradicate => biomass,
-        // The two investment dips, read off the ladder's own rungs — the same seam the plant side's
-        // Cultivate dip reads. They ride **Sustain's** sustainable rate: the crew is gentling the herd
-        // / building the fence, so the draw is a sustainable one.
-        FollowPolicy::Tame => {
-            sustain
-                * ladder
-                    .rung(RungKey::AnimalPastoral)
-                    .yield_fraction_while_building()
-                    .expect("the pastoral rung is an investment — it has a build meter")
-        }
-        FollowPolicy::Corral => {
-            sustain
-                * ladder
-                    .rung(RungKey::AnimalPen)
-                    .yield_fraction_while_building()
-                    .expect("the pen rung is an investment — it has a build meter")
-        }
-        // The plant-only rungs — rejected on a Hunt assignment at `assign_labor`
-        // (`FollowPolicy::valid_for_hunt`). Unreachable in practice; yield nothing rather than silently
-        // hunting under a nonsense policy. **Exhaustive** — a new verb must fail to compile here.
-        FollowPolicy::Cultivate | FollowPolicy::Sow => 0.0,
     };
-    rate.max(0.0)
+    // **The build dip is a factor on the chosen stance, not a rung of its own** (issue #442, §2.2).
+    // It used to be two extra `match` arms, each `fraction × Sustain's` rate, because a build verb
+    // *was* the policy. Now the same fraction — read through the one `LadderConfig::build_dip` seam
+    // the plant web reads — multiplies whichever stance the player holds, so Taming-while-Depleting
+    // takes more now and stalls its own meter instead of being forbidden.
+    (stance * ladder.build_dip(improvement)).max(0.0)
 }
 
 /// **The biomass a hunt may convert to whole animals THIS turn**, given the herd's accumulated
 /// kill-credit and this turn's [`hunt_policy_rate`]. This is the ceiling [`quantise_animal_take`] reads.
 ///
-/// - **Eradicate bypasses the bank** — it takes the whole standing stock (`biomass`), the denial
-///   mission's whole point.
+/// - **Eradicate bypasses the bank** — it takes the whole standing stock, the denial mission's whole
+///   point. It reads the **current** `biomass` rather than the pre-regrowth figure `rate` was sized
+///   against, which is why it needs `build_dip` separately, where every other arm gets the dip folded
+///   into `rate` by [`hunt_policy_rate`].
 /// - **Every other policy banks its rate**: `min(credit + rate, biomass)`. Capped at the standing stock
 ///   so the bank never funds animals that do not exist (which would release a burst when the herd
 ///   recovered — see [`Herd::hunt_credit`]).
 ///
+/// `build_dip` is [`crate::intensification::LadderConfig::build_dip`] of the assignment's improvement
+/// — [`crate::intensification::NO_BUILD_UNDERWAY_DIP`] for a pure harvest. It exists so **the dip
+/// bites on Eradicate too** (issue #442 §2.2): a crew gentling a herd it is also wiping out only
+/// handles a fraction of it, and a stance that ignored the dip would be the one hole in *"the dip
+/// multiplies whichever stance you hold"* — the hole the forecast==actual sweep found.
+///
 /// The **take path** ([`systems::hunt_take`]) advances and drains the persisted credit; the **forecast**
 /// ([`hunt_forecast`]) reads the same current credit + rate to predict the identical take, so
 /// forecast == actual by construction.
-pub fn hunt_credit_ceiling(policy: FollowPolicy, biomass: f32, credit: f32, rate: f32) -> f32 {
+pub fn hunt_credit_ceiling(
+    policy: FollowPolicy,
+    build_dip: f32,
+    biomass: f32,
+    credit: f32,
+    rate: f32,
+) -> f32 {
     if matches!(policy, FollowPolicy::Eradicate) {
-        biomass.max(0.0)
+        (biomass.max(0.0) * build_dip).max(0.0)
     } else {
         (credit + rate).clamp(0.0, biomass.max(0.0))
     }
@@ -4617,8 +4634,8 @@ pub(crate) fn corral_yield(
 /// **The flags gate the yield COMPONENTS, not the buttons.** A wolf (`edible == false`,
 /// `tradeable == true`) shows the **full** ladder and is paid in pelts, because each rung is a
 /// meaningful *rate* at which to collect pelts — that is the whole product/intensity split
-/// (`docs/plan_hunt_yield_model.md`). So `EXTRACTIVE` / [`FollowPolicy::HUNT_POLICIES`] are
-/// unchanged, and this is not a general per-species filter.
+/// (`docs/plan_hunt_yield_model.md`). So [`FollowPolicy::ALL`] is unchanged, and this is not a
+/// general per-species filter.
 ///
 /// **The only pruning rule:** a [`HuntYield::yields_nothing`] species — a pure pest, worth neither
 /// meat nor pelt — offers **`Eradicate` alone**. Every other rung would be a rate at which to collect
@@ -4630,7 +4647,7 @@ pub fn hunt_policies_for(hunt_yield: HuntYield) -> &'static [FollowPolicy] {
     if hunt_yield.yields_nothing() {
         &DENIAL_ONLY
     } else {
-        &FollowPolicy::HUNT_POLICIES
+        &FollowPolicy::ALL
     }
 }
 
@@ -4688,8 +4705,11 @@ pub(crate) fn hunt_forecast(
     let ceiling = |policy| {
         // Sustain's rate is sized against the **pre-regrowth** biomass (slice 8b), so a below-K/2
         // herd holds rather than leaking; the ceiling then clamps to the current stock.
+        // The four STANCE rows: a pure harvest's rate. The build dip is a factor applied on top
+        // (`ceiling_under`), never a fifth row.
         let rate = hunt_policy_rate(
             policy,
+            NO_IMPROVEMENT_UNDERWAY,
             herd.biomass_before_regrowth,
             capacity,
             &ecology,
@@ -4697,7 +4717,7 @@ pub(crate) fn hunt_forecast(
             ladder,
         );
         hunt_yield.apply(
-            hunt_credit_ceiling(policy, herd.biomass, 0.0, rate),
+            hunt_credit_ceiling(policy, NO_BUILD_UNDERWAY_DIP, herd.biomass, 0.0, rate),
             output_multiplier,
         )
     };
@@ -4709,16 +4729,10 @@ pub(crate) fn hunt_forecast(
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
-        // The investment rung: what the herd pays *while the pen is built* (Corral — the dip, on the
-        // herd's CURRENT ecology), and what it will pay *once penned*.
-        ceiling_prepare: ceiling(FollowPolicy::Corral),
-        // The rung below: what the herd pays *while it is being tamed* (the `animal:pastoral` dip).
-        ceiling_tame: ceiling(FollowPolicy::Tame),
-        // `Sow` is plant-only — a herd has no field rung, and `hunt_policy_ceiling` yields `0` for
-        // it. Resolved through the same `ceiling` closure rather than a literal, so the "not a hunt
-        // policy" rule stays stated in exactly one place (the mirror of `forage_forecast`'s
-        // `ceiling_tame`).
-        ceiling_sow: ceiling(FollowPolicy::Sow),
+        // The animal web's two build dips (`Tame`, then `Corral`), as the FACTORS they are: the
+        // ceiling a builder pays is `stance × dip`, so the four rows above stay the whole story and
+        // the dip rides whichever stance the player holds (§2.2).
+        build_dips: BuildDips::for_branch(ladder, RungBranch::Animal),
         // The Corral rung's PAYOFF (`corralYield`) projected for a still-un-penned herd: the pen's
         // **sustained MSY** on the improved (pen) ecology — the long-run rate that shows the
         // Sustain < Tame < Corral ladder, NOT the one-turn constant-escapement take. Same
@@ -5630,8 +5644,8 @@ mod tests {
 
     /// The **Tame rung's payoff** (`pastoral_yield`) is what a Sustain hunt pays *once the herd is
     /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can quote
-    /// Tame's `→ +Y` instead of only its during-building dip (`ceiling_tame`), which reads *below* wild
-    /// Sustain and hides that taming out-yields wild hunting.
+    /// Tame's `→ +Y` instead of only its during-building dip (`ceiling_under(stance, Tame)`), which
+    /// reads *below* the undipped stance and hides that taming out-yields wild hunting.
     ///
     /// **Both projections are the SUSTAINED MSY on each rung's own ecology** — the long-run rate, which
     /// is `r`-dependent and so orders the ladder strictly. For a healthy pennable herd at capacity
@@ -5653,11 +5667,14 @@ mod tests {
         herd.body_mass = 50.0;
         let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
 
+        let tame_dip = forecast
+            .ceiling_under(FollowPolicy::Sustain, Some(Improvement::Tame))
+            .provisions;
         assert!(
-            forecast.ceiling_tame.provisions < forecast.ceiling_sustain.provisions,
+            tame_dip < forecast.ceiling_sustain.provisions,
             "the during-building dip reads below wild Sustain — the defect pastoral_yield fixes: \
              dip {} vs sustain {}",
-            forecast.ceiling_tame.provisions,
+            tame_dip,
             forecast.ceiling_sustain.provisions,
         );
         // The ladder, now a strict three-step ordering on the sustained MSY of each rung's ecology
@@ -5685,8 +5702,9 @@ mod tests {
     /// steady rate, so the displayed ladder is ordered whatever the bank holds:
     ///
     /// `Sustain < Surplus < Deplete` (extractive, steady multiples of MSY), the Tame/Corral **dips**
-    /// below their **payoffs** (`ceiling_tame < pastoral_yield`, `ceiling_prepare < managed_yield` — the
-    /// "Preparing +X → then +Y" the client renders, dip now under payoff), and the whole intensification
+    /// below their **payoffs** (`Sustain×Tame's dip < pastoral_yield`, `Sustain×Corral's dip <
+    /// managed_yield` — the "Preparing +X → then +Y" the client renders, dip now under payoff), and
+    /// the whole intensification
     /// ladder `Sustain < pastoral_yield < managed_yield`. Asserting this **with a full bank** is the
     /// regression: the old credit-inclusive ceiling failed every one of these.
     #[test]
@@ -5716,18 +5734,35 @@ mod tests {
             forecast.ceiling_surplus.provisions,
             forecast.ceiling_deplete.provisions,
         );
-        // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff".
+        // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff". Since #442
+        // a dip is the SELECTED stance's ceiling scaled, so it is asked for against Sustain, the
+        // stance a builder normally holds.
+        let tame_dip = forecast
+            .ceiling_under(FollowPolicy::Sustain, Some(Improvement::Tame))
+            .provisions;
+        let corral_dip = forecast
+            .ceiling_under(FollowPolicy::Sustain, Some(Improvement::Corral))
+            .provisions;
         assert!(
-            forecast.ceiling_tame.provisions < forecast.pastoral_yield.provisions,
+            tame_dip < forecast.pastoral_yield.provisions,
             "the Tame dip must read below its payoff (Preparing < then): dip {} payoff {}",
-            forecast.ceiling_tame.provisions,
+            tame_dip,
             forecast.pastoral_yield.provisions,
         );
         assert!(
-            forecast.ceiling_prepare.provisions < forecast.managed_yield.provisions,
+            corral_dip < forecast.managed_yield.provisions,
             "the Corral dip must read below its payoff: dip {} payoff {}",
-            forecast.ceiling_prepare.provisions,
+            corral_dip,
             forecast.managed_yield.provisions,
+        );
+        // **The dip rides whichever stance is selected** (§2.2) — the constant this arc removed. A
+        // Deplete builder's dip is a fraction of Deplete's larger ceiling, not of Sustain's.
+        assert!(
+            forecast
+                .ceiling_under(FollowPolicy::Deplete, Some(Improvement::Tame))
+                .provisions
+                > tame_dip,
+            "a Deplete-while-taming crew takes MORE now — that is what stalls its own meter"
         );
         // The intensification ladder, visible at a single turn despite the full bank.
         assert!(

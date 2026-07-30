@@ -280,6 +280,15 @@ pub(crate) fn herds_to_array(
         // The trade half of the Tame payoff, the twin of `corral_trade` above — one pair, rendered
         // component-by-component only when non-zero, so Tame's face carries both products.
         let _ = dict.insert("pastoral_trade", herd.pastoralTrade());
+        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the animal twins of `ForagePatchState`'s
+        // `cultivate_build_fraction` / `sow_build_fraction`. The dip stopped being a
+        // `hunt_policy_ceilings` ROW (that list is exactly the four stances now) because a crew may
+        // hold ANY stance while it builds, so the dip has to multiply whichever stance is selected:
+        //     preparing(stance, rung) = hunt_policy_ceilings[stance] × <rung>_build_fraction
+        // Composed in ONE place client-side (`SourceForecast.improvement_forecast`) and paired with
+        // `pastoral_yield` / `corral_yield` as the "→ then +Y" half of the deal.
+        let _ = dict.insert("tame_build_fraction", herd.tameBuildFraction());
+        let _ = dict.insert("corral_build_fraction", herd.corralBuildFraction());
         array.push(&dict.to_variant());
     }
     array
@@ -449,6 +458,12 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("tended_fodder", patch.tendedFodder());
         let _ = dict.insert("field_trade", patch.fieldTrade());
         let _ = dict.insert("field_fodder", patch.fieldFodder());
+        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the plant twins of `HerdTelemetryState`'s
+        // `tame_build_fraction` / `corral_build_fraction`; see there for why the dip stopped being a
+        // `forage_policy_ceilings` row. `MapView` cross-refs both onto `tile_info` (as `patch_*`)
+        // exactly as it does the payoffs they pair with.
+        let _ = dict.insert("cultivate_build_fraction", patch.cultivateBuildFraction());
+        let _ = dict.insert("sow_build_fraction", patch.sowBuildFraction());
         array.push(&dict.to_variant());
     }
     array

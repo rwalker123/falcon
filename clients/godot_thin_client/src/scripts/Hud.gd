@@ -38,6 +38,11 @@ signal recall_expedition_requested(payload: Dictionary)
 ## Emitted when the player extends a built pen by one fenced ring (Grazing 2d-γ). Payload keys:
 ## { faction, x, y } — the pen's anchor tile. Main formats the `extend_pen <faction> <x> <y>` command.
 signal extend_pen_requested(payload: Dictionary)
+## Emitted when the player commits an IMPROVEMENT — the second axis (issue #442). Payload keys:
+## { faction, improvement, x, y, herd_id }. Main formats the matching verb
+## (`cultivate` / `sow` / `tame` / `corral`). RELAYED from `DrawerComposeController`, which is its
+## only emitter, exactly as `extend_pen_requested` is.
+signal improvement_requested(payload: Dictionary)
 ## Optimistic pending-labor state changed (Early-Game Labor slice 3b UX): carries the
 ## per-band pending map so MapView can draw the pending-action hex highlights. Main forwards
 ## it to `MapView.set_labor_pending`.
@@ -343,6 +348,8 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: send_hunt_expedition_requested.emit(payload))
     _drawercompose.extend_pen_requested.connect(
         func(payload: Dictionary) -> void: extend_pen_requested.emit(payload))
+    _drawercompose.improvement_requested.connect(
+        func(payload: Dictionary) -> void: improvement_requested.emit(payload))
     # The command-targeting cluster. Constructed AFTER `_drawercompose` (its three close-sheet nudges)
     # and BEFORE `_bandpanel` (which injects `_targeting` — so `_targeting` must exist first). The pick
     # flow's `_bandpanel.rerender()` is therefore a lazily-bound lambda: `_bandpanel` is null now but
@@ -704,7 +711,14 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## `species` is the FORAGE-only crop selection (flora roster S1) — which named plant a Cultivate/Sow
 ## should commit the patch to. Empty (the default, and what every non-forage caller sends) means "pick
 ## the tile's dominant legal plant for me", the same absent-means-default convention `policy` has.
-func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String, policy: String, species: String = "") -> void:
+##
+## `improvement` NEVER reaches the command (issue #442) — `assign_labor` sets the STANCE and the crew
+## and deliberately does not touch the second axis; that is what makes a crew edit stop re-asserting a
+## build and re-running its gates. It is recorded on the PENDING overlay alone, so an optimistic edit
+## keeps showing the build the source is already doing instead of blanking it for a turn.
+func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
+        policy: String, species: String = "",
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
     # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
     # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
     # rollback. `entity` is the CLIENT-LOCAL key the optimistic pending overlay is filed under (every
@@ -725,7 +739,7 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "policy": policy,
         "species": species,
     })
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, policy)
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, policy, improvement)
     _after_pending_change()
 
 # ---- Optimistic pending labor (slice 3b UX) --------------------------------

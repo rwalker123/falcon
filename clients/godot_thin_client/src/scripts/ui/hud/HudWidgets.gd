@@ -454,12 +454,6 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
     add_stepper_controls(row, count, count < party_max, on_change)
     return row
 
-## The unmet-prerequisite reasons a `gates` dict holds for one policy — empty (available) for an
-## absent key. The single reader of the gates contract, so callers never re-assert its shape.
-static func gate_reasons(gates: Dictionary, policy: String) -> Array:
-    var reasons: Variant = gates.get(policy, null)
-    return reasons if reasons is Array else []
-
 ## The rung a policy-picker Button stands for, as `Button` meta. THE ONE STABLE HANDLE on a rung: the
 ## face is presentation and has already changed twice (glyph+metric → glyph+name over metric → that
 ## same pair as child Labels at two sizes), so a harness matching on `btn.text` breaks with every
@@ -474,6 +468,85 @@ const POLICY_RUNG_META := "policy"
 ## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
+
+## The improvement CONTROL's checkbox, as `Control` meta — the stable handle on the second axis, for
+## the same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
+## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert both which rung is
+## offered and, from the node's own type, which of the three states it is in: a `CheckBox` is offered
+## or running (`button_pressed` tells them apart) and a `Label` is done.
+const IMPROVEMENT_CONTROL_META := "improvement"
+
+## **THE IMPROVEMENT CONTROL** (issue #442) — the second axis's whole widget, in the ONE of three
+## states the caller resolved, plus its gate reasons / pause line beneath.
+##
+## `state` is `IMPROVEMENT_STATE_*`. The face and the tooltip are the CALLER's words (it knows the
+## rung, its payoff and its meter); what lives here is the SHAPE the three states share, so the two
+## webs cannot drift into two different-looking controls:
+##
+##   OFFERED — an unchecked `CheckBox`, enabled iff ungated. A gated one is **shown, unchecked and
+##             explained**, exactly as a gated rung is: disabled, its reasons in the tooltip AND
+##             spelled out beneath it, because a greyed control alone does not teach.
+##   RUNNING — a checked, **LIVE** `CheckBox`: unchecking abandons the build (`abandon_improvement`).
+##   DONE    — a plain `Label`. Nothing to uncheck, nothing to clear.
+##
+## **UNCHECKING IS NEVER GATED, AND THAT IS LOAD-BEARING.** The abandon path asks for no knowledge, no
+## ceiling, no site and pointedly no `Thriving` check, because abandoning a STALLED build is exactly
+## when a player reaches for it — so `notes` on a RUNNING control (the WARN pause line) must NOT
+## disable it, unlike `notes` on an OFFERED one (unmet prerequisites, which genuinely block). A
+## condition that greys a running box is a bug, not a safeguard.
+##
+## `on_toggle` is called with **the improvement's NEW value** — the rung's key when a box is checked,
+## `IMPROVEMENT_NONE` when one is unchecked — so a caller writes the value it is given rather than
+## re-deriving the direction from the control's state.
+##
+## `notes` render beneath in the hint style — gate reasons when offered, the WARN-amber pause line
+## when running (`warn_notes` picks the tint). Returns the whole block, so a caller adds one child.
+const IMPROVEMENT_STATE_OFFERED := "offered"
+const IMPROVEMENT_STATE_RUNNING := "running"
+const IMPROVEMENT_STATE_DONE := "done"
+
+static func build_improvement_control(improvement: String, state: String, face: String,
+        tooltip: String, on_toggle: Callable, notes: Array = [],
+        warn_notes: bool = false) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    if state == IMPROVEMENT_STATE_DONE:
+        # A state, not a choice. `set_label_tooltip` because a bare `tooltip_text` on a Label is a
+        # SILENT no-op (Labels default to MOUSE_FILTER_IGNORE).
+        var done := Label.new()
+        done.text = face
+        # NO font-size override, so the control sits at the sheet's body size — the same size the
+        # STANCE rungs' names wear (`_policy_rung_line`'s `font_size 0`). The two are peer AXES, and
+        # rendering the second one at hint size made the whole decision read as a footnote to the
+        # first. The gate/pause notes below it stay at hint size, where they belong.
+        done.add_theme_color_override("font_color", HudStyle.HEALTHY)
+        done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        set_label_tooltip(done, tooltip)
+        block.add_child(done)
+    else:
+        var box := CheckBox.new()
+        box.text = face
+        box.tooltip_text = tooltip
+        box.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        var running := state == IMPROVEMENT_STATE_RUNNING
+        box.button_pressed = running
+        # ONLY an OFFERED box is ever disabled, and only by an unmet prerequisite. A RUNNING one stays
+        # live however loudly its notes read — see the ungated-abandon rule above.
+        box.disabled = not running and not notes.is_empty()
+        if not box.disabled:
+            # `toggled`, not `pressed`: the handler needs the NEW state, and reading `button_pressed`
+            # back inside a `pressed` handler is the kind of ordering assumption that silently
+            # inverts. `pressed` here is the box's state AFTER the click, so it maps straight onto
+            # "which improvement is composed now".
+            box.toggled.connect(func(pressed: bool) -> void:
+                on_toggle.call(improvement if pressed else SourceForecast.IMPROVEMENT_NONE))
+        block.add_child(box)
+    for note in notes:
+        var line := alloc_hint_label(String(note))
+        if warn_notes:
+            line.add_theme_color_override("font_color", HudStyle.WARN)
+        block.add_child(line)
+    return block
 
 ## ONE RUNG of the policy picker: a clickable, styleable, disable-able `Button` with a TWO-LINE face
 ## whose lines carry DIFFERENT TYPE — which `Button.text` structurally cannot do (one font size per
@@ -531,29 +604,26 @@ static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Labe
         label.add_theme_font_size_override("font_size", font_size)
     return label
 
-## The take-policy radio; `on_pick` fires with the chosen policy. The highlighted option is
+## The harvest-STANCE radio; `on_pick` fires with the chosen stance. The highlighted option is
 ## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
 ## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
-## forage drawer) and owns none of their state. `options` is the option set for this source kind —
-## the four extractive rungs by default, plus that kind's INVESTMENT rungs on the forage/herd assign
-## controls (HudBandLaborState.FORAGE_POLICY_OPTIONS / HudBandLaborState.HUNT_POLICY_OPTIONS). A `selected` that is not in `options`
-## simply highlights nothing; a caller offering a narrower set than its source can stand on owes the
-## player a line saying so (see `HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT`).
+## forage drawer) and owns none of their state.
 ##
-## `gates` maps a policy → an Array[String] of its unmet-prerequisite reasons (empty / absent =
-## available). A gated option is **shown, greyed, and explained** rather than hidden: it is disabled,
-## its tooltip carries every reason (one per line), and the reasons render under the row — one
-## compact line when there is a single reason, a "<policy> needs:" header + one bullet per reason
-## when there are several (each reason now names its remedy, so two on one line would not fit). The
-## player discovers the rung, what it costs to unlock, AND how to unlock it, BEFORE trying to use it.
+## `options` is `SourceForecast.LABOR_HUNT_POLICIES` for every caller now (issue #442). The parameter
+## survives because the picker has no business knowing the stance list, but the per-kind six-rung sets
+## it used to be handed are gone: an improvement is its own control, not a fifth and sixth radio.
+##
+## **NO RUNG HERE IS EVER GATED** (issue #442). A `gates` dict, the greyed-and-explained rendering it
+## drove, and the height-saving `collapse_other_gates` opt-in beside it are all gone: a harvest stance
+## has no prerequisite and never retires, so every one of the four is always live. Unmet prerequisites
+## belong to the IMPROVEMENT axis now, and `HudWidgets.build_improvement_control` renders them in the
+## same shown-unchecked-and-explained shape this used to.
 static func build_policy_picker(
     on_pick: Callable,
     selected: String,
     options: Array = SourceForecast.LABOR_HUNT_POLICIES,
-    gates: Dictionary = {},
     takes: Dictionary = {},
-    columns: int = 0,
-    collapse_other_gates: bool = false) -> VBoxContainer:
+    columns: int = 0) -> VBoxContainer:
     var current := selected
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -578,7 +648,6 @@ static func build_policy_picker(
     grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     for policy in options:
         var policy_key := String(policy)
-        var reasons := gate_reasons(gates, policy_key)
         var btn := Button.new()
         # TWO-LINE FACE, one line per AXIS — the fix for the axis collision the one-line face had:
         #   line 1  WHICH RUNG — `HudFormat.policy_face`, the FoodIcons policy glyph welded to the
@@ -602,54 +671,23 @@ static func build_policy_picker(
         # line, and its text now lives on a child Label), so a harness that identified a rung by reading
         # `btn.text` broke each time. The meta is the rung's identity and never moves.
         btn.set_meta(POLICY_RUNG_META, policy_key)
-        # SELECTED AND GATED IS A REAL STATE, not a contradiction. The compose sheet renders the rung
-        # the band is STANDING ON even after that rung has become unavailable (a Cultivate patch that
-        # slipped out of Thriving, a Tame herd that finished taming) — "this is what you are doing, and
-        # it is a dead end, here is the way out". `selected_when_disabled` keeps the selected border and
-        # the primary text hue through the disabled treatment, which would otherwise erase every mark of
-        # selection and leave the picker looking as though nothing were chosen.
-        HudStyle.apply_button(btn, variant, is_selected)
+        # **THE SELECTED-AND-GATED STATE IS GONE** (issue #442 retiring #420). It existed because a
+        # completed build stranded the picker on a dead rung — the band standing on a Cultivate whose
+        # patch had just finished. A stance is never retired and never gated, so there is no rung left
+        # that is simultaneously the current choice and unavailable, and `HudStyle.apply_button` no
+        # longer carries the flag that rendered one.
+        HudStyle.apply_button(btn, variant)
         # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
-        # goods/turn"), led by the rung name; a gated button appends its gate reasons below, so a hover
-        # tells you what the rung costs to unlock as well as what it pays.
+        # goods/turn"), led by the rung name.
         var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
             if full != "" else policy_key.capitalize()
-        var tooltip_lines: Array[String] = [name_line]
-        btn.disabled = not reasons.is_empty()
-        if btn.disabled:
-            tooltip_lines.append_array(reasons)
-        else:
-            btn.pressed.connect(func() -> void: on_pick.call(policy_key))
-        btn.tooltip_text = HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(tooltip_lines)
+        btn.pressed.connect(func() -> void: on_pick.call(policy_key))
+        btn.tooltip_text = name_line
         # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
         # equal width and fill the panel content width.
         var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric,
-            HudStyle.button_font_color(variant, btn.disabled, is_selected))
+            HudStyle.button_font_color(variant, btn.disabled))
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
-    # Spell the unmet prerequisites out in the panel — a greyed button alone doesn't teach. A caller
-    # that is TIGHT ON HEIGHT may opt into collapsing the rungs it is not composing (see
-    # HudFloraVocab.GATE_REASON_COLLAPSED_ONE_FORMAT); by default every gated rung still teaches in full.
-    for policy in options:
-        var policy_key := String(policy)
-        var reasons := gate_reasons(gates, policy_key)
-        if reasons.is_empty():
-            continue
-        var titled := HudFormat.policy_face(policy_key)
-        if collapse_other_gates and policy_key != current:
-            # Collapsed: the count, plus every reason in the line's own tooltip. A Label ignores the
-            # mouse by default, so the filter must be set with the text or the tooltip never shows.
-            var collapsed := alloc_hint_label(HudFloraVocab.GATE_REASON_COLLAPSED_ONE_FORMAT % titled \
-                if reasons.size() == 1 \
-                else HudFloraVocab.GATE_REASON_COLLAPSED_MANY_FORMAT % [titled, reasons.size()])
-            set_label_tooltip(collapsed, HudFloraVocab.GATE_REASON_TOOLTIP_SEPARATOR.join(reasons))
-            block.add_child(collapsed)
-            continue
-        if reasons.size() == 1:
-            block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_LINE_FORMAT % [titled, reasons[0]]))
-            continue
-        block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_HEADER_FORMAT % titled))
-        for reason in reasons:
-            block.add_child(alloc_hint_label(HudFloraVocab.GATE_REASON_BULLET_FORMAT % reason))
     return block

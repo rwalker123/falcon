@@ -68,6 +68,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
                 species: None,
             },
             workers: workers.max(1),
+            improvement: None,
         }],
         ..Default::default()
     });

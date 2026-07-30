@@ -15,7 +15,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0** — the pace of EVERY rung's `earns_knowledge` and the bar at which a faction may act on one, ~20 turns per lesson; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the `FollowPolicy` that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_earned`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands no prior patch at all), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. every rung but `plant:field`. **Rung 4 (Worked Land) will be a looser copy of this record and nothing else**), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/`0.25`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/`0.25`, `fixed`, site `{ min_forage_capacity 195, requires_fresh_water true }` → **49 sowable tiles of 4160** on the standard map)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `FollowPolicy`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
+| `src/data/intensification_ladder.json` | **THE INTENSIFICATION LADDER** — one grammar for both food webs (`intensification.rs`, env override **`INTENSIFICATION_LADDER_PATH`**; design `docs/plan_intensification_ladder.md` §5). A `knowledge` block (**`progress_per_turn` 0.05 / `completion_threshold` 1.0** — the pace of EVERY rung's `earns_knowledge` and the bar at which a faction may act on one, ~20 turns per lesson; **moved here in slice 4 from the two identical per-web copies** in `labor_config`'s `forage.cultivation` and `fauna_config`'s `husbandry`, once the earn path became one rung-driven seam — the number paces *both* webs, so it belongs to the ladder, exactly like the build dials) plus a flat `rungs` list; each record is one rung of one branch (`plant` = forage patches, `animal` = herds): `id`/`branch`/`order`, `verb` (the **`Improvement`** — `cultivate`/`sow`/`tame`/`corral` — that fills this rung's per-source build meter — **`null` = no verb drives this rung today, and the engine skips it**), `unlock_knowledge`/`earns_knowledge` (knowledge ids the rung gates on / **teaches when practised** — `null` = ungated / teaches nothing; **both are LIVE**: `unlock_knowledge` is what every gate resolves through, and `earns_knowledge` drives `RungDef::knowledge_earned`, the one earn seam), `requires_rung` (the rung directly below on the ladder — the ladder is strictly sequential; **a claim about the ladder's SHAPE, not a per-source precondition** — no code reads it as one, and the per-source rule differs per branch: `corral` demands a herd you already tamed, `sow` demands no prior patch at all), `ceiling_required` (the per-species `husbandry_ceiling` gate, animal branch only), **`site_requirement`** (`{ min_forage_capacity, requires_fresh_water }` — **what the LAND must be** for the rung to be placed on a tile; the plant twin of `ceiling_required`, keyed on the ground instead of the species. `null` = the rung asks nothing of the site, i.e. every rung but `plant:field`. **Rung 4 (Worked Land) will be a looser copy of this record and nothing else**), `build` (`progress_per_turn`/`decay_per_turn`/**`yield_fraction_while_building`** — the per-source meter's rate, its abandon-decay, and the **investment dip** the source pays while the crew prepares instead of harvests; `null` on a rung with nothing to build), and `behavior` (the bounded coded primitives `movement` ∈ `fixed|roam|drift_to_owner|pursue` — **read by `fauna::advance_herds`, the first live primitive (slice 3b)**; `pursue` (Predators Phase 2) is currently **diet-resolved** for a wild carnivore in `fauna::movement_primitive`, not assigned by a rung record, because the husbandry rungs are diet-orthogonal — `feeding` ∈ `photosynthesis|forage|self_graze`, `harvest` ∈ `worker_take|worker_tend|passive` — the last two still **parsed and validated only**). **Shipped rungs:** plant `wild`(1, earns `cultivation`)/`tended`(2, verb `cultivate`, gate `cultivation`, **earns `seed_selection`**, build `0.04`/`0.01`/`0.25`)/**`field`(3, verb `sow`, gate `seed_selection`, earns nothing, build `0.04`/`0.01`/`0.25`, `fixed`, site `{ min_forage_capacity 195, requires_fresh_water true }` → **49 sowable tiles of 4160** on the standard map)**; animal `wild`(1, earns `herding`, `roam`)/`pastoral`(2, verb `tame`, gate `herding`, ceiling `pastoral`, **earns `penning`**, build `0.04`/`0.01`/`0.50`, **`drift_to_owner` + `worker_take`**)/`pen`(3, verb `corral`, gate **`penning`** (slice 4's §4.3 reshuffle — was `herding`), ceiling `pen`, **earns `foddering`** (Flora Roster F3 — running a pen teaches you to hay it; unlocks the fodder-draw, not a rung), build `0.04`/`0.0`/`0.50`, `fixed`). **The file describes what the sim does TODAY, deliberately** — later slices change behaviour by *editing it*. **Validated** — `LadderConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention): unique `(branch, id)` and `(branch, order)`, exactly one order-1 rung per branch, `requires_rung` resolving to a real same-branch rung at `order - 1` (and `null` iff `order == 1`), `verb` parsing to a real `Improvement`, `unlock_knowledge`/`earns_knowledge` resolving to a known discovery id, `0 < progress_per_turn`, `0 <= decay_per_turn < progress_per_turn`, `0 < yield_fraction_while_building < 1`, a `site_requirement`'s `min_forage_capacity` finite & `>= 0` **and the requirement actually requiring something** (a floor of `0` with `requires_fresh_water: false` admits every tile — a placement rule that places no rule, which is how a rung's scarcity evaporates silently; say `null` instead), **`knowledge.progress_per_turn > 0`** (else nothing is ever learned and the ladder silently freezes at rung 1) and **`0 < knowledge.completion_threshold <= 1`** (at `0` every gate opens on turn 1; above `1` no gate can ever open, since the ledger clamps accrual to `1.0`) — both **stated once, for both webs**, having moved from each web's own config — and **every rung the engine names by hand (`RungKey`) present** (so a broken override cannot silently no-op a shipped rung); a broken invariant is logged at **error** level (`intensification_ladder.invalid_rejected`) and the builtin is used. See "The Intensification Ladder" |
 ## The Intensification Ladder
 
 **One grammar for both food webs** (`intensification.rs`, config `src/data/intensification_ladder.json`;
@@ -28,6 +28,73 @@ meter** climbs → it decays if you walk away → at `1.0` the source steps up a
 **The ladder is DATA over a bounded set of coded primitives.** A rung is a [`RungDef`] record, the ladder
 is a list, and adding a rung that recombines existing primitives is a one-record edit. See the
 `intensification_ladder.json` row in Configuration Files for the record shape and the shipped rungs.
+
+### An assignment has TWO axes: a stance and an improvement
+
+**The rung-transition verbs are not a fifth, sixth, seventh and eighth harvest policy** (issue #442,
+`docs/plan_investment_rung_toggle.md`). A labor assignment carries two independent facts, and they
+live in two slots:
+
+| Axis | Question | Type | Values | Where |
+|---|---|---|---|---|
+| **Stance** | how hard do I pull? | one-of | `Sustain` · `Surplus` · `Deplete` · `Eradicate` | `LaborTarget::{Forage,Hunt}.policy` |
+| **Improvement** | what am I building? | optional, at most one | plant `Cultivate` → `Sow`; animal `Tame` → `Corral` | `LaborAssignment.improvement` |
+
+- **`policy` is never written by the sim.** Completion clears `improvement`; the stance stays exactly
+  as the player set it (see "Completion CLEARS the improvement" below).
+- **A non-Sustain stance beside a running build is LEGAL**, and it is not gated. It defeats itself
+  through the ecology: the build meter accrues only while the source is `Thriving`, and the dip now
+  rides the harsher stance's larger ceiling, so a Deplete builder takes more now and drives itself out
+  of Thriving sooner. Adding a gate would re-create in the UI the very coupling this split removes.
+  > **Measured, and the two webs differ.** On the **animal** web the punishment bites: Deplete is
+  > `deplete_multiplier × MSY`, a constant catch above the sustainable rate, which has **no
+  > equilibrium** — a Deplete-while-taming herd leaves Thriving and the meter stalls short of taming
+  > (pinned by `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`).
+  > On the **plant** web it does **not**: a forage `Deplete` is `market.take_fraction × biomass`, a
+  > fraction of the standing stock, which *does* have a stable equilibrium — dipped by 0.25 it settles
+  > at ≈ `0.8 K`, comfortably above `stressed_fraction` (0.40). Measured on the shipped dials, a
+  > Deplete-while-cultivating patch stays Thriving for the whole 25-turn build and fills its meter at
+  > the full rate while paying ~2.5× a Sustain builder's food. So on plants the stance choice during a
+  > build is currently free money. **A balance decision, not a bug in the split** — the levers are
+  > `forage.market.take_fraction` and the `plant:tended` rung's `yield_fraction_while_building`.
+- **Kind-exclusivity is exhaustive, not a complement.** `Improvement::valid_for_forage` /
+  `valid_for_hunt` are two exhaustive matches, so a new verb fails to compile until someone states its
+  web; the retired `FollowPolicy::valid_for_*` were hand-written `!matches!` complements that would
+  have defaulted a new verb to legal on **both**.
+- **`FollowPolicy::EXTRACTIVE` / `is_investment()` are deleted.** A set-membership predicate over one
+  enum is unnecessary once the sets are different types. Its doc recorded two hand-written lists that
+  had rotted (`send_hunt_expedition`'s launch gate silently accepted `tame`, and
+  `hunt_expedition_floor`'s `matches!` was missing it too); **both guarantees are now type-level** —
+  `ExpeditionMission::Hunt` carries a `FollowPolicy`, which cannot *name* a build verb, so the launch
+  gate rejects one through the ordinary parse and the unreachable-arm `debug_assert!` is gone.
+- **Commands.** `assign_labor … [stance] <workers>` sets the stance and **never touches the
+  improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer
+  sees the verb, so the `Cultivate` start gate is not re-asserted). The improvement is set by its own
+  verb: `cultivate` / `sow` / `tame` / `corral`, all four routing through
+  `set_improvement_on_working_bands` + `validate_improvement`.
+- **And CLEARED by `abandon_improvement`** (`abandon_improvement <faction> forage <x> <y>` /
+  `… hunt <herd_id>`, proto field 46, alias `abandon`) — the one path that passes `None`. **It is not
+  a nicety: without it the split would have removed a capability by accident.** While the build verb
+  *was* the policy, changing your mind meant picking another policy, so a 25-turn commitment could
+  always be walked away from; giving the stance its own control left the improvement with a set-only
+  one. It:
+  - is **ungated** — abandonment is not a rung transition, so no knowledge, no species ceiling, no
+    site and pointedly **no `Thriving` check**. A *stalled* build on unhealthy ground is exactly when
+    a player reaches for it, and copying `cultivate`'s gates would make the remedy unreachable in that
+    case. Its only rejections are "not a source kind" and "nothing is being built there";
+  - **does not touch the meter.** Each web already has a rule for a source nobody is improving, and
+    this hands the source back to it — the same state an out-of-range lapse reaches. **Plant meters
+    bleed** (`advance_cultivation` applies the rung's `decay_per_turn = 0.01`, so a part-prepared patch
+    reverts toward `0` over ~100 turns); **animal meters are kept** (`domestication_progress` is
+    monotone-up since the neglect-escape arc, and `animal:pen`'s `decay_per_turn` is `0` — nothing
+    reads `build_decay` on the animal branch at all). Inventing a forfeit here would make the command
+    differ from walking the band away, which is the same decision with more steps;
+  - names a **source**, not a verb, because at most one improvement is ever in flight on one — and
+    reports on the running verb's own feed channel (`improvement_event_kind`), so a rung's whole life
+    reads on one line.
+- **On the wire:** `LaborAssignment.improvement:string` (`""` = a pure harvest) beside the
+  now-always-a-stance `policy`; the per-source ceiling lists drop to the four stance rows and the two
+  dips ship as fractions — see "Pre-commit Yield Forecast".
 
 ### The build engine — THE seam both tracks call
 
@@ -55,21 +122,37 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   `fauna::advance_husbandry` (both Logistics; **the one-turn lag is deliberate** — each reads a flag
   the labor arm wrote *last* turn: `ForagePatch::tended_this_turn` / `Herd::tamed_this_turn`); the pen
   has **no** decay (`decay_per_turn: 0.0` — an untended pen escapes outright rather than bleeding).
-  The dip: `forage::forage_policy_ceiling`'s `Cultivate` arm and `fauna::hunt_policy_ceiling`'s
-  **`Tame`** and `Corral` arms — so **forecast == actual** for free (see "Pre-commit Yield
+  The dip: **one seam, `LadderConfig::build_dip(improvement)`**, read by `forage::forage_policy_ceiling`
+  and `fauna::hunt_policy_rate` alike — so **forecast == actual** for free (see "Pre-commit Yield
   Forecast"). **Extending** a pen (2d-β) reads the *same* `animal:pen` rung, so a ring can never drift
   from the initial build.
-- **Completion retires the build verb — ONE seam for all four rungs.** A build verb only means "the
+- **The dip multiplies the SELECTED STANCE, not a hardcoded Sustain** (issue #442,
+  `docs/plan_investment_rung_toggle.md` §2.2). `yield_fraction_while_building` used to be applied to
+  the source's Sustain (MSY) ceiling and nothing else, because a build verb *was* the policy and a
+  builder could be in no other stance. With the two axes split
+  (`FollowPolicy` = the stance, `Improvement` = the build) the same fraction rides whichever stance
+  the player holds — the identical formula with the constant removed. `SourceYieldForecast` carries
+  the pair as `build_dips: BuildDips`, and `ceiling_under(policy, improvement)` is the one lookup
+  every take path and every assign-time seed uses; the four `ceiling_*` rows stay the *undipped*
+  stance ceilings. **`hunt_credit_ceiling` takes the dip as its own argument** because Eradicate
+  bypasses the bank and reads the current standing stock rather than the banked rate — without it,
+  Eradicate would be the one stance the dip did not reach (caught by the forecast==actual sweep).
+- **Completion CLEARS the improvement — ONE seam for all four rungs.** A build verb only means "the
   crew is preparing, not harvesting", so once a meter fills it names a rung that can never accomplish
   anything more on that source and the dip would be charged forever for nothing. Each of the four
-  accrual arms therefore records the completing assignment's index, and a single post-loop pass in
-  `advance_labor_allocation` rewrites that assignment's policy to **`HARVEST_POLICY_AFTER_BUILD`**
-  (`FollowPolicy::Sustain` — the rung that collects the payoff the build just unlocked), preserving
-  the source, the committed species and the worker count. **The completing turn still pays the dip**
-  (accrual is after the take), so the handoff takes effect the next turn; the retire runs **before**
-  the lapsed-assignment removal, which invalidates indices. Each completion event carries
-  `retired_policy=sustain`. A rung whose gate merely **lapses mid-build** is untouched — nothing
-  completed, so the source keeps its build verb and its progress.
+  accrual arms records the completing assignment's index, and a single post-loop pass in
+  `advance_labor_allocation` sets that assignment's `improvement` back to `None`, preserving the
+  source, the committed species, the worker count **and the stance**. **The completing turn still
+  pays the dip** (accrual is after the take), so the undipped ceiling starts paying the next turn; the
+  pass runs **before** the lapsed-assignment removal, which invalidates indices. A rung whose gate
+  merely **lapses mid-build** is untouched — nothing completed, so the source keeps its verb and its
+  progress.
+  > **It used to rewrite `policy` onto a module constant `HARVEST_POLICY_AFTER_BUILD`
+  > (`FollowPolicy::Sustain`)**, because the build verb had occupied the stance slot and completion had
+  > to hand *something* back — so the sim silently replaced the player's stated policy on a turn they
+  > could not predict, and each completion event carried a `retired_policy=sustain` detail. The
+  > constant, its ten call sites and that detail token are all deleted (issue #442): the stance was
+  > never vacated, so there is nothing to restore.
 
 ### The knowledge pattern — practise rung N, unlock rung N+1
 
@@ -87,11 +170,13 @@ for **every** rung including the wild ones. Callers resolve the rung via `fauna:
 (**before** the arms branch, so every rung reaches the earn path uniformly).
 
 Three rules ride the seam:
-- **Only stewardship teaches** (§4.2) — `FollowPolicy::teaches_knowledge`, defined against the
-  `EXTRACTIVE` grouping: **Sustain** teaches (the one extractive rung that only takes the regrowth)
-  and so do the investment verbs (`Cultivate`/`Tame`/`Corral` — managing *is* the practice);
-  **Surplus/Deplete/Eradicate teach nothing, at any rung** (they overdraw — slaughtering isn't
-  practice).
+- **Only stewardship teaches** (§4.2) — `FollowPolicy::teaches_knowledge`, and since issue #442 it is
+  a **stance** predicate and nothing else: **Sustain** teaches (the one rung that takes only the
+  regrowth); **Surplus/Deplete/Eradicate teach nothing, at any rung** (they overdraw — slaughtering
+  isn't practice). The build verbs used to be `FollowPolicy` variants and taught by construction; an
+  `Improvement` now rides *beside* a stance, so a crew preparing ground under Sustain teaches exactly
+  as it always did while one preparing it under Deplete learns nothing — the same ecology-side
+  punishment §2.1 hands the build meter, applied to the lesson.
 - **You learn from a healthy source** — `eligible` is the `EcologyPhase::Thriving` gate both shipped
   earn sites already had, preserved unchanged.
 - **The two webs learn separately** (§4.2) — free, not enforced: the lesson is read off the source's

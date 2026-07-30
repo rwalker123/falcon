@@ -167,11 +167,13 @@ gated, **paid** verb, so both food webs read the same:
 | rung 2 verb | `Cultivate` → tended patch | **`Tame`** → pastoral herd |
 | rung 3 verb | *(`Sow` — a later slice)* | `Corral` → pen |
 
-- **`FollowPolicy::Tame`** (wire key `"tame"`) — **Hunt-only** (`valid_for_hunt`; a Forage assignment
-  carrying it is rejected at `assign_labor`, exactly as `Corral` is). It is an **investment** rung, so
-  it is in [`FollowPolicy::HUNT_POLICIES`] (the herd's policy list the client previews) but **not** in
-  `EXTRACTIVE` — an expedition can only take, never invest, so `send_hunt_expedition` rejects it and no
-  `huntTripEstimates` row is emitted for it.
+- **`Improvement::Tame`** (wire key `"tame"`) — **animal-only** (`Improvement::valid_for_hunt`; a
+  Forage assignment carrying it is rejected at its command, exactly as `Corral` is). Since issue #442
+  it is an `Improvement`, not a `FollowPolicy`: it rides `LaborAssignment.improvement` **beside**
+  whatever stance the crew holds, so a herd being tamed is still being Sustain- (or Surplus-, or
+  Deplete-) hunted. It is not a `huntPolicyCeilings` row (those are the four stances) and emits no
+  `huntTripEstimates` row, because an expedition's mission carries a `FollowPolicy` and therefore
+  cannot name it at all.
 - **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
   `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` (`hunt_policy_ceiling`, through
   the *same* shared MSY helper — the crew is gentling the herd, not harvesting it; a fraction of MSY is
@@ -184,11 +186,11 @@ gated, **paid** verb, so both food webs read the same:
   either. Ownership is **not** in the gate: `accrue_domestication` owns the
   `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
   Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
-  **The turn the herd becomes domesticated, `Tame` retires onto the harvest rung** — the assignment is
-  rewritten to `HARVEST_POLICY_AFTER_BUILD` (`Sustain`) with the herd and the crew intact, so the band
-  starts drawing the pastoral payoff instead of paying the taming dip on a herd with nothing left to
-  gentle. The completing turn still pays the dip. One seam for all four investment rungs — see
-  "Completion retires the build verb" in `intensification.md`.
+  **The turn the herd becomes domesticated, the assignment's `improvement` is cleared** — the herd,
+  the crew **and the stance** all intact, so the band starts drawing the undipped pastoral payoff
+  instead of paying the taming dip on a herd with nothing left to gentle. The completing turn still
+  pays the dip. One seam for all four rungs — see "Completion CLEARS the improvement" in
+  `intensification.md`.
 - **Tameness is PERMANENT once earned (neglect-escape arc, `docs/plan_fauna_neglect_escape.md` §2.1).**
   `domestication_progress` is monotone-up: `Tame` builds it and **nothing decays it** — the tameness-bleed
   (`decay_under_herded`/`decay_domestication`) is deleted. An abandoned part-tamed herd keeps its earned
@@ -197,11 +199,10 @@ gated, **paid** verb, so both food webs read the same:
   `taming_rate` now scales only the `Tame` *build* (progress-up), never a decay. **Distinct from an ordinary
   hunt at any other policy**: a Sustain hunt *harvests* a herd; only `Tame` raises the taming meter.
 - **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
-  `CommandEventKind::Tame`) — **sets the `Tame` policy** on the bands already hunting the herd, the
-  command form of the client's policy picker. It **tames nothing outright**. It targets a **herd id**
+  `CommandEventKind::Tame`) — **sets the `Tame` improvement** on the bands already hunting the herd,
+  the command form of the client's checkbox (issue #442: the stance beside it is left alone). It **tames nothing outright**. It targets a **herd id**
   (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
-  follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, shared with
-  the `assign_labor … tame` path): faction hasn't learned Herding / no such herd / the species is wild
+  follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, reached through `validate_improvement`): faction hasn't learned Herding / no such herd / the species is wild
   game (hunt-only) / already domesticated (corral it instead) / another people are taming it / **no
   band is hunting it** (staff it first). Deliberately **not** gated on Thriving, unlike the patch — a
   herd's phase swings as it is hunted, and the labor arm pauses accrual gracefully.
@@ -260,11 +261,13 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   **The old Cultivation asymmetry is gone:** taming is no longer ungated (Herding gates `Tame`), so
   both webs now gate rung 2 on the knowledge rung 1 teaches, and rung 3 on the knowledge rung 2
   teaches. One knowledge per transition. See "The knowledge pattern".
-- **The `Corral` policy — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd worked
-  under `FollowPolicy::Corral` (Hunt-only) **costs a yield dip while the pen is built**: the take
-  ceiling is the `animal:pen` rung's `yield_fraction_while_building × sustainable_yield(..)` (`hunt_policy_ceiling`,
-  reusing the **shared** MSY helper — the crew is building, not hunting; a fraction of MSY is a
-  sustainable draw, so the herd stays healthy) and `corral_progress` accrues
+- **The `Corral` improvement — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd
+  worked with `Improvement::Corral` (animal-only) in flight **costs a yield dip while the pen is
+  built**: the take
+  ceiling is the `animal:pen` rung's `yield_fraction_while_building ×` **the selected stance's** rate
+  (`hunt_policy_rate`, reusing the **shared** MSY helper — the crew is building, not hunting; a
+  fraction of a *Sustain* draw is a sustainable draw, so a Sustain builder's herd stays healthy, while
+  a Deplete builder's does not — issue #442 §2.2) and `corral_progress` accrues
   that rung's `progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
   AND owns the **domesticated** herd; a gate that lapses **mid-build** just stops accrual that turn
   (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
@@ -272,18 +275,19 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   pen whose herd escapes loses its progress outright** (reset to `0.0`; see *Escapes-if-untended*
   below). Accrued **after** the take, so the turn pays exactly what the forecast promised. At `1.0`
   `Herd::corral_at` pens it (sets `corralled_at`, stops roaming, grants the one-turn tended grace),
-  pushes a `CommandEventKind::Corral` feed line, and **retires `Corral` onto the harvest rung** —
-  the keeper crew stays on the herd under `HARVEST_POLICY_AFTER_BUILD` (`Sustain`) rather than
-  fencing a pen that is already up. Extending a pen is command-driven (`herd.pen_extending`), not
-  policy-driven, so the retire cannot block a later ring. One seam for all four investment rungs —
-  see "Completion retires the build verb" in `intensification.md`.
+  pushes a `CommandEventKind::Corral` feed line, and **clears the assignment's `improvement`** — the
+  keeper crew stays on the herd, under the stance it chose, rather than fencing a pen that is already
+  up. Extending a pen is command-driven (`herd.pen_extending`), not improvement-driven, so the clear
+  cannot block a later ring. One seam for all four rungs — see "Completion CLEARS the improvement"
+  in `intensification.md`.
 - **`corral` command (repurposed)** — `corral <faction> <x> <y>` (`handle_corral`; unchanged
-  proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) now **sets
-  the `Corral` policy** on the band(s) already hunting the herd standing on that tile — the command
-  form of the client's policy picker. It **pens nothing outright**. Rejections: no herd there / faction
+  proto/runtime/text plumbing, `CommandEventKind::Corral`, `CorralCommand` proto field 38) **sets the
+  `Corral` improvement** on the band(s) already hunting the herd standing on that tile — the command
+  form of the client's checkbox. Since issue #442 it touches the improvement slot **only**: the band's
+  stance and crew are untouched by construction. It **pens nothing outright**. Rejections: no herd there / faction
   hasn't learned **Penning** ("…have not learned Penning yet. Tame and keep herds to learn it.") / not
   domesticated / not the owner / already corralled / **no band is hunting it** (staff it first). Same
-  gates as the `assign_labor … corral` path (`validate_labor_policy`).
+  gates as `validate_improvement`'s `Corral` arm, which every path shares.
 - **The pen is a managed POPULATION** (`docs/plan_corral_managed_population.md`): its yield follows the
   animals you actually keep, those animals **eat** every turn, and underfeeding **shrinks** the herd. A
   one-off 25-turn build that then printed food forever is now a **sustained commitment with a running

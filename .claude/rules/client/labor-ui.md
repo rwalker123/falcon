@@ -3,6 +3,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/{ComposeSheet,ComposeState,DrawerComposeController}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{HudBandLaborState,SourceForecast,FoodOutlookChart,ArrivalStrip}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{hud_compose_vocab,hud_work_vocab}.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
 ---
 
 <!-- Extracted verbatim from lines 171-172;179-179;185-186;1776-2474 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -22,6 +23,151 @@ paths:
 | `ui/hud/ComposeSheet.gd` | The selection card's **write state** — the floating **compose sheet** (`docs/plan_tile_panel_layout.md` §10-§15). Composing is MODAL BY NATURE (open, decide, commit, done), so the two ~270px compose blocks (`%ForageAssignControls` / `%HerdAssignControls`) left the drawer for a sheet that borrows space only while in use; the drawer keeps the detail rows, a one-line standing summary and an `Assign … ▸` button. **That button wears `primary` while ITS sheet is open and `ghost` at rest — never `armed`**: `armed` is the destructive/warned treatment (DANGER border), and "its sheet is open" is a LIVE state, which this HUD spells in SIGNAL cyan (the Sight chip, the selection accent, the turn orb's calm pulse). **Its card is an `AutoSizingPanel`, NOT a `DockScrollFit` card** — it floats against the VIEWPORT, which is the opposite of what the drawer above needs, and picking wrong misbehaves silently rather than failing (`.claude/rules/client/panel-framework.md`). **The node IS the full-screen dismiss catcher with the card as its CHILD**, reusing `NarrativeForkPanel`'s nesting exactly (siblings make the ordering ambiguous and the catcher eats the card's own clicks), pinned to the viewport EXPLICITLY via `_sync_to_viewport` — a hidden Control's anchors never settle, and the full-rect preset would also overwrite the size. **NO SCRIM, and that is the one deliberate departure from the fork panel:** a fork is a story beat demanding attention, an assignment is composed *against* the map (work-range ring, herd position, hunt reach are all live context), so the catcher dismisses without dimming. **And that is also why the catcher dismisses on a real CLICK only, never a wheel tick** (`DISMISS_BUTTONS`, an ALLOWLIST of left/right/middle so a future Godot wheel/extra index stays non-dismissing by default): the catcher is `MOUSE_FILTER_STOP` across the whole viewport, so an idle scroll over the un-scrimmed map lands on it, and dismissing there would throw away the composition mid-read. `NarrativeForkPanel` is deliberately left as-is — a modal scrimmed story beat has no such gesture — so the two diverge here on purpose; do NOT factor out a shared predicate for one differing call site. (**Not** a map-zoom passthrough: the catcher stops the wheel either way, so the map cannot zoom while a sheet is open, and a wheel over the card is absorbed by its own `ScrollContainer`.) Guarded by ui_preview's paired wheel-leaves-OPEN / left-click-CLOSES assertions. The sheet floats BESIDE the selection card (`_place_card`, falling back to the viewport margin) so the list + summary it is editing stay readable. It knows nothing about foraging or hunting: `open(eyebrow, title, subject_key, anchor)` returns the content VBox and the caller fills it. `subject_key` is what lets a per-snapshot refresh tell "the same source, restated" from "a different source, gone" |
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the `tile_info` cross-ref's prefixing is MIXED, `patch_ecology_phase`/`patch_is_field`/`patch_sow_site_refusal` but plain `is_cultivated`, and this adapter is the ONE place that mapping is written down), and **`next_rung_ready`** — the READY test all three surfaces mark from. **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`TopBarReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `TopBarReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_no_surplus` / `hunt_no_surplus_reason` / `expedition_party_cap` / `expedition_useful_cap` / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
+
+## An assignment has TWO axes: the STANCE and the IMPROVEMENT (issue #442)
+
+**This section supersedes every passage below that treats a build verb as a value of `policy`.** Those
+passages are kept because they still document *why* each behaviour exists; where one asserts that
+Cultivate/Sow/Tame/Corral are rungs of the policy picker, read it against this.
+
+A labor assignment carries two independent facts, and they are two wire fields:
+
+| Axis | Question | Wire | Values |
+|---|---|---|---|
+| **Stance** | how hard do I pull? | `LaborAssignment.policy` | `sustain` · `surplus` · `deplete` · `eradicate` |
+| **Improvement** | what am I building? | `LaborAssignment.improvement` | `""` · `cultivate` · `sow` · `tame` · `corral` |
+
+`policy` is **always** a stance and is **never rewritten by the sim**. The design and its rationale
+live with the arc that owns it — `.claude/rules/core_sim/intensification.md` → "An assignment has TWO
+axes" (and `docs/plan_investment_rung_toggle.md`). What follows is only the client half.
+
+**The stance ROW is the existing policy picker, narrowed to four rungs and never gated.** Every
+per-kind option list is gone (`HudBandLaborState.HUNT_POLICY_OPTIONS` / `FORAGE_POLICY_OPTIONS`): both
+webs, a resident band and a detached party alike, offer `SourceForecast.LABOR_HUNT_POLICIES` and
+nothing else. `build_policy_picker` lost its `gates` parameter, the greyed-and-explained rendering it
+drove and the `collapse_other_gates` height opt-in with it — a stance has no prerequisite and never
+retires, so no rung of that picker can be disabled.
+
+**The improvement ROW is one control below it** (`HudWidgets.build_improvement_control` +
+`DrawerComposeController._build_improvement_control`), in exactly one of three states:
+
+1. **Offered** — an unchecked `CheckBox` naming the next rung and its terms
+   (`🌱 Cultivate this patch · then 1.20 food`). A gated one is **shown, unchecked, disabled and
+   explained** — its reasons render beneath it in the hint style, the treatment a gated rung had.
+2. **Running** — checked and **LIVE**, carrying the build meter (`🌱 Cultivating — 60%`). Unchecking
+   it abandons the build (`abandon_improvement`, below).
+3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
+   beneath it when there is one.
+
+**ONLY ONE improvement is ever offered — the source's next rung.** `RungGates.next_rung_offered` is
+that answer and shares its ordering with `next_rung_ready` through the private `_next_rung`: highest
+ungated rung first (so sowable wild ground, where both plant rungs clear, offers **Sow**), falling
+back to the LOWEST admitted-but-gated rung when none is ready — the nearest thing you could work
+toward. The two answers differ on **the gate alone**, and that difference is the difference between a
+MARK (promises the verb is available, so a gated rung must not wear one) and a CONTROL (is how the
+player discovers the rung exists).
+
+**The forecast states the whole deal, in three terms**, composed in ONE place
+(`SourceForecast.improvement_forecast`) so no surface can derive it differently:
+
+```
++0.96 food  →  +0.24 food while building  →  +1.20 food
+   stance            preparing (WARN-amber)        payoff
+```
+
+`preparing = stanceCeiling × <rung>BuildFraction`, **per account** — the dip applies to provisions,
+trade goods and fodder exactly as the take does, and each term is priced through
+`expected_yield_account` so a crew below max-useful sees its own capped take rather than a ceiling it
+does not reach. The **first** term is the number the old two-term `Preparing: X → then Y` line
+structurally could not show: a build verb *was* the policy, so committing vacated the stance and there
+was no baseline left to quote.
+
+**A non-Sustain stance beside a running build is LEGAL and is not an error state.** It defeats itself
+through the ecology, not through a gate: the build meter accrues only while the source is Thriving,
+and Deplete is what drives it out. The dip rides the LARGER ceiling, so a Deplete builder takes more
+now and stalls their own meter. `ui_preview`'s `improvement_deplete_while_building` is that frame.
+
+**The pause line is both webs' now.** A build accrues only while its source is Thriving, and that is
+deliberately not a gate (a source's phase swings as it is worked). The sim PAUSES, losing nothing, and
+`_improvement_paused_note` states the pause, its cause and the ease-off remedy on the Running control.
+It was `_tame_stalled_hint`, animal-only, because the plant web had no control to hang it on.
+
+**The one asymmetry that survives, and must be kept:** the **Corral** done-state label carries the
+pen's per-turn fodder upkeep (`🐄 Penned · 1.74 fodder/turn upkeep`) and the **Tame** one does not — a
+penned herd cannot graze and a pastoral one still can, and a standing obligation belongs with the
+standing state. `improvement_done_penned` and `improvement_done_animal` assert the two halves.
+
+**Committing sends TWO commands, in this order:** `assign_labor` (crew + stance + crop) and then the
+improvement's own verb (`cultivate` / `sow` / `tame` / `corral`, formatted by `Main.format_improvement`
+off `HudLayer.improvement_requested`). The order is load-bearing — the sim's improvement commands act
+on the bands **already working** the source, so a verb aimed at an unworked one is rejected outright.
+`assign_labor` deliberately does not carry the improvement at all, which is what closes the
+**re-staffing gap**: changing the crew of a *paused* build used to re-issue a command whose gates the
+pause had failed, so the crew could not be changed at all.
+
+### What this deleted
+
+Each existed only to undo the overload:
+
+- **`INVESTMENT_POLICIES`** and every `policy in INVESTMENT_POLICIES` branch — the wire answers that
+  question with a field now.
+- **`forecast["investment"]`** and `FORECAST_PAYOFF_KEYS`-used-as-a-rung-test. `forecast_inputs` is
+  stance-only; the payoff keys stay as *payoff* lookups and stop being how a surface asks "is this a
+  build?". `herd_crew_floor` and `is_managed_hunt_source` take the improvement axis instead.
+- **The selected-and-gated rung state (#420)** — the compose-sheet reset logic that rendered a
+  standing-but-retired rung, `HudWidgets.build_policy_picker`'s gate machinery, the three
+  `GATE_REASON_ALREADY_*` reasons, the gate-reason LAYOUT vocabulary
+  (`GATE_REASON_LINE`/`HEADER`/`BULLET`/`COLLAPSED_*`/`TOOLTIP_SEPARATOR`) and the work inspector's
+  standing-investment WARN line + discard confirm. **`HudStyle.apply_button`'s `selected_when_disabled`
+  SURVIVES** — the flag was written for #420 but the crop picker's committed row is a genuine second
+  caller (marked-and-locked is a real state for a readout), so only its #420 caller went.
+- **The per-kind option lists** and the husbandry-ceiling filtering / standing-rung re-admission pass
+  that maintained them.
+
+### Unchecking: `abandon_improvement`
+
+**`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
+(alias `abandon`) is what a live Running box sends. It exists because the split otherwise removed a
+capability the old model had by accident: when the build verb WAS the policy, picking another policy
+always walked a 25-turn commitment away.
+
+**It names a SOURCE, not a verb** — at most one improvement is ever in flight on a source — so it is
+targeted by the **web** (`forage` → tile, `hunt` → herd). The SET verbs are targeted by the **verb**
+(`tame` names a herd; `cultivate`/`sow`/`corral` name a tile), and **`corral` is the case that proves
+the two rules genuinely differ**: a herd's rung addressed by the pen's place. `Main` therefore keeps
+`format_improvement` and `format_abandon_improvement` as separate builders, dispatched on whether the
+payload's `improvement` is empty — `""` being the wire's own spelling of "building nothing", so the
+compose state, the payload and the branch all read one value instead of a parallel flag.
+
+**UNCHECKING IS ALWAYS LEGAL, and nothing may gate it.** No knowledge, no ceiling, no site, no
+`Thriving` check — abandoning a *stalled* build is the case it exists for, so gating it on the
+conditions that STARTED the build would make the remedy unreachable exactly when it is wanted. Hence
+`build_improvement_control` disables **only** an OFFERED box, and only on unmet prerequisites; a
+RUNNING box stays live however loudly its pause note reads. A condition that greys a running box is a
+bug, not a safeguard.
+
+**It is NOT a cancel-and-refund, and the two webs differ** — verified sim-side, not assumed. The
+command does not touch the meter at all; it hands the source back to the rule that already governs an
+unimproved one, which is the same state walking the band away reaches:
+
+- **plant** — `cultivation_progress` / `field_progress` BLEED at `decay_per_turn = 0.01` (~100 turns
+  to zero) once nobody is improving the patch;
+- **animal** — `domestication` / `corral_progress` are KEPT (the animal branch never decays).
+
+So the copy must not promise progress back on either web, and must not imply the plant meter is safe.
+`IMPROVEMENT_ABANDON_HINTS` carries one honest line per web on the running control's **tooltip**,
+beside the rung's own hint. **Deliberately no confirm dialog**: unchecking is always legal, fully
+reversible on the animal web and slow-decaying on the plant one, so a modal would be ceremony over a
+decision the player can simply re-make — and the "End it" confirm that used to guard a policy-pick
+discard is precisely what this axis split removed.
+
+### What remains SERVER-SIDE
+
+- **No build RATE on the wire.** `progress_per_turn` is sim-side config, so the control cannot say
+  `~25 turns` / `~10 turns left`; it states the rung, its terms and its meter percent instead.
+
+---
+
 - **Labor allocation UI** (`Hud.gd`, Early-Game Labor slice 3b — `docs/plan_early_game_labor.md`):
   the band is a **labor pool** whose working-age workers are assigned source-centrically to
   in-range sources/roles. There is **exactly one player band today**, captured each snapshot
@@ -496,7 +642,8 @@ paths:
     (two bands, one tile — picker flips enabled↔disabled).
 
   - **Cultivate / Sow / Tame / Corral — the FOUR INVESTMENT rungs** (on BOTH assign controls; the
-    sim's `FollowPolicy::Cultivate` / `Sow` / `Tame` / `Corral`, and `INVESTMENT_POLICIES` names the
+    sim's `Improvement::Cultivate` / `Sow` / `Tame` / `Corral` since #442 — they are their OWN
+    control, not rungs of this picker; `SourceForecast.FORAGE_IMPROVEMENTS` / `HUNT_IMPROVEMENTS` name the
     set). The extractive four take from a wild source; these pay an **up-front cost** — while the
     source is being prepared it yields only its dip ceiling, then steps up a rung. Each ladder runs a
     verb **twice**, one per rung-transition (`docs/plan_intensification_ladder.md` §2):
@@ -559,45 +706,28 @@ paths:
       **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd
       **ownership** — the tracks are per-faction, so a herd tamed by ANOTHER faction reads as
       available client-side while the sim rejects the assign.
-    - **THE COMPOSE SHEET NEVER RENDERS A POLICY THE BAND IS NOT ON** (issue #420, both compose
-      builders). A gated rung is normally not a legal composition and is reset to Sustain — but **a
-      gated rung that IS the band's standing assignment renders SELECTED AND GATED, with its remedy**,
-      so clearing it is something the player *does* rather than something that happens to them. The
-      reset therefore fires only when the composed policy is gated/structurally invalid **and** differs
-      from the standing one. The standing rung is `policy_for_forage` / `policy_for_hunt` read **only
-      when `workers_for_forage` / `workers_for_hunt > 0`**: those helpers answer with the DEFAULT for an
-      unstaffed source, so calling them blind would make every fresh sheet look as though the band were
-      standing on Sustain and the reset would never fire on a genuinely stale composition.
-      The case this exists for is the one the sim deliberately leaves alone — a patch that drops out of
-      Thriving mid-build **keeps** its Cultivate assignment and merely pauses accrual
-      (`.claude/rules/core_sim/cultivation.md`, "neither lost nor silently switched"). Forcing the
-      default there claimed the band had been switched, and every number under it — the rung faces,
-      `max_useful_workers`, the stepper cap — was computed for the *displayed* rung while the sim
-      worked the source under the real one (the reported `Now 2` over a stepper capped at `1`).
-      **On the hunt side the standing rung is also RE-ADMITTED to the option set when the
-      husbandry-ceiling pass filtered it out** — the fully-tamed `Tame` case, which the ceiling pass
-      retires outright. Re-admission is for the standing rung ALONE and never general: the
-      "an out-of-ceiling rung is HIDDEN, never greyed" rule holds for every other case, and it cannot
-      widen the picker past what the sim allows, since the sim refuses to put a band on a rung its
-      species' ceiling forbids. A re-admitted `Tame` carries its own gate reason,
-      `GATE_REASON_ALREADY_TAMED_FORMAT` ("Already fully tamed — ♻ Sustain-hunt it to harvest"), in the
-      register of the plant pair; the reason is computed whether or not the rung is offered, so
-      visibility stays the option set's business and the gate stays the gate's.
-      **`HudWidgets.build_policy_picker` renders selected-and-gated as a distinct state** — the two
-      used to be mutually exclusive by construction, and the plain disabled treatment fades the border
-      to `LINE_SOFT` and the text to `INK_FAINT`, erasing the only mark of which rung is current and
-      leaving a picker that looks unselected. `HudStyle.apply_button`'s `selected_when_disabled` (and
-      `button_font_color`'s matching `selected`) keeps the variant's own border and text HUE at
-      `BUTTON_SELECTED_DISABLED_TEXT_ALPHA`, so the rung reads "you are doing this, and it is a dead
-      end". The face's two lines still take ONE tint, now passed INTO `_policy_rung_cell` as a
-      parameter rather than re-derived there, because the disabled tint depends on selectedness the
-      cell does not know. ui_preview `forage_cultivate_paused` (the primary frame) /
-      `forage_cultivate_done_standing` / `herd_tame_done_standing` (the re-admission) /
-      `herd_tame_done_other_rung` (the blast-radius guard: a band standing on Sustain sees no Tame).
-      **A SIM-SIDE GAP RIDES WITH IT:** `validate_labor_policy` rejects a *new* Cultivate assign on a
-      non-Thriving patch, and re-staffing a paused build re-issues exactly that command, so the crew
-      count cannot be changed while the pause lasts (unassign is exempt — `workers == 0` skips
-      validation, so the remedy the sheet offers is always reachable).
+    - **ISSUE #420's WHOLE MECHANISM IS RETIRED** (issue #442 — see "An assignment has TWO axes"
+      above). It existed because a build verb was a value of `policy`, which produced a state a radio
+      cannot express: a band STANDING on a rung the picker had to grey (a Cultivate patch that slipped
+      out of Thriving, a Tame herd that finished taming). The answer was to render that rung SELECTED
+      AND GATED — a reset that fired only when the composed rung was gated *and* differed from the
+      standing one, a husbandry-ceiling re-admission pass so the hidden standing rung came back, three
+      `GATE_REASON_ALREADY_*` reasons, and a bespoke `selected_when_disabled` button state. All of it
+      is gone: a stance is never gated and never retires, so the compose sheet's reset can now only
+      fire on a malformed composition, and a build that finishes becomes a static DONE LABEL — which
+      cannot be selected-and-gated. **The behaviour it protected is preserved and improved**: a patch
+      that drops out of Thriving mid-build keeps its improvement and merely pauses, and the control
+      now SAYS SO in a WARN line naming the cause and the remedy, on both webs, instead of leaving the
+      player to read a greyed rung. `_forage_policy_gates` / `_hunt_policy_gates` keep every gate they
+      had; they simply feed the improvement control rather than the picker.
+      **Known gap (pre-existing):** `_hunt_policy_gates` does NOT check herd **ownership** — the
+      tracks are per-faction, so a herd tamed by ANOTHER faction reads as available client-side while
+      the sim rejects the assign.
+      **THE SIM-SIDE GAP THAT RODE WITH IT IS CLOSED** (#442): `validate_labor_policy` rejected a
+      *new* Cultivate assign on a non-Thriving patch and re-staffing a paused build re-issued exactly
+      that command, so the crew of a paused build could not be changed at all. `assign_labor` no
+      longer asserts an improvement, so it no longer re-runs the improvement's gates — crew size is a
+      stance-side edit.
     - **A RETAINED DRAWER-ACTIONS CLOSURE NEVER CAPTURES ITS SUBJECT — it re-resolves through
       `_live_herd` / `_live_tile_info` at press time.** The two drawer-action builders diff against a
       shape signature (`_herd_actions_shape` / the forage twin) and PATCH a same-shape restate in
@@ -693,7 +823,8 @@ paths:
       pastoral MSY once tamed, the twin of `corralYield`), decoded as `pastoral_yield` and mapped in
       `FORECAST_PAYOFF_KEYS` → so Tame is a full investment rung (`forecast["investment"] == true`) and
       renders the SAME dip→payoff row as Cultivate/Sow/Corral: `Preparing: +<dip> → then +<pastoralYield>`
-      (no feed term — Tame has no running cost). `INVESTMENT_POLICIES` still names the set (an investment
+      (no feed term — Tame has no running cost). Since #442 the deal is `improvement_forecast`'s three-term
+      line on the improvement control; the payoff keys still name the set (an investment
       rung must never fall through to the extractive `renewable / ⚠ overdraws` preview), and both hunt
       investment rungs' picker buttons wear the `→ +Y/turn` PAYOFF (Tame `→ pastoralYield`, Corral
       `→ corralYield`) via `_hunt_policy_takes` — NOT the during-building dip, which reads below Sustain
@@ -847,7 +978,7 @@ paths:
     `herders_needed 0`, so `max(useful, 0)` is a no-op everywhere else.
     * **Which field it reads is keyed on the FORECAST's own `investment` flag, not on a policy-name
       table** — `forecast_inputs` sets that flag from `FORECAST_PAYOFF_KEYS`, whose keys are exactly
-      `INVESTMENT_POLICIES`, so the two agree by construction while `SourceForecast` stays free of the
+      the IMPROVEMENT axis (`improvement != ""` since #442), so the two agree by construction while `SourceForecast` stays free of the
       compose vocabulary (it references no `Hud*Vocab` module at all, and that is the invariant).
       An INVESTMENT rung reads the ownership-INDEPENDENT `herders_needed_if_managed`, because the rung
       is what MAKES the herd managed: a still-wild herd reports `herders_needed == 0` until the sim
@@ -878,7 +1009,7 @@ paths:
     disabled `+` is never mute. (`SourceForecast.expedition_useful_cap` scans the full estimate table for M even past
     the fieldable party, so "of M" can exceed the party you can currently staff.)
     **ONE forecast row per rung, and forage now mirrors the local hunt exactly** (`Hud.gd`): an
-    **INVESTMENT** rung (Cultivate/Sow — the `_forage_assign_policy in INVESTMENT_POLICIES` branch)
+    **INVESTMENT** rung (Cultivate/Sow — a composed IMPROVEMENT since #442, not a policy branch)
     keeps `_forecast_yield_row`'s dip→payoff deal (`Preparing: +X /turn → then +Y /turn`); an
     **EXTRACTIVE** rung renders `_local_forage_preview_bbcode` — the plant twin of
     `_local_hunt_preview_bbcode` — the take + a verdict (`+2.74 /turn · renewable`, or WARN-amber
@@ -894,7 +1025,7 @@ paths:
     both sides of the test at 0. ANY rather than ALL, because the warning is about the PATCH, and one
     account drawn past its regrowth draws down the same patch. This retires the old `"Expected yield:"` prefix for extractive forage (`FORECAST_LABEL_FORMAT`
     is gone and `_forecast_yield_row`'s non-investment `else` branch was unreachable and removed — its
-    only two callers, hunt via `forecast_active` and forage via the `INVESTMENT_POLICIES` guard, both
+    only two callers, both reached through `_build_improvement_control` since #442, both
     gate on an investment rung) and fixes the gap where an Eradicate/Deplete forage rendered no overdraw
     warning. Shared helpers `SourceForecast.forecast_inputs` / `SourceForecast.max_useful_workers` / `SourceForecast.expected_yield` /
     `_forecast_worker_cap` / `_forecast_yield_row` (investment-only now) serve both controls. **Guards:**

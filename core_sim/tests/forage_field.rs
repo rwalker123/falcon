@@ -2,7 +2,7 @@
 //!
 //! `Sow` is the plant twin of `Corral`: it **places a food source where you want it**. Once a faction
 //! knows **Seed Selection** (earned by working tended patches — slice 4 earned it, this slice spends
-//! it), a crew working a tile under `FollowPolicy::Sow` builds a Field on it over ~25 turns, and the
+//! it), a crew working a tile under `Improvement::Sow` builds a Field on it over ~25 turns, and the
 //! completed Field pays a *higher* managed harvest than the tended patch below it.
 //!
 //! Two things separate it from every other rung, and both are tested here:
@@ -27,9 +27,9 @@ use core_sim::{
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
     FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
-    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
@@ -264,12 +264,16 @@ fn find_bare_sowable_tile(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
+/// A band foraging `patch`. `improvement` is the second axis (issue #442): `None` for a plain
+/// gather, `Some(Improvement::Sow)` for a crew putting a Field in. The **stance** stays `Sustain`
+/// throughout this file — these tests measure the `Sow` build, not the harvest pressure beside it.
 fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
+    let policy = FollowPolicy::Sustain;
     app.world
         .spawn((
             PopulationCohort {
@@ -308,6 +312,7 @@ fn spawn_forager(
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
+                    improvement,
                 }],
                 ..Default::default()
             },
@@ -358,7 +363,7 @@ fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(FollowPolicy::Sow, true, RUNG_TIMESCALE_UNSCALED),
+        field.build_accrual(Some(Improvement::Sow), true, RUNG_TIMESCALE_UNSCALED),
         field.build_decay(RUNG_TIMESCALE_UNSCALED),
     )
 }
@@ -415,7 +420,7 @@ fn sowing_bare_hospitable_ground_creates_a_patch_and_builds_a_field() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
 
     let expected_capacity = {
         let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -473,7 +478,7 @@ fn a_bare_ground_sow_pays_almost_nothing_while_it_builds_then_pays_the_field() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
 
     // The opening turns pay NOTHING: a fraction of the MSY of a seed stock below its Allee threshold
     // is a fraction of zero. There is nothing there yet — that is the whole cost of the rung.
@@ -554,7 +559,7 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
             let wild = core_sim::ForagePatch::new(coord, capacity);
             core_sim::patch_provisions_per_biomass(&wild, &composition, &flora, &labor.forage)
         };
-        spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+        spawn_forager(&mut app, tile, coord, None);
         app.world.run_system_once(advance_labor_allocation);
         (provisions_f32(&mut app), biomass, capacity, basket_rate)
     }
@@ -638,12 +643,12 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
             patch.owner = Some(FactionId(0));
             patch.species = crop;
         }
-        spawn_forager(&mut baseline, tile, coord, FollowPolicy::Sustain);
+        spawn_forager(&mut baseline, tile, coord, None);
         baseline.world.run_system_once(advance_labor_allocation);
         provisions_f32(&mut baseline)
     };
 
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
     app.world.run_system_once(advance_labor_allocation);
     let while_sowing = provisions_f32(&mut app);
     assert!(
@@ -685,7 +690,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     // Name the crop on the assignment (rather than leaving the auto-pick) so the retire can be
     // asserted to carry the *commitment* across, not merely the tile coordinate.
     let crop = default_sowable_species(&app, coord).expect("sowable ground grows a sowable plant");
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
     {
         let mut allocation = app
             .world
@@ -710,15 +715,10 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         "fixture: the Field must still be going in here (progress {})",
         field_progress_of(&app, coord)
     );
-    assert!(
-        matches!(
-            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].target,
-            LaborTarget::Forage {
-                policy: FollowPolicy::Sow,
-                ..
-            }
-        ),
-        "an unfinished build keeps its verb — only completion retires it"
+    assert_eq!(
+        app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+        Some(Improvement::Sow),
+        "an unfinished build keeps its verb — only completion clears it"
     );
 
     run_turns_with_forage(&mut app, 1);
@@ -734,27 +734,31 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     assert_eq!(
         allocation.assignments.len(),
         1,
-        "the retire rewrites a row, it never adds or drops one"
+        "completion edits a row, it never adds or drops one"
     );
     let assignment = &allocation.assignments[0];
     assert_eq!(
         assignment.workers, FORAGE_WORKERS,
         "the crew stays on the ground it sowed"
     );
+    assert_eq!(
+        assignment.improvement, None,
+        "completion clears the improvement — there is nothing left to sow here"
+    );
     let LaborTarget::Forage {
-        tile: retired_tile,
+        tile: sown_tile,
         policy,
         species,
     } = &assignment.target
     else {
-        panic!("the retire must not change the target's KIND: {assignment:?}");
+        panic!("completion must not change the target's KIND: {assignment:?}");
     };
     assert_eq!(
         *policy,
         FollowPolicy::Sustain,
-        "a finished Field hands its crew to the harvest rung"
+        "the crew's stance is left exactly as the player set it (issue #442)"
     );
-    assert_eq!(*retired_tile, coord, "the same ground");
+    assert_eq!(*sown_tile, coord, "the same ground");
     assert_eq!(
         species.as_deref(),
         Some(crop.as_str()),
@@ -771,7 +775,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
     grant_seed_selection(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
     let (progress_per_turn, decay_per_turn) = field_build(&app);
     assert!(decay_per_turn > 0.0, "an unworked field must bleed");
     run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
@@ -826,7 +830,7 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
 fn sow_seeds_nothing_without_seed_selection() {
     let mut app = spawn_world();
     let (tile, coord) = find_bare_sowable_tile(&mut app);
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sow);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
 
     run_turns_with_forage(&mut app, 30);
 

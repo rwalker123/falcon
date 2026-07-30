@@ -13,13 +13,13 @@ use core_sim::{
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_herds, spawn_initial_world,
     CommandEventEntry, CommandEventKind, CommandEventLog, CultureManager, DiscoveryProgressLedger,
     FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId,
-    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
-    PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+    GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, RungKey,
+    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, WellbeingConfigHandle, FOOD, FULLY_HERDED, HERDING_DISCOVERY_ID,
+    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -117,7 +117,24 @@ fn prime_thriving_herd(app: &mut App) -> String {
     id
 }
 
+/// A band hunting `herd_id` under `policy`, building nothing. The improvement axis has its own
+/// helper — [`spawn_builder`] — because the two are independent (issue #442).
 fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
+    spawn_crew(app, herd_id, policy, None)
+}
+
+/// A band hunting `herd_id` under `Sustain` while **building** `improvement` — the stance a builder
+/// normally holds, so the build meter accrues and the dip rides an MSY draw.
+fn spawn_builder(app: &mut App, herd_id: &str, improvement: Improvement) -> bevy::prelude::Entity {
+    spawn_crew(app, herd_id, FollowPolicy::Sustain, Some(improvement))
+}
+
+fn spawn_crew(
+    app: &mut App,
+    herd_id: &str,
+    policy: FollowPolicy,
+    improvement: Option<Improvement>,
+) -> bevy::prelude::Entity {
     let pos = app
         .world
         .resource::<HerdRegistry>()
@@ -166,6 +183,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::pre
                         policy,
                     },
                     workers: HUNT_WORKERS,
+                    improvement,
                 }],
                 ..Default::default()
             },
@@ -379,7 +397,7 @@ fn tame_policy_domesticates_thriving_herd() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     grant_herding(&mut app);
-    spawn_hunter(&mut app, &id, FollowPolicy::Tame);
+    spawn_builder(&mut app, &id, Improvement::Tame);
 
     // A herd under active taming is spared the decay pass (`tamed_this_turn`, mirroring a patch under
     // Cultivate), so it accrues the FULL progress_per_turn(0.04) → 25 turns at the rung's own pace.
@@ -457,24 +475,93 @@ fn the_tame_take_dips_to_the_rungs_yield_fraction() {
             .expect("the pastoral rung is an investment")
     };
 
-    // One turn of Sustain (the MSY baseline) vs one turn of Tame, from an identical start.
-    let harvest = |policy: FollowPolicy| -> f32 {
+    // One turn of a plain Sustain hunt (the MSY baseline) vs one turn of the same Sustain hunt with
+    // a Tame build running, from an identical start — the two differ only in the improvement axis.
+    let harvest = |improvement: Option<Improvement>| -> f32 {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
         grant_herding(&mut app);
-        spawn_hunter(&mut app, &id, policy);
+        spawn_crew(&mut app, &id, FollowPolicy::Sustain, improvement);
         let before = provisions_f32(&mut app);
         run_turns_with_hunt(&mut app, 1);
         provisions_f32(&mut app) - before
     };
 
-    let sustained = harvest(FollowPolicy::Sustain);
-    let tamed = harvest(FollowPolicy::Tame);
+    let sustained = harvest(None);
+    let tamed = harvest(Some(Improvement::Tame));
     assert!(sustained > 0.0, "the Sustain baseline must pay something");
     assert!(
         (tamed - sustained * dip).abs() < sustained * 0.02,
         "Tame must pay the rung's dip: expected ~{}, got {tamed}",
         sustained * dip
+    );
+}
+
+/// **§2.1 — a non-Sustain stance beside a running build is LEGAL, and it defeats itself through the
+/// ecology rather than through a gate** (issue #442, `docs/plan_investment_rung_toggle.md`).
+///
+/// Two facts, one run:
+/// 1. **The sim accepts it.** A `Deplete` stance with a `Tame` build in flight resolves — no arm
+///    refuses the combination — and it takes **strictly more** than a `Sustain` builder would,
+///    because the dip now multiplies Deplete's larger ceiling (§2.2, the generalised dip).
+/// 2. **It stalls its own meter.** Deplete is `deplete_multiplier × MSY`, a constant catch *above*
+///    the sustainable rate, so it has **no equilibrium**: the herd declines out of `Thriving`, and
+///    the build gate (`eligible`) stops accruing. The Sustain control on identical ground tames the
+///    herd in the same span, so the stall is the stance's doing and not the fixture's.
+///
+/// This is why the design refuses to add a gate: the punishment is already in the ecology, and it is
+/// proportionate — ease off and the herd recovers and the meter resumes.
+#[test]
+fn a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter() {
+    // Long enough to tame the fixture species outright under Sustain — so a stalled meter is a
+    // statement about the stance, not about the horizon.
+    const TURNS: u32 = 60;
+
+    let run = |policy: FollowPolicy| {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        grant_herding(&mut app);
+        spawn_crew(&mut app, &id, policy, Some(Improvement::Tame));
+        let before = provisions_f32(&mut app);
+        run_turns_with_hunt(&mut app, 1);
+        let first_turn_take = provisions_f32(&mut app) - before;
+        run_turns_with_hunt(&mut app, TURNS - 1);
+        let herd = herd_of(&app, &id);
+        (first_turn_take, herd)
+    };
+
+    let (sustain_take, sustain_herd) = run(FollowPolicy::Sustain);
+    let (deplete_take, deplete_herd) = run(FollowPolicy::Deplete);
+
+    // (1) It is sayable, and it pays MORE now — the dip rides the stance the player chose.
+    assert!(
+        deplete_take > sustain_take,
+        "the dip multiplies the SELECTED stance (§2.2), so a Deplete builder takes more now:          deplete {deplete_take} vs sustain {sustain_take}"
+    );
+
+    // The control: the same build under Sustain finishes, so the horizon is not what stalls it.
+    assert!(
+        sustain_herd.is_domesticated(),
+        "control: a Sustain builder tames the herd within {TURNS} turns (progress {})",
+        sustain_herd.domestication_progress
+    );
+
+    // (2) And it defeats itself: the herd is driven out of Thriving, so the meter stops.
+    assert_ne!(
+        deplete_herd.ecology_phase,
+        core_sim::EcologyPhase::Thriving,
+        "a constant catch above MSY has no equilibrium — Deplete must drive the herd out of          Thriving, which is the whole self-punishment"
+    );
+    assert!(
+        !deplete_herd.is_domesticated(),
+        "the build meter accrues only while the source is Thriving, so a Deplete builder stalls          short of taming it (progress {})",
+        deplete_herd.domestication_progress
+    );
+    assert!(
+        deplete_herd.domestication_progress < sustain_herd.domestication_progress,
+        "the Deplete builder banks strictly less progress over the same span: {} vs {}",
+        deplete_herd.domestication_progress,
+        sustain_herd.domestication_progress
     );
 }
 
@@ -505,7 +592,7 @@ fn turns_to_tame(species_key: &str, cap_turns: u32) -> u32 {
     let id = prime_thriving_herd(&mut app);
     rebadge_as(&mut app, &id, species_key);
     grant_herding(&mut app);
-    spawn_hunter(&mut app, &id, FollowPolicy::Tame);
+    spawn_builder(&mut app, &id, Improvement::Tame);
     for turn in 1..=cap_turns {
         run_turns_with_hunt(&mut app, 1);
         if herd_of(&app, &id).is_domesticated() {
@@ -578,7 +665,7 @@ fn a_fully_abandoned_pastoral_herd_goes_feral_without_decaying_its_taming() {
         .map(|h| h.biomass)
         .sum();
     grant_herding(&mut app);
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Tame);
+    let band = spawn_builder(&mut app, &id, Improvement::Tame);
     run_turns_with_hunt(&mut app, 6);
     let built = progress_of(&app, &id);
     assert!(built > 0.0, "some progress should have accrued");
@@ -729,7 +816,7 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
     grant_penning(&mut app);
-    let builder = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
+    let builder = spawn_builder(&mut app, &id, Improvement::Corral);
     run_turns_with_hunt(&mut app, 1);
     let building = yield_of(&app, builder);
 
@@ -1565,7 +1652,7 @@ fn half_built_pen_keeps_progress_when_its_keeper_leaves() {
         herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
     }
     grant_penning(&mut app);
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Corral);
+    let band = spawn_builder(&mut app, &id, Improvement::Corral);
 
     run_turns_with_hunt(&mut app, 5);
     let half_built = corral_progress_of(&app, &id);
@@ -1646,22 +1733,19 @@ fn ladder_knowledge(app: &App, discovery: u32) -> f32 {
         .to_f32()
 }
 
-/// Switch the band's (only) Hunt assignment onto `policy` — the sim-side of the client's policy
-/// picker, which is what the player does at each rung of the climb.
-fn set_hunt_policy(
+/// Check or clear the **improvement** on the band's (only) Hunt assignment — the sim side of the
+/// client's checkbox, which is what the player does at each build leg of the climb. The stance is
+/// untouched (issue #442): the crew keeps Sustain-hunting throughout.
+fn set_hunt_improvement(
     app: &mut App,
     band: bevy::prelude::Entity,
-    herd_id: &str,
-    policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) {
-    let mut allocation = app
-        .world
+    app.world
         .get_mut::<LaborAllocation>(band)
-        .expect("band exists");
-    allocation.assignments[0].target = LaborTarget::Hunt {
-        fauna_id: herd_id.to_string(),
-        policy,
-    };
+        .expect("band exists")
+        .assignments[0]
+        .improvement = improvement;
 }
 
 /// Run turns until `done`, returning how many it took. Capped so a leg that can never complete fails
@@ -1715,7 +1799,7 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
     );
 
     // Leg 2 — `Tame` fills this herd's meter (Herding is the gate the leg above just opened).
-    set_hunt_policy(&mut app, band, &id, FollowPolicy::Tame);
+    set_hunt_improvement(&mut app, band, Some(Improvement::Tame));
     let leg2 = turns_until(&mut app, "tame the herd", 120, |app| {
         herd_of(app, &id).is_domesticated()
     });
@@ -1726,13 +1810,13 @@ fn the_full_wild_to_pen_climb_is_paced_by_practising_each_rung() {
         ladder_knowledge(&app, PENNING_DISCOVERY_ID) < RUNG_COMPLETE,
         "Penning cannot already be known — taming a WILD herd practises rung 1, not rung 2"
     );
-    set_hunt_policy(&mut app, band, &id, FollowPolicy::Sustain);
+    set_hunt_improvement(&mut app, band, None);
     let leg3 = turns_until(&mut app, "learn Penning", 60, |app| {
         ladder_knowledge(app, PENNING_DISCOVERY_ID) >= RUNG_COMPLETE
     });
 
     // Leg 4 — `Corral`, gated on the Penning the leg above just earned.
-    set_hunt_policy(&mut app, band, &id, FollowPolicy::Corral);
+    set_hunt_improvement(&mut app, band, Some(Improvement::Corral));
     let leg4 = turns_until(&mut app, "build the pen", 60, |app| {
         herd_of(app, &id).is_corralled()
     });

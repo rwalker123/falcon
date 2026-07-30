@@ -225,6 +225,8 @@ func _ready() -> void:
             hud.connect("recall_expedition_requested", Callable(self, "_on_hud_recall_expedition"))
         if hud.has_signal("extend_pen_requested") and not hud.is_connected("extend_pen_requested", Callable(self, "_on_hud_extend_pen")):
             hud.connect("extend_pen_requested", Callable(self, "_on_hud_extend_pen"))
+        if hud.has_signal("improvement_requested") and not hud.is_connected("improvement_requested", Callable(self, "_on_hud_improvement")):
+            hud.connect("improvement_requested", Callable(self, "_on_hud_improvement"))
         if hud.has_signal("answer_fork_requested") and not hud.is_connected("answer_fork_requested", Callable(self, "_on_hud_answer_fork")):
             hud.connect("answer_fork_requested", Callable(self, "_on_hud_answer_fork"))
         if hud.has_signal("next_turn_requested") and not hud.is_connected("next_turn_requested", Callable(self, "_on_hud_next_turn")):
@@ -846,6 +848,73 @@ static func format_extend_pen(payload: Dictionary) -> Dictionary:
         "message": "Extend pen at (%d, %d)." % [x, y],
     }
 
+## **THE SECOND AXIS's commands** (issue #442): `cultivate <faction> <x> <y>` / `sow <faction> <x> <y>`
+## / `corral <faction> <x> <y>` address a TILE, and `tame <faction> <herd_id>` addresses a HERD —
+## taming is the verb you reach for on a ROAMING herd, identified by who follows it rather than by
+## where it stands this turn, while a pen is a place. That split is the sim's, mirrored here.
+##
+## Each sets ONLY the improvement, on whichever bands already work the source — which is why the
+## compose sheet sends `assign_labor` FIRST: an improvement verb aimed at an unworked source is
+## rejected outright.
+const IMPROVEMENT_HERD_TARGETED := ["tame"]
+
+static func format_improvement(payload: Dictionary) -> Dictionary:
+    var improvement := String(payload.get("improvement", "")).strip_edges().to_lower()
+    if improvement == "":
+        return {}
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    if improvement in IMPROVEMENT_HERD_TARGETED:
+        var herd_id := String(payload.get("herd_id", "")).strip_edges()
+        if herd_id == "":
+            return {}
+        return {
+            "line": "%s %d %s" % [improvement, faction, herd_id],
+            "message": "%s %s." % [improvement.capitalize(), herd_id],
+        }
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "%s %d %d %d" % [improvement, faction, x, y],
+        "message": "%s (%d, %d)." % [improvement.capitalize(), x, y],
+    }
+
+## **`abandon_improvement <faction> forage <x> <y>` / `abandon_improvement <faction> hunt <herd_id>`**
+## — the command that stops a build (issue #442). Alias `abandon`.
+##
+## **IT NAMES A SOURCE, NOT A VERB, AND THAT IS WHY IT IS ITS OWN BUILDER.** At most one improvement
+## is ever in flight on a source, so naming the source names the thing being abandoned — and the
+## targeting rule that follows is the WEB's (`forage` → tile, `hunt` → herd), not the verb's. The set
+## verbs above target by VERB (`tame` names a herd; `cultivate`/`sow`/`corral` name a tile), and
+## `corral` is the case that proves the two rules genuinely differ: it is a HERD's rung addressed by
+## the pen's PLACE, so a shared branch would send `abandon_improvement <f> <x> <y>` for a herd.
+##
+## **Always allowed.** The server gates it on nothing — no knowledge, no ceiling, no site, no
+## `Thriving` — because abandoning a STALLED build is the case it exists for. The only rejections are
+## an unknown kind and a source building nothing, neither of which this can produce.
+static func format_abandon_improvement(payload: Dictionary) -> Dictionary:
+    var faction := int(payload.get("faction", PLAYER_FACTION_ID))
+    var kind := String(payload.get("kind", "")).strip_edges().to_lower()
+    if kind == SourceForecast.LABOR_KIND_HUNT:
+        var herd_id := String(payload.get("herd_id", "")).strip_edges()
+        if herd_id == "":
+            return {}
+        return {
+            "line": "abandon_improvement %d %s %s" % [faction, kind, herd_id],
+            "message": "Stop improving %s." % herd_id,
+        }
+    if kind != SourceForecast.LABOR_KIND_FORAGE:
+        return {}
+    var x := int(payload.get("x", -1))
+    var y := int(payload.get("y", -1))
+    if x < 0 or y < 0:
+        return {}
+    return {
+        "line": "abandon_improvement %d %s %d %d" % [faction, kind, x, y],
+        "message": "Stop improving (%d, %d)." % [x, y],
+    }
+
 ## Send whatever a `format_*` builder produced, or nothing at all when it declined.
 func _send_formatted_command(formatted: Dictionary) -> void:
     if formatted.is_empty():
@@ -880,6 +949,19 @@ func _on_hud_send_hunt_expedition(payload: Dictionary) -> void:
 ## turns (rejecting at max radius / unowned / Herding-unknown with a feed message).
 func _on_hud_extend_pen(payload: Dictionary) -> void:
     _send_formatted_command(format_extend_pen(payload))
+
+## Commit — or abandon — an improvement on a source the band already works (the second axis, issue
+## #442). Sent immediately after the `assign_labor` that guarantees the crew is there.
+##
+## An EMPTY `improvement` is the abandon: `""` is the wire's own spelling of "building nothing", so
+## the compose state, the payload and this branch all read one value rather than a parallel flag. The
+## two commands keep separate builders because they target their source by different rules — see
+## `format_abandon_improvement`.
+func _on_hud_improvement(payload: Dictionary) -> void:
+    if String(payload.get("improvement", "")).strip_edges() == "":
+        _send_formatted_command(format_abandon_improvement(payload))
+        return
+    _send_formatted_command(format_improvement(payload))
 
 ## Recall an in-flight expedition home (folds workers + provisions back on arrival).
 func _on_hud_recall_expedition(payload: Dictionary) -> void:

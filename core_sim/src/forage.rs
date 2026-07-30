@@ -61,7 +61,7 @@ use std::{borrow::Cow, collections::HashMap};
 use bevy::prelude::*;
 
 use crate::{
-    components::{FollowPolicy, SourceYield, Tile},
+    components::{FollowPolicy, Improvement, SourceYield, Tile, NO_IMPROVEMENT_UNDERWAY},
     fauna::{
         classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
         sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
@@ -70,8 +70,8 @@ use crate::{
     flora_config::{FloraConfig, FloraShare},
     food::FoodModuleTag,
     intensification::{
-        LadderConfig, LadderConfigHandle, RungDef, RungKey, SiteRefusal, RUNG_COMPLETE,
-        RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
+        BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, SiteRefusal,
+        RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
@@ -143,13 +143,13 @@ pub struct ForagePatch {
     /// `carrying_capacity`. Lights the client over-forage readout the same way herds do.
     pub ecology_phase: EcologyPhase,
     /// Cultivation progress in `[0.0, 1.0]`; `1.0` = cultivated. Accrues **only** while a band works
-    /// this patch under the explicit `FollowPolicy::Cultivate` policy (faction knows Cultivation +
-    /// patch Thriving); decays on a patch nobody is working (see `advance_cultivation`). The plant
-    /// mirror of `Herd::corral_progress`.
+    /// this patch with the [`crate::components::Improvement::Cultivate`] verb in flight (faction knows
+    /// Cultivation + patch Thriving); decays on a patch nobody is working (see `advance_cultivation`).
+    /// The plant mirror of `Herd::corral_progress`.
     pub cultivation_progress: f32,
     /// **Field**-build progress in `[0.0, 1.0]`; `1.0` = a sown Field (the plant ladder's **rung 3**).
-    /// Accrues only while a band works this patch under the explicit `FollowPolicy::Sow` policy
-    /// (faction knows **Seed Selection**); decays on a patch nobody is working (see
+    /// Accrues only while a band works this patch with [`crate::components::Improvement::Sow`] in
+    /// flight (faction knows **Seed Selection**); decays on a patch nobody is working (see
     /// `advance_cultivation`). The plant mirror of `Herd::corral_progress` — and, exactly like the
     /// herd's two meters, it is **its own** meter rather than a second reading of
     /// `cultivation_progress`: a branch with two investment rungs carries two meters, one per rung.
@@ -182,7 +182,7 @@ pub struct ForagePatch {
     /// Faction tending/owning this patch (`Some` iff either improvement meter is `> 0`).
     pub owner: Option<FactionId>,
     /// Transient per-turn flag: a Forage assignment **worked this patch as an improvement** this turn
-    /// — tending a completed patch/Field, or preparing one under `FollowPolicy::Cultivate`/`Sow` (set in
+    /// — tending a completed patch/Field, or preparing one under `Cultivate`/`Sow` (set in
     /// `advance_labor_allocation`, Population). `advance_cultivation` (Logistics, the *next* turn —
     /// Logistics runs before Population) reads it to decide feral/decay vs. spared, then clears it.
     /// Sparing a *preparing* patch too is what makes the investment accrue at the full
@@ -213,7 +213,7 @@ impl ForagePatch {
     }
 
     /// **A patch a crew has just put seed into** — the plant rung-3 verb's create-from-nothing case
-    /// (`FollowPolicy::Sow` on hospitable ground that carried no forage site at all,
+    /// ([`crate::components::Improvement::Sow`] on hospitable ground that carried no forage site at all,
     /// `docs/plan_intensification_ladder.md` §2). It is an ordinary patch from this moment on: same
     /// biomass model, same **tile** capacity (`tile_forage_capacity` — the *same* source a wild patch
     /// is seeded from, never a Field-specific table), same logistic regrowth.
@@ -280,8 +280,9 @@ impl ForagePatch {
             && self.owner == Some(faction)
     }
 
-    /// Accrue cultivation progress for `faction` (the preparing band, working the patch under
-    /// `FollowPolicy::Cultivate`). Sets ownership on the first accrual; only the owner makes progress.
+    /// Accrue cultivation progress for `faction` (the preparing band, working the patch with
+    /// [`crate::components::Improvement::Cultivate`] in flight). Sets ownership on the first accrual;
+    /// only the owner makes progress.
     /// Clamped to 1.0 — reaching it makes the patch a tended crop from the *next* turn's payout on
     /// (the accrual runs after this turn's take, so the pre-commit forecast can't lie). No-op once the
     /// patch is cultivated. Mirrors `Herd::accrue_corral`.
@@ -297,8 +298,9 @@ impl ForagePatch {
         }
     }
 
-    /// Accrue **Field**-build progress for `faction` (the sowing band, working the patch under
-    /// `FollowPolicy::Sow`) — the exact twin of `accrue_cultivation` one rung up, with the same
+    /// Accrue **Field**-build progress for `faction` (the sowing band, working the patch with
+    /// [`crate::components::Improvement::Sow`] in flight) — the exact twin of `accrue_cultivation` one
+    /// rung up, with the same
     /// owner-locking, the same clamp, and the same "no-op once complete". Mirrors `Herd::accrue_corral`.
     pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32) {
         if self.is_field() {
@@ -1345,8 +1347,8 @@ pub fn advance_forage_regrowth(
 /// (`advance_labor_allocation`, Population) to the band whose Forage assignment actually tends the
 /// patch, at a higher-than-wild rate — see that system. This pass now only handles **decay/feral**:
 /// - A patch **worked as an improvement this turn** (`tended_this_turn`) is **spared**. That covers
-///   a completed patch/Field being worked *and* one being prepared under `FollowPolicy::Cultivate` /
-///   `FollowPolicy::Sow` — so an investment accrues at the full `progress_per_turn` (25 turns at the
+///   a completed patch/Field being worked *and* one being prepared under `Improvement::Cultivate` /
+///   `Improvement::Sow` — so an investment accrues at the full `progress_per_turn` (25 turns at the
 ///   shipped default) instead of net-of-decay.
 /// - An **untended** cultivated patch **goes feral**: `cultivation_progress` decays by
 ///   `decay_per_turn`, dropping below `1.0` so it reverts to a wild depletable gather patch, and keeps
@@ -1470,6 +1472,7 @@ pub(crate) fn forage_take(
     tile_composition: &[FloraShare],
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
     ladder: &LadderConfig,
@@ -1484,6 +1487,7 @@ pub(crate) fn forage_take(
     let ecology = patch_ecology(patch, forage);
     let policy_ceiling = forage_policy_ceiling(
         policy,
+        improvement,
         patch.biomass,
         patch.carrying_capacity,
         &ecology,
@@ -1504,30 +1508,39 @@ pub(crate) fn forage_take(
     scalar_from_f32(forage_provisions(take, rate, output_multiplier))
 }
 
-/// The per-policy **biomass** ceiling on a gather at the patch's current stock — the single source of
-/// the Sustain/Surplus/Deplete/Eradicate/**Cultivate** rungs, shared by `forage_take` (the take path)
-/// and `forage_forecast` (the pre-commit forecast). Sustain = Maximum Sustainable Yield (regrowth at
-/// K/2, so a full patch still yields and a collapsed one yields nothing), Surplus = that ×
-/// `surplus_multiplier`, Deplete = `market.take_fraction × biomass`, Eradicate =
-/// `eradicate.take_fraction × biomass`, **Cultivate** = the `plant:tended` rung's
-/// `yield_fraction_while_building ×` the *same* `sustainable_yield` MSY ceiling (the preparing dip —
-/// reusing the shared helper, never a second formula). Not yet clamped to biomass — callers do that
-/// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_ceiling`.
+/// The per-stance **biomass** ceiling on a gather at the patch's current stock, **dipped by whatever
+/// improvement the crew is building** — the single source of the rung ceilings, shared by
+/// `forage_take` (the take path) and `forage_forecast` (the pre-commit forecast). Sustain = Maximum
+/// Sustainable Yield (regrowth at K/2, so a full patch still yields and a collapsed one yields
+/// nothing), Surplus = that × `surplus_multiplier`, Deplete = `market.take_fraction × biomass`,
+/// Eradicate = `eradicate.take_fraction × biomass`. Not yet clamped to biomass — callers do that
+/// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_rate`.
+///
+/// **The dip is a factor on the SELECTED stance, not a fifth rung** (issue #442,
+/// `docs/plan_investment_rung_toggle.md` §2.2). It used to be `Cultivate`/`Sow` arms of the policy
+/// `match`, each hardcoded to `fraction × the Sustain (MSY) ceiling`, because a build verb *was* the
+/// policy and a builder could be in no other stance. Now `improvement` is an independent axis and the
+/// same fraction multiplies whichever stance the player holds — the identical formula with the
+/// constant removed. That is what makes a Deplete-while-building self-punishing without a gate: the
+/// dip rides a draw-down, so the builder takes more now, leaves Thriving sooner, and stalls their own
+/// meter. The fraction is read through the one [`LadderConfig::build_dip`] seam, so the two webs'
+/// dips cannot be applied differently.
 ///
 /// `ecology` is **the patch's own** — resolved by [`patch_ecology`], never by the caller reaching for
 /// `forage.ecology` directly. The tended rung is expressed *entirely* by handing this function a
 /// different ecology (wild `r` = 0.25 / tended = wild × `tended_regrowth_gain`), exactly as the
-/// husbandry ladder is expressed to `hunt_policy_ceiling`, so a call site that re-derives one silently
-/// gathers a tended patch on the wild curve.
+/// husbandry ladder is expressed to `fauna::hunt_policy_rate`, so a call site that re-derives one
+/// silently gathers a tended patch on the wild curve.
 pub(crate) fn forage_policy_ceiling(
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     biomass: f32,
     carrying_capacity: f32,
     ecology: &EcologyConfig,
     forage: &ForageLaborConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    match policy {
+    let stance = match policy {
         FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
         FollowPolicy::Surplus => {
             sustainable_yield(biomass, carrying_capacity, ecology) * forage.surplus_multiplier
@@ -1537,31 +1550,11 @@ pub(crate) fn forage_policy_ceiling(
         // later plant-side pass, not here.
         FollowPolicy::Deplete => forage.market.take_fraction * biomass,
         FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
-        // The two plant investment dips: a *fraction* of the MSY ceiling, so the preparing take is
-        // sustainable and the patch stays healthy while the work goes on. Each read off its **own**
-        // rung — the same seam the animal side's `Tame`/`Corral` dips read, so every rung's
-        // investment cost is tuned in one file, and the two plant rungs' dips stay independently
-        // tunable (the `ceiling_tame` lesson: never fold two rungs onto one number just because
-        // today's levers happen to agree).
-        FollowPolicy::Cultivate => {
-            sustainable_yield(biomass, carrying_capacity, ecology)
-                * ladder
-                    .rung(RungKey::PlantTended)
-                    .yield_fraction_while_building()
-                    .expect("the tended rung is an investment — it has a build meter")
-        }
-        // On BARE ground this is a fraction of nothing — a freshly sown patch is below the Allee
-        // threshold, so its MSY is `0` and the sow honestly pays ~0 while it builds (a pure
-        // investment). On ground that already carries a stand it is the familiar dip.
-        FollowPolicy::Sow => {
-            sustainable_yield(biomass, carrying_capacity, ecology)
-                * field_yield_fraction_while_building(ladder)
-        }
-        // `Tame`/`Corral` are animal-only policies — rejected on a Forage assignment at
-        // `assign_labor` (`FollowPolicy::valid_for_forage`). Unreachable in practice; defensively
-        // yield nothing rather than silently gathering under a nonsense policy.
-        FollowPolicy::Tame | FollowPolicy::Corral => 0.0,
-    }
+    };
+    // On BARE ground a `Sow` dip is a fraction of nothing — a freshly sown patch is below the Allee
+    // threshold, so its MSY is `0` and the sow honestly pays ~0 while it builds (a pure investment).
+    // On ground that already carries a stand it is the familiar dip on whatever the crew is drawing.
+    stance * ladder.build_dip(improvement)
 }
 
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
@@ -2024,16 +2017,11 @@ pub fn tended_take_trade_goods(
     )
 }
 
-/// **The `plant:field` rung's investment dip**, resolved off the ladder — the fraction of what a
-/// patch would otherwise pay that it *does* pay while a crew sows a Field into it. One lookup, shared
-/// by `forage_policy_ceiling` (via the rung), the managed-patch forecast and the managed-patch payout,
-/// so a Sow on a tended patch can never be quoted one dip and paid another.
-pub(crate) fn field_yield_fraction_while_building(ladder: &LadderConfig) -> f32 {
-    ladder
-        .rung(RungKey::PlantField)
-        .yield_fraction_while_building()
-        .expect("the field rung is an investment — it has a build meter")
-}
+// **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
+// because two plant sites needed it and only one of them went through `forage_policy_ceiling`. It has
+// no callers left: since issue #442 *every* dip on both webs is read through the one
+// `LadderConfig::build_dip(improvement)` seam, which is keyed on the verb rather than hard-coding a
+// `RungKey`, so a per-rung accessor could only ever be a second way to ask the same question.
 
 /// `SourceYieldForecast::body_mass_yield` for a plant source (slice 8) — `0` = *do not quantise*.
 ///
@@ -2110,14 +2098,16 @@ pub(crate) fn deplete_trade_markup(policy: FollowPolicy, forage: &ForageLaborCon
 }
 
 /// **The whole per-rung forecast table for one patch** — the plant twin of
-/// `snapshot::hunt_policy_ceiling_entries`, walking [`FollowPolicy::FORAGE_POLICIES`].
+/// `snapshot::hunt_policy_ceiling_entries`, walking [`FollowPolicy::ALL`].
 ///
 /// **Every account, at every rung, projected through the SAME helpers the take path pays with**, so
 /// `forecast == actual` holds *per component* rather than on food alone (the
 /// `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` gap this closes):
-/// - the **extractive** rungs and the two **investment dips** convert at the patch's **standing**
-///   rung's rates — a crew still clearing has displaced nothing, so a patch being prepared reads
-///   exactly like the wild stand it still is;
+/// - the four **stance** rows convert at the patch's **standing** rung's rates — a crew still
+///   clearing has displaced nothing, so a patch being prepared reads exactly like the wild stand it
+///   still is. **The two build dips are no longer rows here** (issue #442): a dip is a factor on the
+///   selected stance, exported as `ForagePatchState.cultivateBuildFraction`/`sowBuildFraction`, so
+///   the table states one number per stance and the client multiplies;
 /// - a **Field** (rung 3) is *yours*, so the policy axis collapses: every row is the managed
 ///   production and the managed per-worker throughput, and it takes **no markup** (a Field is never
 ///   drawn down and has no policy axis — the rule [`field_trade_goods`] already states).
@@ -2167,7 +2157,7 @@ pub fn plant_policy_forecasts(
                 output_multiplier,
             ),
         };
-        return FollowPolicy::FORAGE_POLICIES
+        return FollowPolicy::ALL
             .iter()
             .map(|&policy| PlantPolicyForecast {
                 policy,
@@ -2182,7 +2172,7 @@ pub fn plant_policy_forecasts(
     let trade_rate = patch_trade_per_biomass(patch, tile_composition, flora, forage);
     let fodder_rate = patch_fodder_per_biomass(patch, tile_composition, flora, forage);
     let throughput = forage_per_worker_biomass(forage, seasonal);
-    FollowPolicy::FORAGE_POLICIES
+    FollowPolicy::ALL
         .iter()
         .map(|&policy| {
             let markup = deplete_trade_markup(policy, forage);
@@ -2193,6 +2183,8 @@ pub fn plant_policy_forecasts(
             };
             let ceiling_biomass = forage_policy_ceiling(
                 policy,
+                // The rows are the pure-harvest ceilings; a build dips whichever row is selected.
+                NO_IMPROVEMENT_UNDERWAY,
                 patch.biomass,
                 patch.carrying_capacity,
                 &ecology,
@@ -2269,6 +2261,8 @@ pub(crate) fn forage_forecast(
         plant_food_only(forage_provisions(
             forage_policy_ceiling(
                 policy,
+                // The four rows are the pure-harvest ceilings; the dip rides `build_dips` below.
+                NO_IMPROVEMENT_UNDERWAY,
                 patch.biomass,
                 patch.carrying_capacity,
                 &ecology,
@@ -2291,22 +2285,12 @@ pub(crate) fn forage_forecast(
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
-        // The investment rungs: what the patch pays *while preparing* (Cultivate at rung 2, Sow at
-        // rung 3 — each its own field, since the two dips are independently tunable), and what it
-        // will pay *once prepared* — so the client can show "preparing X → then Y" before committing.
-        //
-        // **Both stay honest on an ALREADY-TENDED patch**, which is the copy bug slice 7 fixed: this
-        // branch used to be `SourceYieldForecast::tended(managed)`, whose every ceiling — the
-        // "preparing" dip and the "then" payoff alike — was the one managed number, so a completed
-        // rung-2 patch quoted "preparing 0.66 → then 0.66". Now `ceiling_prepare` is Cultivate's dip
-        // on this patch's own (already boosted) curve, `ceiling_sow` is Sow's dip on it, and
-        // `managed_yield` below is the rung-2 payoff — each computed, none copied.
-        ceiling_prepare: ceiling(FollowPolicy::Cultivate),
-        ceiling_sow: ceiling(FollowPolicy::Sow),
-        // `Tame` is animal-only — a patch has no taming rung, and `forage_policy_ceiling` yields `0`
-        // for it. Resolved through the same `ceiling` closure rather than a literal, so the "not a
-        // forage policy" rule stays stated in exactly one place.
-        ceiling_tame: ceiling(FollowPolicy::Tame),
+        // **The plant web's two build dips, as the FACTORS they are** (issue #442 §2.2). They used
+        // to be three more ceiling *rows* — `ceiling_prepare` (Cultivate), `ceiling_sow` and a
+        // permanently-zero `ceiling_tame` — each the rung's fraction of the **Sustain** ceiling,
+        // which was only expressible while a build verb *was* the policy. A patch is a plant source,
+        // so it prices `Cultivate` and `Sow`; `Tame`/`Corral` are not askable of it by type.
+        build_dips: BuildDips::for_branch(ladder, RungBranch::Plant),
         // **Cultivate's "then Y"** — what this patch will pay once tended, on the tended curve. On a
         // patch that is *already* tended this is simply its own `ceiling_sustain`, which is the truth:
         // the rung is built, and the number is what it pays. (Sow's "then Y" is `field_provisions`,
@@ -2389,6 +2373,7 @@ pub fn project_realized_forage(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     horizon: u32,
 ) -> f32 {
     if horizon == 0 {
@@ -2425,6 +2410,7 @@ pub fn project_realized_forage(
                 tile_composition,
                 workers,
                 policy,
+                improvement,
                 forage,
                 flora,
                 ladder,
@@ -2473,6 +2459,7 @@ pub fn project_arrivals_forage(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     horizon: u32,
 ) -> Vec<f32> {
     // `LaborConfig::validate` pins `horizon > 0`; a zero horizon yields an empty schedule, which the
@@ -2504,6 +2491,7 @@ pub fn project_arrivals_forage(
                 tile_composition,
                 workers,
                 policy,
+                improvement,
                 forage,
                 flora,
                 ladder,
@@ -2534,6 +2522,7 @@ pub fn forage_source_yield_preview(
     output_multiplier: f32,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
 ) -> SourceYield {
@@ -2570,6 +2559,7 @@ pub fn forage_source_yield_preview(
         output_multiplier,
         workers,
         policy,
+        improvement,
         realized_horizon,
     );
     // The discrete twin, from the same patch state: what lands on each of the next
@@ -2584,6 +2574,7 @@ pub fn forage_source_yield_preview(
         output_multiplier,
         workers,
         policy,
+        improvement,
         arrivals_horizon,
     );
     // **`managed` is rung 3 ONLY** (slice 7). It marks the sources whose harvest cannot overdraw —
@@ -2598,6 +2589,7 @@ pub fn forage_source_yield_preview(
         0,
         workers,
         policy,
+        improvement,
         realized,
         // The plant web's steady TRADE projection is the same gap the forecast carries — see
         // [`PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`]. The trade a Deplete gather *actually* earns is
@@ -2714,6 +2706,7 @@ mod tests {
             NO_BASKET,
             20,
             FollowPolicy::Sustain,
+            NO_IMPROVEMENT_UNDERWAY,
             &forage,
             &FloraConfig::builtin(),
             &LadderConfig::builtin(),
@@ -2745,6 +2738,7 @@ mod tests {
                 NO_BASKET,
                 20,
                 FollowPolicy::Sustain,
+                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
@@ -2798,6 +2792,7 @@ mod tests {
                 NO_BASKET,
                 3,
                 FollowPolicy::Eradicate,
+                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
@@ -2839,6 +2834,7 @@ mod tests {
                 NO_BASKET,
                 workers,
                 policy,
+                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),
@@ -2964,6 +2960,7 @@ mod tests {
                 NO_BASKET,
                 50,
                 FollowPolicy::Eradicate,
+                NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
                 &LadderConfig::builtin(),

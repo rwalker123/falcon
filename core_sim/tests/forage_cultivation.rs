@@ -20,7 +20,7 @@ use core_sim::{
     spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
     wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
     FactionInventory, FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -162,32 +162,34 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
-/// Switch a band's (single) Forage assignment to `policy` — what the client's picker does. (The
-/// *finishing* case needs no picker since issue #420: completion retires the build verb itself.)
-fn set_forage_policy(app: &mut App, band: bevy::prelude::Entity, policy: FollowPolicy) {
+/// Check or clear the **improvement** on a band's (single) Forage assignment — what the client's
+/// checkbox does. Since issue #442 this touches only the improvement slot: the stance and the crew
+/// stay put, and completion clears the box itself.
+fn set_forage_improvement(
+    app: &mut App,
+    band: bevy::prelude::Entity,
+    improvement: Option<Improvement>,
+) {
     let mut allocation = app
         .world
         .get_mut::<LaborAllocation>(band)
         .expect("band forages");
-    let assignment = allocation
+    allocation
         .assignments
         .first_mut()
-        .expect("a Forage assignment");
-    let LaborTarget::Forage {
-        policy: current, ..
-    } = &mut assignment.target
-    else {
-        panic!("the fixture band forages");
-    };
-    *current = policy;
+        .expect("a Forage assignment")
+        .improvement = improvement;
 }
 
+/// A band foraging `patch`. `improvement` is the second axis; the **stance** is `Sustain` throughout
+/// this file, which measures the `Cultivate` build rather than the harvest pressure beside it.
 fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
+    let policy = FollowPolicy::Sustain;
     app.world
         .spawn((
             PopulationCohort {
@@ -226,6 +228,7 @@ fn spawn_forager(
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
+                    improvement,
                 }],
                 ..Default::default()
             },
@@ -280,19 +283,19 @@ fn cultivation_config(app: &App) -> (f32, f32, f32) {
         tended
             .yield_fraction_while_building()
             .expect("the tended rung is an investment"),
-        tended.build_accrual(FollowPolicy::Cultivate, true, RUNG_TIMESCALE_UNSCALED),
+        tended.build_accrual(Some(Improvement::Cultivate), true, RUNG_TIMESCALE_UNSCALED),
         tended.build_decay(RUNG_TIMESCALE_UNSCALED),
     )
 }
 
-/// One turn of the pipeline under `policy` on a fresh identical world; returns the provisions the
-/// band was paid. Lets a test compare the Cultivate **dip** against the Sustain baseline without
-/// re-deriving the MSY formula anywhere.
-fn one_turn_yield(policy: FollowPolicy) -> f32 {
+/// One turn of the pipeline under `improvement` on a fresh identical world; returns the provisions
+/// the band was paid. Lets a test compare the Cultivate **dip** against the undipped Sustain baseline
+/// without re-deriving the MSY formula anywhere.
+fn one_turn_yield(improvement: Option<Improvement>) -> f32 {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, policy);
+    spawn_forager(&mut app, tile, coord, improvement);
     run_turns_with_forage(&mut app, 1);
     provisions_f32(&mut app)
 }
@@ -304,7 +307,7 @@ fn one_turn_yield(policy: FollowPolicy) -> f32 {
 fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    spawn_forager(&mut app, tile, coord, None);
 
     run_turns_with_forage(&mut app, 5);
     let learned = app
@@ -343,8 +346,8 @@ fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
 /// gathering — and the reduced take is *sustainable*, so the patch stays Thriving throughout.
 #[test]
 fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() {
-    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
-    let cultivating_yield = one_turn_yield(FollowPolicy::Cultivate);
+    let sustain_yield = one_turn_yield(None);
+    let cultivating_yield = one_turn_yield(Some(Improvement::Cultivate));
     assert!(
         sustain_yield > 0.0,
         "baseline Sustain yield must be positive"
@@ -362,7 +365,7 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
     // so it is a sustainable take, not a depletion.
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     let (_, progress_per_turn, _) = cultivation_config(&app);
     run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
     assert_eq!(
@@ -392,7 +395,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         .carrying_capacity;
 
     // A wild Sustain gather commits nothing — rung 1 never picks a crop.
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, None);
     run_turns_with_forage(&mut app, 1);
     assert_eq!(
         app.world
@@ -404,7 +407,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         "gathering the wild basket is not a commitment"
     );
 
-    set_forage_policy(&mut app, band, FollowPolicy::Cultivate);
+    set_forage_improvement(&mut app, band, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 1);
     let patch = app
         .world
@@ -458,12 +461,12 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
 /// patch then pays the full tended yield — strictly more than the wild Sustain skim it replaced.
 #[test]
 fn cultivate_completes_then_pays_the_tended_yield() {
-    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
+    let sustain_yield = one_turn_yield(None);
 
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     let (_, progress_per_turn, _) = cultivation_config(&app);
 
     // Progress accrues at the full rate — no net-of-decay drag while the crew is working it.
@@ -488,11 +491,11 @@ fn cultivate_completes_then_pays_the_tended_yield() {
         assert_eq!(registry.cultivated_count(FactionId(0)), 1);
     }
 
-    // **Harvest it to read the payoff.** Since issue #420 the sim retires `Cultivate` onto the
-    // harvest rung on the completing turn, so this is a no-op re-assert — kept because this test
-    // measures the *payoff* and must read it off the harvest rung whatever put the band there. The
-    // retire itself is pinned in `systems::labor::labor_yield_tests`.
-    set_forage_policy(&mut app, band, FollowPolicy::Sustain);
+    // **Harvest it to read the payoff.** Since issue #420 completion clears the improvement itself,
+    // so this is a no-op re-assert — kept because this test measures the *payoff* and must read it
+    // off an undipped harvest whatever put the band there. The clearing itself is pinned in
+    // `systems::labor::labor_yield_tests`.
+    set_forage_improvement(&mut app, band, None);
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let tended_yield = provisions_f32(&mut app) - before;
@@ -519,7 +522,7 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     // (a) No knowledge.
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 5);
     assert_eq!(
         progress_of(&app, coord),
@@ -532,7 +535,7 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 3);
     let banked = progress_of(&app, coord);
     assert!(banked > 0.0);
@@ -579,7 +582,7 @@ fn tended_patch_pays_its_tending_band_place_local_and_draws_down() {
     grant_cultivation_knowledge(&mut app, FactionId(0));
     // Sustain, not Cultivate: this test reads the finished rung's *harvest*, on a patch seated
     // already-complete — the rung a band that really built it is retired onto (issue #420).
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    spawn_forager(&mut app, tile, coord, None);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
     // The decay pass pays nothing and spares the worked patch.
@@ -657,7 +660,7 @@ fn abandoned_preparation_decays() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
 
     run_turns_with_forage(&mut app, 5);
     let banked = progress_of(&app, coord);

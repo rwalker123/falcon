@@ -31,6 +31,12 @@ pub(crate) fn labor_assignment_to_state(
         // The other currency, beside the food it never joins (issue #337).
         trade_yield: yields.trade,
         realized_trade_yield: yields.realized_trade,
+        // **The second axis** (issue #442) — what this crew is building, `""` for a pure harvest.
+        // Written for every kind, because a band-wide role simply never carries one.
+        improvement: assignment
+            .improvement
+            .map(|improvement| improvement.as_str().to_string())
+            .unwrap_or_default(),
         ..Default::default()
     };
     match &assignment.target {
@@ -678,6 +684,7 @@ mod tests {
                     policy: FollowPolicy::Sustain,
                 },
                 workers: 4,
+                improvement: None,
             }],
             last_yields: vec![SourceYield {
                 arrivals,
@@ -803,6 +810,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Scout,
                 workers: 4,
+                improvement: None,
             }],
             last_yields: vec![SourceYield::ZERO],
             ..Default::default()

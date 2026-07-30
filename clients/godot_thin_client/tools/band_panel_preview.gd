@@ -69,10 +69,14 @@ const QUARRY_NEAR_Y := 18
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
 
-## The work-inspector policy-picker states work TWO Hunt rows on one band, told apart by the rung they
-## stand on: `corral` is an INVESTMENT rung (the picker offers only the four extractive ones, so it can
-## highlight nothing) and `sustain` is the ordinary control.
-const INVESTMENT_ROW_POLICY := "corral"
+## The work-inspector policy-picker states work TWO Hunt rows on one band. They used to be told apart
+## by the RUNG they stood on — one on `corral`, which the four-rung picker could not highlight at all.
+## **Since issue #442 there is no such row**: `policy` is always a stance, so both rows light a rung
+## and the picker behaves identically on each. What the pair now proves is the other half of that
+## split — a row that IS building something (`improvement: "corral"`) still lights its STANCE and a
+## pick still commits immediately, because a stance re-pick no longer touches the build at all.
+const INVESTMENT_ROW_STANCE := "sustain"
+const INVESTMENT_ROW_IMPROVEMENT := "corral"
 const INVESTMENT_ROW_HERD_ID := "game_aurochs_11"
 ## The crew that mid-build pen owes. Set through `_set_managed_herders`, so BOTH herder counts carry it.
 const INVESTMENT_ROW_HERDERS_NEEDED := 3
@@ -567,33 +571,35 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
-	# until now (`_work_policy_open` was never set true in either harness). Two rows, two behaviours:
-	# a source standing on an INVESTMENT rung (Corral) highlights none of the four extractive rungs,
-	# so it must SAY the standing rung and CONFIRM before a pick discards it; a source standing on an
-	# extractive rung (Sustain) must behave exactly as it always has — one lit rung, immediate emit.
+	# until it got these (`_work_policy_open` is otherwise never true in either harness). Two rows: one
+	# BUILDING a pen beside one that is not, and the claim is that the picker cannot tell them apart.
+	# The standing-investment WARN line and the discard confirm that used to ride the first row are
+	# gone with issue #442 — a stance re-pick leaves the improvement alone, so there is nothing to warn
+	# about discarding, and both rows take the immediate-emit path the extractive one always did.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
 	_hud.update_herds(_investment_policy_herd_fixtures())
 	_push_bands([_investment_policy_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
-	_open_work_policy_picker(INVESTMENT_ROW_POLICY)
+	_open_work_policy_picker_for_herd(INVESTMENT_ROW_HERD_ID)
 	await _settle()
 	await _save("band_panel_work_policy_investment")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_assert_standing_investment_line(INVESTMENT_ROW_POLICY)
-	_assert_policy_pick_confirms(INVESTMENT_ROW_POLICY, true)
+	# A BUILDING row lights its STANCE like any other — the state that used to light nothing.
+	_assert_lit_rung(INVESTMENT_ROW_STANCE)
+	_assert_policy_pick_confirms(INVESTMENT_ROW_HERD_ID, false)
 
-	# The CONTROL: the very same picker on the extractive row beside it. Both assertions here must
-	# pass BEFORE and AFTER the investment fix — they are what proves it cannot fire on the normal path.
-	_open_work_policy_picker(EXTRACTIVE_ROW_POLICY)
+	# The CONTROL: the very same picker on the row that is building NOTHING. Its two assertions are
+	# now identical to the pair above, which IS the claim — the improvement axis is invisible here.
+	_open_work_policy_picker_for_herd(EXTRACTIVE_ROW_HERD_ID)
 	await _settle()
 	await _save("band_panel_work_policy_extractive")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
 	_assert_lit_rung(EXTRACTIVE_ROW_POLICY)
-	_assert_policy_pick_confirms(EXTRACTIVE_ROW_POLICY, false)
+	_assert_policy_pick_confirms(EXTRACTIVE_ROW_HERD_ID, false)
 	_hud._bandpanel._work_policy_open = false
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
@@ -1487,7 +1493,8 @@ func _investment_policy_band_fixture() -> Dictionary:
 	band["entity"] = 912
 	band["id"] = "Band 9"
 	band["labor_assignments"] = [
-		{"kind": "hunt", "workers": 3, "workers_needed": 3, "policy": INVESTMENT_ROW_POLICY,
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "policy": INVESTMENT_ROW_STANCE,
+			"improvement": INVESTMENT_ROW_IMPROVEMENT,
 			"fauna_id": INVESTMENT_ROW_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 0.75, "sustainable_yield": 0.75},
 		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": EXTRACTIVE_ROW_POLICY,
@@ -1507,8 +1514,9 @@ func _investment_policy_herd_fixtures() -> Array:
 		"per_worker_yield": 0.25,
 		"hunt_policy_ceilings": {
 			"sustain": 0.40, "surplus": 1.10, "deplete": 1.60, "eradicate": 2.40,
-			"tame": 0.20, INVESTMENT_ROW_POLICY: 0.75,
 		},
+		# The build dips are FRACTIONS of the held stance now, not rows of the list above (#442).
+		"tame_build_fraction": 0.50, "corral_build_fraction": 0.50,
 	}
 	_set_managed_herders(penned, INVESTMENT_ROW_HERDERS_NEEDED)
 	return [
@@ -1532,7 +1540,8 @@ func _under_herded_work_band_fixture() -> Dictionary:
 	band["id"] = "Band 18"
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 2, "workers_needed": UNDER_HERDED_WORK_HERDERS_NEEDED,
-			"policy": "corral",
+			"policy": "sustain",
+			"improvement": "corral",
 			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 5.40, "sustainable_yield": 5.40, "overdraws": false},
 		{"kind": "scout", "workers": 1},
@@ -1627,7 +1636,11 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	var herd := _hud._band_labor.find_world_herd(herd_id)
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, "sustain")
-	var floor_workers := SourceForecast.herd_crew_floor(herd, forecast)
+	# `herd_crew_floor` keys on the IMPROVEMENT axis since #442 (it picks the ownership-gated
+	# `herders_needed` or the would-be `herders_needed_if_managed`), so the probe reads the ROW's own
+	# improvement rather than asserting one — that is what keeps the twin comparison honest.
+	var floor_workers := SourceForecast.herd_crew_floor(herd,
+		_hud._band_labor.improvement_for_hunt(band, herd_id) != SourceForecast.IMPROVEMENT_NONE)
 	var compose_cap := int(_hud._drawercompose._forecast_worker_cap(
 		forecast, HERDER_FLOOR_HERDERS_NEEDED + 1, floor_workers)["cap"])
 	var row_below: bool = bool(SourceForecast.source_worker_cap_state(
@@ -1843,17 +1856,19 @@ func _open_work_inspector_for_herd(herd_id: String) -> void:
 		return
 	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
 
-func _open_work_policy_picker(policy: String) -> void:
+## **Keyed on the HERD, not on the rung.** Both rows stand on the same stance now (issue #442 — the
+## build verb moved to its own field), so a rung is no longer an identity; the source is.
+func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 	var band: Dictionary = _hud._band_labor._panel_band
 	for model_variant in _hud._bandpanel._work_source_models(band, 0):
 		var model: Dictionary = model_variant
-		if String(model.get("policy", "")) != policy:
+		if String(model.get("herd_id", "")) != herd_id:
 			continue
 		_hud._bandpanel._work_open_key = String(model.get("key", ""))
 		_hud._bandpanel._work_policy_open = true
 		_hud._bandpanel._repage_work_zone()
 		return
-	push_error("band_panel_preview: no work row standing on '%s' — fixture drifted?" % policy)
+	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
 
 ## The open inspector strip: the work zone host's PanelContainer (the board and chips are boxes).
 func _work_inspector_strip() -> PanelContainer:
@@ -1898,29 +1913,17 @@ func _find_first_grid(node: Node) -> GridContainer:
 			return found
 	return null
 
-## RED 1: a source standing on an INVESTMENT rung must SAY so. Without it the picker highlights none
-## of its four rungs and reads as an unset control on a very-much-set assignment.
-func _assert_standing_investment_line(policy: String) -> void:
-	var want := HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(policy)
-	var strip := _work_inspector_strip()
-	if strip != null and _find_label_with_text(strip, want) != null:
-		print("band_panel_preview: assert OK — inspector states the standing rung ('%s')" % want)
-	else:
-		push_error("band_panel_preview: inspector never rendered the standing-investment line '%s'" % want)
+## `_assert_standing_investment_line` went with the WARN line it read, and `_find_label_with_text`
+## was its only caller (issue #442): a work row can no longer stand on a rung the picker cannot
+## show, so there is no such line to look for.
 
-func _find_label_with_text(node: Node, text: String) -> Label:
-	if node is Label and (node as Label).text == text:
-		return node
-	for child in node.get_children():
-		var found := _find_label_with_text(child, text)
-		if found != null:
-			return found
-	return null
-
-## RED 2 (the important one) / CONTROL (i): press a real rung button and watch what happens.
-## `want_confirm` true  — the standing rung is an INVESTMENT: a ConfirmationDialog must appear and
-##                        `assign_labor_requested` must NOT fire yet (the ~25-turn build is at stake).
-## `want_confirm` false — the ordinary EXTRACTIVE path: the emit must land immediately, no dialog.
+## Press a real rung button and watch what happens: the emit must land IMMEDIATELY, with no dialog,
+## on BOTH rows. `want_confirm` survives as a parameter so the assertion still states which outcome it
+## expects rather than asserting a bare "nothing happened" — but no caller passes `true` any more.
+## The confirm it once guarded existed because a stance pick DISCARDED a running build; since issue
+## #442 `assign_labor` does not touch the improvement axis at all, so there is nothing to lose and
+## nothing to ask about. A row that IS building takes the same path as one that is not, which is the
+## whole point of the pair.
 func _assert_policy_pick_confirms(standing: String, want_confirm: bool) -> void:
 	var buttons := _picker_rung_buttons()
 	if not buttons.has(PICKED_RUNG_POLICY):

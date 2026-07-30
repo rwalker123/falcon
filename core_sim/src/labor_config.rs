@@ -147,10 +147,10 @@ const DEFAULT_CULTIVATION_TENDED_CONVERSION_GAIN: f32 = 2.0;
 /// managed rate. They stay here for the same reason `pastoral_gain`/`pen_gain` stay in `fauna_config`:
 /// a rung's *payoff* is its web's economy, where its *build* is the ladder's grammar.
 ///
-/// A patch worked under the explicit **Cultivate** policy (`FollowPolicy::Cultivate`) — faction knows
-/// Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's `progress_per_turn` toward
-/// cultivation (`1.0` = cultivated) while yielding only that rung's `yield_fraction_while_building ×
-/// its Sustain (MSY) ceiling` (the investment cost). A cultivated patch that isn't tended any given
+/// A patch worked with the **Cultivate** improvement in flight ([`crate::components::Improvement::Cultivate`])
+/// — faction knows Cultivation, patch is **Thriving** — accrues the `plant:tended` rung's
+/// `progress_per_turn` toward cultivation (`1.0` = cultivated) while yielding only that rung's
+/// `yield_fraction_while_building ×` the assignment's own stance ceiling (the investment cost). A cultivated patch that isn't tended any given
 /// turn goes **feral**, its progress decaying by the rung's `decay_per_turn` back below `1.0`
 /// (reverting to a wild gather patch). A tended patch is **still a wild stand** — the tending buys it
 /// a faster curve (`tended_regrowth_gain`), and the band gathers it under the full policy axis,

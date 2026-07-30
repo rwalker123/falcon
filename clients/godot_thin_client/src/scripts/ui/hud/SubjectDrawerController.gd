@@ -299,10 +299,10 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
     # never invent a state on a patch that isn't being worked.
-    if bool(tile_info.get("is_cultivated", false)):
+    if bool(tile_info.get("patch_is_cultivated", false)):
         lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
-    elif tile_info.has("cultivation_progress"):
-        var cultivation_progress := float(tile_info["cultivation_progress"])
+    elif tile_info.has("patch_cultivation_progress"):
+        var cultivation_progress := float(tile_info["patch_cultivation_progress"])
         if cultivation_progress > 0.0:
             lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress, false))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent

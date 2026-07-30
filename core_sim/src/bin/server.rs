@@ -45,7 +45,7 @@ use core_sim::{
     EcologyPhase, EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
     FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry,
-    FrameSink, GenerationId, GenerationRegistry, HerdRegistry, InfluencerImpacts,
+    FrameSink, GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
     InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
     QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
@@ -549,6 +549,15 @@ enum Command {
         faction: FactionId,
         target_x: u32,
         target_y: u32,
+    },
+    /// Abandon whatever improvement is in flight on one source (issue #442) — `kind` picks the web,
+    /// `target_*` names a patch, `fauna_id` a herd. See `handle_abandon_improvement`.
+    AbandonImprovement {
+        faction: FactionId,
+        kind: String,
+        target_x: u32,
+        target_y: u32,
+        fauna_id: String,
     },
     ExtendPen {
         faction: FactionId,
@@ -1532,6 +1541,7 @@ fn seed_source_yield(
     app: &mut bevy::prelude::App,
     band: Entity,
     target: &LaborTarget,
+    improvement: Option<Improvement>,
     workers: u32,
 ) {
     // Unassigned (`workers == 0`): `set_assignment` already dropped the source's row with its
@@ -1613,6 +1623,7 @@ fn seed_source_yield(
                 output_mult,
                 workers,
                 *policy,
+                improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
             )
@@ -1637,6 +1648,7 @@ fn seed_source_yield(
                 output_mult,
                 workers,
                 *policy,
+                improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
             )
@@ -1646,185 +1658,218 @@ fn seed_source_yield(
     band_allocation_mut(app, band).set_source_yield(target, seeded);
 }
 
-/// Validate a labor target's **policy** against the source it names, returning a player-facing
-/// rejection reason (`Err`) or `Ok`. Two independent checks:
+/// Validate a labor target's **stance** against the source it names, returning a player-facing
+/// rejection reason (`Err`) or `Ok`.
 ///
-/// 1. **Kind.** The *investment* policies are kind-exclusive: `Cultivate`/`Sow` are Forage-only,
-///    `Tame`/`Corral` are Hunt-only (`FollowPolicy::valid_for_forage` / `valid_for_hunt`). An invalid
-///    combo is rejected outright rather than silently coerced.
-/// 2. **Gates — one knowledge per rung-transition** (§4.3). Each investment verb resolves its gate off
-///    its OWN rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving**
-///    patch (not already tended, not someone else's); **`Sow`** needs **Seed Selection** + ground the
-///    `plant:field` rung's `site_requirement` accepts (see `validate_sow`); `Tame` needs **Herding**
-///    (see `validate_tame`); and `Corral` needs **Penning** — *not* Herding, which gates `tame` alone —
-///    plus an owned, **domesticated**, not-yet-penned herd of a `pen`-ceiling species.
-///
-/// The extractive policies (Sustain/Surplus/Deplete/Eradicate) are always valid on either kind.
+/// **Since issue #442 the stance axis has exactly one rule left**, and it is a *species* rule rather
+/// than a policy one: `fauna::hunt_policies_for` prunes a [`fauna::HuntYield::yields_nothing`] quarry
+/// — worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
+/// rate at which to collect nothing. Everything this function used to check was about the **build
+/// verbs**, which are no longer stances: the kind-exclusivity check (`Cultivate` on a herd) and the
+/// four per-rung gates moved to [`validate_improvement`], where they belong to the axis that carries
+/// them. That split is what makes a crew change a *stance-side* edit which never re-asserts a
+/// paused build's start gate (`docs/plan_investment_rung_toggle.md` §6).
 fn validate_labor_policy(
     app: &bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
 ) -> Result<(), String> {
+    let _ = faction;
     match target {
-        LaborTarget::Forage {
-            tile,
-            policy,
-            species,
-        } => {
-            if !policy.valid_for_forage() {
-                return Err(format!(
-                    "'{}' is not a foraging policy — it applies to herds.",
-                    policy.as_str()
-                ));
-            }
-            if matches!(policy, FollowPolicy::Sow) {
-                return validate_sow(app, faction, *tile, species.as_deref());
-            }
-            if !matches!(policy, FollowPolicy::Cultivate) {
-                return Ok(());
-            }
-            // The rung's own gate, resolved off the ladder — the `validate_tame` pattern: the record
-            // says which knowledge opens `cultivate`, and the ladder says when a knowledge is known.
-            let (knowledge_threshold, tended_unlock) = {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                (
-                    ladder.knowledge.completion_threshold,
-                    ladder.rung(RungKey::PlantTended).unlock_discovery_id(),
-                )
-            };
-            let knows_cultivation = tended_unlock.is_none_or(|knowledge| {
-                knows(
-                    app.world.resource::<DiscoveryProgressLedger>(),
-                    faction,
-                    knowledge,
-                    knowledge_threshold,
-                )
-            });
-            if !knows_cultivation {
-                return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
-            }
-            let Some(patch) = app.world.resource::<ForageRegistry>().patch(*tile) else {
-                return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
-            };
-            if patch.is_cultivated() {
-                return Err(format!(
-                    "The patch at ({}, {}) is already cultivated — forage it to tend it.",
-                    tile.x, tile.y
-                ));
-            }
-            // **Thriving is a START gate, not a CONTINUE gate.** It asks whether the land is fit for
-            // a crew to *begin* clearing it — a question a build already underway has answered. The
-            // sim's own mid-build ruling is that a patch dropping out of Thriving **holds its
-            // progress and stops accruing**, neither losing the investment nor switching the policy;
-            // that ruling is only actionable if the player can still adjust the crew while the build
-            // is paused, and adjusting a crew re-issues this exact `Cultivate` assignment. Gated on
-            // the phase, the only executable response to a paused build was to unassign it
-            // (`workers == 0`, the one exempt path) — which clears `tended_this_turn` and starts the
-            // feral bleed. So a build underway skips **this** check and nothing else: the rejections
-            // above and below still run, in particular the other-faction owner rule.
-            if !patch.cultivation_underway(faction) && patch.ecology_phase != EcologyPhase::Thriving
-            {
-                return Err(format!(
-                    "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
-                    tile.x, tile.y
-                ));
-            }
-            if patch.owner.is_some_and(|owner| owner != faction) {
-                return Err(format!(
-                    "Another people are cultivating the patch at ({}, {}).",
-                    tile.x, tile.y
-                ));
-            }
-            // **Which plant would this commit the ground to?** (Flora Roster S1.) The last gate,
-            // because it is the most specific: the land and the knowledge decide whether the verb is
-            // available at all, and this decides whether the *selection* is one this ground can grow.
-            validate_species_selection(app, *tile, species.as_deref(), RungKey::PlantTended)
-        }
         LaborTarget::Hunt { fauna_id, policy } => {
-            if !policy.valid_for_hunt() {
-                return Err(format!(
-                    "'{}' is not a hunting policy — it applies to forage patches.",
-                    policy.as_str()
-                ));
-            }
             // **The species' offered ladder** (`fauna::hunt_policies_for`) — the ONE seam this
             // validator shares with the snapshot's exported `huntPolicyCeilings`, so the picker the
-            // client draws and the picker the sim accepts cannot drift into two lists. It prunes
-            // only the degenerate `yields_nothing` quarry (worth neither meat nor pelt), which
-            // offers `Eradicate` alone: every other rung would be a rate at which to collect
-            // nothing. A wolf keeps the full ladder and is paid in pelts.
-            {
-                let fauna = app.world.resource::<FaunaConfigHandle>().get();
-                let species = app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .find(fauna_id)
-                    .map(|herd| herd.species.clone());
-                if let Some(species) = species {
-                    let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
-                    if !offered.contains(policy) {
-                        return Err(format!(
-                            "The {} yields neither food nor trade goods — the only thing to do with \
-                             it is eradicate it.",
-                            species
-                        ));
-                    }
+            // client draws and the picker the sim accepts cannot drift into two lists.
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let species = app
+                .world
+                .resource::<HerdRegistry>()
+                .find(fauna_id)
+                .map(|herd| herd.species.clone());
+            if let Some(species) = species {
+                let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
+                if !offered.contains(policy) {
+                    return Err(format!(
+                        "The {} yields neither food nor trade goods — the only thing to do with \
+                         it is eradicate it.",
+                        species
+                    ));
                 }
-            }
-            if matches!(policy, FollowPolicy::Tame) {
-                return validate_tame(app, faction, fauna_id);
-            }
-            if !matches!(policy, FollowPolicy::Corral) {
-                return Ok(());
-            }
-            // **The §4.3 gate reshuffle**: rung 3 is gated on **Penning**, the knowledge rung 2
-            // teaches — not on Herding, which now gates `tame` alone. Read off the rung record (the
-            // `validate_tame` pattern) rather than a hard-coded id, so the gate cannot drift from the
-            // ladder the labor arm accrues against.
-            let (knowledge_threshold, pen_unlock) = {
-                let ladder = app.world.resource::<LadderConfigHandle>().get();
-                (
-                    ladder.knowledge.completion_threshold,
-                    ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
-                )
-            };
-            let knows_penning = pen_unlock.is_none_or(|knowledge| {
-                knows(
-                    app.world.resource::<DiscoveryProgressLedger>(),
-                    faction,
-                    knowledge,
-                    knowledge_threshold,
-                )
-            });
-            if !knows_penning {
-                return Err(
-                    "Your people have not learned Penning yet. Tame and keep herds to learn it."
-                        .to_string(),
-                );
-            }
-            let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
-                return Err(format!("No herd '{}' to corral.", fauna_id));
-            };
-            // Grazing 2d-δ: only a `Pen`-ceiling species may be penned (nomadic herders don't fence).
-            if !herd.can_pen() {
-                return Err(format!("{} cannot be penned.", herd.species));
-            }
-            if herd.is_corralled() {
-                return Err(format!("{} is already corralled.", fauna_id));
-            }
-            if !herd.is_domesticated() {
-                return Err(format!(
-                    "{} is not domesticated. Tame it before building a pen.",
-                    fauna_id
-                ));
-            }
-            if herd.owner != Some(faction) {
-                return Err(format!("You do not own {}.", fauna_id));
             }
             Ok(())
         }
-        LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
+        LaborTarget::Forage { .. } | LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
     }
+}
+
+/// Validate an **[`Improvement`]** against the source it names — the gate half of the second axis,
+/// and the home of every check `validate_labor_policy` used to carry for a build verb.
+///
+/// 1. **The web must match the source kind.** `Cultivate`/`Sow` are plant-only, `Tame`/`Corral`
+///    animal-only ([`Improvement::valid_for_forage`] / [`Improvement::valid_for_hunt`]). Rejected
+///    outright rather than silently coerced.
+/// 2. **Gates — one knowledge per rung-transition** (§4.3). Each verb resolves its gate off its OWN
+///    rung record, never a hard-coded id: `Cultivate` needs **Cultivation** + a **Thriving** patch
+///    (not already tended, not someone else's); `Sow` needs **Seed Selection** + ground the
+///    `plant:field` rung's `site_requirement` accepts; `Tame` needs **Herding**; and `Corral` needs
+///    **Penning** — *not* Herding, which gates `tame` alone — plus an owned, **domesticated**,
+///    not-yet-penned herd of a `pen`-ceiling species. Each is unchanged by the axis split.
+fn validate_improvement(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    target: &LaborTarget,
+    improvement: Improvement,
+) -> Result<(), String> {
+    match target {
+        LaborTarget::Forage { tile, species, .. } => {
+            if !improvement.valid_for_forage() {
+                return Err(format!(
+                    "'{}' is not something you build on the land — it applies to herds.",
+                    improvement.as_str()
+                ));
+            }
+            match improvement {
+                Improvement::Sow => validate_sow(app, faction, *tile, species.as_deref()),
+                _ => validate_cultivate(app, faction, *tile, species.as_deref()),
+            }
+        }
+        LaborTarget::Hunt { fauna_id, .. } => {
+            if !improvement.valid_for_hunt() {
+                return Err(format!(
+                    "'{}' is not something you build on a herd — it applies to forage patches.",
+                    improvement.as_str()
+                ));
+            }
+            match improvement {
+                Improvement::Tame => validate_tame(app, faction, fauna_id),
+                _ => validate_corral(app, faction, fauna_id),
+            }
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => Err(format!(
+            "There is nothing to {} on a standing role.",
+            improvement.as_str()
+        )),
+    }
+}
+
+/// The **`Cultivate`** verb's gates — the plant rung-2 twin of [`validate_tame`], split out of the
+/// old inline chain when the improvement became its own axis.
+fn validate_cultivate(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    species: Option<&str>,
+) -> Result<(), String> {
+    // The rung's own gate, resolved off the ladder — the `validate_tame` pattern: the record
+    // says which knowledge opens `cultivate`, and the ladder says when a knowledge is known.
+    let (knowledge_threshold, tended_unlock) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.rung(RungKey::PlantTended).unlock_discovery_id(),
+        )
+    };
+    let knows_cultivation = tended_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_cultivation {
+        return Err("Your people have not learned Cultivation yet. Sustain-forage thriving patches to learn it.".to_string());
+    }
+    let Some(patch) = app.world.resource::<ForageRegistry>().patch(tile) else {
+        return Err(format!("No forage patch at ({}, {}).", tile.x, tile.y));
+    };
+    if patch.is_cultivated() {
+        return Err(format!(
+            "The patch at ({}, {}) is already cultivated — forage it to tend it.",
+            tile.x, tile.y
+        ));
+    }
+    // **Thriving is a START gate, not a CONTINUE gate.** It asks whether the land is fit for a crew
+    // to *begin* clearing it — a question a build already underway has answered. The sim's own
+    // mid-build ruling is that a patch dropping out of Thriving **holds its progress and stops
+    // accruing**, neither losing the investment nor switching the verb.
+    //
+    // **The re-staffing trap this used to create is gone** (issue #442): adjusting a paused build's
+    // crew is an `assign_labor`, which no longer re-asserts the improvement and therefore never
+    // reaches this function at all. The exemption survives because *re-checking* the box on a paused
+    // build is still a legitimate no-op the player may issue — and because the rejections below it
+    // (in particular the other-faction owner rule) must still run either way. It remains a condition
+    // on **this** check only, never an early return past the ones below.
+    if !patch.cultivation_underway(faction) && patch.ecology_phase != EcologyPhase::Thriving {
+        return Err(format!(
+            "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
+            tile.x, tile.y
+        ));
+    }
+    if patch.owner.is_some_and(|owner| owner != faction) {
+        return Err(format!(
+            "Another people are cultivating the patch at ({}, {}).",
+            tile.x, tile.y
+        ));
+    }
+    // **Which plant would this commit the ground to?** (Flora Roster S1.) The last gate, because it
+    // is the most specific: the land and the knowledge decide whether the verb is available at all,
+    // and this decides whether the *selection* is one this ground can grow.
+    validate_species_selection(app, tile, species, RungKey::PlantTended)
+}
+
+/// The **`Corral`** verb's gates — the animal rung-3 twin of [`validate_sow`].
+///
+/// **The §4.3 gate reshuffle**: rung 3 is gated on **Penning**, the knowledge rung 2 teaches — not on
+/// Herding, which now gates `tame` alone. Read off the rung record (the [`validate_tame`] pattern)
+/// rather than a hard-coded id, so the gate cannot drift from the ladder the labor arm accrues
+/// against.
+fn validate_corral(
+    app: &bevy::prelude::App,
+    faction: FactionId,
+    fauna_id: &str,
+) -> Result<(), String> {
+    let (knowledge_threshold, pen_unlock) = {
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        (
+            ladder.knowledge.completion_threshold,
+            ladder.rung(RungKey::AnimalPen).unlock_discovery_id(),
+        )
+    };
+    let knows_penning = pen_unlock.is_none_or(|knowledge| {
+        knows(
+            app.world.resource::<DiscoveryProgressLedger>(),
+            faction,
+            knowledge,
+            knowledge_threshold,
+        )
+    });
+    if !knows_penning {
+        return Err(
+            "Your people have not learned Penning yet. Tame and keep herds to learn it."
+                .to_string(),
+        );
+    }
+    let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
+        return Err(format!("No herd '{}' to corral.", fauna_id));
+    };
+    // Grazing 2d-δ: only a `Pen`-ceiling species may be penned (nomadic herders don't fence).
+    if !herd.can_pen() {
+        return Err(format!("{} cannot be penned.", herd.species));
+    }
+    if herd.is_corralled() {
+        return Err(format!("{} is already corralled.", fauna_id));
+    }
+    if !herd.is_domesticated() {
+        return Err(format!(
+            "{} is not domesticated. Tame it before building a pen.",
+            fauna_id
+        ));
+    }
+    if herd.owner != Some(faction) {
+        return Err(format!("You do not own {}.", fauna_id));
+    }
+    Ok(())
 }
 
 /// The **`Sow`** policy's gates — the plant **rung-3** verb (`docs/plan_intensification_ladder.md`
@@ -2079,8 +2124,10 @@ fn validate_tame(
 ///   `assign_labor <faction> <band> scout <workers>`
 ///   `assign_labor <faction> <band> warrior <workers>`
 ///
-/// `policy` accepts the four extractive rungs plus the kind-specific **investment** rungs
-/// (`cultivate` on forage, `corral` on hunt) — see `validate_labor_policy` for the gates.
+/// `policy` is one of the **four harvest stances** (`sustain`/`surplus`/`deplete`/`eradicate`). It
+/// no longer accepts a build verb: an improvement is set by its own command
+/// (`cultivate`/`sow`/`tame`/`corral`) and **is never touched by this one**
+/// (`docs/plan_investment_rung_toggle.md` §5), which is what makes a paused build's crew editable.
 #[allow(clippy::too_many_arguments)]
 fn handle_assign_labor(
     app: &mut bevy::prelude::App,
@@ -2153,9 +2200,10 @@ fn handle_assign_labor(
         LaborTarget::Warrior => CommandEventKind::CancelOrder,
     };
 
-    // Kind + gate validation for the policy (notably the two investment policies, Cultivate/Corral).
-    // Unassigning (`workers == 0`) is always allowed — a player must be able to abandon an
-    // investment even if its gates have since lapsed.
+    // Stance validation. Unassigning (`workers == 0`) is always allowed — a player must be able to
+    // abandon an investment even if its gates have since lapsed. **The improvement's gates are NOT
+    // re-run here** (issue #442): this command does not set an improvement, so re-asserting one the
+    // band already carries would refuse a crew change on a paused build — the trap §6 removes.
     if workers > 0 {
         if let Err(reason) = validate_labor_policy(app, faction, &target) {
             emit_command_failure(app, event_kind, faction, reason);
@@ -2174,15 +2222,22 @@ fn handle_assign_labor(
         .unwrap_or(0);
 
     let kind_label = target.kind();
-    let (applied, assigned_total) = {
+    let (applied, assigned_total, improvement) = {
         let mut allocation = band_allocation_mut(app, band.entity);
         let applied = allocation.set_assignment(target.clone(), workers, available);
-        (applied, allocation.assigned_total())
+        // `set_assignment` carries any running improvement across, so the seed must price the dip
+        // that is still in flight rather than the undipped stance.
+        let improvement = allocation
+            .assignments
+            .iter()
+            .find(|assignment| assignment.target.same_source(&target))
+            .and_then(|assignment| assignment.improvement);
+        (applied, allocation.assigned_total(), improvement)
     };
-    // Show the source's expected yield immediately (workers added/removed OR policy changed — every
+    // Show the source's expected yield immediately (workers added/removed OR stance changed — every
     // shape of this command that moves the number): without the seed the row reads `+0.00` until the
     // player advances a turn.
-    seed_source_yield(app, band.entity, &target, applied);
+    seed_source_yield(app, band.entity, &target, improvement, applied);
 
     let tick = app.world.resource::<SimulationTick>().0;
     let clamp_note = if applied < workers {
@@ -2438,18 +2493,18 @@ fn handle_send_hunt_expedition(
     // Deplete are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
     let policy: FollowPolicy = match policy.as_deref() {
         None => FollowPolicy::Sustain,
-        // **Every** investment policy is place-bound work a *resident* band does — a detached party
-        // cannot tame a herd, pen it, or sow a field and walk home — so they are rejected here
-        // alongside an unparseable token.
+        // **A build verb is not parseable as a stance at all since issue #442**, so this rejects one
+        // by the same path as any other unknown token — no predicate, no list, nothing to rot. Every
+        // rung-transition is place-bound work a *resident* band does (a detached party cannot tame a
+        // herd, pen it, or sow a field and walk home), and `ExpeditionMission::Hunt` carries a
+        // `FollowPolicy`, which can no longer name one.
         //
-        // **Derived from the grouping, never re-listed** (`FollowPolicy::is_investment` — the one
-        // home for that question). `EXTRACTIVE` *is* the expedition's whole axis (its own docs say so,
-        // and the snapshot's trip-estimate export already walks exactly it), so this cannot drift. The
-        // hand-written `matches!(Cultivate | Corral)` it replaced had already drifted — it silently
-        // **accepted `tame`**, which then sailed past `hunt_expedition_ceiling`'s `debug_assert!` and
-        // took a plausible-looking pastoral-dip ceiling.
+        // The two guards this replaces were both hand-written lists, and both had rotted: this gate
+        // silently **accepted `tame`**, which then sailed past `hunt_expedition_floor`'s
+        // `debug_assert!` and took a plausible-looking pastoral-dip ceiling. Factoring them onto
+        // `FollowPolicy::is_investment` fixed that; typing the two sets apart removes the question.
         Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) if !parsed.is_investment() => parsed,
+            Ok(parsed) => parsed,
             _ => {
                 emit_command_failure(
                     app,
@@ -2960,7 +3015,7 @@ fn handle_cancel_order(
 
 /// **Set the `Tame` policy** on the herd `herd_id` for the band(s) already hunting it — the animal
 /// rung-2 verb, and the exact twin of `handle_cultivate`. This is the command form of what the
-/// client's policy picker does; it **tames nothing outright**.
+/// client's improvement checkbox does; it **tames nothing outright**.
 ///
 /// It **replaces the retired `domesticate` early-claim**, which snapped `domestication_progress` to
 /// `1.0` once past a `claim_threshold`. That claim existed to *skip the investment*, which is the
@@ -2976,11 +3031,14 @@ fn handle_cancel_order(
 /// `husbandry_ceiling` must allow domestication, and the herd must not already be domesticated or
 /// another faction's — plus the rejection when **no band is hunting it**.
 fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String) {
+    // The source, named by the herd id. Its *stance* is irrelevant here: `same_source` matches on the
+    // id alone, and this command sets only the improvement — whatever stance each band holds is left
+    // exactly as the player set it (issue #442).
     let target = LaborTarget::Hunt {
         fauna_id: herd_id.clone(),
-        policy: FollowPolicy::Tame,
+        policy: FollowPolicy::default(),
     };
-    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Tame) {
         warn!(
             target: "shadow_scale::command",
             command = "tame",
@@ -2993,7 +3051,7 @@ fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String
         return;
     }
 
-    let switched = set_policy_on_working_bands(app, faction, &target);
+    let switched = set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Tame));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -3102,7 +3160,7 @@ fn handle_answer_fork(
     }
 }
 
-/// **Set the Cultivate policy** on the forage patch at `tile` for the band(s) already working it
+/// **Set the Cultivate improvement** on the forage patch at `tile` for the band(s) already working it
 /// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
 /// the client's policy picker does; it does **not** claim or complete anything.
 ///
@@ -3115,14 +3173,16 @@ fn handle_answer_fork(
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
 /// patch must be **Thriving**, not already cultivated, and not another faction's.
 fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
+    // The source, named by the tile. Its stance and its crop are the band's, not the command's: this
+    // sets only the improvement, and `same_source` matches on the tile alone.
     let target = LaborTarget::Forage {
         tile,
-        policy: FollowPolicy::Cultivate,
-        // The command form names no crop — `set_policy_on_working_bands` carries over whatever the
-        // band's existing assignment selected, and an assignment that selected nothing auto-picks.
+        policy: FollowPolicy::default(),
+        // The command form names no crop, so the gate below judges the auto-pick and the band keeps
+        // whatever it selected.
         species: None,
     };
-    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Cultivate) {
         warn!(
             target: "shadow_scale::command",
             command = "cultivate",
@@ -3136,7 +3196,8 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
         return;
     }
 
-    let switched = set_policy_on_working_bands(app, faction, &target);
+    let switched =
+        set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Cultivate));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -3178,7 +3239,7 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 
 /// **Set the `Sow` policy** on the tile at `tile` for the band(s) already foraging it — the plant
 /// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
-/// what the client's policy picker does; it **sows nothing outright**.
+/// what the client's improvement checkbox does; it **sows nothing outright**.
 ///
 /// What makes it the interesting verb: `Sow` **places** a food source — *including on ground that
 /// carries no forage site at all* — so a crew can put a Field on the floodplain they chose rather than
@@ -3199,12 +3260,12 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     let target = LaborTarget::Forage {
         tile,
-        policy: FollowPolicy::Sow,
-        // As in `handle_cultivate`: the command sets the *policy*, and any crop the band already
-        // selected on this tile is carried over rather than silently cleared.
+        policy: FollowPolicy::default(),
+        // As in `handle_cultivate`: the command sets the *improvement*, and the crop the band already
+        // selected on this tile is untouched.
         species: None,
     };
-    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Sow) {
         warn!(
             target: "shadow_scale::command",
             command = "sow",
@@ -3218,7 +3279,7 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
         return;
     }
 
-    let switched = set_policy_on_working_bands(app, faction, &target);
+    let switched = set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Sow));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -3255,7 +3316,7 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     );
 }
 
-/// **Set the Corral policy** on the domesticated herd standing at `tile` for the band(s) already
+/// **Set the Corral improvement** on the domesticated herd standing at `tile` for the band(s) already
 /// hunting it — the animal mirror of `handle_cultivate`, and the command form of the client's policy
 /// picker. While the pen is built the keeper takes only
 /// `husbandry.corralling_yield_fraction × the herd's Sustain (MSY) ceiling`; at
@@ -3292,9 +3353,9 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
 
     let target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
-        policy: FollowPolicy::Corral,
+        policy: FollowPolicy::default(),
     };
-    if let Err(reason) = validate_labor_policy(app, faction, &target) {
+    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Corral) {
         warn!(
             target: "shadow_scale::command",
             command = "corral",
@@ -3307,7 +3368,8 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
         return;
     }
 
-    let switched = set_policy_on_working_bands(app, faction, &target);
+    let switched =
+        set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Corral));
     if switched == 0 {
         emit_command_failure(
             app,
@@ -3346,6 +3408,154 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
             fauna_id, tile.x, tile.y, switched
         )),
     );
+}
+
+/// **Abandon the improvement running on one source** — the command that passes `None` where
+/// `cultivate` / `sow` / `tame` / `corral` pass a verb (issue #442,
+/// `docs/plan_investment_rung_toggle.md`). Text forms:
+///   `abandon_improvement <faction> forage <x> <y>`
+///   `abandon_improvement <faction> hunt <herd_id>`
+///
+/// **It exists because the split otherwise removed a capability the old model had by accident.** When
+/// the build verb *was* the policy, changing your mind meant picking another policy, so a 25-turn
+/// commitment could always be walked away from. Splitting the axes gave the stance its own control
+/// and left the improvement with a set-only one; without this the player could start a Corral and
+/// never stop it.
+///
+/// **Ungated, and that is the design.** Abandonment is not a rung transition: it asks for no
+/// knowledge, no species ceiling, no site and — pointedly — no `Thriving` check. A **stalled** build
+/// on unhealthy ground is exactly when a player reaches for this, and gating it on the conditions
+/// that *started* the build would make the remedy unreachable in precisely that case. The only
+/// rejections are "that is not a source kind" and "nobody is building anything there".
+///
+/// **It does not zero the meter, deliberately.** Each web already has a rule for a source nobody is
+/// improving, and this simply hands the source back to it — the same state an assignment reaches when
+/// it lapses out of range:
+/// - **plant**: `advance_cultivation` bleeds `cultivation_progress` / `field_progress` at the rung's
+///   `decay_per_turn` on every turn the patch is not worked as an improvement, so an abandoned
+///   part-prepared patch reverts toward `0`;
+/// - **animal**: `domestication_progress` is monotone-up (the tameness bleed was retired with the
+///   neglect-escape arc) and the `animal:pen` rung's `decay_per_turn` is `0`, so the meter is kept.
+///
+/// Inventing a forfeit here would have made *this* path differ from walking the band away, which is
+/// the same decision expressed with more steps.
+///
+/// The **stance and the crew are untouched**, as with every improvement-side command: the band goes
+/// on working the source, undipped, under the policy the player chose.
+fn handle_abandon_improvement(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    kind: String,
+    tile: UVec2,
+    fauna_id: String,
+) {
+    // The source, named the way its web names it. The stance is irrelevant — `same_source` matches on
+    // the tile / herd id alone — so the default one stands in.
+    let target = match kind.trim().to_ascii_lowercase().as_str() {
+        "forage" => LaborTarget::Forage {
+            tile,
+            policy: FollowPolicy::default(),
+            species: None,
+        },
+        "hunt" if !fauna_id.trim().is_empty() => LaborTarget::Hunt {
+            fauna_id: fauna_id.clone(),
+            policy: FollowPolicy::default(),
+        },
+        "hunt" => {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                "abandon_improvement hunt requires <herd_id>.".to_string(),
+            );
+            return;
+        }
+        other => {
+            emit_command_failure(
+                app,
+                CommandEventKind::CancelOrder,
+                faction,
+                format!("Unknown source kind '{}' — expected forage or hunt.", other),
+            );
+            return;
+        }
+    };
+
+    // **Which verb is actually running**, resolved before the clear so the feed line can name it (and
+    // so "nothing to abandon" is a distinct, honest rejection rather than a silent no-op). At most one
+    // improvement is ever in flight on a source, so the first band working it answers for all of them.
+    let running = app
+        .world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(cohort, _)| cohort.faction == faction)
+        .find_map(|(_, allocation)| {
+            allocation
+                .assignments
+                .iter()
+                .find(|assignment| assignment.target.same_source(&target))
+                .and_then(|assignment| assignment.improvement)
+        });
+    let Some(improvement) = running else {
+        emit_command_failure(
+            app,
+            CommandEventKind::CancelOrder,
+            faction,
+            format!("Nothing is being built on {}.", describe_source(&target)),
+        );
+        return;
+    };
+    // The improvement's own feed channel, so abandoning a Corral reads on the same line the Corral
+    // was announced on.
+    let event_kind = improvement_event_kind(improvement);
+
+    let cleared = set_improvement_on_working_bands(app, faction, &target, None);
+    let tick = app.world.resource::<SimulationTick>().0;
+    info!(
+        target: "shadow_scale::command",
+        command = "abandon_improvement",
+        faction = %faction.0,
+        improvement = improvement.as_str(),
+        bands = cleared,
+        "command.abandon_improvement.abandoned"
+    );
+    push_command_event(
+        app,
+        tick,
+        event_kind,
+        faction,
+        format!(
+            "Abandoned {} on {}",
+            improvement.as_str(),
+            describe_source(&target)
+        ),
+        Some(format!(
+            "status=abandoned action=abandon_improvement improvement={} bands={}",
+            improvement.as_str(),
+            cleared
+        )),
+    );
+}
+
+/// A source named for a player-facing line: a patch by its coordinates, a herd by its id.
+fn describe_source(target: &LaborTarget) -> String {
+    match target {
+        LaborTarget::Forage { tile, .. } => format!("({}, {})", tile.x, tile.y),
+        LaborTarget::Hunt { fauna_id, .. } => fauna_id.clone(),
+        LaborTarget::Scout => "scouting".to_string(),
+        LaborTarget::Warrior => "the watch".to_string(),
+    }
+}
+
+/// The command-feed channel an improvement's events ride — the same one its *setting* verb used, so a
+/// rung's whole life (start → complete, or start → abandon) reads on one line.
+fn improvement_event_kind(improvement: Improvement) -> CommandEventKind {
+    match improvement {
+        Improvement::Cultivate => CommandEventKind::Cultivate,
+        Improvement::Sow => CommandEventKind::Sow,
+        Improvement::Tame => CommandEventKind::Tame,
+        Improvement::Corral => CommandEventKind::Corral,
+    }
 }
 
 /// Grazing 2d-β — the `ExtendPen` command. Put an owned, **built** pen at `tile` into the "extending"
@@ -3534,68 +3744,48 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     );
 }
 
-/// Re-point every band of `faction` **already working** `target`'s source (matched by
-/// `LaborTarget::same_source`, so the tile / herd id) at `target`'s policy, keeping each band's
-/// worker count. Returns how many bands were switched (`0` = nobody is working that source, which the
-/// callers report as a rejection). The shared body of the repurposed `cultivate` / `corral` commands:
-/// both now *set a policy* on an existing assignment rather than claiming the improvement outright.
-fn set_policy_on_working_bands(
+/// Set (or clear) the **improvement** on every band of `faction` **already working** `target`'s
+/// source (matched by `LaborTarget::same_source`, so the tile / herd id). Returns how many bands were
+/// updated (`0` = nobody is working that source, which the callers report as *"staff it first"*).
+/// The shared body of the four improvement commands (`cultivate` / `sow` / `tame` / `corral`).
+///
+/// **It touches nothing but the improvement slot** (issue #442). Its predecessor
+/// `set_policy_on_working_bands` had to rebuild each band's whole `LaborTarget` — and therefore had to
+/// carefully merge back the crop the band had selected, or a policy switch silently cleared it. With
+/// the verb in its own slot the target is never rewritten, so the stance, the crew and the committed
+/// species all survive by construction and the `merge_target` helper that guarded the species is gone.
+fn set_improvement_on_working_bands(
     app: &mut bevy::prelude::App,
     faction: FactionId,
     target: &LaborTarget,
+    improvement: Option<Improvement>,
 ) -> usize {
-    // Each band's own target, because a policy switch must **preserve the crop the band already
-    // selected** on this source (Flora Roster S1): `set_assignment` replaces the whole target, so
-    // handing it the command's species-less one would silently clear a player's choice.
-    let bands: Vec<(Entity, u32, u32, LaborTarget)> = app
+    // Each band's own assignment target, because the re-seed below must price the source under the
+    // stance and crop that band actually holds — the command names neither.
+    let bands: Vec<(Entity, u32, LaborTarget)> = app
         .world
         .query::<(Entity, &PopulationCohort, &LaborAllocation)>()
         .iter(&app.world)
         .filter(|(_, cohort, _)| cohort.faction == faction)
-        .filter_map(|(entity, cohort, allocation)| {
-            let workers = allocation.workers_on(target);
-            let merged = allocation
+        .filter_map(|(entity, _, allocation)| {
+            allocation
                 .assignments
                 .iter()
-                .find(|assignment| assignment.target.same_source(target))
-                .map_or_else(|| target.clone(), |existing| merge_target(target, existing));
-            (workers > 0).then(|| (entity, workers, available_workers(cohort.working), merged))
+                .find(|assignment| assignment.target.same_source(target) && assignment.workers > 0)
+                .map(|assignment| (entity, assignment.workers, assignment.target.clone()))
         })
         .collect();
-    for (entity, workers, available, target) in &bands {
-        let applied = {
+    for (entity, workers, band_target) in &bands {
+        {
             let mut allocation = band_allocation_mut(app, *entity);
-            allocation.set_assignment(target.clone(), *workers, *available)
-        };
-        // A policy switch changes the expected yield (e.g. Sustain → Cultivate drops to the preparing
-        // bite), so re-seed the source's telemetry from the new policy's forecast — same reason as in
-        // `handle_assign_labor`, which this command is the shorthand for.
-        seed_source_yield(app, *entity, target, applied);
+            allocation.set_improvement(band_target, improvement);
+        }
+        // Starting (or finishing) a build changes the expected yield — the take drops to
+        // `stance ceiling × yield_fraction_while_building` — so re-seed the source's telemetry from
+        // the new forecast, the same reason `handle_assign_labor` seeds after a stance edit.
+        seed_source_yield(app, *entity, band_target, improvement, *workers);
     }
     bands.len()
-}
-
-/// The policy-switch target for one band: `incoming`'s policy, but keeping any **species selection**
-/// the band's `existing` assignment on the same source already carries. Only the Forage kind has one;
-/// every other target is the incoming one unchanged.
-fn merge_target(incoming: &LaborTarget, existing: &core_sim::LaborAssignment) -> LaborTarget {
-    match (incoming, &existing.target) {
-        (
-            LaborTarget::Forage {
-                tile,
-                policy,
-                species: None,
-            },
-            LaborTarget::Forage {
-                species: selected, ..
-            },
-        ) => LaborTarget::Forage {
-            tile: *tile,
-            policy: *policy,
-            species: selected.clone(),
-        },
-        _ => incoming.clone(),
-    }
 }
 
 fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<String>) {
@@ -4348,6 +4538,19 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             faction: FactionId(faction_id),
             target_x,
             target_y,
+        }),
+        ProtoCommandPayload::AbandonImprovement {
+            faction_id,
+            kind,
+            target_x,
+            target_y,
+            fauna_id,
+        } => Some(Command::AbandonImprovement {
+            faction: FactionId(faction_id),
+            kind,
+            target_x,
+            target_y,
+            fauna_id,
         }),
         ProtoCommandPayload::ExtendPen {
             faction_id,
@@ -5149,6 +5352,21 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             target_y,
         } => {
             handle_corral(app, faction, UVec2::new(target_x, target_y));
+        }
+        Command::AbandonImprovement {
+            faction,
+            kind,
+            target_x,
+            target_y,
+            fauna_id,
+        } => {
+            handle_abandon_improvement(
+                app,
+                faction,
+                kind,
+                UVec2::new(target_x, target_y),
+                fauna_id,
+            );
         }
         Command::ExtendPen {
             faction,
@@ -5962,11 +6180,12 @@ mod tests {
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
         build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-        PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
+        NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID,
+        SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
-    /// more; progress must be earned under the Cultivate policy).
+    /// more; progress must be earned with the Cultivate improvement in flight).
     fn seed_thriving_patch(app: &mut bevy::prelude::App, coord: UVec2) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = ForagePatch::new(coord, 100.0);
@@ -5975,7 +6194,7 @@ mod tests {
     }
 
     /// A band of `faction` sitting on tile entity `home` with one labor assignment (the band the
-    /// repurposed `cultivate` / `corral` commands re-point at the investment policy).
+    /// repurposed `cultivate` / `corral` commands check the improvement box on).
     fn spawn_working_band(
         app: &mut bevy::prelude::App,
         faction: FactionId,
@@ -6012,6 +6231,7 @@ mod tests {
                     assignments: vec![core_sim::LaborAssignment {
                         target,
                         workers: BAND_WORKERS,
+                        improvement: None,
                     }],
                     ..Default::default()
                 },
@@ -6169,7 +6389,17 @@ mod tests {
         );
     }
 
-    /// The policy the band's single assignment currently carries.
+    /// The **improvement** the band's single assignment currently carries — what the four build
+    /// commands set, and what a command they reject must leave alone.
+    fn band_improvement(app: &bevy::prelude::App, band: Entity) -> Option<Improvement> {
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band has an allocation")
+            .assignments[0]
+            .improvement
+    }
+
+    /// The **stance** the band's single assignment currently carries.
     fn band_policy(app: &bevy::prelude::App, band: Entity) -> FollowPolicy {
         match &app
             .world
@@ -6218,9 +6448,14 @@ mod tests {
             "cultivate must emit a NotKnown failure when Cultivation is unknown"
         );
         assert_eq!(
+            band_improvement(&app, band),
+            None,
+            "a rejected cultivate must not start a build"
+        );
+        assert_eq!(
             band_policy(&app, band),
             FollowPolicy::Sustain,
-            "a rejected cultivate must not switch the band's policy"
+            "and it must never touch the band's stance"
         );
     }
 
@@ -6253,11 +6488,11 @@ mod tests {
             cultivate_failure_detail_contains(&app, "not thriving"),
             "cultivate must reject a stressed patch"
         );
-        assert_eq!(band_policy(&app, band), FollowPolicy::Sustain);
+        assert_eq!(band_improvement(&app, band), None);
     }
 
     /// The repurposed `cultivate`: with Cultivation known and a Thriving patch, it **sets the
-    /// Cultivate policy** on the band already foraging the tile (it claims nothing — the investment
+    /// Cultivate improvement** on the band already foraging the tile (it claims nothing — the investment
     /// must still be worked off).
     #[test]
     fn cultivate_sets_the_cultivate_policy_on_the_working_band() {
@@ -6279,9 +6514,14 @@ mod tests {
         handle_cultivate(&mut app, faction, coord);
 
         assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "cultivate checks the improvement box on the working band"
+        );
+        assert_eq!(
             band_policy(&app, band),
-            FollowPolicy::Cultivate,
-            "cultivate switches the working band onto the investment policy"
+            FollowPolicy::Sustain,
+            "and leaves the stance exactly as the player set it (issue #442)"
         );
         assert!(
             !app.world
@@ -6311,14 +6551,16 @@ mod tests {
         ));
     }
 
-    // --- The Thriving gate is a START gate, not a CONTINUE gate (issue #420) ----------------------
+    // --- The Thriving gate is a START gate, not a CONTINUE gate (issues #420 + #442) -------------
     //
-    // A build already underway is exempt from the phase check, and from **that check only**. Without
-    // the exemption a paused build could not be **re-crewed**: adjusting workers re-issues the same
-    // `Cultivate` assignment the gate refuses, so the sole executable response to a paused build was
-    // `workers == 0` (the one always-allowed path) — which stops `tended_this_turn` and starts the
-    // feral bleed. "Stops accruing, is not lost, is not switched" is only actionable if the crew can
-    // still be moved.
+    // A build already underway is exempt from the phase check, and from **that check only**.
+    //
+    // **Issue #442 removed the trap this exemption was originally added for.** Re-crewing a paused
+    // build used to re-issue the whole `Cultivate` assignment through this gate, so the sole
+    // executable response to a paused build was `workers == 0` — which stops `tended_this_turn` and
+    // starts the feral bleed. Now `assign_labor` carries no verb at all, so a crew change never
+    // reaches this validator. The exemption survives for the *other* path: re-checking the box on a
+    // paused build is a legitimate no-op the player may issue, and it must not be refused.
 
     /// Seat the source patch as a **paused build**: part-prepared and owned, but no longer Thriving —
     /// exactly the state a patch reaches when another band overdraws it mid-cultivation.
@@ -6348,30 +6590,42 @@ mod tests {
         seed_paused_build(&mut app, coord, Some(faction));
         grant_cultivation(&mut app, faction);
 
-        let verdict = validate_labor_policy(
+        // Re-checking the box on a paused build this faction owns is still permitted (the exemption).
+        let verdict = validate_improvement(
             &app,
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
                 species: None,
             },
+            Improvement::Cultivate,
         );
         assert!(
             verdict.is_ok(),
-            "a build already underway must accept a re-crew on a paused patch: {verdict:?}"
+            "a build already underway must accept a re-check on a paused patch: {verdict:?}"
         );
 
-        // End to end, at a **changed** worker count — the shape of the command the remedy issues.
+        // **THE issue-#442 fix, end to end.** A crew change on a paused build is a *stance-side*
+        // edit: `assign_labor` names no verb, so the phase gate is never consulted and the build
+        // survives at the new head-count. Before the split this command re-issued `Cultivate` and
+        // the gate refused it, leaving `workers == 0` (abandon it) as the only executable answer.
         let band = spawn_resident_working_band(
             &mut app,
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
                 species: None,
             },
         );
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the band works the patch");
+            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
+        }
         const EASED_OFF_WORKERS: u32 = BAND_WORKERS - 1;
         handle_assign_labor(
             &mut app,
@@ -6382,7 +6636,7 @@ mod tests {
             Some(coord.x),
             Some(coord.y),
             None,
-            Some("cultivate".to_string()),
+            None,
             None,
         );
         let allocation = app
@@ -6399,9 +6653,10 @@ mod tests {
             "the eased-off crew is what the command must be able to apply"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Cultivate,
-            "the build keeps its verb through a re-crew"
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "the build survives a crew change — a stance-side edit never re-asserts the verb, and \
+             never drops it"
         );
         assert!(
             !cultivate_failure_detail_contains(&app, "not thriving")
@@ -6426,14 +6681,15 @@ mod tests {
         }
         grant_cultivation(&mut app, faction);
 
-        let verdict = validate_labor_policy(
+        let verdict = validate_improvement(
             &app,
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
                 species: None,
             },
+            Improvement::Cultivate,
         );
         assert!(
             verdict
@@ -6459,9 +6715,9 @@ mod tests {
         let faction = FactionId(0);
         let rival = FactionId(1);
         let coord = UVec2::new(1, 1);
-        let cultivate = LaborTarget::Forage {
+        let patch = LaborTarget::Forage {
             tile: coord,
-            policy: FollowPolicy::Cultivate,
+            policy: FollowPolicy::Sustain,
             species: None,
         };
 
@@ -6469,7 +6725,7 @@ mod tests {
         seed_thriving_patch(&mut paused, coord);
         seed_paused_build(&mut paused, coord, Some(rival));
         grant_cultivation(&mut paused, faction);
-        let verdict = validate_labor_policy(&paused, faction, &cultivate);
+        let verdict = validate_improvement(&paused, faction, &patch, Improvement::Cultivate);
         assert!(
             verdict
                 .as_ref()
@@ -6487,7 +6743,7 @@ mod tests {
             patch.owner = Some(rival);
         }
         grant_cultivation(&mut thriving, faction);
-        let verdict = validate_labor_policy(&thriving, faction, &cultivate);
+        let verdict = validate_improvement(&thriving, faction, &patch, Improvement::Cultivate);
         assert!(
             verdict
                 .as_ref()
@@ -6514,28 +6770,30 @@ mod tests {
 
         // The control: with no selection named, the paused build re-crews (the phase check is the
         // only thing that was refusing it, and it is now exempt).
-        let permitted = validate_labor_policy(
+        let permitted = validate_improvement(
             &app,
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
                 species: None,
             },
+            Improvement::Cultivate,
         );
         assert!(
             permitted.is_ok(),
-            "control: a paused build with no crop named re-crews: {permitted:?}"
+            "control: a paused build with no crop named is re-checkable: {permitted:?}"
         );
 
-        let verdict = validate_labor_policy(
+        let verdict = validate_improvement(
             &app,
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
                 species: Some("not_a_plant".to_string()),
             },
+            Improvement::Cultivate,
         );
         assert!(
             verdict
@@ -7143,7 +7401,7 @@ mod tests {
     }
 
     /// **The happy path.** On ground the land accepts — rich *and* watered, the river-valley set —
-    /// `sow` is accepted: it sets the policy and claims nothing, exactly like `cultivate`. The seed
+    /// `sow` is accepted: it checks the improvement box and claims nothing, exactly like `cultivate`. The seed
     /// itself goes in when the crew works the ground.
     ///
     /// (`Sow`'s *create-from-nothing* half — hospitable ground carrying no forage site at all — cannot
@@ -7168,9 +7426,9 @@ mod tests {
         handle_sow(&mut app, faction, coord);
 
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Sow,
-            "sow switches the working band onto the investment policy"
+            band_improvement(&app, band),
+            Some(Improvement::Sow),
+            "sow checks the improvement box on the working band"
         );
         assert!(
             !app.world
@@ -7294,15 +7552,22 @@ mod tests {
 
         // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
         // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
-        // The dip is read off the per-policy ROW — a patch's only ceiling representation since #426,
-        // the flat `ceiling_sow` scalar it replaced now being a retired `(deprecated)` wire slot.
+        // **Since issue #442 the dip is the FRACTION times the selected stance's row** — the wire
+        // carries `sow_build_fraction` and the four stance rows, so this composes the two exactly as
+        // the client must.
         assert!(patch.tended_yield > 0.0);
-        let sow_dip = patch
+        let sustain_ceiling = patch
             .forage_policy_ceilings
             .iter()
-            .find(|row| row.policy == FollowPolicy::Sow.as_str())
+            .find(|row| row.policy == FollowPolicy::Sustain.as_str())
             .map(|row| row.provisions_per_turn)
-            .expect("the Sow rung is on the wire");
+            .expect("the four stance rows are on the wire");
+        assert!(
+            patch.sow_build_fraction > 0.0 && patch.sow_build_fraction < 1.0,
+            "the Sow dip crosses as its fraction: {}",
+            patch.sow_build_fraction
+        );
+        let sow_dip = sustain_ceiling * patch.sow_build_fraction;
         assert!(
             sow_dip > 0.0 && sow_dip < patch.tended_yield,
             "sowing a tended patch pays a fraction of what it would otherwise hand you: {sow_dip} vs {}",
@@ -7470,7 +7735,7 @@ mod tests {
     }
 
     /// The repurposed `corral`: a faction that knows Penning and owns the domesticated herd on the
-    /// tile **sets the Corral policy** on the band already hunting it. The pen is not built yet — that
+    /// tile **sets the Corral improvement** on the band already hunting it. The pen is not built yet — that
     /// costs `1 / corral_build_progress_per_turn` turns of the reduced Corral take.
     #[test]
     fn corral_sets_the_corral_policy_on_the_working_band() {
@@ -7491,9 +7756,9 @@ mod tests {
         handle_corral(&mut app, faction, coord);
 
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Corral,
-            "corral switches the working band onto the investment policy"
+            band_improvement(&app, band),
+            Some(Improvement::Corral),
+            "corral checks the improvement box on the working band"
         );
         assert!(
             !herd_is_corralled(&app, &id),
@@ -7570,9 +7835,9 @@ mod tests {
         handle_tame(&mut app, faction, id.clone());
 
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Tame,
-            "tame switches the working band onto the investment policy"
+            band_improvement(&app, band),
+            Some(Improvement::Tame),
+            "tame checks the improvement box on the working band"
         );
         assert!(
             !app.world
@@ -7930,33 +8195,34 @@ mod tests {
         assert_eq!(herd_pen_state(&app, &id), (0, false), "no ring started");
     }
 
-    /// **The investment policies never reach an expedition.** Penning a herd (or preparing a patch)
-    /// is place-bound work a *resident* band does — a detached party cannot pen a herd and walk home
-    /// — so `send_hunt_expedition` refuses `corral`/`cultivate` at launch, alongside an unparseable
-    /// token. This rejection is load-bearing: it is the ONLY thing standing between the player and
-    /// `hunt_expedition_ceiling`'s unreachable arm (which takes nothing and `debug_assert!`s). No
-    /// party may be spawned, and the failure must name the four policies that ARE valid.
+    /// **An improvement verb never reaches an expedition.** Preparing ground, gentling a herd or
+    /// building a pen is place-bound work a *resident* band does — a detached party cannot pen a herd
+    /// and walk home — so `send_hunt_expedition` refuses all four at launch, alongside any other
+    /// unparseable token. No party may be spawned, and the failure must name the four stances that
+    /// ARE valid.
+    ///
+    /// **Since issue #442 the guarantee is structural** and this test is its behavioural echo: an
+    /// `ExpeditionMission::Hunt` carries a [`FollowPolicy`], which cannot *name* a build verb, so the
+    /// verb is rejected by the ordinary parse. The two hand-written lists this replaces had both
+    /// rotted (the gate silently accepted `tame`), which is what makes the sweep worth keeping.
     #[test]
-    fn send_hunt_expedition_rejects_the_investment_policies() {
-        // **Every** investment verb, derived from the grouping rather than re-listed here — the same
-        // discipline the code under test now uses. `tame` and `sow` are the ones a hand-written
-        // `matches!(Cultivate | Corral)` had silently let through.
-        let investment: Vec<&str> = [
-            FollowPolicy::Cultivate,
-            FollowPolicy::Sow,
-            FollowPolicy::Tame,
-            FollowPolicy::Corral,
+    fn send_hunt_expedition_rejects_the_improvement_verbs() {
+        let improvements: Vec<&str> = [
+            Improvement::Cultivate,
+            Improvement::Sow,
+            Improvement::Tame,
+            Improvement::Corral,
         ]
         .iter()
-        .inspect(|policy| {
+        .inspect(|improvement| {
             assert!(
-                !FollowPolicy::EXTRACTIVE.contains(policy),
-                "{policy:?} is an investment rung — the launch gate is EXTRACTIVE membership"
+                improvement.as_str().parse::<FollowPolicy>().is_err(),
+                "{improvement:?} must not parse as a stance — that is the whole guarantee"
             );
         })
-        .map(|policy| policy.as_str())
+        .map(|improvement| improvement.as_str())
         .collect();
-        for token in investment {
+        for token in improvements {
             let mut app = build_headless_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
@@ -7991,45 +8257,311 @@ mod tests {
         }
     }
 
-    /// The kind gates: `Cultivate` on a Hunt assignment and `Corral` on a Forage assignment are both
-    /// rejected outright by `validate_labor_policy` (the `assign_labor` guard).
+    /// **§2.1 — a non-Sustain stance beside a running build is LEGAL, and nothing gates it**
+    /// (issue #442, `docs/plan_investment_rung_toggle.md`). The command layer is where a gate would
+    /// have had to live, so this is where its absence is pinned: a `Deplete` forage assignment is
+    /// accepted, checking `Cultivate` on top of it is accepted, and the two survive together on the
+    /// band's row.
+    ///
+    /// The design refuses the gate deliberately — the ecology is what punishes over-drawing while
+    /// building (the meter accrues only while the source is Thriving), and a gate would re-create in
+    /// the UI the very coupling this arc removes from the model. The self-punishment itself is
+    /// measured on the animal web by
+    /// `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`.
     #[test]
-    fn cross_kind_investment_policies_are_rejected() {
+    fn a_deplete_stance_accepts_a_cultivate_improvement_beside_it() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        grant_cultivation(&mut app, faction);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Deplete,
+                species: None,
+            },
+        );
+
+        // The stance validator has nothing to say about a plant source, and the improvement's own
+        // gates ask about knowledge, health and ownership — never about the stance beside them.
+        let target = LaborTarget::Forage {
+            tile: coord,
+            policy: FollowPolicy::Deplete,
+            species: None,
+        };
+        assert!(validate_labor_policy(&app, faction, &target).is_ok());
+        assert!(
+            validate_improvement(&app, faction, &target, Improvement::Cultivate).is_ok(),
+            "no gate may refuse a build because of the stance held beside it (§2.1)"
+        );
+
+        handle_cultivate(&mut app, faction, coord);
+
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "the build starts under a Deplete stance — it is sayable"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Deplete,
+            "and the stance is untouched: the two axes are independent"
+        );
+    }
+
+    /// **A running improvement can be ABANDONED, and the stance survives** (issue #442). The
+    /// two-axis split gave the stance its own control and left the improvement with a set-only one,
+    /// which silently removed a capability the old model had by accident: when the build verb *was*
+    /// the policy, changing your mind meant picking another policy. `abandon_improvement` is the
+    /// missing half — the one path that passes `None`.
+    ///
+    /// **Phase 1 pins the "ungated" claim against a state where a gate really would bite**: the box
+    /// is checked on a patch that has since gone Stressed and has banked **nothing**, so
+    /// `validate_cultivate`'s build-underway exemption does *not* apply and the setting verb is
+    /// refused outright. That is the state the player is most stuck in — the build cannot start and,
+    /// without this command, cannot be called off either — and it is the only fixture that can tell
+    /// an ungated abandon from one that copied `cultivate`'s gates (a *paused* build with progress
+    /// would pass those gates via the exemption and prove nothing).
+    ///
+    /// **Phase 2 pins that abandoning does not forfeit the meter**, which needs a build with progress
+    /// banked.
+    #[test]
+    fn a_running_improvement_can_be_abandoned_and_the_stance_survives() {
+        // --- Phase 1: the stuck state — box checked, nothing banked, ground gone Stressed. ---
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        {
+            let mut registry = app.world.resource_mut::<ForageRegistry>();
+            registry.patch_mut(coord).unwrap().ecology_phase = EcologyPhase::Stressed;
+        }
+        grant_cultivation(&mut app, faction);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Surplus,
+                species: None,
+            },
+        );
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the band works the patch");
+            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
+        }
+
+        // The control: *setting* this verb here is refused, so any gate copied onto the abandon path
+        // would refuse it too. Without this line the phase below could pass against a gated abandon.
+        let would_be_refused = validate_improvement(
+            &app,
+            faction,
+            &LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Surplus,
+                species: None,
+            },
+            Improvement::Cultivate,
+        );
+        assert!(
+            would_be_refused
+                .as_ref()
+                .is_err_and(|reason| reason.contains("not thriving")),
+            "fixture: the SETTING verb must be refused here, or 'ungated' is untested: \
+             {would_be_refused:?}"
+        );
+
+        handle_abandon_improvement(
+            &mut app,
+            faction,
+            "forage".to_string(),
+            coord,
+            String::new(),
+        );
+
+        assert_eq!(
+            band_improvement(&app, band),
+            None,
+            "abandoning is not a rung transition — it takes no gate, least of all the phase gate \
+             that stalled the build the player is trying to call off"
+        );
+        assert_eq!(
+            band_policy(&app, band),
+            FollowPolicy::Surplus,
+            "the stance the player chose is untouched, as with every improvement-side command"
+        );
+        assert_eq!(
+            app.world
+                .get::<LaborAllocation>(band)
+                .expect("the band keeps its allocation")
+                .assignments[0]
+                .workers,
+            BAND_WORKERS,
+            "the crew stays on the source — you abandon the BUILD, not the patch"
+        );
+        assert!(
+            !cultivate_failure_detail_contains(&app, "not thriving"),
+            "abandoning must emit no phase rejection"
+        );
+
+        // --- Phase 2: the meter is not forfeited. ---
+        //
+        // Abandoning hands the source back to its web's own unworked-source rule (here
+        // `advance_cultivation`'s per-turn bleed), which is exactly the state walking the band out of
+        // range already reaches. Inventing a forfeit here would make this path differ from that one.
+        let mut app = build_headless_app();
+        seed_thriving_patch(&mut app, coord);
+        seed_paused_build(&mut app, coord, Some(faction));
+        grant_cultivation(&mut app, faction);
+        let band = spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+                species: None,
+            },
+        );
+        {
+            let mut allocation = app
+                .world
+                .get_mut::<LaborAllocation>(band)
+                .expect("the band works the patch");
+            allocation.assignments[0].improvement = Some(Improvement::Cultivate);
+        }
+        let banked = app
+            .world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("seeded patch")
+            .cultivation_progress;
+        assert!(
+            banked > 0.0,
+            "fixture: there must be progress to walk away from"
+        );
+
+        handle_abandon_improvement(
+            &mut app,
+            faction,
+            "forage".to_string(),
+            coord,
+            String::new(),
+        );
+
+        assert_eq!(band_improvement(&app, band), None);
+        assert_eq!(
+            app.world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .expect("seeded patch")
+                .cultivation_progress,
+            banked,
+            "the command does not forfeit progress — the web's decay rule owns that"
+        );
+    }
+
+    /// Abandoning something nobody is building is a **named rejection**, not a silent no-op — the
+    /// same discipline the four setting verbs use for "no band is working that source".
+    #[test]
+    fn abandoning_nothing_is_rejected_by_name() {
+        let mut app = build_headless_app();
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+        seed_thriving_patch(&mut app, coord);
+        spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+                species: None,
+            },
+        );
+
+        handle_abandon_improvement(
+            &mut app,
+            faction,
+            "forage".to_string(),
+            coord,
+            String::new(),
+        );
+        assert!(
+            app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                matches!(entry.kind, CommandEventKind::CancelOrder)
+                    && entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains("Nothing is being built"))
+            }),
+            "a harvesting band has nothing to abandon, and the feed must say so"
+        );
+
+        // An unknown source kind is refused before anything is looked up.
+        handle_abandon_improvement(
+            &mut app,
+            faction,
+            "quarry".to_string(),
+            coord,
+            String::new(),
+        );
+        assert!(
+            app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                entry
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("Unknown source kind"))
+            }),
+            "only the two food webs name a source"
+        );
+    }
+
+    /// The kind gates: `Corral` on a forage patch and `Cultivate` on a herd are both rejected
+    /// outright by `validate_improvement` (the guard each build command routes through).
+    #[test]
+    fn cross_web_improvements_are_rejected() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
         let id = seed_herd(&mut app, coord, Some(faction));
 
-        let corral_on_forage = validate_labor_policy(
+        let corral_on_forage = validate_improvement(
             &app,
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Corral,
+                policy: FollowPolicy::Sustain,
                 species: None,
             },
+            Improvement::Corral,
         );
         assert!(
             corral_on_forage
                 .as_ref()
-                .is_err_and(|reason| reason.contains("not a foraging policy")),
-            "Corral is not a forage policy: {corral_on_forage:?}"
+                .is_err_and(|reason| reason.contains("applies to herds")),
+            "Corral is not a plant improvement: {corral_on_forage:?}"
         );
 
-        let cultivate_on_hunt = validate_labor_policy(
+        let cultivate_on_hunt = validate_improvement(
             &app,
             faction,
             &LaborTarget::Hunt {
                 fauna_id: id,
-                policy: FollowPolicy::Cultivate,
+                policy: FollowPolicy::Sustain,
             },
+            Improvement::Cultivate,
         );
         assert!(
             cultivate_on_hunt
                 .as_ref()
-                .is_err_and(|reason| reason.contains("not a hunting policy")),
-            "Cultivate is not a hunt policy: {cultivate_on_hunt:?}"
+                .is_err_and(|reason| reason.contains("applies to forage patches")),
+            "Cultivate is not an animal improvement: {cultivate_on_hunt:?}"
         );
     }
 
@@ -8237,6 +8769,7 @@ mod tests {
             1.0,
             BAND_WORKERS,
             FollowPolicy::Sustain,
+            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
         );
@@ -8302,6 +8835,7 @@ mod tests {
             1.0,
             BAND_WORKERS,
             FollowPolicy::Sustain,
+            NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
         );

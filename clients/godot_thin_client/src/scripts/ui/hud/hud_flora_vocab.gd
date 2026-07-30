@@ -49,22 +49,12 @@ const GATE_REASON_HERD_DOMESTICATED_FORMAT := "This herd is %d%% tamed — %s Ta
 # %s = the live `patch_ecology_phase`, capitalized.
 const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and let it regrow to Thriving"
 
-# A COMPLETED investment rung is a dead-end no-op — the build is DONE, so re-running the verb only pays
-# the low prep dip forever. The rung is greyed (like Sow is greyed when gated) and the reason points the
-# player at the ♻ Sustain that now HARVESTS the finished ground, where the real payoff lives. Mirrors the
-# SOURCE-reason voice ("This herd is 40% tamed — ◎ Tame it to finish") for a state that is already there.
-const GATE_REASON_ALREADY_TENDED_FORMAT := "Already a Tended Patch — %s Sustain-forage it to harvest"
-
-const GATE_REASON_ALREADY_FIELD_FORMAT := "Already a Field — %s Sustain-forage it to harvest"
-
-# The HERD twin of the two above, and the ONE gate reason written for a rung that is normally not on
-# the picker at all: a fully tamed herd RETIRES Tame outright (`DrawerComposeController`'s
-# husbandry-ceiling pass hides it), so this reason is only ever read by a band caught STANDING on
-# Tame when the meter filled — the rung is re-admitted selected + gated so the player can see what
-# they are on and clear it themselves. Same voice and same remedy shape as the plant pair: the
-# ♻ Sustain-hunt that now harvests the tamed herd, which is also what teaches Penning for the rung
-# above.
-const GATE_REASON_ALREADY_TAMED_FORMAT := "Already fully tamed — %s Sustain-hunt it to harvest"
+# **THE THREE "already built" GATE REASONS ARE GONE** (issue #442). They greyed a completed rung
+# that was still standing in the policy picker — "Already a Tended Patch — Sustain-forage it to
+# harvest" — a sentence only a UI that models a finished build as a selectable rung ever needs to
+# say. An improvement that completes now becomes a static DONE LABEL, so there is no control left to
+# grey and no dead end to explain: the state says what it is, and the next rung's checkbox sits
+# beneath it. `SourceForecast.improvement_is_done` is the one test that retires a rung.
 
 # THE SOW SITE GATE — "why can't I sow HERE?" is *the* question rung 3 provokes, because only ~1% of
 # the map will take seed (46 of 4160 tiles on the standard map: alluvial plain + river delta). The
@@ -96,31 +86,12 @@ const SOW_REFUSAL_FALLBACK := "This ground will not take seed — your people ca
 # test; it reads as unknown rather than asserting a phase we don't have.
 const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
 
-# A single-reason gate reads as a compact one-liner under the picker row ("🌱 Cultivate — <reason>").
-const GATE_REASON_LINE_FORMAT := "%s — %s"
-
-# Two or more reasons are far too long for one line, so they render as a header + one bullet each
-# ("🌱 Cultivate needs:" / "   · <reason>").
-const GATE_REASON_HEADER_FORMAT := "%s needs:"
-
-const GATE_REASON_BULLET_FORMAT := "   · %s"
-
-# COLLAPSING ANOTHER RUNG'S REASONS — OPT-IN, and deliberately narrow. Three wrapped paragraphs
-# explaining why *Sow* is refused while the player composes a *Cultivate* answer a question they did
-# not ask and cost about a third of the compose card; the crop picker, the stepper and the commit
-# button are what paid. But spelled-out reasons are also how the ladder TEACHES — several frames exist
-# precisely to show a NON-composed rung's full prerequisites (`forage_cultivate_locked`,
-# `forage_sow_locked`, `herd_corral_locked*`, and `two_meter_split`, whose whole subject is the gated
-# Corral's reason line while Tame is composed). So this is NOT the shared default: `HudWidgets.build_policy_picker`
-# collapses only when its caller asks, and the only caller that asks is the forage compose while a
-# COMMITTING rung is selected — i.e. exactly when the crop picker is on the card competing for height.
-# Every other picker (hunt, expedition, work board) is byte-for-byte unchanged.
-const GATE_REASON_COLLAPSED_ONE_FORMAT := "%s — locked (1 requirement unmet)"
-
-const GATE_REASON_COLLAPSED_MANY_FORMAT := "%s — locked (%d requirements unmet)"
-
-# The disabled button's tooltip carries every reason, one per line.
-const GATE_REASON_TOOLTIP_SEPARATOR := "\n"
+# **THE GATE-REASON LAYOUT VOCABULARY IS GONE** (issue #442) — the one-liner + header/bullet pair,
+# the two COLLAPSED formats and the tooltip separator all served `HudWidgets.build_policy_picker`'s
+# greyed-and-explained rung. A harvest stance has no prerequisite, so no picker rung is ever gated
+# now, and the reasons themselves (which are still very much alive) render beneath the IMPROVEMENT
+# checkbox in the shared hint style — one reason per line, no collapsing, because the control is one
+# rung and not six and there is no longer a height problem to solve.
 
 # The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
 const CULTIVATION_PREPARING_LABEL := "Preparing"
@@ -154,9 +125,11 @@ const FLORA_SHARE_FORMAT := "%s %d%%"
 const FLORA_CROP_ROW := "Crop"
 
 # THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of
-# a server default. It renders only under the two rungs that actually commit a patch to one plant; the
-# extractive rungs gather the whole basket and choose nothing, so a crop control there would be noise.
-const FLORA_COMMITTING_POLICIES := [HudConst.LABOR_POLICY_CULTIVATE, HudConst.LABOR_POLICY_SOW]
+# a server default. It renders under the IMPROVEMENT control, since which plant a patch is committed to
+# is part of the same decision as which rung to build; a harvest stance gathers the whole basket and
+# chooses nothing. `FLORA_COMMITTING_POLICIES` used to name that pair here and is gone — the plant
+# ladder is `SourceForecast.FORAGE_IMPROVEMENTS`, and a second list of the same two verbs was one more
+# thing to keep in step (issue #442).
 
 const FLORA_CROP_PICKER_HEADER := "Crop to commit to"
 
@@ -269,7 +242,8 @@ const FLORA_CROP_ROW_PADDING_V := HudStyle.WORK_ROW_PADDING_V
 # carry today is 5 (a navigable hex blends the valley's basket with the channel's fishery), so at 5 the
 # whole basket is on screen and the player compares it rather than peering at it through a slot: a
 # picker that hides the best crop behind a scroll is the guess the payoff ratio exists to remove. It was
-# 2 rows until the OTHER rung's gate reasons were collapsed (see GATE_REASON_COLLAPSED_ONE_FORMAT),
+# 2 rows until the OTHER rung's gate reasons were collapsed (a measurement taken when the picker
+# still carried six rungs and their gates),
 # which is what bought the other three. The cap is still a real guard, not dead code — F5 refines this
 # coarse roster into a fine-grained one and baskets lengthen — and ui_preview's
 # `forage_crop_picker_overlong` (a synthetic 8-plant tile, longer than any real one) keeps the scroll

@@ -230,11 +230,16 @@ const BUTTON_SELECTED_DISABLED_TEXT_ALPHA := 0.72
 ## face asks here rather than repeating a colour, so a new state colour added below arrives on every
 ## face at once instead of only on the themed half.
 ##
-## `selected` is read ONLY when `disabled`, and it exists because the two states stopped being
-## mutually exclusive: a policy picker now renders the rung a band is STANDING ON even when that rung
-## has become unavailable ("you are doing this, and it is a dead end"). Fading such a control to
-## `INK_FAINT` like any other locked one erases the only mark that says which rung is current,
-## leaving a picker that appears to have no selection at all.
+## `selected` is read ONLY when `disabled`, for a control that is simultaneously the current choice
+## and un-actionable. Fading such a control to `INK_FAINT` like any other locked one erases the only
+## mark that says which one is current.
+##
+## **Its ONE remaining caller is the CROP PICKER's committed row** (`DrawerComposeController`), where
+## a committed patch shows its whole basket as a locked READOUT with the standing crop still marked.
+## The policy picker's standing-but-gated rung — the state this was originally written for (#420) —
+## is gone with issue #442: a stance is never gated and never retires, and an improvement is a
+## checkbox that becomes a label, which cannot be selected-and-locked. Do not delete the flag on that
+## news; the crop picker's need is a genuinely different one.
 static func button_font_color(variant: String = "ghost", disabled: bool = false,
 		selected: bool = false) -> Color:
 	var live: Color
@@ -256,9 +261,9 @@ static func button_font_color(variant: String = "ghost", disabled: bool = false,
 ##
 ## `selected_when_disabled` styles the disabled state as "the current choice, unavailable" rather
 ## than "locked": the variant's own border survives instead of fading to `LINE_SOFT`, and the text
-## keeps its hue (`button_font_color`'s `selected`). Set it wherever a control can be both the
-## selection and gated — the standing-but-gated policy rung. It changes NOTHING while the button is
-## enabled, so it is safe to set before `disabled` is known.
+## keeps its hue (`button_font_color`'s `selected`). Its one caller is the crop picker's committed
+## row — see `button_font_color`. It changes NOTHING while the button is enabled, so it is safe to
+## set before `disabled` is known.
 static func apply_button(button: Button, variant: String = "ghost",
 		selected_when_disabled: bool = false) -> void:
 	if button == null:

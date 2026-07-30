@@ -315,6 +315,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(policy) = assignment.policy() {
                 let _ = entry.insert("policy", policy);
             }
+            // THE SECOND AXIS (issue #442). `policy` above is now ALWAYS one of the four harvest
+            // STANCES; this is what the crew is BUILDING on the source, independent of how hard it
+            // pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always inserted (as "" when the
+            // string is absent) so the entry shape is stable and no consumer has to distinguish
+            // "not building" from "older snapshot" — the two mean the same thing here.
+            let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
             array.push(&entry.to_variant());
         }
     }

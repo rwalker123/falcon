@@ -1065,6 +1065,7 @@ mod food_flow_tests {
                 species: None,
             },
             workers: 4,
+            improvement: None,
         }
     }
 

@@ -21,10 +21,11 @@ use crate::{
     combat_config::CombatConfigHandle,
     components::{
         available_workers, fragments_from_contract, fragments_to_contract, BandTravel, ElementKind,
-        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, KnowledgeFragment,
-        LaborAllocation, LaborTarget, LocalStore, LogisticsLink, MoraleCause, MoraleContributions,
-        MountainMetadata, PendingMigration, PopulationCohort, PowerNode, ResidentBand, SourceYield,
-        StartingUnit, Tile, TradeLink, FODDER, FOOD, TRADE_GOODS,
+        Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy, Improvement,
+        KnowledgeFragment, LaborAllocation, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
+        MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
+        ResidentBand, SourceYield, StartingUnit, Tile, TradeLink, FODDER, FOOD,
+        NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{

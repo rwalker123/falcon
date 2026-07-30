@@ -598,8 +598,11 @@ one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`
 and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`advance_fauna_pursuits`,
 plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
 **labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
-(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy }`, `Hunt { fauna_id,
-policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. `advance_labor_allocation`
+(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy, species }`,
+`Hunt { fauna_id, policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. Each
+staffed row is a `LaborAssignment { target, workers, improvement }`: **`policy` is the harvest STANCE
+and `improvement` is what the crew is BUILDING**, two independent axes since issue #442 — see "An
+assignment has TWO axes" in `intensification.md`. `advance_labor_allocation`
 (`systems.rs`, Population stage, replacing the three retired systems) resolves per-worker yields each
 turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range `FoodModuleTag` tile;
 Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
@@ -624,7 +627,7 @@ summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt
 pre-3b client. Husbandry re-homes here — but **Sustain no longer tames** (slice 3a): a **`Tame`** Hunt
 fills the meter, while any stewardship policy on a Thriving source earns the knowledge that source's
 current **rung** teaches (slice 4 — see "The knowledge pattern"). The
-**investment policies** `Cultivate` (Forage-only) / `Corral` (Hunt-only) also resolve here — a reduced
+**improvements** `Cultivate` (plant-only) / `Corral` (animal-only) also resolve here — a reduced
 take while the improvement is prepared, then the managed yield; see "Cultivation" / "Corral". Config:
 `labor_config.json`. Client allocation panel is PR 3b.
 
@@ -659,7 +662,7 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 `Herd` carries `domestication_progress` (0–1, `1.0` = domesticated) and `owner:
 Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
-  (Population), a Hunt assignment carrying **`FollowPolicy::Tame`** on a **Thriving** herd adds the
+  (Population), a Hunt assignment carrying **`Improvement::Tame`** on a **Thriving** herd adds the
   `animal:pastoral` rung's `progress_per_turn` × the species' `taming_rate` for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
   husbandry ceiling). At `1.0` the herd domesticates. **A `Sustain` hunt tames nothing** — it only

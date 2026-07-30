@@ -46,7 +46,7 @@ use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
-    components::FollowPolicy,
+    components::{FollowPolicy, Improvement},
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
     forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
@@ -80,6 +80,65 @@ pub const RUNG_UNSTARTED: f32 = 0.0;
 /// **timescale**. See [`RungDef::build_accrual`] for why it scales the whole timescale rather than the
 /// speed alone.
 pub const RUNG_TIMESCALE_UNSCALED: f32 = 1.0;
+
+/// **The yield dip of an assignment that is building nothing** — the identity, so a pure harvest pays
+/// its stance's whole ceiling. Named rather than a bare `1.0` at [`LadderConfig::build_dip`]'s `None`
+/// arm, where the number says nothing about which multiplier is being declined.
+pub const NO_BUILD_UNDERWAY_DIP: f32 = 1.0;
+
+/// **One food web's two build dips**, carried on a `fauna::SourceYieldForecast` so a forecast can
+/// price a build without holding the ladder — the pre-commit twin of [`LadderConfig::build_dip`].
+///
+/// Two slots, not four, because the improvements are **kind-exclusive**: a plant source is only ever
+/// asked about `Cultivate`/`Sow` and an animal one about `Tame`/`Corral`, so "rung 2" and "rung 3"
+/// name the pair unambiguously for whichever branch the source belongs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BuildDips {
+    /// The rung-2 verb's `yield_fraction_while_building` (`Cultivate` on plants, `Tame` on animals).
+    pub rung_two: f32,
+    /// The rung-3 verb's (`Sow` on plants, `Corral` on animals).
+    pub rung_three: f32,
+}
+
+impl Default for BuildDips {
+    /// A default-constructed forecast prices no build — the identity, matching
+    /// [`BuildDips::UNDIPPED`]. (`SourceYieldForecast` derives `Default` for its test fixtures.)
+    fn default() -> Self {
+        Self::UNDIPPED
+    }
+}
+
+impl BuildDips {
+    /// **Nothing left to build** — both dips the identity. The value a rung-3 managed source carries
+    /// (a Field, a penned herd): its policy axis has collapsed onto one managed number, and quoting a
+    /// dip on it would price a build that cannot be started.
+    pub const UNDIPPED: Self = Self {
+        rung_two: NO_BUILD_UNDERWAY_DIP,
+        rung_three: NO_BUILD_UNDERWAY_DIP,
+    };
+
+    /// Read one branch's pair off the ladder.
+    pub fn for_branch(ladder: &LadderConfig, branch: RungBranch) -> Self {
+        let (rung_two, rung_three) = match branch {
+            RungBranch::Plant => (Improvement::Cultivate, Improvement::Sow),
+            RungBranch::Animal => (Improvement::Tame, Improvement::Corral),
+        };
+        Self {
+            rung_two: ladder.build_dip(Some(rung_two)),
+            rung_three: ladder.build_dip(Some(rung_three)),
+        }
+    }
+
+    /// The dip an assignment carrying `improvement` multiplies its stance's ceiling by —
+    /// [`NO_BUILD_UNDERWAY_DIP`] when it is building nothing.
+    pub fn of(self, improvement: Option<Improvement>) -> f32 {
+        match improvement {
+            None => NO_BUILD_UNDERWAY_DIP,
+            Some(Improvement::Cultivate | Improvement::Tame) => self.rung_two,
+            Some(Improvement::Sow | Improvement::Corral) => self.rung_three,
+        }
+    }
+}
 
 /// Which food web a rung belongs to. The two webs are separate ladders that never share a rung — a
 /// master rancher isn't automatically a farmer (`plan_intensification_ladder.md` §4.2).
@@ -322,10 +381,12 @@ pub struct RungBuild {
     /// positive and finite, which the roster that owns it (`FaunaConfig::validate`) enforces.
     pub decay_per_turn: f32,
     /// **The investment cost.** While the meter is filling, the source's take ceiling is only this
-    /// fraction of its **Sustain (MSY)** ceiling — the crew is preparing, not harvesting. A fraction
-    /// of MSY is a sustainable draw, so the source stays healthy while the work goes on. Validated
-    /// `0 < f < 1`: at `0` the rung would starve its builders, at `>= 1` it would cost nothing and
-    /// the whole "investment with a time horizon" decision would evaporate.
+    /// fraction of the **selected stance's** ceiling — the crew is preparing, not harvesting. It rode
+    /// the Sustain (MSY) ceiling until issue #442, when the build verb stopped *being* the stance; a
+    /// fraction of a sustainable draw is still sustainable, so a Sustain builder keeps its source
+    /// healthy, and a Deplete builder's dip rides a draw-down and undermines its own meter (§2.2).
+    /// Validated `0 < f < 1`: at `0` the rung would starve its builders, at `>= 1` it would cost
+    /// nothing and the whole "investment with a time horizon" decision would evaporate.
     pub yield_fraction_while_building: f32,
 }
 
@@ -339,9 +400,8 @@ pub struct RungDef {
     /// Position on its branch's ladder, `1` = the wild source. Unique within the branch; the ladder
     /// is strictly sequential (see `requires_rung`).
     pub order: u32,
-    /// The [`FollowPolicy`] whose verb fills this rung's build meter. `None` = **this rung is not
-    /// driven by a verb today** — the engine skips it (today's animal `pastoral`, and both wild
-    /// rungs, which are nothing to build).
+    /// The [`Improvement`] whose verb fills this rung's build meter. `None` = **this rung is not
+    /// driven by a verb today** — the engine skips it (both wild rungs, which are nothing to build).
     pub verb: Option<String>,
     /// The knowledge a faction must hold before it may select `verb`. `None` = ungated today.
     pub unlock_knowledge: Option<String>,
@@ -376,12 +436,12 @@ pub struct RungDef {
 }
 
 impl RungDef {
-    /// The policy that drives this rung's build meter, already parsed. `None` for a rung no verb
+    /// The improvement that drives this rung's build meter, already parsed. `None` for a rung no verb
     /// drives today. (Validated at load, so the parse cannot fail here.)
-    pub fn verb_policy(&self) -> Option<FollowPolicy> {
+    pub fn verb_improvement(&self) -> Option<Improvement> {
         self.verb
             .as_deref()
-            .map(|verb| FollowPolicy::from_str(verb).expect("validated at load"))
+            .map(|verb| Improvement::from_str(verb).expect("validated at load"))
     }
 
     /// The discovery gating this rung's verb. `None` for an ungated rung. (Validated at load.)
@@ -410,8 +470,10 @@ impl RungDef {
     /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung`].
     ///
     /// Returns the discovery to credit, or `None` when:
-    /// - the policy is **not stewardship** ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain and
-    ///   the investment verbs teach; Surplus/Deplete/Eradicate never do, at any rung), or
+    /// - the **stance** is not stewardship ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain
+    ///   teaches; Surplus/Deplete/Eradicate never do, at any rung. Since issue #442 the build verbs
+    ///   are an independent axis and are **not** in this decision: a crew preparing ground under
+    ///   Sustain teaches as it always did, one preparing it under Deplete learns nothing), or
     /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
     ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
     ///   sites already had, or
@@ -433,9 +495,9 @@ impl RungDef {
     }
 
     /// **The build seam — the accrual side.** How much this rung's per-source meter advances this
-    /// turn: `progress_per_turn × timescale` when `policy` **is** the rung's verb *and* the caller's
-    /// rung-specific gates hold (`eligible` — knows the unlock knowledge, the source is healthy, the
-    /// species' ceiling allows it, the faction owns it), otherwise `0`.
+    /// turn: `progress_per_turn × timescale` when `improvement` **is** the rung's verb *and* the
+    /// caller's rung-specific gates hold (`eligible` — knows the unlock knowledge, the source is
+    /// healthy, the species' ceiling allows it, the faction owns it), otherwise `0`.
     ///
     /// A rung with **no verb** (`verb: null`) or **no build** is never driven: it returns `0` — which
     /// is what keeps the `wild` rungs (nothing to build) out of the engine.
@@ -458,11 +520,16 @@ impl RungDef {
     /// The caller applies the amount to its own meter (`ForagePatch::accrue_cultivation` /
     /// `Herd::accrue_domestication` / `Herd::accrue_corral`), which owns the clamp to
     /// [`RUNG_COMPLETE`] and the side-effects of completing.
-    pub fn build_accrual(&self, policy: FollowPolicy, eligible: bool, timescale: f32) -> f32 {
+    pub fn build_accrual(
+        &self,
+        improvement: Option<Improvement>,
+        eligible: bool,
+        timescale: f32,
+    ) -> f32 {
         let Some(build) = self.build.as_ref() else {
             return 0.0;
         };
-        if !eligible || self.verb_policy() != Some(policy) {
+        if !eligible || improvement.is_none() || self.verb_improvement() != improvement {
             return 0.0;
         }
         build.progress_per_turn * timescale
@@ -479,9 +546,15 @@ impl RungDef {
             .map_or(0.0, |build| build.decay_per_turn * timescale)
     }
 
-    /// **The build seam — the investment dip.** The fraction of the source's Sustain (MSY) ceiling
-    /// it pays while this rung is being built. `None` for a rung with no build — a caller with no
-    /// dip to apply must not silently substitute one.
+    /// **The build seam — the investment dip.** The fraction of the source's **selected stance's**
+    /// ceiling it pays while this rung is being built. `None` for a rung with no build — a caller
+    /// with no dip to apply must not silently substitute one.
+    ///
+    /// It rode the **Sustain** ceiling until issue #442, because a build verb *was* the policy and a
+    /// builder could therefore not be in any other stance. With the axes split the same fraction
+    /// multiplies whichever stance the player holds — the identical formula with the constant
+    /// removed — which is what makes a Deplete-while-building self-punishing without a gate
+    /// (`docs/plan_investment_rung_toggle.md` §2.2).
     pub fn yield_fraction_while_building(&self) -> Option<f32> {
         self.build
             .as_ref()
@@ -552,6 +625,33 @@ impl LadderConfig {
     pub fn rung(&self, key: RungKey) -> &RungDef {
         self.find(key.branch(), key.id())
             .expect("validate requires every coded rung to be defined")
+    }
+
+    /// **The rung an [`Improvement`] builds** — the one verb→rung map, so no call site pairs a verb
+    /// with a `RungKey` by hand. The inverse of [`RungDef::verb_improvement`], and total by
+    /// construction: every verb names exactly one rung of exactly one branch.
+    pub fn rung_for(&self, improvement: Improvement) -> &RungDef {
+        self.rung(match improvement {
+            Improvement::Cultivate => RungKey::PlantTended,
+            Improvement::Sow => RungKey::PlantField,
+            Improvement::Tame => RungKey::AnimalPastoral,
+            Improvement::Corral => RungKey::AnimalPen,
+        })
+    }
+
+    /// **THE dip multiplier an assignment's ceiling carries** (`docs/plan_investment_rung_toggle.md`
+    /// §2.2): the building rung's `yield_fraction_while_building`, or the identity
+    /// [`NO_BUILD_UNDERWAY_DIP`] when the crew is only harvesting.
+    ///
+    /// One lookup for both webs, so the plant and animal take paths cannot apply the dip differently
+    /// — and so the *stance* it multiplies is entirely the caller's business, which is what generalised
+    /// the dip off its hardcoded Sustain base.
+    pub fn build_dip(&self, improvement: Option<Improvement>) -> f32 {
+        improvement.map_or(NO_BUILD_UNDERWAY_DIP, |improvement| {
+            self.rung_for(improvement)
+                .yield_fraction_while_building()
+                .expect("a rung a verb builds is an investment — it has a build meter")
+        })
     }
 
     /// A rung by branch + id, if it exists.
@@ -731,16 +831,15 @@ fn validate_knowledge(knowledge: &LadderKnowledge) -> Result<(), LadderConfigErr
     Ok(())
 }
 
-/// The verb (when named) has to be a real policy, and the knowledge links (when named) real
+/// The verb (when named) has to be a real improvement, and the knowledge links (when named) real
 /// discoveries — otherwise the rung is unreachable in a way nothing on the map would explain.
 fn validate_links(rung: &RungDef, where_: &str) -> Result<(), LadderConfigError> {
     if let Some(verb) = rung.verb.as_deref() {
-        if FollowPolicy::from_str(verb).is_err() {
+        if Improvement::from_str(verb).is_err() {
             return Err(LadderConfigError::Invalid {
                 field: where_.to_string(),
-                constraint:
-                    "name a real FollowPolicy in `verb` (or null for a rung no verb drives)"
-                        .to_string(),
+                constraint: "name a real Improvement in `verb` (or null for a rung no verb drives)"
+                    .to_string(),
                 value: format!("verb = '{verb}'"),
             });
         }
@@ -1001,19 +1100,19 @@ mod tests {
         // Rung 1 already teaches (§0: practice-earns-knowledge is shipped on both tracks) but is
         // driven by no verb — you don't *build* a wild source.
         let plant_wild = ladder.rung(RungKey::PlantWild);
-        assert_eq!(plant_wild.verb_policy(), None);
+        assert_eq!(plant_wild.verb_improvement(), None);
         assert_eq!(
             plant_wild.earns_discovery_id(),
             Some(CULTIVATION_DISCOVERY_ID)
         );
         let animal_wild = ladder.rung(RungKey::AnimalWild);
-        assert_eq!(animal_wild.verb_policy(), None);
+        assert_eq!(animal_wild.verb_improvement(), None);
         assert_eq!(animal_wild.earns_discovery_id(), Some(HERDING_DISCOVERY_ID));
 
         // Plant rung 2 — the shipped Cultivate investment, gated on Cultivation, and (slice 4)
         // **teaching Seed Selection**: practise the tended patch, learn to select seed.
         let tended = ladder.rung(RungKey::PlantTended);
-        assert_eq!(tended.verb_policy(), Some(FollowPolicy::Cultivate));
+        assert_eq!(tended.verb_improvement(), Some(Improvement::Cultivate));
         assert_eq!(tended.unlock_discovery_id(), Some(CULTIVATION_DISCOVERY_ID));
         assert_eq!(
             tended.earns_discovery_id(),
@@ -1024,7 +1123,7 @@ mod tests {
         // the conflation fix (§4.1): the rung is driven by its own verb, not by a Sustain harvest.
         // Slice 4: practising it **teaches Penning**, the gate on rung 3.
         let pastoral = ladder.rung(RungKey::AnimalPastoral);
-        assert_eq!(pastoral.verb_policy(), Some(FollowPolicy::Tame));
+        assert_eq!(pastoral.verb_improvement(), Some(Improvement::Tame));
         assert_eq!(pastoral.unlock_discovery_id(), Some(HERDING_DISCOVERY_ID));
         assert_eq!(pastoral.earns_discovery_id(), Some(PENNING_DISCOVERY_ID));
         assert_eq!(pastoral.ceiling_required, Some(HusbandryCeiling::Pastoral));
@@ -1042,7 +1141,7 @@ mod tests {
         // knowledge per transition. Since Flora Roster F3 it TEACHES **Foddering** (2007) — running a
         // pen is how you learn to hay one (`selective_breeding`, rung 4's lesson, stays parked).
         let pen = ladder.rung(RungKey::AnimalPen);
-        assert_eq!(pen.verb_policy(), Some(FollowPolicy::Corral));
+        assert_eq!(pen.verb_improvement(), Some(Improvement::Corral));
         assert_eq!(pen.unlock_discovery_id(), Some(PENNING_DISCOVERY_ID));
         assert_eq!(pen.earns_discovery_id(), Some(FODDERING_DISCOVERY_ID));
         assert_eq!(pen.ceiling_required, Some(HusbandryCeiling::Pen));
@@ -1073,17 +1172,23 @@ mod tests {
         let build = tended.build.as_ref().expect("tended rung builds");
 
         assert_eq!(
-            tended.build_accrual(FollowPolicy::Cultivate, true, RUNG_TIMESCALE_UNSCALED),
+            tended.build_accrual(Some(Improvement::Cultivate), true, RUNG_TIMESCALE_UNSCALED),
             build.progress_per_turn
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(FollowPolicy::Sustain, true, RUNG_TIMESCALE_UNSCALED),
+            tended.build_accrual(Some(Improvement::Sow), true, RUNG_TIMESCALE_UNSCALED),
+            0.0
+        );
+        // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
+        // its stance.
+        assert_eq!(
+            tended.build_accrual(None, true, RUNG_TIMESCALE_UNSCALED),
             0.0
         );
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            tended.build_accrual(FollowPolicy::Cultivate, false, RUNG_TIMESCALE_UNSCALED),
+            tended.build_accrual(Some(Improvement::Cultivate), false, RUNG_TIMESCALE_UNSCALED),
             0.0
         );
         assert_eq!(
@@ -1105,17 +1210,15 @@ mod tests {
         let ladder = LadderConfig::builtin();
         for key in [RungKey::AnimalWild, RungKey::PlantWild] {
             let wild = ladder.rung(key);
-            for policy in [
-                FollowPolicy::Sustain,
-                FollowPolicy::Surplus,
-                FollowPolicy::Deplete,
-                FollowPolicy::Eradicate,
-                FollowPolicy::Cultivate,
-                FollowPolicy::Tame,
-                FollowPolicy::Corral,
+            for improvement in [
+                None,
+                Some(Improvement::Cultivate),
+                Some(Improvement::Sow),
+                Some(Improvement::Tame),
+                Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(policy, true, RUNG_TIMESCALE_UNSCALED),
+                    wild.build_accrual(improvement, true, RUNG_TIMESCALE_UNSCALED),
                     0.0
                 );
             }
@@ -1148,26 +1251,24 @@ mod tests {
         let build = pastoral.build.as_ref().expect("the pastoral rung builds");
 
         assert_eq!(
-            pastoral.build_accrual(FollowPolicy::Tame, true, RUNG_TIMESCALE_UNSCALED),
+            pastoral.build_accrual(Some(Improvement::Tame), true, RUNG_TIMESCALE_UNSCALED),
             build.progress_per_turn
         );
-        for policy in [
-            FollowPolicy::Sustain,
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-            FollowPolicy::Cultivate,
-            FollowPolicy::Corral,
+        for improvement in [
+            None,
+            Some(Improvement::Cultivate),
+            Some(Improvement::Sow),
+            Some(Improvement::Corral),
         ] {
             assert_eq!(
-                pastoral.build_accrual(policy, true, RUNG_TIMESCALE_UNSCALED),
+                pastoral.build_accrual(improvement, true, RUNG_TIMESCALE_UNSCALED),
                 0.0,
-                "{policy:?} must not tame a herd — only Tame does"
+                "{improvement:?} must not tame a herd — only Tame does"
             );
         }
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
         assert_eq!(
-            pastoral.build_accrual(FollowPolicy::Tame, false, RUNG_TIMESCALE_UNSCALED),
+            pastoral.build_accrual(Some(Improvement::Tame), false, RUNG_TIMESCALE_UNSCALED),
             0.0
         );
     }
@@ -1240,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_verb_that_is_not_a_policy() {
+    fn rejects_a_verb_that_is_not_an_improvement() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "tended");
             json["rungs"][idx]["verb"] = "plough".into();
@@ -1355,20 +1456,15 @@ mod tests {
     fn knowledge_earned_is_the_rungs_lesson_gated_on_stewardship_and_health() {
         let ladder = LadderConfig::builtin();
 
-        // Rung 1 teaches under every stewardship policy...
+        // Rung 1 teaches under the one stewardship stance. Since issue #442 stewardship is a
+        // property of the STANCE alone — a build verb is a separate axis and is not in this
+        // decision, so a crew preparing ground under Sustain teaches exactly as it always did.
         let wild = ladder.rung(RungKey::AnimalWild);
-        for policy in [
-            FollowPolicy::Sustain,
-            FollowPolicy::Tame,
-            FollowPolicy::Corral,
-            FollowPolicy::Cultivate,
-        ] {
-            assert_eq!(
-                wild.knowledge_earned(policy, true),
-                Some(HERDING_DISCOVERY_ID),
-                "{policy:?} is stewardship — practising the wild rung must teach Herding"
-            );
-        }
+        assert_eq!(
+            wild.knowledge_earned(FollowPolicy::Sustain, true),
+            Some(HERDING_DISCOVERY_ID),
+            "Sustain is stewardship — practising the wild rung must teach Herding"
+        );
         // ...and under none of the overdrawing ones (§4.2).
         for policy in [
             FollowPolicy::Surplus,
