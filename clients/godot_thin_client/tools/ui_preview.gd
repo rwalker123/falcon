@@ -1137,11 +1137,10 @@ func _ready() -> void:
 	# is the whole point of showing a gated improvement rather than hiding it, and it survived the move
 	# off the picker unchanged.
 	var sow_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
-	_assert_hud("a gated improvement is offered UNCHECKED and disabled, never hidden",
-		sow_box is CheckBox and not (sow_box as CheckBox).button_pressed
-		and (sow_box as CheckBox).disabled)
-	_assert_hud("…with its unmet prerequisite spelled out in full beneath it",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "Seed Selection"))
+	_assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
+		sow_box != null and not (sow_box is CheckBox))
+	_assert_hud("…with its unmet prerequisite as the control's OWN text, not an offer above it",
+		sow_box is Label and (sow_box as Label).text.contains("Seed Selection"))
 	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
 	_assert_hud("…above a DONE label for the rung already built",
 		_find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate") is Label)
@@ -1460,7 +1459,18 @@ func _ready() -> void:
 	# State 442-cultivate-done — the DONE state. A finished patch's rung becomes a static LABEL (no box
 	# to uncheck, nothing to clear), and the NEXT rung's checkbox renders beneath it. This is the state
 	# that retired #420 outright: a label cannot be selected-and-gated.
-	var tended_tile := _tended_tile_fixture()
+	# SOWABLE ground, not the reference patch. The claim below is that the ladder CONTINUES beneath a
+	# done label — which needs a next rung that is genuinely on offer. `_tended_tile_fixture` is built
+	# on the reference tile, whose `sow_site_refusal` is "too_dry", so Sow there can only ever be
+	# gated: the assertion would be testing the gated shape while claiming to test the offered one.
+	var tended_tile := _sowable_tile_fixture()
+	# `patch_`-PREFIXED, like every other key on a tile_info dict — the unprefixed spellings are the
+	# RAW wire patch's, and setting those here leaves `improvement_is_done` reading nothing at all.
+	tended_tile["patch_cultivation_progress"] = 1.0
+	tended_tile["patch_is_cultivated"] = true
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
 	_hud._band_labor._player_band = _cultivating_forage_band_fixture(
 		int(tended_tile["x"]), int(tended_tile["y"]))
 	_hud._compose.reset_forage_source()
@@ -1474,8 +1484,12 @@ func _ready() -> void:
 	_assert_hud("…naming the state the build left the patch in",
 		_improvement_face(_hud._drawercompose._compose_sheet, "cultivate").contains(
 			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
-	_assert_hud("…and the NEXT rung's checkbox sits beneath it",
-		_find_improvement_control(_hud._drawercompose._compose_sheet, "sow") is CheckBox)
+	# The ladder CONTINUES: an offerable next rung is a live checkbox, which is also what separates the
+	# done state from a dead end. A gated next rung would be a Label — see `forage_sow_locked` — so
+	# this assertion only means something on ground that will take seed.
+	var next_rung := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
+	_assert_hud("…and the NEXT rung's LIVE checkbox sits beneath it",
+		next_rung is CheckBox and not (next_rung as CheckBox).disabled)
 
 	# State 442-offered-gated — the OFFERED state with an unmet prerequisite. A gated improvement is
 	# SHOWN, UNCHECKED and EXPLAINED, exactly as a gated rung always was: discovering the rung exists and
@@ -1490,11 +1504,25 @@ func _ready() -> void:
 	await _settle()
 	await _save("improvement_offered_gated")
 	var gated_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
-	_assert_hud("a gated improvement is SHOWN and unchecked, never hidden",
-		gated_box is CheckBox and not (gated_box as CheckBox).button_pressed)
-	_assert_hud("…and disabled, with its reason spelled out beneath it",
-		gated_box != null and (gated_box as CheckBox).disabled
-		and _has_label_containing(_hud._drawercompose._compose_sheet, CULTIVATION_LOCKED_NEEDLE))
+	# **A GATED RUNG IS A LABEL, NOT A DISABLED CHECKBOX** — the control's SHAPE says whether this is a
+	# choice or a fact, and an unmet prerequisite is a fact. The greyed-checkbox form this replaced put
+	# an offer the player cannot accept ("Cultivate this patch · then 0.04 food …") directly above the
+	# sentence explaining that they cannot accept it.
+	_assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
+		gated_box != null)
+	_assert_hud("…as a LABEL rather than a checkbox, because it is a state and not a choice",
+		not (gated_box is CheckBox))
+	_assert_hud("…whose own text is the REASON, so nothing offers what cannot be taken",
+		gated_box is Label and (gated_box as Label).text.contains(CULTIVATION_LOCKED_NEEDLE))
+	_assert_hud("…and the offer wording is gone entirely, not merely greyed",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, GATED_OFFER_NEEDLE))
+	# THE CROP LIST IS PART OF COMMITTING, so a refused commitment offers none. Shipped once with the
+	# picker rendered under the disabled box: four live, clickable crop rows beneath a checkbox whose
+	# own note read "Your people know Cultivation 0%" — the card refusing the act and inviting the
+	# player to configure it in the same breath. The gate NOTE stays (it answers "why not?"); the
+	# CONFIGURATION goes. Found in play, not by the harness, which is why the assertion exists now.
+	_assert_hud("…and offers no crop to commit to, committing being what is refused",
+		_find_crop_row(_hud._drawercompose._compose_sheet, GATED_CROP_NEEDLE) == null)
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
@@ -4285,6 +4313,13 @@ const FORECAST_THEN_NEEDLE := IMPROVEMENT_DEAL_MIDDLE_NEEDLE
 
 const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
 const CULTIVATION_LOCKED_NEEDLE := "know Cultivation"
+## A crop `_food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
+## gated offer. Naming a real crop matters: a needle no basket contains would make the assertion pass
+## whether the list rendered or not.
+const GATED_CROP_NEEDLE := "Wild Grain"
+## The offer wording that must NOT appear while the rung is gated — the imperative the gated state
+## exists to remove. Kept as a literal so a reworded offer cannot silently pass this assertion.
+const GATED_OFFER_NEEDLE := "Cultivate this patch"
 ## The Corral done-label's upkeep clause — asserted PRESENT on the penned frame and ABSENT on the
 ## pastoral one, which is the only way to pin an asymmetry rather than merely one side of it.
 const UPKEEP_NEEDLE := "fodder/turn upkeep"

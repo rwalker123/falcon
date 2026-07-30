@@ -525,10 +525,34 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
         if terms != "" else HudComposeVocab.IMPROVEMENT_OFFER_BARE_FORMAT % [
             FoodIcons.for_policy(rung),
             String(HudComposeVocab.IMPROVEMENT_OFFER_LABELS.get(rung, rung.capitalize()))]
+    var reasons := RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)
+    # **GATED — THE REASON IS THE CONTROL, and the offer text is not shown at all.** This used to
+    # render the full offer ("🌱 Cultivate this patch · then 0.04 food · 2.74 trade · 0.81 fodder") as
+    # a greyed checkbox with "Your people know Cultivation 0% — ♻ Sustain-forage a wild patch to learn
+    # it" on a line beneath. That is an OFFER the player cannot accept sitting directly above the
+    # sentence explaining that they cannot accept it — the card arguing with itself, and an imperative
+    # ("Cultivate this patch") aimed at someone who has no way to obey it.
+    #
+    # So the reason moves UP into the control's own slot, keeping the rung's glyph so the improvement
+    # axis is still visibly present and still identifiable. What is lost is the payoff terms as
+    # motivation ("here is what it would pay"); that is deliberate — a number you cannot act on is
+    # noise at the moment you are told you cannot act, and the rung's tooltip still carries its hint.
+    if not reasons.is_empty():
+        target.add_child(HudWidgets.build_improvement_control(rung,
+            HudWidgets.IMPROVEMENT_STATE_GATED,
+            HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
+                FoodIcons.for_policy(rung), String(reasons[0])],
+            String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
+            # A second and later reason keeps the note treatment beneath — the lead line can only
+            # carry one, and dropping the rest would hide half of what the rung costs to unlock.
+            reasons.slice(1)))
+        return
     target.add_child(HudWidgets.build_improvement_control(rung,
         HudWidgets.IMPROVEMENT_STATE_OFFERED, offer_face,
-        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle,
-        RungGates.gate_reasons_for({rung: offer.get("reasons", [])}, rung)))
+        String(HudComposeVocab.IMPROVEMENT_HINTS.get(rung, "")), on_toggle))
+    # The crop picker rides an OFFER only: "which crop do I commit this patch to?" is part of
+    # committing, so it has no meaning where committing is refused — the gated branch above returns
+    # before reaching it.
     if extra_rows.is_valid():
         extra_rows.call(rung, target)
 

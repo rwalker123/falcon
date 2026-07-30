@@ -2599,6 +2599,12 @@ pub fn forage_source_yield_preview(
     )
 }
 
+/// TEMPORARY measurement harness (`#[ignore]`d) for the harvest-stance design review — it drives the
+/// shipped take/regrowth/build functions of **both** webs forward and prints the tables. Lives here
+/// because the plant half needs this module's private `regrow_patch`. Delete with the review.
+#[cfg(test)]
+mod stance_probe;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -42,21 +42,34 @@ live in two slots:
 
 - **`policy` is never written by the sim.** Completion clears `improvement`; the stance stays exactly
   as the player set it (see "Completion CLEARS the improvement" below).
-- **A non-Sustain stance beside a running build is LEGAL**, and it is not gated. It defeats itself
-  through the ecology: the build meter accrues only while the source is `Thriving`, and the dip now
-  rides the harsher stance's larger ceiling, so a Deplete builder takes more now and drives itself out
-  of Thriving sooner. Adding a gate would re-create in the UI the very coupling this split removes.
-  > **Measured, and the two webs differ.** On the **animal** web the punishment bites: Deplete is
-  > `deplete_multiplier × MSY`, a constant catch above the sustainable rate, which has **no
-  > equilibrium** — a Deplete-while-taming herd leaves Thriving and the meter stalls short of taming
-  > (pinned by `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`).
-  > On the **plant** web it does **not**: a forage `Deplete` is `market.take_fraction × biomass`, a
-  > fraction of the standing stock, which *does* have a stable equilibrium — dipped by 0.25 it settles
-  > at ≈ `0.8 K`, comfortably above `stressed_fraction` (0.40). Measured on the shipped dials, a
-  > Deplete-while-cultivating patch stays Thriving for the whole 25-turn build and fills its meter at
-  > the full rate while paying ~2.5× a Sustain builder's food. So on plants the stance choice during a
-  > build is currently free money. **A balance decision, not a bug in the split** — the levers are
-  > `forage.market.take_fraction` and the `plant:tended` rung's `yield_fraction_while_building`.
+- **A non-Sustain stance beside a running build is LEGAL**, and it is not gated. The split's own
+  reason for leaving it ungated was that the ecology would discipline it — the build meter accrues
+  only while the source is `Thriving`, and the dip rides the harsher stance's larger ceiling, so a
+  Deplete builder should take more now and drive itself out of Thriving sooner.
+  > **THAT JUSTIFICATION DOES NOT SURVIVE MEASUREMENT, and the harness that refutes it is
+  > `core_sim/src/forage/stance_probe.rs`** (`#[ignore]`d; run with
+  > `cargo test -p core_sim --lib stance_probe -- --ignored --nocapture --test-threads=1`). Every
+  > figure below is measured by driving the shipped Logistics → Population → accrual order.
+  >
+  > **On plants the discipline is absent outright.** Dipped ×0.25, **all four stances stay Thriving
+  > for the entire build and all four complete in exactly 25 turns**; Eradicate pays **16.62 food to
+  > Sustain's 4.40 (3.8×)** and leaves the patch at 0.68 K. The harshest stance is strictly dominant
+  > and costs nothing. The same holds for `Sow`.
+  >
+  > **On animals it bites only the fast breeders.** The stall is real for Rabbit (r 0.35) — which is
+  > exactly what `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`
+  > pins, on a rabbit primed to K/2. From a FULL herd it does not generalise: **Wild Boar's
+  > Deplete+Tame completes on schedule (32 turns) at 0.556 K paying 2.5× the food**, and Steppe
+  > Runner's completes (125 turns, 0.459 K, 280.80 food against Sustain's 110.40). **That test is true
+  > of its fixture, not of the web** — the verdict depends on both species `r` and starting stock.
+  >
+  > **`Sow` and `Corral` have no health gate at all**, deliberately (sown ground starts Collapsing),
+  > so at rung 3 every stance completes on schedule on both webs — a Corral finishes around a rabbit
+  > herd measured at 0.008 K.
+  >
+  > **This is a balance decision, not a bug in the split**, and it is OPEN. The levers are
+  > `forage.market.take_fraction`, the rungs' `yield_fraction_while_building`, and whether rung 3
+  > should take rung 2's Thriving gate.
 - **Kind-exclusivity is exhaustive, not a complement.** `Improvement::valid_for_forage` /
   `valid_for_hunt` are two exhaustive matches, so a new verb fails to compile until someone states its
   web; the retired `FollowPolicy::valid_for_*` were hand-written `!matches!` complements that would

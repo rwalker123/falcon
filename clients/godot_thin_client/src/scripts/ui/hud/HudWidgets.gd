@@ -504,13 +504,29 @@ const IMPROVEMENT_CONTROL_META := "improvement"
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"
+## An offer the source cannot take yet. **A LABEL, not a disabled checkbox** — the control's shape
+## says whether this is a CHOICE or a FACT, and an unmet prerequisite is a fact. It shipped once as a
+## greyed checkbox reading "Cultivate this patch · then 0.04 food …" with the reason on a second line
+## beneath, which put an OFFER the player cannot accept directly above the sentence explaining that
+## they cannot accept it — the card arguing with itself. The reason is now the control's own text.
+const IMPROVEMENT_STATE_GATED := "gated"
 
 static func build_improvement_control(improvement: String, state: String, face: String,
         tooltip: String, on_toggle: Callable, notes: Array = [],
         warn_notes: bool = false) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    if state == IMPROVEMENT_STATE_DONE:
+    if state == IMPROVEMENT_STATE_GATED:
+        # Same Label treatment as DONE — both are states rather than choices — but in the muted ink a
+        # prerequisite deserves rather than DONE's HEALTHY, which would read as an achievement.
+        var locked := Label.new()
+        locked.text = face
+        locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        locked.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
+        set_label_tooltip(locked, tooltip)
+        block.add_child(locked)
+    elif state == IMPROVEMENT_STATE_DONE:
         # A state, not a choice. `set_label_tooltip` because a bare `tooltip_text` on a Label is a
         # SILENT no-op (Labels default to MOUSE_FILTER_IGNORE).
         var done := Label.new()

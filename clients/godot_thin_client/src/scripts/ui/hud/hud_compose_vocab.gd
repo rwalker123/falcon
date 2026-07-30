@@ -216,6 +216,12 @@ const IMPROVEMENT_OFFER_FORMAT := "%s %s · then %s"
 # an older snapshot): the verb alone, never a fabricated "· then +0.00".
 const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
 
+## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
+## The rung is NOT named here and that is the point — naming it ("Cultivate this patch") reads as an
+## offer, and this state exists precisely because there is no offer to make yet. The glyph keeps the
+## improvement axis visible and identifiable without making a promise.
+const IMPROVEMENT_GATED_FORMAT := "%s %s"
+
 # `<glyph> <participle> — 60%` — the running checkbox's face. The percent comes from the SAME
 # `SourceForecast.improvement_progress` the map badge and the work board read, so the three can never
 # quote different meters.
