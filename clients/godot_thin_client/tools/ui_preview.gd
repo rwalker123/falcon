@@ -5226,8 +5226,46 @@ func _no_flash_band_fixture(workers: int, yield_val: float) -> Dictionary:
 		],
 	}
 
+## **Seed the per-policy forage ROWS from the flat scalars this fixture already states** (#426).
+##
+## The wire now carries the tile's whole yield vector as one row per rung — six dicts keyed by policy,
+## both the ceiling and the per-worker term, in all three accounts — and the six flat `patch_ceiling_*`
+## scalars are deprecated slots. `SourceForecast.forecast_is_known` reads the ROW's PRESENCE as its
+## "does the wire describe this source" witness, so a fixture that seeds only the scalars now correctly
+## reads as *undescribed* and renders no forecast at all.
+##
+## Deriving the rows here rather than hand-writing them at ~30 fixture sites keeps each fixture naming
+## its numbers ONCE, in the readable scalar form its comments explain, and makes the two
+## representations unable to disagree. A state that wants a genuinely NON-derivable row (a trade-paying
+## or fodder-paying tile) overwrites the relevant dict after calling this.
+##
+## Trade and fodder default to 0 — the render-only-when-non-zero rule means every existing frame is
+## then byte-identical, which is exactly what a reseeding pass must not disturb.
+func _seed_forage_rows(tile: Dictionary) -> Dictionary:
+	var per_worker := float(tile.get("patch_per_worker_yield", 0.0))
+	var ceilings := {
+		"sustain": float(tile.get("patch_ceiling_sustain", 0.0)),
+		"surplus": float(tile.get("patch_ceiling_surplus", 0.0)),
+		"deplete": float(tile.get("patch_ceiling_deplete", 0.0)),
+		"eradicate": float(tile.get("patch_ceiling_eradicate", 0.0)),
+		"cultivate": float(tile.get("patch_ceiling_cultivate", 0.0)),
+		"sow": float(tile.get("patch_ceiling_sow", 0.0)),
+	}
+	var zeros := {}
+	var per_worker_rows := {}
+	for policy in ceilings:
+		zeros[policy] = 0.0
+		per_worker_rows[policy] = per_worker
+	tile["patch_forage_policy_ceilings"] = ceilings
+	tile["patch_forage_policy_trade_ceilings"] = zeros.duplicate()
+	tile["patch_forage_policy_fodder_ceilings"] = zeros.duplicate()
+	tile["patch_forage_policy_per_worker"] = per_worker_rows
+	tile["patch_forage_policy_per_worker_trade"] = zeros.duplicate()
+	tile["patch_forage_policy_per_worker_fodder"] = zeros.duplicate()
+	return tile
+
 func _food_tile_fixture() -> Dictionary:
-	return {
+	var tile := {
 		"x": 66, "y": 10,
 		"terrain_label": "Prairie Steppe",
 		"tags_text": "Fertile",
@@ -5311,6 +5349,7 @@ func _food_tile_fixture() -> Dictionary:
 		"graze_capacity": 240.0,
 		"graze_ecology_phase": "thriving",
 	}
+	return _seed_forage_rows(tile)
 
 ## An OVERGRAZED pasture: the standing graze has been drawn deep into the stressed band, so the
 ## `Pasture ecology` row reads a WARN-amber "⚠ Stressed" — the SAME label + tint a stressed herd or a
@@ -5364,7 +5403,7 @@ func _weeded_crop_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return tile
+	return _seed_forage_rows(tile)
 
 ## A player faction carrying real stock, so the left dock's Stockpiles card is VISIBLE and reserves
 ## its own height beneath the tile card (`DockScrollFit._height_reserved_below`). Five items, the
@@ -5760,7 +5799,7 @@ func _tended_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return tile
+	return _seed_forage_rows(tile)
 
 ## QUALIFYING GROUND for `Sow` — an alluvial plain beside fresh water, i.e. one of the ~46 tiles of
 ## 4160 (1.1%) on the standard map that will actually take seed. `patch_sow_site_refusal` is "" (the
@@ -5784,7 +5823,7 @@ func _sowable_tile_fixture() -> Dictionary:
 	tile["patch_sow_site_refusal"] = ""
 	tile["patch_ceiling_sow"] = 0.02
 	tile["patch_field_yield"] = 2.40
-	return tile
+	return _seed_forage_rows(tile)
 
 ## The OTHER refusal. `_food_tile_fixture` is "too_dry" (rich prairie away from water); this is thin
 ## upland ground — watered, but too poor to take a crop without fertilizing. The two messages must
@@ -5826,7 +5865,7 @@ func _field_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
-	return tile
+	return _seed_forage_rows(tile)
 
 ## A herd mid-TAME on a pen-ceiling species: the 🐾 Tame rung is available and selected, the herd's
 ## OWN meter reads 40% (`domestication`), and Corral is still gated on Penning. This is the frame the
