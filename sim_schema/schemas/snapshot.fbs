@@ -1155,6 +1155,58 @@ table ForagePatchState {
   // (`isCultivated`/`isField`). See docs/plan_flora_roster.md §4.3.
   committedSpecies:string;
   committedDisplayName:string;
+  // --- THE TILE'S YIELD VECTOR (appended, issue #426) --------------------------------------------
+  // Every field above this line is PROVISIONS. But a harvest of `B` biomass pays `B × yield.*` into
+  // THREE accounts, and a patch's rate for each is the share-weighted average over its own basket
+  // (`patch_provisions_per_biomass` / `patch_trade_per_biomass` / `patch_fodder_per_biomass`) — so
+  // the food-only forecast under-reported almost every tile in the game, not merely the cash crops.
+  // Every staple carries the flat `trade_goods_per_biomass` token (0.005), so essentially NO tile is
+  // single-account; a tobacco Field was just the case where the missing account was the WHOLE yield
+  // and `perWorkerYield == 0` made the client read "no forecast data".
+  //
+  // THIS IS THE **TILE's** VECTOR, NOT A PLANT'S — do not confuse it with `FloraShareInfo`'s
+  // `cultivate*`/`sow*` payoffs, which answer "what would THIS PLANT pay if I committed to it".
+  // Rungs 1 and 2 are baskets (rung 2 only WEEDS), so they routinely pay 2–3 accounts; only a sown
+  // Field is one plant. The two surfaces are answering different questions and must stay separate.
+  //
+  // Read each beside its provisions sibling as ONE vector and render a component **only when it is
+  // non-zero** — the rule `HuntPolicyCeiling.tradeGoodsPerTurn` already states. In particular
+  // `trade > 0` does **NOT** mean "cash crop": every staple pays the token.
+  perWorkerTrade:float = 0;
+  perWorkerFodder:float = 0;
+  // The per-policy ceilings as ROWS rather than scalars — one per rung, each carrying all three
+  // accounts. This replaces the six flat `ceiling*` fields above (now deprecated slots), mirroring
+  // the migration `HerdTelemetryState` already made to `huntPolicyCeilings`: a future rung (rung 4,
+  // Worked Land) costs no schema change, where the flat shape would have cost three more fields per
+  // rung forever.
+  foragePolicyCeilings:[ForagePolicyCeiling];
+  // The non-food halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
+  // `fieldYield`, exactly as `pastoralTrade`/`corralTrade` are of `pastoralYield`/`corralYield`. A
+  // tended patch is drawn down, so its accounts ride the take; a Field is a managed rate. Two fields
+  // per account per rung for `tendedYield`/`fieldYield`'s own reason: the rungs differ in basket,
+  // conversion gain AND the shape of the harvest, so one number cannot answer both.
+  tendedTrade:float = 0;
+  tendedFodder:float = 0;
+  fieldTrade:float = 0;
+  fieldFodder:float = 0;
+}
+
+// One rung's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
+// twin of [HuntPolicyCeiling], and deliberately the same shape: `policy` names the rung
+// (`sustain`/`surplus`/`deplete`/`eradicate`/`cultivate`/`sow`), and the three components are that
+// rung's per-turn ceiling in each account, already biomass-clamped, captured at
+// `output_multiplier = 1.0`.
+//
+// A LIST, not flat scalars, for the reason the herd's is: the set of rungs grows (rung 4 is planned),
+// and a row costs no schema change where a scalar triple costs three fields per rung forever.
+//
+// **`fodderPerTurn` has no herd counterpart** — the animal web has two accounts, the plant web three
+// (`hay_grass` pays fodder and nothing else). Render a component only when it is non-zero.
+table ForagePolicyCeiling {
+  policy:string;
+  provisionsPerTurn:float = 0;
+  tradeGoodsPerTurn:float = 0;
+  fodderPerTurn:float = 0;
 }
 
 // One named plant's share of a tile's forage capacity — see `ForagePatchState.composition`.

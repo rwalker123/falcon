@@ -521,6 +521,66 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
+    /// **Trade goods/turn one forager contributes** — the trade twin of [`Self::per_worker_yield`]
+    /// (issue #426). Read the two as ONE vector and render each component only when it is non-zero.
+    ///
+    /// **`> 0` does NOT mean "cash crop".** Every staple carries the flat `trade_goods_per_biomass`
+    /// token (0.005), so essentially no tile in the game is single-account — which is precisely why
+    /// the food-only forecast under-reported almost every patch rather than only the cash crops.
+    #[serde(default)]
+    pub per_worker_trade: f32,
+    /// **Fodder/turn one forager contributes** — the third account, which the animal web has no
+    /// counterpart for (`hay_grass` pays fodder and nothing else). `0` on a basket holding no fodder
+    /// crop, which is most of them.
+    #[serde(default)]
+    pub per_worker_fodder: f32,
+    /// **The per-policy ceilings as rows**, one per rung, each carrying all three accounts — the
+    /// plant twin of [`HerdTelemetryState::hunt_policy_ceilings`] and the replacement for the six
+    /// flat `ceiling_*` scalars above.
+    ///
+    /// A list rather than scalars for the reason the herd's is: the rung set grows (rung 4, Worked
+    /// Land, is planned), and a row costs no schema change where a scalar triple would cost three
+    /// fields per rung forever.
+    #[serde(default)]
+    pub forage_policy_ceilings: Vec<ForagePolicyCeilingState>,
+    /// Trade goods/turn a **completed tended patch** would pay — the twin of [`Self::tended_yield`],
+    /// as `pastoral_trade` is of `pastoral_yield`. Rung 2 is drawn down, so this rides the take.
+    #[serde(default)]
+    pub tended_trade: f32,
+    /// Fodder/turn a **completed tended patch** would pay. `0` unless its basket holds a fodder crop.
+    #[serde(default)]
+    pub tended_fodder: f32,
+    /// Trade goods/turn a **completed Field** would pay — the twin of [`Self::field_yield`]. A Field
+    /// is one plant at 100% share, so this is that crop's own rate; for a cash crop it is the whole
+    /// yield and [`Self::field_yield`] is `0`.
+    #[serde(default)]
+    pub field_trade: f32,
+    /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
+    #[serde(default)]
+    pub field_fodder: f32,
+}
+
+/// **One rung's ceiling on one tile, in every account that tile's basket pays** (issue #426) — the
+/// plant twin of [`HuntPolicyCeilingState`], deliberately the same shape.
+///
+/// `policy` names the rung (`sustain`/`surplus`/`deplete`/`eradicate`/`cultivate`/`sow`); each
+/// component is that rung's per-turn ceiling in one account, already biomass-clamped and captured at
+/// `output_multiplier = 1.0`. **Render a component only when it is non-zero** — the rule
+/// [`HuntPolicyCeilingState::trade_goods_per_turn`] already states.
+///
+/// **This is the TILE's vector, not a plant's.** Rungs 1 and 2 are baskets (rung 2 only *weeds*), so
+/// they routinely pay two or three accounts; only a sown Field is a single plant. `FloraShareInfo`'s
+/// `cultivate*`/`sow*` payoffs answer the different question "what would *this plant* pay here".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ForagePolicyCeilingState {
+    pub policy: String,
+    #[serde(default)]
+    pub provisions_per_turn: f32,
+    #[serde(default)]
+    pub trade_goods_per_turn: f32,
+    /// **No herd counterpart** — the animal web has two accounts, the plant web three.
+    #[serde(default)]
+    pub fodder_per_turn: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

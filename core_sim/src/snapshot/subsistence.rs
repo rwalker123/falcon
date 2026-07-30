@@ -1,5 +1,7 @@
 use super::*;
 use crate::fauna_config::HuntYield;
+use crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED;
+use sim_schema::ForagePolicyCeilingState;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
@@ -479,6 +481,39 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
+                // **THE TILE'S PER-RUNG VECTOR** (#426) — the same six rungs as the flat `ceiling_*`
+                // fields above, as rows, so a future rung costs no schema change (the migration
+                // `hunt_policy_ceilings` already made). The FOOD axis is live and is the identical
+                // number its flat twin carries, read from the one `forecast` above so the two
+                // representations cannot disagree while both are on the wire.
+                //
+                // **The two non-food accounts are still the `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
+                // gap**, because `forage_forecast` does not project them yet — that is the remaining
+                // half of #426 and it needs `YieldPair` to carry a third account (see the issue). They
+                // are written explicitly rather than defaulted so the sentinel is visible at the site
+                // a reader will look, exactly as the food-only comment below has been since #337.
+                forage_policy_ceilings: [
+                    ("sustain", forecast.ceiling_sustain.provisions),
+                    ("surplus", forecast.ceiling_surplus.provisions),
+                    ("deplete", forecast.ceiling_deplete.provisions),
+                    ("eradicate", forecast.ceiling_eradicate.provisions),
+                    ("cultivate", forecast.ceiling_prepare.provisions),
+                    ("sow", forecast.ceiling_sow.provisions),
+                ]
+                .into_iter()
+                .map(|(policy, provisions)| ForagePolicyCeilingState {
+                    policy: policy.to_string(),
+                    provisions_per_turn: provisions,
+                    trade_goods_per_turn: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                    fodder_per_turn: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                })
+                .collect(),
+                per_worker_trade: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                per_worker_fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                tended_trade: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                tended_fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                field_trade: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
+                field_fodder: PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                 // **What is growing here — as this PATCH has it** (#433). The tile names the
                 // plants (§2, per-tile realization §10) and the patch's rung then says how much of
                 // each: a tended patch's basket visibly collapses toward its crop and a Field
