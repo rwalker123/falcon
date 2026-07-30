@@ -261,6 +261,15 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
 	"patch_field_progress", "patch_is_field",
 	"patch_ceiling_sow", "patch_field_yield", "patch_sow_site_refusal",
+	# THE TILE'S PER-RUNG YIELD VECTOR (#426) — the six per-policy row dicts plus the two investment
+	# rungs' non-food payoff twins. Redacted for the same reason every forecast field above is: each is
+	# quoted at the patch's CURRENT biomass, which is live state a remembered tile does not know.
+	# **The row dicts carry the `known` signal**, so redacting them is also what keeps a remembered tile
+	# reading "no forecast" rather than a stale one — the presence test answers correctly for free.
+	"patch_forage_policy_ceilings", "patch_forage_policy_trade_ceilings",
+	"patch_forage_policy_fodder_ceilings", "patch_forage_policy_per_worker",
+	"patch_forage_policy_per_worker_trade", "patch_forage_policy_per_worker_fodder",
+	"patch_tended_trade", "patch_tended_fodder", "patch_field_trade", "patch_field_fodder",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2687,6 +2696,23 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
 		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
+		# THE TILE'S PER-RUNG YIELD VECTOR (#426) — six dicts keyed by policy, carrying BOTH halves of
+		# `min(workers × per_worker, ceiling)` in all three accounts. They replace the flat
+		# `patch_ceiling_*` scalars above (deprecated slots), and their PRESENCE is what tells
+		# `SourceForecast` "the wire describes this source" apart from "every rung honestly pays zero" —
+		# the distinction issue #426 exists to restore. Held BY REFERENCE, never copied: these are
+		# decoder-owned sub-trees and nothing here writes into them (turn-profiling.md's rule).
+		info["patch_forage_policy_ceilings"] = patch.get("forage_policy_ceilings", {})
+		info["patch_forage_policy_trade_ceilings"] = patch.get("forage_policy_trade_ceilings", {})
+		info["patch_forage_policy_fodder_ceilings"] = patch.get("forage_policy_fodder_ceilings", {})
+		info["patch_forage_policy_per_worker"] = patch.get("forage_policy_per_worker", {})
+		info["patch_forage_policy_per_worker_trade"] = patch.get("forage_policy_per_worker_trade", {})
+		info["patch_forage_policy_per_worker_fodder"] = patch.get("forage_policy_per_worker_fodder", {})
+		# The two investment rungs' non-food payoff twins, each quoted at ITS OWN rung (#433).
+		info["patch_tended_trade"] = float(patch.get("tended_trade", 0.0))
+		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
+		info["patch_field_trade"] = float(patch.get("field_trade", 0.0))
+		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the
