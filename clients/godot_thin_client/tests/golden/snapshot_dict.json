@@ -407,14 +407,42 @@
       ],
       "cultivation_progress": 14.53,
       "ecology_phase": "forage_patches[0].ecology_phase",
+      "field_fodder": 51.360001,
       "field_progress": 67.019997,
+      "field_trade": 31.200001,
       "field_yield": 78.199997,
+      "forage_policy_ceilings": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 107.459999,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 31.870001
+      },
+      "forage_policy_fodder_ceilings": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 69.059998,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 46.830002
+      },
+      "forage_policy_per_worker": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 51.66,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 64.940002
+      },
+      "forage_policy_per_worker_fodder": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 24.49,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 48.630001
+      },
+      "forage_policy_per_worker_trade": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 64.410004,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 64.959999
+      },
+      "forage_policy_trade_ceilings": {
+        "forage_patches[0].forage_policy_ceilings[0].policy": 65.650002,
+        "forage_patches[0].forage_policy_ceilings[1].policy": 93.769997
+      },
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
       "owner": 114,
       "per_worker_yield": 54.48,
       "sow_site_refusal": "forage_patches[0].sow_site_refusal",
+      "tended_fodder": 66.300003,
+      "tended_trade": 73.300003,
       "tended_yield": 11.58,
       "x": 0,
       "y": 0
@@ -464,14 +492,42 @@
       ],
       "cultivation_progress": 85.480003,
       "ecology_phase": "forage_patches[1].ecology_phase",
+      "field_fodder": 98.510002,
       "field_progress": 6.39,
+      "field_trade": 33.970001,
       "field_yield": 75.790001,
+      "forage_policy_ceilings": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 70.669998,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 33.669998
+      },
+      "forage_policy_fodder_ceilings": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 94.910004,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 14.6
+      },
+      "forage_policy_per_worker": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 99.849998,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 84.269997
+      },
+      "forage_policy_per_worker_fodder": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 60.790001,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 0.14
+      },
+      "forage_policy_per_worker_trade": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 110.400002,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 30.93
+      },
+      "forage_policy_trade_ceilings": {
+        "forage_patches[1].forage_policy_ceilings[0].policy": 4.82,
+        "forage_patches[1].forage_policy_ceilings[1].policy": 96.849998
+      },
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
       "owner": 21,
       "per_worker_yield": 108.360001,
       "sow_site_refusal": "forage_patches[1].sow_site_refusal",
+      "tended_fodder": 52.509998,
+      "tended_trade": 68.269997,
       "tended_yield": 86.169998,
       "x": 1,
       "y": 1

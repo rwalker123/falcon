@@ -411,6 +411,50 @@ pub(crate) fn forage_patches_to_array(
         if let Some(committed_display_name) = patch.committedDisplayName() {
             let _ = dict.insert("committed_display_name", committed_display_name);
         }
+        // **THE TILE'S PER-RUNG YIELD VECTOR** (#426) — the plant twin of `hunt_policy_ceilings`
+        // above, and surfaced the same way: **SIX Dictionaries keyed by the SAME policy strings,
+        // filled in ONE pass**, so no two accounts can drift apart. A harvest pays three accounts, and
+        // every staple carries the flat trade token, so essentially no tile is single-account — a
+        // food-only view under-reported almost every patch, not merely the cash crops.
+        //
+        // **Both halves of the client's `min(workers × per_worker, ceiling)` are per-POLICY here, and
+        // that is the point.** On the plant web `Deplete` marks trade up, and the sim applies that
+        // markup to the FINAL take — after the worker cap — so the markup has to be present on the
+        // per-worker term too or a labor-bound Deplete take reads low by the full multiplier. The
+        // server folded it in; the client just takes the `min` per component and never sees a markup.
+        //
+        // `trade > 0` does **NOT** mean "cash crop": every staple pays the token (flora.md).
+        if let Some(rungs) = patch.foragePolicyCeilings() {
+            let mut ceiling = VarDictionary::new();
+            let mut ceiling_trade = VarDictionary::new();
+            let mut ceiling_fodder = VarDictionary::new();
+            let mut per_worker = VarDictionary::new();
+            let mut per_worker_trade = VarDictionary::new();
+            let mut per_worker_fodder = VarDictionary::new();
+            for rung in rungs {
+                if let Some(policy) = rung.policy() {
+                    let _ = ceiling.insert(policy, f64::from(rung.provisionsPerTurn()));
+                    let _ = ceiling_trade.insert(policy, f64::from(rung.tradeGoodsPerTurn()));
+                    let _ = ceiling_fodder.insert(policy, f64::from(rung.fodderPerTurn()));
+                    let _ = per_worker.insert(policy, f64::from(rung.perWorkerProvisions()));
+                    let _ = per_worker_trade.insert(policy, f64::from(rung.perWorkerTradeGoods()));
+                    let _ = per_worker_fodder.insert(policy, f64::from(rung.perWorkerFodder()));
+                }
+            }
+            let _ = dict.insert("forage_policy_ceilings", &ceiling);
+            let _ = dict.insert("forage_policy_trade_ceilings", &ceiling_trade);
+            let _ = dict.insert("forage_policy_fodder_ceilings", &ceiling_fodder);
+            let _ = dict.insert("forage_policy_per_worker", &per_worker);
+            let _ = dict.insert("forage_policy_per_worker_trade", &per_worker_trade);
+            let _ = dict.insert("forage_policy_per_worker_fodder", &per_worker_fodder);
+        }
+        // The two investment rungs' PAYOFF twins — the non-food halves of `tended_yield`/`field_yield`,
+        // as `pastoral_trade`/`corral_trade` are of their food siblings. Each is quoted at **its own**
+        // rung (#433), never at the rung the patch happens to stand on.
+        let _ = dict.insert("tended_trade", patch.tendedTrade());
+        let _ = dict.insert("tended_fodder", patch.tendedFodder());
+        let _ = dict.insert("field_trade", patch.fieldTrade());
+        let _ = dict.insert("field_fodder", patch.fieldFodder());
         array.push(&dict.to_variant());
     }
     array
