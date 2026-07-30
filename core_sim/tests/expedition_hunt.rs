@@ -1462,3 +1462,186 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
         "the boar on the tile is healthy — its estimate is positive while the party's target's is 0"
     );
 }
+
+/// Home-band distance from the herd for the near-band drop-off test: **inside**
+/// `hunt.drop_off_within_tiles` (3), so the near-band gate fires, **and** within
+/// `effective_comm_range()` (2) of the party — which spawns *at* the herd — so the drop-off deposits
+/// from where the party is standing.
+///
+/// **Three distinct radii, easily conflated** (this const's doc claimed the wrong one before): the
+/// take radius `hunt.reach_tiles` (1, party → herd), the drop-off gate `hunt.drop_off_within_tiles`
+/// (3, herd → home band), and the delivery proximity `effective_comm_range()` (2, party → home band,
+/// what `near_home` in `advance_expeditions` tests). Only the last two are geometry this test
+/// depends on.
+///
+/// The test does **not** depend on a carry-in: `near_home` is already true on turn 1, so no walking
+/// happens between the kill and the deposit. What it pins is that the party **survives** the
+/// drop-off and resumes hunting, which is independent of how far the load travels.
+const NEAR_BAND_TILES: u32 = 2;
+
+/// A pack a `PARTY_WORKERS` party needs **several turns** to load past the drop-off's worthwhile-load
+/// bar (`hunt.min_deliver_fraction` × cap), so a near-band delivery is a genuine **partial** — the
+/// only regime in which the drop-off gate is distinguishable from trip completion. Neither shipped
+/// value works here: at `per_worker_carry` 0.8 the pack (3.2 food) holds barely one turn's conversion
+/// (4 hunters × `per_worker_biomass_capacity` 40 = 160 biomass ≈ 3.2 food), so the raid always ends on
+/// `full`; and `unbounded_carry_config`'s 1e6 puts *half* the pack out of reach, so the gate never
+/// fires at all.
+const DROP_OFF_PER_WORKER_CARRY: f32 = 2.4;
+
+/// The shipped expedition config with the multi-turn pack above.
+fn drop_off_pack_config() -> Arc<ExpeditionConfig> {
+    let mut cfg = (*ExpeditionConfig::builtin()).clone();
+    cfg.hunt.per_worker_carry = DROP_OFF_PER_WORKER_CARRY;
+    Arc::new(cfg)
+}
+
+/// A home band `tiles_away` tiles along the herd's **row** (so the row offset *is* the hex distance),
+/// putting the herd inside the hunt drop-off radius — the near-band geometry every other trip test
+/// deliberately avoids (see `spawn_home_band`). Its larder starts empty, so every gain in it is
+/// delivered haul.
+fn spawn_home_band_near_herd(
+    app: &mut App,
+    herd_pos: UVec2,
+    tiles_away: u32,
+) -> bevy::prelude::Entity {
+    let width = app.world.resource::<TileRegistry>().width;
+    let near = UVec2::new((herd_pos.x + tiles_away) % width, herd_pos.y);
+    let tile = tile_at(app, near);
+    app.world.spawn((cohort(tile, 10), ResidentBand)).id()
+}
+
+/// **A raid does not end because its quarry strolled past camp** (issue #441). A hunting party whose
+/// herd wanders within `hunt.drop_off_within_tiles` of the home band used to reach `done` on the
+/// near-band gate: it delivered a *partial* pack, folded home and **despawned** with the herd's
+/// standing surplus still on the hoof — the trip cancelled by a coincidence of geography. The gate is
+/// a **drop-off**: deliver, then resume hunting. The trip ends only on a full pack or the surplus
+/// spent.
+///
+/// Pins all three halves — the delivery happens, the party **survives** it still on the job, and the
+/// trip's total haul strictly exceeds the one partial load the old code came home with. This is the
+/// `near_band_gate == true` path, which both expedition suites otherwise park the band far away to
+/// avoid.
+#[test]
+fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
+    let mut app = build_headless_app();
+    app.update();
+    app.world
+        .insert_resource(ExpeditionConfigHandle::new(drop_off_pack_config()));
+
+    let (id, herd_pos) = pin_frozen_boar_herd(&mut app, 1.0);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        // Retag to a harmless species (attack 0), as the forecast pins do: casualties would shrink the
+        // party mid-trip and move `cap`/`min_deliver` under the assertions below.
+        herd.species = "Rabbit Warren".to_string();
+        // The documented boar `r` — a pinned herd keeps its ORIGINAL species' growth rate (retagging
+        // does not change it), and a fast breeder would regrow its surplus as fast as the raid takes
+        // it, so the trip would never reach `surplus_spent` inside the horizon.
+        herd.regrowth_rate = BOAR_R;
+    }
+    let home = spawn_home_band_near_herd(&mut app, herd_pos, NEAR_BAND_TILES);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
+
+    // The geometry this test exists for: the herd is inside the drop-off radius, and the party (which
+    // spawned at the herd) is inside comm range of the band.
+    let cfg = expedition_config(&app);
+    assert!(
+        NEAR_BAND_TILES <= cfg.hunt.drop_off_within_tiles,
+        "the fixture must put the herd INSIDE the drop-off radius ({NEAR_BAND_TILES} tiles, radius {})",
+        cfg.hunt.drop_off_within_tiles
+    );
+    assert!(
+        NEAR_BAND_TILES <= cfg.effective_comm_range(),
+        "the band must sit within comm range ({}) of the party's kill site, which is what puts it in \
+         delivery range from where it stands ({NEAR_BAND_TILES} tiles) — retuning `comm_range_tiles` \
+         below that turns this fixture into a carry-in, which `NEAR_BAND_TILES`'s doc denies",
+        cfg.effective_comm_range()
+    );
+
+    let pack_cap = PARTY_WORKERS as f32 * cfg.hunt.per_worker_carry;
+    let food_per_animal = BOAR_BODY
+        * app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .hunt
+            .provisions_per_biomass;
+    let sustain_floor = BOAR_K * 0.5;
+
+    // Drive the REAL systems until the raid ends (the party despawns on its fold-back), watching the
+    // home larder for each drop-off and the pack for the fill that would legitimately end the trip.
+    let mut first_drop_off = None;
+    let mut peak_carried = 0.0_f32;
+    let mut despawn_turn = None;
+    for turn in 1..=cfg.hunt.forecast_horizon_turns {
+        drive_expedition_turn(&mut app);
+        let alive = app.world.get::<Expedition>(party).is_some();
+        let larder = carried(&app, home);
+        if first_drop_off.is_none() && larder > 0.0 {
+            // **The regression**: on the old rule the near-band gate fed `done`, so the party folded
+            // home and despawned on the very turn it delivered this partial load.
+            assert!(
+                alive,
+                "turn {turn}: the party must SURVIVE its near-band drop-off of {larder} food — \
+                 a despawn here is the #441 bug (a raid ended by geography)"
+            );
+            let phase_now = phase(&app, party);
+            assert!(
+                matches!(
+                    phase_now,
+                    ExpeditionPhase::Hunting | ExpeditionPhase::Delivering
+                ),
+                "turn {turn}: after a drop-off the party is still on the job, not folding home \
+                 (phase {phase_now:?})"
+            );
+            first_drop_off = Some(larder);
+        }
+        if alive {
+            peak_carried = peak_carried.max(carried(&app, party));
+        } else {
+            despawn_turn = Some(turn);
+            break;
+        }
+    }
+    let first_drop_off =
+        first_drop_off.expect("a near-band party delivers its worthwhile partial load");
+    let despawn_turn = despawn_turn.expect("the raid ends within the forecast horizon");
+    let delivered_total = carried(&app, home);
+    let leftover = herd_biomass(&app, &id);
+    println!(
+        "[near-band drop-off] first drop-off {first_drop_off} food, {delivered_total} total over \
+         {despawn_turn} turns (pack {pack_cap}, peak carried {peak_carried}, herd left {leftover} \
+         vs Sustain floor {sustain_floor})"
+    );
+
+    // The point of the fix: the committed party kept raiding, so the trip delivered STRICTLY MORE
+    // than the single partial load it used to come home with.
+    assert!(
+        delivered_total > first_drop_off,
+        "the raid must deliver more than its first drop-off ({delivered_total} vs \
+         {first_drop_off}) — the party resumed hunting instead of ending the trip"
+    );
+
+    // …and it ended the RIGHT way: the herd is within one body of its Sustain floor (the standing
+    // surplus is spent) or the pack filled. Never on the drop-off gate.
+    let surplus_spent = leftover - sustain_floor < BOAR_BODY;
+    let pack_filled = peak_carried >= pack_cap - food_per_animal;
+    assert!(
+        surplus_spent || pack_filled,
+        "the raid must end on a spent surplus (herd left {leftover}, floor {sustain_floor}) or a \
+         full pack (peak carried {peak_carried} of {pack_cap})"
+    );
+
+    // The drop-off narrates as a `Delivering` drop-off line, not a fold-back — the party reported in
+    // and went back out.
+    let dropped_off = app.world.resource::<CommandEventLog>().iter().any(|e| {
+        e.detail
+            .as_deref()
+            .is_some_and(|d| d.contains("status=delivered"))
+    });
+    assert!(
+        dropped_off,
+        "a near-band drop-off pushes the Delivering feed line (status=delivered)"
+    );
+}

@@ -552,7 +552,14 @@ pub fn advance_expeditions(
                                 ) <= cfg.hunt.drop_off_within_tiles
                             })
                             .unwrap_or(false);
-                        // Worthwhile-load early delivery: fixes the empty-larder flip-flop bug.
+                        // **An opportunistic DROP-OFF, never a trip completion** (issue #441). The
+                        // herd has wandered within `drop_off_within_tiles` of the band and the pack
+                        // holds a worthwhile load, so the party runs it in rather than hauling it
+                        // around — the fix for the empty-larder flip-flop, where a party sat on a
+                        // full-ish pack beside a hungry camp. It says *deliver now*, and nothing
+                        // about whether the raid is over: that is `full`/`surplus_spent` below. For
+                        // **every** delivering policy this feeds `relaunch`, so a committed party
+                        // keeps raiding with an empty pack instead of folding home mid-surplus.
                         let near_band_gate = herd_near_band && carried >= min_deliver;
 
                         // **The load-bearing completion fix.** A raid is over when the standing surplus
@@ -574,15 +581,24 @@ pub fn advance_expeditions(
                                 ))
                                 < body_mass;
 
-                        // `done` = deliver then fold back + despawn (one trip); `relaunch` = deliver
-                        // then resume Hunting. A raid ends when the pack fills, a worthwhile near-band
-                        // delivery is possible, OR the standing surplus is spent (Sustain leaves K/2,
-                        // Surplus 0.30·K). Deplete makes repeated FULL-cap trips while the herd still has
-                        // surplus (relaunch), but once it is stripped to its floor it comes home for
-                        // good (`surplus_spent ⇒ done`) rather than trickle-churning at the floor.
+                        // `done` = deliver then fold back + despawn (the trip is over); `relaunch` =
+                        // deliver then resume Hunting. **A raid ends when the pack FILLS or the
+                        // standing surplus is SPENT** (Sustain leaves K/2, Surplus 0.30·K) — those are
+                        // the only two ways the work runs out. A herd that happens to wander within
+                        // `drop_off_within_tiles` of camp is an opportunistic **drop-off**, not a
+                        // completion (issue #441): the party is already committed and keeps raiding.
+                        // Deplete makes repeated FULL-cap trips while the herd still has surplus
+                        // (relaunch), and once it is stripped to its floor it comes home for good
+                        // (`surplus_spent ⇒ done`) rather than trickle-churning at the floor.
+                        //
+                        // **Why the drop-off loop terminates**: `done` is tested *before* `relaunch`
+                        // below, so a party at the policy floor never relaunches — once
+                        // `surplus_spent` fires it comes home for good. Each drop-off cycle drains
+                        // more of the standing surplus, so the loop converges on `surplus_spent` (or
+                        // `full`, or the lost-herd guard).
                         let (done, relaunch) = match policy {
                             FollowPolicy::Sustain | FollowPolicy::Surplus => {
-                                (full || near_band_gate || surplus_spent, false)
+                                (full || surplus_spent, near_band_gate)
                             }
                             FollowPolicy::Deplete => (surplus_spent, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
@@ -671,8 +687,13 @@ pub fn advance_expeditions(
                 }
             }
             ExpeditionPhase::Delivering => {
-                // Deplete only: run carried food to the band's live tile; on arrival deposit it and
-                // auto-relaunch to Hunting (repeated trips). Sustain/Surplus deliver via Returning.
+                // Run carried food to the band's live tile; once within comm range of it, deposit and
+                // auto-relaunch to Hunting. **Every extractive delivering policy passes through here** (issue #441),
+                // not Deplete alone: Deplete arrives on each FULL pack of its repeated trips, and any
+                // policy arrives on a near-band drop-off. What differs between them is only *what ends
+                // the trip* (the `Hunting` arm's `done`) — Deplete's series ends on surplus-spent,
+                // Sustain/Surplus's single raid on a full pack or surplus-spent, and only those exits
+                // route through `Returning`.
                 if let Some(home) = home_pos {
                     commands.entity(entity).insert(BandTravel { target: home });
                 }
@@ -1304,6 +1325,15 @@ fn hunt_trip_forecast_seeded(
         // food_per_animal`) must NOT come home empty on turn 1 — it banks credit until it can kill one,
         // fills the pack with that forced partial (`larder → cap`), and *then* completes. Once a delivery
         // exists, the can't-seat check resumes its old job (no over-killing a fractional gap).
+        //
+        // **The near-band drop-off is deliberately NOT modelled here, and cannot be**: the pre-launch
+        // `huntTripEstimates` table is **band-agnostic** (one row per herd serves every band), so this
+        // forecast has no band position to measure `hunt.drop_off_within_tiles` against. The
+        // approximation is one-directional and therefore safe: a drop-off lets a raid deliver **more**
+        // than projected (several loads over a longer trip, since the party resumes hunting with an
+        // empty pack), never less, so this projection is a **lower bound** on a near-band raid. Before
+        // issue #441 the same gate made Sustain/Surplus *end* the trip, so the forecast erred in the
+        // unhelpful direction — quoting a trip that came home early with less than promised.
         let food_per_animal = hunt_yield
             .apply(quarry.body_mass, EXPEDITION_OUTPUT_MULTIPLIER)
             .provisions;

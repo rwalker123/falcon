@@ -131,7 +131,8 @@ mission:
   worth of biomass — `workers × per_worker_biomass_capacity`, capped per policy (below) — from the
   herd and convert through the species' `HuntYield::apply` up to the carry cap (`party ×
   hunt.per_worker_carry`). Deliver only with a worthwhile load: a full pack **or** `herd_near_band &&
-  carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). An empty pack at
+  carried ≥ hunt.min_deliver_fraction × cap` (the empty-larder flip-flop fix). The near-band case is a
+  **drop-off, not a trip end** — the party delivers and resumes hunting (issue #441). An empty pack at
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
 > #### A hunting expedition is a GREEDY RAID, not a resident band's throttled skim (playtest fix)
 >
@@ -170,20 +171,37 @@ mission:
 >     with the band is safe.
 
 - **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
-  **Sustain/Surplus** — one raid: deliver on a full pack, a worthwhile near-band delivery, **or the
-  surplus spent**, then fold home. **Deplete** — repeated FULL-cap trips (`Delivering`→deposit→
-  **auto-relaunch**) *while the herd still has surplus*; once stripped to `0.15·K` (surplus spent) it
-  comes home for good rather than trickle-churning at the floor. **Eradicate** — no floor: grinds the
-  herd to extinction (→ lost-herd `Returning`), **banking the windfall it can carry** on the way (#337 —
-  denial is the end state, not an empty pack).
+  **Sustain/Surplus** — **one raid**, ending on a **full pack or the surplus spent**, then fold home; a
+  herd that wanders within `hunt.drop_off_within_tiles` of the band earns an opportunistic **drop-off**
+  (`Delivering`→deposit) and the party **resumes hunting** with an empty pack. **Deplete** — repeated
+  FULL-cap trips (`Delivering`→deposit→**auto-relaunch**) *while the herd still has surplus*; once
+  stripped to `0.15·K` (surplus spent) it comes home for good rather than trickle-churning at the
+  floor. **Eradicate** — no floor: grinds the herd to extinction (→ lost-herd `Returning`), **banking
+  the windfall it can carry** on the way (#337 — denial is the end state, not an empty pack).
 - **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
   surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
-  raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**.
+  raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**. That list is
+  literally the whole rule for every delivering policy: the near-band drop-off is **orthogonal to
+  completion** — it decides *deliver now*, never *the trip is over*. `done` is tested before
+  `relaunch`, so a party at the policy floor comes home for good instead of cycling, and each drop-off
+  drains more standing surplus, so the drop-off loop converges on `surplus_spent`.
+- **The drop-off radius and the local-hunt leash are DIFFERENT CIRCLES, deliberately.** The drop-off
+  radius is `hunt.drop_off_within_tiles` (**3**) measured **herd → home band**; the *local* band-Hunt
+  leash is `band_work_range + hunt_leash_tiles` (2 + 3 = **5**, `LaborConfig::hunt_reach()` in
+  `labor_config.rs`, whose out-of-leash case lapses a resident band's Hunt assignment). So a herd 4–5
+  tiles out is locally huntable with no expedition consequence at all, and a herd ≤ 3 tiles out prompts
+  an expedition **drop-off** — not a cancellation of either.
 - **Launch forecast — a bounded forward SIMULATION of the raid** (`hunt_trip_forecast`,
   `systems::expeditions`). It runs the raid forward turn by turn — `fauna::regrow_biomass` (Logistics)
   then `expedition_take_biomass` (Population), accumulating the larder on the **fixed-point `Scalar`
   grid** — until the raid completes (fill OR surplus spent OR herd lost) or `hunt.forecast_horizon_turns`
-  (**60**). No second copy of the model, and the completion test mirrors the arm's `done`. It returns:
+  (**60**). No second copy of the model, and the completion test mirrors the arm's `done`. It **cannot
+  model the near-band drop-off**, and that is structural, not an omission: the `huntTripEstimates` table
+  it feeds is **band-agnostic** (one row per herd serves every band), so there is no band distance to
+  measure `hunt.drop_off_within_tiles` against. The resulting approximation is one-directional — a
+  drop-off lets a raid deliver **more** than projected (several loads over a longer trip, since the
+  party resumes hunting with an empty pack), never less — so the projection is a **lower bound** on a
+  near-band raid. It returns:
   - **`turns_to_fill`** — turns until the raid **completes** (*"turns until the party comes home"*, NOT
     *"turns until the pack is full"*: a big party on a full herd leaves a partial pack once it strips
     the surplus, a successful short trip). `None` = never completed within the horizon.
@@ -341,7 +359,10 @@ unknown/n-a — a scout, a normal band, or a trickle-fill raid with no finite ET
 **`expeditionProjectedDelivery:float`** (`carried + still-to-take`, pack-capped — `0` means the herd
 is at/below the policy floor with no surplus to raid), and **`expeditionRecurring:bool`**
 (`FollowPolicy::expedition_recurring()` — the single source, `matches!(self, Deplete)`, since Deplete is
-the only policy that relaunches for repeated trips; Sustain/Surplus/Eradicate fold home after one).
+the only policy whose trip is a *series* of trips; Sustain/Surplus/Eradicate make **one raid** and fold
+home. Not the same question as "does it ever pass through `Delivering`": a near-band drop-off is an
+incident inside one raid, so a Sustain party that drops a load off and resumes hunting still reads
+`false`).
 Client-consumed only (not persisted). See the client's parties inspector strip + "Next delivery" line.
 
 **Pre-launch export — the client does ZERO arithmetic.** The launch forecast above only rides the
@@ -408,16 +429,19 @@ lookup**:
   band's Hunt labor arm really takes (the conversion and the multiplier are linear, so they factor out
   of the `min`, and the exported ceiling is biomass-clamped exactly as the take is).
 
-`core_sim/tests/expedition_hunt.rs` pins **both — each to the sim's REAL behaviour, never to another
-preview** (the lesson of the ~34-vs-~6-turn Surplus bug: the old guard compared the client against
-`hunt_trip_forecast`, so two copies of the same wrong ceiling agreed with each other while both
-disagreed with the take). `exported_hunt_trip_estimates_match_a_real_party_run` asserts every exported
-estimate (small-game / big-game / collapsing herd × all four policies × every legal party size) equals
-what a **real party run forward through the real systems** actually does — including the
-stock-exhaustion case that motivated the rewrite; `exported_snapshot_fields_reproduce_band_hunt_take`
-does the same for the band arithmetic against `hunt_take(..)` (healthy / clamp-binding depleted /
-collapsing herd × every worker count × all four policies × a unit and a discontent-reduced output
-multiplier). If either readout ever drifts from the sim, that test fails.
+`core_sim/tests/expedition_hunt.rs` + `core_sim/tests/hunt_yield_vector.rs` pin **both — each to the
+sim's REAL behaviour, never to another preview** (the lesson of the ~34-vs-~6-turn Surplus bug: the old
+guard compared the client against `hunt_trip_forecast`, so two copies of the same wrong ceiling agreed
+with each other while both disagreed with the take). For the **expedition** readout,
+`hunt_yield_vector::a_hunting_expedition_delivers_both_products_it_forecast` asserts the **exported**
+`huntTripEstimates` row against the two accounts a real driven raid actually credits — the home band's
+larder for provisions, the faction stockpile for trade goods — over an edible × an inedible species ×
+Sustain/Surplus/Deplete, and `expedition_hunt::a_far_just_launched_party_projects_the_estimate_delivery`
+pins the in-flight projection to the exported row for the same `(policy, party size)`. For the **band**
+readout, `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` does the same against
+`hunt_take(..)` (healthy / clamp-binding depleted / collapsing herd × every worker count × all four
+policies × a unit and a discontent-reduced output multiplier). If either readout ever drifts from the
+sim, those tests fail.
 
 See Also: `docs/plan_exploration_and_sites.md` §2 (design), "Wondrous Sites" (discovery rides the
 flushed tiles), "Visibility Systems" (the `Without<Expedition>` gate).
