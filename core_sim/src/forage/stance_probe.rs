@@ -21,12 +21,25 @@ use crate::fauna::{
 };
 use crate::fauna_config::{FaunaConfig, HusbandryCeiling, SizeClass};
 use crate::flora_config::FloraConfig;
-use crate::intensification::{LadderConfig, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED};
+use crate::intensification::{
+    LadderConfig, RungDef, RungKey, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED,
+};
 use crate::labor_config::LaborConfig;
 use crate::systems::hunt_take;
 use sim_runtime::TerrainType;
 
 // ---- Probe constants (harness parameters, not gameplay levers) --------------------------------
+
+/// **Every build in this probe is staffed to its full crew**, so the figures it reports are the
+/// rung's own pace rather than a staffing shortfall's. A rung that declares no `crew_needed` (both
+/// animal rungs) is unscaled by crew, so one worker measures its true rate there.
+fn full_crew(rung: &RungDef) -> u32 {
+    rung.build_crew_needed().unwrap_or(SOLE_WORKER)
+}
+
+/// The crew a rung with no declared crew is probed at — one, because the scale is the identity there
+/// and any other number would imply the probe had chosen a staffing level.
+const SOLE_WORKER: u32 = 1;
 
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
 /// (or its floor) with room to spare — the slowest mover is a mammoth at `r = 0.04`.
@@ -212,7 +225,12 @@ fn run_plant_build(policy: FollowPolicy, verb: Improvement) -> PlantBuildOutcome
                 // health check, deliberately (sown ground starts Collapsing).
                 _ => true,
             };
-            let accrual = rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED);
+            let accrual = rung.build_accrual(
+                improvement,
+                eligible,
+                RUNG_TIMESCALE_UNSCALED,
+                full_crew(rung),
+            );
             if accrual > 0.0 {
                 // The completion bool is the labor arm's feed-line trigger; this probe reads the
                 // meter itself just below, so it is deliberately discarded here.
@@ -386,7 +404,12 @@ fn run_corral(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> H
                 .provisions;
             let eligible =
                 herd.can_pen() && herd.is_domesticated() && herd.owner == Some(PROBE_FACTION);
-            let accrual = pen.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED);
+            let accrual = pen.build_accrual(
+                improvement,
+                eligible,
+                RUNG_TIMESCALE_UNSCALED,
+                full_crew(pen),
+            );
             if accrual > 0.0 {
                 let tile = herd.position();
                 if herd.accrue_corral(PROBE_FACTION, accrual, tile) {
@@ -442,7 +465,8 @@ fn run_tame(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> Her
             herd.tamed_this_turn = true;
             let eligible =
                 herd.can_domesticate() && herd.ecology_phase == FaunaEcologyPhase::Thriving;
-            let accrual = pastoral.build_accrual(improvement, eligible, timescale);
+            let accrual =
+                pastoral.build_accrual(improvement, eligible, timescale, full_crew(pastoral));
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual);
                 if herd.is_domesticated() {
@@ -711,8 +735,8 @@ fn probe_build_and_teach_axis() {
                 "x{}",
                 ladder.build_dip(Some(v))
             )),
-            rung.build_accrual(verb, true, RUNG_TIMESCALE_UNSCALED),
-            rung.build_accrual(verb, false, RUNG_TIMESCALE_UNSCALED),
+            rung.build_accrual(verb, true, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+            rung.build_accrual(verb, false, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
             rung.build_decay(RUNG_TIMESCALE_UNSCALED),
         );
     }

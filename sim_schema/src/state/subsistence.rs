@@ -374,6 +374,18 @@ pub struct HerdTelemetryState {
     /// tunable; one shared number would agree by today's coincidence and lie after a retune.
     #[serde(default)]
     pub corral_build_fraction: f32,
+    /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
+    /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
+    /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
+    #[serde(default)]
+    pub has_neglect_grace: bool,
+    /// **Turns of neglect this herd can still absorb before animals start leaving** — the countdown,
+    /// not the counter, so no client subtracts anything: `0` = the shed is running *now*, `N > 0` =
+    /// it starts in N more turns of too-few-keepers. A properly herded herd reads its rung's full
+    /// grace + 1 ("let them go and you have this long"). The animal twin of
+    /// [`ForagePatchState::neglect_grace_remaining`].
+    #[serde(default)]
+    pub neglect_grace_remaining: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -427,6 +439,8 @@ impl Default for HerdTelemetryState {
             herders_needed_if_managed: 0,
             tame_build_fraction: 0.0,
             corral_build_fraction: 0.0,
+            has_neglect_grace: false,
+            neglect_grace_remaining: 0,
         }
     }
 }
@@ -566,6 +580,26 @@ pub struct ForagePatchState {
     /// [`Self::cultivate_build_fraction`], paired with [`Self::field_yield`].
     #[serde(default)]
     pub sow_build_fraction: f32,
+    /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
+    /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
+    #[serde(default)]
+    pub has_neglect_grace: bool,
+    /// **Turns of neglect this patch can still absorb before its improvement starts reverting** — the
+    /// countdown, not the counter: `0` = the ground is going feral *now*, `N > 0` = it starts in N
+    /// more un-worked turns. Describes whichever rung would bleed next, since the plant web unwinds
+    /// **newest-first** (a Field's meter empties before the tended ground beneath it loses anything).
+    #[serde(default)]
+    pub neglect_grace_remaining: u32,
+    /// **The crew the `Cultivate` build wants** (`plant:tended`'s `crew_needed`). It floors the
+    /// compose sheet's worker cap — while a build runs the ceiling is the *dip*, so inverting it
+    /// alone asked for fewer hands than gathering the same ground — and the build's progress scales
+    /// by `min(workers / this, 1)`, so the rung's stated 25 turns is its **full-crew** duration.
+    #[serde(default)]
+    pub cultivate_crew_needed: u32,
+    /// **The crew the `Sow` build wants** (`plant:field`'s `crew_needed`) — the twin of
+    /// [`Self::cultivate_crew_needed`]; two fields because the rungs' dials are independently tunable.
+    #[serde(default)]
+    pub sow_crew_needed: u32,
 }
 
 /// **One rung's ceiling on one tile, in every account that tile's basket pays** (issue #426) — the

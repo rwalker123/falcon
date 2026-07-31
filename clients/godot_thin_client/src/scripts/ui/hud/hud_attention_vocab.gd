@@ -38,6 +38,51 @@ const ATTENTION_PEN_LABEL_FORMAT := "%s pen starving"
 # herd, and its Jump lands on that herd — the band adds nothing the player can act on here.
 const ATTENTION_PEN_DETAIL_FORMAT := "%d%% fed — the herd is shrinking"
 
+## **A BUILT RUNG NOBODY IS WORKING** (issue #442) — a Tended Patch or a Field with no foragers on it,
+## or a tamed/penned herd short of the keepers it needs. Both are the same loss: 25 turns of forgone
+## harvest bleeding back to wild while the player looks somewhere else.
+##
+## **IT CANNOT LIVE ON THE WORK BOARD, and that is why it is an attention row.** The board lists
+## ASSIGNMENTS; an unworked patch has none, so it is *absent* from the board rather than flagged on it
+## — the one state the board structurally cannot report. The orb is the generic "something needs you"
+## hub and finds the player wherever they are looking, which is exactly the requirement.
+##
+## WARN, not critical, for the `starving_pen` reason: it is a reversible loss, and the grace means it
+## has usually not even begun. **The urgency lives in the DETAIL TEXT, not in a persistent counter row**
+## — a permanent countdown on a card would make the player watch a number instead of act on it.
+const ATTENTION_KIND_UNWORKED_RUNG := "unworked_rung"
+
+const ATTENTION_KIND_UNDER_CREWED_HERD := "under_crewed_herd"
+
+# `Tended Patch at (31, 18) unworked` — the rung noun comes from HudComposeVocab.IMPROVEMENT_DONE_LABELS,
+# never retyped, so the alert and the compose sheet's done-state label name the rung identically.
+const ATTENTION_UNWORKED_LABEL_FORMAT := "%s at (%d, %d) unworked"
+
+# THE COUNTDOWN CLAUSE, and its three readings. `neglectGraceRemaining` is `(grace + 1) - neglect`:
+# `0` means the ground is reverting NOW, `N > 0` means it starts in N more unworked turns. The third
+# case is `hasNeglectGrace == false` — nothing is at risk — which must render NO countdown at all,
+# because a false bool beside a `0` would otherwise read as the most urgent state there is.
+const ATTENTION_LAPSE_SOON_FORMAT := "the tending lapses in %d turn%s"
+
+const ATTENTION_LAPSE_NOW := "the ground is reverting now"
+
+const ATTENTION_LAPSE_UNKNOWN := "nobody is keeping it"
+
+# `Aurochs Herd under-crewed` + `2 of 4 keepers — sheds in 3 turns`. The herd's penalty is the SHED
+# (animals over the keepers' capacity drift back to the wild web), not a meter bleed — the animal web's
+# meters do not decay at all — so it gets its own clause rather than sharing the plant one.
+const ATTENTION_UNDER_CREWED_LABEL_FORMAT := "%s under-crewed"
+
+const ATTENTION_UNDER_CREWED_DETAIL_FORMAT := "%d of %d keepers — %s"
+
+const ATTENTION_SHED_SOON_FORMAT := "sheds in %d turn%s"
+
+const ATTENTION_SHED_NOW := "shedding animals now"
+
+# English plural suffix for the countdown clauses ("in 1 turn" / "in 2 turns"). Spelled once, beside
+# the formats that interpolate it.
+const ATTENTION_TURN_PLURAL_SUFFIX := "s"
+
 ## The Telling (docs/plan_the_telling.md): a narrative fork awaiting the player's answer.
 ##
 ## CRITICAL and, uniquely, `blocking` — it is the one producer that holds the end-turn. That is a
@@ -74,6 +119,16 @@ const ATTENTION_SEVERITY_WARN := "warn"
 # would climb off the top of the screen and take the `Advance ▸` footer with it — hence a cap, past
 # which the remainder folds into a single overflow row that jumps to the first party beyond it.
 const ATTENTION_AWAITING_MAX_ROWS := 3
+
+# The unworked-rung producer caps for THE SAME REASON and therefore at the same number — a mid-game
+# empire can hold a dozen improved patches, and the popover climbing off the top of the screen would
+# take the `Advance ▸` footer with it. A downward alias rather than a second literal 3: two constants
+# holding one number for one reason is how they drift apart.
+const ATTENTION_UNWORKED_MAX_ROWS := ATTENTION_AWAITING_MAX_ROWS
+
+const ATTENTION_UNWORKED_OVERFLOW_LABEL_FORMAT := "+%d more unworked"
+
+const ATTENTION_UNWORKED_OVERFLOW_DETAIL := "Jump to the next one going feral"
 
 const ATTENTION_AWAITING_OVERFLOW_LABEL_FORMAT := "+%d more awaiting orders"
 

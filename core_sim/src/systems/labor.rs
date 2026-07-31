@@ -1,5 +1,17 @@
 use super::*;
 
+/// **The crew a pen-extension ring is credited with.** `ExtendPen` is command-driven rather than
+/// assignment-driven, so it has no worker count of its own to hand [`RungDef::build_accrual`] — and
+/// it does not need one: the `animal:pen` rung declares no `crew_needed` (the animal web sizes a crew
+/// off the herd, via `fauna::herders_needed`, not off the rung), so the crew factor is the identity
+/// whatever is passed. Named so that the day an animal rung *does* declare a crew, this site reads as
+/// an assumption to revisit rather than a silently under-crewed fence.
+const PEN_EXTEND_CREW: u32 = 1;
+
+/// **No improvement is being built on this source**, so its build contributes no crew demand and
+/// [`source_crew_needed`] collapses to the take-side count — the pre-crew-axis behaviour, verbatim.
+const NO_BUILD_CREW: u32 = 0;
+
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
 /// system stays under Bevy's 16-parameter ceiling as new configs join it (Predators Phase 0 added
 /// combat + creatures). Each is resolved to its `Arc` once at the top of the system.
@@ -96,8 +108,16 @@ pub fn advance_labor_allocation(
     let pen_rung = ladder.rung(RungKey::AnimalPen);
     // **Extending** a pen (2d-β) re-uses the pen rung's own build dials — a ring is the same fencing
     // labor at the same forgone-yield price, so it must never drift from the initial build.
-    let pen_build_rate =
-        pen_rung.build_accrual(Some(Improvement::Corral), true, RUNG_TIMESCALE_UNSCALED);
+    // `workers` is `PEN_EXTEND_CREW` because the `animal:pen` rung declares no `crew_needed` — the
+    // animal web sizes a crew off the herd (`herders_needed`), not off the rung — so the value cannot
+    // change the rate; it is named rather than a bare literal so a future rung-level animal crew
+    // makes this site's assumption visible instead of silently under-crewing every ring.
+    let pen_build_rate = pen_rung.build_accrual(
+        Some(Improvement::Corral),
+        true,
+        RUNG_TIMESCALE_UNSCALED,
+        PEN_EXTEND_CREW,
+    );
     let pen_build_dip = pen_rung
         .yield_fraction_while_building()
         .expect("the pen rung is an investment — it has a build meter");
@@ -110,11 +130,19 @@ pub fn advance_labor_allocation(
     for (mut cohort, mut allocation) in cohorts.iter_mut() {
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
-        allocation.normalize(available);
+        let faction = cohort.faction;
+        // **A trimmed-away assignment is ANNOUNCED.** `normalize` drops from the tail when the band
+        // no longer has the hands, and until this it did so in total silence — the one place in the
+        // labor system that abandoned work without saying so, while the out-of-range lapse a hundred
+        // lines below has always pushed a feed entry. The improvement rides the *assignment*, so a
+        // population dip could destroy a 25-turn build commitment and the player would only find out
+        // by noticing a tended patch with nobody on it.
+        for assignment in allocation.normalize(available) {
+            announce_dropped_assignment(&mut event_log, tick.0, faction, &assignment);
+        }
         if allocation.assignments.is_empty() {
             continue;
         }
-        let faction = cohort.faction;
         let Ok(band_pos) = tiles.get(cohort.current_tile).map(|tile| tile.position) else {
             continue;
         };
@@ -635,6 +663,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             RUNG_TIMESCALE_UNSCALED,
+                            workers,
                         );
                         // **The feed line rides the TRANSITION, not the state.** `accrue_cultivation`
                         // answers "did this call finish it", so a second band working an
@@ -678,6 +707,7 @@ pub fn advance_labor_allocation(
                             &mut event_log,
                             tick.0,
                             *tile,
+                            workers,
                         ) {
                             completed.push(idx);
                         }
@@ -740,7 +770,14 @@ pub fn advance_labor_allocation(
                     // ceiling offered beyond what the crew could gather — here it is not lost, it
                     // simply stays in the stock and regrows, but it is the same "add hands" answer.
                     let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal);
-                    let workers_needed = workers_needed_for_take(take, per_worker_biomass, workers);
+                    // **Floored at the build's own crew**, the plant twin of a herd's `herders_needed`
+                    // (see [`source_crew_needed`]): while an improvement runs the take is the DIP, so
+                    // inverting it alone told the player a 25-turn build wanted fewer hands than
+                    // gathering the same ground.
+                    let workers_needed = source_crew_needed(
+                        forage_build_crew(improvement, tended_rung, field_rung),
+                        workers_needed_for_take(take, per_worker_biomass, workers),
+                    );
                     let production = forage_policy_ceiling(
                         *policy,
                         improvement,
@@ -1134,7 +1171,7 @@ pub fn advance_labor_allocation(
                             // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
                             // breeding pen (the aurochs pulses) drops 0 animals on a wait turn, which
                             // would collapse the crew to the herder count and contradict `wasted`.
-                            workers_needed: managed_crew_needed(
+                            workers_needed: source_crew_needed(
                                 herders_needed,
                                 fauna::hunt_haul_workers(
                                     production,
@@ -1206,6 +1243,7 @@ pub fn advance_labor_allocation(
                             improvement,
                             eligible,
                             fauna.taming_rate_for(&herd.species),
+                            workers,
                         );
                         // The TRANSITION, not the state (the Cultivate arm's rule): a second band
                         // taming the same herd clears its verb via the already-built check above
@@ -1245,8 +1283,12 @@ pub fn advance_labor_allocation(
                         // THE build seam — the same call the plant side's Cultivate arm makes.
                         // Penning is a flat build for every species — only *taming* varies (slice
                         // 3c): a fence is a fence.
-                        let accrual =
-                            pen_rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED);
+                        let accrual = pen_rung.build_accrual(
+                            improvement,
+                            eligible,
+                            RUNG_TIMESCALE_UNSCALED,
+                            workers,
+                        );
                         if accrual > 0.0 {
                             let pen_tile = herd.position();
                             if herd.accrue_corral(faction, accrual, pen_tile) {
@@ -1340,7 +1382,7 @@ pub fn advance_labor_allocation(
                         herd.body_mass,
                         labor.hunt.per_worker_biomass_capacity,
                     );
-                    let workers_needed = managed_crew_needed(herders_needed, take_workers);
+                    let workers_needed = source_crew_needed(herders_needed, take_workers);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
                     // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -1575,8 +1617,106 @@ pub fn advance_labor_allocation(
 /// **Wild hunting is untouched by construction**: a wild herd isn't yours to maintain, so
 /// `fauna::herd_herders_needed` is `0` and this collapses to the take-side count — the shipped
 /// behaviour, verbatim. (`hunt = reach + carry`; `harvest = maintain + take`.)
-fn managed_crew_needed(herders_needed: u32, take_workers: u32) -> u32 {
-    herders_needed.max(take_workers)
+///
+/// **The plant web reads it too, with the build crew as the standing half.** A crew *preparing* a
+/// patch is paid the investment dip, so inverting that (dipped) take gave `workers_needed = 1` where
+/// the same patch's wild Sustain gather wants 2 — the panel asked for **fewer** people to do **more**
+/// work, and flagged the second worker as overstaffing. The rung's own `crew_needed`
+/// ([`RungDef::build_crew_needed`]) is that standing half, exactly as `herders_needed` is on a herd.
+fn source_crew_needed(standing_crew: u32, take_workers: u32) -> u32 {
+    standing_crew.max(take_workers)
+}
+
+/// **Say what the band just stopped doing** — the feed line for an assignment
+/// [`LaborAllocation::normalize`] trimmed away because the band no longer has the workers for it.
+///
+/// Shaped like the out-of-range Forage lapse it sits beside: the source named in the label, a
+/// `status=lapsed reason=…` detail, and the verb's own `CommandEventKind` so the line lands on the
+/// channel the player is already watching for that source.
+///
+/// **The improvement is named explicitly when one was in flight**, because that is the expensive
+/// half: workers come back, but a build meter that stops being worked starts reverting, and a
+/// 25-turn commitment is exactly the thing a player must not lose without being told. A lapse with no
+/// build says so plainly instead of leaving a blank where the interesting clause would be.
+fn announce_dropped_assignment(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    faction: FactionId,
+    assignment: &LaborAssignment,
+) {
+    // A band-wide role (Scout/Warrior) has no source to name and no verb channel of its own; it is
+    // reported on the label alone, through the role's own kind where one exists.
+    let (kind, source_label, source_detail) = match &assignment.target {
+        LaborTarget::Forage { tile, .. } => (
+            CommandEventKind::Forage,
+            format!("foragers at ({}, {})", tile.x, tile.y),
+            format!("kind=forage x={} y={}", tile.x, tile.y),
+        ),
+        LaborTarget::Hunt { fauna_id, .. } => (
+            CommandEventKind::Hunt,
+            format!("hunters on {fauna_id}"),
+            format!("kind=hunt herd={fauna_id}"),
+        ),
+        LaborTarget::Scout => (
+            CommandEventKind::Scout,
+            "scouts".to_string(),
+            "kind=scout".to_string(),
+        ),
+        LaborTarget::Warrior => (
+            CommandEventKind::CancelOrder,
+            "warriors".to_string(),
+            "kind=warrior".to_string(),
+        ),
+    };
+    // The build verb, if one was in flight — appended to both halves rather than folded in, so a
+    // lapse that cost nothing but hands does not read as though it cost an investment.
+    let lost_build = assignment
+        .improvement
+        .map(|improvement| improvement.as_str());
+    let (label, build_detail) = match lost_build {
+        Some(verb) => (
+            format!(
+                "{source_label} disbanded — too few workers, and the {verb} underway there is \
+                 abandoned"
+            ),
+            format!(" action={verb}"),
+        ),
+        None => (
+            format!("{source_label} disbanded — too few workers"),
+            String::new(),
+        ),
+    };
+    event_log.push(CommandEventEntry::new(
+        tick,
+        kind,
+        faction,
+        label,
+        Some(format!(
+            "status=lapsed reason=too_few_workers {source_detail} workers={}{build_detail}",
+            assignment.workers,
+        )),
+    ));
+}
+
+/// **The crew the improvement in flight on a forage patch demands** — the plant twin of
+/// `fauna::herd_herders_needed`, resolved off the rung the verb builds rather than off the source's
+/// size (a patch has no size; a rung has a job).
+///
+/// [`NO_BUILD_CREW`] when nothing is being built here, or when the rung declares no crew — so a pure
+/// harvest's staffing answer is unchanged, and the floor can only ever *raise* the count.
+fn forage_build_crew(
+    improvement: Option<Improvement>,
+    tended_rung: &RungDef,
+    field_rung: &RungDef,
+) -> u32 {
+    match improvement {
+        Some(Improvement::Cultivate) => tended_rung.build_crew_needed(),
+        Some(Improvement::Sow) => field_rung.build_crew_needed(),
+        // The animal verbs cannot ride a Forage assignment (`Improvement::valid_for_forage`), and a
+        // patch with no verb is being gathered, not built.
+        _ => None,
+    }
+    .unwrap_or(NO_BUILD_CREW)
 }
 
 /// **Has this patch already climbed the rung `improvement` builds?** The plant half of the
@@ -1588,9 +1728,18 @@ fn managed_crew_needed(herders_needed: u32, take_workers: u32) -> u32 {
 /// one: nothing has been built toward `Tame` on a patch and nothing ever will be. That state is
 /// unreachable anyway — `validate_improvement` refuses a cross-web verb at every command path — and
 /// answering `true` would silently *clear* a mis-set verb instead of leaving the evidence in place.
+///
+/// **`Cultivate` is answered by `is_managed()`, not `is_cultivated()` — a Field is above rung 2.**
+/// `Sow` needs no prior patch, so a Field can stand on ground that was never tended
+/// (`cultivation_progress == 0`), and on such a patch `is_cultivated()` is false while the Field arm
+/// `continue`s past the Cultivate block entirely: the verb was neither cleared nor accrued, so a
+/// `cultivate` on a wild-sown Field **stalled forever, silently**, and only `abandon_improvement`
+/// could clear it. Reading the *whole* managed state answers the question the seam is actually
+/// asking — *is there anything left to build at this rung on this source* — and a Field that later
+/// lapses flips the answer back, because this is evaluated against the current state each turn.
 fn forage_rung_already_built(patch: &ForagePatch, improvement: Improvement) -> bool {
     match improvement {
-        Improvement::Cultivate => patch.is_cultivated(),
+        Improvement::Cultivate => patch.is_managed(),
         Improvement::Sow => patch.is_field(),
         Improvement::Tame | Improvement::Corral => false,
     }
@@ -1617,6 +1766,9 @@ fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
 /// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
 /// for the turn: progress is neither lost nor silently switched.
 ///
+/// `workers` is the crew this assignment put on the tile: the rung's `crew_needed` scales the accrual
+/// by `min(workers / crew_needed, 1)`, so a Sow the player under-staffed takes proportionally longer.
+///
 /// Returns **`true` when THIS call completed the Field** — the caller clears the assignment's
 /// `improvement` on that signal. Shaped like `Herd::accrue_corral`'s completion bool rather than
 /// swallowing the completion into the event push, so both plant build rungs report the same thing to
@@ -1631,8 +1783,9 @@ fn accrue_field(
     event_log: &mut CommandEventLog,
     tick: u64,
     tile: UVec2,
+    workers: u32,
 ) -> bool {
-    let accrual = field_rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED);
+    let accrual = field_rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED, workers);
     if accrual <= 0.0 {
         return false;
     }
@@ -2122,6 +2275,13 @@ mod labor_yield_tests {
     /// Whole workers on each assignment: large enough that forage yields clearly and the hunt's
     /// per-worker biomass cap never binds (so a Sustain take is set by the regrowth ceiling).
     const WORKERS: u32 = 10;
+
+    /// **Staff a build to the rung's full crew**, so an assertion about a rung's `progress_per_turn`
+    /// reads its stated rate rather than an under-crewed fraction of it. A rung declaring no crew
+    /// (both animal rungs) is unscaled, so [`WORKERS`] is as good as any number there.
+    fn full_crew(rung: &crate::intensification::RungDef) -> u32 {
+        rung.build_crew_needed().unwrap_or(WORKERS)
+    }
     /// The biome under the harness's food-module tile — grassland, matching the
     /// `FoodModule::SavannaGrassland` tag it carries. A forage patch's carrying capacity is the
     /// **tile's** (`forage.capacity_by_biome`, the human food web's per-biome table), so the harness
@@ -3940,7 +4100,12 @@ mod labor_yield_tests {
                 tended
                     .yield_fraction_while_building()
                     .expect("the tended rung is an investment"),
-                tended.build_accrual(Some(Improvement::Cultivate), true, RUNG_TIMESCALE_UNSCALED),
+                tended.build_accrual(
+                    Some(Improvement::Cultivate),
+                    true,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(tended),
+                ),
             )
         };
 
@@ -4063,7 +4228,12 @@ mod labor_yield_tests {
             (
                 pen.yield_fraction_while_building()
                     .expect("the pen rung is an investment"),
-                pen.build_accrual(Some(Improvement::Corral), true, RUNG_TIMESCALE_UNSCALED),
+                pen.build_accrual(
+                    Some(Improvement::Corral),
+                    true,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(pen),
+                ),
             )
         };
 
@@ -4302,11 +4472,15 @@ mod labor_yield_tests {
         let crop = source_tile_default_crop(&world, RungKey::PlantTended);
         let progress_per_turn = {
             let ladder = world.resource::<LadderConfigHandle>().get();
-            ladder.rung(RungKey::PlantTended).build_accrual(
-                Some(Improvement::Cultivate),
-                true,
-                RUNG_TIMESCALE_UNSCALED,
-            )
+            {
+                let tended = ladder.rung(RungKey::PlantTended);
+                tended.build_accrual(
+                    Some(Improvement::Cultivate),
+                    true,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(tended),
+                )
+            }
         };
         let band = spawn_band(
             &mut world,
@@ -4425,11 +4599,15 @@ mod labor_yield_tests {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let species = world.resource::<HerdRegistry>().herds[0].species.clone();
             (
-                ladder.rung(RungKey::AnimalPastoral).build_accrual(
-                    Some(Improvement::Tame),
-                    true,
-                    fauna.taming_rate_for(&species),
-                ),
+                {
+                    let pastoral = ladder.rung(RungKey::AnimalPastoral);
+                    pastoral.build_accrual(
+                        Some(Improvement::Tame),
+                        true,
+                        fauna.taming_rate_for(&species),
+                        full_crew(pastoral),
+                    )
+                },
                 species,
             )
         };
@@ -4505,11 +4683,15 @@ mod labor_yield_tests {
         }
         let build_per_turn = {
             let ladder = world.resource::<LadderConfigHandle>().get();
-            ladder.rung(RungKey::AnimalPen).build_accrual(
-                Some(Improvement::Corral),
-                true,
-                RUNG_TIMESCALE_UNSCALED,
-            )
+            {
+                let pen = ladder.rung(RungKey::AnimalPen);
+                pen.build_accrual(
+                    Some(Improvement::Corral),
+                    true,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(pen),
+                )
+            }
         };
         let band = spawn_band(
             &mut world,

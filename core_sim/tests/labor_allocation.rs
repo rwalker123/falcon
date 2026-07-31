@@ -661,10 +661,14 @@ fn assignment_sum_clamps_to_working_age() {
     // Normalize down when working-age shrinks below the assigned total.
     alloc.set_assignment(LaborTarget::Warrior, 2, 4);
     assert_eq!(alloc.assigned_total(), 4);
-    alloc.normalize(3);
+    let dropped = alloc.normalize(3);
     assert!(
         alloc.assigned_total() <= 3,
         "normalize should trim Σ workers to the new working-age ceiling"
+    );
+    assert!(
+        dropped.is_empty(),
+        "trimming 4 → 3 only shrinks the tail assignment; nothing was given up"
     );
 
     // Sanity: available_workers floors the fractional working scalar.
@@ -1048,5 +1052,72 @@ fn a_spent_source_schedules_nothing() {
     assert!(
         schedule.iter().all(|v| *v == 0.0),
         "a herd that can never spare a whole animal delivers nothing: {schedule:?}"
+    );
+}
+
+/// **A trimmed-away assignment is announced, and the lost build is named.**
+///
+/// `LaborAllocation::normalize` drops from the tail when a band's working-age head-count shrinks
+/// below what it has committed, and it did so in **total silence** — the one place in the labor
+/// system that abandoned work without telling the player, against the out-of-range Forage lapse a
+/// few tests above which has always pushed a feed entry. The improvement rides the *assignment*, not
+/// the source, so a population dip could destroy a 25-turn `Cultivate` commitment with nothing said
+/// anywhere; the likely upstream cause of a playtest report of a tended patch that quietly ended up
+/// with zero workers.
+#[test]
+fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
+    let mut app = spawn_world();
+    let (patch_pos, patch_tile) = food_tile(&mut app);
+    let herd_id = app.world.resource::<HerdRegistry>().herds[0].id.clone();
+
+    // Two assignments, Σ = 6, on a band with only 3 hands: `normalize` drops the tail (the hunt) and
+    // trims the forage. The tail carries a build verb, which is the half that cannot come back.
+    let mut allocation = forage_alloc(patch_pos, 3);
+    allocation.assignments.push(LaborAssignment {
+        target: LaborTarget::Hunt {
+            fauna_id: herd_id.clone(),
+            policy: FollowPolicy::Sustain,
+        },
+        workers: 3,
+        improvement: Some(core_sim::Improvement::Tame),
+    });
+    let band = spawn_band(&mut app, patch_tile, 3, allocation);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    assert_eq!(
+        app.world
+            .get::<LaborAllocation>(band)
+            .expect("band allocation")
+            .assignments
+            .len(),
+        1,
+        "the tail assignment is dropped — this test is meaningless if nothing was trimmed"
+    );
+    let entry = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .find(|entry| {
+            entry
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("reason=too_few_workers"))
+        })
+        .cloned()
+        .expect("trimming an assignment must push a feed entry, not vanish silently");
+    let detail = entry.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains(&format!("herd={herd_id}")),
+        "the entry names the source that was given up: {detail}"
+    );
+    assert!(
+        detail.contains("action=tame") && entry.label.contains("tame"),
+        "and names the build that was abandoned — the expensive half: {detail} / {}",
+        entry.label
+    );
+    assert!(
+        matches!(entry.kind, CommandEventKind::Hunt),
+        "on the source's own feed channel"
     );
 }

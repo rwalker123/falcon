@@ -134,7 +134,8 @@ invariant.
 Ecology/husbandry tunables live in the `ecology` (`regrowth_rate`, `collapse_fraction`,
 `collapse_rate`, `stressed_fraction`, `extinction_floor`), `immigration`, and `husbandry`
 (**`pastoral.ecology`**, **`pen`** — see "Corral" — plus the per-species growth gains) blocks of
-`fauna_config.json`. **The pen's BUILD dials live in `intensification_ladder.json`** (the `animal:pen`
+`fauna_config.json`.
+**The pen's BUILD dials live in `intensification_ladder.json`** (the `animal:pen`
 rung's `build` block), and as of slice 4 so do the **earned-knowledge dials** (the ladder-level
 `knowledge` block — the old `knowledge_progress_per_turn` / `knowledge_completion_threshold`, which
 `labor_config` duplicated verbatim) — see "The Intensification Ladder": both food webs climb on the same
@@ -151,6 +152,33 @@ bands (`extinction_floor < collapse_fraction < stressed_fraction < 1`) in all th
 `regrowth_rate > 0`, `husbandry_regrowth_cap > 0`, `0 ≤ pen.starve_shrink_rate ≤ 1`,
 `hunt.provisions_per_biomass > 0`, and the follow/market bounds. (The **knowledge** bounds moved to
 `LadderConfig::validate` with the dials in slice 4, where they hold for both webs at once.)
+
+### The shed waits out a NEGLECT GRACE, and the notice does not
+
+`Herd::neglect_turns` counts **consecutive** turns the keepers failed to hold the flock
+(`herded_fraction < FULLY_HERDED`), reset outright by any turn they did — and by a herd not being
+managed at all, since a wild herd is nobody's to neglect. **Animals leave only while that counter
+exceeds the herd's rung's `grace_turns`** (`RungDef::neglect_grace_turns`), resolved through
+**`fauna::herd_keeping_rung`**: `animal:pen` for a penned herd, `animal:pastoral` for any other
+managed one.
+
+- **It is `herd_keeping_rung`, not `herd_rung`.** The latter answers which rung the herd has
+  *completed*, and a half-tamed herd is already owned and already sheds — reading `animal:wild` there
+  (no build, so no grace) would hand the herd in the middle of a 25-turn investment the *least*
+  forgiveness on the ladder.
+- **The under-herded notice is deliberately NOT gated on the grace.** It fires the turn the herd
+  genuinely becomes under-contained, which is exactly the window in which the player can still send
+  hands and lose nothing; warning only once the animals were leaving would spend the grace on silence.
+  This is why the measurement was split out of the shed: **`fauna::uncontained_overage`** answers *is
+  this herd under-contained*, `shed_uncontained_animals` answers *do animals leave this turn*.
+- **On the wire:** `HerdTelemetryState.hasNeglectGrace` / `neglectGraceRemaining` — the countdown, not
+  the counter (`0` = shedding now), published through the same `herd_keeping_rung` seam the shed gates
+  on, so the wire cannot count down against a rung the sim is not applying. See the plant twin in
+  `cultivation.md`.
+- **`animal:pastoral`'s `decay_per_turn` is DELETED, not zeroed** (and `animal:pen`'s `0.0` with it):
+  the arc made `domestication_progress` monotone-up, so the number described a tameness-bleed the sim
+  does not have and **nothing read it** — `RungDef::build_decay` has two production call sites, both on
+  the plant branch. `null` says "this rung's meter does not bleed"; a `0` read like a live dial.
 
 ## The `Tame` verb (Intensification rung 2) — the grammar fix
 
@@ -224,9 +252,12 @@ gated, **paid** verb, so both food webs read the same:
 - **Config** — the whole rung is `intensification_ladder.json`'s `animal:pastoral` record: verb `tame`,
   `unlock_knowledge: "herding"`, **`earns_knowledge: "penning"`** (slice 4 — a config edit, exactly as
   promised),
-  `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn 0.01,
-  yield_fraction_while_building 0.50 }`. The first two **moved verbatim** from `fauna_config.json`
-  `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the animal-side `corral` precedent).
+  `ceiling_required: "pastoral"`, `build: { progress_per_turn 0.04, decay_per_turn null, grace_turns 2,
+  crew_needed null, yield_fraction_while_building 0.50 }`. `progress_per_turn` **moved verbatim** from
+  `fauna_config.json` `husbandry`; the dip is **new** (a **playtest dial** — 0.50 mirrors the
+  animal-side `corral` precedent); `decay_per_turn` is null because the animal web's meters do not
+  bleed; `crew_needed` is null because a herd's crew comes from its **size** (`herders_needed`), not
+  from the rung, so a `Tame` build's accrual is **not** scaled by crew the way a plant build's is.
 - **Slice 3b landed the rest of the rung:** passive-free pastoral is **retired** (a tamed herd yields
   only through a worker's Hunt assignment, at the pastoral `r` — see "Domestication / husbandry" and
   "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
@@ -331,10 +362,11 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
     on staying**: it out-pays every other rung, but only while you feed it, every turn, forever — and
     its food cost lands **exactly when food is scarce**, so a bad winter forces a real choice (eat the
     seed corn and lose future yield, or go hungry).
-  - *Sheds-if-under-contained (neglect-escape arc, `docs/plan_fauna_neglect_escape.md`)* — the binary
-    escape is **retired**. In `advance_husbandry` (Logistics, before Population — the one-turn-lag flag,
-    like `ForagePatch::tended_this_turn`) an under-contained pen **sheds whole animals over its labor
-    capacity** into the wild web at `pen_escape_fraction` (slower than pastoral — the fence buys time),
+  - *Sheds-if-under-contained, AFTER A GRACE (neglect-escape arc, `docs/plan_fauna_neglect_escape.md`)*
+    — the binary escape is **retired**. In `advance_husbandry` (Logistics, before Population — the
+    one-turn-lag flag, like `ForagePatch::tended_this_turn`) an under-contained pen **sheds whole
+    animals over its labor capacity** into the wild web at `pen_escape_fraction` (slower than pastoral
+    — the fence buys time),
     and an untended one is BOTH un-herded (sheds) and un-fed (`pen_fed_fraction = NOT_FED`, so it does
     not regrow — a fast breeder's growth would otherwise cancel the shed). A **fully-abandoned pen bleeds
     its whole flock out and DESPAWNS**: it keeps shedding until it can no longer shed a whole animal

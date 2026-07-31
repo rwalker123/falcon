@@ -1208,7 +1208,26 @@ impl LaborAllocation {
 
     /// Trim assignments so `Σ ≤ available` (called each turn in case `working` shrank). Reduces
     /// from the last assignment(s) first, dropping any that reach zero.
-    pub fn normalize(&mut self, available: u32) {
+    ///
+    /// **Returns the assignments it dropped, because dropping one silently was a defect.** A
+    /// population decline destroys whatever the tail assignment was doing — including a build
+    /// commitment, since [`LaborAssignment::improvement`] rides the *assignment* and not the source,
+    /// so 25 turns of `Cultivate` can vanish with it. Every other path that gives up work tells the
+    /// player (the out-of-range Forage lapse, the hunt leash lapse, `cancel_order`); this one said
+    /// nothing at all, and a tended patch that quietly ended up with zero workers is what it looks
+    /// like from the outside. The caller owns the feed line — `LaborAllocation` has no event log and
+    /// should not grow one — so this hands back the evidence and `advance_labor_allocation` narrates
+    /// it.
+    ///
+    /// **They are dropped, not zeroed, and that is deliberate.** A zero-worker assignment is this
+    /// system's own word for *abandon it* (`set_assignment` with `workers == 0` removes the row;
+    /// `workers == 0` clears `tended_this_turn`, which starts the feral bleed anyway), so zeroing
+    /// would keep a row the map still renders as worked, holding a build verb that can never accrue,
+    /// while paying nothing — the same "correct `+0.00` forever" state the out-of-range lapse exists
+    /// to avoid. Dropping returns the slot to the pool and matches every other give-up path.
+    #[must_use = "a dropped assignment must be announced — see the doc comment"]
+    pub fn normalize(&mut self, available: u32) -> Vec<LaborAssignment> {
+        let mut dropped = Vec::new();
         let mut total = self.assigned_total();
         while total > available {
             let excess = total - available;
@@ -1217,12 +1236,13 @@ impl LaborAllocation {
             };
             if last.workers > excess {
                 last.workers -= excess;
-            } else {
-                self.assignments.pop();
+            } else if let Some(assignment) = self.assignments.pop() {
+                dropped.push(assignment);
             }
             total = self.assigned_total();
         }
         self.align_yields();
+        dropped
     }
 
     /// Clear every assignment (the repurposed `cancel_order` — band goes fully idle).

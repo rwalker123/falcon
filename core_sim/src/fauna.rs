@@ -28,7 +28,7 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, RungMovement,
-        NO_BUILD_UNDERWAY_DIP,
+        NEGLECT_NONE, NO_BUILD_UNDERWAY_DIP, NO_NEGLECT_GRACE,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -488,6 +488,22 @@ pub struct Herd {
     /// twin of `pen_starving`, and like it a rollback rewinds the edge rather than re-firing the
     /// notice.
     pub under_herded: bool,
+    /// **How many consecutive turns this managed herd's keepers have failed to hold it** — the
+    /// neglect counter the shed is gated on, and the exact twin of `ForagePatch::neglect_turns`.
+    /// Reset to [`NEGLECT_NONE`] on any turn the herd's upkeep requirement is met (its assigned
+    /// herders reach `herders_needed`, i.e. `herded_fraction == FULLY_HERDED`) **and on any turn it is
+    /// not a managed herd at all** — a wild herd is nobody's to neglect. Incremented on every other
+    /// turn.
+    ///
+    /// Animals leave only while this **exceeds** the herd's current rung's
+    /// [`RungDef::neglect_grace_turns`] — `animal:pastoral`'s for a tamed herd, `animal:pen`'s for a
+    /// penned one, which is why the grace is per-rung: the fence holds a flock without a keeper for
+    /// far longer than habit holds an unfenced one. The under-herded *notice* is deliberately **not**
+    /// gated on it (see `advance_husbandry`): the grace is exactly when the player can still act.
+    ///
+    /// Rides the checkpoint with the rest of the registry, so a rollback rewinds a spent grace rather
+    /// than handing the herd a fresh one.
+    pub neglect_turns: u16,
 }
 
 impl Herd {
@@ -563,6 +579,7 @@ impl Herd {
             herders_needed: 0,
             // A fresh herd is fully contained (nothing to hold yet).
             under_herded: false,
+            neglect_turns: NEGLECT_NONE,
         }
     }
 
@@ -3099,9 +3116,21 @@ pub fn repopulate_fauna(
 /// (`advance_labor_allocation`); this pass runs its feed check and the shared shed. Logistics runs
 /// before Population, so both flags were written **last** turn (the deliberate one-turn lag, mirroring
 /// `ForagePatch::tended_this_turn`):
-/// - **Under-contained → shed** (§2.2). Too few keepers (or none) sheds animals over the labor
-///   capacity into the wild web, per-rung rate (`pen_escape_fraction` < `pastoral_escape_fraction` —
-///   the fence buys time). The pen is lost only on shed-to-zero, not on the first untended turn.
+/// - **Under-contained → shed, ONCE THE GRACE IS SPENT** (§2.2). Too few keepers (or none) sheds
+///   animals over the labor capacity into the wild web, per-rung rate (`pen_escape_fraction` <
+///   `pastoral_escape_fraction` — the fence buys time). The pen is lost only on shed-to-zero, not on
+///   the first untended turn.
+///
+///   **The shed no longer bites on the first under-herded turn.** [`Herd::neglect_turns`] counts
+///   consecutive turns the herd's keepers failed to hold it, and animals leave only while that
+///   exceeds the herd's rung's `grace_turns` ([`RungDef::neglect_grace_turns`] — `animal:pen`'s for a
+///   penned herd, `animal:pastoral`'s otherwise). The plant twin is the same counter gating the feral
+///   bleed in [`crate::forage::advance_cultivation`]: one trigger, two penalties.
+///
+///   **The under-herded NOTICE is deliberately not gated on the grace** — it fires on the turn the
+///   herd genuinely becomes under-contained, which is precisely the window in which the player can
+///   still send hands and lose nothing. Warning only once the animals are already leaving would spend
+///   the grace on silence.
 /// - **A keeper who cannot pay the feed → starvation** (unchanged, §2.5). An underfed pen
 ///   (`pen_fed_fraction < 1`) **shrinks** by `pen.starve_shrink_rate × (1 − fed) × biomass`, floored at
 ///   `pen.ecology.extinction_floor × K_pen`. It does **not** despawn and does **not** lose the pen: the
@@ -3121,8 +3150,12 @@ pub fn advance_husbandry(
     world_seed: Option<Res<WorldGenSeed>>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
+    // The neglect grace is a ladder dial (the rung's `build.grace_turns`), read here for the same
+    // reason `advance_cultivation` reads it: the penalty differs per web, the trigger does not.
+    ladder_config: Res<LadderConfigHandle>,
 ) {
     let fauna = fauna_config.get();
+    let ladder = ladder_config.get();
     let width = config.grid_size.x.max(1);
     let height = config.grid_size.y.max(1);
     let wrap = config.map_topology.wrap_horizontal;
@@ -3196,13 +3229,29 @@ pub fn advance_husbandry(
             herd.id.hash(&mut hasher);
             SmallRng::seed_from_u64(base_seed ^ ESCAPE_SEED_SALT ^ hasher.finish())
         };
-        let shed = shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng);
-        // A shed occurring **is** the "under-contained this turn" signal: `shed_uncontained_animals`
-        // returns `Some` exactly when the herd has a real overage (herded_fraction < 1 with ≥ 1 animal
-        // over its labor capacity), i.e. its herders can't hold all its animals and it is drifting off.
-        let under_contained = shed.is_some();
-        if let Some(event) = shed {
-            shed_events.push(event);
+        //
+        // **The overage is measured first and the shed is gated second**, because the two answer
+        // different questions: *is this herd under-contained* (which drives the notice, and must be
+        // true during the grace — that is when the player can still fix it) versus *do animals leave
+        // this turn* (which the grace suppresses).
+        let under_contained = uncontained_overage(herd, herded_last_turn, &fauna).is_some();
+        // **The neglect counter** — the animal twin of `ForagePatch::neglect_turns`. A herd whose
+        // keepers can hold it is forgiven outright, so the grace measures *consecutive* neglect.
+        if under_contained {
+            herd.neglect_turns = herd.neglect_turns.saturating_add(1);
+        } else {
+            herd.neglect_turns = NEGLECT_NONE;
+        }
+        // The rung whose keeping obligation this herd is under, through the one seam the wire's
+        // countdown reads too ([`herd_keeping_rung`]).
+        let grace = herd_keeping_rung(herd, &ladder)
+            .map_or(NO_NEGLECT_GRACE, |rung| rung.neglect_grace_turns());
+        if u32::from(herd.neglect_turns) > grace {
+            if let Some(event) =
+                shed_uncontained_animals(herd, source_index, herded_last_turn, &fauna, &mut rng)
+            {
+                shed_events.push(event);
+            }
         }
 
         // **UNDER-HERDED EDGE NOTICE (slice 2, `docs/plan_fauna_neglect_escape.md` §4 item 1).** Fire a
@@ -3342,22 +3391,7 @@ fn shed_uncontained_animals(
     rng: &mut SmallRng,
 ) -> Option<ShedEvent> {
     let body_mass = herd.body_mass;
-    if body_mass <= 0.0 || herd.biomass <= 0.0 {
-        return None;
-    }
-    let current_animals = herd.biomass / body_mass;
-    // **Reconstruct the real labor capacity from actual staffing** (review fix — see the doc comment):
-    // `capacity = assigned × animals_per_herder`, with `assigned = herded_fraction × herders_needed`.
-    // A fully-staffed herd reads `herded == 1` ⇒ `capacity = needed × aph ≥ current` ⇒ no shed; a herd
-    // nobody worked reads `herded == 0` ⇒ `capacity = 0` ⇒ the whole flock is overage.
-    let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
-    let needed = herd_herders_needed(herd, fauna) as f32;
-    let capacity_animals = herded_last_turn.max(0.0) * needed * animals_per_herder;
-    let overage_animals = (current_animals - capacity_animals).max(0.0);
-    if overage_animals < MIN_ESCAPE_ANIMALS {
-        // Fits its labor capacity (or within one animal of it) — the self-limiting attractor.
-        return None;
-    }
+    let overage_animals = uncontained_overage(herd, herded_last_turn, fauna)?;
     let husbandry = &fauna.husbandry;
     let rate = if herd.is_corralled() {
         husbandry.pen_escape_fraction
@@ -3390,6 +3424,65 @@ fn shed_uncontained_animals(
         husbandry_ceiling: herd.husbandry_ceiling,
         source_index,
     })
+}
+
+/// **Which rung's keeping obligation this herd is under** — `animal:pen` for a penned herd,
+/// `animal:pastoral` for any other managed one, `None` for a wild herd (nobody's to keep, so it never
+/// sheds and has no grace to spend).
+///
+/// **Deliberately not [`herd_rung`]**, which answers which rung the herd has *completed*: a half-tamed
+/// herd is already owned and already sheds, and reading `animal:wild` there — a rung with no build and
+/// therefore no `grace_turns` — would hand the herd in the middle of a 25-turn investment the least
+/// forgiveness on the whole ladder.
+///
+/// **One seam, two readers**, the twin of `forage::patch_unwinding_rung`: `advance_husbandry` gates
+/// the shed on this rung's grace and the snapshot publishes *that* rung's countdown.
+pub fn herd_keeping_rung<'a>(herd: &Herd, ladder: &'a LadderConfig) -> Option<&'a RungDef> {
+    (herd.is_corralled() || herd.owner.is_some()).then(|| {
+        ladder.rung(if herd.is_corralled() {
+            RungKey::AnimalPen
+        } else {
+            RungKey::AnimalPastoral
+        })
+    })
+}
+
+/// **Turns of neglect this herd can still absorb before its keepers start losing animals** — the wire's
+/// countdown, resolved through [`herd_keeping_rung`] so it always describes the rung
+/// [`advance_husbandry`] actually gates the shed on. `None` = a wild herd, with nothing at risk.
+pub fn herd_neglect_grace_remaining(herd: &Herd, ladder: &LadderConfig) -> Option<u32> {
+    herd_keeping_rung(herd, ladder).map(|rung| {
+        crate::intensification::neglect_grace_remaining(
+            herd.neglect_turns,
+            rung.neglect_grace_turns(),
+        )
+    })
+}
+
+/// **How many whole animals this herd's keepers cannot hold** — the measurement half of
+/// [`shed_uncontained_animals`], split out because *being* under-contained and *losing animals for it*
+/// are two questions with two answers once a neglect grace sits between them: the under-herded feed
+/// notice fires on the first, the shed only on the second.
+///
+/// `None` means the herd fits its labor capacity (or is within one animal of it) — the self-limiting
+/// attractor — or has no measurable stock at all. See [`shed_uncontained_animals`] for why the
+/// capacity is reconstructed from `herded_fraction × herders_needed × animals_per_herder` rather than
+/// the `(1 − herded_fraction) × current` shorthand.
+fn uncontained_overage(herd: &Herd, herded_last_turn: f32, fauna: &FaunaConfig) -> Option<f32> {
+    let body_mass = herd.body_mass;
+    if body_mass <= 0.0 || herd.biomass <= 0.0 {
+        return None;
+    }
+    let current_animals = herd.biomass / body_mass;
+    // **Reconstruct the real labor capacity from actual staffing** (review fix — see the doc comment):
+    // `capacity = assigned × animals_per_herder`, with `assigned = herded_fraction × herders_needed`.
+    // A fully-staffed herd reads `herded == 1` ⇒ `capacity = needed × aph ≥ current` ⇒ no shed; a herd
+    // nobody worked reads `herded == 0` ⇒ `capacity = 0` ⇒ the whole flock is overage.
+    let animals_per_herder = fauna.animals_per_herder_for(&herd.species);
+    let needed = herd_herders_needed(herd, fauna) as f32;
+    let capacity_animals = herded_last_turn.max(0.0) * needed * animals_per_herder;
+    let overage_animals = (current_animals - capacity_animals).max(0.0);
+    (overage_animals >= MIN_ESCAPE_ANIMALS).then_some(overage_animals)
 }
 
 /// **Announce a lost pen** (`docs/plan_fauna_neglect_escape.md` §2.4). A fully-abandoned pen has shed

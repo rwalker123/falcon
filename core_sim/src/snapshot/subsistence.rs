@@ -1,10 +1,23 @@
 use super::*;
 use crate::fauna_config::HuntYield;
 use crate::forage::{
-    field_fodder, field_trade_goods, plant_policy_forecasts, tended_fodder, tended_trade_goods,
+    field_fodder, field_trade_goods, patch_neglect_grace_remaining, plant_policy_forecasts,
+    tended_fodder, tended_trade_goods,
 };
 use crate::intensification::NO_BUILD_REMAINING_FRACTION;
 use sim_schema::ForagePolicyCeilingState;
+
+/// **The countdown a source with nothing at risk publishes.** Paired with `has_neglect_grace: false`,
+/// which is the field a reader must check — this number is only here because the wire has no optional
+/// scalars, and it deliberately reuses the "biting now" value rather than inventing a sentinel the
+/// client could mistake for a real countdown.
+const NO_NEGLECT_REMAINING: u32 = 0;
+
+/// **The crew a rung that declares none publishes.** Unreachable on the plant branch today (both
+/// plant rungs state a `crew_needed`), but the wire must say something, and `0` is the schema's own
+/// "this rung declares no crew" reading — never a fabricated `1`, which would floor the worker cap at
+/// a number nobody chose.
+const NO_RUNG_CREW: u32 = 0;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
@@ -225,6 +238,10 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             let next_position = entry
                 .next_position
                 .filter(|pos| inputs.herd_is_visible(herd, *pos));
+            // The neglect countdown, off the live registry herd (the display `entry` carries no
+            // counter). A herd the registry cannot resolve has nothing at risk to report.
+            let neglect_grace =
+                herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
@@ -393,6 +410,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .build_dips
                     .rung_three
                     .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **The neglect countdown**, resolved through the *same* `herd_keeping_rung` seam
+                // `advance_husbandry` gates the shed on, so the wire can never count down a grace
+                // against a rung the sim is not applying. `None` = a wild herd: nobody's to keep, so
+                // the pair reads "nothing at risk" rather than a zero that means "shedding now".
+                has_neglect_grace: neglect_grace.is_some(),
+                neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
             }
         })
         .collect()
@@ -448,6 +471,7 @@ pub(crate) fn snapshot_forage_patches(
             // derives from this one (#433). A patch whose tile is absent from the map names no
             // plants and falls back to the empty-basket defaults.
             let tile_composition = tile_quotes.tile_composition(patch.tile);
+            let neglect_grace = patch_neglect_grace_remaining(patch, ladder);
             let forecast = forage_forecast(
                 patch,
                 tile_composition,
@@ -535,6 +559,24 @@ pub(crate) fn snapshot_forage_patches(
                     .build_dips
                     .rung_three
                     .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                // **The neglect countdown**, resolved through the *same* `patch_unwinding_rung` seam
+                // `advance_cultivation` bleeds through — so the wire counts down against the rung
+                // that will actually revert, not one the patch merely stands on. `None` = a wild
+                // patch, which is most of them.
+                has_neglect_grace: neglect_grace.is_some(),
+                neglect_grace_remaining: neglect_grace.unwrap_or(NO_NEGLECT_REMAINING),
+                // **The two build crews** — the floor under the client's worker cap, and the
+                // denominator its build actually accrues against. `0` means the rung declares no
+                // crew (unreachable on the plant branch today; the field is the honest shape rather
+                // than a fabricated `1`).
+                cultivate_crew_needed: ladder
+                    .rung(RungKey::PlantTended)
+                    .build_crew_needed()
+                    .unwrap_or(NO_RUNG_CREW),
+                sow_crew_needed: ladder
+                    .rung(RungKey::PlantField)
+                    .build_crew_needed()
+                    .unwrap_or(NO_RUNG_CREW),
                 // The two investment rungs' PAYOFF twins — each projected at **its own** rung
                 // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433

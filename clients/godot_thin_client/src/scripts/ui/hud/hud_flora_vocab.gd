@@ -96,6 +96,15 @@ const GATE_PHASE_UNKNOWN_LABEL := "not Thriving"
 # The build-verb for the in-progress Cultivate rung — the plant twin of Husbandry's "Domesticating".
 const CULTIVATION_PREPARING_LABEL := "Preparing"
 
+# The DECAYING state's verb, shared by BOTH plant rungs (`DetailFormat.cultivation_label` /
+# `field_label`) — a meter below complete that nobody is building. It is the third state those rows
+# used to lack: a bleeding 99% wore "Preparing 99%" in neutral ink, identical to a fresh build one
+# turn from done, so the card said *gaining* while the player was *losing*. The word is the SIM's own
+# ("gone feral — untended, the ground is reverting"), so the tile card and the command-feed receipt
+# that fires when the meter finally empties name the same event. ONE word for both rungs on purpose:
+# the fact is identical and the ROW's name already says which rung is losing.
+const RUNG_REVERTING_LABEL := "Reverting"
+
 # Tile card "Field" row — plant RUNG 3, the patch twin of the herd's "Corral" row and the rung above
 # "Cultivation". Its own row (never merged with Cultivation): a patch carries BOTH meters, and a Field
 # may stand on ground that was never tended. "Sowing N%" follows the pen's "Building N%" / the fence's

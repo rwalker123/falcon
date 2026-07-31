@@ -982,9 +982,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+            # THE ROW'S OWN IMPROVEMENT DIPS ITS CEILING, and its rung's build crew floors the count —
+            # the plant twins of the herd branch below, and the same reason: while a build runs the sim
+            # caps the take at `stance ceiling × buildFraction` and asks for `max(build crew, take
+            # crew)` hands. A stance-only forecast here let the board's `+` add workers the sim then
+            # reported idle on the same row.
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement), workers, idle,
+                SourceForecast.plant_crew_floor(
+                    patch, HudComposeVocab.BARE_FORECAST_PREFIX, improvement))
         else:
             if not (policy in SourceForecast.LABOR_HUNT_POLICIES):
                 policy = _band_labor.policy_for_hunt(band, herd_id)
@@ -994,9 +1001,12 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             live_herd = _band_labor.find_world_herd(herd_id)
+            # The IMPROVEMENT dips the ceiling here too (see the forage branch): a crew building a pen
+            # is paid `stance × corralBuildFraction`, so a stance-only forecast caps this row above
+            # what the sim will pay it.
             var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy)
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement)
             # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
             # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
             # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the

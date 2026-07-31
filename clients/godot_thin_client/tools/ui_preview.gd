@@ -211,6 +211,41 @@ const PEN_FED_STARVING := 0.40
 # assignment and the auto-max assertion all read them from here rather than repeating bare 1s and 2s.
 const UNDER_HERDED_CORRAL_HERDERS_NEEDED := 2
 const UNDER_HERDED_CORRAL_HERDERS_STAFFED := 1
+# The species name every orb row that names a herd must quote. `Hud._herd_label_for_id` resolves
+# `game_deer_07` through the roster, the current selection and the world-herd list in that order, and
+# every fixture carrying that id declares the same `species` — so the alert text is asserted against the
+# ONE string all three lookups answer, never against a hand-typed copy of it.
+const RED_DEER_LABEL := "Red Deer"
+# The unworked-rung / under-crewed state's wire numbers (`turn_orb_unworked_rung`).
+# `neglectGraceRemaining` ships as `(grace + 1) - neglect`, so every one of these is a COUNTDOWN to the
+# penalty, never a count of neglected turns:
+#   • NEGLECT_GRACE_SOON — the tended patch has 2 turns left. Deliberately not 1: the countdown
+#     interpolates `ATTENTION_TURN_PLURAL_SUFFIX`, and at 1 the suffix is empty, so a row that dropped
+#     the plural entirely would still match.
+#   • NEGLECT_GRACE_NOW — the wire's `0`, which is "the ground is reverting THIS turn", the most urgent
+#     reading there is. It must never render as a `0`-turn countdown.
+#   • NEGLECT_GRACE_FULL — what a source that IS being kept reads (the rung's whole window). The worked
+#     control carries it, so its silence is the WORKED test and not an incidentally absent countdown.
+#   • NEGLECT_GRACE_HERD — the animal web's twin, on the under-crewed herd; plural for the same reason.
+# The third patch of the set has NO number here at all: it carries `has_neglect_grace == false`
+# (nothing at risk), which is the one reading the pair of fields exists to keep distinct from the zero.
+const NEGLECT_GRACE_SOON := 2
+const NEGLECT_GRACE_NOW := 0
+const NEGLECT_GRACE_FULL := 4
+const NEGLECT_GRACE_HERD := 3
+# The under-crewed herd's staffing PAIR — 2 keepers standing where the sim demands 4. Like the
+# corral-deficit pair above they must DISAGREE for the alert to fire at all, and both halves are read
+# back off the RENDERED row (`2 of 4 keepers — sheds in 3 turns`).
+const UNDER_CREWED_HERD_STAFFED := 2
+const UNDER_CREWED_HERD_NEEDED := 4
+# What the orb's registry must hold in that state: THREE unworked-rung rows out of six staged patches
+# (the wild one, the rival's and the worked one raise nothing) plus the ONE under-crewed herd row.
+# Counted rather than searched, because a producer that alarmed on every source would satisfy every
+# positive assertion in the block without this one.
+const UNWORKED_EXPECTED_ROWS := 4
+# Somebody else's faction — the owner of the "not ours" control patch. Derived from the player's id so
+# the two can never be written equal, which would silently turn that negative control into a positive.
+const RIVAL_FACTION_ID := HudConst.PLAYER_FACTION_ID + 1
 # The stale-DATA reopen guard's herd (`herd_compose_reopen_fresh`), staged on ONE id across two turns.
 # Turn N it is still WILD — not owned, so the ownership-gated crew is 0 and only the would-be crew is
 # real. Turn N+1 the sim has taken ownership: a real crew of 4 (both halves equal, as the sim exports
@@ -1475,6 +1510,56 @@ func _ready() -> void:
 	_assert_hud("…and the dip rides the SELECTED stance's ceiling, not a hardcoded Sustain",
 		float(deplete_dip["preparing"]) > float(sustain_dip["preparing"]))
 
+	# State 442-build-crew — **THE SHEET AND THE SIM, ON ONE NUMBER.** `forecast_inputs` used to take a
+	# STANCE ONLY, so while a build ran the sheet read the UNDIPPED ceiling and three surfaces went wrong
+	# together: the stepper let the player dial workers the sim reports idle, the green line quoted a take
+	# the sim does not pay, and the overdraw verdict compared an undipped take against the Sustain bar.
+	# The two cap paths are documented as twins that "can never gate differently" — and they could not,
+	# because they were wrong in the SAME way, agreeing with each other while contradicting the sim.
+	# So the control here is the SIM's answer: `workers_needed`, read back off the very assignment the
+	# sheet is composed over.
+	_hud._compose.set_forage_policy("sustain")
+	_hud._compose.set_forage_count(BUILD_CREW_DIALED_FORAGERS)
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("improvement_build_crew")
+	var sim_workers_needed := int((HudBandLaborState.labor_assignments_of(
+		_hud._band_labor.player_band())[0] as Dictionary)["workers_needed"])
+	var rendered_cap := _stepper_value(_hud._drawercompose._compose_sheet)
+	print("ui_preview: build crew  sim workers_needed=%d  rendered cap=%d" % [
+		sim_workers_needed, rendered_cap])
+	# ONE equality, BOTH halves of the fix. Without the DIP the cap is ceil(0.96/0.32) = 3; without the
+	# CREW FLOOR it is ceil(0.24/0.32) = 1; only the pair lands on the sim's 2.
+	_assert_hud("the compose stepper caps at the crew the SIM asks for (%d), not at an undipped ceiling"
+		% sim_workers_needed, rendered_cap == sim_workers_needed)
+	# THE WORKED-ROW TWIN, on the SAME forecast. `source_worker_cap_state` is the Band panel's gate, and
+	# the two are only genuinely one ceiling if it goes dead at exactly that count — asserted on either
+	# side of it so "always false" cannot pass.
+	var build_forecast := SourceForecast.forecast_inputs(_seeded_food_tile(),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		"sustain", SourceForecast.IMPROVEMENT_CULTIVATE)
+	var build_floor := SourceForecast.plant_crew_floor(_seeded_food_tile(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE)
+	var row_below: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
+		sim_workers_needed - 1, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+	var row_at: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
+		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+	_assert_hud("…and the WORK BOARD's `+` gates at the same count — live below it, dead at it",
+		row_below and not row_at)
+	# THE GREEN LINE AND THE DEAL'S MIDDLE TERM, both read off the RENDERED sheet. They are two different
+	# producers over one patch and one crew; the fix is only real if they now carry the same figure —
+	# and it is the sim's `min(w × per_worker, ceiling × dip)`, not the undipped labour take.
+	var build_green := _label_text_containing(
+		_hud._drawercompose._compose_sheet, SourceForecast.YIELD_TOOLTIP_RENEWABLE)
+	var build_deal := _label_text_containing(
+		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+	print("ui_preview: build crew  green=%s  deal=%s" % [build_green, build_deal])
+	_assert_hud("the green forecast line quotes the DIPPED take the sim pays (%s)"
+		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE))
+	_assert_hud("…and the deal's 'while building' term is the SAME number, not a second answer",
+		build_deal.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % BUILD_CREW_DIPPED_TAKE)
+		and build_deal.contains(IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
+
 	# THE ABANDON, plant side — driven here rather than on the frame above because committing CLOSES
 	# the sheet and writes a pending assign, which the Deplete frame beside it reads.
 	await _assert_abandon_emits(SourceForecast.LABOR_KIND_FORAGE, "cultivate",
@@ -1576,8 +1661,56 @@ func _ready() -> void:
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
 
+	# ---- THE THIRD METER STATE: BUILDING vs REVERTING (issue #442) ------------------------------
+	# **"Preparing 99%" WAS THE MOST MISLEADING LINE ON THE CARD.** A meter that is bleeding back toward
+	# wild wore the build's own word in the build's own neutral ink, so gaining and losing read
+	# identically — the two differ only in which DIRECTION the number is moving, which a percentage
+	# cannot show. Judged as an A/B on ONE patch at ONE meter value, because the claim is precisely that
+	# the same number reads differently depending on whether a crew is on it: the only thing that moves
+	# between these two frames is who the player band is working.
+	var meter_tile := _food_tile_fixture()
+	meter_tile["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	#   (a) BUILDING — the band's own Cultivate assignment is on this tile. Neutral ink, build verb.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_hud.clear_selection()
+	_hud.show_tile_selection(meter_tile)
+	await _settle()
+	await _save("tile_meter_building")
+	var building_row := _hud.tile_detail.text
+	# **WORD AND TINT IN ONE NEEDLE.** `detail_bbcode` renders a row's value as
+	# `[color=#HEX]<value>[/color]`, so asserting the whole tinted cell pins both halves at once — and it
+	# has to, because the old row was not merely mis-WORDED, it was mis-COLOURED: a bleeding meter wore
+	# the neutral ink of a build one turn from done. A bare hex search would match any INK row on the
+	# card; this one can only be satisfied by the cultivation value itself.
+	_assert_hud("a meter a crew IS building reads as a BUILD, in neutral ink",
+		building_row.contains(_meter_value_markup(
+			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
+	#   (b) REVERTING — the SAME patch at the SAME percentage with nobody building it. The band is
+	#   working a different tile, so the patch is improved, unworked and bleeding.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture(
+		METER_AWAY_TILE_X, int(meter_tile["y"]))
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_hud.clear_selection()
+	_hud.show_tile_selection(meter_tile)
+	await _settle()
+	await _save("tile_meter_reverting")
+	var reverting_row := _hud.tile_detail.text
+	print("ui_preview: meter rows  building=%s  reverting=%s" % [
+		_detail_excerpt(building_row, CULTIVATION_ROW_KEY),
+		_detail_excerpt(reverting_row, CULTIVATION_ROW_KEY)])
+	_assert_hud("the SAME meter with nobody on it reads as a LOSS, in WARN ink — not a build",
+		reverting_row.contains(_meter_value_markup(
+			HudFloraVocab.RUNG_REVERTING_LABEL, HudStyle.WARN_HEX)))
+	# THE NEGATIVE, with the positive above it as its companion (a whole-text search alone would also
+	# pass on a card that rendered no cultivation row at all): the build's word must be REPLACED, not
+	# merely joined — a row reading both would be the same ambiguity in longer form.
+	_assert_hud("…and the build's own word is GONE from the row, not merely joined by another",
+		not reverting_row.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
+
 	# Restore the unassigned near band + a plain Sustain compose for the range states below.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_bands = []
 	_hud._compose.reset_forage_source()
 	_hud._compose.set_forage_count(1)
 	_hud._compose.set_forage_policy("sustain")
@@ -3486,9 +3619,113 @@ func _ready() -> void:
 	_hud.turn_orb.open_popover()
 	await _settle()
 	await _save("turn_orb_starving_pen")
+	# **THIS PRODUCER WAS DEAD, AND THE FRAME COULD NOT SAY SO** (issue #442). It found its pens by
+	# `policy == "corral"`, and the axis split made `policy` always one of the four STANCES — the build
+	# verb moved to `improvement` — so the test could never again be true and no starving pen had been
+	# reported since. A PNG of an orb with one row in it looks entirely reasonable, which is why the
+	# assertion is the only thing that could have caught it. Read off the RENDERED rows.
+	var pen_rows := _orb_rows()
+	_assert_hud("the starving-pen producer still fires after the stance/improvement split",
+		_orb_row_with(pen_rows, HudAttentionVocab.ATTENTION_PEN_LABEL_FORMAT % RED_DEER_LABEL) != null)
 	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
 
 	_hud.turn_orb.toggle_popover()   # close, so later states render without it
+
+	# State 7d — turn orb, THE UNWORKED-RUNG + UNDER-CREWED producers (issue #442). A built rung nobody
+	# is working is the one loss the WORK BOARD structurally cannot report: that board lists
+	# ASSIGNMENTS, and an unworked patch has none, so it is ABSENT from the board rather than flagged on
+	# it. The orb is the generic "something needs you" hub, so this is where it has to live — and the
+	# URGENCY rides the row's own words, not a standing counter the player would learn to watch.
+	#
+	# The fixture is built as a set of CONTROLS, because every claim here is about which sources produce
+	# a row and which do not:
+	#   (70,20) tended, owned, unworked, grace 2   → a row, counting down
+	#   (71,20) FIELD,  owned, unworked, grace 0   → a row, the penalty biting NOW
+	#   (72,20) tended, owned, unworked, NO grace  → a row with NO countdown at all (the bool's whole job)
+	#   (73,20) WILD,   owned, unworked            → NO row: nothing has been built here to lose
+	#   (74,20) tended, NOT ours                   → NO row: a rival's ground is not our alarm
+	#   (66,10) tended, owned, WORKED by the band  → NO row: it is being kept
+	_hud.turn_orb.toggle_popover()
+	_hud.turn_orb.set_attention([])
+	_hud.update_forage_patches(_neglect_patches_fixture())
+	_hud.update_herds([_under_crewed_herd_fixture()])
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 811, "size": 40, "turns_of_food": 99.0, "activity": "forage",
+			"current_x": 66, "current_y": 10, "idle_workers": 0,
+			"labor_assignments": [
+				# The WORKED control — the same rung on the same kind of ground, kept.
+				{"kind": "forage", "workers": 2, "target_x": 66, "target_y": 10, "policy": "sustain",
+					"improvement": "", "actual_yield": 1.20, "sustainable_yield": 1.20},
+				# The UNDER-CREWED herd: 2 keepers where the sim asks 4.
+				{"kind": "hunt", "workers": UNDER_CREWED_HERD_STAFFED, "fauna_id": "game_deer_07",
+					"policy": "sustain", "improvement": "",
+					"target_x": 68, "target_y": 15, "actual_yield": 0.60, "sustainable_yield": 0.60},
+			]},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_unworked_rung")
+	var neglect_rows := _orb_rows()
+	for row in neglect_rows:
+		print("ui_preview: orb row  %s | %s" % [String(row["label"]), String(row["detail"])])
+	var lapsing_soon: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 70, 20])
+	var lapsing_now: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["sow"], 71, 20])
+	var no_grace: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 72, 20])
+	_assert_hud("an unworked Tended Patch raises a row naming the rung and the hex",
+		lapsing_soon != null)
+	# **THE COUNTDOWN, at N > 0.** The number is the wire's own `(grace + 1) - neglect`; the client does
+	# no subtraction, so a row quoting anything else means someone re-derived it.
+	_assert_hud("…whose urgency is IN THE TEXT — `%s`"
+		% (HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
+			NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]),
+		lapsing_soon != null and String(lapsing_soon["detail"]) == (
+			HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
+				NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]))
+	# **AND AT ZERO, which is NOT "nothing at risk".** `0` is the wire's "the penalty is biting NOW" —
+	# the most urgent reading there is — so it must never render as a `0`-turn countdown.
+	_assert_hud("a rung at grace 0 says the ground is reverting NOW, never `in 0 turns`",
+		lapsing_now != null and String(lapsing_now["detail"]) == HudAttentionVocab.ATTENTION_LAPSE_NOW)
+	# **AND THE BOOL, which is the whole reason the pair is two fields.** `has_neglect_grace == false`
+	# means nothing is at risk; rendered as a countdown it would collide with the biting-now zero and
+	# read as the loudest row on the card. Asserted by DIGITS, so no phrasing of a number can pass.
+	_assert_hud("a source with NO neglect grace renders no countdown at all — not even a zero",
+		no_grace != null and not _contains_digit(String(no_grace["detail"])))
+	# THE THREE NEGATIVE CONTROLS, counted rather than searched: a producer that alarmed on everything
+	# would satisfy every positive assertion above.
+	_assert_hud("a wild patch, a rival's ground and a WORKED rung raise nothing (%d rows, not %d)"
+		% [neglect_rows.size(), _neglect_patches_fixture().size()],
+		neglect_rows.size() == UNWORKED_EXPECTED_ROWS)
+	# THE ANIMAL HALF — under-crewed rather than unworked, because a herd carries no owner on the wire
+	# and only the band's own assignment can attribute it.
+	var herd_row: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNDER_CREWED_LABEL_FORMAT % RED_DEER_LABEL)
+	_assert_hud("a managed herd below its keeper count raises a row naming both counts",
+		herd_row != null and String(herd_row["detail"]) == (
+			HudAttentionVocab.ATTENTION_UNDER_CREWED_DETAIL_FORMAT % [
+				UNDER_CREWED_HERD_STAFFED, UNDER_CREWED_HERD_NEEDED,
+				HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT % [
+					NEGLECT_GRACE_HERD, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]]))
+	# MOST URGENT FIRST — the rows are sorted on the wire's countdown, so the ground reverting NOW sits
+	# above the one with turns left. `ATTENTION_UNWORKED_MAX_ROWS` caps the list, and a cap that kept an
+	# arbitrary three would be worse than none.
+	# BOTH ROWS PINNED PRESENT FIRST. `find()` answers -1 for a missing row, and -1 is less than every
+	# real index — so the bare comparison PASSES when the biting-now row is absent, which is the one
+	# failure this assertion exists to catch. Presence is carried by the earlier row assertions, but an
+	# assertion that reads as an ordering claim must not be satisfiable by an absence.
+	var now_at := neglect_rows.find(lapsing_now)
+	var soon_at := neglect_rows.find(lapsing_soon)
+	_assert_hud("…and the biting-now row sorts above the one still counting down",
+		now_at >= 0 and soon_at >= 0 and now_at < soon_at)
+	_hud.turn_orb.toggle_popover()
+	_hud.update_forage_patches([])              # restore: no patches for the states below
+	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
+	_hud.turn_orb.set_attention([])
 
 	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
 	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
@@ -4446,6 +4683,52 @@ func _turn_orb_advance_button() -> Button:
 	var btn := footer.get_child(0)
 	return btn as Button
 
+## **THE RENDERED reason rows of the open popover**, in the order they are drawn, each as
+## `{label, detail}` read off the two Labels themselves — never off `TurnOrb._entries`. A registry read
+## would pass on a row the popover never drew, and it would also skip the sort `set_attention` applies,
+## so a claim about which row sits ABOVE which could not be made against it. The popover body is a
+## header, one Button per entry, and a footer whose Advance button is nested one level deeper — so the
+## body's DIRECT Button children are exactly the reason rows.
+func _orb_rows() -> Array:
+	var rows: Array = []
+	var pop := _hud.turn_orb._popover
+	if pop == null or pop.get_child_count() == 0:
+		return rows
+	for row_node in pop.get_child(0).get_children():
+		if not (row_node is Button) or row_node.get_child_count() == 0:
+			continue
+		# The row is stripe · icon · text stack · jump, and the text stack is the only VBox in it, so
+		# the label/detail pair is reached structurally rather than by counting siblings.
+		for cell in row_node.get_child(0).get_children():
+			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
+				continue
+			rows.append({
+				"label": String((cell.get_child(0) as Label).text),
+				"detail": String((cell.get_child(1) as Label).text),
+			})
+			break
+	return rows
+
+## The rendered row whose label is EXACTLY `label`, or `null`. Rows are found by the words the player
+## reads, so a producer that fired with different text is a miss rather than a silent match.
+func _orb_row_with(rows: Array, label: String) -> Variant:
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["label"]) == label:
+			return row
+	return null
+
+const DIGIT_CHARACTERS := "0123456789"
+
+## Does this rendered string carry ANY digit? The "renders no countdown at all" claim is asserted on
+## DIGITS rather than on an absent phrase, so no rewording of a number — `0`, `in 0 turns`, `0 left` —
+## can satisfy it.
+func _contains_digit(text: String) -> bool:
+	for i in text.length():
+		if DIGIT_CHARACTERS.contains(text[i]):
+			return true
+	return false
+
 ## The Telling: a pending fork on the wire, in the per-faction shape the native decoder produces
 ## (`[{faction, forks: [...]}]`). Copy is verbatim from beat_definitions.json —
 ## `sedentarization.soft_drift` / `soft_drift.long_chase` — with `{beast.plural}` resolved the way
@@ -4614,10 +4897,45 @@ const TWO_METER_PENNING := 0.45
 ## frames — it is the sim's unassign on a worked source and a no-op on an unworked one — and a bare 0
 ## beside `COMPOSE_COUNT_UNSET` reads like an omission.
 const ZERO_CREW := 0
-## The crew the two stance-beside-a-build frames are composed at — enough to saturate the patch on
-## EVERY stance (Eradicate's ceiling 4.80 over per-worker 0.32 = 15), so the deal's terms are the
-## CEILING rather than the crew, and the Sustain/Deplete pair differs by the one thing under test.
+## The crew the two stance-beside-a-build frames are DIALED at — past every stance's cap, so the sheet's
+## own clamp decides the crew and the deal's terms are the CEILING rather than the number typed here.
+## It used to be described as "enough to saturate the patch on EVERY stance (Eradicate 4.80 / 0.32 =
+## 15)", which stopped being true when the cap learned about the dip (#442): a BUILDING crew is capped
+## on `stance × 0.25`, so Sustain clamps to 2 (the build crew) and Deplete to 3. Both frames still show
+## the ceiling binding — that is what the clamp guarantees — and the pair still differs only by stance.
 const IMPROVEMENT_STANCE_FRAME_FORAGERS := 15
+## **THE SIM'S OWN `workers_needed` FOR A CULTIVATING CREW ON THE REFERENCE PATCH.** Its derivation from
+## the ladder's and the fixture's numbers is on `_cultivating_forage_band_fixture`, which ships it on the
+## wire; `improvement_build_crew` asserts the compose cap equals what the sheet READS BACK off that
+## assignment, so the control is the sim's published answer rather than a number the harness chose twice.
+const CULTIVATE_SIM_WORKERS_NEEDED := 2
+## Dialed past every plausible cap on that frame, so what the stepper renders IS the cap.
+const BUILD_CREW_DIALED_FORAGERS := 9
+## Idle workers handed to the WORKED-ROW cap twin, so IDLE never becomes the binding term and the two
+## probes differ only by the count under test. Any number above the cap does; this one is not the band's.
+const BUILD_CREW_IDLE_ON_HAND := 9
+## **THE METER VALUE THE BUILDING/REVERTING PAIR IS JUDGED AT — deliberately NEAR COMPLETE.** "Preparing
+## 96%" beside "Reverting 96%" is the exact ambiguity the third state exists to remove: at a high
+## percentage the two states are most alike and the stakes are highest, since what is nearly finished is
+## also what there is most to lose. Both frames render this ONE number, so the word and the tint are the
+## only things that can differ between them.
+const REVERTING_METER_PROGRESS := 0.96
+const REVERTING_METER_PERCENT := 96
+## The tile the band works INSTEAD in the reverting frame — any tile that is not the one being judged.
+## The patch under test is then improved, owned and unworked, which is the whole condition.
+const METER_AWAY_TILE_X := 64
+## The tile card's cultivation ROW key, for the run-log excerpt. Not an assertion input: the assertions
+## match the rendered VALUE markup, which no other row can produce.
+const CULTIVATION_ROW_KEY := "Cultivation"
+## How much of a rendered detail card to echo around a row key when reporting. Enough for the value
+## cell and its colour tag, short enough to stay one log line.
+const DETAIL_EXCERPT_CHARS := 96
+const DETAIL_EXCERPT_ABSENT := "<row absent>"
+## The take that crew is paid — `min(2 × 0.32, 0.96 × 0.25)` = the DIPPED ceiling, 0.24 food/turn. It is
+## the number the green forecast line, the deal's middle term and the sim's own `actual_yield` must all
+## carry; before the dip reached the forecast the green line quoted 0.64 (the undipped labour take) while
+## the deal beside it said 0.24 — the same patch, the same crew, two different answers on one sheet.
+const BUILD_CREW_DIPPED_TAKE := "0.24"
 ## **The three "already built" remedy needles went with the gate reasons they pinned** (issue #442):
 ## a completed rung is a static DONE LABEL now, not a greyed picker button, so there is no dead end to
 ## explain and nothing for a needle to find. `IMPROVEMENT_DONE_LABELS` is what those frames assert on.
@@ -4684,6 +5002,20 @@ func _label_text_containing(root: Node, needle: String) -> String:
 		if found != "":
 			return found
 	return ""
+
+## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 96%[/color]`, exactly as
+## `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state was a
+## failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
+func _meter_value_markup(verb: String, hex: String) -> String:
+	return "[color=#%s]%s %d%%[/color]" % [hex, verb, REVERTING_METER_PERCENT]
+
+## A readable slice of a rendered detail card's BBCode around one row key — for the run log, so a
+## failing meter assertion shows what the card actually SAID rather than only that it disagreed.
+func _detail_excerpt(bbcode: String, key: String) -> String:
+	var at := bbcode.find(key)
+	if at < 0:
+		return DETAIL_EXCERPT_ABSENT
+	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
 
 func _has_label_containing(root: Node, text: String) -> bool:
 	if root == null:
@@ -5645,13 +5977,22 @@ func _forage_range_bands() -> Array:
 ## the (66,10) reference — the finished Tended Patch at (67,11) — would read as UNSTAFFED there, i.e.
 ## exactly the "not standing" case those frames must not render. Both defaults keep every existing
 ## caller on the reference tile.
+## **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.**
+## Derived here by the sim's rule rather than picked, so the assertion on `improvement_build_crew` has a
+## control it did not write itself. For this patch under Sustain + Cultivate
+## (`_food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96, cultivate fraction 0.25, crew 2):
+##   take        = min(w × 0.32, 0.96 × 0.25) = 0.24   (`forage::forage_take` — the dip is INSIDE the min)
+##   take crew   = ceil(0.24 / 0.32)          = 1      (`systems::labor::workers_needed_for_take`)
+##   workers_needed = max(build crew 2, take crew 1) = 2  (`systems::labor::source_crew_needed`)
+## It read `1` — the answer from before either half existed — which is exactly the number the client's
+## old stance-only, floor-less cap agreed with.
 func _cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = _forage_range_bands()[0]
 	band["labor_assignments"] = [{
 		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "policy": "sustain",
 		"improvement": "cultivate",
 		"actual_yield": 0.24, "sustainable_yield": 0.96, "realized_yield": 0.24,
-		"workers_needed": 1, "overdraws": false,
+		"workers_needed": CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}]
 	return band
 
@@ -6224,6 +6565,18 @@ func _food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
+		# THE BUILD CREWS (#442) — `intensification_ladder.json`'s own `crew_needed` for the two plant
+		# rungs (tended 2, field 3), which is what the compose stepper FLOORS its cap on. Not decoration:
+		# the dip shrinks the ceiling the cap divides, so without a crew a Cultivate composed here caps
+		# at ONE forager while the sim asks for two — the exact disagreement the pair of them fixes.
+		"patch_cultivate_crew_needed": 2,
+		"patch_sow_crew_needed": 3,
+		# THE NEGLECT GRACE (#442) — the countdown to this rung reverting. The reference patch IS being
+		# worked (a crew is cultivating it), so it reads the plant:tended rung's full `grace + 1` = 3:
+		# "walk away and you have this long". `has_neglect_grace` is what makes the number readable at
+		# all — a wild patch would ship `false`, not a zero.
+		"patch_has_neglect_grace": true,
+		"patch_neglect_grace_remaining": 3,
 		# Plant RUNG 3 — the Field + the Sow verb. This reference tile is ordinary prairie steppe:
 		# rich enough to forage, but it will NOT take seed (rung 3 moves seed, it cannot fertilize or
 		# irrigate), so the sim's `sow_site_refusal` verdict rides here and the Sow option is gated
@@ -7691,6 +8044,57 @@ func _starving_pen_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 310.0
 	fixture["pen_fed_fraction"] = PEN_FED_STARVING
 	return fixture
+
+## The SAME penned herd, UNDER-CREWED (`turn_orb_unworked_rung`): 2 keepers standing where the sim
+## demands 4, so the shed clock has started and `neglect_grace_remaining` is counting down.
+##
+## **IT IS FULLY FED, ON PURPOSE.** A starving pen fires `_starving_pen_attention`'s own row off the very
+## same herd, and the row COUNT is the negative control for the whole block — two producers on one herd
+## would make it unreadable and would let an over-eager unworked scan hide inside the total. Its tile is
+## the world-herd list's `(68, 15)` (matching the band's hunt assignment) and deliberately not the
+## worked patch's `(66, 10)`, so the two webs' jump targets stay distinguishable.
+func _under_crewed_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["x"] = 68
+	fixture["y"] = 15
+	_set_managed_herders(fixture, UNDER_CREWED_HERD_NEEDED)
+	fixture["has_neglect_grace"] = true
+	fixture["neglect_grace_remaining"] = NEGLECT_GRACE_HERD
+	return fixture
+
+## **THE UNWORKED-RUNG CONTROL SET** (`turn_orb_unworked_rung`) — six patches in the wire shape
+## `forage_patches_to_array` produces, of which only THREE may raise a row. Every field here is one the
+## producer actually reads, and each patch differs from the one above it in exactly ONE of them, so a
+## failure names the condition that broke rather than "the fixture changed":
+##   (70,20) tended · ours · unworked · grace 2      → a row, counting down
+##   (71,20) FIELD  · ours · unworked · grace 0      → a row, the penalty biting NOW
+##   (72,20) tended · ours · unworked · NO grace     → a row with no countdown at all
+##   (73,20) WILD   · ours · unworked                → silent: nothing has been built here to lose
+##   (74,20) tended · a RIVAL's · unworked           → silent: a rival's ground is not our alarm
+##   (66,10) tended · ours · WORKED by the band      → silent: it is being kept
+## The worked control carries the FULL grace window rather than omitting the pair, so its silence can
+## only come from the crew on it — an absent countdown would have silenced it for the wrong reason.
+func _neglect_patches_fixture() -> Array:
+	return [
+		{"x": 70, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_SOON},
+		{"x": 71, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": true,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
+		{"x": 72, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": false, "neglect_grace_remaining": 0},
+		{"x": 73, "y": 20, "ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": false, "neglect_grace_remaining": 0},
+		{"x": 74, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": RIVAL_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
+		{"x": 66, "y": 10, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_FULL},
+	]
 
 ## A SELF-FEEDING pen on lush land (Grazing 2d-γ): a radius-2 fenced footprint (19 tiles) whose grazing
 ## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the NET larder bill `pen_larder_bill`

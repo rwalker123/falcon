@@ -345,6 +345,47 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		}
 	return merged
 
+## **WHAT THE PLAYER IS DOING ON ONE SOURCE, FOLDED ACROSS EVERY BAND** — `{workers, improvement}`.
+## The per-BAND readers above answer "does THIS band work it"; a tile card and an attention producer
+## are asking about the source, which several bands may share and which the *panel* band may not be
+## one of. Reading `player_band()` there would have called an improved patch unworked whenever the
+## crew on it belonged to another band.
+##
+## Pending-aware, because it reads `effective_worker_map`: a just-issued Cultivate stops the tile card
+## reading "Reverting" on the same frame rather than one snapshot later.
+##
+## `improvement` is the FIRST non-empty one found. At most one improvement is ever in flight on a
+## source (the ladder's own rule — an improvement is always the source's next rung), so a second one
+## would be a wire contradiction, not a case to merge.
+##
+## `bands` names the ROSTER to fold over; empty means the INGESTED one, which is what every reader
+## running after `ingest_snapshot_bands` wants. The turn-orb attention producers pass the INCOMING
+## roster instead — they run BEFORE the ingest (Producer 2's decline diff requires that ordering), so
+## the ingested list is still LAST turn's, and a band whose crews the client has not ingested yet
+## would read as working nothing at all.
+func forage_effort_at(x: int, y: int, bands: Array = []) -> Dictionary:
+	return _effort_on(pending_key(LABOR_KIND_FORAGE, x, y, ""), bands)
+
+## The herd twin of `forage_effort_at`, keyed by fauna id — herds MIGRATE, so a herd is never located
+## by tile in this model.
+func hunt_effort_on(herd_id: String, bands: Array = []) -> Dictionary:
+	return _effort_on(pending_key(LABOR_KIND_HUNT, -1, -1, herd_id), bands)
+
+func _effort_on(key: String, bands: Array = []) -> Dictionary:
+	var workers := 0
+	var improvement := SourceForecast.IMPROVEMENT_NONE
+	for band_variant in (bands if not bands.is_empty() else current_player_bands()):
+		if not (band_variant is Dictionary):
+			continue
+		var merged := effective_worker_map(band_variant)
+		if not merged.has(key):
+			continue
+		var m: Dictionary = merged[key]
+		workers += int(m.get("workers", 0))
+		if improvement == SourceForecast.IMPROVEMENT_NONE:
+			improvement = String(m.get("improvement", "")).strip_edges().to_lower()
+	return {"workers": workers, "improvement": improvement}
+
 ## Optimistic idle = working-age minus the sum of effective worker counts.
 func effective_idle(band: Dictionary) -> int:
 	var assigned := 0

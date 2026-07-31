@@ -201,6 +201,15 @@ projection* is the sustained MSY. Pinned by
   `max_useful_workers` is invariant to it.
 - Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
   `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
+- **A crew BUILDING something floors that cap**, on both webs, because the take a build is paid is the
+  **dip** and inverting a dip asks for fewer hands than gathering the same source does:
+  `max_useful_workers(stance, rung) = max(ceil(ceiling / perWorker), <crew floor>)`. The herd's floor
+  is `herdersNeeded` / `herdersNeededIfManaged` (derived from the herd's size) and has shipped for
+  slices; the patch's is the appended **`cultivateCrewNeeded` / `sowCrewNeeded`**, the rung's own
+  `crew_needed`. **The same number is the build's denominator** — plant accrual is
+  `progress_per_turn × min(workers / crew_needed, 1)` — so staffing the cap the panel offers is what
+  buys the rung's stated build length, and under-staffing costs turns rather than nothing. Sim-side
+  the floor is `systems::labor::source_crew_needed`, one `max()` for both webs.
 - A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the policy axis
   collapses**: every ceiling is its managed yield (`SourceYieldForecast::managed`). **The worker cap does
   not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =

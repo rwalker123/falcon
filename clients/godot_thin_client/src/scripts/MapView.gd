@@ -274,6 +274,14 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# and that control is already withheld on a hex the player cannot see. ONE rule for the whole
 	# patch payload beats a pair of exceptions.
 	"patch_cultivate_build_fraction", "patch_sow_build_fraction",
+	# THE NEGLECT GRACE + the two build CREWS (#442). The grace is live patch state by construction
+	# (it counts the turns since anyone worked this ground), and the crews are patch config like the
+	# dips beside them — both redacted under the one rule the whole patch payload follows, since both
+	# are only ever read to drive the improvement control, which a hex the player cannot see does not
+	# render. Redacting the grace is also what keeps a remembered tile from counting down a lapse it
+	# has no way to observe.
+	"patch_has_neglect_grace", "patch_neglect_grace_remaining",
+	"patch_cultivate_crew_needed", "patch_sow_crew_needed",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2726,6 +2734,19 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# multiplication happens.
 		info["patch_cultivate_build_fraction"] = float(patch.get("cultivate_build_fraction", 0.0))
 		info["patch_sow_build_fraction"] = float(patch.get("sow_build_fraction", 0.0))
+		# THE NEGLECT GRACE (#442) — the COUNTDOWN to the ground reverting, with its own presence bool.
+		# `has_neglect_grace == false` means nothing is built here to lose (the common case, a wild
+		# patch), and it is what keeps the honest "reverting NOW" zero from reading as "nothing at
+		# risk": every reader tests the bool BEFORE the number. Both travel `patch_`-prefixed like the
+		# rest of the payload.
+		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
+		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
+		# THE TWO BUILD CREWS (#442) — what each plant rung's build demands, and the FLOOR under the
+		# compose sheet's worker cap (the plant twin of a managed herd's `herders_needed`). Without it
+		# a build asked for fewer hands than gathering the same ground, because while a build runs the
+		# ceiling the cap divides is the DIP.
+		info["patch_cultivate_crew_needed"] = int(patch.get("cultivate_crew_needed", 0))
+		info["patch_sow_crew_needed"] = int(patch.get("sow_crew_needed", 0))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the

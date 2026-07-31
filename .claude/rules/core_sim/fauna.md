@@ -667,10 +667,12 @@ Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
   husbandry ceiling). At `1.0` the herd domesticates. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
-- *Decay*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after `advance_herds` — runs
-  *before* the same turn's accrual, so a `Tame`-worked herd nets `progress_per_turn − decay_per_turn`
-  and an abandoned one only decays by the `animal:pastoral` rung's `decay_per_turn`, clearing `owner`
-  at 0).
+- *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
+  neglect sheds **animals**, never tameness — and as of the neglect-grace slice the `animal:pastoral`
+  rung's `decay_per_turn` is **`null`** rather than the `0.01` it used to carry, because nothing read
+  it (`RungDef::build_decay`'s only production call sites are the two plant rungs). What
+  `advance_husbandry` does to a neglected herd is the **shed**, gated on the rung's `grace_turns` —
+  see "Herding is standing labor" in `husbandry.md`.
 - *Yield*: **none here — passive-free pastoral is RETIRED** (intensification ladder slice 3b, §3:
   every rung is worker-driven). A tamed herd used to pay its owner the pastoral MSY **with no worker
   at all**, split evenly across the owner's bands; `advance_husbandry` now pays **nothing** and a

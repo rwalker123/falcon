@@ -285,6 +285,17 @@ const FORECAST_BUILD_FRACTION_KEYS := {
     IMPROVEMENT_TAME: "tame_build_fraction",
     IMPROVEMENT_CORRAL: "corral_build_fraction",
 }
+# The identity dip — what a ceiling is multiplied by when NO build is under way. The sim's
+# `NO_BUILD_UNDERWAY_DIP`, spelled once here so "not building" is a value rather than a branch.
+const NO_BUILD_DIP := 1.0
+# THE PLANT BUILD CREW each improvement demands — the plant twin of a managed herd's `herders_needed`,
+# and the FLOOR under the worker cap (`plant_crew_floor`). Only the plant rungs declare one: the animal
+# rungs take their crew from the herd's own size, which is why there is no `IMPROVEMENT_TAME` row here
+# rather than a zero one — a missing key is the honest "this web answers elsewhere".
+const FORECAST_CREW_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivate_crew_needed",
+    IMPROVEMENT_SOW: "sow_crew_needed",
+}
 # The per-source BUILD METER each improvement fills, 0..1. The one place that mapping is written down
 # (`RungGates.rung_in_progress` reads it, so the compose sheet, the work board and the map badge can
 # never quote different meters for one verb).
@@ -694,7 +705,39 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
     var rows: Dictionary = src.get(prefix + FORAGE_ROW_CEILING, {})
     return not rows.is_empty()
 
-static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
+## **THE ONE PLACE A BUILD'S CEILING DIP IS RESOLVED** — `<rung>BuildFraction` off the source, or
+## `NO_BUILD_DIP` when nothing is in flight. It is the client twin of `LadderConfig::build_dip`, and
+## every ceiling in this file goes through it, so the compose sheet, the work board and the deal line
+## cannot apply the dip differently (or, as they did, three of them not at all).
+##
+## A `<= 0` fraction is the wire saying it does not describe this rung's build on this source — a
+## species that can never be penned, a patch with no such rung. That is NOT "the build pays zero", so
+## it answers the identity rather than collapsing every ceiling to nothing; `improvement_forecast`
+## makes the same call the other way, declining to quote a deal it cannot price.
+static func build_dip(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_FRACTION_KEYS.has(improvement):
+        return NO_BUILD_DIP
+    var fraction := float(src.get(
+        prefix + String(FORECAST_BUILD_FRACTION_KEYS[improvement]), 0.0))
+    return fraction if fraction > 0.0 else NO_BUILD_DIP
+
+## **`improvement` IS THE DIP, AND LEAVING IT OUT WAS A THREE-SURFACE BUG.** While a build runs the
+## sim's ceiling is `stance ceiling × <rung>BuildFraction` — the stance-only answer is the ceiling of a
+## crew that is NOT building, which is exactly not the crew asking. Passed, every ceiling here (and
+## therefore `axis_ceiling`) carries the dip, so the compose stepper's cap, the green forecast line and
+## the overdraw verdict resolved off this all agree with the sim rather than with each other.
+## `IMPROVEMENT_NONE` (the default) is the identity, so a pure harvest reads exactly as before.
+##
+## **`improvement_forecast` deliberately does NOT pass one.** Its first term is the un-dipped stance
+## baseline — the `1.27 → 0.32 while building → 5.76` deal — and dipping it there would quote the dip
+## twice and erase the number the whole three-term line exists to show.
+static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String,
+        improvement: String = IMPROVEMENT_NONE) -> Dictionary:
+    # The dip factor for the rung in flight, or 1.0 when nothing is being built here. A 0/absent
+    # fraction means the wire does not describe this rung's build on this source, which is NOT "the
+    # build pays nothing" — so it falls back to the identity and the ceilings stay undipped, exactly
+    # as `improvement_forecast` declines to quote a deal it cannot price.
+    var dip := build_dip(src, prefix, improvement)
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
     # branch on the kind the CALLER STATED — the prefix cannot answer this (a herd and a raw wire
@@ -756,6 +799,14 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
             forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_TRADE, policy), 0.0)
         per_worker_fodder = maxf(
             forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_FODDER, policy), 0.0)
+    # **THE DIP RIDES THE CEILINGS ONLY, PER ACCOUNT** — never the per-worker rates. The sim caps a
+    # build's take at `min(workers × per_worker, ceiling × dip)` (`forage::forage_take`), so a crew is
+    # as productive per head while it builds; what shrinks is how much the ground will give up. Applied
+    # here, before the axis triple is derived, so `axis_ceiling` and every consumer of it — the worker
+    # cap, the preview line, the overdraw test — read one dipped number.
+    ceiling *= dip
+    ceiling_trade *= dip
+    ceiling_fodder *= dip
     var trade_axis: bool = not has_component(per_worker) and has_component(per_worker_trade)
     var axis_per_worker := per_worker_trade if trade_axis else per_worker
     var axis_ceiling := ceiling_trade if trade_axis else ceiling
@@ -939,6 +990,23 @@ static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
         return int(herd.get("herders_needed_if_managed", 0))
     return int(herd.get("herders_needed", 0))
 
+## **The PLANT twin of `herd_crew_floor`** (issue #442) — the crew the rung being built on this patch
+## demands (`<rung>CrewNeeded`), as a FLOOR on the compose stepper's worker cap. Same shape, same
+## contract, same one definition: a RAISE, never a new cap, and `0` for a patch that is only being
+## gathered.
+##
+## It exists because the dip and the cap fight each other. While a build runs the ceiling the cap
+## divides is `stance × buildFraction`, so `ceil(ceiling / perWorker)` collapses — a 25-turn
+## improvement asked for FEWER hands than gathering the same ground, and the sim's own
+## `source_crew_needed` (`max(build crew, take crew)`) then reported the row overstaffed at the count
+## the sheet had just capped it to. The rung's crew is the standing half of exactly that `max`.
+##
+## `prefix` spells the keys, so this reads a `patch_`-prefixed tile_info and a raw wire patch alike.
+static func plant_crew_floor(patch: Dictionary, prefix: String, improvement: String) -> int:
+    if not FORECAST_CREW_KEYS.has(improvement):
+        return 0
+    return int(patch.get(prefix + String(FORECAST_CREW_KEYS[improvement]), 0))
+
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
 ## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
 ## beside it so the two can never disagree. A source's `+` may add a worker only while the band has an
@@ -983,10 +1051,16 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 ## `forecast_inputs`' own (`per_worker`/`ceiling`, `per_worker_trade`/`ceiling_trade`,
 ## `per_worker_fodder`/`ceiling_fodder`) — passed in rather than switched on here, so adding a fourth
 ## account is a call site, not an edit to this function.
+## **`ceiling_scale` GOES INSIDE THE `min`, AND THAT IS THE WHOLE POINT OF THE PARAMETER.** A build's
+## dip is a factor on the CEILING (`forage::forage_take` caps at `min(workers × per_worker, ceiling ×
+## dip)`), so scaling the already-capped take instead — `min(…) × dip` — is a different number
+## whenever the crew is labour-bound below the dipped ceiling, and the client under-reported by exactly
+## the dip there. `NO_BUILD_DIP` (the default) leaves every non-build caller bit-identical.
 static func expected_yield_account(forecast: Dictionary, workers: int, band: Dictionary,
-        per_worker_key: String, ceiling_key: String) -> float:
+        per_worker_key: String, ceiling_key: String,
+        ceiling_scale: float = NO_BUILD_DIP) -> float:
     var raw := minf(float(workers) * float(forecast.get(per_worker_key, 0.0)),
-        float(forecast.get(ceiling_key, 0.0)))
+        float(forecast.get(ceiling_key, 0.0)) * ceiling_scale)
     return raw * float(band.get("output_multiplier", OUTPUT_FULL))
 
 ## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:

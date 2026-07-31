@@ -71,10 +71,11 @@ use crate::{
     food::FoodModuleTag,
     intensification::{
         BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, SiteRefusal,
-        RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
+        NEGLECT_NONE, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED,
     },
     labor_config::{ForageLaborConfig, LaborConfigHandle, NO_FORAGE_CAPACITY},
     orders::FactionId,
+    resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
     scalar::{scalar_from_f32, Scalar},
 };
 
@@ -193,6 +194,21 @@ pub struct ForagePatch {
     /// runs before the labor arm can re-mark a patch a band is working — from reverting a tended patch
     /// / Field a band tends every turn.
     pub tended_this_turn: bool,
+    /// **How many consecutive turns nobody has worked this patch as an improvement** — the neglect
+    /// counter `advance_cultivation` gates the feral bleed on. Reset to [`NEGLECT_NONE`] on any turn
+    /// `tended_this_turn` is set; incremented on every turn it is not. The bleed applies only while
+    /// this exceeds the decaying rung's [`RungBuild::grace_turns`], so a crew may be away for a few
+    /// turns — re-tasked, raided, following a herd — without the patch starting to revert.
+    ///
+    /// **The requirement stays per-SOURCE, not per-band** (`tended_this_turn` is set by *any* crew on
+    /// the tile), and it stays **binary**: a partly-crewed build accrues more slowly
+    /// ([`RungDef::build_accrual`]'s crew scale) but is not *neglect*. Grading neglect by crew size is
+    /// a separate decision.
+    ///
+    /// Rides the checkpoint with the rest of the registry, so a rollback rewinds the grace along with
+    /// the meter it protects — otherwise a restore could hand a patch a fresh grace it had already
+    /// spent.
+    pub neglect_turns: u16,
 }
 
 impl ForagePatch {
@@ -209,6 +225,7 @@ impl ForagePatch {
             species: None,
             owner: None,
             tended_this_turn: false,
+            neglect_turns: NEGLECT_NONE,
         }
     }
 
@@ -330,18 +347,30 @@ impl ForagePatch {
     /// gather patch); the *caller* (`advance_cultivation`) decides when to spare a worked patch.
     /// Mirrors `Herd::decay_domestication` (minus the domesticated short-circuit — a tended patch left
     /// untended is meant to go feral).
-    pub(crate) fn decay_cultivation(&mut self, amount: f32) {
+    ///
+    /// **Returns `true` only when THIS call took the rung back below [`RUNG_COMPLETE`]** — the feral
+    /// *edge*, the exact mirror of [`Self::accrue_cultivation`]'s "did this call finish it". The
+    /// caller announces on that edge and nowhere else: a 25-turn investment's payoff has just been
+    /// destroyed, and the feed says so once rather than every turn of the long bleed that follows.
+    pub(crate) fn decay_cultivation(&mut self, amount: f32) -> bool {
+        let was_cultivated = self.is_cultivated();
         self.cultivation_progress = (self.cultivation_progress - amount).max(0.0);
         self.reconcile_owner();
+        was_cultivated && !self.is_cultivated()
     }
 
     /// Decay **Field**-build progress toward zero by `amount` — the rung-3 twin of
     /// `decay_cultivation`, and (unlike the pen, which is lost outright when its herd bolts) a
     /// *gradual* bleed for the same reason cultivation bleeds gradually: **a patch is a place and a
     /// herd is not**, so leftover progress still refers to the same ground.
-    pub(crate) fn decay_field(&mut self, amount: f32) {
+    ///
+    /// **Returns `true` only when THIS call took the rung back below [`RUNG_COMPLETE`]** — see
+    /// [`Self::decay_cultivation`] for why the announcement rides the edge.
+    pub(crate) fn decay_field(&mut self, amount: f32) -> bool {
+        let was_field = self.is_field();
         self.field_progress = (self.field_progress - amount).max(0.0);
         self.reconcile_owner();
+        was_field && !self.is_field()
     }
 
     /// **Commit this patch to one named plant** — the first turn a crew works it under
@@ -1368,46 +1397,146 @@ pub fn advance_forage_regrowth(
 /// - An **abandoned** part-prepared patch's partial accrual decays the same way (walk away mid-
 ///   investment and the cleared ground grows back over).
 ///
-/// **One feral rule, both plant rungs.** An untended patch bleeds **both** improvement meters, each
-/// at its own rung's `decay_per_turn` — so an abandoned **Field** reverts to a wild gather patch after
-/// one untended turn, exactly as an abandoned tended patch does, and both meters lapse to zero over
-/// ~100 turns (ownership clearing only once nothing is left of either). It does *not* step down to a
-/// tended patch on the way: that would pay the deserter the rung-2 managed yield for free while the
-/// rung-3 improvement lapsed, and the plant web has exactly one story here — *an improvement you stop
-/// working goes back to the wild*.
+/// **A GRACE first.** Nothing decays on the first un-worked turn any more. Each patch carries a
+/// [`ForagePatch::neglect_turns`] counter — reset whenever the patch is worked, incremented whenever
+/// it is not — and the bleed applies only while it *exceeds* the decaying rung's `grace_turns`
+/// ([`RungDef::neglect_grace_turns`]). A crew re-tasked for a couple of turns, a band that walked to
+/// answer a raid, a keeper following a herd: none of those cost the investment now. The animal twin is
+/// the same counter gating the shed in [`crate::fauna::advance_husbandry`] — one trigger, two
+/// penalties.
+///
+/// **The unwind is NEWEST-FIRST: one meter at a time, the highest rung with progress on it.** The
+/// least-established improvement is the most fragile, so a Field bleeds to nothing *before* the tended
+/// ground beneath it loses anything, and `cultivation_progress` **cannot move while `field_progress >
+/// RUNG_UNSTARTED`**. Bleeding both at once produced an unrecoverable state: a gap in a `Sow` knocked
+/// cultivation to `0.99`, and once the crew came back the running `Sow` marked the patch worked every
+/// turn, so the tended rung could neither decay further nor re-accrue (only `Cultivate` accrues it, and
+/// at most one improvement is ever in flight). The patch was stranded one hundredth below a rung it had
+/// already paid for, permanently. Ordering the unwind makes that state unreachable by construction.
+///
+/// It still does *not* step a lapsing Field down to a tended patch: rung 3 unwinding to zero reveals
+/// whatever rung 2 the ground already had — which may be nothing — and never pays the deserter a rung
+/// they did not build.
+///
+/// **A lost rung is ANNOUNCED.** Crossing back below [`RUNG_COMPLETE`] destroys a 25-turn investment's
+/// payoff, so each decay call reports that edge and this pass pushes the rung's own feed line
+/// (`CommandEventKind::Cultivate` / `Sow`) — once, on the transition, the way the animal web has always
+/// announced a lost pen (`fauna::announce_pen_lost`). The long bleed to zero that follows says nothing
+/// further: the loss already happened.
 ///
 /// **Stage ordering.** Logistics runs *before* Population, so the `tended_this_turn` flag this pass
 /// reads was written by the labor arm **last** turn (a one-turn lag) — the flag is a deliberate
 /// carry-across-turns signal, not a same-turn one. Each patch's flag is cleared here after it is read,
 /// so the labor arm re-sets it next Population stage. Net effect: a patch worked every turn never
-/// decays; a patch whose band leaves goes feral / reverts one turn later. The plant counterpart of
-/// `fauna::advance_husbandry`'s decay side.
+/// decays; a patch whose band leaves starts counting toward its rung's grace one turn later. The plant
+/// counterpart of `fauna::advance_husbandry`'s decay side.
+/// **Which rung's meter is unwinding on this patch right now** — the *newest* improvement that still
+/// has progress banked on it, because the plant web unwinds newest-first (see
+/// [`advance_cultivation`]). `None` for a wild patch: nothing has been built here, so there is nothing
+/// to lose and no grace to spend.
+///
+/// **One seam, two readers**, and that is the point: `advance_cultivation` bleeds the rung this
+/// returns, and `snapshot_forage_patches` publishes *that* rung's remaining grace. Deriving the
+/// at-risk rung twice is how the wire comes to count down a grace on a rung the sim is not touching.
+pub fn patch_unwinding_rung<'a>(
+    patch: &ForagePatch,
+    ladder: &'a LadderConfig,
+) -> Option<&'a RungDef> {
+    if patch.field_progress > RUNG_UNSTARTED {
+        Some(ladder.rung(RungKey::PlantField))
+    } else if patch.cultivation_progress > RUNG_UNSTARTED {
+        Some(ladder.rung(RungKey::PlantTended))
+    } else {
+        None
+    }
+}
+
+/// **Turns of neglect this patch can still absorb before its feral bleed starts** — the wire's
+/// countdown, resolved through [`patch_unwinding_rung`] so it always describes the rung
+/// [`advance_cultivation`] would actually bleed. `None` = a wild patch, with nothing at risk.
+pub fn patch_neglect_grace_remaining(patch: &ForagePatch, ladder: &LadderConfig) -> Option<u32> {
+    patch_unwinding_rung(patch, ladder).map(|rung| {
+        crate::intensification::neglect_grace_remaining(
+            patch.neglect_turns,
+            rung.neglect_grace_turns(),
+        )
+    })
+}
+
 pub fn advance_cultivation(
     mut registry: ResMut<ForageRegistry>,
     ladder_config: Res<LadderConfigHandle>,
+    mut event_log: ResMut<CommandEventLog>,
+    tick: Res<SimulationTick>,
 ) {
     let ladder = ladder_config.get();
-    // Each plant rung's own build decay — the shared ladder seam (`crate::intensification`), not a
-    // plant-only lever. Two rungs, two rates, one pass: the ladder can be retuned per rung without
-    // this system knowing anything about either number.
-    let tended_decay = ladder
-        .rung(RungKey::PlantTended)
-        .build_decay(RUNG_TIMESCALE_UNSCALED);
-    let field_decay = ladder
-        .rung(RungKey::PlantField)
-        .build_decay(RUNG_TIMESCALE_UNSCALED);
     for patch in registry.patches.values_mut() {
         // Spare any patch a band worked as an improvement this turn (working a completed
-        // Field/patch, or preparing one under Cultivate/Sow). Everything else decays, on both rungs:
-        // an untended Field or cultivated patch goes feral (reverts to wild once < 1.0), and an
-        // abandoned part-prepared patch reverts toward 0.
-        if !patch.tended_this_turn {
-            patch.decay_field(field_decay);
-            patch.decay_cultivation(tended_decay);
+        // Field/patch, or preparing one under Cultivate/Sow) — and forgive whatever neglect it had
+        // accumulated, so the grace is about *consecutive* absence rather than a lifetime budget.
+        if patch.tended_this_turn {
+            patch.neglect_turns = NEGLECT_NONE;
+        } else {
+            patch.neglect_turns = patch.neglect_turns.saturating_add(1);
+            let neglect = u32::from(patch.neglect_turns);
+            // **Newest first, through the one seam the wire reads too.** Exactly one meter unwinds
+            // per turn — the Field while it has anything left, then the tended ground under it — and
+            // the rung whose meter is moving owns *both* dials, because the grace sits beside the
+            // `decay_per_turn` it gates. Every number here is the ladder's
+            // (`crate::intensification`), so a rung can be retuned without this system knowing what
+            // it says.
+            if let Some(rung) = patch_unwinding_rung(patch, &ladder) {
+                if neglect > rung.neglect_grace_turns() {
+                    let decay = rung.build_decay(RUNG_TIMESCALE_UNSCALED);
+                    let verb = rung.verb_improvement();
+                    let lost = if verb == Some(Improvement::Sow) {
+                        patch.decay_field(decay)
+                    } else {
+                        patch.decay_cultivation(decay)
+                    };
+                    if lost {
+                        announce_rung_lost(&mut event_log, tick.0, patch.owner, verb, patch.tile);
+                    }
+                }
+            }
         }
         // Clear the transient per-turn flag after reading it (re-set next Population stage if worked).
         patch.tended_this_turn = false;
     }
+}
+
+/// **Announce a lost plant rung** — the plant twin of `fauna::announce_pen_lost`, and pushed on the
+/// same edge: the turn a *completed* improvement crosses back below [`RUNG_COMPLETE`]. A completed rung
+/// is 25 turns of forgone harvest, so losing it is never silent; the partial bleed that follows is not
+/// announced, because the thing that mattered has already happened.
+///
+/// Rides the verb's **own** feed kind (`cultivate` / `sow`), so a rung's whole life — the command, the
+/// completion, the loss — reads on one channel, exactly as the pen's does.
+fn announce_rung_lost(
+    event_log: &mut CommandEventLog,
+    tick: u64,
+    owner: Option<FactionId>,
+    verb: Option<Improvement>,
+    tile: UVec2,
+) {
+    let (Some(owner), Some(verb)) = (owner, verb) else {
+        return;
+    };
+    let (kind, what) = match verb {
+        Improvement::Sow => (CommandEventKind::Sow, "field"),
+        _ => (CommandEventKind::Cultivate, "tended patch"),
+    };
+    let (x, y) = (tile.x, tile.y);
+    event_log.push(CommandEventEntry::new(
+        tick,
+        kind,
+        owner,
+        format!("The {what} at ({x}, {y}) has gone feral — untended, the ground is reverting"),
+        Some(format!(
+            "status=feral reason=untended action={} x={x} y={y}",
+            verb.as_str()
+        )),
+    ));
 }
 
 /// Apply one turn of **pure logistic** regrowth toward the patch's carrying capacity and refresh its

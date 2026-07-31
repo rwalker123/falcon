@@ -359,11 +359,29 @@ fn field_progress_of(app: &App, coord: UVec2) -> f32 {
 
 /// The `plant:field` rung's build dials, read off the ladder — the same seam the sim drives sowing
 /// with, so a retune moves the tests with the game rather than against it.
+/// **The `plant:field` rung's neglect grace** — the consecutive un-worked turns the feral bleed
+/// forgives before it starts. Read off the ladder, never restated.
+fn field_grace(app: &App) -> u32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantField)
+        .neglect_grace_turns()
+}
+
 fn field_build(app: &App) -> (f32, f32) {
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let field = ladder.rung(RungKey::PlantField);
     (
-        field.build_accrual(Some(Improvement::Sow), true, RUNG_TIMESCALE_UNSCALED),
+        // Staffed to the rung's full crew — the rung's stated rate, not an under-crewed fraction.
+        field.build_accrual(
+            Some(Improvement::Sow),
+            true,
+            RUNG_TIMESCALE_UNSCALED,
+            field
+                .build_crew_needed()
+                .expect("the field rung declares a crew"),
+        ),
         field.build_decay(RUNG_TIMESCALE_UNSCALED),
     )
 }
@@ -789,16 +807,29 @@ fn an_abandoned_field_goes_feral_and_fully_lapses() {
     // The crew walks off.
     app.world.despawn(band);
 
-    // Two untended turns revert it to a wild gather patch: the feral pass reads a flag the labor arm
-    // wrote **last** turn (Logistics runs before Population — the deliberate one-turn lag), so the
-    // first pass after the crew leaves still sees the ground as worked and spares it.
-    run_turns_untended(&mut app, 2);
+    // The feral pass reads a flag the labor arm wrote **last** turn (Logistics runs before Population
+    // — the deliberate one-turn lag), so the first pass after the crew leaves still sees the ground
+    // as worked and spares it. On top of that the `plant:field` rung forgives `grace_turns` of
+    // consecutive neglect. Both are read off the ladder rather than restated, so a retune moves this
+    // test with the game.
+    const SPARED_LAG_TURNS: u32 = 1;
+    let grace = field_grace(&app);
+    run_turns_untended(&mut app, SPARED_LAG_TURNS + grace);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field(),
+        "the grace turns cost the Field nothing"
+    );
+    run_turns_untended(&mut app, 1);
     {
         let registry = app.world.resource::<ForageRegistry>();
         let patch = registry.patch(coord).unwrap();
         assert!(
             !patch.is_field(),
-            "one untended turn takes a field feral: progress {}",
+            "the first turn past the grace takes a field feral: progress {}",
             patch.field_progress
         );
         assert!(
@@ -909,3 +940,209 @@ fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
 /// A token crew for the second band on a shared source: enough to hold an assignment (and therefore
 /// an improvement) without its share of the draw-down changing what the first band is measuring.
 const TOKEN_SECOND_CREW: u32 = 1;
+
+// ---------------------------------------------------------------------------------------------
+// The plant web unwinds NEWEST-FIRST
+// ---------------------------------------------------------------------------------------------
+
+/// **A lower rung does not decay while a higher one still has progress.** Rung 3 bleeds to nothing
+/// first, and only then does the tended ground beneath it start to go — the least-established
+/// improvement is the most fragile.
+///
+/// This is the fix for an **unrecoverable** state, and that is why it matters more than tidiness.
+/// Bleeding both meters together knocked a completed tended patch to `0.99` during a gap in the Sow
+/// work; once the crew came back, the running `Sow` marked the patch worked every turn, so
+/// cultivation could neither decay further nor re-accrue (only `Cultivate` accrues it, and at most one
+/// improvement is ever in flight). The patch was stranded one hundredth below a rung it had already
+/// paid for, permanently.
+#[test]
+fn an_unworked_patch_unwinds_its_newest_rung_first() {
+    let mut app = spawn_world();
+    let (_tile, coord) = find_sowable_tile(&app);
+    // A patch standing on rung 2 with a part-built Field on top of it — the state a crew that
+    // started sowing a tended patch and then walked away leaves behind.
+    const PART_BUILT_FIELD: f32 = 0.5;
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.cultivation_progress = 1.0;
+        patch.field_progress = PART_BUILT_FIELD;
+        patch.owner = Some(FactionId(0));
+    }
+
+    let (_, field_decay) = field_build(&app);
+    let grace = field_grace(&app);
+    // Run right through the Field's whole bleed. Cultivation must not move by so much as one turn's
+    // decay while the Field still has anything left.
+    let field_bleed_turns = (PART_BUILT_FIELD / field_decay).ceil() as u32;
+    run_turns_untended(&mut app, grace + field_bleed_turns);
+    {
+        let registry = app.world.resource::<ForageRegistry>();
+        let patch = registry.patch(coord).expect("patch");
+        assert!(
+            patch.field_progress < field_decay,
+            "the Field's own meter is spent (an `f32` subtracted turn by turn lands a few ULPs \
+             above zero, which is still `> RUNG_UNSTARTED` — correctly, that is the guard): {}",
+            patch.field_progress
+        );
+        assert_eq!(
+            patch.cultivation_progress, 1.0,
+            "and the tended ground under it lost NOTHING while that was happening"
+        );
+        assert!(
+            patch.is_cultivated(),
+            "so the patch is still a tended patch — the rung it paid for survives"
+        );
+    }
+
+    // Only once nothing is left of the Field does rung 2 become the newest thing to lose, and start
+    // to bleed. The neglect counter is long past every grace by now, so this is immediate.
+    const FLOAT_RESIDUE_TURNS: u32 = 2;
+    run_turns_untended(&mut app, FLOAT_RESIDUE_TURNS + 1);
+    let patch_registry = app.world.resource::<ForageRegistry>();
+    let patch = patch_registry.patch(coord).expect("patch");
+    assert_eq!(patch.field_progress, 0.0, "the Field is fully gone");
+    assert!(
+        patch.cultivation_progress < 1.0,
+        "with the Field gone, the tended rung is the newest thing left and starts to bleed"
+    );
+}
+
+/// **The frozen-at-0.99 state is unreachable by construction** — the concrete case the ordering rule
+/// exists for, driven through the real pipeline rather than asserted on the rule.
+///
+/// A completed tended patch, a gap in the Sow work, then the crew returns: cultivation must still be
+/// exactly `1.0`, because it cannot move while `field_progress > 0`. Under the old both-meters bleed it
+/// landed just below `1.0` and could never come back.
+#[test]
+fn a_gap_in_a_sow_cannot_strand_the_tended_rung_below_complete() {
+    let mut app = spawn_world();
+    let (tile, coord) = find_sowable_tile(&app);
+    grant_seed_selection(&mut app, FactionId(0));
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.cultivation_progress = 1.0;
+        patch.owner = Some(FactionId(0));
+    }
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    run_turns_with_forage(&mut app, 5);
+    assert!(
+        field_progress_of(&app, coord) > 0.0,
+        "the Sow is genuinely underway"
+    );
+
+    // The crew is pulled away for long enough to bleed, then comes back.
+    app.world.despawn(band);
+    let grace = field_grace(&app);
+    run_turns_untended(&mut app, grace + 3);
+    let stranded = app
+        .world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .cultivation_progress;
+    assert_eq!(
+        stranded, 1.0,
+        "cultivation cannot move while a Field meter still stands: {stranded}"
+    );
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .is_cultivated(),
+        "so the patch the player paid 25 turns for is still a tended patch"
+    );
+}
+
+/// **Losing a Field is announced on the `sow` channel** — the rung-3 twin of the tended patch's feral
+/// line, and pushed on the same edge (the turn it crosses back below `1.0`), once.
+#[test]
+fn losing_a_field_pushes_one_feed_line_on_the_sow_channel() {
+    let mut app = spawn_world();
+    let (_tile, coord) = find_sowable_tile(&app);
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.field_progress = 1.0;
+        patch.owner = Some(FactionId(0));
+    }
+
+    let grace = field_grace(&app);
+    run_turns_untended(&mut app, grace);
+    assert_eq!(
+        feral_lines(&app),
+        0,
+        "nothing is lost, so nothing is announced, while the grace holds"
+    );
+
+    let (_, decay) = field_build(&app);
+    run_turns_untended(&mut app, (1.0 / decay).ceil() as u32 + 2);
+    assert_eq!(
+        feral_lines(&app),
+        1,
+        "the loss is announced once, on the turn it happens — not every turn of the bleed"
+    );
+    let detail = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .find(|entry| entry.label.contains("gone feral"))
+        .expect("the feral line")
+        .detail
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        detail.contains("action=sow"),
+        "a lost Field reads on the `sow` channel, not `cultivate`: {detail}"
+    );
+}
+
+/// Feed lines announcing a plant rung going feral.
+fn feral_lines(app: &App) -> usize {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.label.contains("gone feral"))
+        .count()
+}
+
+/// **A `Cultivate` on a Field is handed back, not stalled forever.**
+///
+/// `Sow` needs no prior patch, so a Field routinely stands on ground that was never tended — and on
+/// such a patch `is_cultivated()` is false while the Field arm of the labor loop `continue`s past the
+/// Cultivate block entirely. The verb was therefore neither cleared nor accrued: the meter never
+/// moved, nothing was said, and only `abandon_improvement` could get the crew off the dead rung. The
+/// "nothing left to build" seam now reads the patch's whole managed state, so the verb comes back on
+/// the first worked turn.
+#[test]
+fn a_cultivate_on_a_field_is_handed_back_rather_than_stalling_forever() {
+    let mut app = spawn_world();
+    let (tile, coord) = find_sowable_tile(&app);
+    grant_seed_selection(&mut app, FactionId(0));
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch");
+        patch.field_progress = 1.0;
+        patch.owner = Some(FactionId(0));
+    }
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    assert_eq!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .cultivation_progress,
+        0.0,
+        "the fixture is the reachable case: a Field on ground that was never tended"
+    );
+
+    run_turns_with_forage(&mut app, 1);
+
+    assert_eq!(
+        app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+        None,
+        "the crew is taken off a rung it can never build on this source"
+    );
+}

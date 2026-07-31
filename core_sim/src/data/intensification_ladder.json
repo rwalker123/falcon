@@ -1,7 +1,8 @@
 {
   "_comment": "THE INTENSIFICATION LADDER (docs/plan_intensification_ladder.md §5). Both food webs climb the same ladder: rung 1 = the wild source, rung 2 = you manage it in place, rung 3 = you control its reproduction. A rung is a RECORD; the ladder is a LIST; adding a rung is appending a record. THIS FILE DESCRIBES WHAT THE SIM DOES TODAY, not the target model — later slices change behaviour by EDITING it (that is the whole thesis). A rung whose `verb` is null is not driven by a policy today and the build engine skips it.",
   "_comment_branches": "`plant` = the human food web (forage patches, forage.rs). `animal` = the animal food web (herds, fauna.rs). The two learn separately (§4.2) and never share a rung.",
-  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible, `decay_per_turn` bled on a turn nobody works it, `yield_fraction_while_building` = the investment dip (the source pays this fraction of its Sustain/MSY ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs — there is nothing to build about a wild source).",
+  "_comment_build": "`build` is the PER-SOURCE meter the rung's verb fills: `progress_per_turn` accrued while the verb is the active policy and the source is eligible AT FULL CREW, `decay_per_turn` bled on a turn nobody works it (null = this rung's meter does not bleed at all — the whole animal branch, whose tameness is monotone-up and whose pen is lost with the herd rather than decayed; it used to carry numbers here that NOTHING read), `grace_turns` = how many consecutive unworked turns the rung forgives before its neglect penalty starts (plants bleed the meter, animals shed animals — one trigger, two penalties), `crew_needed` = the crew the build wants (the accrual scales by min(workers/crew_needed, 1) and the source's worker cap is floored at it; null = this rung's web derives its crew from the SOURCE, not the rung — both animal rungs, where herders_needed comes from the herd's own size), `yield_fraction_while_building` = the investment dip (the source pays this fraction of the SELECTED STANCE's ceiling while the crew prepares rather than harvests). Null on a rung with no build (the wild rungs — there is nothing to build about a wild source).",
+  "_comment_grace": "THE NEGLECT GRACE, per rung and deliberately so: a weeded patch reverts in a season, a fence stands for years. The two webs are not even monotone in the same direction — on plants the NEWEST rung is the most fragile (a standing crop wants hands every turn; the cleared, stumped ground under it keeps its clearing longer), while on animals the HIGHEST rung is the most forgiving (the fence does the holding, so the keeper can be away). All four are PLAYTEST ANCHORS. Validated `< 1/progress_per_turn`: a grace that outlasts its own build makes walking away free.",
   "_comment_behavior": "Config over CODED PRIMITIVES (§5): bounded enums the engine knows how to run. `movement`: fixed | roam | drift_to_owner (the proximity spine far -> near -> fixed; a drifting herd biases each roam step toward its owner's nearest band, composing with — never replacing — the graze-aware roam's barren-avoidance and fertility preference). `feeding`: photosynthesis (needs no feed) | forage (eats the open graze layer) | self_graze (feeds off its own fenced footprint). `harvest`: worker_take (workers draw the source down) | worker_tend (workers take a managed harvest without drawing it down) | passive (pays its owner with no workers at all — NO SHIPPED RUNG IS PASSIVE since slice 3b retired passive-free pastoral). **`movement` IS READ** by fauna::advance_herds (slice 3b — the first primitive the engine applies); `feeding`/`harvest` are parsed and validated only.",
   "_comment_knowledge": "THE PACE OF THE LADDER (§4, slice 4). `progress_per_turn` is the faction knowledge earned per turn a crew works a source under a STEWARDSHIP policy at a rung that teaches (Sustain + the investment verbs; Surplus/Deplete/Eradicate teach nothing — §4.2); `completion_threshold` is the ledger bar at which the faction KNOWS it and may pick the verb it gates. 0.05 / 1.0 -> ~20 turns per lesson. MOVED here VERBATIM from the two identical per-web copies (labor_config's `forage.cultivation` and fauna_config's `husbandry`) once the earn path became one rung-driven seam: the number paces BOTH webs, so it belongs to the ladder, exactly like the build dials. PLAYTEST DIALS — this is the lever that sets how long the whole wild->pen climb takes.",
   "knowledge": {
@@ -38,10 +39,12 @@
       "requires_rung": "wild",
       "ceiling_required": null,
       "site_requirement": null,
-      "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns; yield_fraction_while_building 0.25 = the old `cultivating_yield_fraction`).",
+      "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare AT FULL CREW; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns; yield_fraction_while_building 0.25 = the old `cultivating_yield_fraction`). grace_turns 2: cleared, weeded ground keeps its clearing a couple of turns after the crew stops — volunteers close in within a season, not overnight. crew_needed 2: the SAME two hands the reference tile's wild Sustain gather wants (AlluvialPlain K 195 -> 2 gatherers, see cultivation.md), because 'preparing this patch needs fewer people than gathering it' was the bug. At 1 worker a Cultivate takes 50 turns, not 25.",
       "build": {
         "progress_per_turn": 0.04,
         "decay_per_turn": 0.01,
+        "grace_turns": 2,
+        "crew_needed": 2,
         "yield_fraction_while_building": 0.25
       },
       "behavior": {
@@ -68,10 +71,12 @@
         "min_forage_capacity": 195.0,
         "requires_fresh_water": true
       },
-      "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.25 = the same investment dip a Cultivate pays). Note what the dip means on BARE ground: there is no standing crop to take a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it is the familiar 0.25 x MSY bite.",
+      "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.25 = the same investment dip a Cultivate pays). Note what the dip means on BARE ground: there is no standing crop to take a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it is the familiar 0.25 x MSY bite. grace_turns 1: a standing crop is the most perishable thing on the ladder and wants hands every turn — one missed turn is forgiven, two is not. That it is SHORTER than the tended rung's is the point: the newest improvement is the most fragile, which is the same claim the newest-first unwind order makes. crew_needed 3: sowing PLACES a source rather than tidying one, so it is the heavier job, and the Field it buys wants ~10 gatherers anyway. At 2 workers a Sow takes ~38 turns, at 1 it takes 75.",
       "build": {
         "progress_per_turn": 0.04,
         "decay_per_turn": 0.01,
+        "grace_turns": 1,
+        "crew_needed": 3,
         "yield_fraction_while_building": 0.25
       },
       "_comment_behavior": "A field is a place that photosynthesises and is harvested by its tenders without being drawn down — the same primitives the tended patch recombines. Rung 3 of the plant ladder changes WHERE the source is, not how it behaves; `movement: fixed` is exactly the point (`Sow` fixes the source at a tile of YOUR choosing rather than the one the wild put it on).",
@@ -113,10 +118,12 @@
       "_comment_ceiling_required": "Grazing 2d-delta: a species may only be tamed if its `husbandry_ceiling` reaches `pastoral` (Herd::can_domesticate).",
       "ceiling_required": "pastoral",
       "site_requirement": null,
-      "_comment_build": "progress_per_turn 0.04 (-> 25 turns to tame) and decay_per_turn 0.01 (an abandoned herd goes feral over ~100 turns) are today's shipped values, MOVED here verbatim from fauna_config.json `husbandry`. yield_fraction_while_building 0.50 is NEW — taming now costs yield, like every other rung; 0.50 mirrors the animal-side `corral` dip precedent. A PLAYTEST DIAL.",
+      "_comment_build": "progress_per_turn 0.04 (-> 25 turns to tame, x the species' taming_rate) is today's shipped value, MOVED here verbatim from fauna_config.json `husbandry`. decay_per_turn is now NULL and that is a DELETION, not a retune: the neglect-escape arc made `domestication_progress` monotone-up, so the 0.01 that sat here was read by NOTHING (RungDef::build_decay has two production call sites, both on the plant branch) and documented a tameness-bleed the sim does not have. yield_fraction_while_building 0.50 mirrors the animal-side `corral` dip precedent. grace_turns 2: a tamed herd with no fence stays near its people out of habit for a turn or two, then drifts — the same number as the plant rung 2, because both rungs make the same claim (you manage the wild source in place). crew_needed is null: a herd's crew comes from its SIZE (fauna::herders_needed), not from the rung, so there is no rung-level constant to state here and the Tame accrual is unscaled by crew. PLAYTEST DIALS.",
       "build": {
         "progress_per_turn": 0.04,
-        "decay_per_turn": 0.01,
+        "decay_per_turn": null,
+        "grace_turns": 2,
+        "crew_needed": null,
         "yield_fraction_while_building": 0.5
       },
       "_comment_behavior": "Slice 3b, the thesis in action — THE BEHAVIOUR CHANGE IS THIS DIFF. `harvest` was `passive` (a tamed herd paid its owner with no workers at all); §3 retires that: EVERY rung is worker-driven, so a pastoral herd is now `worker_take` like a wild one — it yields only through a normal Hunt assignment. The payoff is not zero workers, it is YIELD PER WORKER: `herd_ecology` already gives a tamed herd the pastoral r (wild x `pastoral_gain` 1.5), so the same workers take ~1.5x the sustainable food. `movement` was `roam`; it is now `drift_to_owner` — the proximity spine's middle rung (wild roams its full range, tamed drifts to the camp, penned is fixed at the fence), which is also less chasing and so more effective yield.",
@@ -139,10 +146,12 @@
       "_comment_ceiling_required": "Grazing 2d-delta: only a `pen`-ceiling species may be fenced (Herd::can_pen).",
       "ceiling_required": "pen",
       "site_requirement": null,
-      "_comment_build": "Today's shipped values, moved here verbatim from fauna_config.json `husbandry` (progress_per_turn 0.04 = the old `corral_build_progress_per_turn` -> 25 turns per pen / per extension ring; decay_per_turn 0.0 because pen construction does NOT bleed today — an untended pen escapes outright, zeroing corral_progress in advance_husbandry, rather than decaying; yield_fraction_while_building 0.50 = the old `corralling_yield_fraction`, the dip the keeper pays while building AND while extending the fence).",
+      "_comment_build": "Today's shipped values, moved here verbatim from fauna_config.json `husbandry` (progress_per_turn 0.04 = the old `corral_build_progress_per_turn` -> 25 turns per pen / per extension ring; yield_fraction_while_building 0.50 = the old `corralling_yield_fraction`, the dip the keeper pays while building AND while extending the fence). decay_per_turn is NULL rather than the old 0.0: pen construction does not bleed, and `null` says so where a `0` read like a live dial that happened to be parked. grace_turns 6: the fence does the holding, so an abandoned pen keeps its flock far longer than an unfenced pastoral herd keeps its — the turns-side statement of the same claim `pen_escape_fraction < pastoral_escape_fraction` already makes about the rate. crew_needed null, for the reason the `pastoral` rung gives. PLAYTEST DIALS.",
       "build": {
         "progress_per_turn": 0.04,
-        "decay_per_turn": 0.0,
+        "decay_per_turn": null,
+        "grace_turns": 6,
+        "crew_needed": null,
         "yield_fraction_while_building": 0.5
       },
       "behavior": {

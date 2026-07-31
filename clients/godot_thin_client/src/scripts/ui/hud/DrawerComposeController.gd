@@ -382,13 +382,22 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, policy: Stri
 ## a take can sit inside one while blowing through another, so a single scalar cannot answer this; ANY
 ## rather than ALL, because the warning is about the patch, and one account drawn past its regrowth
 ## draws down the same patch.
-func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String, workers: int) -> String:
+##
+## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY.** The take
+## must carry it — while a build runs the sim pays `min(crew × per_worker, ceiling × dip)`, and this
+## line quoting the undipped ceiling is what made it disagree with both the deal line's middle term and
+## the worked row it becomes next turn. The SUSTAIN reference must NOT: it is the patch's regrowth
+## rate, a property of the land, and dipping it would move the sustainability bar down in step with the
+## take and let a genuinely overdrawing build read green.
+func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, policy: String,
+        workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
     # The Sustain ceiling IS the patch's sustainable yield (its regrowth take), so a take above it draws
     # the patch down — mirrors how the hunt version derives `sustainable` from the Sustain ceiling.
     var sustain := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.DEFAULT_HUNT_POLICY)
     if not bool(sustain["known"]):
         return ""
-    var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, policy)
+    var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, policy, improvement)
     if not bool(forecast["known"]):
         return ""
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
@@ -685,12 +694,18 @@ func _build_improvement_deal(source: Dictionary, kind: String, prefix: String, s
     row.add_theme_color_override("default_color", hex)
     target.add_child(row)
 
-## One of the deal's terms as a products string, CLAMPED BY THE CREW. The deal carries CEILINGS, and a
-## crew below max-useful does not reach them — so each account is priced through
-## `SourceForecast.expected_yield_account`, the same `min(workers x per_worker, ceiling)` the sim
-## applies per component, and only then scaled by `dip` (1.0 for the stance term, the rung's build
-## fraction for the "while building" one). Scaling the CAPPED take rather than the ceiling is what
-## keeps the two terms in exact proportion at every crew size.
+## One of the deal's terms as a products string, CLAMPED BY THE CREW. The deal carries UNDIPPED
+## CEILINGS, and a crew below max-useful does not reach them — so each account is priced through
+## `SourceForecast.expected_yield_account`, the same `min(workers × per_worker, ceiling × dip)` the sim
+## applies per component (`dip` = `DEAL_STANCE_UNDIPPED` for the stance term, the rung's build fraction
+## for the "while building" one).
+##
+## **THE DIP GOES INSIDE THE `min`, NOT AFTER IT** — the sim caps the take at the DIPPED ceiling
+## (`forage::forage_take`), so `min(w × per_worker, ceiling) × dip` differs from the sim's answer
+## whenever the crew is labour-bound below the dipped ceiling, and this line then under-reported the
+## middle term by exactly the dip. This function's own docstring used to assert the proportionality
+## that scaling-after buys — "keeps the two terms in exact proportion at every crew size" — which is a
+## property the SIM does not have and the reason the wrong order looked right.
 ##
 ## Each account renders only when non-zero (`picker_products`), so a staple reads `+0.96 food`, flax
 ## `+0.24 trade`, and hay ground both plus its fodder.
@@ -698,11 +713,11 @@ func _account_products(deal: Dictionary, workers: int, band: Dictionary, dip: fl
     var stance_forecast: Dictionary = deal["stance_forecast"]
     return SourceForecast.picker_products(
         SourceForecast.expected_yield_account(
-            stance_forecast, workers, band, "per_worker", "ceiling") * dip,
+            stance_forecast, workers, band, "per_worker", "ceiling", dip),
         SourceForecast.expected_yield_account(
-            stance_forecast, workers, band, "per_worker_trade", "ceiling_trade") * dip,
+            stance_forecast, workers, band, "per_worker_trade", "ceiling_trade", dip),
         SourceForecast.expected_yield_account(
-            stance_forecast, workers, band, "per_worker_fodder", "ceiling_fodder") * dip)
+            stance_forecast, workers, band, "per_worker_fodder", "ceiling_fodder", dip))
 
 ## THE overdraw test: a take above the source's renewable-sustainable ceiling (by more than the
 ## epsilon) draws the source down. One definition, shared by the confirmed allocation rows
@@ -818,13 +833,17 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # forecasting a per-turn yield for it would be a lie. On a local hunt the ceiling caps the
     # stepper (no over-assigning) and drives the live expected-yield row; both recompute here on
     # every stepper/policy change, since both re-render these controls.
-    var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy())
     # THE COMPOSED IMPROVEMENT — the second axis, LOCAL hunt only (a detached party builds no pen).
     # The deal it states rides the SELECTED stance, which is the whole point of the split: a Deplete
     # builder's dip is a fraction of Deplete's larger ceiling, and it defeats itself through the
     # ecology (the meter accrues only while the herd is Thriving) rather than through a gate.
+    # RESOLVED BEFORE THE FORECAST, because the forecast now takes it: while a build runs the sim's
+    # ceiling is `stance × <rung>BuildFraction`, so a stance-only forecast caps the stepper on a
+    # ceiling this crew will not be paid.
     var composed_improvement := SourceForecast.IMPROVEMENT_NONE if is_expedition \
         else _compose.hunt_improvement()
+    var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
+        HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy(), composed_improvement)
     # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
     # PLATEAUS with party size once the herd's surplus binds, so extra hunters past the plateau raid no
     # more animals and should be flagged idle exactly as an over-staffed local hunt is (the silent-idle-
@@ -1383,13 +1402,21 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         _compose.forage_policy(), SourceForecast.LABOR_HUNT_POLICIES,
         forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
     target.add_child(HudWidgets.alloc_hint_label(String(HudComposeVocab.FORAGE_POLICY_HINTS.get(_compose.forage_policy(), ""))))
-    # Pre-commit forecast: the patch's per-worker yield + the SELECTED stance's ceiling cap the
-    # stepper at max-useful workers, so the player CAN'T over-assign while composing. Both the
-    # stepper and the stance picker re-render these controls, so the cap and the preview below
-    # recompute on every change (a Deplete/Eradicate ceiling is higher than Sustain's, so switching
-    # stance moves the cap).
-    var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_policy())
-    var capped := _forecast_worker_cap(forecast, _band_labor.assignable_forage_workers(band, x, y))
+    # Pre-commit forecast: the patch's per-worker yield + the SELECTED stance's ceiling — DIPPED by
+    # whatever this crew is building — cap the stepper at max-useful workers, so the player CAN'T
+    # over-assign while composing. Both the stepper and the stance picker re-render these controls, so
+    # the cap and the preview below recompute on every change (a Deplete/Eradicate ceiling is higher
+    # than Sustain's, so switching stance moves the cap; ticking the improvement box moves it too).
+    var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_policy(), composed_improvement)
+    # …and floored on the rung's OWN build crew, the plant twin of a managed herd's herding crew. The
+    # dip and the cap otherwise fight: dividing the dipped ceiling collapses the count, so committing
+    # to a 25-turn improvement would ask for fewer hands than gathering the same ground — and the sim,
+    # which takes `max(build crew, take crew)`, would then report the row overstaffed at the very count
+    # this sheet capped it to.
+    var capped := _forecast_worker_cap(forecast, _band_labor.assignable_forage_workers(band, x, y),
+        SourceForecast.plant_crew_floor(
+            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX, composed_improvement))
     var cap := int(capped["cap"])
     # Auto-max on stance select — "give me everything this patch sustains": jump to the max-useful for
     # the stance (clamped to available below). Only ever set by a stance click, never by a −/+ tick.
@@ -1420,7 +1447,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # existed because a build verb occupied this same control and a dip→payoff pair cannot share a line
     # with a bare rate. They no longer share one — the improvement control states the deal below.
     var yield_line := _local_forage_preview_bbcode(
-        band, tile_info, _compose.forage_policy(), _compose.forage_count())
+        band, tile_info, _compose.forage_policy(), _compose.forage_count(), composed_improvement)
     if yield_line != "":
         target.add_child(HudWidgets.forecast_label(yield_line))
     # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for

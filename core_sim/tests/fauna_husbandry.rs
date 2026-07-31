@@ -216,6 +216,42 @@ fn run_turns_untended(app: &mut App, turns: u32) {
     }
 }
 
+/// **Nobody is holding this flock** — the `herded_fraction` a fixture seats to make a herd fully
+/// under-contained. The sim's own `NOT_HERDED`, restated here because it is crate-internal.
+const NOT_HERDED_FIXTURE: f32 = 0.0;
+
+/// **The neglect grace of the rung a managed herd stands on**, read off the shipped ladder rather
+/// than restated as a literal — so a retune moves these tests with the game. `animal:pen` for a
+/// penned herd, `animal:pastoral` otherwise (see `fauna::herd_keeping_rung`).
+fn neglect_grace(app: &App, id: &str) -> u32 {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    let herd = herd_of(app, id);
+    ladder
+        .rung(if herd.is_corralled() {
+            RungKey::AnimalPen
+        } else {
+            RungKey::AnimalPastoral
+        })
+        .neglect_grace_turns()
+}
+
+/// **Run `turns` under-herded turns, re-seating the staffing each one.** `advance_husbandry` resets
+/// `herded_fraction` after reading it (the Population→Logistics lag the labor arm writes across), so
+/// a fixture that seats it once would read "fully abandoned" from the second turn on — and this
+/// helper exists precisely because the neglect grace made *multiple* under-herded turns the normal
+/// case in these tests. Runs the husbandry pass alone (no regrowth), so the only biomass change is
+/// the shed.
+fn run_understaffed_turns(app: &mut App, id: &str, herded_fraction: f32, turns: u32) {
+    for _ in 0..turns {
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.herded_fraction = herded_fraction;
+        }
+        app.world.run_system_once(advance_husbandry);
+    }
+}
+
 /// Run untended turns one at a time until the pen is lost (a "drifted off" corral feed line appears),
 /// up to `cap`. The pen is announced lost the turn the fully-abandoned herd bleeds out, and the empty
 /// managed entity is despawned that same `advance_husbandry` pass — so after this returns the herd is
@@ -2009,9 +2045,19 @@ fn the_shed_is_bounded_by_the_true_overage_near_a_ceil_boundary() {
         let needed = (current_animals / aph).ceil().max(1.0);
         herd.herded_fraction = (assigned / needed).min(1.0);
     }
+    // Spend the rung's neglect grace first — nothing sheds inside it — then measure the one pass
+    // that actually bites, so this still reads the *first* shed's size.
+    let herded = herd_of(&app, &id).herded_fraction;
+    let grace = neglect_grace(&app, &id);
+    run_understaffed_turns(&mut app, &id, herded, grace);
     let start_biomass = herd_of(&app, &id).biomass;
+    assert_eq!(
+        start_biomass,
+        current_animals * body_mass,
+        "the grace turns cost the herd nothing"
+    );
 
-    app.world.run_system_once(advance_husbandry);
+    run_understaffed_turns(&mut app, &id, herded, 1);
 
     let shed_animals = (start_biomass - herd_of(&app, &id).biomass) / body_mass;
     assert!(
@@ -2222,15 +2268,17 @@ fn shed_animals_appear_in_the_wild_web() {
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
         herd.biomass = herd.carrying_capacity;
-        herd.herded_fraction = 0.0; // fully under-contained ⇒ a real shed this turn
+        herd.herded_fraction = NOT_HERDED_FIXTURE; // fully under-contained ⇒ a real shed, once the grace is spent
     }
     let wild_before: f32 = wild_herds_of(&app, &species)
         .iter()
         .map(|h| h.biomass)
         .sum();
 
-    // A single shed pass (no regrowth), so the ONLY change to wild biomass is the placed escapees.
-    app.world.run_system_once(advance_husbandry);
+    // The grace first (nothing leaves inside it), then the one pass that sheds — so the ONLY change
+    // to wild biomass is the placed escapees.
+    let grace = neglect_grace(&app, &id);
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, grace + 1);
 
     let wild = wild_herds_of(&app, &species);
     let wild_after: f32 = wild.iter().map(|h| h.biomass).sum();
@@ -2429,3 +2477,114 @@ fn the_persisted_under_herded_flag_suppresses_a_re_fire() {
         "a reset (transient) edge would re-fire — so persisting it is load-bearing"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// The neglect grace on the animal web
+// ---------------------------------------------------------------------------------------------
+
+/// **The shed does not bite on the first under-herded turn any more, and it bites on exactly the
+/// turn after the grace** — the boundary, pinned from BOTH sides. The plant twin is
+/// `forage_cultivation::the_feral_bleed_starts_exactly_one_turn_past_the_grace`; one trigger, two
+/// penalties.
+#[test]
+fn the_shed_starts_exactly_one_turn_past_the_grace() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.biomass = herd.carrying_capacity;
+    }
+    let start = herd_of(&app, &id).biomass;
+    let grace = neglect_grace(&app, &id);
+    assert!(grace > 0, "this test needs a rung that forgives something");
+
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, grace);
+    assert_eq!(
+        herd_of(&app, &id).biomass,
+        start,
+        "not one animal leaves while the grace holds"
+    );
+    assert_eq!(
+        u32::from(herd_of(&app, &id).neglect_turns),
+        grace,
+        "the counter has climbed to exactly the grace"
+    );
+
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, 1);
+    assert!(
+        herd_of(&app, &id).biomass < start,
+        "the first turn past the grace sheds animals into the wild web"
+    );
+}
+
+/// **The grace is CONSECUTIVE neglect** — a turn in which the keepers can hold the flock forgives it
+/// outright, so a crew that lapses and recovers never accumulates its way into a shed.
+#[test]
+fn holding_a_herd_resets_its_neglect_counter() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.biomass = herd.carrying_capacity;
+    }
+    let start = herd_of(&app, &id).biomass;
+    let grace = neglect_grace(&app, &id);
+
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, grace);
+    // One fully-staffed turn.
+    run_understaffed_turns(&mut app, &id, FULLY_HERDED_FIXTURE, 1);
+    assert_eq!(
+        herd_of(&app, &id).neglect_turns,
+        0,
+        "a turn the keepers held the flock forgives the neglect outright"
+    );
+
+    // The whole grace is available again from scratch — nothing has left after 2 × grace turns of
+    // neglect, because they were never consecutive.
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, grace);
+    assert_eq!(
+        herd_of(&app, &id).biomass,
+        start,
+        "the grace is spent from zero again, not from where it left off"
+    );
+}
+
+/// **The under-herded NOTICE is not gated on the grace, and that is the point of the grace.** The
+/// warning fires on the turn the herd genuinely becomes under-contained — the window in which the
+/// player can still send hands and lose nothing. Warning only once the animals were already leaving
+/// would spend the grace on silence.
+#[test]
+fn the_under_herded_notice_fires_inside_the_grace() {
+    let mut app = spawn_world();
+    let id = prime_thriving_herd(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.accrue_domestication(FactionId(0), RUNG_COMPLETE);
+        herd.biomass = herd.carrying_capacity;
+    }
+    let start = herd_of(&app, &id).biomass;
+
+    run_understaffed_turns(&mut app, &id, NOT_HERDED_FIXTURE, 1);
+
+    assert_eq!(
+        herd_of(&app, &id).biomass,
+        start,
+        "the grace is still holding — nothing has been lost yet"
+    );
+    assert!(
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .any(|entry| matches!(entry.kind, CommandEventKind::HerdUnderHerded)),
+        "...and the player has already been told, while it is still free to fix"
+    );
+}
+
+/// A fully-staffed `herded_fraction` — the sim's `FULLY_HERDED`, restated because it is
+/// crate-internal.
+const FULLY_HERDED_FIXTURE: f32 = 1.0;
