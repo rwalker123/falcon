@@ -263,7 +263,7 @@ pub struct LogisticsLink {
 
 /// Commodity key for a band's food larder. `"provisions"` is the reward name foraging, hunt, and
 /// husbandry income deposit into the band's local `stores` — provisions left `FactionInventory`
-/// entirely (only trade goods stay faction-global); kept as a stable constant.
+/// entirely; kept as a stable constant.
 pub const FOOD: &str = "provisions";
 
 /// Commodity key for a band's **fodder** larder — the storable hay a fodder crop grows (Flora Roster
@@ -273,9 +273,18 @@ pub const FOOD: &str = "provisions";
 /// and the two stores **never convert** — feeding a pen bread ([`FOOD`]) stays as lossy as ever.
 pub const FODDER: &str = "fodder";
 
-/// Commodity key for a faction's **trade goods** account — pelts, hides, ivory, the tradeable half of
-/// every yield vector. Unlike [`FOOD`]/[`FODDER`] this is **not** a band-local `LocalStore` key: trade
-/// goods are faction-global and integer-valued, so they live in `FactionInventory`'s stockpile map.
+/// Commodity key for a band's **trade goods** store — pelts, hides, ivory, the tradeable half of every
+/// yield vector. A **third key on the same [`LocalStore`]** as [`FOOD`]/[`FODDER`], and band-local for
+/// the same reason grain is: goods sit where they were produced until a trade network reaches them, so
+/// `balance_supply_networks` — which is commodity-generic — shares them between same-faction bands
+/// inside `SupplyNetworkConfig.reach_tiles` and *not* beyond it. A faction's total is therefore a
+/// **derived sum over bands**, never a stored number.
+///
+/// `FactionInventory` still carries a `trade_goods` stockpile, but only on the **start-profile** path:
+/// `seed_starting_inventory` writes a profile's grant into it and the Startup-only
+/// `apply_trade_goods_bonus` drains it into the opening trade-link openness bonus. Nothing ongoing
+/// credits or reads it.
+///
 /// Named for the same reason the other two are: every producer (band hunt, pen, gather, expedition)
 /// and every consumer must agree on one string.
 pub const TRADE_GOODS: &str = "trade_goods";
@@ -767,15 +776,15 @@ pub struct Expedition {
     pub pending_reveal: Vec<UVec2>,
     /// **Trade goods the party is carrying home** — the pelts/hides/ivory half of every kill's
     /// [`crate::HuntYield`], accrued off the biomass it actually *hauled* (never what it left on the
-    /// range) and settled into the faction stockpile on arrival (a `Delivering` drop-off or a
-    /// `Returning` fold-back). It is the trade twin of the provisions in `stores[FOOD]`.
+    /// range) and settled into the **home band's** `stores[TRADE_GOODS]` on arrival (a `Delivering`
+    /// drop-off or a `Returning` fold-back). It is the trade twin of the provisions in `stores[FOOD]`,
+    /// and lands in the same store they do.
     ///
-    /// **Fractional, and banked rather than paid per kill, deliberately** (`docs/plan_hunt_yield_model.md`,
-    /// issue #337): a raid's promised `HuntTripForecast::delivered_trade` is the *sum over the whole
-    /// trip*, so rounding each turn's fraction to a whole good at the kill would floor a wolf raid's
-    /// ~0.4/turn to **zero every turn** and pay nothing at all — the forecast promising a product the
-    /// sim never delivers. One rounding, at the delivery the forecast is scoped to, keeps
-    /// `forecast == actual`. (A resident band rounds per turn because its forecast is a per-turn rate.)
+    /// **Banked rather than paid per kill, deliberately** (`docs/plan_hunt_yield_model.md`, issue
+    /// #337): a raid's promised `HuntTripForecast::delivered_trade` is the *sum over the whole trip*,
+    /// and the pack has to reach the band before anyone can hold what is in it. Nothing rounds at
+    /// either end any more — the band's store is fixed-point — so the exact carried fraction settles
+    /// and `forecast == actual` holds without a remainder being dropped per trip.
     pub carried_trade: f32,
 }
 
@@ -963,7 +972,7 @@ pub struct SourceYield {
     ///
     /// **There is deliberately NO trade arrivals schedule.** `arrivals` is a *larder* concept — it
     /// answers *"when does food land so my people eat"*, a question with a consumption clock ticking
-    /// against it. Trade goods go to a faction stockpile that nothing consumes per turn, so a
+    /// against it. Trade goods sit in the band's store with nothing consuming them per turn, so a
     /// per-turn arrival timetable for them would answer a question nobody is asking. The omission is
     /// a decision, not an oversight (`docs/plan_hunt_yield_model.md` §9).
     pub arrivals: Vec<f32>,

@@ -249,7 +249,8 @@ paths:
     good — denial is the END STATE, not a promise that the carcasses were thrown away (#337)). **These are
     NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
     products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
-    goods onto `Expedition::carried_trade` and into the faction stockpile at the drop-off/fold-back), but
+    goods onto `Expedition::carried_trade` and into the HOME BAND's `stores` at the drop-off/fold-back —
+    the faction stockpile until issue #381 moved trade goods band-local), but
     accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
     trade payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
@@ -1068,7 +1069,9 @@ shows.
 **`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
 `food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
 `band_has_food_flow`, and the arrivals schedule) still sum `actual_yield` alone — trade goods credit
-the faction stockpile and never the larder — so a trade-only hunt must not move the Food line. That is
+the band's `stores[trade_goods]` and never its larder — so a trade-only hunt must not move the Food
+line. (That credit was the FACTION stockpile until issue #381; the account is still separate from the
+larder, which is the whole point.) That is
 what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
 AGGREGATE is never "add trade to the food total".
 

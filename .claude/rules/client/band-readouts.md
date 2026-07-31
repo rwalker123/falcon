@@ -178,14 +178,15 @@ paths:
   Trade: +1.36 /turn
   ```
 
-  - **IT IS A RATE AND NOTHING ELSE, AND THAT IS THE SCOPE FIX.** A stock figure belongs here in
-    principle, but the only trade-goods STOCK the sim publishes is `FactionInventory` — faction-global
-    (`core_sim/src/components.rs`: trade goods "are faction-global … so they live in
-    `FactionInventory`'s stockpile map") — so every band would print the same total. The row shipped
-    once with a `(faction)` caveat beside the number and that was the wrong answer: a caveat does not
-    make a foreign number belong on a band panel. **A band-local stock arrives when the sim gives trade
-    goods a band-local store** — the design direction is that a band/city holds what it produces until
-    a trade network connects it — and this row gains the figure for free when it does.
+  - **BOTH NUMBERS ARE GENUINELY THIS BAND'S**, which they were not when the row first shipped. Trade
+    goods used to live only in the faction-global `FactionInventory`, so the stock had to wear a
+    `(faction)` caveat — and a caveat is the wrong answer to a wrong number. **The sim now keeps them
+    in the band's own `stores`**, the third key beside provisions and fodder: a band holds what it
+    produces until a trade network reaches it, and `balance_supply_networks` pools it with same-faction
+    bands inside `SupplyNetworkConfig.reach_tiles` (default 3) — which is the "within N hexes you need
+    no route" rule, and it works because that balancer is commodity-generic. The stock is read exactly
+    the way the Food row reads the larder (`DetailFormat.band_trade_stock` ↔ `band_provisions`), and it
+    needed **no schema or decoder change**: `PopulationCohortState.stores` already ships every key.
     **`accessible_stockpile` was NOT that store, and its rows are RETIRED.**
     `core_sim/src/snapshot/population.rs`'s `accessible_stockpile_state` reads
     `inventory.stockpile(faction)` **whole** and gates it only on the band sitting within

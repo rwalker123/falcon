@@ -72,8 +72,8 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > components), so it is a widening, not a change.
 >
 > **No trade `arrivals` schedule, deliberately.** `arrivals` answers *"when does food land so my people
-> eat"* — a question with a consumption clock. Trade goods go to a faction stockpile nothing consumes
-> per turn, so a trade timetable would answer a question nobody asks. **And `food_income` stays
+> eat"* — a question with a consumption clock. Trade goods sit in the band's own store with nothing
+> consuming them per turn, so a trade timetable would answer a question nobody asks. **And `food_income` stays
 > `Σ actual` and must never include `trade`**: that sum is one side of the pinned larder identity
 > `larder_delta == food_income − food_consumption − pen_feed_upkeep`, and trade never touches the
 > larder.
@@ -261,6 +261,47 @@ player-facing is issue #272's notification system.
 
 Guarded by `labor_allocation::forage_lapses_when_the_band_walks_out_of_work_range`, which asserts in the
 same run that an in-range band's assignment survives, so "lapse" cannot silently widen to "always drop".
+
+### Trade goods are a BAND-LOCAL store, and the faction figure is derived
+
+`TRADE_GOODS` is a **third key on the same `PopulationCohort::stores` `LocalStore`** as `FOOD` and
+`FODDER` — a band/city holds what it produced until a trade network reaches it. Every ongoing credit
+site works the way the `FODDER` lines beside them do:
+
+```rust
+let trade_goods = scalar_from_f32(production.min(collection));
+if trade_goods > scalar_zero() {
+    cohort.stores.add(TRADE_GOODS, trade_goods);
+}
+```
+
+The five sites are the Field harvest, the drawn-down forage take, the pen harvest and the wild hunt
+(all `systems/labor.rs`), plus the expedition's delivery (`systems::expeditions::settle_carried_trade`,
+which credits the **home band**). There is **no faction-level total anywhere** — nothing in the sim
+reads accumulated trade goods, and a faction figure is a sum over its bands, computed where it is
+wanted rather than stored.
+
+**Three things fall out for free, which is why this is a key and not a new account:**
+- the snapshot already ships every key generically (`snapshot/population.rs` iterates `cohort.stores`),
+  so there is no schema change and no decoder change;
+- `balance_supply_networks` (`supply.rs`) collects `commodities` from whatever keys the member nodes
+  hold, so same-faction bands inside `SupplyNetworkConfig.reach_tiles` share their trade goods and
+  bands beyond it do not — **no trade-specific path belongs in that system**;
+- a `LocalStore` is fixed-point, so per-turn flows accumulate instead of rounding.
+
+> **The rounding those credits used to do was a live bug.** `FactionInventory` is an `i64` stockpile,
+> so each site banked `(production.min(collection)).round() as i64` — which discards **every** per-turn
+> trade income below `0.5`. A forage patch paying `0.04` trade/turn contributed exactly nothing,
+> forever, while the client honestly reported `+0.04 /turn` off `SourceYield::trade`. Small sources now
+> genuinely accrue, which is an observable balance change, not just a refactor. Pinned by
+> `forage_tended_vector::a_sub_unit_trade_income_accumulates_instead_of_vanishing` (a sub-unit
+> per-turn credit whose running total clears a whole good) and
+> `::trade_income_lands_in_the_producing_bands_store_not_the_faction_stockpile`.
+
+**`FactionInventory` survives on the start-profile path alone.** `seed_starting_inventory`
+(`systems/worldgen.rs`) writes a `StartProfileOverrides::inventory` grant into it and the **Startup-only**
+`apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness bonus.
+That conversion is the resource's only remaining reader, and it never sees ongoing income.
 
 ---
 

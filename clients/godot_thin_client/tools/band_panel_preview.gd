@@ -1443,6 +1443,13 @@ func _assert_forage_trade_counted() -> void:
 	if not text.contains("+0.08"):
 		push_error("band_panel_preview: Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
 		return
+	# The band-local STOCK, read off `stores.trade_goods` the way the Food row reads the larder.
+	# Matched as the VALUE cell's own run (`12 · +0.08`) rather than `Trade 12`: the KV formatter splits
+	# the row into table cells and the key cell carries the disclosure caret, so the two are never
+	# adjacent in the parsed text.
+	if not text.contains("12 · +0.08"):
+		push_error("band_panel_preview: Trade row does not carry the band's stock of 12 — got: %s" % text)
+		return
 	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)
 	var joined := "\n".join(rows)
 	if not joined.contains(DetailFormat.FOOD_LABEL_GATHERED):
@@ -2594,7 +2601,9 @@ func _band_fixture() -> Dictionary:
 		"fertility_hunger": 1.0,
 		"fertility_reserve": 1.5,
 		"fertility_trend": 1.25,
-		"stores": {"provisions": 84.0},
+		# Trade goods are the THIRD key on the band's own `stores` since issue #381 — the sim moved them
+		# off the faction stockpile, so this is what the Trade row's total reads.
+		"stores": {"provisions": 84.0, "trade_goods": 12.0},
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.

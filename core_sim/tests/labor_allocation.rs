@@ -17,7 +17,7 @@ use core_sim::{
     LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
+    StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD, TRADE_GOODS,
 };
 
 fn spawn_world() -> App {
@@ -718,19 +718,18 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
 /// **Reframed by #433.** The species-blind flat `market.trade_goods_per_biomass` is retired, so
 /// "only Deplete sells" is no longer the rule: every harvest carries its basket's trade component,
 /// because you gathered the goods. What is left for Deplete alone is the *markup*, which is what
-/// this test now pins — at the integer stockpile, where a plain-rate staple gather is sub-1 and
-/// rounds away. The rate-level statement ("Sustain of a trade-bearing basket really does pay") is
-/// pinned in `forage_basket_reweight.rs`, which can read the unrounded number.
+/// this test pins. It reads the **band's own `TRADE_GOODS` store** — the account every ongoing
+/// harvest credits — so the numbers compared are the unrounded ones the sim really banks.
 #[test]
 fn deplete_forage_sells_harder_than_every_other_policy() {
-    // Bump the Deplete markup so a single gather on a small patch clears integer rounding — the
-    // *markup* is the lever now that the flat rate is gone. (`forage.market.*` keeps the old config
-    // name — see `ForageMarketConfig`.)
-    let run = |policy: FollowPolicy| -> (i64, f32) {
+    // Bump the Deplete markup so its smaller marked-up take unambiguously out-earns Eradicate's
+    // bigger unmarked-up one — the *markup* is the lever now that the flat rate is gone.
+    // (`forage.market.*` keeps the old config name — see `ForageMarketConfig`.)
+    let run = |policy: FollowPolicy| -> (f32, f32) {
         let mut app = spawn_world();
         app.world
             .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
-                config.forage.market.trade_goods_multiplier = DEPLETE_MARKUP_CLEARING_ROUNDING;
+                config.forage.market.trade_goods_multiplier = DEPLETE_MARKUP_OUT_EARNING_ERADICATE;
                 config.hunt.per_worker_biomass_capacity = 40.0;
             })));
         let (pos, tile) = food_tile(&mut app);
@@ -740,14 +739,15 @@ fn deplete_forage_sells_harder_than_every_other_policy() {
             patch.biomass = patch.carrying_capacity * 0.8;
             patch.biomass
         };
-        spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
+        let band = spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
         app.world.run_system_once(advance_labor_allocation);
         let trade = app
             .world
-            .resource::<FactionInventory>()
-            .stockpile(FactionId(0))
-            .and_then(|s| s.get("trade_goods").copied())
-            .unwrap_or(0);
+            .get::<PopulationCohort>(band)
+            .expect("the foraging band still exists")
+            .stores
+            .get(TRADE_GOODS)
+            .to_f32();
         let after = app
             .world
             .resource::<ForageRegistry>()
@@ -762,7 +762,7 @@ fn deplete_forage_sells_harder_than_every_other_policy() {
     let (erad_trade, _) = run(FollowPolicy::Eradicate);
 
     assert!(
-        deplete_trade > 0,
+        deplete_trade > 0.0,
         "Deplete forage sells gathered goods as trade goods: {deplete_trade}"
     );
     assert!(
@@ -781,11 +781,10 @@ fn deplete_forage_sells_harder_than_every_other_policy() {
 }
 
 /// **The `Deplete` markup this fixture runs at.** Every staple's `trade_goods_per_biomass` is the
-/// flat 0.005 token, so one gather's plain trade credit is a small fraction of a trade good and
-/// rounds to zero at the integer stockpile. The markup is the one lever left that can lift a single
-/// turn's sale above 1 — so it is set high enough that it does, and the policy *ordering* the test
-/// asserts is then visible in whole trade goods.
-const DEPLETE_MARKUP_CLEARING_ROUNDING: f32 = 800.0;
+/// same flat 0.005 token, so trade income is proportional to the take — and Eradicate takes strictly
+/// more biomass than Deplete. Only the markup can put Deplete's *smaller* take above it, so the
+/// fixture sets it high enough that the policy ordering the test asserts is unambiguous.
+const DEPLETE_MARKUP_OUT_EARNING_ERADICATE: f32 = 800.0;
 
 // ---------------------------------------------------------------------------------------------
 // The arrival schedule (`SourceYield::arrivals`) — WHEN the food lands, not how much on average.

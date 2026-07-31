@@ -397,7 +397,8 @@ land-use tension.
   read `0` for a cash crop (worthless as food), so this is the number that lets the picker show its
   real value instead of a bare `0×`.
 - **Wire (append-only):** `FloraShareInfo.sowTradePayoff` — trade/turn a sown Field of this plant
-  would credit the faction stockpile; `0` for a staple/hay or a plant that cannot Sow here. **Client
+  would credit the working band's own `TRADE_GOODS` store (see `yield-forecast.md` → "Trade goods are a
+  BAND-LOCAL store"); `0` for a staple/hay or a plant that cannot Sow here. **Client
   done:** the native reader decodes `sowTradePayoff` and the crop picker renders a cash-crop trade row
   (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was deliberately omitted for parity with fodder —
   no role-badge mechanism exists for either.

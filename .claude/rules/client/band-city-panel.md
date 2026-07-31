@@ -209,9 +209,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   **The SHORT tier drops the Trade row** (`_build_vitals_label` passes `compact` to
   `BandDetailLines.unit_summary_lines`), the row-level twin of this zone's food-outlook-chart gate
   below and taken for the same reason: the row measures 26px against a ~300px T/B zone that CLIPS
-  rather than scrolls. Trade stays legible there on the WORK zone header's `⇄` total. The row is a per-turn RATE only —
-  band-scoped by construction, since the sim's only trade STOCK is faction-global; it is specified in
-  `band-readouts.md`; the `Population … Workers … (Idle …)` LINE is
+  rather than scrolls. Trade stays legible there on the WORK zone header's `⇄` total. The row carries the band's own stock
+  AND its per-turn rate — both band-scoped, since the sim keeps trade goods in the cohort's `stores`;
+  it is specified in `band-readouts.md`; the `Population … Workers … (Idle …)` LINE is
   **gone** — the two bars below state the same facts as charts, and a text restatement above them was
   the third telling of one fact. **PEOPLE** is the new one: a stacked children/working/elders bar
   (`age_children`/`age_working`/`age_elders`, falling back to `working_age` for the middle) plus its

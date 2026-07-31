@@ -40,10 +40,9 @@ extends RefCounted
 # with no animals never sprouts an empty Fodder line.
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 
-# ---- The band's TRADE row (issue #381): what THIS band earns per turn in the second product, in the
-# Food row's shape. It carries a rate and nothing else — see `_band_trade_line` for why there is no
-# stock figure beside it.
-const BAND_TRADE_ROW_FORMAT := "Trade: [color=#%s]%s[/color]"
+# ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
+# second product, in the Food row's shape — `Trade: 12 · +0.04 /turn`.
+const BAND_TRADE_ROW_FORMAT := "Trade: %d · [color=#%s]%s[/color]"
 
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
@@ -314,29 +313,32 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
         _food_flow_present = true
     return line
 
-## Selection-panel band trade row: "Trade: +1.36 /turn" — what THIS band earns per turn in the second
-## product of the very sources the Food row totals. **ALWAYS emitted for a player band**, reading
-## `+0.00 /turn` when it earns none: trade is a standing account of the band's economy, not a
-## conditional feature like the Fodder row, and a row that vanishes when the number is zero makes the
-## player wonder whether the band *can* trade at all — which is exactly how it read in playtest.
+## Selection-panel band trade row: "Trade: 12 · +0.04 /turn" — what THIS band HOLDS and what it earns
+## per turn in the second product of the very sources the Food row totals. **ALWAYS emitted for a
+## player band**, reading `+0.00 /turn` when it earns none: trade is a standing account of the band's
+## economy, not a conditional feature like the Fodder row, and a row that vanishes when the number is
+## zero makes the player wonder whether the band *can* trade at all — which is exactly how it read in
+## playtest.
 ##
-## **IT CARRIES A RATE AND NOTHING ELSE, AND THAT IS THE SCOPE FIX.** A stock figure belongs here too
-## in principle, but the only trade-goods STOCK the sim publishes today is `FactionInventory` — a
-## faction-global number (`core_sim/src/components.rs`: trade goods "are faction-global … so they live
-## in `FactionInventory`'s stockpile map"), so every band would print the same total. Showing it on a
-## band panel needed a `(faction)` caveat to stay honest, and a caveat is the wrong answer to a wrong
-## number: the row now shows only what is genuinely this band's. **A band-local stock arrives when the
-## sim gives trade goods a band-local store** — the design direction is that a band/city holds what it
-## produces until a trade network connects it — and this row gains the figure for free when it does.
+## **BOTH NUMBERS ARE GENUINELY THIS BAND'S**, which they were not when this row first shipped. Trade
+## goods used to live only in the faction-global `FactionInventory`, so the stock had to be tagged
+## `(faction)` to stay honest — and a caveat is the wrong answer to a wrong number. The sim now keeps
+## them in the band's own `stores`, the third key beside provisions and fodder (issue #381): a band
+## holds what it produces until a trade network reaches it, and `balance_supply_networks` pools it with
+## same-faction bands inside `SupplyNetworkConfig.reach_tiles`. So the stock is read the same way the
+## Food row reads the larder, and the tag is gone.
 ##
 ## The rate takes NO sign branch: nothing consumes trade goods, so it cannot come out negative and a
 ## DANGER arm would be unreachable. Zero reads in neutral ink rather than green — a band earning
-## nothing is not a "good", the same call the Output row makes at full output.
+## nothing is not a "good", the same call the Output row makes at full output. **The STOCK is not
+## tinted at all**, matching the Food row's provisions figure: a quantity on hand is not a verdict.
 func _band_trade_line(unit_data: Dictionary) -> String:
     var income := DetailFormat.band_trade_income(unit_data)
     var hex := HudStyle.HEALTHY_HEX if DetailFormat.band_has_trade_flow(unit_data) \
         else HudStyle.INK_DIM_HEX
-    return BAND_TRADE_ROW_FORMAT % [hex, SourceForecast.format_yield(income)]
+    return BAND_TRADE_ROW_FORMAT % [
+        int(round(DetailFormat.band_trade_stock(unit_data))), hex,
+        SourceForecast.format_yield(income)]
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict

@@ -820,6 +820,17 @@ static func band_pen_feed(band: Dictionary) -> float:
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
 
+## The band's TRADE GOODS on hand — the third key on the same `stores` map as provisions and fodder,
+## and genuinely THIS band's since the sim moved trade goods off the faction stockpile (issue #381).
+## A band beyond every supply network's reach holds what it produced and nothing else; one inside
+## `SupplyNetworkConfig.reach_tiles` of a neighbour holds its equalized share, because
+## `balance_supply_networks` pools every `stores` key generically.
+static func band_trade_stock(band: Dictionary) -> float:
+    var stores_variant: Variant = band.get("stores", {})
+    if stores_variant is Dictionary:
+        return float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_TRADE_GOODS, 0.0))
+    return 0.0
+
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
 ## arithmetic the chart and the Food line share.

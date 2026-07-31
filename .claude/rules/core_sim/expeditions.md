@@ -282,17 +282,22 @@ mission:
   are **retired**. It was never a gap the client could live with: since #337 the raid *forecast*
   advertises `deliveredTrade`, so a food-only take promised pelts the sim never paid — and an
   **inedible** quarry (a wolf) made a hunting expedition return with literally *nothing*.
-  - **Where each product lands.** Provisions go into the party's pack (`stores[FOOD]`, carry-capped)
-    and fold into the home band's larder. Trade goods accrue **fractionally** on
-    `Expedition::carried_trade` and settle into the faction stockpile at the next arrival — a
-    `Delivering` drop-off or a `Returning` fold-back (`systems::expeditions::settle_carried_trade`).
-    Both scale off the biomass the party **carried**, never what it killed.
-  - **Why banked rather than paid per kill** (unlike the resident band, which rounds per turn): a
-    raid's promised `HuntTripForecast::delivered_trade` is a sum over the **whole trip**, so rounding
-    each turn's fraction at the kill would floor a wolf raid's ~0.4/turn to **zero every turn**. One
-    rounding, at the delivery the forecast is scoped to, is what keeps `forecast == actual` for the
-    trade component. The remainder under a whole good is dropped, so each trip settles against its own
-    forecast. `carried_trade` is snapshot-persisted (`PopulationCohortState.expedition_carried_trade`,
+  - **Where each product lands — ONE store, both products.** Provisions go into the party's pack
+    (`stores[FOOD]`, carry-capped) and fold into the home band's larder. Trade goods accrue
+    **fractionally** on `Expedition::carried_trade` and settle into that **same home band's**
+    `stores[TRADE_GOODS]` at the next arrival — a `Delivering` drop-off or a `Returning` fold-back
+    (`systems::expeditions::settle_carried_trade`). Trade goods are band-local like grain
+    (`yield-forecast.md` → "Trade goods are a BAND-LOCAL store"), so a haul that arrives with no home
+    band left to receive it is simply lost, exactly as the carried food is. Both scale off the biomass
+    the party **carried**, never what it killed.
+  - **Why banked rather than paid per kill**: a raid's promised `HuntTripForecast::delivered_trade` is
+    a sum over the **whole trip**, and the pack has to physically reach the band before anyone can hold
+    what is in it. **Nothing rounds at either end** — the band store is fixed-point — so the exact
+    carried fraction lands and `forecast == actual` holds without a remainder being dropped per trip.
+    (The settle used to `round()` to whole goods because `FactionInventory` is an `i64` account; the
+    feed line still prints the haul, now to 2 dp, and "returning EMPTY" is a claim about the raw
+    `carried_trade` so a sub-unit pack of pelts is never called empty.)
+    `carried_trade` is snapshot-persisted (`PopulationCohortState.expedition_carried_trade`,
     persistence-only, not on the FlatBuffers wire) so a rollback does not silently drop the pelts while
     restoring the meat.
   - **The scout's opportunistic replenish banks its hides too** — a roadside kill is skinned as well
@@ -435,7 +440,7 @@ guard compared the client against `hunt_trip_forecast`, so two copies of the sam
 with each other while both disagreed with the take). For the **expedition** readout,
 `hunt_yield_vector::a_hunting_expedition_delivers_both_products_it_forecast` asserts the **exported**
 `huntTripEstimates` row against the two accounts a real driven raid actually credits — the home band's
-larder for provisions, the faction stockpile for trade goods — over an edible × an inedible species ×
+own store, `FOOD` for provisions and `TRADE_GOODS` for pelts — over an edible × an inedible species ×
 Sustain/Surplus/Deplete, and `expedition_hunt::a_far_just_launched_party_projects_the_estimate_delivery`
 pins the in-flight projection to the exported row for the same `(policy, party size)`. For the **band**
 readout, `expedition_hunt::exported_snapshot_fields_reproduce_band_hunt_take` does the same against

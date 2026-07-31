@@ -54,7 +54,6 @@ const HARVEST_POLICY_AFTER_BUILD: FollowPolicy = FollowPolicy::Sustain;
 pub fn advance_labor_allocation(
     mut registry: ResMut<HerdRegistry>,
     mut forage_registry: ResMut<ForageRegistry>,
-    mut inventory: ResMut<FactionInventory>,
     mut discovery: ResMut<DiscoveryProgressLedger>,
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
@@ -458,9 +457,9 @@ pub fn advance_labor_allocation(
                         }
                         // **The TRADE-GOODS account (Flora Roster F4).** The SAME managed harvest, routed by the yield
                         // vector's trade component — a staple/hay Field's field_trade_goods is ~0, a cash crop's is
-                        // dominant, so this is commodity-generic with NO role branch. Trade goods are a FACTION-level
-                        // commodity (integer stockpile), not a band-local store, so — unlike FOOD/FODDER — they credit
-                        // FactionInventory, exactly as the Deplete-forage arm's wild sale does.
+                        // dominant, so this is commodity-generic with NO role branch. Credited to the band's own
+                        // `TRADE_GOODS` `LocalStore` key, exactly like FOOD/FODDER above: goods sit where they were
+                        // produced until a supply network reaches them (see `TRADE_GOODS`).
                         let trade_production = field_trade_goods(
                             patch,
                             &tile_composition,
@@ -476,9 +475,9 @@ pub fn advance_labor_allocation(
                                 &flora,
                                 mult_f,
                             );
-                        let trade_goods = (trade_production.min(trade_collection)).round() as i64;
-                        if trade_goods > 0 {
-                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
+                        let trade_goods = scalar_from_f32(trade_production.min(trade_collection));
+                        if trade_goods > scalar_zero() {
+                            cohort.stores.add(TRADE_GOODS, trade_goods);
                         }
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
@@ -500,7 +499,7 @@ pub fn advance_labor_allocation(
                         yields[idx] = SourceYield {
                             actual: paid,
                             // A cash crop's harvest really does sell (Flora Roster F4) — the same
-                            // `min(production, collection)` the trade stockpile was credited with.
+                            // `min(production, collection)` the band's trade store was credited with.
                             trade: trade_production.min(trade_collection),
                             realized_trade: crate::forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED,
                             // A managed harvest never draws the stock down, so it can never overdraw.
@@ -692,9 +691,9 @@ pub fn advance_labor_allocation(
                             mult_f,
                         ) * crate::forage::deplete_trade_markup(*policy, &labor.forage);
                     {
-                        let trade_goods = forage_trade.round() as i64;
-                        if trade_goods > 0 {
-                            inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
+                        let trade_goods = scalar_from_f32(forage_trade);
+                        if trade_goods > scalar_zero() {
+                            cohort.stores.add(TRADE_GOODS, trade_goods);
                         }
                     }
                     // Sustainable = one turn's MSY of the patch at its **pre-take** biomass, in
@@ -1035,12 +1034,11 @@ pub fn advance_labor_allocation(
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
-                        // Trade goods are a FACTION-level integer commodity, so — unlike FOOD — they
-                        // credit `FactionInventory`. Scaled off what was **carried home**, like the
-                        // food beside it.
-                        let pen_trade = paid.trade_goods.round() as i64;
-                        if pen_trade > 0 {
-                            inventory.add_stockpile(faction, TRADE_GOODS, pen_trade);
+                        // Trade goods land in the keeper band's own store, like the food beside them,
+                        // and are scaled off what was **carried home**.
+                        let pen_trade = scalar_from_f32(paid.trade_goods);
+                        if pen_trade > scalar_zero() {
+                            cohort.stores.add(TRADE_GOODS, pen_trade);
                         }
                         let tended = provisions.to_f32();
                         // Accrue the extension ring **after** the take (mirroring `accrue_corral`), so
@@ -1249,15 +1247,15 @@ pub fn advance_labor_allocation(
                     // because it *takes* 2.5× more biomass: that is the intensity ladder doing the
                     // work, not a per-rung bonus.
                     //
-                    // FOOD income is fully fractional; trade goods stay integer → FactionInventory.
-                    // Both scale off the meat actually **carried home**, not the animals killed: you
-                    // cannot trade a hide you left on the range.
-                    let trade_goods = paid.trade_goods.round() as i64;
+                    // Both accounts are fully fractional and band-local. Both scale off the meat
+                    // actually **carried home**, not the animals killed: you cannot trade a hide you
+                    // left on the range.
+                    let trade_goods = scalar_from_f32(paid.trade_goods);
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
-                    if trade_goods > 0 {
-                        inventory.add_stockpile(faction, TRADE_GOODS, trade_goods);
+                    if trade_goods > scalar_zero() {
+                        cohort.stores.add(TRADE_GOODS, trade_goods);
                     }
                     // **The LONG-RUN sustainable rate** — one turn's net regrowth at the herd's
                     // **pre-take** biomass (the herd's OWN ecology/capacity: a tamed herd grows 1.5×
