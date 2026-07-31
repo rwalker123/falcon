@@ -1458,10 +1458,11 @@ func _assert_forage_trade_counted() -> void:
 		push_error("band_panel_preview: Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
 		return
 	# The band-local STOCK, read off `stores.trade_goods` the way the Food row reads the larder.
-	# Matched as the VALUE cell's own run (`12 · +0.08`) rather than `Trade 12`: the KV formatter splits
-	# the row into table cells and the key cell carries the disclosure caret, so the two are never
-	# adjacent in the parsed text.
-	if not text.contains("12 · +0.08"):
+	# Matched as the VALUE cell's own run (`12.0 · +0.08`) rather than `Trade 12.0`: the KV formatter
+	# splits the row into table cells and the key cell carries the disclosure caret, so the two are never
+	# adjacent in the parsed text. ONE DECIMAL — the stock is a float on screen because the sim
+	# accumulates sub-unit trade income; the exact rendered value is what this pins.
+	if not text.contains("12.0 · +0.08"):
 		push_error("band_panel_preview: Trade row does not carry the band's stock of 12 — got: %s" % text)
 		return
 	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)

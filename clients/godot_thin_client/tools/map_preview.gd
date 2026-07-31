@@ -1232,10 +1232,11 @@ func _ready() -> void:
 	await _set_canvas(DEFAULT_CANVAS_SIZE)
 	await _settle()
 
-	# State "trade overlay" — the Trade tab's diffusion overlay, pushed exactly the way TradePanel
-	# pushes it (update_trade_overlay → set_trade_overlay_enabled → set_trade_overlay_selection, all
-	# three reached BY NAME through has_method/call). Three links fan the draw's branches across one
-	# frame: the SELECTED caravan (green, widened — the branch an unselected-only fixture would leave
+	# State "trade overlay" — the diffusion overlay, pushed through the same three seams the live
+	# client uses (update_trade_overlay → set_trade_overlay_enabled → set_trade_overlay_selection, all
+	# three reached BY NAME through has_method/call). In the client the link array comes from the
+	# snapshot's `trade_links` section; the Map tab's toggle only pushes the enabled flag. Three links
+	# fan the draw's branches across one frame: the SELECTED caravan (green, widened — the branch an unselected-only fixture would leave
 	# unproven), a busy open link (widest amber), and a thin closed one whose leak is imminent (the red
 	# midpoint dot). A fourth link addresses tiles that don't exist, so the skip guard is exercised too.
 	_map.set_fow_enabled(false)
@@ -2966,8 +2967,8 @@ func _entity_tiles() -> Array:
 			tiles.append({"entity": _tile_entity(x, y), "x": x, "y": y, "terrain": TERRAIN_ID})
 	return tiles
 
-## One trade link in the shape the Trade tab hands to `update_trade_overlay`: endpoints as tile
-## entities, a throughput (drives line width) and a knowledge sub-dict (openness drives opacity,
+## One trade link in the shape the snapshot's `trade_links` section hands to `update_trade_overlay`:
+## endpoints as tile entities, a throughput (drives line width) and a knowledge sub-dict (openness drives opacity,
 ## leak_timer arms the red midpoint dot).
 func _trade_link(entity: int, from_tile: Vector2i, to_tile: Vector2i,
 		throughput: float, openness: float, leak_timer: int) -> Dictionary:

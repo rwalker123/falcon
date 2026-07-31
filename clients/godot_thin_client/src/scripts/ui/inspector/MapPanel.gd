@@ -162,19 +162,19 @@ func _on_highlight_rivers_toggled(pressed: bool) -> void:
 func _on_logistics_overlay_toggled(_pressed: bool) -> void:
 	_sync_trade_overlay()
 
-## Push the trade overlay's on/off state to the map, through the same `has_method` guards the retired
-## Trade tab used (`MapView` may not implement all three; the names are documented as movable there).
+## Push the trade overlay's on/off state to the map, through the same `has_method` guard the retired
+## Trade tab used (`MapView` may not implement the seam; the name is documented as movable there).
 ##
-## **THE LINK LIST AND THE PER-LINK SELECTION HIGHLIGHT WENT WITH THAT TAB.** They were inputs only it
-## had — it owned the `_links` dict the diffusion telemetry filled and the `ItemList` whose selection
-## chose one — so this pushes an EMPTY link array and no selection. The toggle's remaining job is
-## whether the overlay draws at all, which is the whole of what a Map-tab toggle should decide.
+## **THE ENABLED FLAG IS THE WHOLE OF WHAT THIS TOGGLE DECIDES.** The links themselves come from the
+## snapshot: `MapView.display_snapshot` feeds `update_trade_overlay(trade_variant, …)` from the
+## `trade_links` section, and the renderer REBUILDS its link list from whatever array it is handed —
+## so a panel that also pushed links would be a second, competing source of truth (and pushing an
+## empty one would blank the overlay until the next snapshot that happens to carry the section).
+## The per-link selection highlight went with the Trade tab, which owned the `ItemList` that chose one.
 func _sync_trade_overlay() -> void:
 	if _map_view == null:
 		return
 	var enabled: bool = logistics_overlay_toggle != null and logistics_overlay_toggle.button_pressed
-	if _map_view.has_method("update_trade_overlay"):
-		_map_view.call("update_trade_overlay", [], enabled)
 	if _map_view.has_method("set_trade_overlay_enabled"):
 		_map_view.call("set_trade_overlay_enabled", enabled)
 

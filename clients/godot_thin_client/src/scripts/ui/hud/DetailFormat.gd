@@ -949,8 +949,13 @@ static func band_trade_income(band: Dictionary) -> float:
 ## True when the band earns a meaningful trade flow — the gate on the Trade row's `/turn` component and
 ## its breakdown disclosure. ONE term where `band_has_food_flow` has four, because trade has only the
 ## income side; below the floor reads as "no flow" (component omitted, not shown as a zero).
+##
+## The floor is `has_component`'s DISPLAY floor, not the sim-side `FOOD_FLOW_MIN`: everything this
+## gate opens is rendered at `YIELD_DECIMALS`, so a finer threshold would admit rates that then print
+## as `+0.00` in healthy green behind a live caret. `band_has_food_flow` is a different question (does
+## the larder move at all) and keeps `FOOD_FLOW_MIN`.
 static func band_has_trade_flow(band: Dictionary) -> bool:
-    return band_trade_income(band) >= SourceForecast.FOOD_FLOW_MIN
+    return SourceForecast.has_component(band_trade_income(band))
 
 ## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
 ## mirroring `morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything

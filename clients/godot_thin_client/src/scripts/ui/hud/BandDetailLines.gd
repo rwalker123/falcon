@@ -41,8 +41,11 @@ extends RefCounted
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 
 # ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
-# second product, in the Food row's shape — `Trade: 12 · +0.04 /turn`.
-const BAND_TRADE_ROW_FORMAT := "Trade: %d · [color=#%s]%s[/color]"
+# second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
+# like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
+# rather than rounding away, so a band earning ~0.005/turn would read a flat `0` for a hundred turns
+# beside a visibly non-zero rate if this printed an integer.
+const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
 
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
@@ -313,7 +316,7 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
         _food_flow_present = true
     return line
 
-## Selection-panel band trade row: "Trade: 12 · +0.04 /turn" — what THIS band HOLDS and what it earns
+## Selection-panel band trade row: "Trade: 12.0 · +0.04 /turn" — what THIS band HOLDS and what it earns
 ## per turn in the second product of the very sources the Food row totals. **ALWAYS emitted for a
 ## player band**, reading `+0.00 /turn` when it earns none: trade is a standing account of the band's
 ## economy, not a conditional feature like the Fodder row, and a row that vanishes when the number is
@@ -332,12 +335,16 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
 ## DANGER arm would be unreachable. Zero reads in neutral ink rather than green — a band earning
 ## nothing is not a "good", the same call the Output row makes at full output. **The STOCK is not
 ## tinted at all**, matching the Food row's provisions figure: a quantity on hand is not a verdict.
+##
+## **THE STOCK IS PRINTED AS A FLOAT**, unlike the Food row's whole-unit provisions: the sim
+## accumulates sub-unit trade income instead of rounding it away each turn, so an integer readout
+## would put that accumulation back on screen as a stuck `0`. One decimal, as the Fodder row does.
 func _band_trade_line(unit_data: Dictionary) -> String:
     var income := DetailFormat.band_trade_income(unit_data)
     var hex := HudStyle.HEALTHY_HEX if DetailFormat.band_has_trade_flow(unit_data) \
         else HudStyle.INK_DIM_HEX
     return BAND_TRADE_ROW_FORMAT % [
-        int(round(DetailFormat.band_trade_stock(unit_data))), hex,
+        DetailFormat.band_trade_stock(unit_data), hex,
         SourceForecast.format_yield(income)]
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".

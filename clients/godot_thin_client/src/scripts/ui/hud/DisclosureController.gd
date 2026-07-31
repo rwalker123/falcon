@@ -158,13 +158,17 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
 ## **INCOME-ONLY — every row is ▲, and that is the whole difference from Food.** Trade goods have no
 ## consumer: nothing eats them and no pen is fed on them, so there is no Eaten/Pen-feed/Lost-to-raids
 ## analogue and no debit row exists to write. The rows therefore sum to the headline directly.
+##
+## Both rows gate on `has_component` — the DISPLAY floor — where the Food rows above gate on the
+## sim-side `FOOD_FLOW_MIN`. A trade rate is small enough often enough (one forager on a staple patch
+## earns ~0.003/turn) that the finer floor would list rows reading `▲ +0.00 Gathered`.
 func trade_breakdown_lines(band: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     var gathered := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_FORAGE)
-    if gathered >= SourceForecast.FOOD_FLOW_MIN:
+    if SourceForecast.has_component(gathered):
         lines.append(DetailFormat.food_breakdown_row(gathered, DetailFormat.FOOD_LABEL_GATHERED))
     var hunted := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
-    if hunted >= SourceForecast.FOOD_FLOW_MIN:
+    if SourceForecast.has_component(hunted):
         lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
     return lines
 
