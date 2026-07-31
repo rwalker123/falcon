@@ -1904,6 +1904,21 @@ func _ready() -> void:
 	_assert_hud("Penning alone unlocks Corral — the same herd now offers it as a live choice",
 		corral_ungated is CheckBox and not (corral_ungated as CheckBox).disabled
 		and not (corral_ungated as CheckBox).button_pressed)
+	# **AN UNTICKED BOX HAS TO BE THERE TO BE TICKED.** Godot's stock `unchecked` art is a FILLED
+	# near-black square drawn for a LIGHT surface, so on this console it reserved its width and painted
+	# nothing: an offer that read as a line of prose with no control on it. Measure the thing that was
+	# actually wrong — CONTRAST against the panel — rather than the presence of an override: the first
+	# cut of the fix set `icon_normal_color`, which a CheckBox ignores entirely, and an override-shaped
+	# assertion would have passed on it.
+	_assert_hud("an offered rung's box is VISIBLE against the panel, not black on black",
+		_checkbox_indicator_contrast(corral_ungated, "unchecked")
+		>= CHECKBOX_INDICATOR_MIN_CONTRAST)
+	# The ticked half needs a DIFFERENT question asked of it: the stock `checked` art is a light chip and
+	# already clears the contrast bar, so re-using that measure here would pass with the fix removed —
+	# a vacuous assertion. What the designer asked for is that a running build be unmistakable, so pin
+	# the HUE: ticked reads in `SIGNAL`, the colour this HUD uses for nothing but live state.
+	_assert_hud("…and the ticked art reads in SIGNAL, so a running build is unmistakably running",
+		_checkbox_tick_colour_gap(corral_ungated) <= CHECKBOX_TICK_COLOUR_TOLERANCE)
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
@@ -4750,6 +4765,77 @@ func _policy_picker_columns(root: Node) -> int:
 ## NODE TYPE is half the assertion: a `CheckBox` is offered or running (`button_pressed` tells those
 ## apart) and a plain `Label` is done, which is exactly the three-state contract. Returns the Control,
 ## so a caller can type-test it.
+## The luminance gap an improvement checkbox's indicator must clear against the panel it sits on.
+## 0.25 of the full range is far below what the fix delivers (~0.5 for both states) and far above what
+## the defect scored: Godot's stock `unchecked` art is `#191919` at half alpha, which composites over
+## `PANEL_SOLID` to a gap of ~0.001 — invisible, which is exactly the bug.
+const CHECKBOX_INDICATOR_MIN_CONTRAST := 0.25
+
+## How visible one of a CheckBox's indicator states is: composite every pixel of the art it would draw
+## over `HudStyle.PANEL_SOLID` at that pixel's own alpha, and keep the largest luminance distance from
+## the panel. **Measured off the art, not off a theme override**, because "the box is invisible" is a
+## claim about pixels — an assertion phrased as "an override is set" would have passed on a
+## `icon_normal_color` override, which a `CheckBox` ignores.
+func _checkbox_indicator_contrast(control: Control, icon: String) -> float:
+	var box := control as CheckBox
+	if box == null:
+		return 0.0
+	var tex := box.get_theme_icon(icon)
+	if tex == null:
+		return 0.0
+	var img := tex.get_image()
+	if img == null:
+		return 0.0
+	var panel := HudStyle.PANEL_SOLID
+	var panel_luminance := panel.get_luminance()
+	var best := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			var over := panel.lerp(Color(px.r, px.g, px.b), px.a)
+			best = maxf(best, absf(over.get_luminance() - panel_luminance))
+	return best
+
+## How far the TICKED art's colour may sit from `HudStyle.SIGNAL` once brightness is divided out.
+## Godot's stock tick chip is neutral grey, which scores ~0.65 on this measure, so 0.1 separates
+## "recoloured to the live token" from "whatever the theme shipped" with room to spare.
+const CHECKBOX_TICK_COLOUR_TOLERANCE := 0.1
+
+## The ticked indicator's own colour, compared to `SIGNAL` with BRIGHTNESS DIVIDED OUT: take the art's
+## most prominent pixel, scale it and `SIGNAL` so each has a largest channel of 1, and measure the
+## distance. Brightness is normalised away because the chip's absolute level comes from the stock art
+## being recoloured rather than redrawn; what is being pinned is that a running build wears the
+## console's live colour instead of the stock theme's grey.
+func _checkbox_tick_colour_gap(control: Control) -> float:
+	var box := control as CheckBox
+	if box == null:
+		return 1.0
+	var tex := box.get_theme_icon("checked")
+	if tex == null:
+		return 1.0
+	var img := tex.get_image()
+	if img == null:
+		return 1.0
+	var best := Color(0, 0, 0, 0)
+	var best_weight := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			var weight := px.get_luminance() * px.a
+			if weight > best_weight:
+				best_weight = weight
+				best = px
+	return _unit_channel(best).distance_to(_unit_channel(HudStyle.SIGNAL))
+
+## A colour as a hue-only vector: its RGB scaled so the largest channel is 1. `Vector3.ONE` (neutral
+## white/grey) for a black input, which reads as "no colour of its own" — the right answer for the
+## degenerate case and the same answer a grey chip gives.
+func _unit_channel(c: Color) -> Vector3:
+	var peak: float = maxf(maxf(c.r, c.g), c.b)
+	if peak <= 0.0:
+		return Vector3.ONE
+	return Vector3(c.r, c.g, c.b) / peak
+
 ## **UNCHECK THE RUNNING BOX AND CHECK WHAT THE CLIENT WOULD TRANSMIT** — driven through the REAL
 ## control and the REAL formatter, not through the handler each would have called.
 ##

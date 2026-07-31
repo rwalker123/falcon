@@ -546,6 +546,10 @@ static func build_improvement_control(improvement: String, state: String, face: 
         var box := CheckBox.new()
         box.text = face
         box.tooltip_text = tooltip
+        # **WITHOUT THIS THE BOX IS NOT THERE.** The stock CheckBox art is drawn for a light surface,
+        # so on this console the unchecked indicator reserves its width and paints nothing — an offer
+        # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
+        HudStyle.apply_checkbox(box)
         box.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         var running := state == IMPROVEMENT_STATE_RUNNING
         box.button_pressed = running

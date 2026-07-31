@@ -307,6 +307,131 @@ static func apply_button(button: Button, variant: String = "ghost",
 	button.add_theme_color_override("font_disabled_color",
 		button_font_color(variant, true, selected_when_disabled))
 
+# ---- checkboxes ------------------------------------------------------------
+## **THE INDICATOR GODOT'S DEFAULT THEME CANNOT DRAW ON THIS HUD.** The client applies no `Theme`
+## resource at all (`minimal_theme.tres` in this folder is an `@tool` EDITOR theme, referenced by
+## nothing), so a `CheckBox` wears the stock art — which is designed for a LIGHT surface: `unchecked`
+## is a FILLED near-black rounded square (`#191919` at 50% alpha) and `checked` is a light square
+## carrying a dark tick. On the console's near-black panels the unchecked one is invisible: it
+## reserves its width and draws nothing, so the improvement control's offered row read as a line of
+## prose with no control on it.
+##
+## **THE COLOUR HAS TO BE IN THE PIXELS, and that is the trap here.** `CheckBox` draws its indicator
+## itself, from the `checked`/`unchecked` THEME ICONS, **unmodulated** — the `icon_*_color` items
+## reach a `Button`'s `icon` PROPERTY and nothing else, so `add_theme_color_override("icon_normal_
+## color", …)` on a CheckBox is a silent no-op (the first cut of this fix shipped exactly that and
+## rendered a stark white box). Tinting is therefore impossible through the theme, and each of the
+## four indicator textures is rasterised in its final palette colour below:
+##
+##   UNCHECKED — the stock art is REPLACED by an empty outlined box drawn in `INK_DIM`. An OUTLINE,
+##       not a fill, because an empty box is what "you may tick this" looks like; a filled one would
+##       read as already ticked. `INK_DIM` rather than `INK` so the offer sits a step behind the
+##       running state without disappearing.
+##   CHECKED — the stock tick art is KEPT and RECOLOURED to `SIGNAL`, this HUD's live-state colour
+##       (the Sight chip, the selection accent, the turn orb's calm pulse). The tick shape comes free
+##       and the box reads as lit, which is the job: this control is how a player sees whether a
+##       25-turn build is running, so "is it on?" must be answerable at a glance.
+##   The two `_disabled` twins mirror those — the outline in `INK_FAINT`, and the stock disabled tick
+##       art recoloured to `SIGNAL` (its own greyness supplies the "unavailable" reading). Neither
+##       state arises today (a gated rung is a Label, and a running build is never gated), but leaving
+##       them on the invisible stock art would be a hole waiting for the next caller.
+##
+## Called per control rather than through a project theme because the improvement control is the
+## client's ONLY `CheckBox` — the Options pane's toggles are `CheckButton`s, a different widget with
+## its own art — and the client applies no theme resource to hang it on anyway. If a second checkbox
+## ever appears it calls this; that is what keeps the treatment in one place.
+
+## The generated indicator matches the stock icon's 16px exactly, so swapping it moves no metrics.
+const CHECKBOX_INDICATOR_SIZE := 16
+## Stroke thickness and outer corner radius of that box, in indicator pixels. The radius echoes the
+## rounded corners of the stock tick art it alternates with.
+const CHECKBOX_INDICATOR_BORDER := 2.0
+const CHECKBOX_INDICATOR_RADIUS := 3.0
+## Coverage samples per axis within one indicator pixel. A hard-edged rounded corner rasterised at
+## 16px stairsteps badly, so each pixel's alpha is the fraction of it the outline covers.
+const CHECKBOX_INDICATOR_SUPERSAMPLE := 4
+
+# The four indicator textures, built once on the first styled checkbox: the compose sheet rebuilds
+# its controls on every selection change, and these are fixed 16×16 rasters.
+static var _checkbox_unchecked: ImageTexture = null
+static var _checkbox_unchecked_disabled: ImageTexture = null
+static var _checkbox_checked: ImageTexture = null
+static var _checkbox_checked_disabled: ImageTexture = null
+
+## Is the sample point inside the indicator's rounded box, shrunk by `inset` on every side? The
+## standard rounded-rect test: clamp the point into the box's straight-edged core, then ask whether it
+## lies within `radius` of that core.
+static func _checkbox_box_covers(px: float, py: float, inset: float, radius: float) -> bool:
+	var core_min := inset + radius
+	var core_max := float(CHECKBOX_INDICATOR_SIZE) - inset - radius
+	if core_max < core_min:
+		return false
+	return Vector2(px - clampf(px, core_min, core_max),
+		py - clampf(py, core_min, core_max)).length() <= radius
+
+## The empty outlined box that stands in for the stock unchecked art, in `tint`.
+static func _checkbox_outline(tint: Color) -> ImageTexture:
+	var img := Image.create_empty(CHECKBOX_INDICATOR_SIZE, CHECKBOX_INDICATOR_SIZE, false,
+		Image.FORMAT_RGBA8)
+	var samples := CHECKBOX_INDICATOR_SUPERSAMPLE
+	var per_pixel := float(samples * samples)
+	var inner_radius: float = maxf(CHECKBOX_INDICATOR_RADIUS - CHECKBOX_INDICATOR_BORDER, 0.0)
+	for y in CHECKBOX_INDICATOR_SIZE:
+		for x in CHECKBOX_INDICATOR_SIZE:
+			var covered := 0.0
+			for sy in samples:
+				for sx in samples:
+					var px := x + (sx + 0.5) / float(samples)
+					var py := y + (sy + 0.5) / float(samples)
+					if _checkbox_box_covers(px, py, 0.0, CHECKBOX_INDICATOR_RADIUS) \
+							and not _checkbox_box_covers(px, py, CHECKBOX_INDICATOR_BORDER,
+								inner_radius):
+						covered += 1.0
+			img.set_pixel(x, y, Color(tint.r, tint.g, tint.b, tint.a * covered / per_pixel))
+	return ImageTexture.create_from_image(img)
+
+## The stock tick art multiplied through `tint`, keeping its alpha. The art is a light rounded square
+## carrying a DARK tick, so the product is a `tint`-coloured chip with the tick still cut out of it —
+## which is why recolouring beats drawing our own: the tick's shape is the part worth keeping.
+## `copy_from` because `Texture2D.get_image()` can hand back the theme's own image, and mutating that
+## would recolour every CheckBox the engine draws.
+static func _checkbox_recoloured(source: Texture2D, tint: Color) -> ImageTexture:
+	var img := Image.new()
+	img.copy_from(source.get_image())
+	img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			img.set_pixel(x, y, Color(px.r * tint.r, px.g * tint.g, px.b * tint.b, px.a * tint.a))
+	return ImageTexture.create_from_image(img)
+
+## Apply the console's checkbox treatment — see the block comment above for why the art is replaced
+## rather than tinted.
+static func apply_checkbox(box: CheckBox) -> void:
+	if box == null:
+		return
+	if _checkbox_unchecked == null:
+		# Read the stock tick art BEFORE any override lands on this box, which is why this runs here
+		# and not at load: resolving a theme icon needs a control to resolve it against.
+		_checkbox_unchecked = _checkbox_outline(INK_DIM)
+		_checkbox_unchecked_disabled = _checkbox_outline(INK_FAINT)
+		_checkbox_checked = _checkbox_recoloured(box.get_theme_icon("checked"), SIGNAL)
+		_checkbox_checked_disabled = _checkbox_recoloured(
+			box.get_theme_icon("checked_disabled"), SIGNAL)
+	box.add_theme_icon_override("unchecked", _checkbox_unchecked)
+	box.add_theme_icon_override("unchecked_disabled", _checkbox_unchecked_disabled)
+	box.add_theme_icon_override("checked", _checkbox_checked)
+	box.add_theme_icon_override("checked_disabled", _checkbox_checked_disabled)
+	# The FONT overrides do land — the face is the Button's own `text` — so the row reads in the
+	# console's ink rather than the stock theme's off-white.
+	box.add_theme_color_override("font_color", INK)
+	box.add_theme_color_override("font_hover_color", INK)
+	box.add_theme_color_override("font_pressed_color", INK)
+	box.add_theme_color_override("font_hover_pressed_color", INK)
+	box.add_theme_color_override("font_focus_color", INK)
+	box.add_theme_color_override("font_disabled_color", INK_FAINT)
+
 # ---- inline link buttons ---------------------------------------------------
 # Padding around an inline link's text. Deliberately far tighter than the boxed
 # `_button_stylebox` chrome (11 × 9) so a clickable label keeps a plain label's
