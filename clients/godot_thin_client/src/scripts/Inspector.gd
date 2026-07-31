@@ -36,7 +36,6 @@ var capability_flags: int = 0
 @onready var influencer_panel: InfluencerInspectorPanel = $RootPanel/TabContainer/Influencers
 @onready var corruption_panel: CorruptionInspectorPanel = $RootPanel/TabContainer/Corruption
 @onready var power_panel: PowerInspectorPanel = $RootPanel/TabContainer/Power
-@onready var trade_panel: TradeInspectorPanel = $RootPanel/TabContainer/Trade
 @onready var crisis_panel: CrisisInspectorPanel = $RootPanel/TabContainer/Crisis
 ## Extracted tab panels that implement the coordinator contract (apply_update/reset).
 ## Populated in _ready once the @onready handles resolve.
@@ -105,7 +104,7 @@ func _ready() -> void:
 	# map-size/scenario/rivers controls are owned by MapPanel.
 	_apply_capability_gating()
 	apply_typography()
-	_tab_panels = [power_panel, crisis_panel, knowledge_panel, trade_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel, map_panel, culture_panel, terrain_panel]
+	_tab_panels = [power_panel, crisis_panel, knowledge_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel, map_panel, culture_panel, terrain_panel]
 	if map_panel != null:
 		map_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if culture_panel != null:
@@ -120,12 +119,6 @@ func _ready() -> void:
 		crisis_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
 	if knowledge_panel != null:
 		knowledge_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
-	# Trade diffusion records also feed the Knowledge event list; the panels stay
-	# decoupled — Trade emits, the coordinator forwards to Knowledge.
-	if trade_panel != null and knowledge_panel != null:
-		trade_panel.knowledge_events_produced.connect(
-			func(records: Array) -> void: knowledge_panel.append_events(records)
-		)
 	if victory_panel != null:
 		victory_panel.set_log_hook(Callable(self, "_append_command_log"))
 	# Fauna is now display-only telemetry (herd list + detail). The follow-herd command it
@@ -301,8 +294,6 @@ func _render_dynamic_sections() -> void:
 		culture_panel.render(influencer_panel.aggregate_resonance() if influencer_panel != null else {})
 
 func _render_static_sections() -> void:
-	if trade_panel != null:
-		trade_panel.reset()
 	if power_panel != null:
 		power_panel.reset()
 	if fauna_panel != null:
@@ -389,8 +380,6 @@ func apply_typography() -> void:
 		crisis_panel.apply_typography()
 	if knowledge_panel != null:
 		knowledge_panel.apply_typography()
-	if trade_panel != null:
-		trade_panel.apply_typography()
 	if sentiment_panel != null:
 		sentiment_panel.apply_typography()
 	if great_discoveries_panel != null:
@@ -688,8 +677,6 @@ func _disable_autoplay(log_message: bool) -> void:
 
 func attach_map_view(view: Node) -> void:
 	_map_view = view
-	if trade_panel != null:
-		trade_panel.set_map_view(view)
 	if map_panel != null:
 		map_panel.set_map_view(view)
 	if overlay_panel != null:
@@ -713,8 +700,6 @@ func _on_log_stream_entry(entry: Dictionary) -> void:
 	# Cross-panel dispatch of a raw log-stream entry (LogsPanel owns display/sparkline).
 	if knowledge_panel != null:
 		knowledge_panel.ingest_log_entry(entry)
-	if trade_panel != null:
-		trade_panel.ingest_log_entry(entry)
 
 func get_resolved_font_size() -> int:
 	return _resolved_font_size
@@ -915,9 +900,6 @@ func _apply_capability_gating() -> void:
 	# Knowledge stays a clickable tab; the panel renders a locked explanation while gated.
 	if knowledge_panel != null:
 		knowledge_panel.set_available(_has_flag(CAP_ESPIONAGE_T2))
-	# Trade stays a clickable tab; the panel renders a locked explanation while gated.
-	if trade_panel != null:
-		trade_panel.set_available(_has_flag(CAP_INDUSTRY_T1) or _has_flag(CAP_INDUSTRY_T2))
 	# Terrain is an always-available inspection tab (biome list, tile drill-down, terrain
 	# highlight) with no capability-gated actions.
 	_set_tab_enabled("Terrain", true)

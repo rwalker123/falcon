@@ -105,14 +105,19 @@ func register(row_label: String, kind: String, band: Dictionary, lines: Array[St
 
 ## Does this row have something worth reading right now? Each disclosure kind owns its own answer
 ## (`DetailFormat.*_is_concerning`), and the verdict only ever tints the caret WARN — no popover ever
-## opens itself. A dispatch rather than a chain of ternaries because there are three kinds now and a
-## fourth would otherwise be a nested conditional nobody can read.
+## opens itself. A dispatch rather than a chain of ternaries because there are four kinds now and a
+## fifth would otherwise be a nested conditional nobody can read.
 func _is_concerning(kind: String, band: Dictionary) -> bool:
     match kind:
         HudDisclosureVocab.BREAKDOWN_KIND_FOOD:
             return DetailFormat.food_is_concerning(band)
         HudDisclosureVocab.BREAKDOWN_KIND_GROWTH:
             return DetailFormat.growth_is_concerning(band)
+        HudDisclosureVocab.BREAKDOWN_KIND_TRADE:
+            # Trade is NEVER concerning: there is no trade analogue of starvation — nothing consumes
+            # trade goods, so the stock cannot drain and the flow cannot go negative. Answered
+            # explicitly rather than falling through to the morale verdict by accident.
+            return false
         _:
             return DetailFormat.morale_is_concerning(band)
 
@@ -143,6 +148,24 @@ func food_breakdown_lines(band: Dictionary) -> Array[String]:
     var raid_forfeit := DetailFormat.band_raid_forfeit(band)
     if raid_forfeit >= SourceForecast.FOOD_FLOW_MIN:
         lines.append(DetailFormat.food_breakdown_row(-raid_forfeit, DetailFormat.FOOD_LABEL_RAID_FORFEIT))
+    return lines
+
+## The category breakdown sub-lines under Trade — the same two INCOME rows the Food breakdown opens
+## with (`    ▲ +0.48  Gathered` / `    ▲ +0.12  Hunted`), reusing `FOOD_LABEL_GATHERED` /
+## `FOOD_LABEL_HUNTED` because they name the same two categories of worked source, not the same
+## product.
+##
+## **INCOME-ONLY — every row is ▲, and that is the whole difference from Food.** Trade goods have no
+## consumer: nothing eats them and no pen is fed on them, so there is no Eaten/Pen-feed/Lost-to-raids
+## analogue and no debit row exists to write. The rows therefore sum to the headline directly.
+func trade_breakdown_lines(band: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var gathered := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_FORAGE)
+    if gathered >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(gathered, DetailFormat.FOOD_LABEL_GATHERED))
+    var hunted := DetailFormat.sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
+    if hunted >= SourceForecast.FOOD_FLOW_MIN:
+        lines.append(DetailFormat.food_breakdown_row(hunted, DetailFormat.FOOD_LABEL_HUNTED))
     return lines
 
 ## Meta dispatcher for the summary-row disclosures (Food/Morale): the `[url]` meta IS the disclosure

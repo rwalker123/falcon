@@ -7,7 +7,8 @@ class_name KnowledgeInspectorPanel
 ## coordinator forwards snapshot updates via apply_update(), clears via reset(), reports
 ## capability via set_available(), reports command connectivity via set_command_connected(),
 ## wires command issuing via set_command_hooks(), and pushes log-stream telemetry via
-## ingest_log_entry(). Trade diffusion records arrive through the public append_events().
+## ingest_log_entry() — which is also where TRADE-DIFFUSION records now arrive, parsed here rather
+## than cross-fed from the retired Trade tab (issue #381).
 ##
 ## Follows the tab-panel contract established by PowerPanel/CrisisPanel (see
 ## clients/godot_thin_client/CLAUDE.md).
@@ -21,6 +22,9 @@ const COUNTERINTEL_POLICY_OPTIONS := [
 	{"key": "crisis", "label": "Crisis"}
 ]
 const KNOWLEDGE_EVENT_HISTORY_LIMIT = 24
+# The log-stream prefix carrying trade-diffusion records (see `_maybe_ingest_trade_diffusion`). It
+# arrived here with the retired Trade tab, which owned this parse until issue #381.
+const TRADE_TELEMETRY_PREFIX := "trade.telemetry "
 const KNOWLEDGE_TIMELINE_HISTORY_LIMIT = 48
 const KNOWLEDGE_TIMELINE_KIND_LABELS := {
 	0: "Leak progress",
@@ -150,24 +154,53 @@ func _style(control: Control, style: StringName) -> void:
 	if control != null:
 		Typography.apply(control, style)
 
-## Public feeder: trade-diffusion records cross-fed from the Trade tab appear in the
-## knowledge "Recent Events" list. Enforces the shared history limit and re-renders.
-func append_events(records: Array) -> void:
-	for record in records:
-		if record is Dictionary:
-			# Public cross-panel boundary: own a copy so a caller mutating its
-			# records later can't retroactively alter the knowledge history.
-			_events.append((record as Dictionary).duplicate(true))
+## Coordinator collaborator: feed a log-stream entry through the knowledge ingesters
+## (knowledge telemetry / TRADE DIFFUSION / counter-intel / espionage). Each matches at most one
+## entry type.
+func ingest_log_entry(entry: Dictionary) -> void:
+	_maybe_ingest_knowledge_telemetry(entry)
+	_maybe_ingest_trade_diffusion(entry)
+	_maybe_ingest_counterintel_log(entry)
+	_maybe_ingest_espionage_log(entry)
+
+## Trade-diffusion records — a discovery spreading between factions along a trade link or with a
+## migration — appended to the "Recent Events" list.
+##
+## **THIS USED TO ARRIVE FROM THE TRADE TAB** as a `knowledge_events_produced` batch that the Inspector
+## coordinator forwarded here (`append_events`). That tab is retired (issue #381), and with it the
+## signal and the coordinator hop: this panel is the only consumer these records ever had, and it was
+## already being fed every log entry through `ingest_log_entry`, so parsing the line here removes a
+## cross-panel seam rather than rehoming one. The record shape is unchanged — `_format_event_line`
+## reads it exactly as before.
+func _maybe_ingest_trade_diffusion(entry: Dictionary) -> bool:
+	var message: String = String(entry.get("message", ""))
+	if not message.begins_with(TRADE_TELEMETRY_PREFIX):
+		return false
+	var payload := message.substr(TRADE_TELEMETRY_PREFIX.length())
+	var parsed: Variant = JSON.parse_string(payload)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return false
+	var info: Dictionary = parsed
+	var tick_value: int = int(info.get("tick", _last_turn))
+	var records_variant: Variant = info.get("records", [])
+	if not (records_variant is Array):
+		return false
+	var appended := false
+	for record_variant in (records_variant as Array):
+		if not (record_variant is Dictionary):
+			continue
+		# Own a copy: the log entry is not ours, and the tick is stamped ON the record because
+		# `_format_event_line` reads it per row (a batch can straddle a turn boundary).
+		var record := (record_variant as Dictionary).duplicate(true)
+		record["tick"] = tick_value
+		_events.append(record)
+		appended = true
+	if not appended:
+		return false
 	while _events.size() > KNOWLEDGE_EVENT_HISTORY_LIMIT:
 		_events.pop_front()
 	_render()
-
-## Coordinator collaborator: feed a log-stream entry through the knowledge ingesters
-## (telemetry / counter-intel / espionage). Each matches at most one entry type.
-func ingest_log_entry(entry: Dictionary) -> void:
-	_maybe_ingest_knowledge_telemetry(entry)
-	_maybe_ingest_counterintel_log(entry)
-	_maybe_ingest_espionage_log(entry)
+	return true
 
 func _init_counterintel_controls() -> void:
 	if _policy_dropdown != null:

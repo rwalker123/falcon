@@ -276,8 +276,12 @@ func _build_vitals_label(band: Dictionary) -> RichTextLabel:
     detail_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     _disclosures.wire_label(detail_label)
     var ctx := DetailFormat.Context.new()
+    # The SHORT tier drops the Trade row, the same budget call `build_band_zone` makes for the
+    # food-outlook chart one block below: a ~300px T/B zone CLIPS what it cannot hold, and the row
+    # measures 26px against a zone that is already tight.
     detail_label.text = DetailFormat.detail_bbcode(
-        _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx), ctx)
+        _banddetail.unit_summary_lines(band, _selectioncard.selected_terrain_label(), ctx,
+            _band_zone_tier == HudWorkVocab.BAND_ZONE_TIER_SHORT), ctx)
     return detail_label
 
 ## "PEOPLE" — who the band IS: a stacked children/working-age/elders bar plus its key and the

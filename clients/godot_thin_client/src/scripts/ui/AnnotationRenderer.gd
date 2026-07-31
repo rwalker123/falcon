@@ -22,7 +22,8 @@ extends RefCounted
 ##   * `set_targeting`            — Main.gd connects the HUD's `targeting_changed` signal by name
 ##                                  (`has_method` + `Callable(map_view, "set_targeting")`)
 ##   * `update_trade_overlay` / `set_trade_overlay_enabled` / `set_trade_overlay_selection`
-##                                — TradePanel.gd pushes each via `has_method` + `call`
+##                                — MapPanel.gd pushes the first two via `has_method` + `call`
+##                                  (the Trade tab that owned them was retired, issue #381)
 ##   * `set_terrain_highlight`    — TerrainPanel.gd pushes it via `has_method` + `call`
 ## The pass-throughs store here and MapView owns the `queue_redraw` (the `set_labor_pending` idiom);
 ## the two setters that only redrew CONDITIONALLY return a bool so that condition is preserved.

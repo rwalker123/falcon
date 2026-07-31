@@ -873,6 +873,52 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
 
+# =====================================================================================
+#  BAND TRADE ARITHMETIC — THE SECOND PRODUCT
+#  The exact twin of the food family above, for the OTHER thing a worked source yields
+#  (issue #337's `trade_yield`). It lives here for the same reason: the Trade summary row and its
+#  breakdown are the only readers today, and both are pure `band`-dict math.
+# =====================================================================================
+
+## Sum of per-source trade goods (goods/turn) across this band's labor assignments of one kind — the
+## category total behind the Trade breakdown (Gathered = forage, Hunted = hunt), and the trade twin of
+## `sum_realized_yield`.
+##
+## **THE `realized_trade_yield` → `trade_yield` FALLBACK IS LOAD-BEARING, NOT DEFENSIVE.**
+## `realized_trade_yield` is 0 on every FORAGE source by design — the plant web's trade PROJECTION is a
+## documented sim-side gap (`native/src/dict/population.rs`) — so a forage patch must fall back to the
+## trade it ACTUALLY earned this turn or the row would read 0 for a patch visibly selling flax. This is
+## exactly what `SourceForecast.source_yield_readout` does per row, which is the point: summing it the
+## same way makes the Trade headline equal the sum of the per-source rows the player can open, BY
+## CONSTRUCTION — the same principle `band_trade_income` inherits from `band_food_income`.
+##
+## THE CONSEQUENCE, STATED HONESTLY: the Trade headline is forward-PROJECTED for hunt sources and
+## THIS-TURN-ACTUAL for forage ones, so unlike the all-steady Food headline it can twitch turn to turn
+## for a forage-heavy band. That resolves itself when the sim projects plant-web trade; until then a
+## steady-looking number would be the lie, not the twitch.
+static func sum_realized_trade(band: Dictionary, kind: String) -> float:
+    var total := 0.0
+    for a in HudBandLaborState.labor_assignments_of(band):
+        if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
+            var d := a as Dictionary
+            total += float(d["realized_trade_yield"]) if d.has("realized_trade_yield") \
+                else float(d.get("trade_yield", 0.0))
+    return total
+
+## The band's total trade income = Gathered + Hunted, the trade twin of `band_food_income` and summed
+## from the SAME per-source values as the breakdown rows so it equals them exactly. There is no debit
+## term to subtract: trade goods have no consumer (nothing eats them, no pen is fed on them), so unlike
+## food this income IS the net.
+static func band_trade_income(band: Dictionary) -> float:
+    return sum_realized_trade(band, SourceForecast.LABOR_KIND_FORAGE) \
+        + sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
+
+## True when the band earns a meaningful trade flow — the gate on the Trade row's `/turn` component and
+## its breakdown disclosure. ONE term where `band_has_food_flow` has four, because trade has only the
+## income side; below the floor reads as "no flow" (component omitted, not shown as a zero).
+static func band_has_trade_flow(band: Dictionary) -> bool:
+    return band_trade_income(band) >= SourceForecast.FOOD_FLOW_MIN
+
 ## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
 ## mirroring `morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything
 ## (a popover that pops itself open on a snapshot would be worse than the clipping it replaced); it

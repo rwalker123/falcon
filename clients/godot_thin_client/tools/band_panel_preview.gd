@@ -68,6 +68,7 @@ const QUARRY_NEAR_Y := 18
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
+const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
 
 ## The work-inspector policy-picker states work TWO Hunt rows on one band, told apart by the rung they
 ## stand on: `corral` is an INVESTMENT rung (the picker offers only the four extractive ones, so it can
@@ -361,6 +362,68 @@ func _ready() -> void:
 		_assert_work_zone_readable()
 		_assert_zone_content_fits()
 		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
+
+	# (b2) THE TRADE ROW (issue #381) — the band dock's answer to the retired left-dock Stockpiles card.
+	# It prints a FACTION-scoped stock beside a BAND-scoped rate, so the three states below are chosen to
+	# pin exactly that seam: the two numbers move INDEPENDENTLY, and each can be present without the other.
+	# The stock comes through the REAL path (`HudLayer.update_stockpiles`, the same call `Main` dispatches
+	# off `faction_inventory`), never a poke at `BandDetailLines._faction_stock`.
+	#
+	# (i) BOTH halves live: faction stock + this band's own trade income, disclosure OPEN so the
+	# Gathered/Hunted rows behind the headline are in frame. `_band_fixture`'s deer pays ⇄ 0.04.
+	# LEFT dock only — see (iv) for why the row is not in a T/B frame.
+	_hud.update_stockpiles(_trade_stockpile_fixture())
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
+	await _settle()
+	await _save("band_panel_trade_expanded_left")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
+
+	# (ii) STOCK, NO FLOW — the faction holds trade goods but THIS band earns none. The row must still
+	# render (the stock is a faction fact the player acts on) and must drop the ` · /turn` component
+	# rather than print a `+0.00` claiming the band contributes when it does not. It also carries NO
+	# caret: an income-only breakdown has no rows when there is no income.
+	_push_bands([_no_trade_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_trade_no_flow")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# (iii) NEITHER — a faction that has never earned a trade good, working a band that earns none.
+	# **NO Trade row at all**, the Fodder rule one product over: an all-zero row is noise, and this is
+	# the state every early game starts in. Restores the stockpile afterwards so later states are
+	# unaffected by the empty push.
+	# **THE RE-PUSH IS LOAD-BEARING, NOT TIDINESS.** `update_stockpiles` only writes the totals; the
+	# Trade row is composed during `render_band`, so clearing the stock without re-rendering leaves the
+	# PREVIOUS frame's row on screen — which is exactly what this state rendered before the re-push was
+	# added, silently making it a duplicate of (ii). The live client re-renders for free: `Main`
+	# dispatches `update_stockpiles` (line ~500) BEFORE `update_band_alerts` (~536), and the latter runs
+	# `BandPanelController.refresh_snapshot`, so the row is current within the same snapshot.
+	_hud.update_stockpiles([])
+	_push_bands([_no_trade_band_fixture()])
+	await _settle()
+	await _save("band_panel_trade_absent")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+
+	# (iv) THE SHORT-TIER DROP. The T/B dock's band zone is ~300px and CLIPS what it cannot hold, so
+	# the Trade row is gated off there exactly as the food-outlook chart is — measured at 26px, against
+	# a zone with nothing to spare. This is the frame that proves the gate: the SAME band and stockpile
+	# as (i), in a TOP dock, must render Food/Morale/Growth and NO Trade row.
+	# **It is asserted, not just eyeballed**, because an absent row and a row scrolled out of a clipped
+	# zone look identical in a PNG.
+	_hud.update_stockpiles(_trade_stockpile_fixture())
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _save("band_panel_trade_short_tier")
+	_assert_zones_within_bounds()
+	_assert_trade_row_absent_in_short_tier()
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -1356,6 +1419,39 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 ## the top-level content is anchored full-rect and so always "fits", while the thing that actually
 ## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
 ## in the frame; this is the only thing that catches it.
+## The SHORT band-zone tier must drop the Trade row (`BandPanelController._build_vitals_label` passes
+## `compact`). Asserted rather than eyeballed: a dropped row and a row clipped off the bottom of a
+## `clip_contents` zone are the SAME PICTURE, so only a text read can tell them apart. It reads the
+## rendered vitals BBCode back out of the live label, which is also what makes it fail if the gate is
+## removed — the row would be present in the text while still invisible in the PNG.
+##
+## **MATCH BARE KEYS, NOT `"Trade:"`.** `DetailFormat._split_kv` splits each `Key: value` line into a
+## BBCode TABLE row and drops the `": "` separator, so the colon is never in the rendered text.
+func _assert_trade_row_absent_in_short_tier() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: short-tier trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	# The Food row proves the vitals label is actually populated — without it, "no Trade row" would
+	# pass vacuously on an empty label.
+	if not text.contains("Food"):
+		push_error("band_panel_preview: short-tier trade assert — vitals label has no Food row (vacuous)")
+		return
+	if text.contains("Trade"):
+		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
+		return
+	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
+
+func _find_vitals_label(node: Node) -> RichTextLabel:
+	if node is RichTextLabel and (node as RichTextLabel).get_parsed_text().contains("Morale"):
+		return node as RichTextLabel
+	for child in node.get_children():
+		var found := _find_vitals_label(child)
+		if found != null:
+			return found
+	return null
+
 func _assert_zones_within_bounds() -> void:
 	var failures: Array[String] = []
 	for host_variant in _find_zone_hosts(_panel):
@@ -2532,6 +2628,34 @@ func _concerning_food_band_fixture() -> Dictionary:
 		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "policy": "deplete", "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
 		{"kind": "scout", "workers": 2},
 	]
+	return band
+
+## The player faction's stockpile, in the wire shape `HudLayer.update_stockpiles` parses. Only
+## `trade_goods` is a live producer sim-side (`core_sim` credits `TRADE_GOODS` and nothing else), but a
+## second item rides along so the extraction loop is exercised on a MULTI-item inventory rather than one
+## it could pick by luck.
+func _trade_stockpile_fixture() -> Array:
+	return [{
+		"faction": 0,
+		"inventory": [
+			{"item": "trade_goods", "quantity": 27},
+			{"item": "flax", "quantity": 6},
+		],
+	}]
+
+## `_band_fixture` with every TRADE component stripped off its assignments — the band that earns no
+## trade at all. It is what makes the Trade row's two halves separable in a frame: paired with a seeded
+## stockpile it proves the stock renders WITHOUT a rate, and with an empty one that the row disappears
+## entirely. Strips rather than hand-writing a fixture so it cannot drift from `_band_fixture`'s chrome.
+func _no_trade_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	var stripped: Array = []
+	for a in (band["labor_assignments"] as Array):
+		var d := (a as Dictionary).duplicate(true)
+		d.erase("trade_yield")
+		d.erase("realized_trade_yield")
+		stripped.append(d)
+	band["labor_assignments"] = stripped
 	return band
 
 ## The trade-only-HUNT variant of the band above: the deer is unassigned, so every hunt this band works

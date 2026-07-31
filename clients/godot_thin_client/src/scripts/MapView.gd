@@ -1605,9 +1605,11 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 
 
 
-## The three Trade-tab overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these
-## THREE NAMES can move: TradePanel.gd reaches every one of them via has_method/call, so a rename
-## would silently do nothing rather than error.
+## The trade-overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these THREE NAMES
+## can move: `MapPanel.gd` reaches them via has_method/call, so a rename would silently do nothing
+## rather than error. (They were the retired Trade tab's until issue #381; `set_trade_overlay_selection`
+## has NO caller now — the per-link selection went with that tab — but it stays because the overlay's
+## selection state is still real and the seam is reflective either way.)
 func update_trade_overlay(trade_links: Array, enabled: bool = _annotations.is_trade_overlay_enabled()) -> void:
 	_annotations.update_trade_overlay(trade_links, enabled)
 	queue_redraw()

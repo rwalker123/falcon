@@ -121,9 +121,6 @@ var _server_build: String = "?"
 @onready var allocation_panel: VBoxContainer = %AllocationPanel
 @onready var herd_assign_controls: VBoxContainer = %HerdAssignControls
 @onready var forage_assign_controls: VBoxContainer = %ForageAssignControls
-@onready var stockpile_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel
-@onready var stockpile_title: Label = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileTitle
-@onready var stockpile_list: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox/StockpileList
 @onready var left_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack
 @onready var right_stack: VBoxContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack
 @onready var right_dock_scroll: ScrollContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll
@@ -304,13 +301,13 @@ func _ready() -> void:
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
-    # knowledge-unlock nudge straight through it. The meter glyph, percent formatter and stockpile
-    # item wording are `HudFormat.meter_bar` / `HudFormat.progress_percent` / `HudFormat.stockpile_label`
-    # now, which the cluster calls directly — no Callable injection.
+    # knowledge-unlock nudge straight through it. The meter glyph and percent formatter are
+    # `HudFormat.meter_bar` / `HudFormat.progress_percent` now, which the cluster calls directly —
+    # no Callable injection.
     _topbar = TopBarReadouts.new(
         turn_label, metrics_label, sedentarization_label, demographics_label,
         discoveries_row, discoveries_label, discoveries_strip, intensification_label,
-        stockpile_panel, stockpile_list, _command_feed)
+        _command_feed)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
@@ -421,7 +418,6 @@ func _ready() -> void:
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
     left_dock.add(tile_panel, 10)
-    left_dock.add(stockpile_panel, 20)
     left_dock.add(command_feed_panel, 30)
     # The right dock is the narrative surface's home: the telling owns the top of it and, with both
     # reference cards hidden by default, effectively the whole column. Sharing the left dock left it
@@ -430,10 +426,6 @@ func _ready() -> void:
     right_dock.add(victory_panel, 20)
     right_dock.add(terrain_legend_panel, 30)
     _load_hud_panel_prefs()
-    if stockpile_panel != null:
-        stockpile_panel.visible = false
-    if stockpile_title != null:
-        stockpile_title.text = "Stockpiles"
     _apply_hud_style()
     _setup_build_overlay()
     # The selection drawer's Food/Morale labels are click-to-expand breakdown disclosures.
@@ -449,8 +441,8 @@ func _ready() -> void:
     get_viewport().size_changed.connect(_drawer.fit_subject_drawer.bind(true))
 
 ## Apply the shared HudStyle console look to the selection panel: restyle its
-## action buttons, tint the detail text, and bring the two plain PanelContainers
-## (stockpile, victory) up to the same card chrome the PanelCards already use.
+## action buttons, tint the detail text, and bring the one remaining plain PanelContainer
+## (victory) up to the same card chrome the PanelCards already use.
 func _apply_hud_style() -> void:
     for detail in [tile_detail, occupant_detail]:
         if detail != null:
@@ -463,8 +455,6 @@ func _apply_hud_style() -> void:
         subject_divider.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
         subject_divider.custom_minimum_size = Vector2(0.0, HudSelectionVocab.SUBJECT_DIVIDER_HEIGHT)
         subject_divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    if stockpile_panel != null:
-        stockpile_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
     if victory_panel != null:
         victory_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
 
@@ -532,10 +522,33 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
     _turnorb.set_turn(turn)
 
 ## Top-bar faction readouts — thin delegators to the TopBarReadouts controller (`_topbar`), which owns
-## the Sedentarization / demographics / discoveries / intensification / stockpile rendering. These
+## the Sedentarization / demographics / discoveries / intensification rendering. These
 ## names stay on HudLayer because Main reaches them by reflection (`_hud_invoke` → has_method+callv).
+##
+## The player faction's stockpile totals, from snapshot `faction_inventory`. **This one is NOT a
+## `_topbar` delegator any more** (issue #381): the left-dock Stockpiles card it used to render was
+## retired in favour of the band dock's Trade row, so the totals now go to `BandDetailLines`, which
+## prints the trade stock beside this band's trade rate. The name stays here because `Main` reaches it
+## by reflection, and the extraction loop came with it — this is the only reader.
 func update_stockpiles(faction_inventory_variant: Variant) -> void:
-    _topbar.update_stockpiles(faction_inventory_variant)
+    var totals: Dictionary = {}
+    var faction_array: Array = faction_inventory_variant if faction_inventory_variant is Array else []
+    for faction_entry in faction_array:
+        if not (faction_entry is Dictionary):
+            continue
+        if int(faction_entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
+            continue
+        var inventory_variant: Variant = faction_entry.get("inventory", [])
+        if inventory_variant is Array:
+            for stock_entry in (inventory_variant as Array):
+                if not (stock_entry is Dictionary):
+                    continue
+                var item_name := String((stock_entry as Dictionary).get("item", "")).strip_edges()
+                if item_name == "":
+                    continue
+                totals[item_name] = int((stock_entry as Dictionary).get("quantity", 0))
+        break
+    _banddetail.set_faction_stockpile(totals)
 
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
@@ -869,6 +882,12 @@ func reset_command_feed() -> void:
 ## module resets ITSELF; nothing but delegation belongs here.
 func reset_world_state() -> void:
     _topbar.reset_world_state()
+    # The faction stockpile is a CURRENT-VALUE cache, not a per-snapshot rebuild: `Main` dispatches
+    # `update_stockpiles` only when the `faction_inventory` section actually CHANGED, so without this
+    # the new world's band panel would print the PREVIOUS world's trade stock until its first trade
+    # good was earned. (This clear used to live in `TopBarReadouts.reset_world_state` alongside the
+    # retired Stockpiles card's `_stockpile_totals`; it moved here with the totals themselves.)
+    update_stockpiles([])
     # The Telling is deliberately NOT reset per snapshot (see `TellingPanel.ingest_events`), and this
     # is the one exception: a world CHANGE is not another snapshot of the same story, it is a
     # different story, and the previous world's beats are not part of it.
