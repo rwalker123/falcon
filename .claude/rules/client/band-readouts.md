@@ -186,10 +186,16 @@ paths:
     make a foreign number belong on a band panel. **A band-local stock arrives when the sim gives trade
     goods a band-local store** — the design direction is that a band/city holds what it produces until
     a trade network connects it — and this row gains the figure for free when it does.
-    **`accessible_stockpile` is NOT that store**: `core_sim/src/snapshot/population.rs`'s
-    `accessible_stockpile_state` reads `inventory.stockpile(faction)` whole and merely gates it on the
-    band's distance from the faction start, so the drawer's `Available N Trade Goods` row is the SAME
-    faction number under another name.
+    **`accessible_stockpile` was NOT that store, and its rows are RETIRED.**
+    `core_sim/src/snapshot/population.rs`'s `accessible_stockpile_state` reads
+    `inventory.stockpile(faction)` **whole** and gates it only on the band sitting within
+    `stockpile_access_radius` of the faction's START position — a half-built proximity idea whose
+    shipped radius is `0`. So `Stockpile: radius 0` / `Available: 2 Trade Goods` printed the faction
+    total under a band-scoped heading, appeared only while the band had not left the start hex, and sat
+    beside a Trade row saying the same number. The rows, their consts, the producer,
+    `HudFormat.stockpile_label` (its last reader) and MapView's marker copy are all gone;
+    `marker_field_guard` no longer lists the key. **The wire field itself survives, unread** — retiring
+    `AccessibleStockpileState` and its `stockpile_access_radius` lever is sim-side cleanup.
   - **ALWAYS emitted for a player band, reading `+0.00 /turn` when it earns none.** Trade is a standing
     account of the band's economy, not a conditional feature like the Fodder row; a row that vanished
     at zero read in playtest as "this band cannot trade at all" rather than "it earns none right now".

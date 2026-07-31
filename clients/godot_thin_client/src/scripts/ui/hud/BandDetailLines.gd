@@ -59,12 +59,6 @@ const MORALE_TREND_RISING_GLYPH := "▲"
 const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
 
-# ---- Accessible-stockpile rows (the band's reachable stores, from `accessible_stockpile`).
-const STOCKPILE_RADIUS_FORMAT := "Stockpile: radius %d"
-const STOCKPILE_AVAILABLE_FORMAT := "Available: %s"
-const STOCKPILE_ENTRY_FORMAT := "%d %s"
-const STOCKPILE_ENTRY_SEPARATOR := ", "
-
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a hunt party's migrating target.
 var _band_labor: HudBandLaborState = null
@@ -197,12 +191,14 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     # Per-source labor is now shown by the allocation panel (a real −/+ control set),
     # not as drawer text; the old single-task harvest/scout summaries are retired.
-    var stockpile_variant: Variant = unit_data.get("accessible_stockpile", {})
-    if stockpile_variant is Dictionary:
-        var stockpile_lines := _accessible_stockpile_lines(stockpile_variant)
-        if not stockpile_lines.is_empty():
-            lines.append("")
-            lines.append_array(stockpile_lines)
+    #
+    # **THE `Stockpile: radius N` / `Available: …` ROWS ARE GONE** (issue #381). They read as the
+    # band's own reachable stores and were nothing of the kind: `accessible_stockpile_state`
+    # (`core_sim/src/snapshot/population.rs`) returns the WHOLE faction stockpile, gated only on the
+    # band sitting within `stockpile_access_radius` of the faction's START position — a half-built
+    # proximity idea whose shipped radius is 0, so the rows showed for a band that had not left the
+    # start hex and vanished the moment it moved. Beside a Trade row on the same panel they printed
+    # the same faction number twice, one of them wearing a meaningless `radius 0`.
     # The carets this render registered are the LAST thing the context needs; read them back here so
     # every caller gets a fully-filled context by simply passing it in.
     context.disclosures = _disclosures.state()
@@ -461,27 +457,3 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         lines.append(DetailFormat.RECOVERY_GUIDANCE_TEXT)
     return lines
 
-## The band's reachable stores: a radius line plus one comma-joined `<qty> <Item>` run. Travels with
-## `unit_summary_lines`, its only caller; the item wording is `HudFormat.stockpile_label`, shared with
-## the left-dock stockpile panel so an item is spelled the same in both.
-func _accessible_stockpile_lines(stockpile: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var radius := int(stockpile.get("radius", 0))
-    var entries_variant: Variant = stockpile.get("entries", [])
-    var entries: Array = entries_variant if entries_variant is Array else []
-    if entries.is_empty():
-        return lines
-    var formatted: Array[String] = []
-    for entry in entries:
-        if not (entry is Dictionary):
-            continue
-        var item := String(entry.get("item", ""))
-        var qty := int(entry.get("quantity", 0))
-        if item == "" and qty == 0:
-            continue
-        formatted.append(STOCKPILE_ENTRY_FORMAT % [qty, HudFormat.stockpile_label(item)])
-    if formatted.is_empty():
-        return lines
-    lines.append(STOCKPILE_RADIUS_FORMAT % radius)
-    lines.append(STOCKPILE_AVAILABLE_FORMAT % STOCKPILE_ENTRY_SEPARATOR.join(formatted))
-    return lines

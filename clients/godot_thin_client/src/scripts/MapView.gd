@@ -2305,9 +2305,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				marker["dest_x"] = int(scout.get("target_x", -1))
 				marker["dest_y"] = int(scout.get("target_y", -1))
 				marker["travel_task_kind"] = "scout"
-		var stockpile_variant: Variant = entry.get("accessible_stockpile", {})
-		if stockpile_variant is Dictionary:
-			marker["accessible_stockpile"] = (stockpile_variant as Dictionary).duplicate(true)
 		if bool(marker.get("is_expedition", false)) \
 				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
 			_has_awaiting_expedition = true

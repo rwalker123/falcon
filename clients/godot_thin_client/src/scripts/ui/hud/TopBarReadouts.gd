@@ -16,7 +16,8 @@ extends RefCounted
 ## dock's Trade row, which is purely BAND-scoped (a per-turn rate, no faction stock), so no HUD cluster
 ## reads `faction_inventory` any more and `HudLayer.update_stockpiles` is gone with it. The snapshot key
 ## still has a consumer — `MapPanel.apply_update` reads it for the scenario description.
-## `HudFormat.stockpile_label` survives the move: the band drawer's accessible-stock rows still use it.
+## `HudFormat.stockpile_label` went with it: its second reader, the band drawer's accessible-stock
+## rows, was retired in the same pass (those rows printed the faction stockpile too).
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
 # The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on

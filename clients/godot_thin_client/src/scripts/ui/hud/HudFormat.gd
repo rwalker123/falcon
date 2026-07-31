@@ -23,8 +23,6 @@ class_name HudFormat
 
 ## A food module the table cannot name and whose key is empty — the tile carries no module at all.
 const FOOD_MODULE_UNKNOWN_LABEL := "Unknown"
-## A stockpile entry with no item key at all — falls back to the section's own name.
-const STOCKPILE_UNKNOWN_LABEL := "Stockpile"
 ## Dependency ratio: dependents per this many working-age adults.
 const PEOPLE_DEPENDENCY_BASE := 100
 ## SHORT on purpose: the chip's face already carries the count, so the tooltip only has to say what a
@@ -179,31 +177,6 @@ static func dependency_tooltip(dependents: int, working: int) -> String:
     if dependency_per_hundred(dependents, working) > HudWorkVocab.PEOPLE_DEPENDENCY_HEAVY:
         text += PEOPLE_DEPENDENCY_HEAVY_TOOLTIP
     return text
-
-## Humanize a raw stockpile item key (`dried_fish` → `Dried Fish`). Word-cased token by token rather
-## than through `String.capitalize()`, which also rewrites punctuation and separators. TWO surfaces
-## share it — the left-dock stockpile panel (`TopBarReadouts`) and the band drawer's accessible-stock
-## rows (`BandDetailLines`) — which is why it lives here instead of being injected into either.
-## An empty/blank key falls back to the section's own name rather than an empty cell.
-static func stockpile_label(raw_value: String) -> String:
-    var trimmed := raw_value.strip_edges()
-    if trimmed == "":
-        return STOCKPILE_UNKNOWN_LABEL
-    var tokens: PackedStringArray = trimmed.split("_", false)
-    if tokens.is_empty():
-        return trimmed.capitalize()
-    var parts: Array[String] = []
-    for token in tokens:
-        if token == "":
-            continue
-        var head := token.substr(0, 1).to_upper()
-        var tail := ""
-        if token.length() > 1:
-            tail = token.substr(1, token.length() - 1)
-        parts.append(head + tail)
-    if parts.is_empty():
-        return trimmed.capitalize()
-    return " ".join(parts)
 
 # ---- Expedition row vocabulary -------------------------------------------------------------------
 
