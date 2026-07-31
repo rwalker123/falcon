@@ -524,31 +524,6 @@ func update_overlay(turn: int, metrics: Dictionary) -> void:
 ## Top-bar faction readouts — thin delegators to the TopBarReadouts controller (`_topbar`), which owns
 ## the Sedentarization / demographics / discoveries / intensification rendering. These
 ## names stay on HudLayer because Main reaches them by reflection (`_hud_invoke` → has_method+callv).
-##
-## The player faction's stockpile totals, from snapshot `faction_inventory`. **This one is NOT a
-## `_topbar` delegator any more** (issue #381): the left-dock Stockpiles card it used to render was
-## retired in favour of the band dock's Trade row, so the totals now go to `BandDetailLines`, which
-## prints the trade stock beside this band's trade rate. The name stays here because `Main` reaches it
-## by reflection, and the extraction loop came with it — this is the only reader.
-func update_stockpiles(faction_inventory_variant: Variant) -> void:
-    var totals: Dictionary = {}
-    var faction_array: Array = faction_inventory_variant if faction_inventory_variant is Array else []
-    for faction_entry in faction_array:
-        if not (faction_entry is Dictionary):
-            continue
-        if int(faction_entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
-            continue
-        var inventory_variant: Variant = faction_entry.get("inventory", [])
-        if inventory_variant is Array:
-            for stock_entry in (inventory_variant as Array):
-                if not (stock_entry is Dictionary):
-                    continue
-                var item_name := String((stock_entry as Dictionary).get("item", "")).strip_edges()
-                if item_name == "":
-                    continue
-                totals[item_name] = int((stock_entry as Dictionary).get("quantity", 0))
-        break
-    _banddetail.set_faction_stockpile(totals)
 
 func update_sedentarization(sedentarization_variant: Variant) -> void:
     _topbar.update_sedentarization(sedentarization_variant)
@@ -882,12 +857,6 @@ func reset_command_feed() -> void:
 ## module resets ITSELF; nothing but delegation belongs here.
 func reset_world_state() -> void:
     _topbar.reset_world_state()
-    # The faction stockpile is a CURRENT-VALUE cache, not a per-snapshot rebuild: `Main` dispatches
-    # `update_stockpiles` only when the `faction_inventory` section actually CHANGED, so without this
-    # the new world's band panel would print the PREVIOUS world's trade stock until its first trade
-    # good was earned. (This clear used to live in `TopBarReadouts.reset_world_state` alongside the
-    # retired Stockpiles card's `_stockpile_totals`; it moved here with the totals themselves.)
-    update_stockpiles([])
     # The Telling is deliberately NOT reset per snapshot (see `TellingPanel.ingest_events`), and this
     # is the one exception: a world CHANGE is not another snapshot of the same story, it is a
     # different story, and the previous world's beats are not part of it.

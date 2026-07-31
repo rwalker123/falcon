@@ -363,16 +363,13 @@ func _ready() -> void:
 		_assert_zone_content_fits()
 		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
 
-	# (b2) THE TRADE ROW (issue #381) — the band dock's answer to the retired left-dock Stockpiles card.
-	# It prints a FACTION-scoped stock beside a BAND-scoped rate, so the three states below are chosen to
-	# pin exactly that seam: the two numbers move INDEPENDENTLY, and each can be present without the other.
-	# The stock comes through the REAL path (`HudLayer.update_stockpiles`, the same call `Main` dispatches
-	# off `faction_inventory`), never a poke at `BandDetailLines._faction_stock`.
+	# (b2) THE TRADE ROW (issue #381) — what THIS band earns per turn in the second product. The row is
+	# **purely band-scoped**: it carries a rate and no stock, because the only trade-goods stock the sim
+	# publishes is faction-global and every band would print the same total. So the states below pin the
+	# rate's two ends plus the tier gate — there is no stock axis left to vary.
 	#
-	# (i) BOTH halves live: faction stock + this band's own trade income, disclosure OPEN so the
-	# Gathered/Hunted rows behind the headline are in frame. `_band_fixture`'s deer pays ⇄ 0.04.
-	# LEFT dock only — see (iv) for why the row is not in a T/B frame.
-	_hud.update_stockpiles(_trade_stockpile_fixture())
+	# (i) EARNING — `_band_fixture`'s deer pays ⇄ 0.04, disclosure OPEN so the Gathered/Hunted rows behind
+	# the headline are in frame. LEFT dock only; see (iii) for why the row is not in a T/B frame.
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
@@ -383,41 +380,24 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
 
-	# (ii) STOCK, NO FLOW — the faction holds trade goods but THIS band earns none. The row must still
-	# render (the stock is a faction fact the player acts on) and must drop the ` · /turn` component
-	# rather than print a `+0.00` claiming the band contributes when it does not. It also carries NO
-	# caret: an income-only breakdown has no rows when there is no income.
+	# (ii) ZERO — a band working no trade-paying source. **The row is STILL THERE**, reading `+0.00 /turn`
+	# in neutral ink with no caret, and that is the whole point of the state: a row that vanished at zero
+	# read in playtest as "this band cannot trade at all" rather than "it earns none right now". The caret
+	# is absent because `register` declines an empty payload — an income-only breakdown has no rows when
+	# there is no income — so a zero row is honestly inert rather than opening an empty popover.
 	_push_bands([_no_trade_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
-	await _save("band_panel_trade_no_flow")
+	await _save("band_panel_trade_zero")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
+	_assert_trade_row_reads_zero()
 
-	# (iii) NEITHER — a faction that has never earned a trade good, working a band that earns none.
-	# **NO Trade row at all**, the Fodder rule one product over: an all-zero row is noise, and this is
-	# the state every early game starts in. Restores the stockpile afterwards so later states are
-	# unaffected by the empty push.
-	# **THE RE-PUSH IS LOAD-BEARING, NOT TIDINESS.** `update_stockpiles` only writes the totals; the
-	# Trade row is composed during `render_band`, so clearing the stock without re-rendering leaves the
-	# PREVIOUS frame's row on screen — which is exactly what this state rendered before the re-push was
-	# added, silently making it a duplicate of (ii). The live client re-renders for free: `Main`
-	# dispatches `update_stockpiles` (line ~500) BEFORE `update_band_alerts` (~536), and the latter runs
-	# `BandPanelController.refresh_snapshot`, so the row is current within the same snapshot.
-	_hud.update_stockpiles([])
-	_push_bands([_no_trade_band_fixture()])
-	await _settle()
-	await _save("band_panel_trade_absent")
-	_assert_zones_within_bounds()
-	_assert_zone_content_fits()
-
-	# (iv) THE SHORT-TIER DROP. The T/B dock's band zone is ~300px and CLIPS what it cannot hold, so
-	# the Trade row is gated off there exactly as the food-outlook chart is — measured at 26px, against
-	# a zone with nothing to spare. This is the frame that proves the gate: the SAME band and stockpile
-	# as (i), in a TOP dock, must render Food/Morale/Growth and NO Trade row.
-	# **It is asserted, not just eyeballed**, because an absent row and a row scrolled out of a clipped
-	# zone look identical in a PNG.
-	_hud.update_stockpiles(_trade_stockpile_fixture())
+	# (iii) THE SHORT-TIER DROP. The T/B dock's band zone is ~300px and CLIPS what it cannot hold, so the
+	# Trade row is gated off there exactly as the food-outlook chart is — measured at 26px, against a zone
+	# with nothing to spare. The SAME earning band as (i), in a TOP dock, must render Food/Morale/Growth
+	# and NO Trade row. **Asserted, not just eyeballed**, because an absent row and a row clipped off the
+	# bottom of a `clip_contents` zone are the same picture.
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_TOP)
 	await _settle()
@@ -1442,6 +1422,24 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
+
+## The zero case: the Trade row must be PRESENT and read a zero rate. Asserted because "absent" and
+## "present but zero" are one glance apart in a PNG and the difference is the whole playtest report.
+func _assert_trade_row_reads_zero() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: zero-trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains("Trade"):
+		push_error("band_panel_preview: a band earning no trade dropped its Trade row — it must read zero")
+		return
+	# `format_yield` writes a signed magnitude, so a zero rate renders "+0.00". Matching the NUMBER
+	# rather than the row keeps this from passing on an earning band that merely has a Trade row.
+	if not text.contains("+0.00"):
+		push_error("band_panel_preview: zero-trade band's Trade row does not read +0.00 — got: %s" % text)
+		return
+	print("band_panel_preview: assert OK — a band earning no trade still shows Trade, reading +0.00")
 
 func _find_vitals_label(node: Node) -> RichTextLabel:
 	if node is RichTextLabel and (node as RichTextLabel).get_parsed_text().contains("Morale"):
@@ -2630,23 +2628,10 @@ func _concerning_food_band_fixture() -> Dictionary:
 	]
 	return band
 
-## The player faction's stockpile, in the wire shape `HudLayer.update_stockpiles` parses. Only
-## `trade_goods` is a live producer sim-side (`core_sim` credits `TRADE_GOODS` and nothing else), but a
-## second item rides along so the extraction loop is exercised on a MULTI-item inventory rather than one
-## it could pick by luck.
-func _trade_stockpile_fixture() -> Array:
-	return [{
-		"faction": 0,
-		"inventory": [
-			{"item": "trade_goods", "quantity": 27},
-			{"item": "flax", "quantity": 6},
-		],
-	}]
-
 ## `_band_fixture` with every TRADE component stripped off its assignments — the band that earns no
-## trade at all. It is what makes the Trade row's two halves separable in a frame: paired with a seeded
-## stockpile it proves the stock renders WITHOUT a rate, and with an empty one that the row disappears
-## entirely. Strips rather than hand-writing a fixture so it cannot drift from `_band_fixture`'s chrome.
+## trade at all, which is what the zero-rate Trade row is judged on. Strips rather than hand-writing a
+## fixture so it cannot drift from `_band_fixture`'s chrome (and so the ONLY difference between this
+## band and the earning one is the thing under test).
 func _no_trade_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	var stripped: Array = []

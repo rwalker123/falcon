@@ -13,9 +13,10 @@ extends RefCounted
 ## cluster's knowledge back through the public `faction_knowledge()`.
 ##
 ## THE STOCKPILE PANEL LEFT THIS CLUSTER (issue #381): the left-dock card was retired for the band
-## dock's Trade row, so `HudLayer.update_stockpiles` now feeds `BandDetailLines` directly and nothing
-## here reads `faction_inventory`. `HudFormat.stockpile_label` survives the move — its other reader is
-## the band drawer's accessible-stock rows, which are unaffected.
+## dock's Trade row, which is purely BAND-scoped (a per-turn rate, no faction stock), so no HUD cluster
+## reads `faction_inventory` any more and `HudLayer.update_stockpiles` is gone with it. The snapshot key
+## still has a consumer — `MapPanel.apply_update` reads it for the scenario description.
+## `HudFormat.stockpile_label` survives the move: the band drawer's accessible-stock rows still use it.
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
 # The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on
@@ -129,10 +130,9 @@ func _init(
 ## `Herding ✔`. `_knowledge_announced` rides along because a track re-learned in the new world
 ## deserves its unlock nudge again.
 ##
-## THE FACTION STOCKPILE IS NO LONGER RESET HERE — it left this cluster with the Stockpiles card
-## (issue #381) and is now `BandDetailLines._faction_stock`, cleared by `HudLayer.reset_world_state`
-## itself. It still needs clearing for the same reason it always did: `Main` dispatches
-## `update_stockpiles` only when the section CHANGED, so it is a current-VALUE cache, not a rebuild.
+## THE FACTION STOCKPILE IS NO LONGER RESET HERE, and no longer needs to be: it left this cluster with
+## the Stockpiles card (issue #381), and the band dock's Trade row that replaced it holds no cached
+## stock at all — it renders a per-turn rate straight off the band dict, which every snapshot restates.
 ##
 ## Sedentarization and demographics are rebuilt wholesale from each snapshot and so need no cache
 ## clearing, but they are re-rendered empty here too: they only update when their key is PRESENT, so

@@ -23,11 +23,6 @@ const LAND_SUBJECT_ID := -1
 # Provisions is the food item under a band's larder `stores`.
 const STORE_ITEM_PROVISIONS := "provisions"
 
-# Trade goods — the item key under the FACTION inventory (snapshot `faction_inventory`), which is where
-# the second product of a worked source accrues (never a band's larder). Must match `TRADE_GOODS` in
-# `core_sim/src/components.rs`; the sim writes that string onto the wire and nothing translates it.
-const STORE_ITEM_TRADE_GOODS := "trade_goods"
-
 # Early-Game Labor (docs/plan_early_game_labor.md, slice 3b). Assignment kinds mirror
 # the sim's LaborAssignment.kind; the source-centric allocation targets the single
 # player band captured from each snapshot (there is exactly one player band today).
