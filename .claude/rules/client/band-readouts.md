@@ -188,15 +188,15 @@ paths:
     the way the Food row reads the larder (`DetailFormat.band_trade_stock` ↔ `band_provisions`), and it
     needed **no schema or decoder change**: `PopulationCohortState.stores` already ships every key.
     **`accessible_stockpile` was NOT that store, and its rows are RETIRED.**
-    `core_sim/src/snapshot/population.rs`'s `accessible_stockpile_state` reads
-    `inventory.stockpile(faction)` **whole** and gates it only on the band sitting within
+    It published `inventory.stockpile(faction)` **whole**, gated only on the band sitting within a
     `stockpile_access_radius` of the faction's START position — a half-built proximity idea whose
-    shipped radius is `0`. So `Stockpile: radius 0` / `Available: 2 Trade Goods` printed the faction
+    shipped radius was `0`. So `Stockpile: radius 0` / `Available: 2 Trade Goods` printed the faction
     total under a band-scoped heading, appeared only while the band had not left the start hex, and sat
     beside a Trade row saying the same number. The rows, their consts, the producer,
     `HudFormat.stockpile_label` (its last reader) and MapView's marker copy are all gone;
-    `marker_field_guard` no longer lists the key. **The wire field itself survives, unread** — retiring
-    `AccessibleStockpileState` and its `stockpile_access_radius` lever is sim-side cleanup.
+    `marker_field_guard` no longer lists the key. Sim-side the lever and the computation are gone too,
+    so **the field always arrives absent**; the wire table and this decoder survive unread — see
+    `.claude/rules/core_sim/yield-forecast.md` → "`accessibleStockpile` is an unread wire table".
   - **ALWAYS emitted for a player band, reading `+0.00 /turn` when it earns none.** Trade is a standing
     account of the band's economy, not a conditional feature like the Fodder row; a row that vanished
     at zero read in playtest as "this band cannot trade at all" rather than "it earns none right now".

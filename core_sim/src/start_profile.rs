@@ -118,8 +118,6 @@ pub struct StartProfileOverrides {
     #[serde(default)]
     pub inventory: Vec<InventoryEntry>,
     #[serde(default)]
-    pub stockpile_access_radius: Option<u32>,
-    #[serde(default)]
     pub ai_profile_overrides: HashMap<String, Value>,
     #[serde(default)]
     pub victory_modes_enabled: Vec<String>,

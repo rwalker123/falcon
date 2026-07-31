@@ -303,5 +303,29 @@ wanted rather than stored.
 `apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness bonus.
 That conversion is the resource's only remaining reader, and it never sees ongoing income.
 
+#### `accessibleStockpile` is an unread wire table, and `reach_tiles` is the real radius
+
+`PopulationCohortState.accessible_stockpile` is **always `None`**. The field once carried a copy of
+the faction's `FactionInventory` stockpile onto any band whose home tile sat within
+`StartProfileOverrides.stockpile_access_radius` (Manhattan distance) of the faction's **start
+position** — the position the campaign seeded the faction at, not any band, node or route. Nothing in
+the manual or the design docs describes such a rule, so the readout it fed was retired along with the
+lever, the `DEFAULT_STOCKPILE_ACCESS_RADIUS` default and the distance test; a band's own
+`cohort.stores` is the only store it has.
+
+**The band-to-band radius that does exist is `SupplyNetworkConfig.reach_tiles`** (default `3`) — a
+different mechanic in every respect: it connects same-faction bands to *each other*, and
+`balance_supply_networks` **equalizes their `stores`** rather than publishing a second store beside
+them. Reaching for "bands near each other can pool without a route" means reaching for that lever.
+
+The FlatBuffers table survives unread on purpose: `AccessibleStockpile` /
+`AccessibleStockpileEntry` (`sim_schema/schemas/snapshot.fbs`), their `*State` twins
+(`sim_schema/src/state/population.rs`), the codec (`sim_schema/src/codec/population.rs`) and the
+client decoder all stay, because deleting a FlatBuffers field costs a schema rebuild plus a
+decode-guard golden re-record for a table nothing reads. It simply always serializes as absent. The
+decode guard still exercises the decode path for it — that fixture is **synthetic**
+(`xtask/src/decode_fixture.rs` builds it, not the sim), so its golden is independent of what the
+capture publishes.
+
 ---
 

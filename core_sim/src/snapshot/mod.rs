@@ -8,10 +8,9 @@ use bevy::{
     prelude::*,
 };
 use sim_runtime::{
-    encode_delta_flatbuffer, encode_snapshot_flatbuffer, AccessibleStockpileEntryState,
-    AccessibleStockpileState, AxisBiasState, CampaignProfileState, ClimateBandsState,
-    CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem, CrisisGaugeState,
-    CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
+    encode_delta_flatbuffer, encode_snapshot_flatbuffer, AxisBiasState, CampaignProfileState,
+    ClimateBandsState, CohortStoreState, CommandEventState, CorruptionLedger, CorruptionSubsystem,
+    CrisisGaugeState, CrisisMetricKind as SchemaCrisisMetricKind, CrisisOverlayState,
     CrisisSeverityBand as SchemaCrisisSeverityBand, CrisisTelemetryState,
     CrisisTrendSample as SchemaCrisisTrendSample, CultureLayerState, CultureTensionState,
     CultureTraitEntry, DiscoveredSiteState as SchemaDiscoveredSiteState,
@@ -142,8 +141,6 @@ pub(crate) use vision::*;
 const AXIS_NAMES: [&str; 4] = ["Knowledge", "Trust", "Equity", "Agency"];
 
 const CHANNEL_LABELS: [&str; 4] = ["Popular", "Peer", "Institutional", "Humanitarian"];
-
-const DEFAULT_STOCKPILE_ACCESS_RADIUS: u32 = 0;
 
 /// The per-source **yield forecast** (`ForagePatchState`/`HerdTelemetryState` `per_worker_yield` +
 /// policy ceilings) is captured band-agnostically: the productivity multiplier is a per-band value
@@ -883,7 +880,6 @@ mod tests {
         cohort: &PopulationCohort,
         allocation: &LaborAllocation,
     ) -> PopulationCohortState {
-        let inventory = FactionInventory::default();
         let demographics = crate::demographics_config::DemographicsConfig::default();
         let wellbeing = crate::wellbeing_config::WellbeingConfig::default();
         let membership = crate::supply::SupplyNetworkMembership::default();
@@ -903,12 +899,8 @@ mod tests {
             cohort,
             allocation: Some(allocation),
             expedition: None,
-            home_position: Some(UVec2::new(0, 0)),
             current_position: None,
             is_traveling: false,
-            stockpile_radius: 0,
-            start_position: None,
-            inventory: &inventory,
             demographics: &demographics,
             wellbeing: &wellbeing,
             supply_membership: &membership,
