@@ -71,8 +71,8 @@ pub fn advance_band_movement(
 /// - **Provisions** drain by `party × provision_upkeep_per_worker` (scouts only — hunt lives off its
 ///   kills); non-fatal at zero in v1.
 /// - **Both halves of a kill's [`HuntYield`] come home** (#337) — the provisions into the party's
-///   larder, the trade goods onto `Expedition::carried_trade` and out to the faction stockpile at the
-///   next drop-off/fold-back. See [`settle_carried_trade`].
+///   larder, the trade goods onto `Expedition::carried_trade` and into the **home band's** store at
+///   the next drop-off/fold-back. See [`settle_carried_trade`].
 /// - **Phase transitions**: `Outbound` + arrived (no `BandTravel`) → `AwaitingOrders` + a one-shot
 ///   arrival feed line; `Returning` → chase the home band's live tile and, once within comm range,
 ///   fold workers + leftover provisions back into the band and despawn (fold-back happens after the
@@ -88,7 +88,6 @@ pub fn advance_expeditions(
     mut ledger: ResMut<crate::visibility::VisibilityLedger>,
     mut event_log: ResMut<CommandEventLog>,
     mut herds: ResMut<HerdRegistry>,
-    mut inventory: ResMut<FactionInventory>,
     tiles: Query<&Tile>,
     mut expeditions: Query<(
         Entity,
@@ -312,19 +311,21 @@ pub fn advance_expeditions(
                 if near_home {
                     // Close enough to run home: fold workers + carried food back in (after the scout
                     // flush above, so the final findings reported), then despawn.
+                    // **The other half of the haul settles into the SAME store as the meat.** Trade
+                    // goods are band-local (see [`TRADE_GOODS`]), so the pelts land in the home
+                    // band's larder alongside the provisions — the last chance before the party
+                    // despawns and the bank goes with it. No home band left to receive them means
+                    // the haul is simply lost, exactly as the carried food is.
+                    let mut banked_trade = scalar_zero();
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
                         home.working += cohort.working;
                         let leftover = cohort.stores.get(FOOD);
                         if leftover > scalar_zero() {
                             home.stores.add(FOOD, leftover);
                         }
+                        banked_trade = settle_carried_trade(&mut expedition, &mut home);
                         home.sync_size();
                     }
-                    // **The other half of the haul.** The pelts do NOT fold into the band's local
-                    // larder — trade goods are faction-global — so they settle here, the last chance
-                    // before the party despawns and the bank goes with it.
-                    let banked_trade =
-                        settle_carried_trade(&mut expedition, faction, &mut inventory);
                     event_log.push(CommandEventEntry::new(
                         current_turn,
                         CommandEventKind::ExpeditionReturned,
@@ -334,8 +335,8 @@ pub fn advance_expeditions(
                             exp_pos.x, exp_pos.y
                         ),
                         Some(format!(
-                            "status=returned trade_goods={} expedition={}",
-                            banked_trade,
+                            "status=returned trade_goods={:.2} expedition={}",
+                            banked_trade.to_f32(),
                             entity.to_bits()
                         )),
                     ));
@@ -508,7 +509,7 @@ pub fn advance_expeditions(
                         // exactly as `hunt_trip_forecast` projects them — the raid cannot pay food it
                         // did not promise, nor pocket the pelts it did. They then part ways: the meat
                         // is bounded by the pack (`room`), the pelts ride home on `carried_trade` and
-                        // settle into the faction stockpile at the drop-off. Both scale off what the
+                        // settle into the home band's store at the drop-off. Both scale off what the
                         // party **carries**, never what it killed: you cannot trade a hide you left on
                         // the range.
                         {
@@ -620,8 +621,8 @@ pub fn advance_expeditions(
                             // home with no meat and a pack full of pelts, and calling that EMPTY
                             // would be exactly the food-only blindness this arc removes. The pelts
                             // are still banked on `carried_trade`; the `Returning` arm settles them.
-                            let pelts = whole_trade_goods(expedition.carried_trade);
-                            let (message, reason) = if carried > scalar_zero() || pelts > 0 {
+                            let pelts = expedition.carried_trade;
+                            let (message, reason) = if carried > scalar_zero() || pelts > 0.0 {
                                 (
                                     format!(
                                         "Hunting expedition harvested {} — returning home",
@@ -692,26 +693,27 @@ pub fn advance_expeditions(
                         let carried = cohort.stores.get(FOOD);
                         cohort.stores.take(FOOD, carried)
                     };
+                    // The trip's pelts settle with its meat — one delivery, both products into the
+                    // one band store, so the credit matches the raid forecast this trip was quoted
+                    // against.
+                    let mut banked_trade = scalar_zero();
                     if let Ok(mut home) = bands.get_mut(expedition.home_band) {
                         if delivered > scalar_zero() {
                             home.stores.add(FOOD, delivered);
                         }
+                        banked_trade = settle_carried_trade(&mut expedition, &mut home);
                     }
-                    // The trip's pelts settle with its meat — one delivery, both products, so the
-                    // stockpile credit matches the raid forecast this trip was quoted against.
-                    let banked_trade =
-                        settle_carried_trade(&mut expedition, faction, &mut inventory);
                     event_log.push(CommandEventEntry::new(
                         current_turn,
                         CommandEventKind::Hunt,
                         faction,
                         format!(
                             "Hunting expedition dropped off {}",
-                            describe_haul(delivered.to_i64_whole(), banked_trade)
+                            describe_haul(delivered.to_i64_whole(), banked_trade.to_f32())
                         ),
                         Some(format!(
-                            "status=delivered trade_goods={} expedition={}",
-                            banked_trade,
+                            "status=delivered trade_goods={:.2} expedition={}",
+                            banked_trade.to_f32(),
                             entity.to_bits()
                         )),
                     ));
@@ -728,50 +730,48 @@ pub fn advance_expeditions(
 /// `output_multiplier(cohort, ..)`). Named so the forecast and the take can't disagree.
 const EXPEDITION_OUTPUT_MULTIPLIER: f32 = 1.0;
 
-/// A carried fractional trade haul as **whole goods** — the granularity the stockpile (an `i64`
-/// account) and the client's "~N trade goods" readout both work in.
-fn whole_trade_goods(carried_trade: f32) -> i64 {
-    carried_trade.round() as i64
-}
-
-/// Bank everything a party is carrying in [`Expedition::carried_trade`] into the faction stockpile
-/// and empty the pack, returning the whole goods credited.
+/// Bank everything a party is carrying in [`Expedition::carried_trade`] into the **home band's**
+/// store and empty the pack, returning what was credited.
 ///
 /// **Called on ARRIVAL — a `Delivering` drop-off or a `Returning` fold-back — not at the kill**, and
-/// that is the whole reason the field exists. A raid's promised `HuntTripForecast::delivered_trade`
-/// is a sum over the *whole trip*, so rounding each turn's fraction at the kill (as the resident band
-/// does, whose forecast *is* a per-turn rate) would floor a wolf raid's ~0.4/turn to **zero every
-/// turn**: the client would be shown pelts the sim never paid. One rounding, at the delivery the
-/// forecast is scoped to, is what keeps `forecast == actual` for the trade component
-/// (`docs/plan_hunt_yield_model.md` Decision 8).
+/// that is the whole reason the field exists: a raid's promised `HuntTripForecast::delivered_trade`
+/// is a sum over the *whole trip*, and the pack has to physically reach the band before anyone can
+/// hold what is in it (`docs/plan_hunt_yield_model.md` Decision 8).
 ///
-/// The remainder under a whole good is **dropped, not carried forward**, so each trip settles against
-/// its own forecast rather than smuggling a fraction of the last one into the next.
-fn settle_carried_trade(
-    expedition: &mut Expedition,
-    faction: FactionId,
-    inventory: &mut FactionInventory,
-) -> i64 {
-    let banked = whole_trade_goods(expedition.carried_trade);
+/// **Nothing is rounded off any more.** The banked amount used to be `round()`ed to whole goods
+/// because `FactionInventory` is an `i64` account; a [`LocalStore`](crate::LocalStore) is
+/// fixed-point, so the exact carried fraction lands and `forecast == actual` holds without a
+/// remainder being dropped on each trip.
+fn settle_carried_trade(expedition: &mut Expedition, home: &mut PopulationCohort) -> Scalar {
+    let banked = scalar_from_f32(expedition.carried_trade);
     expedition.carried_trade = 0.0;
-    if banked > 0 {
-        inventory.add_stockpile(faction, TRADE_GOODS, banked);
+    if banked > scalar_zero() {
+        home.stores.add(TRADE_GOODS, banked);
     }
     banked
 }
 
-/// A haul as feed-line prose — *"12 provisions"*, *"4 trade goods"*, or *"12 provisions and 4 trade
-/// goods"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule the
-/// whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species with no
-/// commercial value does not report "0 trade goods". Both zero is not this function's case — the
+/// A haul as feed-line prose — *"12 provisions"*, *"4.00 trade goods"*, or *"12 provisions and 4.00
+/// trade goods"*. **A zero component is omitted, never printed** (the render-only-when-non-zero rule
+/// the whole yield-vector arc runs on): a wolf raid does not report "0 provisions", and a species with
+/// no commercial value does not report "0 trade goods". Both zero is not this function's case — the
 /// caller reports an empty pack with its cause instead.
-fn describe_haul(provisions: i64, trade_goods: i64) -> String {
-    match (provisions > 0, trade_goods > 0) {
-        (true, true) => format!("{provisions} provisions and {trade_goods} trade goods"),
-        (false, true) => format!("{trade_goods} trade goods"),
+///
+/// Trade goods print to [`HAUL_TRADE_DECIMALS`] rather than as a whole count: since they became a
+/// fixed-point band store a raid can honestly come home with a *fraction* of a good, and a whole-count
+/// readout would print "0 trade goods" over a pack that really did bank pelts.
+fn describe_haul(provisions: i64, trade_goods: f32) -> String {
+    let trade = format!("{trade_goods:.*} trade goods", HAUL_TRADE_DECIMALS);
+    match (provisions > 0, trade_goods > 0.0) {
+        (true, true) => format!("{provisions} provisions and {trade}"),
+        (false, true) => trade,
         _ => format!("{provisions} provisions"),
     }
 }
+
+/// Decimal places a feed line prints a fractional trade haul to — enough to show a sub-unit pack
+/// (a wolf raid's ~0.4 pelts) without turning the line into a float dump.
+const HAUL_TRADE_DECIMALS: usize = 2;
 
 // **Retired in slice 7: `TENDED_SOURCE_WORKERS_NEEDED = 1`.** A managed source used to define its
 // `SourceYield.workers_needed` as a hardcoded one worker ("maintenance labor — a tending presence, not

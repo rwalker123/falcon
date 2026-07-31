@@ -68,6 +68,7 @@ const QUARRY_NEAR_Y := 18
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for that band.
 const BAND_FIXTURE_DISCLOSURE_FOOD := "food:904"
 const BAND_FIXTURE_DISCLOSURE_MORALE := "morale:904"
+const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
 
 ## The work-inspector policy-picker states work TWO Hunt rows on one band. They used to be told apart
 ## by the RUNG they stood on — one on `corral`, which the four-rung picker could not highlight at all.
@@ -365,6 +366,52 @@ func _ready() -> void:
 		_assert_work_zone_readable()
 		_assert_zone_content_fits()
 		_click_disclosure(BAND_FIXTURE_DISCLOSURE_MORALE)
+
+	# (b2) THE TRADE ROW (issue #381) — what THIS band earns per turn in the second product. The row is
+	# **purely band-scoped**: it carries a rate and no stock, because the only trade-goods stock the sim
+	# publishes is faction-global and every band would print the same total. So the states below pin the
+	# rate's two ends plus the tier gate — there is no stock axis left to vary.
+	#
+	# (i) EARNING — the fixture's forage patch pays ⇄ 0.04 through the `realized == 0` fallback and its
+	# deer pays ⇄ 0.04 outright, so the headline reads +0.08 over a TWO-row breakdown. Disclosure OPEN,
+	# because **the Gathered row is the regression guard**: reading `realized_trade_yield` alone drops
+	# the forage half, which is exactly how a cash-crop band came to read `+0.00` in playtest.
+	# LEFT dock only; see (iii) for why the row is not in a T/B frame.
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
+	await _settle()
+	await _save("band_panel_trade_expanded_left")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_forage_trade_counted()
+	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
+
+	# (ii) ZERO — a band working no trade-paying source. **The row is STILL THERE**, reading `+0.00 /turn`
+	# in neutral ink with no caret, and that is the whole point of the state: a row that vanished at zero
+	# read in playtest as "this band cannot trade at all" rather than "it earns none right now". The caret
+	# is absent because `register` declines an empty payload — an income-only breakdown has no rows when
+	# there is no income — so a zero row is honestly inert rather than opening an empty popover.
+	_push_bands([_no_trade_band_fixture()])
+	_panel.set_dock(SIDE_LEFT)
+	await _settle()
+	await _save("band_panel_trade_zero")
+	_assert_zones_within_bounds()
+	_assert_zone_content_fits()
+	_assert_trade_row_reads_zero()
+
+	# (iii) THE SHORT-TIER DROP. The T/B dock's band zone is ~300px and CLIPS what it cannot hold, so the
+	# Trade row is gated off there exactly as the food-outlook chart is — measured at 26px, against a zone
+	# with nothing to spare. The SAME earning band as (i), in a TOP dock, must render Food/Morale/Growth
+	# and NO Trade row. **Asserted, not just eyeballed**, because an absent row and a row clipped off the
+	# bottom of a `clip_contents` zone are the same picture.
+	_push_bands([_band_fixture()])
+	_panel.set_dock(SIDE_TOP)
+	await _settle()
+	await _save("band_panel_trade_short_tier")
+	_assert_zones_within_bounds()
+	_assert_trade_row_absent_in_short_tier()
 
 	# (c) CONCERNING food (net negative + low runway): the breakdown AUTO-shows (no click) under a red net.
 	_push_bands([_concerning_food_band_fixture()])
@@ -1370,6 +1417,101 @@ func _collect_zone_content_shortfall(node: Node, host: Control, failures: Array[
 ## the top-level content is anchored full-rect and so always "fits", while the thing that actually
 ## overflows is a board row off the bottom of the column. The hosts clip, so an overflow is invisible
 ## in the frame; this is the only thing that catches it.
+## The SHORT band-zone tier must drop the Trade row (`BandPanelController._build_vitals_label` passes
+## `compact`). Asserted rather than eyeballed: a dropped row and a row clipped off the bottom of a
+## `clip_contents` zone are the SAME PICTURE, so only a text read can tell them apart. It reads the
+## rendered vitals BBCode back out of the live label, which is also what makes it fail if the gate is
+## removed — the row would be present in the text while still invisible in the PNG.
+##
+## **MATCH BARE KEYS, NOT `"Trade:"`.** `DetailFormat._split_kv` splits each `Key: value` line into a
+## BBCode TABLE row and drops the `": "` separator, so the colon is never in the rendered text.
+func _assert_trade_row_absent_in_short_tier() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: short-tier trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	# The Food row proves the vitals label is actually populated — without it, "no Trade row" would
+	# pass vacuously on an empty label.
+	if not text.contains("Food"):
+		push_error("band_panel_preview: short-tier trade assert — vitals label has no Food row (vacuous)")
+		return
+	if text.contains("Trade"):
+		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
+		return
+	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
+
+## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
+## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
+## a fallback spelled `has("realized_trade_yield")` silently drops every cash crop and the row reads
+## `+0.00` on a band visibly selling flax. The fixture's patch pays 0.04 and its deer pays 0.04, so the
+## headline must read +0.08 and the breakdown must carry BOTH categories. A PNG cannot carry this — the
+## broken and the fixed frame differ by two characters — so it is asserted on both halves: the total
+## proves the forage contribution landed, the Gathered row proves it landed on the right category.
+func _assert_forage_trade_counted() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: forage-trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains("+0.08"):
+		push_error("band_panel_preview: Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
+		return
+	# The band-local STOCK, read off `stores.trade_goods` the way the Food row reads the larder.
+	# Matched as the VALUE cell's own run (`12.0 · +0.08`) rather than `Trade 12.0`: the KV formatter
+	# splits the row into table cells and the key cell carries the disclosure caret, so the two are never
+	# adjacent in the parsed text. ONE DECIMAL — the stock is a float on screen because the sim
+	# accumulates sub-unit trade income; the exact rendered value is what this pins.
+	if not text.contains("12.0 · +0.08"):
+		push_error("band_panel_preview: Trade row does not carry the band's stock of 12 — got: %s" % text)
+		return
+	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)
+	var joined := "\n".join(rows)
+	if not joined.contains(DetailFormat.FOOD_LABEL_GATHERED):
+		push_error("band_panel_preview: the Trade breakdown has no Gathered row — the forage source's trade was dropped (rows: %s)" % joined)
+		return
+	if not joined.contains(DetailFormat.FOOD_LABEL_HUNTED):
+		push_error("band_panel_preview: the Trade breakdown has no Hunted row (rows: %s)" % joined)
+		return
+	print("band_panel_preview: assert OK — a forage source's trade counts (Trade +0.08, Gathered + Hunted)")
+
+## The breakdown rows stashed for a disclosure key, read back the way the popover reads them.
+func _disclosure_rows(key: String) -> Array[String]:
+	var payloads: Dictionary = _hud._disclosures._breakdown_payloads
+	var rows: Array[String] = []
+	var stashed: Variant = payloads.get(key, [])
+	if stashed is Array:
+		for row in (stashed as Array):
+			rows.append(String(row))
+	return rows
+
+## The zero case: the Trade row must be PRESENT and read a zero rate. Asserted because "absent" and
+## "present but zero" are one glance apart in a PNG and the difference is the whole playtest report.
+func _assert_trade_row_reads_zero() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: zero-trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains("Trade"):
+		push_error("band_panel_preview: a band earning no trade dropped its Trade row — it must read zero")
+		return
+	# `format_yield` writes a signed magnitude, so a zero rate renders "+0.00". Matching the NUMBER
+	# rather than the row keeps this from passing on an earning band that merely has a Trade row.
+	if not text.contains("+0.00"):
+		push_error("band_panel_preview: zero-trade band's Trade row does not read +0.00 — got: %s" % text)
+		return
+	print("band_panel_preview: assert OK — a band earning no trade still shows Trade, reading +0.00")
+
+func _find_vitals_label(node: Node) -> RichTextLabel:
+	if node is RichTextLabel and (node as RichTextLabel).get_parsed_text().contains("Morale"):
+		return node as RichTextLabel
+	for child in node.get_children():
+		var found := _find_vitals_label(child)
+		if found != null:
+			return found
+	return null
+
 func _assert_zones_within_bounds() -> void:
 	var failures: Array[String] = []
 	for host_variant in _find_zone_hosts(_panel):
@@ -2535,7 +2677,9 @@ func _band_fixture() -> Dictionary:
 		"fertility_hunger": 1.0,
 		"fertility_reserve": 1.5,
 		"fertility_trend": 1.25,
-		"stores": {"provisions": 84.0},
+		# Trade goods are the THIRD key on the band's own `stores` since issue #381 — the sim moved them
+		# off the faction stockpile, so this is what the Trade row's total reads.
+		"stores": {"provisions": 84.0, "trade_goods": 12.0},
 		"working_age": 16,
 		"idle_workers": 3,
 		# Age structure (PopulationCohortState children/working/elders) — the band zone's PEOPLE bar.
@@ -2576,7 +2720,12 @@ func _band_fixture() -> Dictionary:
 		# is also OVERSTAFFED (5 assigned, 2 needed) → the "· only 2 of 5 working" note, and carries a
 		# `policy` so its row shows the ♻ policy glyph — both must survive beside the ● status glyph.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			# **THE LIVE FORAGE SHAPE, AND IT IS THE REGRESSION THIS FIXTURE EXISTS FOR.** A cash crop
+			# really does sell (`labor.rs`), so `trade_yield` is non-zero — but its `realized_trade_yield`
+			# is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` **0.0**, and the decoder inserts
+			# that key UNCONDITIONALLY. Both keys present, one of them zero, is exactly what the wire sends
+			# and exactly what a `has("realized_trade_yield")` test reads as "projected: nothing".
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "trade_yield": 0.04, "realized_trade_yield": 0.0},
 			# BOTH PRODUCTS on the worked row (issue #337): a deer pays meat AND hide, so the row
 			# headline must read `+0.20 /turn · ⇄ +0.04` — food leading, trade only because it is
 			# non-zero. `trade_yield` is NOT food income: the Food line's Gathered/Hunted breakdown
@@ -2607,6 +2756,21 @@ func _concerning_food_band_fixture() -> Dictionary:
 		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "policy": "deplete", "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
 		{"kind": "scout", "workers": 2},
 	]
+	return band
+
+## `_band_fixture` with every TRADE component stripped off its assignments — the band that earns no
+## trade at all, which is what the zero-rate Trade row is judged on. Strips rather than hand-writing a
+## fixture so it cannot drift from `_band_fixture`'s chrome (and so the ONLY difference between this
+## band and the earning one is the thing under test).
+func _no_trade_band_fixture() -> Dictionary:
+	var band := _band_fixture()
+	var stripped: Array = []
+	for a in (band["labor_assignments"] as Array):
+		var d := (a as Dictionary).duplicate(true)
+		d.erase("trade_yield")
+		d.erase("realized_trade_yield")
+		stripped.append(d)
+	band["labor_assignments"] = stripped
 	return band
 
 ## The trade-only-HUNT variant of the band above: the deer is unassigned, so every hunt this band works

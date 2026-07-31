@@ -27,7 +27,7 @@ use core_sim::{
     ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY,
+    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 
 /// The four **extractive** rungs — the intensity ladder. Every one of them must pay the species'
@@ -205,13 +205,14 @@ fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
         .unwrap_or(0.0)
 }
 
-fn trade_goods(app: &App) -> i64 {
+/// Trade goods on the producing/receiving band's own `LocalStore` — the account every ongoing
+/// harvest credits, a third key beside `FOOD` on the very store `larder` reads. **Fractional**: it is
+/// fixed-point, so a sub-unit pelt haul accumulates rather than rounding away.
+fn trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
-        .resource::<FactionInventory>()
-        .stockpile(FactionId(0))
-        .and_then(|m| m.get("trade_goods"))
-        .copied()
-        .unwrap_or(0)
+        .get::<PopulationCohort>(band)
+        .map(|c| c.stores.get(TRADE_GOODS).to_f32())
+        .unwrap_or(0.0)
 }
 
 fn herd_biomass(app: &App, id: &str) -> f32 {
@@ -223,7 +224,7 @@ fn herd_biomass(app: &App, id: &str) -> f32 {
 }
 
 /// One hunting turn on a re-shaped herd: `(food_banked, trade_banked, biomass_killed)`.
-fn hunt_one_turn(display_name: &str, policy: FollowPolicy, workers: u32) -> (f32, i64, f32) {
+fn hunt_one_turn(display_name: &str, policy: FollowPolicy, workers: u32) -> (f32, f32, f32) {
     let mut app = spawn_world();
     let (id, pos) = reshape_first_herd(&mut app, display_name);
     let band = spawn_hunters(&mut app, pos, &id, policy, workers);
@@ -231,7 +232,7 @@ fn hunt_one_turn(display_name: &str, policy: FollowPolicy, workers: u32) -> (f32
     app.world.run_system_once(advance_labor_allocation);
     (
         larder(&app, band),
-        trade_goods(&app),
+        trade_goods(&app, band),
         before - herd_biomass(&app, &id),
     )
 }
@@ -255,7 +256,7 @@ fn a_wolf_hunt_credits_pelts_and_exactly_zero_food_on_every_rung() {
             "{policy:?}: a wolf is not food — the larder must not move (killed {killed})"
         );
         assert!(
-            trade > 0,
+            trade > 0.0,
             "{policy:?}: a wolf is a pelt — trade goods must be credited (killed {killed})"
         );
     }
@@ -275,7 +276,7 @@ fn a_deer_hunt_credits_meat_and_hide_under_sustain() {
         "a Sustain deer hunt still feeds the band: {food}"
     );
     assert!(
-        trade > 0,
+        trade > 0.0,
         "a Sustain deer hunt now sells hides too (it earned nothing before #337): {trade}"
     );
 }
@@ -332,7 +333,7 @@ fn eradicate_pays_a_windfall_and_still_ends_the_herd() {
          vs {sustain_food} (Sustain killed {sustain_killed})"
     );
     assert!(
-        trade_goods(&app) > 0,
+        trade_goods(&app, band) > 0.0,
         "denial sells its hides too — every rung is paid the species' vector"
     );
     let left = herd_biomass(&app, &id);
@@ -353,7 +354,7 @@ fn eradicate_pays_a_windfall_and_still_ends_the_herd() {
 /// `foodIncome` is `Σ SourceYield::actual`, and the identity
 /// `larder_delta == food_income − food_consumption − pen_feed_upkeep` is what makes the band's food
 /// panel honest. A hunt that now credits a *second* currency must not leak it into that sum: a
-/// wolf's take contributes `0` to `food_income` while filling the faction's trade stockpile. Run
+/// wolf's take contributes `0` to `food_income` while filling the band's trade store. Run
 /// with only the labor system, so consumption and pen feed are both `0` and the identity reduces to
 /// `larder_delta == Σ actual`.
 #[test]
@@ -385,7 +386,7 @@ fn the_larder_ledger_excludes_trade_goods_for_a_wolf_hunt() {
          {food_income}"
     );
     assert!(
-        trade_goods(&app) > 0,
+        trade_goods(&app, band) > 0.0,
         "…while the same take really did earn trade goods, so this is not a no-op hunt"
     );
 }
@@ -820,16 +821,11 @@ const HOME_BAND_DISTANCE_TILES: u32 = 6;
 /// at `band_move_tiles_per_turn`. A raid that has not resolved by then is a hung test, not a slow one.
 const MAX_RAID_TURNS: u32 = 90;
 
-/// The forecast sums each turn's landed food as a raw `f32` while the party's pack accumulates on
-/// the fixed-point `Scalar` grid, so a multi-turn raid can end a few quanta apart. Sized as the
-/// sibling `expedition_hunt` guards are — a handful of `Scalar` quanta, not a free pass.
-const RAID_FOOD_EPSILON: f32 = 8.0 / core_sim::Scalar::SCALE as f32;
-
-/// Whole trade goods, the granularity the faction stockpile (an `i64` account) works in — the
-/// rounding `settle_carried_trade` applies to a party's carried pelts when it delivers.
-fn whole_trade_goods(carried: f32) -> i64 {
-    carried.round() as i64
-}
+/// The forecast sums each turn's landed payload as a raw `f32` while the band's store accumulates on
+/// the fixed-point `Scalar` grid, so a multi-turn raid can end a few quanta apart. Applies to **both**
+/// products since trade goods became a band-local `Scalar` store. Sized as the sibling
+/// `expedition_hunt` guards are — a handful of `Scalar` quanta, not a free pass.
+const RAID_PAYLOAD_EPSILON: f32 = 8.0 / core_sim::Scalar::SCALE as f32;
 
 /// A detached party / camp cohort of `workers` standing on `tile`, content (morale 1 ⇒ output
 /// multiplier 1.0, the multiplier the expedition path asserts it does *not* apply).
@@ -997,7 +993,7 @@ fn exported_raid_promise(app: &App, id: &str, policy: FollowPolicy) -> (u32, f32
 }
 
 /// Run one raid to its first delivery and report `(food_landed_in_the_band_larder,
-/// trade_goods_banked_by_the_faction)`.
+/// trade_goods_landed_in_the_same_band_store)`.
 ///
 /// Drives the **real** systems in the real order (`advance_herds` → `advance_band_movement` →
 /// `advance_expeditions`) and stops on the party's first completed trip: either it folded back
@@ -1006,7 +1002,7 @@ fn run_one_raid(
     app: &mut App,
     party: bevy::prelude::Entity,
     home: bevy::prelude::Entity,
-) -> (f32, i64) {
+) -> (f32, f32) {
     let mut left_hunting = false;
     for _ in 0..MAX_RAID_TURNS {
         app.world.run_system_once(advance_herds);
@@ -1023,7 +1019,7 @@ fn run_one_raid(
             left_hunting = true;
         }
     }
-    (larder(app, home), trade_goods(app))
+    (larder(app, home), trade_goods(app, home))
 }
 
 /// **10. A hunting EXPEDITION delivers BOTH products it promised — wolf and deer.**
@@ -1035,7 +1031,7 @@ fn run_one_raid(
 ///
 /// Asserted against the **exported** `huntTripEstimates` row (the client's own pre-launch readout),
 /// not an in-process forecast, and against the two accounts the sim really credits: the home band's
-/// larder for provisions and the faction stockpile for trade goods.
+/// store — provisions under `FOOD`, pelts under `TRADE_GOODS`.
 #[test]
 fn a_hunting_expedition_delivers_both_products_it_forecast() {
     for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
@@ -1068,19 +1064,18 @@ fn a_hunting_expedition_delivers_both_products_it_forecast() {
             let (landed_food, banked_trade) = run_one_raid(&mut app, party, home);
 
             assert!(
-                (landed_food - promised_food).abs() <= RAID_FOOD_EPSILON,
+                (landed_food - promised_food).abs() <= RAID_PAYLOAD_EPSILON,
                 "{context}: the band larder must receive the {promised_food} food the exported \
                  estimate promised, got {landed_food}"
             );
-            assert_eq!(
-                banked_trade,
-                whole_trade_goods(promised_trade),
-                "{context}: the faction must bank the {promised_trade} trade goods the exported \
-                 estimate promised (rounded to whole goods)"
+            assert!(
+                (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
+                "{context}: the home band must bank the {promised_trade} trade goods the exported \
+                 estimate promised, got {banked_trade}"
             );
             // …and the test must not be vacuously comparing zeros: a completing raid really pays.
             assert!(
-                banked_trade > 0,
+                banked_trade > 0.0,
                 "{context}: the harness must actually earn trade goods (promised {promised_trade})"
             );
         }
@@ -1124,13 +1119,12 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
         "a wolf hunt adds nothing to the larder — the larder ledger must stay food-only"
     );
     assert!(
-        banked_trade > 0,
+        banked_trade > 0.0,
         "…but the pelts DO come home: the raid promised {promised_trade} trade goods and banked \
          {banked_trade}"
     );
-    assert_eq!(
-        banked_trade,
-        whole_trade_goods(promised_trade),
+    assert!(
+        (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
         "and it banks exactly what the outfit UI promised"
     );
 }

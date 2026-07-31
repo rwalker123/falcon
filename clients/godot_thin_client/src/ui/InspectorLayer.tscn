@@ -6,7 +6,6 @@
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/PowerPanel.gd" id="4"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/CrisisPanel.gd" id="5"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/KnowledgePanel.gd" id="6"]
-[ext_resource type="Script" path="res://src/scripts/ui/inspector/TradePanel.gd" id="7"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/SentimentPanel.gd" id="8"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/VictoryPanel.gd" id="9"]
 [ext_resource type="Script" path="res://src/scripts/ui/inspector/FaunaPanel.gd" id="10"]
@@ -605,72 +604,6 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
-bbcode_enabled = true
-fit_content = true
-
-[node name="Trade" type="ScrollContainer" parent="RootPanel/TabContainer"]
-visible = false
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-script = ExtResource("7")
-metadata/_tab_index = 7
-
-[node name="TradeVBox" type="VBoxContainer" parent="RootPanel/TabContainer/Trade"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/separation = 12
-
-[node name="TradeSummarySection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="TradeSummaryLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Trade Diffusion"
-
-[node name="TradeSummaryText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeSummarySection"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-bbcode_enabled = true
-fit_content = true
-
-[node name="TradeLinksSection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="TradeLinksLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Top Trade Links"
-
-[node name="TradeLinksList" type="ItemList" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeLinksSection"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 200)
-layout_mode = 2
-size_flags_horizontal = 3
-allow_rmb_select = true
-same_column_width = true
-
-[node name="TradeEventsSection" type="VBoxContainer" parent="RootPanel/TabContainer/Trade/TradeVBox"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="TradeEventsLabel" type="Label" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Recent Trade Events"
-
-[node name="TradeEventsText" type="RichTextLabel" parent="RootPanel/TabContainer/Trade/TradeVBox/TradeEventsSection"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
 bbcode_enabled = true
 fit_content = true
 

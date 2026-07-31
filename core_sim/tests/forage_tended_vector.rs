@@ -31,7 +31,7 @@ use core_sim::{
     MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    BUILTIN_LABOR_CONFIG, FODDER, FOOD,
+    BUILTIN_LABOR_CONFIG, FODDER, FOOD, TRADE_GOODS,
 };
 
 /// Whole-worker head-count on the forage — large enough that `forage_take`'s worker cap never binds,
@@ -287,19 +287,21 @@ fn seasonal_weight(app: &mut App, coord: UVec2) -> f32 {
         .expect("the fixture tile carries a food module")
 }
 
-fn faction_trade_goods(app: &App) -> i64 {
+/// Trade goods on the producing band's own `LocalStore` — the third key beside `FOOD`/`FODDER`, and
+/// **fixed-point**, so a sub-unit credit accumulates instead of rounding away. (Ongoing harvest no
+/// longer touches `FactionInventory` at all; that account is start-profile only.)
+fn band_trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
-        .resource::<FactionInventory>()
-        .stockpile(FactionId(0))
-        .and_then(|items| items.get("trade_goods"))
-        .copied()
-        .unwrap_or(0)
+        .get::<PopulationCohort>(band)
+        .expect("the foraging band still exists")
+        .stores
+        .get(TRADE_GOODS)
+        .to_f32()
 }
 
 /// The **published** per-source trade quote — `SourceYield::trade`, the number that rides the wire as
-/// `LaborAssignmentState::tradeYield`. Asserted instead of the stockpile wherever the honest credit
-/// is a fraction of a trade good: the stockpile is an integer, so rounding would hide the very
-/// difference under test.
+/// `LaborAssignmentState::tradeYield`. The twin of what the band store is credited, asserted where a
+/// test wants the *quote* rather than the accumulated balance.
 fn published_trade(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
         .get::<LaborAllocation>(band)
@@ -347,8 +349,7 @@ fn standing_crop(app: &App, coord: UVec2) -> f32 {
 /// against a ceiling-only markup.
 #[test]
 fn the_published_forage_rung_row_is_what_a_real_turn_credits_on_both_binding_sides() {
-    // A trade-dominant crop, so the trade account is large enough to clear the stockpile's integer
-    // rounding and a mis-scaled markup cannot hide inside the epsilon.
+    // A trade-dominant crop, so a mis-scaled markup cannot hide inside the epsilon.
     for policy in [FollowPolicy::Sustain, FollowPolicy::Deplete] {
         for workers in [1_u32, FORAGE_WORKERS] {
             let mut app = spawn_world();
@@ -385,13 +386,12 @@ fn the_published_forage_rung_row_is_what_a_real_turn_credits_on_both_binding_sid
             let expected_trade =
                 (workers as f32 * row.per_worker.trade_goods).min(row.ceiling.trade_goods);
 
-            let _band = spawn_forager_with_workers(&mut app, tile, coord, policy, workers);
+            let band = spawn_forager_with_workers(&mut app, tile, coord, policy, workers);
             app.world.run_system_once(advance_labor_allocation);
-            let credited = faction_trade_goods(&app);
+            let credited = band_trade_goods(&app, band);
 
-            assert_eq!(
-                credited,
-                expected_trade.round() as i64,
+            assert!(
+                (credited - expected_trade).abs() <= EPSILON * expected_trade.max(1.0),
                 "{policy:?} with {workers} forager(s): the published row composes to \
                  {expected_trade} trade but the turn credited {credited}. \
                  (per_worker {}, ceiling {})",
@@ -472,7 +472,7 @@ fn the_deplete_rung_marks_trade_up_in_both_the_ceiling_and_the_per_worker_term()
 /// **The #427 regression.** A Tended Patch committed to `grapevine` — `provisions_per_biomass: 0`,
 /// trade-dominant — under **Sustain** credited nothing in any currency while being drawn down at full
 /// MSY every turn: the fodder and trade routings existed only inside the Field branch. It must now
-/// pay real trade goods into the faction stockpile, and still no food.
+/// pay real trade goods into its own band store, and still no food.
 ///
 /// **Sustain paying trade is intended, not a leak.** Rung 2 is drawn down by the ordinary gather, so
 /// its non-food accounts ride the take like its food account does; the policy axis stays alive
@@ -492,15 +492,15 @@ fn a_tended_cash_crop_under_sustain_credits_trade_goods_and_costs_food() {
     let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
 
     assert_eq!(
-        faction_trade_goods(&app),
-        0,
+        band_trade_goods(&app, band),
+        0.0,
         "no trade goods before the turn"
     );
     app.world.run_system_once(advance_labor_allocation);
 
     assert!(
-        faction_trade_goods(&app) > 0,
-        "a tended grapevine patch must credit the faction trade_goods stockpile, not vanish"
+        band_trade_goods(&app, band) > 0.0,
+        "a tended grapevine patch must credit the band's own trade_goods store, not vanish"
     );
     let take = take_biomass(before, &app, coord);
     assert!(
@@ -640,6 +640,102 @@ fn a_tended_staple_still_pays_food_and_now_pays_its_token_trade() {
         (published_trade(&app, band) - quoted).abs() <= EPSILON,
         "the published trade quote must be the payoff function's number: {} vs {quoted}",
         published_trade(&app, band)
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Trade goods are a BAND-LOCAL store (issue #381 follow-up)
+// ---------------------------------------------------------------------------------------------
+
+/// **A band holds the trade goods it produced, and the faction stockpile does not move.**
+///
+/// Trade goods used to be a faction-global integer account, so a band's harvest teleported into a
+/// number no place on the map owned — which made "a trade network connects two settlements" an
+/// unrepresentable idea. They are now a third key on the *same* `LocalStore` as `FOOD`/`FODDER`, so
+/// the goods sit where they were produced and `balance_supply_networks` (commodity-generic) shares
+/// them exactly as far as `SupplyNetworkConfig.reach_tiles` allows.
+///
+/// `FactionInventory` survives for the **start profile** alone — `seed_starting_inventory` writes the
+/// opening grant, the Startup-only `apply_trade_goods_bonus` drains it into the trade-link openness
+/// bonus — so this asserts both halves: the band gains, and the faction account is untouched.
+#[test]
+fn trade_income_lands_in_the_producing_bands_store_not_the_faction_stockpile() {
+    let mut app = spawn_world();
+    let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
+    seat_tended_patch(&mut app, coord, "grapevine");
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+
+    app.world.run_system_once(advance_labor_allocation);
+
+    assert!(
+        band_trade_goods(&app, band) > 0.0,
+        "the working band must hold the trade goods it produced"
+    );
+    assert_eq!(
+        app.world
+            .resource::<FactionInventory>()
+            .stockpile(FactionId(0))
+            .and_then(|items| items.get("trade_goods").copied())
+            .unwrap_or(0),
+        0,
+        "no ongoing harvest may credit the start-profile faction stockpile"
+    );
+}
+
+/// Turns of sub-unit income run in
+/// [`a_sub_unit_trade_income_accumulates_instead_of_vanishing`]. Enough that the total clears a whole
+/// trade good even though no single turn does, so "it accumulated" cannot be confused with "one turn
+/// happened to be big".
+const SUB_UNIT_ACCUMULATION_TURNS: u32 = 12;
+
+/// The per-turn credit that the retired `.round() as i64` silently discarded: anything under half a
+/// trade good rounded to `0`, forever.
+const ROUNDING_FLOOR: f32 = 0.5;
+
+/// **A sub-unit trade income ACCUMULATES instead of vanishing** — the live playtest bug.
+///
+/// The ongoing trade credits used to be `round()`ed into `FactionInventory`'s `i64` stockpile, so a
+/// source paying (say) `0.04` trade/turn contributed **exactly nothing, every turn, forever**, while
+/// the UI honestly reported `+0.04 /turn` off `SourceYield::trade`. A `LocalStore` is fixed-point
+/// precisely so small per-turn flows accumulate, and the credit now goes in through `scalar_from_f32`
+/// like `FOOD`/`FODDER` beside it.
+///
+/// A tended **staple** is the natural fixture: every staple carries the same flat `0.005` trade token,
+/// so one turn's honest sale is a small fraction of a good — the exact shape the rounding erased. The
+/// test asserts the per-turn quote really is sub-unit (or it would be vacuous) and that the running
+/// balance grows past a whole good regardless.
+#[test]
+fn a_sub_unit_trade_income_accumulates_instead_of_vanishing() {
+    let mut app = spawn_world();
+    let (tile, coord) = richest_tile_growing(&mut app, "wild_emmer");
+    seat_tended_patch(&mut app, coord, "wild_emmer");
+    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+
+    app.world.run_system_once(advance_labor_allocation);
+    let first_turn = band_trade_goods(&app, band);
+    assert!(
+        first_turn > 0.0 && first_turn < ROUNDING_FLOOR,
+        "the fixture must pay a SUB-UNIT trade income or this test is vacuous: {first_turn}/turn"
+    );
+
+    for _ in 1..SUB_UNIT_ACCUMULATION_TURNS {
+        app.world.run_system_once(advance_labor_allocation);
+    }
+
+    let total = band_trade_goods(&app, band);
+    assert!(
+        total > first_turn,
+        "every turn's sub-unit income must add to the store, not round away: \
+         {total} after {SUB_UNIT_ACCUMULATION_TURNS} turns vs {first_turn} after one"
+    );
+    assert_eq!(
+        app.world
+            .resource::<FactionInventory>()
+            .stockpile(FactionId(0))
+            .and_then(|items| items.get("trade_goods").copied())
+            .unwrap_or(0),
+        0,
+        "…and none of it leaked into the start-profile faction stockpile"
     );
 }
 

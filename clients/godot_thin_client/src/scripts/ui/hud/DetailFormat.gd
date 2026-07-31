@@ -844,6 +844,17 @@ static func band_pen_feed(band: Dictionary) -> float:
 static func band_raid_forfeit(band: Dictionary) -> float:
     return float(band.get("raid_forfeit", 0.0))
 
+## The band's TRADE GOODS on hand — the third key on the same `stores` map as provisions and fodder,
+## and genuinely THIS band's since the sim moved trade goods off the faction stockpile (issue #381).
+## A band beyond every supply network's reach holds what it produced and nothing else; one inside
+## `SupplyNetworkConfig.reach_tiles` of a neighbour holds its equalized share, because
+## `balance_supply_networks` pools every `stores` key generically.
+static func band_trade_stock(band: Dictionary) -> float:
+    var stores_variant: Variant = band.get("stores", {})
+    if stores_variant is Dictionary:
+        return float((stores_variant as Dictionary).get(HudConst.STORE_ITEM_TRADE_GOODS, 0.0))
+    return 0.0
+
 ## The band's larder (provisions) as a float — the starting point of the food-outlook projection and
 ## the number the Food summary row prints (rounded there). Here beside the rest of the band food
 ## arithmetic the chart and the Food line share.
@@ -896,6 +907,55 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
             var d := a as Dictionary
             total += float(d["realized_yield"]) if d.has("realized_yield") else float(d.get("actual_yield", 0.0))
     return total
+
+# =====================================================================================
+#  BAND TRADE ARITHMETIC — THE SECOND PRODUCT
+#  The exact twin of the food family above, for the OTHER thing a worked source yields
+#  (issue #337's `trade_yield`). It lives here for the same reason: the Trade summary row and its
+#  breakdown are the only readers today, and both are pure `band`-dict math.
+# =====================================================================================
+
+## Sum of per-source trade goods (goods/turn) across this band's labor assignments of one kind — the
+## category total behind the Trade breakdown (Gathered = forage, Hunted = hunt), and the trade twin of
+## `sum_realized_yield`.
+##
+## **THE PER-SOURCE RATE IS `SourceForecast.trade_rate_of`, AND THAT IS NOT A STYLE CHOICE.** It owns
+## the `realized_trade_yield` → `trade_yield` fallback that makes a FORAGE source's trade count at all
+## — see its header for why the `has()` spelling this sum used to carry never fired, and rendered every
+## cash-crop band as `+0.00`. Calling the same helper the per-source rows call is also what makes this
+## headline equal the sum of those rows BY CONSTRUCTION — the principle `band_trade_income` inherits
+## from `band_food_income`.
+##
+## THE CONSEQUENCE, STATED HONESTLY: the Trade headline is forward-PROJECTED for hunt sources and
+## THIS-TURN-ACTUAL for forage ones, so it is not the smoothed average the Food headline uses. That
+## resolves itself when the sim projects plant-web trade; until then a steady-looking number would be
+## the lie.
+static func sum_realized_trade(band: Dictionary, kind: String) -> float:
+    var total := 0.0
+    for a in HudBandLaborState.labor_assignments_of(band):
+        if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
+            var d := a as Dictionary
+            total += SourceForecast.trade_rate_of(d)
+    return total
+
+## The band's total trade income = Gathered + Hunted, the trade twin of `band_food_income` and summed
+## from the SAME per-source values as the breakdown rows so it equals them exactly. There is no debit
+## term to subtract: trade goods have no consumer (nothing eats them, no pen is fed on them), so unlike
+## food this income IS the net.
+static func band_trade_income(band: Dictionary) -> float:
+    return sum_realized_trade(band, SourceForecast.LABOR_KIND_FORAGE) \
+        + sum_realized_trade(band, SourceForecast.LABOR_KIND_HUNT)
+
+## True when the band earns a meaningful trade flow — the gate on the Trade row's `/turn` component and
+## its breakdown disclosure. ONE term where `band_has_food_flow` has four, because trade has only the
+## income side; below the floor reads as "no flow" (component omitted, not shown as a zero).
+##
+## The floor is `has_component`'s DISPLAY floor, not the sim-side `FOOD_FLOW_MIN`: everything this
+## gate opens is rendered at `YIELD_DECIMALS`, so a finer threshold would admit rates that then print
+## as `+0.00` in healthy green behind a live caret. `band_has_food_flow` is a different question (does
+## the larder move at all) and keeps `FOOD_FLOW_MIN`.
+static func band_has_trade_flow(band: Dictionary) -> bool:
+    return SourceForecast.has_component(band_trade_income(band))
 
 ## Food is "concerning" when the larder is net-draining OR the runway is below the warn threshold —
 ## mirroring `morale_is_concerning`'s below-warn / falling gate. It no longer auto-EXPANDS anything

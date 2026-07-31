@@ -33,9 +33,16 @@ const BREAKDOWN_KIND_MORALE := "morale"
 # combine by product; see `DetailFormat.fertility_breakdown_row`.
 const BREAKDOWN_KIND_GROWTH := "growth"
 
+# The band's trade goods — the SECOND product of the same worked sources the Food breakdown itemizes
+# (issue #381), so its popover carries the same two income rows (Gathered/Hunted) and no debit row at
+# all: nothing consumes trade goods. See `DisclosureController.trade_breakdown_lines`.
+const BREAKDOWN_KIND_TRADE := "trade"
+
 # The detail-row labels the disclosure attaches to (must equal the `Key` the detail formatter splits out).
 const DETAIL_ROW_FOOD := "Food"
 
 const DETAIL_ROW_MORALE := "Morale"
 
 const DETAIL_ROW_GROWTH := "Growth"
+
+const DETAIL_ROW_TRADE := "Trade"

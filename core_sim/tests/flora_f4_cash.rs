@@ -2,7 +2,7 @@
 //!
 //! The yield vector's third and final account. A cash crop (`cotton`/`flax`) is a `field`-ceiling
 //! species whose vector is **trade-dominant** and whose `provisions_per_biomass` is `0`: harvesting
-//! it as a Field credits the faction `trade_goods` stockpile and (near) zero food. F4 is the exact
+//! it as a Field credits the band's `trade_goods` store and (near) zero food. F4 is the exact
 //! twin of F3's fodder work — the *same* managed harvest, routed by the vector's `trade_goods`
 //! component with **no `role` branch**. This file pins that routing against the **loaded** configs,
 //! never a literal, so a retune of a table fails the test instead of agreeing with a stale copy.
@@ -23,7 +23,7 @@ use core_sim::{
     RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    BUILTIN_LABOR_CONFIG, FODDER, FOOD,
+    BUILTIN_LABOR_CONFIG, FODDER, FOOD, TRADE_GOODS,
 };
 use sim_runtime::TerrainType;
 
@@ -218,7 +218,7 @@ fn the_grain_trade_token_carries_the_field_dial_and_the_wild_baseline() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Integration: the labor arm credits the FACTION trade_goods stockpile.
+// Integration: the labor arm credits the BAND's own trade_goods store.
 // ---------------------------------------------------------------------------------------------
 
 fn spawn_world() -> App {
@@ -363,18 +363,21 @@ fn spawn_forager(
         .id()
 }
 
-fn faction_trade_goods(app: &App) -> i64 {
+/// Trade goods on the producing band's own `LocalStore` — the third key beside `FOOD`/`FODDER`.
+/// **Fractional**: a `LocalStore` is fixed-point, so a sub-unit harvest accumulates instead of
+/// rounding away (`FactionInventory`'s `i64` stockpile no longer sees ongoing income at all).
+fn band_trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
-        .resource::<FactionInventory>()
-        .stockpile(FactionId(0))
-        .and_then(|items| items.get("trade_goods"))
-        .copied()
-        .unwrap_or(0)
+        .get::<PopulationCohort>(band)
+        .expect("the keeper band still exists")
+        .stores
+        .get(TRADE_GOODS)
+        .to_f32()
 }
 
-/// **A cash Field credits the faction `trade_goods` stockpile and (near) zero food** — and no fodder
-/// at all. The trade goods are a FACTION-level commodity, so unlike FOOD/FODDER they land in
-/// `FactionInventory`, exactly as the Deplete-forage arm's wild sale does.
+/// **A cash Field credits the band's own `trade_goods` store and (near) zero food** — and no fodder
+/// at all. Trade goods are a third key on the *same* `LocalStore` as FOOD/FODDER: goods sit where
+/// they were produced until a supply network reaches them.
 #[test]
 fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
     let mut app = spawn_world();
@@ -388,15 +391,25 @@ fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
     let keeper = spawn_forager(&mut app, tile, coord);
 
     assert_eq!(
-        faction_trade_goods(&app),
-        0,
+        band_trade_goods(&app, keeper),
+        0.0,
         "no trade goods before the turn"
     );
     app.world.run_system_once(advance_labor_allocation);
 
     assert!(
-        faction_trade_goods(&app) > 0,
-        "a cotton Field must credit the faction trade_goods stockpile"
+        band_trade_goods(&app, keeper) > 0.0,
+        "a cotton Field must credit the keeper band's own trade_goods store"
+    );
+    assert_eq!(
+        app.world
+            .resource::<FactionInventory>()
+            .stockpile(FactionId(0))
+            .and_then(|items| items.get("trade_goods"))
+            .copied()
+            .unwrap_or(0),
+        0,
+        "ongoing harvest must NOT touch the start-profile faction stockpile"
     );
     let cohort = app.world.get::<PopulationCohort>(keeper).unwrap();
     assert!(
@@ -414,11 +427,12 @@ fn a_cash_field_credits_trade_goods_and_leaves_food_and_fodder_alone() {
 /// **The picker quote is the number the sim pays.** The labor arm's `field_trade_goods` and the
 /// crop-picker's `commit_trade_payoff` are one seam: seed a Field at exactly the hypothetical patch
 /// the quote builds (this tile's own `K` for the biome, at full standing crop — a Field neither
-/// raises nor lowers it, #433) and the credited stockpile equals the quote, rounded — quote and
-/// payout cannot drift (the §4.3 "assert the quote against the payoff function" rule, extended to
-/// the trade account).
+/// raises nor lowers it, #433) and the credited store equals the quote **exactly** — quote and payout
+/// cannot drift (the §4.3 "assert the quote against the payoff function" rule, extended to the trade
+/// account). It used to compare against `quoted.round()`, the integer stockpile's granularity; the
+/// band store is fixed-point, so the comparison is now the honest one.
 #[test]
-fn the_picker_trade_payoff_matches_the_credited_stockpile() {
+fn the_picker_trade_payoff_matches_the_credited_store() {
     let mut app = spawn_world();
     let (tile, coord) = first_patch_tile(&app);
 
@@ -437,7 +451,7 @@ fn the_picker_trade_payoff_matches_the_credited_stockpile() {
     let biomass = quote_capacity;
 
     seat_cotton_field(&mut app, coord, biomass);
-    spawn_forager(&mut app, tile, coord);
+    let keeper = spawn_forager(&mut app, tile, coord);
     app.world.run_system_once(advance_labor_allocation);
 
     let quoted = commit_trade_payoff(
@@ -451,10 +465,9 @@ fn the_picker_trade_payoff_matches_the_credited_stockpile() {
         RungKey::PlantField,
     );
     assert!(quoted > 0.0, "the fixture must quote a real cash payoff");
-    assert_eq!(
-        faction_trade_goods(&app),
-        quoted.round() as i64,
-        "the credited trade goods must equal the picker's quote, rounded: paid {} vs quoted {quoted}",
-        faction_trade_goods(&app)
+    let paid = band_trade_goods(&app, keeper);
+    assert!(
+        (paid - quoted).abs() <= EPSILON * quoted.max(1.0),
+        "the credited trade goods must equal the picker's quote: paid {paid} vs quoted {quoted}"
     );
 }

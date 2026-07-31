@@ -1789,11 +1789,6 @@ pub fn capture_snapshot(
     let ladder_config = ladder.get();
     let mut tile_states: Vec<TileState> = Vec::new();
     let mut food_module_states: Vec<FoodModuleState> = Vec::new();
-    let start_position = start_location.position();
-    let stockpile_radius = config
-        .start_profile_overrides
-        .stockpile_access_radius
-        .unwrap_or(DEFAULT_STOCKPILE_ACCESS_RADIUS);
     // Per-tile seasonal gather weight, keyed by coord — the same `FoodModuleTag::seasonal_weight` the
     // Forage arm of `advance_labor_allocation` folds into `forage_take`'s worker cap. The forage
     // patch forecast (below) needs it to report a per-worker yield that matches what the sim pays.
@@ -1955,7 +1950,6 @@ pub fn capture_snapshot(
         .iter()
         .map(
             |(entity, cohort, allocation, travel, expedition, band_id)| {
-                let home_pos = tile_positions.get(&cohort.home.to_bits()).copied();
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
@@ -1996,12 +1990,8 @@ pub fn capture_snapshot(
                     cohort,
                     allocation,
                     expedition,
-                    home_position: home_pos,
                     current_position: current_pos,
                     is_traveling,
-                    stockpile_radius,
-                    start_position,
-                    inventory: &faction_inventory,
                     demographics: &demographics_config,
                     wellbeing: &wellbeing_config,
                     supply_membership: &supply_membership,

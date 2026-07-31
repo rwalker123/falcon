@@ -40,6 +40,13 @@ extends RefCounted
 # with no animals never sprouts an empty Fodder line.
 const BAND_FODDER_ROW_FORMAT := "Fodder: %.1f"
 
+# ---- The band's TRADE row (issue #381): what THIS band HOLDS and what it earns per turn in the
+# second product, in the Food row's shape — `Trade: 12.0 · +0.04 /turn`. The stock carries ONE decimal,
+# like the Fodder row above and for the same reason: sub-unit trade income accumulates in the sim
+# rather than rounding away, so a band earning ~0.005/turn would read a flat `0` for a hundred turns
+# beside a visibly non-zero rate if this printed an integer.
+const BAND_TRADE_ROW_FORMAT := "Trade: %.1f · [color=#%s]%s[/color]"
+
 # ---- The hunt party's carry-ceiling FULL badge (shown when carried ≥ cap; the party heads home full).
 const HUNT_FULL_BADGE := "· FULL"
 
@@ -53,12 +60,6 @@ const MORALE_TREND_RISING_GLYPH := "▲"
 # contribution reads as "culture" (cohesion), negative as "unrest".
 const MORALE_CONTRIB_LABEL_SETTLING := "settling"
 const MORALE_CONTRIB_LABEL_CULTURE := "culture"
-
-# ---- Accessible-stockpile rows (the band's reachable stores, from `accessible_stockpile`).
-const STOCKPILE_RADIUS_FORMAT := "Stockpile: radius %d"
-const STOCKPILE_AVAILABLE_FORMAT := "Available: %s"
-const STOCKPILE_ENTRY_FORMAT := "%d %s"
-const STOCKPILE_ENTRY_SEPARATOR := ", "
 
 # --- Collaborators handed in by HudLayer (the SAME instances it holds) ---
 # The snapshot herd list, for a hunt party's migrating target.
@@ -109,8 +110,14 @@ func _is_player_unit(unit: Dictionary) -> bool:
 ## `terrain_label` is the SELECTED TILE's biome name — the morale row's "it's the hex you're on"
 ## payload, and the only thing these producers ever asked the selection model for. Passed in so this
 ## module holds no selection coupling.
+## `compact` is the SHORT band-zone tier asking for its optional rows to be dropped — today just the
+## Trade row. It is the row-level twin of `BandPanelController.build_band_zone`'s existing gate on
+## `_build_food_outlook_block`, and it exists for the same measured reason: the T/B dock's band zone is
+## ~300px, and a zone that overflows is CLIPPED rather than scrolled, so an optional row there costs a
+## slice of the WORKFORCE bar or a role card. Measured at 26px for this one row. Defaults false, so the
+## drawer host and both harnesses are unaffected.
 func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
-        ctx: DetailFormat.Context = null) -> Array[String]:
+        ctx: DetailFormat.Context = null, compact: bool = false) -> Array[String]:
     # The tint context is an OUT-PARAMETER of this producer, not a member: the caller (each of the two
     # detail hosts) builds it and hands it straight to the formatter. Defaulted so the preview
     # harnesses can still ask for the lines alone.
@@ -144,6 +151,17 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         var fodder_store := float(unit_data.get("fodder_store", 0.0))
         if fodder_store > SourceForecast.FOOD_FLOW_MIN or float(unit_data.get("pen_feed_upkeep", 0.0)) > SourceForecast.FOOD_FLOW_MIN:
             lines.append(BAND_FODDER_ROW_FORMAT % fodder_store)
+        # The band's TRADE row, beneath the two larder rows: the SECOND product the same worked
+        # sources yield. UNCONDITIONAL for a player band (a zero reads `+0.00 /turn`, see
+        # `_band_trade_line`) — only the SHORT band-zone tier suppresses it, for room.
+        if not compact:
+            lines.append(_band_trade_line(unit_data))
+            # The SAME click-to-open disclosure as Food, in the same popover — offered only when there
+            # is FLOW to itemize, since a band earning nothing has no Gathered/Hunted rows behind it.
+            # `register` declines an empty payload, so a zero row simply wears no caret.
+            if DetailFormat.band_has_trade_flow(unit_data):
+                _disclosures.register(HudDisclosureVocab.DETAIL_ROW_TRADE, HudDisclosureVocab.BREAKDOWN_KIND_TRADE,
+                    unit_data, _disclosures.trade_breakdown_lines(unit_data))
     # Morale is our own bands' business only (a non-player band's morale isn't ours
     # to see); morale drives productivity + migration (a harsh tile erodes it until
     # people begin leaving), while deaths stay starvation/cold-driven.
@@ -175,12 +193,14 @@ func unit_summary_lines(unit_data: Dictionary, terrain_label: String,
         lines.append("Position: (%d, %d)" % [int(pos_array[0]), int(pos_array[1])])
     # Per-source labor is now shown by the allocation panel (a real −/+ control set),
     # not as drawer text; the old single-task harvest/scout summaries are retired.
-    var stockpile_variant: Variant = unit_data.get("accessible_stockpile", {})
-    if stockpile_variant is Dictionary:
-        var stockpile_lines := _accessible_stockpile_lines(stockpile_variant)
-        if not stockpile_lines.is_empty():
-            lines.append("")
-            lines.append_array(stockpile_lines)
+    #
+    # **THE `Stockpile: radius N` / `Available: …` ROWS ARE GONE** (issue #381). They read as the
+    # band's own reachable stores and were nothing of the kind: `accessible_stockpile_state`
+    # (`core_sim/src/snapshot/population.rs`) returns the WHOLE faction stockpile, gated only on the
+    # band sitting within `stockpile_access_radius` of the faction's START position — a half-built
+    # proximity idea whose shipped radius is 0, so the rows showed for a band that had not left the
+    # start hex and vanished the moment it moved. Beside a Trade row on the same panel they printed
+    # the same faction number twice, one of them wearing a meaningless `radius 0`.
     # The carets this render registered are the LAST thing the context needs; read them back here so
     # every caller gets a fully-filled context by simply passing it in.
     context.disclosures = _disclosures.state()
@@ -295,6 +315,37 @@ func _band_food_line(unit_data: Dictionary, ctx: DetailFormat.Context) -> String
         line += " · [color=#%s]%s[/color]" % [net_hex, SourceForecast.format_yield(net)]
         _food_flow_present = true
     return line
+
+## Selection-panel band trade row: "Trade: 12.0 · +0.04 /turn" — what THIS band HOLDS and what it earns
+## per turn in the second product of the very sources the Food row totals. **ALWAYS emitted for a
+## player band**, reading `+0.00 /turn` when it earns none: trade is a standing account of the band's
+## economy, not a conditional feature like the Fodder row, and a row that vanishes when the number is
+## zero makes the player wonder whether the band *can* trade at all — which is exactly how it read in
+## playtest.
+##
+## **BOTH NUMBERS ARE GENUINELY THIS BAND'S**, which they were not when this row first shipped. Trade
+## goods used to live only in the faction-global `FactionInventory`, so the stock had to be tagged
+## `(faction)` to stay honest — and a caveat is the wrong answer to a wrong number. The sim now keeps
+## them in the band's own `stores`, the third key beside provisions and fodder (issue #381): a band
+## holds what it produces until a trade network reaches it, and `balance_supply_networks` pools it with
+## same-faction bands inside `SupplyNetworkConfig.reach_tiles`. So the stock is read the same way the
+## Food row reads the larder, and the tag is gone.
+##
+## The rate takes NO sign branch: nothing consumes trade goods, so it cannot come out negative and a
+## DANGER arm would be unreachable. Zero reads in neutral ink rather than green — a band earning
+## nothing is not a "good", the same call the Output row makes at full output. **The STOCK is not
+## tinted at all**, matching the Food row's provisions figure: a quantity on hand is not a verdict.
+##
+## **THE STOCK IS PRINTED AS A FLOAT**, unlike the Food row's whole-unit provisions: the sim
+## accumulates sub-unit trade income instead of rounding it away each turn, so an integer readout
+## would put that accumulation back on screen as a stuck `0`. One decimal, as the Fodder row does.
+func _band_trade_line(unit_data: Dictionary) -> String:
+    var income := DetailFormat.band_trade_income(unit_data)
+    var hex := HudStyle.HEALTHY_HEX if DetailFormat.band_has_trade_flow(unit_data) \
+        else HudStyle.INK_DIM_HEX
+    return BAND_TRADE_ROW_FORMAT % [
+        DetailFormat.band_trade_stock(unit_data), hex,
+        SourceForecast.format_yield(income)]
 
 ## Selection-panel band morale row: "Morale: 41% ▼ — harsh terrain (Karst Cavern Mouth)".
 ## Morale, its per-turn trend, and the dominant cause come from the snapshot cohort dict
@@ -415,27 +466,3 @@ func _morale_breakdown_lines(unit_data: Dictionary, terrain_label: String) -> Ar
         lines.append(DetailFormat.RECOVERY_GUIDANCE_TEXT)
     return lines
 
-## The band's reachable stores: a radius line plus one comma-joined `<qty> <Item>` run. Travels with
-## `unit_summary_lines`, its only caller; the item wording is `HudFormat.stockpile_label`, shared with
-## the left-dock stockpile panel so an item is spelled the same in both.
-func _accessible_stockpile_lines(stockpile: Dictionary) -> Array[String]:
-    var lines: Array[String] = []
-    var radius := int(stockpile.get("radius", 0))
-    var entries_variant: Variant = stockpile.get("entries", [])
-    var entries: Array = entries_variant if entries_variant is Array else []
-    if entries.is_empty():
-        return lines
-    var formatted: Array[String] = []
-    for entry in entries:
-        if not (entry is Dictionary):
-            continue
-        var item := String(entry.get("item", ""))
-        var qty := int(entry.get("quantity", 0))
-        if item == "" and qty == 0:
-            continue
-        formatted.append(STOCKPILE_ENTRY_FORMAT % [qty, HudFormat.stockpile_label(item)])
-    if formatted.is_empty():
-        return lines
-    lines.append(STOCKPILE_RADIUS_FORMAT % radius)
-    lines.append(STOCKPILE_AVAILABLE_FORMAT % STOCKPILE_ENTRY_SEPARATOR.join(formatted))
-    return lines

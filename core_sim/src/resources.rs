@@ -1048,6 +1048,11 @@ impl TradeTelemetry {
 }
 
 /// Per-faction stockpile of abstracted inventory items granted by start profiles.
+///
+/// **Start-profile only.** Nothing in the turn loop credits or reads it: `seed_starting_inventory`
+/// writes `StartProfileOverrides::inventory` here at worldgen and the Startup-only
+/// `apply_trade_goods_bonus` drains the `TRADE_GOODS` grant into the opening trade-link openness
+/// bonus. Ongoing production banks into the producing band's [`crate::LocalStore`] instead.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct FactionInventory {
     stockpiles: HashMap<FactionId, HashMap<String, i64>>,

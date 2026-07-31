@@ -1073,11 +1073,14 @@ func _ready() -> void:
 	# drawer's cap against the dock. A committed patch's block went from ONE line to FOUR rows, so both
 	# surfaces gained ~66px at once, and neither fixture in the shipped set could reach them.
 	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
-	# The Stockpiles card sits BELOW the tile card in the same dock and is hidden until a faction
-	# carries stock, so without this the drawer's cap is measured against a dock with nothing reserved
-	# below it — i.e. not the layout the player has. `DockScrollFit` subtracts the visible siblings'
-	# minimum heights, so pushing real stock is what puts that term in the measurement at all.
-	_hud.update_stockpiles(_stockpile_inventory_fixture())
+	# **THE STOCKPILE PUSH THAT USED TO SIT HERE IS GONE, AND WITH IT A LAYOUT TERM** (issue #381).
+	# The left-dock Stockpiles card sat below the tile card and was hidden until a faction carried
+	# stock, so seeding stock here was what put a reserved sibling into `DockScrollFit`'s measurement.
+	# That card is retired and the band dock's Trade row that replaced it is band-scoped (a rate, no
+	# faction stock), so nothing in the HUD reads `faction_inventory` and `HudLayer.update_stockpiles`
+	# no longer exists. The drawer's cap is now measured against a left dock holding the tile card and
+	# the default-hidden command feed — which IS the layout the player has, and a slightly roomier one
+	# than this state was originally tuned against.
 	# WHAT THE COMMITTED BLOCK COSTS THE DRAWER, measured rather than reasoned about: the SAME tile
 	# with the commitment stripped, so the printed pair is the before/after of one change on one
 	# layout. Both surfaces grew at once, and a sizing claim about either is worth only its number.
@@ -6677,22 +6680,6 @@ func _weeded_crop_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return _seed_forage_rows(tile)
-
-## A player faction carrying real stock, so the left dock's Stockpiles card is VISIBLE and reserves
-## its own height beneath the tile card (`DockScrollFit._height_reserved_below`). Five items, the
-## spread an established band has — enough that the card is a real term in the drawer's cap rather
-## than a title bar.
-func _stockpile_inventory_fixture() -> Array:
-	return [{
-		"faction": 0,
-		"inventory": [
-			{"item": "provisions", "quantity": 148},
-			{"item": "dried_fish", "quantity": 36},
-			{"item": "hay", "quantity": 22},
-			{"item": "trade_goods", "quantity": 14},
-			{"item": "flax", "quantity": 9},
-		],
-	}]
 
 ## THE SIZING CASE FOR A COMMITTED PATCH — `realized_species_max` is 4, so a 4-plant basket is the
 ## WORST CASE both surfaces must fit, not an outlier, and the 3-plant reference tile is one row short

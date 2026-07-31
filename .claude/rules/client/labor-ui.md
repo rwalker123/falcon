@@ -491,7 +491,8 @@ discard is precisely what this axis split removed.
     read in ONE grammar" above. **These are
     NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
     products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
-    goods onto `Expedition::carried_trade` and into the faction stockpile at the drop-off/fold-back), but
+    goods onto `Expedition::carried_trade` and into the HOME BAND's `stores` at the drop-off/fold-back —
+    the faction stockpile until issue #381 moved trade goods band-local), but
     accrues **no husbandry** (a known v1 gap, tracked server-side) — so the expedition set may state a
     trade payoff, never a craft, and the two sets must stay separate. `LOCAL_HUNT_POLICY_HINTS`
     also owns the **`corral`** hint (Corral is a local-hunt-only rung) — which must carry all three
@@ -1244,6 +1245,13 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   than an assumption**: a wide-face ceiling of 2 was written for exactly this face and the rendered
   frame refuted it — three abreast comes out 555px against the deer hunt picker's long-standing 546,
   nothing clips, and 3 + 3 reads better than 2 + 2 + 2. Re-adding one needs a frame that overruns.
+- **`trade_rate_of(source)`** — the ONE per-source trade rate, and the owner of the
+  `realized_trade_yield` → `trade_yield` fallback. **The sentinel is the VALUE `0`, not an absent
+  key**: forage's projection is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` zero, and the
+  decoder inserts the key unconditionally — so the `has("realized_trade_yield")` spelling both readers
+  used to carry never once fired, and every forage source's trade read as nothing (a work row with no
+  `⇄`, a band Trade row at `+0.00`). `source_yield_readout` and `DetailFormat.sum_realized_trade` both
+  call it, which is what keeps a per-source row and the band's headline in agreement by construction.
 - `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
   `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
   the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
@@ -1299,7 +1307,9 @@ shows.
 **`trade_yield` IS NOT FOOD INCOME.** The Food line's Gathered/Hunted breakdown and the band's
 `food_income` (`DetailFormat.band_food_income` / `sum_realized_yield` / `band_net_food` /
 `band_has_food_flow`, and the arrivals schedule) still sum `actual_yield` alone — trade goods credit
-the faction stockpile and never the larder — so a trade-only hunt must not move the Food line. That is
+the band's `stores[trade_goods]` and never its larder — so a trade-only hunt must not move the Food
+line. (That credit was the FACTION stockpile until issue #381; the account is still separate from the
+larder, which is the whole point.) That is
 what keeps the larder identity closed for an inedible quarry, and it is why the answer for an
 AGGREGATE is never "add trade to the food total".
 

@@ -15,7 +15,7 @@ paths:
 
 | Script | Purpose |
 |--------|---------|
-| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx)` (Food · Fodder · Morale · Output · Position · the accessible-stockpile rows, registering the Food/Morale disclosures through `DisclosureController` as it emits them) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · Policy · Phase · Carried/Provisions · Next delivery · Position), plus the private row builders `_band_food_line` / `_band_morale_line` / `_band_output_line` / `_morale_breakdown_lines` / `_accessible_stockpile_lines`. **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio) and `_format_stockpile_label` became `HudFormat.stockpile_label`. Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label/stockpile-row vocabulary came, the disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary and `MORALE_CAUSE_*` stayed on `HudLayer` and are read back as `HudLayer.X` |
+| `ui/hud/BandDetailLines.gd` | `RefCounted` producer (HUD decomposition, `docs/plan_hud_decomposition.md`) owning the **STATEFUL band/party detail-line producers** — the rows a BAND or a PARTY shows in whichever detail surface hosts it: `unit_summary_lines(unit, terrain_label, ctx, compact)` (Food · Fodder · **Trade** · Morale · Output · Growth · Position, registering the Food/Morale/Growth/Trade disclosures through `DisclosureController` as it emits them) and `expedition_summary_lines(unit, ctx)` (Mission · Target + its live `(x, y)` · Policy · Phase · Carried/Provisions · Next delivery · Position), plus the private row builders `_band_food_line` / `_band_trade_line` / `_band_morale_line` / `_band_output_line` / `_morale_breakdown_lines`. **It is the stateful HALF of a three-way split**: the PURE producers became `DetailFormat` statics (`herd_summary_lines`, the expedition tooltip trio). (`_format_stockpile_label` was the third piece of that split, via `HudFormat.stockpile_label`; both it and the accessible-stockpile rows it served are retired — see the accessible-stockpile note further down this file.) Hud holds it as `_banddetail`, constructed in `_ready` AFTER `_disclosures` and BEFORE `_bandpanel`; **both detail hosts share the one instance** — the Occupants-card drawer (`Hud._render_occupant_drawer`) and `BandPanelController`'s vitals label + parties inspector strip, which is what retired three of that controller's nine Callable injections. **THE INJECTION SURFACE IS ONE CALLABLE** — `_herd_label_for_id`, which cannot fold onto `HudBandLaborState` because it reads THREE collaborators (`_selectioncard.find_roster_herd` AND `_selection.herd()` AND `_band_labor.find_world_herd`); `_is_player_unit` is a trivial private COPY (the `SelectionCardController` / `BandPanelController` precedent). **IT NEVER SEES THE SELECTION MODEL**: the old producers read `_selection` at exactly two sites, both `tile_info()["terrain_label"]` for the morale row's "it's the hex you're on" payload, so that ONE display string is now a `terrain_label` PARAMETER and both hosts resolve it through the new `SelectionCardController.selected_terrain_label()`. It also owns `_food_flow_present`, which is a **private handshake between `_band_food_line` (writer) and `unit_summary_lines` (its only reader)** — the formatter has never seen it, so it is deliberately not on the `DetailFormat.Context`. Consts follow the `DetailFormat` rule (a const lives here iff every reader moved here): the Fodder/FULL-badge/morale-arrow/contribution-label vocabulary came (the stockpile-row vocabulary went with those rows). The disclosure `DETAIL_ROW_*` / `BREAKDOWN_KIND_*` protocol vocabulary lives in `hud_disclosure_vocab.gd` and `MORALE_CAUSE_*` in `DetailFormat.gd` — read back as `HudDisclosureVocab.X` / `DetailFormat.X`, NOT as `HudLayer.X`; `Hud.gd` defines none of them |
 | `ui/BandFoodStatus.gd` | Single source of truth for band food-supply thresholds (`band_status_config.json`) + the days→green/amber/red color / BBCode-hex mapping (plus the parallel morale warn/critical thresholds + `color_for_morale`/`hex_for_morale`), shared by MapView's band dot and Hud's food/morale lines + alerts |
 - **Demographics readout** (`Hud.gd` `update_demographics`, dispatched from `Main.gd`): the player
   faction's age structure from `PopulationDemographicsState` (snapshot `demographics[]`) shows as a
@@ -167,6 +167,92 @@ paths:
   only to route the inline re-render, and one click behaviour needs no routing. The label + click are
   wired on BOTH the Occupants-card drawer's `%OccupantDetail` and the dockable Band/City panel's
   per-render vitals label, each binding ITSELF as the popover's anchor.
+- **The band's TRADE row** (issue #381; the per-assignment `realizedTradeYield`/`tradeYield` wire
+  fields). Trade goods are the SECOND product of the very sources the Food row totals, and until this
+  they had no home in the panel the player commands from — the UI was a standalone inspector tab
+  predating the dock, plus a small unlabelled left-dock `Stockpiles` card. Both are retired; the dock
+  carries it, in the Food row's shape:
+
+  ```
+  Food:  74  (93 turns) · -0.81 /turn
+  Trade: 12.0 · +1.36 /turn
+  ```
+
+  - **The stock carries ONE decimal** (`%.1f`, as the Fodder row does), where the Food row's provisions
+    are whole units. The sim accumulates sub-unit trade income rather than rounding it off each turn, so
+    an integer readout would put that accumulation back on screen as a `0` stuck for ~100 turns beside a
+    visibly non-zero rate. `band_panel_preview`'s `_assert_forage_trade_counted` pins the rendered
+    `12.0 · +0.08`.
+
+  - **BOTH NUMBERS ARE GENUINELY THIS BAND'S**, which they were not when the row first shipped. Trade
+    goods used to live only in the faction-global `FactionInventory`, so the stock had to wear a
+    `(faction)` caveat — and a caveat is the wrong answer to a wrong number. **The sim now keeps them
+    in the band's own `stores`**, the third key beside provisions and fodder: a band holds what it
+    produces until a trade network reaches it, and `balance_supply_networks` pools it with same-faction
+    bands inside `SupplyNetworkConfig.reach_tiles` (default 3) — which is the "within N hexes you need
+    no route" rule, and it works because that balancer is commodity-generic. The stock is read exactly
+    the way the Food row reads the larder (`DetailFormat.band_trade_stock` ↔ `band_provisions`), and it
+    needed **no schema or decoder change**: `PopulationCohortState.stores` already ships every key.
+    **`accessible_stockpile` was NOT that store, and its rows are RETIRED.**
+    It published `inventory.stockpile(faction)` **whole**, gated only on the band sitting within a
+    `stockpile_access_radius` of the faction's START position — a half-built proximity idea whose
+    shipped radius was `0`. So `Stockpile: radius 0` / `Available: 2 Trade Goods` printed the faction
+    total under a band-scoped heading, appeared only while the band had not left the start hex, and sat
+    beside a Trade row saying the same number. The rows, their consts, the producer,
+    `HudFormat.stockpile_label` (its last reader) and MapView's marker copy are all gone;
+    `marker_field_guard` no longer lists the key. Sim-side the lever and the computation are gone too,
+    so **the field always arrives absent**; the wire table and this decoder survive unread — see
+    `.claude/rules/core_sim/yield-forecast.md` → "`accessibleStockpile` is an unread wire table".
+  - **ALWAYS emitted for a player band, reading `+0.00 /turn` when it earns none.** Trade is a standing
+    account of the band's economy, not a conditional feature like the Fodder row; a row that vanished
+    at zero read in playtest as "this band cannot trade at all" rather than "it earns none right now".
+    Zero renders in neutral ink, not green — a band earning nothing is not a "good", the same call the
+    Output row makes at full output. No sign branch exists: nothing consumes trade goods, so the rate
+    cannot come out negative and a DANGER arm would be unreachable.
+  - **The trade gates are the DISPLAY floor, `SourceForecast.has_component`** — both the row's
+    healthy-tint/caret gate (`DetailFormat.band_has_trade_flow`) and the two breakdown rows — where the
+    Food side's equivalents keep the sim-side `FOOD_FLOW_MIN`. Trade rates land in that gap routinely
+    (one forager on a staple patch earns ~0.003/turn), so the finer floor rendered them green at
+    `+0.00` behind a live caret whose popover listed `▲ +0.00 Gathered`. See `labor-ui.md` →
+    `has_component` for why a gate finer than its formatter admits what it exists to stop.
+  - **The disclosure is INCOME-ONLY** (`DisclosureController.trade_breakdown_lines`): Gathered/Hunted,
+    every row ▲. Nothing consumes trade goods, so there is no Eaten/Pen-feed/raid analogue and no debit
+    row exists to write — which is also why `_is_concerning` answers **false** for it outright: there
+    is no trade analogue of starvation. A zero row therefore wears NO caret (`register` declines an
+    empty payload), so it is honestly inert rather than opening an empty popover.
+  - **THE PER-SOURCE RATE IS `SourceForecast.trade_rate_of`, AND ITS SENTINEL TEST IS THE VALUE, NOT
+    THE KEY.** `realized_trade_yield` is **0 on every FORAGE source** — a missing *projection*, NOT a
+    claim that plants sell nothing: `core_sim/src/forage.rs`'s
+    `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` says so outright ("a KNOWN GAP, not a claim that plants
+    sell nothing… Do not let a reader treat this as 'plants have no trade value'"), and the trade a
+    gather actually earned ships in `trade_yield` (`labor.rs`: "A cash crop's harvest really does sell
+    (Flora Roster F4)"). **Both readers spelled the fallback as `has("realized_trade_yield") ? … :
+    trade_yield`, which is DEAD CODE** — `native/src/dict/population.rs` inserts that key
+    UNCONDITIONALLY, so `has()` is always true on live data and the `0.0` sentinel won every time.
+    Playtest caught it as a band reading `Trade +0.00 /turn` beside a forage patch its own compose
+    sheet quoted at `0.04 trade`. Testing `realized > 0` is what makes the fallback fire. **The same
+    dead spelling sat in `SourceForecast.source_yield_readout`, so a forage patch's trade had never
+    rendered on a WORK-board row either** — one helper now serves both, which is also what keeps this
+    headline equal to the sum of the rows the player can open. The consequence to state plainly: the
+    headline is forward-projected for hunt sources and this-turn-actual for forage ones, so it is not
+    the smoothed average the Food headline uses.
+  - **The SHORT band-zone tier drops the row** (`unit_summary_lines`' `compact` parameter, passed by
+    `BandPanelController._build_vitals_label`) — the row-level twin of that zone's existing
+    food-outlook-chart gate, and for the same measured reason: the T/B dock's band zone is ~300px and
+    CLIPS what it cannot hold, and this row measures **26px**. Trade is still legible there on the
+    WORK zone header's `⇄` total.
+  - **Nothing in the HUD reads `faction_inventory` any more.** The card's `HudLayer.update_stockpiles`
+    (and `Main`'s dispatch to it) went with the card; `MapPanel.apply_update` still consumes the
+    snapshot key for its scenario description. Nothing here needs a world-boundary reset either — the
+    row renders off the band dict, which every snapshot restates.
+  - band_panel_preview: `band_panel_trade_expanded_left` (earning, disclosure open — its fixture's
+    forage patch carries the LIVE shape `trade_yield 0.04` beside `realized_trade_yield 0.0`, and
+    `_assert_forage_trade_counted` pins both the `+0.08` total and the Gathered row, since the broken
+    and fixed frames differ by two characters; mutation-verified to fail at `+0.04`) /
+    `band_panel_trade_zero` (a band earning none — the row is PRESENT at `+0.00`, **asserted**, since
+    "absent" and "present but zero" are one glance apart and the difference is the whole playtest
+    report) / `band_panel_trade_short_tier` (the T/B gate, also **asserted** — a dropped row and a row
+    clipped off a `clip_contents` zone are the same picture).
 - **Band morale readout** (snapshot `PopulationCohortState.morale`, decoded in `native/src/lib.rs`
   `population_to_dict` as `morale`, a 0–1 float on each cohort dict; flowed into the MapView unit marker
   in `_rebuild_unit_markers`): a band can shrink while well-fed when a harsh tile erodes morale until

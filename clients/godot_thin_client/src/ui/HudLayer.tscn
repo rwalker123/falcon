@@ -232,25 +232,6 @@ card_title = "Tile"
 custom_minimum_size = Vector2(320, 0)
 visible = false
 
-[node name="StockpilePanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
-custom_minimum_size = Vector2(320, 120)
-
-[node name="StockpileMargin" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel"]
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 12
-
-[node name="StockpileVBox" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin"]
-size_flags_horizontal = 3
-
-[node name="StockpileTitle" type="Label" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox"]
-text = "Stockpiles"
-
-[node name="StockpileList" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/StockpilePanel/StockpileMargin/StockpileVBox"]
-size_flags_horizontal = 3
-size_flags_vertical = 3
-
 [node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/TilePanel"]
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
