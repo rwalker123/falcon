@@ -201,18 +201,22 @@ paths:
     row exists to write — which is also why `_is_concerning` answers **false** for it outright: there
     is no trade analogue of starvation. A zero row therefore wears NO caret (`register` declines an
     empty payload), so it is honestly inert rather than opening an empty popover.
-  - **THE ARITHMETIC'S `realized → trade_yield` FALLBACK IS LOAD-BEARING, AND IT IS WHAT MAKES CASH
-    CROPS COUNT.** `realized_trade_yield` is **0 on every FORAGE source** — but that is a missing
-    *projection*, NOT a claim that plants sell nothing: `core_sim/src/forage.rs`'s
+  - **THE PER-SOURCE RATE IS `SourceForecast.trade_rate_of`, AND ITS SENTINEL TEST IS THE VALUE, NOT
+    THE KEY.** `realized_trade_yield` is **0 on every FORAGE source** — a missing *projection*, NOT a
+    claim that plants sell nothing: `core_sim/src/forage.rs`'s
     `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` says so outright ("a KNOWN GAP, not a claim that plants
     sell nothing… Do not let a reader treat this as 'plants have no trade value'"), and the trade a
     gather actually earned ships in `trade_yield` (`labor.rs`: "A cash crop's harvest really does sell
-    (Flora Roster F4)"). So `DetailFormat.sum_realized_trade` falls back to it, exactly as
-    `SourceForecast.source_yield_readout` does per row — which both makes cash crops visible AND makes
-    the headline equal the sum of the per-source rows the player can open, by construction. **Reading
-    the projection alone would render a cash-crop band as `+0.00`.** The consequence to state plainly:
-    the headline is forward-projected for hunt sources and this-turn-actual for forage ones, so it is
-    not the smoothed average the Food headline uses.
+    (Flora Roster F4)"). **Both readers spelled the fallback as `has("realized_trade_yield") ? … :
+    trade_yield`, which is DEAD CODE** — `native/src/dict/population.rs` inserts that key
+    UNCONDITIONALLY, so `has()` is always true on live data and the `0.0` sentinel won every time.
+    Playtest caught it as a band reading `Trade +0.00 /turn` beside a forage patch its own compose
+    sheet quoted at `0.04 trade`. Testing `realized > 0` is what makes the fallback fire. **The same
+    dead spelling sat in `SourceForecast.source_yield_readout`, so a forage patch's trade had never
+    rendered on a WORK-board row either** — one helper now serves both, which is also what keeps this
+    headline equal to the sum of the rows the player can open. The consequence to state plainly: the
+    headline is forward-projected for hunt sources and this-turn-actual for forage ones, so it is not
+    the smoothed average the Food headline uses.
   - **The SHORT band-zone tier drops the row** (`unit_summary_lines`' `compact` parameter, passed by
     `BandPanelController._build_vitals_label`) — the row-level twin of that zone's existing
     food-outlook-chart gate, and for the same measured reason: the T/B dock's band zone is ~300px and
@@ -222,7 +226,10 @@ paths:
     (and `Main`'s dispatch to it) went with the card; `MapPanel.apply_update` still consumes the
     snapshot key for its scenario description. Nothing here needs a world-boundary reset either — the
     row renders off the band dict, which every snapshot restates.
-  - band_panel_preview: `band_panel_trade_expanded_left` (earning, disclosure open) /
+  - band_panel_preview: `band_panel_trade_expanded_left` (earning, disclosure open — its fixture's
+    forage patch carries the LIVE shape `trade_yield 0.04` beside `realized_trade_yield 0.0`, and
+    `_assert_forage_trade_counted` pins both the `+0.08` total and the Gathered row, since the broken
+    and fixed frames differ by two characters; mutation-verified to fail at `+0.04`) /
     `band_panel_trade_zero` (a band earning none — the row is PRESENT at `+0.00`, **asserted**, since
     "absent" and "present but zero" are one glance apart and the difference is the whole playtest
     report) / `band_panel_trade_short_tier` (the T/B gate, also **asserted** — a dropped row and a row

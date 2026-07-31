@@ -884,25 +884,23 @@ static func sum_realized_yield(band: Dictionary, kind: String) -> float:
 ## category total behind the Trade breakdown (Gathered = forage, Hunted = hunt), and the trade twin of
 ## `sum_realized_yield`.
 ##
-## **THE `realized_trade_yield` → `trade_yield` FALLBACK IS LOAD-BEARING, NOT DEFENSIVE.**
-## `realized_trade_yield` is 0 on every FORAGE source by design — the plant web's trade PROJECTION is a
-## documented sim-side gap (`native/src/dict/population.rs`) — so a forage patch must fall back to the
-## trade it ACTUALLY earned this turn or the row would read 0 for a patch visibly selling flax. This is
-## exactly what `SourceForecast.source_yield_readout` does per row, which is the point: summing it the
-## same way makes the Trade headline equal the sum of the per-source rows the player can open, BY
-## CONSTRUCTION — the same principle `band_trade_income` inherits from `band_food_income`.
+## **THE PER-SOURCE RATE IS `SourceForecast.trade_rate_of`, AND THAT IS NOT A STYLE CHOICE.** It owns
+## the `realized_trade_yield` → `trade_yield` fallback that makes a FORAGE source's trade count at all
+## — see its header for why the `has()` spelling this sum used to carry never fired, and rendered every
+## cash-crop band as `+0.00`. Calling the same helper the per-source rows call is also what makes this
+## headline equal the sum of those rows BY CONSTRUCTION — the principle `band_trade_income` inherits
+## from `band_food_income`.
 ##
 ## THE CONSEQUENCE, STATED HONESTLY: the Trade headline is forward-PROJECTED for hunt sources and
-## THIS-TURN-ACTUAL for forage ones, so unlike the all-steady Food headline it can twitch turn to turn
-## for a forage-heavy band. That resolves itself when the sim projects plant-web trade; until then a
-## steady-looking number would be the lie, not the twitch.
+## THIS-TURN-ACTUAL for forage ones, so it is not the smoothed average the Food headline uses. That
+## resolves itself when the sim projects plant-web trade; until then a steady-looking number would be
+## the lie.
 static func sum_realized_trade(band: Dictionary, kind: String) -> float:
     var total := 0.0
     for a in HudBandLaborState.labor_assignments_of(band):
         if a is Dictionary and String((a as Dictionary).get("kind", "")).strip_edges().to_lower() == kind:
             var d := a as Dictionary
-            total += float(d["realized_trade_yield"]) if d.has("realized_trade_yield") \
-                else float(d.get("trade_yield", 0.0))
+            total += SourceForecast.trade_rate_of(d)
     return total
 
 ## The band's total trade income = Gathered + Hunted, the trade twin of `band_food_income` and summed

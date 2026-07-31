@@ -413,6 +413,25 @@ static func format_trade(value: float) -> String:
 static func has_component(rate: float) -> bool:
     return rate >= COMPONENT_RENDER_MIN
 
+## THE ONE DEFINITION of a worked source's trade rate, read off a labor-assignment / worker-map dict.
+##
+## **THE SENTINEL IS THE VALUE `0`, NOT AN ABSENT KEY — and getting that wrong made every FORAGE
+## source's trade invisible.** `realized_trade_yield` is the steady forward-projected rate, and it is
+## `0.0` on every forage source by design (the plant web's trade PROJECTION is a documented sim-side
+## gap, `core_sim/src/forage.rs` `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`, which says in as many words
+## that it is "a KNOWN GAP, not a claim that plants sell nothing"). The trade a gather ACTUALLY earned
+## ships beside it in `trade_yield`.
+##
+## Both readers used to spell the fallback as `has("realized_trade_yield") ? … : trade_yield`, which
+## is **dead code**: `native/src/dict/population.rs` inserts the key UNCONDITIONALLY, so `has()` is
+## always true on live data and the `0.0` sentinel won every time. A cash-crop patch selling 0.04
+## trade/turn therefore rendered `+0.00` — the exact reading the sentinel's own comment warns against.
+## Testing the VALUE is what makes the fallback fire. Trade income is never negative, so `> 0` is a
+## complete test for "the projection has something to say".
+static func trade_rate_of(source: Dictionary) -> float:
+    var realized := float(source.get("realized_trade_yield", 0.0))
+    return realized if realized > 0.0 else float(source.get("trade_yield", 0.0))
+
 ## THE RENDER-ONLY-WHEN-NON-ZERO JOINER for a per-turn readout: `+0.31 /turn · ⇄ +0.12` (both),
 ## `+0.31 /turn` (food only), `⇄ +0.12` (trade only — a wolf), `+0.08 /turn · 0.40 fodder` (a hay
 ## meadow). One definition, so every surface that states a source's per-turn products states them the
@@ -904,11 +923,10 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
             rate = sustainable if kind == LABOR_KIND_HUNT else actual
         # THE SECOND PRODUCT (issue #337): the same steady/actual split in trade goods. Rendered ONLY
         # when non-zero, so a deer row reads `+0.31 /turn · ⇄ +0.12`, a wolf row reads `⇄ +0.12`
-        # ALONE (never a "+0.00 /turn" that says its pelts are worth no meat), and a forage patch is
-        # unchanged. `realized_trade_yield` is 0 on every forage source by design — the plant web's
-        # trade PROJECTION is a sim-side gap — so forage falls back to the trade it actually earned.
-        trade_rate = float(m["realized_trade_yield"]) if m.has("realized_trade_yield") \
-            else float(m.get("trade_yield", 0.0))
+        # ALONE (never a "+0.00 /turn" that says its pelts are worth no meat), and a patch that sells
+        # nothing is unchanged. `trade_rate_of` owns the forage fallback — see its header for why the
+        # `has()` spelling this line used to carry never fired.
+        trade_rate = trade_rate_of(m)
         if has_component(trade_rate):
             tooltip += TRADE_COMPONENT_SEPARATOR + (TRADE_TOOLTIP_FORMAT % [
                 FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade_rate)])

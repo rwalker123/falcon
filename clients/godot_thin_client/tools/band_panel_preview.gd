@@ -368,8 +368,11 @@ func _ready() -> void:
 	# publishes is faction-global and every band would print the same total. So the states below pin the
 	# rate's two ends plus the tier gate — there is no stock axis left to vary.
 	#
-	# (i) EARNING — `_band_fixture`'s deer pays ⇄ 0.04, disclosure OPEN so the Gathered/Hunted rows behind
-	# the headline are in frame. LEFT dock only; see (iii) for why the row is not in a T/B frame.
+	# (i) EARNING — the fixture's forage patch pays ⇄ 0.04 through the `realized == 0` fallback and its
+	# deer pays ⇄ 0.04 outright, so the headline reads +0.08 over a TWO-row breakdown. Disclosure OPEN,
+	# because **the Gathered row is the regression guard**: reading `realized_trade_yield` alone drops
+	# the forage half, which is exactly how a cash-crop band came to read `+0.00` in playtest.
+	# LEFT dock only; see (iii) for why the row is not in a T/B frame.
 	_push_bands([_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
@@ -378,6 +381,7 @@ func _ready() -> void:
 	await _save("band_panel_trade_expanded_left")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
+	_assert_forage_trade_counted()
 	_click_disclosure(BAND_FIXTURE_DISCLOSURE_TRADE)
 
 	# (ii) ZERO — a band working no trade-paying source. **The row is STILL THERE**, reading `+0.00 /turn`
@@ -1422,6 +1426,42 @@ func _assert_trade_row_absent_in_short_tier() -> void:
 		push_error("band_panel_preview: SHORT tier still renders the Trade row — the compact gate is off")
 		return
 	print("band_panel_preview: assert OK — SHORT tier drops the Trade row (Food row still present)")
+
+## **THE FORAGE-TRADE REGRESSION.** A forage source ships `realized_trade_yield == 0` (the documented
+## not-yet-projected sentinel) beside a real `trade_yield`, and the decoder always inserts the key — so
+## a fallback spelled `has("realized_trade_yield")` silently drops every cash crop and the row reads
+## `+0.00` on a band visibly selling flax. The fixture's patch pays 0.04 and its deer pays 0.04, so the
+## headline must read +0.08 and the breakdown must carry BOTH categories. A PNG cannot carry this — the
+## broken and the fixed frame differ by two characters — so it is asserted on both halves: the total
+## proves the forage contribution landed, the Gathered row proves it landed on the right category.
+func _assert_forage_trade_counted() -> void:
+	var vitals := _find_vitals_label(_panel)
+	if vitals == null:
+		push_error("band_panel_preview: forage-trade assert found no vitals label")
+		return
+	var text: String = vitals.get_parsed_text()
+	if not text.contains("+0.08"):
+		push_error("band_panel_preview: Trade must read +0.08 (forage 0.04 + hunt 0.04) — got: %s" % text)
+		return
+	var rows := _disclosure_rows(BAND_FIXTURE_DISCLOSURE_TRADE)
+	var joined := "\n".join(rows)
+	if not joined.contains(DetailFormat.FOOD_LABEL_GATHERED):
+		push_error("band_panel_preview: the Trade breakdown has no Gathered row — the forage source's trade was dropped (rows: %s)" % joined)
+		return
+	if not joined.contains(DetailFormat.FOOD_LABEL_HUNTED):
+		push_error("band_panel_preview: the Trade breakdown has no Hunted row (rows: %s)" % joined)
+		return
+	print("band_panel_preview: assert OK — a forage source's trade counts (Trade +0.08, Gathered + Hunted)")
+
+## The breakdown rows stashed for a disclosure key, read back the way the popover reads them.
+func _disclosure_rows(key: String) -> Array[String]:
+	var payloads: Dictionary = _hud._disclosures._breakdown_payloads
+	var rows: Array[String] = []
+	var stashed: Variant = payloads.get(key, [])
+	if stashed is Array:
+		for row in (stashed as Array):
+			rows.append(String(row))
+	return rows
 
 ## The zero case: the Trade row must be PRESENT and read a zero rate. Asserted because "absent" and
 ## "present but zero" are one glance apart in a PNG and the difference is the whole playtest report.
@@ -2595,7 +2635,12 @@ func _band_fixture() -> Dictionary:
 		# is also OVERSTAFFED (5 assigned, 2 needed) → the "· only 2 of 5 working" note, and carries a
 		# `policy` so its row shows the ♻ policy glyph — both must survive beside the ● status glyph.
 		"labor_assignments": [
-			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
+			# **THE LIVE FORAGE SHAPE, AND IT IS THE REGRESSION THIS FIXTURE EXISTS FOR.** A cash crop
+			# really does sell (`labor.rs`), so `trade_yield` is non-zero — but its `realized_trade_yield`
+			# is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` **0.0**, and the decoder inserts
+			# that key UNCONDITIONALLY. Both keys present, one of them zero, is exactly what the wire sends
+			# and exactly what a `has("realized_trade_yield")` test reads as "projected: nothing".
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "trade_yield": 0.04, "realized_trade_yield": 0.0},
 			# BOTH PRODUCTS on the worked row (issue #337): a deer pays meat AND hide, so the row
 			# headline must read `+0.20 /turn · ⇄ +0.04` — food leading, trade only because it is
 			# non-zero. `trade_yield` is NOT food income: the Food line's Gathered/Hunted breakdown

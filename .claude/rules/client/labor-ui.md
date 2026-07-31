@@ -1006,6 +1006,13 @@ the design doc, and inventing one here would put words on the wire's behalf the 
   than an assumption**: a wide-face ceiling of 2 was written for exactly this face and the rendered
   frame refuted it — three abreast comes out 555px against the deer hunt picker's long-standing 546,
   nothing clips, and 3 + 3 reads better than 2 + 2 + 2. Re-adding one needs a frame that overruns.
+- **`trade_rate_of(source)`** — the ONE per-source trade rate, and the owner of the
+  `realized_trade_yield` → `trade_yield` fallback. **The sentinel is the VALUE `0`, not an absent
+  key**: forage's projection is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` zero, and the
+  decoder inserts the key unconditionally — so the `has("realized_trade_yield")` spelling both readers
+  used to carry never once fired, and every forage source's trade read as nothing (a work row with no
+  `⇄`, a band Trade row at `+0.00`). `source_yield_readout` and `DetailFormat.sum_realized_trade` both
+  call it, which is what keeps a per-source row and the band's headline in agreement by construction.
 - `hunt_policy_trade_ceiling` reads **`hunt_policy_trade_ceilings`**, the trade twin of
   `hunt_policy_ceilings`. Two dicts keyed by the same policy strings rather than one dict of pairs:
   the decoder fills both in ONE pass over the single wire list, so they cannot drift, and every
