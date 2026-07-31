@@ -41,7 +41,7 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
 - **The `Cultivate` improvement — the investment.** In `advance_labor_allocation`'s **Forage** arm
   (Population), a patch worked with `Improvement::Cultivate` in flight:
   - **Costs a yield dip while preparing.** Its take ceiling is the `plant:tended` rung's
-    `yield_fraction_while_building ×` **the assignment's stance ceiling** (`forage_policy_ceiling`,
+    `yield_fraction_while_building ×` **the assignment's stance ceiling** (`forage_escapement_ceiling`,
     reusing the **shared** `sustainable_yield` helper, never a second formula). The crew is clearing
     and planting, not gathering. Under **Sustain** — the stance a builder normally holds — the take is
     a fraction of MSY and therefore **sustainable**, so the patch stays Thriving (which the accrual
@@ -354,7 +354,7 @@ herd has one appetite).
   the reseed floor, i.e. *Collapsing* by construction, so a health gate would forbid the case the rung
   exists for. You *tend* a healthy wild stand; you *plant* bare ground. (`Tame` draws the same line.)
 - **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.25) × what the ground
-  would otherwise pay: the MSY dip on a wild patch (via `forage_policy_ceiling`), and the **managed**
+  would otherwise pay: the dip on a wild patch's escapement ceiling (via `forage_escapement_ceiling`), and the **managed**
   dip on a tended patch being upgraded (0.25 × its tended harvest — `forage_forecast` and the labor
   arm both read the one shared `field_yield_fraction_while_building`). On **bare** ground that is a
   fraction of nothing, so a bare-ground sow is near-pure investment. `forage_field.rs` pins that as a

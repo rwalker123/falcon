@@ -225,11 +225,18 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.biomass = patch.carrying_capacity * 0.5;
+        // **Above Sustain's escapement floor** (`K/2`): at the floor exactly a Sustain gather has
+        // nothing standing above it and every rung reads `+0.00`
+        // (`docs/plan_harvest_floor.md` §1), which would make this ladder a comparison of zeros.
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         patch.ecology_phase = EcologyPhase::Thriving;
     }
     (entity, coord)
 }
+
+/// **The patch's standing crop as a fraction of its capacity** — above Sustain's escapement floor
+/// (`fauna::MSY_BIOMASS_FRACTION`, `K/2`), so a Sustain gather has stock standing above it.
+const STOCKED_STANDING_CROP: f32 = 0.8;
 
 /// The plant a `Sow` on this tile would commit to — the same `default_species_for_rung` answer the
 /// labor arm reaches, so a fixture can put a baseline patch on the *same* crop.
@@ -650,7 +657,11 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     // crop**: a Sow commits the ground to one named plant (Flora Roster S1), which changes its
     // conversion rate, so an uncommitted baseline would be measuring the commitment rather than the
     // rung's dip.
-    let tended_yield = {
+    // `turns == 0` measures the FIRST harvest of an untouched patch — the accumulated stock above the
+    // escapement floor, which is the number the dip is a fraction of on the very same turn. A
+    // positive `turns` runs it that many turns first and measures the last one: the STEADY rate, the
+    // only fair comparison against a Field that has itself been worked for a while.
+    let tended_baseline = |turns: u32| {
         let mut baseline = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut baseline);
         let crop = default_sowable_species(&baseline, coord);
@@ -662,9 +673,16 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
             patch.species = crop;
         }
         spawn_forager(&mut baseline, tile, coord, None);
-        baseline.world.run_system_once(advance_labor_allocation);
-        provisions_f32(&mut baseline)
+        if turns == 0 {
+            baseline.world.run_system_once(advance_labor_allocation);
+            return provisions_f32(&mut baseline);
+        }
+        run_turns_with_forage(&mut baseline, turns);
+        let before = provisions_f32(&mut baseline);
+        run_turns_with_forage(&mut baseline, 1);
+        provisions_f32(&mut baseline) - before
     };
+    let tended_yield = tended_baseline(0);
 
     spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
     app.world.run_system_once(advance_labor_allocation);
@@ -688,10 +706,14 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let after_completion = provisions_f32(&mut app) - before;
+    // Against a tended patch of the SAME age: both have been gathered down to their operating point,
+    // so this compares the two rungs rather than one rung's opening stock against the other's steady
+    // rate (`docs/plan_harvest_floor.md` §1).
+    let tended_steady = tended_baseline((1.0 / progress_per_turn).ceil() as u32);
     assert!(
-        after_completion > tended_yield,
+        after_completion > tended_steady,
         "once the Field stands the dip stops and it out-pays the patch it replaced: \
-         {after_completion} vs {tended_yield}"
+         {after_completion} vs {tended_steady}"
     );
 }
 

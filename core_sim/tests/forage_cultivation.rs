@@ -94,8 +94,15 @@ fn spawn_world() -> App {
     app
 }
 
-/// A `FoodModuleTag` tile that carries a seeded patch. Primes the patch to half its cap (Thriving,
-/// with regrowth headroom) so the take is a clean MSY skim. Returns the tile entity + its coord.
+/// **The patch's standing crop as a fraction of its capacity** — above Sustain's escapement floor
+/// (`fauna::MSY_BIOMASS_FRACTION`, `K/2`), so a Sustain gather has stock standing above it. At the
+/// floor exactly a Sustain take is honestly zero, which is the one reading these fixtures must not
+/// measure.
+const STOCKED_STANDING_CROP: f32 = 0.8;
+
+/// A `FoodModuleTag` tile that carries a seeded patch. Primes the patch above its escapement floor
+/// (Thriving, with regrowth headroom) so the take is a real, ceiling-bound number. Returns the tile
+/// entity + its coord.
 fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let coord = {
         // The tile must grow something the **tended** rung can commit to (Flora Roster S1): a basket
@@ -151,7 +158,10 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.biomass = patch.carrying_capacity * 0.5;
+        // **Above Sustain's escapement floor** (`K/2`), so a Sustain gather has standing stock to
+        // take: at the floor exactly, a Sustain row is honestly `+0.00`
+        // (`docs/plan_harvest_floor.md` §1) and these fixtures would measure an empty turn.
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
     }
     let entity = app
@@ -319,6 +329,22 @@ fn one_turn_yield(improvement: Option<Improvement>) -> f32 {
     provisions_f32(&mut app)
 }
 
+/// **The yield of the LAST of `turns` worked turns** — the rate a patch pays once a gather has held
+/// it at its escapement floor, rather than the one-off windfall of the first harvest of an untouched
+/// stand (`docs/plan_harvest_floor.md` §1). Any comparison between two *rungs* has to be taken here:
+/// the opening stock is the same on both (it is `B − K/2`, which knows nothing about the rung), so
+/// only the steady state can show what tending bought.
+fn steady_turn_yield(improvement: Option<Improvement>, turns: u32) -> f32 {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    spawn_forager(&mut app, tile, coord, improvement);
+    run_turns_with_forage(&mut app, turns.saturating_sub(1));
+    let before = provisions_f32(&mut app);
+    run_turns_with_forage(&mut app, 1);
+    provisions_f32(&mut app) - before
+}
+
 /// **The free path is gone.** Sustain-foraging a Thriving patch still teaches the faction Cultivation
 /// (knowledge is earned by doing), but it never accrues `cultivation_progress` — not even once the
 /// faction knows Cultivation. Cultivating costs something now, and the player must choose to pay it.
@@ -480,8 +506,6 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
 /// patch then pays the full tended yield — strictly more than the wild Sustain skim it replaced.
 #[test]
 fn cultivate_completes_then_pays_the_tended_yield() {
-    let sustain_yield = one_turn_yield(None);
-
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
@@ -518,9 +542,13 @@ fn cultivate_completes_then_pays_the_tended_yield() {
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let tended_yield = provisions_f32(&mut app) - before;
+    // **The wild baseline is taken at the same age**, on ground held at its floor for as many turns.
+    // A one-turn baseline would be the untouched patch's opening windfall — the accumulated stock,
+    // which is `B − K/2` on every rung and therefore says nothing about what tending bought.
+    let sustain_yield = steady_turn_yield(None, 3 + turns_to_prepare + 1);
     assert!(
         tended_yield > sustain_yield,
-        "a tended patch out-pays the wild Sustain skim — the payoff the 25 turns bought: \
+        "a tended patch out-pays the wild Sustain gather — the payoff the 25 turns bought: \
          {tended_yield} vs {sustain_yield}"
     );
     assert_eq!(

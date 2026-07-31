@@ -179,12 +179,13 @@ fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
 fn forage_draws_down_depletable_patch() {
     let mut app = spawn_world();
     let (pos, tile) = food_tile(&mut app);
-    // Seed the patch below its cap so a Sustain gather skims positive regrowth (a full patch's
-    // net regrowth is 0 → no yield, by design).
+    // Seed the patch above Sustain's escapement floor so the gather has standing stock to take.
     let (cap, before) = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(pos).expect("patch on the food tile");
-        patch.biomass = patch.carrying_capacity * 0.5;
+        // **Above Sustain's escapement floor** (`K/2`): at the floor exactly there is nothing
+        // standing above it and the gather is honestly `0` (`docs/plan_harvest_floor.md` §1).
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         (patch.carrying_capacity, patch.biomass)
     };
     let band = spawn_band(&mut app, tile, 10, forage_alloc(pos, 5));
@@ -675,15 +676,19 @@ fn assignment_sum_clamps_to_working_age() {
     assert_eq!(available_workers(scalar_from_f32(5.9)), 5);
 }
 
+/// The standing crop these fixtures seat a patch at — Thriving, and **above** Sustain's escapement
+/// floor (`K/2`), so a gather has stock standing above it to take.
+const STOCKED_STANDING_CROP: f32 = 0.8;
+
 /// Run one turn of forage under `policy` on a Thriving (0.8×cap) patch with ample workers, returning
-/// the assignment's `(actual, sustainable)` food yield and the biomass drawn down this turn.
-fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
+/// the assignment's yield row and the biomass drawn down this turn.
+fn run_forage_yield(policy: FollowPolicy) -> (core_sim::SourceYield, f32) {
     let mut app = spawn_world();
     let (pos, tile) = food_tile(&mut app);
     let before = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(pos).expect("patch on the food tile");
-        patch.biomass = patch.carrying_capacity * 0.8; // Thriving, positive net regrowth.
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         patch.biomass
     };
     let band = spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
@@ -694,30 +699,47 @@ fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
         .expect("band allocation")
         .last_yields
         .clone();
-    let y = &yields[0];
+    let y = yields[0].clone();
     let after = app
         .world
         .resource::<ForageRegistry>()
         .patch(pos)
         .expect("patch present")
         .biomass;
-    (y.actual, y.sustainable, before - after)
+    (y, before - after)
 }
 
-/// (§0-iii over-forage): a non-Sustain gather makes `actual > sustainable` (the client overdraw ⚠
-/// trips) while a Sustain gather keeps `actual ≈ sustainable` (the regrowth skim, no overdraw).
+/// **The over-forage ⚠ is a fact about the stance's FLOOR, not about this turn's number.** A gather
+/// is an overdraw when it stops below the patch's most productive biomass — which is exactly what
+/// `FollowPolicy::overdraws` reads — so Eradicate trips it and Sustain never can.
+///
+/// It is deliberately **not** `actual > sustainable`. Since the harvest floor a take is constant
+/// escapement, so the first harvest of a stocked patch is its accumulated stock and legitimately
+/// exceeds one turn's regrowth under *every* stance, Sustain included. `sustainable` stays on the
+/// row as the MSY reference the player reads beside it, and the draw-down ordering below is what
+/// makes the two stances differ in the way the ⚠ claims.
 #[test]
 fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
-    let (sustain_actual, sustain_sustainable, _) = run_forage_yield(FollowPolicy::Sustain);
-    assert!(
-        (sustain_actual - sustain_sustainable).abs() < 1e-4,
-        "Sustain reads actual ≈ sustainable: {sustain_actual} vs {sustain_sustainable}"
-    );
+    let (sustain, sustain_drawdown) = run_forage_yield(FollowPolicy::Sustain);
+    let (erad, erad_drawdown) = run_forage_yield(FollowPolicy::Eradicate);
 
-    let (erad_actual, erad_sustainable, _) = run_forage_yield(FollowPolicy::Eradicate);
     assert!(
-        erad_actual > erad_sustainable + 1e-4,
-        "Eradicate overdraws (actual > sustainable): {erad_actual} vs {erad_sustainable}"
+        !sustain.overdraws,
+        "a Sustain gather stops at the MSY point — no ⚠: {sustain:?}"
+    );
+    assert!(
+        erad.overdraws,
+        "an Eradicate gather strips past it — the ⚠: {erad:?}"
+    );
+    assert!(
+        sustain.actual > 0.0 && erad.actual > sustain.actual,
+        "and the ⚠ is earned: Eradicate really takes more this turn ({} vs {})",
+        erad.actual,
+        sustain.actual
+    );
+    assert!(
+        erad_drawdown > sustain_drawdown,
+        "…and draws the patch down harder: {erad_drawdown} vs {sustain_drawdown}"
     );
 }
 

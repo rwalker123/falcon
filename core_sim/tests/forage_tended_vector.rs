@@ -49,10 +49,15 @@ const NEUTRAL_MULTIPLIER: f32 = 1.0;
 /// The completed rung-2 meter — a patch whose `cultivation_progress` has reached `RUNG_COMPLETE`.
 const CULTIVATION_COMPLETE: f32 = 1.0;
 
-/// **The patch's standing crop as a fraction of its capacity**: `K/2`, the MSY operating point, so a
-/// Sustain gather takes the largest skim the curve offers and the credited accounts are comfortably
-/// above the integer-rounding floor on the trade stockpile.
-const MSY_STANDING_CROP: f32 = 0.5;
+/// **Sustain's escapement floor as a fraction of capacity** — `K/2`, the MSY operating point a
+/// Sustain gather holds a patch at. The seat helpers put the patch here and then run **one turn of
+/// Logistics regrowth**, so it stands exactly one turn's growth above the floor: the state the real
+/// turn order (regrow → take) hands the Population stage, and the one biomass at which a `Sustain`
+/// take *is* the MSY skim these tests price their quotes on.
+///
+/// Seating it here and taking *without* the regrowth would gather exactly nothing
+/// (`docs/plan_harvest_floor.md` §1) — the escapement ceiling at the floor is `0`.
+const SUSTAIN_ESCAPEMENT_FLOOR: f32 = 0.5;
 
 /// Float slack for a provisions/fodder quote (a chain of ~3 multiplications through the fixed-point
 /// store).
@@ -177,21 +182,33 @@ fn wild_food_rate(app: &App, coord: UVec2) -> f32 {
 /// MSY operating point. Written straight onto the registry (as `flora_f4_cash.rs` seats its Field):
 /// what is under test is the *harvest routing* of a finished rung, not the build that gets there.
 fn seat_tended_patch(app: &mut App, coord: UVec2, species: &str) {
-    let mut registry = app.world.resource_mut::<ForageRegistry>();
-    let patch = registry.patch_mut(coord).expect("patch exists");
-    patch.species = Some(species.to_string());
-    patch.cultivation_progress = CULTIVATION_COMPLETE;
-    patch.biomass = patch.carrying_capacity * MSY_STANDING_CROP;
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch exists");
+        patch.species = Some(species.to_string());
+        patch.cultivation_progress = CULTIVATION_COMPLETE;
+        patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
+    }
+    grow_one_turn(app);
+}
+
+/// One Logistics regrowth pass — the half of the turn these harvest-routing fixtures would otherwise
+/// skip, and the half that puts a floor-seated patch back above its escapement floor.
+fn grow_one_turn(app: &mut App) {
+    app.world.run_system_once(core_sim::advance_forage_regrowth);
 }
 
 /// Leave the patch at `coord` **uncommitted** — a wild stand — at the same standing crop, so the
 /// wild and tended cases differ in exactly one thing.
 fn seat_wild_patch(app: &mut App, coord: UVec2) {
-    let mut registry = app.world.resource_mut::<ForageRegistry>();
-    let patch = registry.patch_mut(coord).expect("patch exists");
-    patch.species = None;
-    patch.cultivation_progress = 0.0;
-    patch.biomass = patch.carrying_capacity * MSY_STANDING_CROP;
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("patch exists");
+        patch.species = None;
+        patch.cultivation_progress = 0.0;
+        patch.biomass = patch.carrying_capacity * SUSTAIN_ESCAPEMENT_FLOOR;
+    }
+    grow_one_turn(app);
 }
 
 fn spawn_forager(
@@ -841,7 +858,7 @@ fn a_tended_cash_crop_earns_more_trade_under_deplete_than_sustain() {
 /// `10.2 trade` beside a rung that pays a fraction of it. `cultivateTradePayoff` is that rung's own
 /// number, and this pins it against what the turn actually credits.
 ///
-/// **Why the two are exactly equal here:** the fixture seats the patch at [`MSY_STANDING_CROP`] (`K/2`,
+/// **Why the two are exactly equal here:** the fixture seats the patch at [`SUSTAIN_ESCAPEMENT_FLOOR`] (`K/2`,
 /// the MSY operating point) and staffs it past any worker cap, so a `Sustain` take *is* the MSY skim on
 /// the tended curve — which is the take `tended_msy_take` prices the quote on. Anywhere else the two
 /// legitimately differ (that is what the policy axis *is*); here they must agree to the float.

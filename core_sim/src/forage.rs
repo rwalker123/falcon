@@ -63,8 +63,9 @@ use bevy::prelude::*;
 use crate::{
     components::{FollowPolicy, Improvement, SourceYield, Tile, NO_IMPROVEMENT_UNDERWAY},
     fauna::{
-        classify_ecology_phase, forecast_source_yield, reseeding_logistic_regrowth,
-        sustainable_yield, EcologyPhase, SourceYieldForecast, NO_PASTORAL_YIELD,
+        classify_ecology_phase, escapement_ceiling, forecast_source_yield,
+        reseeding_logistic_regrowth, sustainable_yield, EcologyPhase, SourceYieldForecast,
+        NO_PASTORAL_YIELD,
     },
     fauna_config::{EcologyConfig, YieldAccounts},
     flora_config::{FloraConfig, FloraShare},
@@ -1021,8 +1022,10 @@ pub fn resolve_committed_species(
 /// **What a patch pays, standing on `rung`** — in provisions/turn, through the *same* helpers the sim
 /// itself quotes and pays each rung with, never a re-derivation of their arithmetic:
 ///
-/// - **wild / anything below rung 2** — its Sustain (MSY) ceiling on the patch's own wild ecology,
-///   the number `forage_policy_ceiling(Sustain, …)` produces, converted at the patch's **basket** rate;
+/// - **wild / anything below rung 2** — its long-run sustainable yield (MSY) on the patch's own wild
+///   ecology, converted at the patch's **basket** rate. **A rung PAYOFF, not a take ceiling**: since
+///   the harvest floor the take is constant escapement (`forage_escapement_ceiling`), which is
+///   `r`-independent and so cannot compare two rungs at all — `r` is exactly what a rung buys;
 /// - **tended** — [`tended_provisions`], the rung-2 payoff quote (the wire's `tendedYield`), which
 ///   rides `tended_ecology` and therefore **carries `cultivation.tended_regrowth_gain`**;
 /// - **field** — [`field_provisions`], the rung-3 managed rate the labor arm actually pays.
@@ -1570,21 +1573,15 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
     patch.refresh_ecology_phase(&ecology);
 }
 
-/// The forage counterpart of `fauna::hunt_take`: resolve the per-policy ecology ceiling, cap it by
-/// the gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal`), clamp to
+/// The forage counterpart of `fauna::hunt_take`: resolve the stance's **escapement ceiling**, cap it
+/// by the gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal`), clamp to
 /// the patch's remaining biomass, **subtract it from the patch**, and convert the take to provisions
 /// (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
 ///
-/// Policy ceilings mirror `hunt_take` (§0-iii — forage parity with hunting): **Sustain** = the
-/// Maximum Sustainable Yield (`sustainable_yield`: regrowth at the most-productive biomass K/2, so a
-/// patch at carrying capacity still yields a positive skim and a collapsed patch yields nothing);
-/// **Surplus** = that × `surplus_multiplier` (overdraws a healthy
-/// patch → slow decline); **Deplete** = `market.take_fraction × biomass` (a hard draw-down → fast
-/// depletion; the caller sells the take as trade goods); **Eradicate** = `eradicate.take_fraction ×
-/// biomass` (strip the patch, no floor); **Cultivate** = the `plant:tended` rung's
-/// `yield_fraction_while_building × MSY` — the
-/// investment dip while the ground is being prepared. All are then throughput-capped and clamped to
-/// biomass.
+/// **The two webs' take paths are now the same expression** (`docs/plan_harvest_floor.md` §1):
+/// `min(crew throughput, max(0, B − floor·K) × build_dip)`, with the floor named by the stance
+/// ([`FollowPolicy::escapement_floor`] — Sustain `K/2`, Surplus `0.30·K`, Deplete `0.15·K`, Eradicate
+/// `0`) and the dip by whatever the crew is building. See [`forage_escapement_ceiling`].
 /// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
 /// `plant:field`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
 /// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
@@ -1619,19 +1616,16 @@ pub(crate) fn forage_take(
     output_multiplier: f32,
     seasonal: f32,
 ) -> Scalar {
-    // Per-policy ecology ceiling + gather throughput, both from the shared helpers the pre-commit
-    // forecast (`forage_forecast`) reads — the take and the forecast can never disagree. The ceiling
-    // rides the patch's **own** curve (`patch_ecology`), so a tended patch is gathered on its boosted
-    // MSY rather than the wild one — the whole of the rung-2 payoff, and the reason this one call
-    // serves rungs 1 and 2 alike.
-    let ecology = patch_ecology(patch, forage);
-    let policy_ceiling = forage_policy_ceiling(
+    // The stance's escapement ceiling + the gather throughput, both from the shared helpers the
+    // pre-commit forecast (`forage_forecast`) reads — the take and the forecast can never disagree.
+    // The ceiling is `r`-independent, so unlike the retired MSY skim it does **not** vary with the
+    // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
+    // stock standing above the floor. One call still serves rungs 1 and 2 alike.
+    let policy_ceiling = forage_escapement_ceiling(
         policy,
         improvement,
         patch.biomass,
         patch.carrying_capacity,
-        &ecology,
-        forage,
         ladder,
     );
     let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
@@ -1650,51 +1644,43 @@ pub(crate) fn forage_take(
 
 /// The per-stance **biomass** ceiling on a gather at the patch's current stock, **dipped by whatever
 /// improvement the crew is building** — the single source of the rung ceilings, shared by
-/// `forage_take` (the take path) and `forage_forecast` (the pre-commit forecast). Sustain = Maximum
-/// Sustainable Yield (regrowth at K/2, so a full patch still yields and a collapsed one yields
-/// nothing), Surplus = that × `surplus_multiplier`, Deplete = `market.take_fraction × biomass`,
-/// Eradicate = `eradicate.take_fraction × biomass`. Not yet clamped to biomass — callers do that
-/// alongside their own throughput cap. The plant mirror of `fauna::hunt_policy_rate`.
+/// `forage_take` (the take path) and `forage_forecast` (the pre-commit forecast), and the exact
+/// plant-web twin of `fauna::hunt_escapement_ceiling`:
+///
+/// ```text
+/// escapement_ceiling(policy.escapement_floor(), B, K) × ladder.build_dip(improvement)
+/// ```
+///
+/// **Constant escapement replaced the four per-stance RATES** (`docs/plan_harvest_floor.md` §1): the
+/// MSY skim, its `surplus_multiplier`, and the two fraction-of-stock draws (`market.take_fraction`,
+/// `eradicate.take_fraction`) are all one expression parameterised by a floor. Not yet clamped to
+/// biomass — callers do that alongside their own throughput cap, and it is belt-and-braces there
+/// (`B − floor·K ≤ B` for any floor `≥ 0`).
+///
+/// **No `ecology`, no `ForageLaborConfig`, and that removal is the point.** An escapement ceiling is
+/// `r`-INDEPENDENT, so a take path that cannot reach the growth curve cannot accidentally start
+/// depending on it again. The rung-2 payoff is unchanged in substance and clearer in mechanism: a
+/// tended patch regrows faster, so *next* turn it has more stock standing above the floor.
 ///
 /// **The dip is a factor on the SELECTED stance, not a fifth rung** (issue #442,
 /// `docs/plan_investment_rung_toggle.md` §2.2). It used to be `Cultivate`/`Sow` arms of the policy
 /// `match`, each hardcoded to `fraction × the Sustain (MSY) ceiling`, because a build verb *was* the
 /// policy and a builder could be in no other stance. Now `improvement` is an independent axis and the
-/// same fraction multiplies whichever stance the player holds — the identical formula with the
-/// constant removed. That is what makes a Deplete-while-building self-punishing without a gate: the
-/// dip rides a draw-down, so the builder takes more now, leaves Thriving sooner, and stalls their own
-/// meter. The fraction is read through the one [`LadderConfig::build_dip`] seam, so the two webs'
-/// dips cannot be applied differently.
-///
-/// `ecology` is **the patch's own** — resolved by [`patch_ecology`], never by the caller reaching for
-/// `forage.ecology` directly. The tended rung is expressed *entirely* by handing this function a
-/// different ecology (wild `r` = 0.25 / tended = wild × `tended_regrowth_gain`), exactly as the
-/// husbandry ladder is expressed to `fauna::hunt_policy_rate`, so a call site that re-derives one
-/// silently gathers a tended patch on the wild curve.
-pub(crate) fn forage_policy_ceiling(
+/// same fraction multiplies whichever stance the player holds. That is what makes a
+/// Deplete-while-building self-punishing without a gate: the dip rides a draw-down, so the builder
+/// takes more now, leaves Thriving sooner, and stalls their own meter. The fraction is read through
+/// the one [`LadderConfig::build_dip`] seam, so the two webs' dips cannot be applied differently. On
+/// BARE ground a `Sow` dip is a fraction of nothing — a freshly sown patch stands below every floor,
+/// so the sow honestly pays ~0 while it builds (a pure investment).
+pub(crate) fn forage_escapement_ceiling(
     policy: FollowPolicy,
     improvement: Option<Improvement>,
     biomass: f32,
     carrying_capacity: f32,
-    ecology: &EcologyConfig,
-    forage: &ForageLaborConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    let stance = match policy {
-        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
-        FollowPolicy::Surplus => {
-            sustainable_yield(biomass, carrying_capacity, ecology) * forage.surplus_multiplier
-        }
-        // `forage.market.*` keeps its old config name: the policy was renamed `Market` → `Deplete`
-        // (`docs/plan_hunt_yield_model.md` §2), but the plant web's trade-rate block is renamed in a
-        // later plant-side pass, not here.
-        FollowPolicy::Deplete => forage.market.take_fraction * biomass,
-        FollowPolicy::Eradicate => forage.eradicate.take_fraction * biomass,
-    };
-    // On BARE ground a `Sow` dip is a fraction of nothing — a freshly sown patch is below the Allee
-    // threshold, so its MSY is `0` and the sow honestly pays ~0 while it builds (a pure investment).
-    // On ground that already carries a stand it is the familiar dip on whatever the crew is drawing.
-    stance * ladder.build_dip(improvement)
+    escapement_ceiling(policy.escapement_floor(), biomass, carrying_capacity)
+        * ladder.build_dip(improvement)
 }
 
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
@@ -2158,7 +2144,7 @@ pub fn tended_take_trade_goods(
 }
 
 // **RETIRED: `field_yield_fraction_while_building`** — the `plant:field` rung's dip, looked up here
-// because two plant sites needed it and only one of them went through `forage_policy_ceiling`. It has
+// because two plant sites needed it and only one of them went through the shared ceiling helper. It has
 // no callers left: since issue #442 *every* dip on both webs is read through the one
 // `LadderConfig::build_dip(improvement)` seam, which is keyed on the verb rather than hard-coding a
 // `RungKey`, so a per-rung accessor could only ever be a second way to ask the same question.
@@ -2306,7 +2292,6 @@ pub fn plant_policy_forecasts(
             })
             .collect();
     }
-    let ecology = patch_ecology(patch, forage);
     // The patch's IN-EFFECT rates — the same three seams `forage_take` and the credit site pay with.
     let provisions_rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
     let trade_rate = patch_trade_per_biomass(patch, tile_composition, flora, forage);
@@ -2321,14 +2306,12 @@ pub fn plant_policy_forecasts(
                 trade_goods: forage_provisions(biomass, trade_rate, output_multiplier) * markup,
                 fodder: forage_provisions(biomass, fodder_rate, output_multiplier),
             };
-            let ceiling_biomass = forage_policy_ceiling(
+            let ceiling_biomass = forage_escapement_ceiling(
                 policy,
                 // The rows are the pure-harvest ceilings; a build dips whichever row is selected.
                 NO_IMPROVEMENT_UNDERWAY,
                 patch.biomass,
                 patch.carrying_capacity,
-                &ecology,
-                forage,
                 ladder,
             )
             .clamp(0.0, patch.biomass);
@@ -2393,26 +2376,23 @@ pub(crate) fn forage_forecast(
             PLANTS_DO_NOT_QUANTISE,
         );
     }
-    let ecology = patch_ecology(patch, forage);
     // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
     // below is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
     // **Stored UNCLAMPED**, with the standing crop carried beside it as `stock_cap` (PR #448
-    // review). `forage_take` dips inside `forage_policy_ceiling` and *then* clamps to
-    // `patch.biomass`, so the forecast has to keep the two terms apart for `ceiling_under` to apply
-    // them in that order — clamping here would make a dipped preview `min(rate, B) × d` against the
-    // take's `min(rate × d, B)`. The animal twin (`fauna::hunt_forecast`) is where that discrepancy
-    // is live today; the plant dials keep it latent, not impossible.
+    // review). `forage_take` dips inside `forage_escapement_ceiling` and *then* clamps to
+    // `patch.biomass`, so the forecast keeps the two terms apart for `ceiling_under` to apply them in
+    // that order — clamping here would make a dipped preview `min(rate, B) × d` against the take's
+    // `min(rate × d, B)`. Under constant escapement the clamp cannot bind on either web, so this is
+    // now belt-and-braces on both sides rather than a live discrepancy.
     let ceiling = |policy| {
         plant_food_only(forage_provisions(
-            forage_policy_ceiling(
+            forage_escapement_ceiling(
                 policy,
                 // The four rows are the pure-harvest ceilings; the dip rides `build_dips` below.
                 NO_IMPROVEMENT_UNDERWAY,
                 patch.biomass,
                 patch.carrying_capacity,
-                &ecology,
-                forage,
                 ladder,
             )
             .max(0.0),
@@ -2861,9 +2841,13 @@ mod tests {
         patch.refresh_ecology_phase(&forage.ecology);
         assert_eq!(patch.ecology_phase, EcologyPhase::Thriving);
 
-        // First Sustain gather off the full patch: take equals MSY (positive), no longer 0.
+        // First Sustain gather off the full patch: **the standing surplus above `K/2`**, capped by
+        // what the crew can carry. Under constant escapement the first harvest of an untouched patch
+        // is the accumulated stock, not a rate — the crew empties the store the patch built up before
+        // anyone worked it, and lands it exactly on its most productive biomass.
         let biomass_before = patch.biomass;
-        let expected_sustainable = sustainable_yield(biomass_before, cap, &forage.ecology);
+        let crew_cap = 20.0 * forage_per_worker_biomass(&forage, 1.0);
+        let expected_first = crew_cap.min(biomass_before - half_cap);
         let provisions = forage_take(
             &mut patch,
             NO_BASKET,
@@ -2881,12 +2865,19 @@ mod tests {
             take > 0.0,
             "a full patch under Sustain must yield > 0: {take}"
         );
-        assert!((take - expected_sustainable).abs() < 1e-3);
-        let actual = provisions.to_f32();
-        let sustainable = expected_sustainable * forage.provisions_per_biomass;
         assert!(
-            (actual - sustainable).abs() < 1e-3,
-            "actual ≈ sustainable (no overdraw): {actual} vs {sustainable}"
+            (take - expected_first).abs() < 1e-3,
+            "the first gather is the escapement surplus (crew permitting): {take} vs {expected_first}"
+        );
+        let actual = provisions.to_f32();
+        assert!(
+            (actual - take * forage.provisions_per_biomass).abs() < 1e-3,
+            "the provisions paid are the take through the patch's own rate: {actual}"
+        );
+        assert!(
+            patch.biomass >= half_cap - 1e-3,
+            "Sustain never draws a patch below its escapement floor: {} vs {half_cap}",
+            patch.biomass
         );
 
         // Over many take+regrowth turns Sustain draws the patch DOWN from full and then HOLDS: the
@@ -2977,10 +2968,10 @@ mod tests {
         assert!(patch.biomass < forage.ecology.collapse_fraction * cap);
     }
 
-    /// The forage policy axis (§0-iii, parity with hunting): on an identical Thriving patch with
-    /// ample workers (so the take is ceiling-bound, not throughput-bound), a heavier policy takes
-    /// more — `Sustain ≤ Surplus < Deplete < Eradicate` — and the heavier policies deplete the patch
-    /// faster (biomass drops more in a single turn).
+    /// The forage policy axis (parity with hunting): on an identical Thriving patch with ample
+    /// workers (so the take is ceiling-bound, not throughput-bound), a **deeper floor** takes more —
+    /// `Sustain ≤ Surplus < Deplete < Eradicate` — and the deeper floors deplete the patch faster
+    /// (biomass drops more in a single turn).
     #[test]
     fn policy_ceilings_order_take_and_depletion() {
         let forage = test_forage_config();
@@ -3026,10 +3017,13 @@ mod tests {
             eradicate_take > sustain_take,
             "Eradicate depletes faster than Sustain"
         );
-        // Sustain leaves the patch at/above where it started net of regrowth (no overdraw): the
-        // take equals the net regrowth ceiling exactly.
-        let expected_sustain = sustainable_yield(start, cap, &forage.ecology);
-        assert!((sustain_take - expected_sustain).abs() < 1e-3);
+        // Sustain takes exactly the stock standing above its escapement floor — `B − K/2` at
+        // `B = 0.8·K` — and so leaves the patch **on** its most productive biomass, never below it.
+        let expected_sustain = start - cap * crate::fauna::MSY_BIOMASS_FRACTION;
+        assert!(
+            (sustain_take - expected_sustain).abs() < 1e-3,
+            "Sustain takes `B - K/2`: {sustain_take} vs {expected_sustain}"
+        );
     }
 
     #[test]

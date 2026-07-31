@@ -1,6 +1,6 @@
 //! **Hunt yield = product × intensity** (`docs/plan_hunt_yield_model.md`, issue #337, phase B1).
 //!
-//! The policy decides HOW MUCH biomass comes home ([`core_sim::hunt_policy_rate`]); the species'
+//! The stance decides HOW MUCH biomass comes home ([`core_sim::hunt_escapement_ceiling`]); the species'
 //! [`core_sim::HuntYield`] decides WHAT that biomass is worth. These two axes used to be welded
 //! together in two places — a 4× trade bonus that only the third rung earned, and an `Eradicate`
 //! that was defined to carry nothing home — and this file is the guard against either coming back.
@@ -55,6 +55,16 @@ const UNBOUNDED_CREW: u32 = 60;
 /// the crew can collect, so proving Eradicate empties a herd needs a crew that could haul it —
 /// otherwise the test would be measuring the carry cap, not the policy.
 const HAUL_THE_WHOLE_HERD_CREW: u32 = 100;
+
+/// **A crew far too small to clear the herd's escapement room** — the *labor-bound* half of the
+/// forecast==actual sweep. One hunter carries `per_worker_biomass_capacity`, which is a rounding
+/// error against `TEST_CAPACITY`, so the crew's throughput is what binds and the ceiling never does.
+///
+/// Since the harvest floor the two regimes are worth sweeping separately: a stance's ceiling is now
+/// the whole standing surplus (`B − floor·K`), which on a full herd is enormous, so a realistic crew
+/// is labor-bound at *every* stance and a forecast that only agreed with the take at the ceiling
+/// would look correct on a fully-staffed harness and lie in play.
+const LABOR_BOUND_CREW: u32 = 1;
 
 /// Float slop for a take reconstructed from a biomass delta through an `f32` rate.
 const YIELD_EPSILON: f32 = 1e-3;
@@ -657,38 +667,74 @@ fn exported_ceilings(app: &App, id: &str) -> Vec<(String, f32, f32)> {
 /// Asserted on the **exported snapshot** (`laborAssignments[].actualYield` / `.tradeYield`), not on
 /// the in-process struct, so it pins the shipped representation — an export that projected the wrong
 /// component would pass an in-memory check and still lie to the client.
+///
+/// **Swept over both binding regimes** (`docs/plan_harvest_floor.md` §9): a [`LABOR_BOUND_CREW`],
+/// where `workers × per_worker` is the smaller term, and crews large enough for the stance's
+/// **escapement ceiling** to bind instead. The take is `min` of the two, so an agreement that held
+/// on only one side would be an agreement about one term rather than about the take.
 #[test]
 fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
+    let mut saw_labor_bound = false;
+    let mut saw_escapement_bound = false;
     for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
         for policy in EXTRACTIVE {
-            let (mut app, id, pos) = headless_with_species(species);
-            let forecast = precommit_pair(&app, &id, policy, UNBOUNDED_CREW);
-            let band = spawn_resident_hunters(&mut app, pos, &id, policy, UNBOUNDED_CREW);
+            for crew in [LABOR_BOUND_CREW, UNBOUNDED_CREW, HAUL_THE_WHOLE_HERD_CREW] {
+                let (mut app, id, pos) = headless_with_species(species);
+                // Which term binds, off the same two numbers the take composes.
+                {
+                    let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                    let labor = app.world.resource::<LaborConfigHandle>().get();
+                    let ladder = app.world.resource::<LadderConfigHandle>().get();
+                    let registry = app.world.resource::<HerdRegistry>();
+                    let herd = registry.find(&id).expect("the herd is on the map");
+                    let ceiling = core_sim::hunt_escapement_ceiling(
+                        policy,
+                        NO_IMPROVEMENT_UNDERWAY,
+                        herd.biomass,
+                        core_sim::herd_capacity(herd, &fauna),
+                        &ladder,
+                    );
+                    let collection = crew as f32 * labor.hunt.per_worker_biomass_capacity;
+                    if collection < ceiling {
+                        saw_labor_bound = true;
+                    } else {
+                        saw_escapement_bound = true;
+                    }
+                }
+                let forecast = precommit_pair(&app, &id, policy, crew);
+                let band = spawn_resident_hunters(&mut app, pos, &id, policy, crew);
 
-            app.world.run_system_once(advance_labor_allocation);
-            recapture_snapshot_in_place(&mut app.world);
-            let paid = exported_pair(&app, band);
+                app.world.run_system_once(advance_labor_allocation);
+                recapture_snapshot_in_place(&mut app.world);
+                let paid = exported_pair(&app, band);
 
-            assert!(
-                (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
-                "{species} {policy:?}: forecast FOOD {} must equal the paid {}",
-                forecast.0,
-                paid.0
-            );
-            assert!(
-                (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
-                "{species} {policy:?}: forecast TRADE {} must equal the paid {}",
-                forecast.1,
-                paid.1
-            );
-            // …and the test must not be vacuously comparing two zeros: every rung of every species
-            // here pays *something*, in one currency or the other.
-            assert!(
-                paid.0 > 0.0 || paid.1 > 0.0,
-                "{species} {policy:?}: the harness must actually take something ({paid:?})"
-            );
+                assert!(
+                    (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
+                    "{species} {policy:?} × {crew} hunters: forecast FOOD {} must equal the paid {}",
+                    forecast.0,
+                    paid.0
+                );
+                assert!(
+                    (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
+                    "{species} {policy:?} × {crew} hunters: forecast TRADE {} must equal the paid {}",
+                    forecast.1,
+                    paid.1
+                );
+                // …and the test must not be vacuously comparing two zeros: every rung of every
+                // species here pays *something*, in one currency or the other, at every staffing.
+                assert!(
+                    paid.0 > 0.0 || paid.1 > 0.0,
+                    "{species} {policy:?} × {crew} hunters: the harness must actually take \
+                     something ({paid:?})"
+                );
+            }
         }
     }
+    assert!(
+        saw_labor_bound && saw_escapement_bound,
+        "both regimes must be covered: labor-bound={saw_labor_bound} \
+         escapement-bound={saw_escapement_bound}"
+    );
 }
 
 /// **8. A wolf's exported per-policy ceilings read ZERO food and NON-ZERO trade, on all four rungs.**

@@ -28,7 +28,7 @@ use crate::{
     hashing::FnvHasher,
     intensification::{
         source_crew_needed, BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef,
-        RungKey, RungMovement, NEGLECT_NONE, NO_BUILD_UNDERWAY_DIP, NO_NEGLECT_GRACE,
+        RungKey, RungMovement, NEGLECT_NONE, NO_NEGLECT_GRACE,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -282,20 +282,19 @@ pub struct Herd {
     /// wire) so a restored herd keeps its quantum rather than reading `0` and being stripped whole in
     /// one turn.
     pub body_mass: f32,
-    /// **The kill-credit accumulator** (slice 8b) — biomass a hunt has *earned toward its next whole
-    /// animal* but not yet spent, in `[0, biomass]`.
+    /// **The kill-credit accumulator** — biomass a hunting **party** has *earned toward its next
+    /// whole animal* but not yet spent, in `[0, biomass]`.
     ///
-    /// A hunt earns its policy's per-turn rate ([`hunt_policy_rate`]) into this bank each turn it works
-    /// the herd; when the bank clears one `body_mass` it pays out a whole animal (many, for a fast
-    /// breeder whose rate is several bodies) and drains by what it killed. **This is what lets the
-    /// multiple-of-MSY rates ([`hunt_policy_ceiling`]) produce whole lumpy animals** without the
-    /// escapement burst: a species whose MSY is lighter than one body (7 of 9) is now huntable because
-    /// the fractional rate *accumulates* here instead of rounding to zero every turn.
+    /// **THE RESIDENT BAND NO LONGER BANKS** (`docs/plan_harvest_floor.md` §1). Its ceiling is
+    /// [`hunt_escapement_ceiling`], a **stock** — the biomass standing above the floor — and banking a
+    /// stock compounds it: the herd would offer its whole surplus every turn *plus* everything it had
+    /// already handed over. The accumulator that role needed is the herd's own standing biomass, which
+    /// crosses one `body_mass` on exactly the cadence the bank used to meter.
     ///
-    /// **Carries across policy changes** — it is earned regrowth toward the next animal, so switching
-    /// Sustain↔Deplete must not reset it (that would let a player dodge the wait). It drains only by
-    /// kills, and is capped at the standing `biomass` so it can never bank credit for animals that do
-    /// not exist (which would release a burst when the herd recovered).
+    /// Its one remaining writer is the hunting **expedition** (`systems::expedition_take_biomass`),
+    /// where it banks a different quantity: the *party's* per-turn processing throughput, metering
+    /// **when** the next whole animal is ready for a body heavier than one turn's work. That bank is
+    /// capped at the herd's standing surplus, so it can never fund a kill below the raid's floor.
     ///
     /// Authoritative sim state — rewound by rollback with the cloned registry (sim-side only, not on
     /// the client wire), so a rollback rewinds a herd's progress toward its next kill rather than
@@ -358,14 +357,18 @@ pub struct Herd {
     /// half-progress meter that never completes.
     pub pen_extending: bool,
     /// **The herd's biomass at the START of this turn, before Logistics regrowth** — captured at the
-    /// top of [`regrow_biomass`] and read the same turn by the Population-stage hunt take (slice 8b).
+    /// top of [`regrow_biomass`].
     ///
-    /// **Sustain's rate is `sustainable_yield` of THIS, not of the post-regrowth stock.** The take runs
-    /// *after* regrowth, so evaluating the sustainable rate at the current (grown) biomass takes
-    /// slightly more than the herd actually grew (`regen(B_post) > regen(B_pre)`) — a slow leak that
-    /// drifts a below-`K/2` herd *down* instead of letting it recover. Reading the pre-regrowth biomass
-    /// makes Sustain take exactly one turn's growth below `K/2` (the herd **holds**), and a full MSY
-    /// above it (declines gently to `K/2`). See [`hunt_policy_rate`].
+    /// **It is the basis every `sustainable_yield` PROJECTION is taken on**, never a take: the take
+    /// runs *after* regrowth, so evaluating a constant-*catch* rate at the current (grown) biomass
+    /// takes slightly more than the herd actually grew (`regen(B_post) > regen(B_pre)`) — a slow leak
+    /// that drifts a below-`K/2` herd *down* instead of letting it recover. Its readers are
+    /// [`hunt_forecast`]'s rung payoffs (`managed_yield` / `pastoral_yield`) and the forward
+    /// projections' Sustain-rate basis.
+    ///
+    /// **The take path stopped reading it** when the harvest floor made every stance constant
+    /// escapement ([`hunt_escapement_ceiling`]): `B − floor·K` is the stock standing above the floor
+    /// whenever it is measured, so there is no leak for a pre-regrowth basis to correct.
     ///
     /// Re-stamped every turn at the top of `regrow_biomass`, so it is never more than one turn old;
     /// sim-side only — not on the client wire. Defaults to `biomass` at construction so a herd that has
@@ -974,8 +977,8 @@ pub fn pen_upkeep(herd: &Herd, fauna: &FaunaConfig) -> f32 {
 /// take = max(0, B − K/2)
 /// ```
 ///
-/// **This is now literally [`hunt_policy_ceiling`]`(Sustain)` on the pen's ecology — ONE RULE FOR
-/// EVERY TAKE IN THE GAME.** A managed harvest and a wild Sustain hunt are the same act against
+/// **This is now literally [`hunt_escapement_ceiling`]`(Sustain, …)` — ONE RULE FOR EVERY TAKE IN
+/// THE GAME**, since `docs/plan_harvest_floor.md` slice 1 gave both food webs the pen's shape. A managed harvest and a wild Sustain hunt are the same act against
 /// different curves, which is what the husbandry ladder always claimed and now actually is.
 ///
 /// ## The `min(peak_regrowth(K), …)` cap was REMOVED in slice 8 — do not restore it
@@ -3768,8 +3771,9 @@ fn starve_underfed_pen(
 /// the DIP has to land inside it** — see [`SourceYieldForecast::ceiling_under`].
 /// **Forecast == actual is an invariant**: the forecast and
 /// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
-/// (`hunt_policy_ceiling` × the species' `HuntYield`, `forage_policy_ceiling`/`forage_provisions`) — never
-/// duplicate the formulas, or the UI will lie.
+/// ([`hunt_escapement_ceiling`] × the species' `HuntYield`,
+/// `forage::forage_escapement_ceiling`/`forage_provisions`) — never duplicate the formulas, or the UI
+/// will lie.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SourceYieldForecast {
     /// **Every field is a [`YieldAccounts`] — food AND trade goods per turn, never a food scalar**
@@ -3797,9 +3801,9 @@ pub struct SourceYieldForecast {
     pub ceiling_surplus: YieldAccounts,
     /// Yield/turn cap under **Deplete**, before the clamp.
     pub ceiling_deplete: YieldAccounts,
-    /// Yield/turn cap under **Eradicate** — the whole standing stock. **No longer zeroed**: since
-    /// #337 denial is the END STATE, not a promise the carcasses were thrown away, so this row is the
-    /// windfall the take path actually pays (`hunt_credit_ceiling` already returned the whole stock).
+    /// Yield/turn cap under **Eradicate** — the whole standing stock (its escapement floor is `0`).
+    /// **No longer zeroed**: since #337 denial is the END STATE, not a promise the carcasses were
+    /// thrown away, so this row is the windfall the take path actually pays.
     pub ceiling_eradicate: YieldAccounts,
     /// **The standing stock no stance can out-take** — the source's remaining biomass through the
     /// same conversion every row above uses, or `None` for a rung-3 managed source (whose production
@@ -3964,12 +3968,12 @@ impl SourceYieldForecast {
     /// a second formula.
     ///
     /// **THE DIP LANDS BEFORE THE CLAMP, because that is the order the take path applies them in**
-    /// (`systems::hunt_take` folds it into `hunt_policy_rate` and *then* runs
-    /// `hunt_credit_ceiling`'s biomass clamp; `forage_take` dips inside `forage_policy_ceiling` and
-    /// *then* clamps to `patch.biomass`). Dipping the already-clamped row instead — `min(rate, B) ×
-    /// d` rather than `min(rate × d, B)` — under-reports whenever the stock binds the undipped rate
-    /// but not the dipped one, which is reachable on any drawn-down source under a stance whose rate
-    /// is biomass-independent. See [`SourceYieldForecast::stock_cap`].
+    /// (`systems::hunt_take` dips inside `hunt_escapement_ceiling`; `forage_take` dips inside
+    /// `forage_escapement_ceiling`, and both *then* clamp to the standing stock). Dipping the
+    /// already-clamped row instead — `min(rate, B) × d` rather than `min(rate × d, B)` — under-reports
+    /// whenever the stock binds the undipped rate but not the dipped one. Neither web can reach that
+    /// state under constant escapement (an escapement ceiling is `≤ B` by construction), so the order
+    /// is now belt-and-braces rather than load-bearing. See [`SourceYieldForecast::stock_cap`].
     pub fn ceiling_under(
         &self,
         policy: FollowPolicy,
@@ -4048,14 +4052,14 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// passed herd state** — no history, no persistence — so the assign-time seed and the resolved row
 /// compute the identical number (exact forecast == actual, the true no-jump).
 ///
-/// **Simulated RATE-BASED, without the kill-credit bank** (`docs`): the bank only quantises *when*
-/// whole animals arrive, never the N-turn total, so simulating the smooth [`hunt_policy_rate`] gives
-/// the smooth average directly — which is the whole point, since the lumpy bank-quantised take is what
-/// `actual` already reports. A Sustain herd converges to ~MSY and reads flat; a Surplus/Deplete herd
-/// declines within the horizon and the average honestly reflects it; a corralled herd projects its
-/// managed pen yield (already smooth). Reuses the shared model helpers ([`regrow_biomass`],
-/// [`hunt_policy_rate`], [`pen_yield_biomass`], [`HuntYield::apply`], [`herd_ecology`]/[`herd_capacity`])
-/// — no second copy of the ecology or take math.
+/// **Simulated UNQUANTISED**: whole-animal rounding decides *when* the food arrives, never the N-turn
+/// total, so simulating the smooth escapement take ([`hunt_escapement_ceiling`]) gives the smooth
+/// average directly — which is the whole point, since the lumpy quantised take is what `actual`
+/// already reports. A Sustain herd converges on `K/2` and reads flat at ~MSY; a Surplus/Deplete herd
+/// declines to its floor within the horizon and the average honestly reflects it; a corralled herd
+/// projects its managed pen yield (already smooth). Reuses the shared model helpers
+/// ([`regrow_biomass`], [`hunt_escapement_ceiling`], [`pen_yield_biomass`], [`HuntYield::apply`],
+/// [`herd_ecology`]/[`herd_capacity`]) — no second copy of the ecology or take math.
 // The projection needs the full take context (source, both configs, throughput, multiplier, crew,
 // policy, horizon) — the same shape `hunt_source_yield_preview` already carries.
 #[allow(clippy::too_many_arguments)]
@@ -4096,21 +4100,13 @@ pub fn project_realized_hunt(
         if quarry.biomass <= ecology.extinction_floor * capacity {
             break; // `advance_herds` would despawn it here — the herd is gone.
         }
-        // Population: the SMOOTH per-turn rate (no kill-credit bank), capped by the crew's throughput
-        // and the standing stock. A pen pays its managed escapement MSY; a wild/pastoral herd pays its
-        // policy rate against the pre-regrowth biomass (slice 8b — what `hunt_take` sizes Sustain on).
+        // Population: the SMOOTH per-turn take (unquantised), capped by the crew's throughput and the
+        // standing stock. A pen pays its managed escapement MSY; a wild/pastoral herd pays the stock
+        // standing above its stance's floor, at the CURRENT biomass — what `hunt_take` reads.
         let rate = if corralled {
             pen_yield_biomass(&quarry, fauna)
         } else {
-            hunt_policy_rate(
-                policy,
-                improvement,
-                quarry.biomass_before_regrowth,
-                capacity,
-                &ecology,
-                fauna,
-                ladder,
-            )
+            hunt_escapement_ceiling(policy, improvement, quarry.biomass, capacity, ladder)
         };
         let take = rate.min(collection).min(quarry.biomass).max(0.0);
         if take <= REALIZED_PROJECTION_TAKE_EPSILON {
@@ -4129,34 +4125,34 @@ pub fn project_realized_hunt(
     }
 }
 
-/// **WHEN the food lands for a hunt source — a FORWARD PROJECTION *with* the kill-credit bank.** The
-/// discrete sibling of [`project_realized_hunt`]: the same forward simulation, from the same herd
-/// state, under the same policy and crew — but run **with** [`Herd::hunt_credit`] and the whole-animal
-/// quantisation the real take path applies, recording what is delivered on each projected turn.
+/// **WHEN the food lands for a hunt source — a FORWARD PROJECTION *with* the whole-animal
+/// quantisation.** The discrete sibling of [`project_realized_hunt`]: the same forward simulation,
+/// from the same herd state, under the same policy and crew — but run through
+/// [`quantise_animal_take`] as the real take path is, recording what is delivered on each projected
+/// turn.
 ///
 /// Returns exactly `horizon` entries: **index `i` is the food delivered `i + 1` turns from now**, and
-/// `0.0` is an honest *wait* turn (the bank could not yet afford a body), not a missing reading. A
-/// **continuous** source — a pen, or fast game whose MSY clears a body every turn — simply has a
-/// positive value in every slot, which the client draws as a solid run.
+/// `0.0` is an honest *wait* turn (the herd could not yet spare a whole body), not a missing reading.
+/// A **continuous** source — a pen, or fast game whose escapement clears a body every turn — simply
+/// has a positive value in every slot, which the client draws as a solid run.
 ///
 /// # Why this and `realized` are two functions, not one
 ///
-/// The bank decides *when* a whole animal lands, never *how much* lands over the window — so
+/// Rounding to whole animals decides *when* one lands, never *how much* lands over the window — so
 /// `realized` omits it to get the smooth average directly, and this keeps it to get the timing. Their
-/// totals agree: `Σ arrivals ≈ realized × horizon`, up to the partial body still banked at the end.
+/// totals agree: `Σ arrivals ≈ realized × horizon`, up to the partial body still standing at the end.
 ///
 /// # Where it starts
 ///
-/// From the herd's **REAL current `hunt_credit`**, never zero — the first arrival is the one the
-/// player cares most about, and a herd six turns into banking a mammoth delivers on turn 1, not turn
-/// 7. Callers pass the **post-take** state so slot 0 is the *next* delivery rather than the one this
-/// turn already paid.
+/// From the herd's **real current biomass**, which since the harvest floor *is* the accumulator: the
+/// wait between kills is the stock climbing back over one `body_mass` above the floor, so a herd six
+/// turns into rebuilding a mammoth's worth of room delivers on turn 1, not turn 7. Callers pass the
+/// **post-take** state so slot 0 is the *next* delivery rather than the one this turn already paid.
 ///
 /// Simulated on a private clone (the caller's herd is never touched) through the same shared helpers
-/// the take path uses ([`regrow_biomass`], [`hunt_policy_rate`], [`hunt_credit_ceiling`],
-/// [`quantise_animal_take`], [`pen_yield_biomass`], [`HuntYield::apply`],
-/// [`herd_ecology`]/[`herd_capacity`]) — **no second copy of the take math**, so the schedule is what
-/// the sim will really pay.
+/// the take path uses ([`regrow_biomass`], [`hunt_escapement_ceiling`], [`quantise_animal_take`],
+/// [`pen_yield_biomass`], [`HuntYield::apply`], [`herd_ecology`]/[`herd_capacity`]) — **no second copy
+/// of the take math**, so the schedule is what the sim will really pay.
 // Same shape as its `realized` sibling — the projection needs the full take context.
 #[allow(clippy::too_many_arguments)]
 pub fn project_arrivals_hunt(
@@ -4205,30 +4201,12 @@ pub fn project_arrivals_hunt(
             quarry.biomass -= take.killed_biomass();
             take.carried
         } else {
-            // A wild/pastoral herd banks its policy rate and kills once the bank clears a body — the
-            // `systems::hunt_take` sequence, helper for helper.
-            let rate = hunt_policy_rate(
-                policy,
-                improvement,
-                quarry.biomass_before_regrowth,
-                capacity,
-                &ecology,
-                fauna,
-                ladder,
-            );
-            let ceiling = hunt_credit_ceiling(
-                policy,
-                ladder.build_dip(improvement),
-                quarry.biomass,
-                quarry.hunt_credit,
-                rate,
-            );
+            // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
+            // whole animals — the `systems::hunt_take` sequence, helper for helper.
+            let ceiling =
+                hunt_escapement_ceiling(policy, improvement, quarry.biomass, capacity, ladder);
             let take = quantise_animal_take(ceiling, collection, quarry.body_mass);
             quarry.biomass -= take.killed_biomass();
-            if !matches!(policy, FollowPolicy::Eradicate) {
-                // Eradicate never touched the bank; every other policy drains it by what was killed.
-                quarry.hunt_credit = (quarry.hunt_credit + rate - take.killed_biomass()).max(0.0);
-            }
             take.carried
         };
         *slot = hunt_yield.apply(carried, output_multiplier).provisions;
@@ -4489,134 +4467,68 @@ pub fn hunt_source_yield_preview(
     )
 }
 
-/// **THE per-turn take RATE a hunt policy earns toward whole animals** (in *biomass*), the ordered
-/// multiples of the herd's sustainable yield (`MSY = r·K/4`, [`peak_regrowth`]). This is a **rate**, not
-/// a take: it is banked into [`Herd::hunt_credit`], and a whole animal is killed only once the bank
-/// clears one `body_mass` (see [`hunt_credit_ceiling`] and [`systems::hunt_take`]).
+/// **THE biomass a hunt may take from a herd this turn** — **constant escapement**, dipped by
+/// whatever the crew is building. The animal web's half of `docs/plan_harvest_floor.md` §1, and the
+/// exact twin of `forage::forage_escapement_ceiling`:
 ///
-/// # FOUR ASCENDING MULTIPLES OF MSY — monotone by construction (slice 8b)
+/// ```text
+/// escapement_ceiling(policy.escapement_floor(), B, K) × ladder.build_dip(improvement)
+/// ```
 ///
-/// | policy | rate | herd |
+/// | policy | floor | herd |
 /// |---|---|---|
-/// | **Sustain** | [`sustainable_yield`] — `regen(min(B, K/2))` | stable, settles at `K/2` |
-/// | **Surplus** | `surplus_multiplier × MSY` (**1.5**) | slowly declines (reversible) |
-/// | **Deplete** | `deplete_multiplier × MSY` (**2.5**) | declines to **extinction** |
-/// | **Eradicate** | the whole stock (`B`) — bypasses the credit bank | gone |
-/// | **Tame / Corral** | Sustain's rate × the rung's `yield_fraction_while_building` | a dip on a sustainable draw |
+/// | **Sustain** | `K/2` ([`MSY_BIOMASS_FRACTION`]) | settles at `K/2`, the most productive biomass |
+/// | **Surplus** | `0.30·K` | drawn down, still above the Allee brink |
+/// | **Deplete** | `0.15·K` | drawn to the brink; depensation finishes it |
+/// | **Eradicate** | `0` | the whole stock — gone |
+/// | **Tame / Corral** | the stance's own floor | a dip on whatever draw the crew holds |
 ///
-/// **Ordering is guaranteed because Surplus/Deplete are multiples of the SAME base:** `Sustain ≤ MSY <
-/// 1.5·MSY < 2.5·MSY ≤ B`, at **every** biomass and for **every** species (`FaunaConfig::validate` pins
-/// `1 ≤ surplus_multiplier < deplete_multiplier`). *"Each option takes more than the previous, or it
-/// looks strange to the player."* A fraction-of-`B` skim could dip below MSY for a fast breeder
-/// (measured in play: Wild Fowl Sustain 0.22 vs a 0.10·B Surplus 0.15 — inverted); a **multiple of MSY
-/// never can**. Extinction is real: constant catch above MSY has no equilibrium, so Surplus declines a
-/// herd and Deplete drives it extinct.
+/// # It is a STOCK, not a rate — which is why the kill-credit bank left this path
 ///
-/// # Sustain's TWO-BRANCH rate — never crashes a herd, never sticks at `K`
+/// The four stances used to be four ascending **multiples of MSY** banked into
+/// [`Herd::hunt_credit`] until the bank cleared one `body_mass`. A ceiling that is already a *stock*
+/// must not be banked: adding it to an accumulator would offer the herd's whole surplus **plus
+/// everything it had already handed over**, compounding a quantity that was never a flow. So
+/// [`systems::hunt_take`] neither reads nor advances `hunt_credit`, and the accumulator the bank
+/// provided is the herd's **own standing biomass**: a mammoth held at floor `0.5` regrows ~120/turn
+/// against an 800 body mass, so `B − 0.5·K` crosses one body after ~7 turns and
+/// [`quantise_animal_take`] pays exactly the wait-then-one pulse the bank used to produce. Same
+/// cadence, one fewer piece of state.
 ///
-/// `sustainable_yield(B)` is **`regen(min(B, K/2))`** (it clamps the argument to `K/2` before the
-/// logistic), which is the two-branch rule: `= regen(K/2) = MSY` for `B ≥ K/2`, `= regen(B) ≤ MSY`
-/// for `Allee ≤ B < K/2`, `0` below the Allee point. **This is NOT `min(MSY, regen(B))`** — those two
-/// agree below `K/2` but diverge above it, and the difference is a shipped bug: `regen(B)` falls back
-/// to **0 at `B = K`** (`regen(K) = r·K·(1−1) = 0`), so `min(MSY, regen(K)) = 0` would leave a full
-/// herd yielding nothing, never dropping below `K`, stuck forever. `regen(min(B, K/2))` stays at MSY.
+/// **Eradicate has no special arm any more.** It was a stock while the other three were rates; now
+/// every stance is the same expression and Eradicate is simply its `floor = 0` case.
 ///
-/// So a full herd declines **gently at MSY/turn and settles at `K/2`** (no escapement burst), and a
-/// **below-`K/2` herd holds or recovers** — the credit still accumulates the sub-MSY rate, so Sustain
-/// stays selectable and pays a kill every few turns while the herd grows back.
+/// # `r`-INDEPENDENT — no ecology, no `FaunaConfig`, and that is structural
 ///
-/// **Why the credit bank is what makes the multiples produce whole animals:** the rate is a *fraction*
-/// of an animal for 7 of 9 species (MSY < `body_mass`). A per-turn ceiling would round that to zero
-/// **forever** (the flow trap). Banked, it accumulates until a body is affordable. A fast breeder whose
-/// rate is several bodies kills several per turn — the credit ceiling never clamps it to one.
+/// The escapement room does not depend on how fast the herd breeds ([`escapement_ceiling`]), so this
+/// function cannot reach the growth curve at all: dropping the `ecology` + `fauna` parameters is what
+/// makes *"the take never depends on `r`"* a property of the signature rather than a rule to
+/// remember. [`sustainable_yield`] survives for **telemetry only** — the overdraw ⚠ and the
+/// investment-payoff projections — and no take path may call it.
 ///
-/// `biomass` is the herd's **pre-regrowth** biomass ([`Herd::biomass_before_regrowth`]) — the take runs
-/// after Logistics regrowth, so Sustain must size its sustainable rate against what the herd *was* this
-/// turn, not the grown stock, or it slowly leaks a below-`K/2` herd down. Surplus/Deplete read only
-/// `carrying_capacity` + `ecology` (their MSY multiple is biomass-independent); Eradicate's return is
-/// unused (its take bypasses the rate — see [`hunt_credit_ceiling`]).
+/// # It reads the CURRENT biomass
 ///
-/// `ecology` + `carrying_capacity` are **the herd's own** — resolved by [`herd_ecology`] /
-/// [`herd_capacity`], never by the caller reaching for `fauna.ecology` or `herd.carrying_capacity`.
-pub fn hunt_policy_rate(
+/// Not [`Herd::biomass_before_regrowth`]. That subtlety existed because a constant *catch* evaluated
+/// after Logistics regrowth takes more than the stock grew, leaking a below-`K/2` herd down;
+/// constant escapement has no such leak — `B_now − floor·K` is exactly the stock standing above the
+/// floor, whenever it is measured.
+///
+/// `carrying_capacity` is **the herd's own**, resolved by [`herd_capacity`] — never the caller
+/// reaching for `herd.carrying_capacity` past the seam.
+pub fn hunt_escapement_ceiling(
     policy: FollowPolicy,
     improvement: Option<Improvement>,
     biomass: f32,
     carrying_capacity: f32,
-    ecology: &EcologyConfig,
-    fauna: &FaunaConfig,
     ladder: &LadderConfig,
 ) -> f32 {
-    let msy = peak_regrowth(carrying_capacity, ecology);
-    let stance = match policy {
-        FollowPolicy::Sustain => sustainable_yield(biomass, carrying_capacity, ecology),
-        FollowPolicy::Surplus => fauna.hunt.surplus_multiplier * msy,
-        FollowPolicy::Deplete => fauna.hunt.deplete_multiplier * msy,
-        // Eradicate takes the whole standing stock (it bypasses the credit bank at the call sites); the
-        // rate is `B` so the fill-bound and the forecast read it as "everything".
-        FollowPolicy::Eradicate => biomass,
-    };
-    // **The build dip is a factor on the chosen stance, not a rung of its own** (issue #442, §2.2).
-    // It used to be two extra `match` arms, each `fraction × Sustain's` rate, because a build verb
-    // *was* the policy. Now the same fraction — read through the one `LadderConfig::build_dip` seam
-    // the plant web reads — multiplies whichever stance the player holds, so Taming-while-Depleting
-    // takes more now and stalls its own meter instead of being forbidden.
-    (stance * ladder.build_dip(improvement)).max(0.0)
-}
-
-/// **The biomass a hunt may convert to whole animals THIS turn**, given the herd's accumulated
-/// kill-credit and this turn's [`hunt_policy_rate`]. This is the ceiling [`quantise_animal_take`] reads.
-///
-/// - **Eradicate bypasses the bank** — it takes the whole standing stock, the denial mission's whole
-///   point. It reads the **current** `biomass` rather than the pre-regrowth figure `rate` was sized
-///   against, which is why it needs `build_dip` separately, where every other arm gets the dip folded
-///   into `rate` by [`hunt_policy_rate`].
-/// - **Every other policy banks its rate**: `min(credit + rate, biomass)`. Capped at the standing stock
-///   so the bank never funds animals that do not exist (which would release a burst when the herd
-///   recovered — see [`Herd::hunt_credit`]).
-///
-/// `build_dip` is [`crate::intensification::LadderConfig::build_dip`] of the assignment's improvement
-/// — [`crate::intensification::NO_BUILD_UNDERWAY_DIP`] for a pure harvest. It exists so **the dip
-/// bites on Eradicate too** (issue #442 §2.2): a crew gentling a herd it is also wiping out only
-/// handles a fraction of it, and a stance that ignored the dip would be the one hole in *"the dip
-/// multiplies whichever stance you hold"* — the hole the forecast==actual sweep found.
-///
-/// The **take path** ([`systems::hunt_take`]) advances and drains the persisted credit; the **forecast**
-/// ([`hunt_forecast`]) reads the same current credit + rate to predict the identical take, so
-/// forecast == actual by construction.
-pub fn hunt_credit_ceiling(
-    policy: FollowPolicy,
-    build_dip: f32,
-    biomass: f32,
-    credit: f32,
-    rate: f32,
-) -> f32 {
-    hunt_stance_offer(policy, build_dip, biomass, credit, rate).clamp(0.0, biomass.max(0.0))
-}
-
-/// **[`hunt_credit_ceiling`] WITHOUT its standing-stock clamp** — what the stance offers before the
-/// herd's size has its say. Split out so [`hunt_forecast`] can store the offer and let
-/// [`SourceYieldForecast::ceiling_under`] apply the dip *inside* the clamp, matching the take path's
-/// order; nobody else should reach for it, because an unclamped offer can name animals that do not
-/// exist.
-///
-/// Both arms are the same two facts [`hunt_credit_ceiling`] documents: **Eradicate bypasses the
-/// bank** and offers the whole standing stock (which is why it needs `build_dip` here — the dip is
-/// not in its `rate`), and every other policy offers `credit + rate` with the dip already folded in
-/// by [`hunt_policy_rate`]. Eradicate's offer is `≤ biomass` because
-/// `yield_fraction_while_building` is validated `< 1`, so clamping it changes nothing.
-fn hunt_stance_offer(
-    policy: FollowPolicy,
-    build_dip: f32,
-    biomass: f32,
-    credit: f32,
-    rate: f32,
-) -> f32 {
-    if matches!(policy, FollowPolicy::Eradicate) {
-        (biomass.max(0.0) * build_dip).max(0.0)
-    } else {
-        credit + rate
-    }
+    // **The build dip is a factor on the chosen stance, not a rung of its own** (issue #442, §2.2):
+    // the same fraction — read through the one `LadderConfig::build_dip` seam the plant web reads —
+    // multiplies whichever stance the player holds, so Taming-while-Depleting takes more now and
+    // stalls its own meter instead of being forbidden. `room × dip ≤ room ≤ B`, so a caller's
+    // standing-stock clamp is belt-and-braces and can never bind.
+    escapement_ceiling(policy.escapement_floor(), biomass, carrying_capacity)
+        * ladder.build_dip(improvement)
 }
 
 /// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
@@ -4734,48 +4646,53 @@ pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32
     }
 }
 
-/// **The STEADY carry crew for a whole-animal (hunt) source** — the number of haulers a hunt needs to
-/// carry home its *peak per-turn animal drop* without waste, and the biomass-space mirror of the
+/// **The carry crew for a whole-animal (hunt) source** — the number of haulers a hunt needs to carry
+/// home the *peak animal drop its ceiling allows* without waste, and the biomass-space mirror of the
 /// client's compose-panel `_max_useful_workers`. This is `SourceYield.workers_needed`'s haul component
 /// for every whole-animal source (wild hunt, pastoral herd, pen), and it is deliberately **not** the
 /// lumpy [`AnimalTake::carried`] of any single turn.
 ///
 /// # Why not the this-turn take
 ///
-/// A slow breeder whose MSY < `body_mass` (a Wild Aurochs, `r ≈ 0.09`, body 80) drops **0** animals on
-/// a wait turn while its kill-credit accumulates — so inverting `carried` collapses `workers_needed` to
-/// `0` (and, for a managed herd, to the bare herder count via
+/// A slow breeder whose one-turn regrowth is lighter than one body (a Wild Aurochs, `r ≈ 0.09`, body
+/// 80) drops **0** animals on a wait turn while the room above its floor rebuilds — so inverting
+/// `carried` collapses `workers_needed` to `0` (and, for a managed herd, to the bare herder count via
 /// [`crate::intensification::source_crew_needed`]).
 /// That contradicts the *same row's* `wasted_yield`, which correctly reports the waste an understaffed
 /// crew leaves standing: the panel then says `workersNeeded: 1` beside a 50%-`wastedYield` at 1 worker
-/// — *drop workers* and *add workers* on one row. Sizing the crew off the **steady rate** instead makes
+/// — *drop workers* and *add workers* on one row. Sizing the crew off the **ceiling** instead makes
 /// the two agree, and makes the band panel's overstaff note equal the compose panel's stepper cap.
 ///
 /// # The peak drop
 ///
-/// The most whole animals a turn's `rate` can drop is `floor(rate / body) + 1`: the herd banks `rate`
-/// biomass/turn and clears one more body than the whole animals the rate already covers, on the turn
-/// its accumulated fraction tips over (the `+1` — the same `floor(ceiling/body)+1` the client counts).
-/// Carrying that peak needs `ceil(peak_biomass / per_worker)` haulers:
+/// The most whole animals `ceiling` can drop is `floor(ceiling / body) + 1`: the whole animals the
+/// room already covers, plus the one its partial body becomes on the turn regrowth tips it over (the
+/// `+1` — the same `floor(ceiling/body)+1` the client counts). Carrying that peak needs
+/// `ceil(peak_biomass / per_worker)` haulers:
 ///
 /// ```text
-/// peak_animals = floor(rate / body) + 1
+/// peak_animals = floor(ceiling / body) + 1
 /// peak_biomass = peak_animals × body
 /// crew         = ceil(peak_biomass / per_worker)
 /// ```
 ///
-/// `rate` is the policy's **steady** per-turn take rate ([`hunt_policy_rate`], NOT the credit-inclusive
-/// [`hunt_credit_ceiling`] burst), so the crew is stable turn to turn and equals the compose panel's cap
-/// by construction. Units are free — pass all three in biomass, or all three in provisions (the ratios
+/// `ceiling` is the take's own bound — the stance's [`hunt_escapement_ceiling`], the number
+/// [`quantise_animal_take`] divides — so the crew and the waste can never disagree about what the
+/// source offered. **On a full herd that is the crew which would clear it to the floor in ONE turn,
+/// which is a big number, and it is the honest one** (`docs/plan_harvest_floor.md` §7.6): it is what
+/// makes *"this crew cannot draw the herd that low"* expressible instead of silently true. Do not
+/// clamp it.
+///
+/// Units are free — pass all three in biomass, or all three in provisions (the ratios
 /// are scale-invariant, so the provisions-space call in [`forecast_source_yield`] and the biomass-space
 /// calls in the labor arm agree). Naturally `>= 1` for any finite-positive `body`/`per_worker` (since
 /// `peak_animals >= 1`); a degenerate `body`/`per_worker` (≤ 0 — unreachable, `FaunaConfig::validate`
 /// pins `body_mass` positive and the per-worker levers are positive config) yields `0`.
-pub fn hunt_haul_workers(rate: f32, body: f32, per_worker: f32) -> u32 {
+pub fn hunt_haul_workers(ceiling: f32, body: f32, per_worker: f32) -> u32 {
     if !body.is_finite() || body <= 0.0 || !per_worker.is_finite() || per_worker <= 0.0 {
         return 0;
     }
-    let peak_animals = (rate.max(0.0) / body).floor() + 1.0;
+    let peak_animals = (ceiling.max(0.0) / body).floor() + 1.0;
     let peak_biomass = peak_animals * body;
     (peak_biomass / per_worker).ceil() as u32
 }
@@ -4882,40 +4799,30 @@ pub(crate) fn hunt_forecast(
             hunt_yield.apply(herd.body_mass, output_multiplier),
         );
     }
-    let ecology = herd_ecology(herd, fauna);
     let capacity = herd_capacity(herd, fauna);
-    // **The displayed ceiling is the STEADY per-turn rate, NOT the credit-inclusive burst** (the
-    // intensification-ladder readout fix). Each policy earns its `hunt_policy_rate` into the herd's
-    // banked `hunt_credit`, and the *take* path cashes `min(credit + rate, biomass)` — a lumpy,
-    // this-turn amount that, for a slow breeder whose MSY < `body_mass`, is inflated by ~a whole banked
-    // animal. Quoting that in the compose forecast made the ladder read nonsense (the Tame dip
-    // out-reading its own payoff; Sustain out-reading Tame). So the forecast drops the transient
-    // `hunt_credit` term and shows the **sustainable** rate — the number the confirmed-allocation row
-    // already headlines (`sustainable_yield`), so compose and resolved now agree. The bank still drives
-    // the lumpy TAKE (`hunt_take` / `hunt_credit_ceiling` are untouched); only the readout is steady.
-    // Passing `credit = 0.0` reuses `hunt_credit_ceiling` so **Eradicate stays the whole stock `B`**
-    // (it bypasses the bank) exactly as the take path reads it — the one policy whose ceiling is
-    // unchanged.
+    // **The four STANCE rows ARE the take**, helper for helper: the stock standing above each
+    // stance's escapement floor, at the herd's current biomass — exactly what `hunt_take` reads. The
+    // build dip is a factor applied on top (`ceiling_under`), never a fifth row, so these are the
+    // pure-harvest ceilings.
+    //
+    // There is no longer a transient term to drop here. The rows used to quote a *rate* while the
+    // take cashed `min(credit + rate, biomass)` — a lumpy this-turn amount inflated by ~a whole
+    // banked animal for a slow breeder — so the forecast deliberately showed the steady rate instead
+    // and the two agreed only in the long run. Under constant escapement the ceiling IS a stock, the
+    // bank is gone, and the row and the take are the same number.
     let ceiling = |policy| {
-        // Sustain's rate is sized against the **pre-regrowth** biomass (slice 8b), so a below-K/2
-        // herd holds rather than leaking; the ceiling then clamps to the current stock.
-        // The four STANCE rows: a pure harvest's rate. The build dip is a factor applied on top
-        // (`ceiling_under`), never a fifth row.
-        let rate = hunt_policy_rate(
-            policy,
-            NO_IMPROVEMENT_UNDERWAY,
-            herd.biomass_before_regrowth,
-            capacity,
-            &ecology,
-            fauna,
-            ladder,
-        );
-        // **Stored UNCLAMPED**, with the clamp carried beside it as `stock_cap` — `ceiling_for`
-        // applies it, and `ceiling_under` applies it *after* the dip, which is the order the take
-        // path uses (PR #448 review). `hunt_stance_offer` is `hunt_credit_ceiling` minus that clamp,
-        // so Eradicate still reads the whole standing stock rather than the (unused) rate.
+        // **Stored UNCLAMPED**, with the standing stock carried beside it as `stock_cap` —
+        // `ceiling_for` applies it, and `ceiling_under` applies it *after* the dip, which is the order
+        // the take path uses (PR #448 review). The clamp cannot bind on an escapement ceiling
+        // (`room × dip ≤ room ≤ B`); it is kept as belt-and-braces and for wire stability.
         hunt_yield.apply(
-            hunt_stance_offer(policy, NO_BUILD_UNDERWAY_DIP, herd.biomass, 0.0, rate),
+            hunt_escapement_ceiling(
+                policy,
+                NO_IMPROVEMENT_UNDERWAY,
+                herd.biomass,
+                capacity,
+                ladder,
+            ),
             output_multiplier,
         )
     };
@@ -4927,9 +4834,8 @@ pub(crate) fn hunt_forecast(
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
-        // The standing stock `hunt_credit_ceiling` clamps every banked policy to — the *current*
-        // biomass, not the pre-regrowth reading the rates were sized against, exactly as the take
-        // path reads it.
+        // The herd's standing stock — belt-and-braces beside rows that already cannot exceed it
+        // (`escapement_ceiling` is `B − floor·K`), kept so every source type populates the same field.
         stock_cap: Some(hunt_yield.apply(herd.biomass.max(0.0), output_multiplier)),
         // The animal web's two build dips (`Tame`, then `Corral`), as the FACTORS they are: the
         // ceiling a builder pays is `stance × dip`, so the four rows above stay the whole story and
@@ -5027,6 +4933,24 @@ pub(crate) fn net_biomass_delta(biomass: f32, cap: f32, ecology: &EcologyConfig)
 /// this number. Exporting it is what stops those fixtures from spelling `0.5` by hand and silently
 /// drifting if the curve's peak ever moves.
 pub const MSY_BIOMASS_FRACTION: f32 = 0.5;
+
+/// **CONSTANT ESCAPEMENT** — the biomass standing above a floor, and therefore the whole take
+/// ceiling on **both** food webs (`docs/plan_harvest_floor.md` §1): a take is
+/// `min(crew throughput, escapement_ceiling(floor, B, K))`, and the floor is the only thing a stance
+/// (later, a labor assignment) contributes to it.
+///
+/// **`r`-INDEPENDENT, which is the property that makes it the right shape** — and is why this
+/// function takes no [`EcologyConfig`]. Unlike MSY (`r·K/4`, [`peak_regrowth`]) the answer does not
+/// depend on how fast the stock breeds, so a take can no longer be a *rate* that outruns the
+/// standing stock, and *"where do I stop"* stops being a question about the growth curve. The sim
+/// already harvests a penned herd exactly this way ([`pen_yield_biomass`], floor
+/// [`MSY_BIOMASS_FRACTION`]); this is that rule generalised to a floor the caller names.
+///
+/// The answer is `≤ biomass` for any `floor_fraction ≥ 0`, so a caller's standing-stock clamp can
+/// never bind — keep such clamps as belt-and-braces, not as load-bearing terms.
+pub fn escapement_ceiling(floor_fraction: f32, biomass: f32, carrying_capacity: f32) -> f32 {
+    (biomass - floor_fraction * carrying_capacity).max(0.0)
+}
 
 /// Max Sustainable Yield ceiling: regrowth evaluated at the most-productive biomass (K/2),
 /// so a resource AT carrying capacity still has a positive sustainable harvest (Sustain draws it
@@ -5821,16 +5745,16 @@ mod tests {
     /// **The build dip lands BEFORE the standing-stock clamp** — `min(rate × d, cap)`, never
     /// `min(rate, cap) × d` (PR #448 review). Asserted on the shared [`SourceYieldForecast`]
     /// accessor rather than on either web's forecast builder, because `ceiling_under` is the one
-    /// lookup both take paths are mirrored by: `fauna::hunt_take` folds the dip into
-    /// `hunt_policy_rate` and *then* clamps, and `forage::forage_take` dips inside
-    /// `forage_policy_ceiling` and *then* clamps to `patch.biomass`.
+    /// lookup both take paths are mirrored by (each dips inside its own `*_escapement_ceiling` and
+    /// *then* clamps to the standing stock).
     ///
-    /// **This is also the plant web's whole guard.** With today's forage dials no stance rate can
-    /// exceed the standing crop (Deplete/Eradicate are fractions *of* biomass, Sustain/Surplus are
-    /// bounded by `r·B` at `r = 0.25`), so the plant clamp never binds and no patch fixture can
-    /// distinguish the two orders. The defect is latent there, not absent — a `surplus_multiplier`
-    /// above ~4, or a `take_fraction` above 1, makes it live — so the ordering is pinned here, where
-    /// the rate and the cap are inputs rather than consequences of a config.
+    /// **NEITHER WEB CAN REACH THE WINDOW TODAY, and that is why this fixture is synthetic.** An
+    /// escapement ceiling is `B − floor·K`, so `room × dip ≤ room ≤ B` and the two orders agree on
+    /// every real source — the `hunt_forecast_equals_actual_take…` sweep asserts exactly that
+    /// (`ceiling_under == ceiling_for × dip` on every row). This keeps the *accessor's* contract
+    /// pinned regardless, with the rate and the cap as inputs rather than as consequences of a
+    /// config, so a future ceiling that can exceed the stock cannot silently reintroduce the
+    /// discrepancy.
     #[test]
     fn the_build_dip_is_applied_inside_the_standing_stock_clamp() {
         // A stance whose rate is well ABOVE the stock (so the clamp binds undipped) and a dip that
@@ -5948,16 +5872,18 @@ mod tests {
     /// The **Tame rung's payoff** (`pastoral_yield`) is what a Sustain hunt pays *once the herd is
     /// tamed* — the pastoral analog of `managed_yield`/`corralYield`. It exists so the client can quote
     /// Tame's `→ +Y` instead of only its during-building dip (`ceiling_under(stance, Tame)`), which
-    /// reads *below* the undipped stance and hides that taming out-yields wild hunting.
+    /// reads *below* the undipped stance.
     ///
-    /// **Both projections are the SUSTAINED MSY on each rung's own ecology** — the long-run rate, which
-    /// is `r`-dependent and so orders the ladder strictly. For a healthy pennable herd at capacity
-    /// (`B = K`, `hunt_credit = 0`): `ceiling_sustain` **<** `pastoral_yield` **<** `managed_yield`,
-    /// each a strict step because only the ecology's `r` differs (wild `r·K/4` < pastoral `r×1.5` < pen
-    /// `r×3`, MSY-capped). The old escapement projection (`max(0, B − K/2)`, ecology-independent) tied
-    /// Tame and Corral at a single turn; sustained MSY is what lets the field show the ladder it exists
-    /// to show. (The pen's **actual** take stays constant-escapement — this is a forecast/display
-    /// number only.)
+    /// **Both payoffs are the SUSTAINED MSY on each rung's own ecology** — the long-run rate, which is
+    /// `r`-dependent and so orders the ladder strictly: `pastoral_yield` **<** `managed_yield`, a
+    /// strict step because only the ecology's `r` differs (pastoral `r×2` < pen `r×4`, MSY-capped).
+    ///
+    /// **The ladder is NOT visible against a stance ceiling, and cannot be** (`docs/plan_harvest_floor.md`
+    /// §1, and the same note husbandry.md already carries for the pen). A stance ceiling is
+    /// **constant escapement** — `B − floor·K`, a *stock* — so `r` cancels out of it entirely and a
+    /// full herd's one-turn Sustain ceiling is `K/2` on **every** rung. Comparing it against a
+    /// long-run rate compares a stock to a flow; that the stock is the larger number at `B = K` says
+    /// nothing about the ladder. What the rungs buy is that the next animal comes sooner.
     #[test]
     fn the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain() {
         let fauna = FaunaConfig::builtin();
@@ -5980,38 +5906,41 @@ mod tests {
             tame_dip,
             forecast.ceiling_sustain.provisions,
         );
-        // The ladder, now a strict three-step ordering on the sustained MSY of each rung's ecology
-        // (r-dependent), where escapement used to tie the top two. Measured ≈ 0.5 < 0.75 < 1.5.
-        assert!(
-            forecast.ceiling_sustain.provisions < forecast.pastoral_yield.provisions,
-            "taming's payoff out-yields wild Sustain: sustain {} vs tame payoff {}",
-            forecast.ceiling_sustain.provisions,
-            forecast.pastoral_yield.provisions,
-        );
+        // The ladder, on the axis that can express it: the two rung PAYOFFS, each a sustained MSY on
+        // its own ecology (r-dependent). Measured ≈ 0.75 < 1.5.
         assert!(
             forecast.pastoral_yield.provisions < forecast.managed_yield.provisions,
-            "the pen's payoff out-yields taming's (Sustain < Tame < Corral): tame {} vs corral {}",
+            "the pen's payoff out-yields taming's (Tame < Corral): tame {} vs corral {}",
             forecast.pastoral_yield.provisions,
             forecast.managed_yield.provisions,
         );
+        // And the stance ceiling is the `r`-free escapement stock — the reason it is NOT on that
+        // ladder. Pinned so nobody "fixes" the ordering above by putting a growth rate back into a
+        // take ceiling.
+        assert!(
+            (forecast.ceiling_sustain.provisions
+                - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
+                .abs()
+                < 1e-4,
+            "a full herd's Sustain ceiling is exactly `B - K/2`, whatever its `r`: {}",
+            forecast.ceiling_sustain.provisions,
+        );
     }
 
-    /// **The forecast ceilings are the STEADY sustainable rate, NOT the credit-inclusive burst** — the
-    /// intensification-ladder readout fix, pinned on a slow-breeder herd whose bank is FULL (the case
-    /// that exposed the bug). A Wild-Aurochs-shaped herd (`r ≈ 0.09`, MSY < `body_mass`) banks ~a whole
-    /// animal of `hunt_credit`; the take path cashes it, so the credit-inclusive ceiling used to inflate
-    /// every extractive readout by that banked amount — pushing Sustain **above** the Tame payoff and
-    /// inverting the ladder (`Sustain 2.24 > Tame 1.44`). Dropping the `hunt_credit` term restores the
-    /// steady rate, so the displayed ladder is ordered whatever the bank holds:
+    /// **The forecast ceilings are the escapement stock the take actually pays, and they stay
+    /// ORDERED** — pinned on a slow-breeder herd (Wild-Aurochs-shaped, `r ≈ 0.09`, one turn's regrowth
+    /// lighter than one body) carrying a stale `hunt_credit`, which the resident path must now ignore
+    /// completely (`Herd::hunt_credit` — the bank left with the rates it metered).
     ///
-    /// `Sustain < Surplus < Deplete` (extractive, steady multiples of MSY), the Tame/Corral **dips**
-    /// below their **payoffs** (`Sustain×Tame's dip < pastoral_yield`, `Sustain×Corral's dip <
-    /// managed_yield` — the "Preparing +X → then +Y" the client renders, dip now under payoff), and
-    /// the whole intensification
-    /// ladder `Sustain < pastoral_yield < managed_yield`. Asserting this **with a full bank** is the
-    /// regression: the old credit-inclusive ceiling failed every one of these.
+    /// What must hold at a single turn: `Sustain < Surplus < Deplete` (deeper floor ⇒ more standing
+    /// stock takeable), and each build **dip** below the undipped stance it rides — the "Preparing +X"
+    /// half of the client's row.
+    ///
+    /// **What is deliberately NOT asserted is dip-versus-payoff.** A dipped stance ceiling is a stock
+    /// and a rung payoff is a long-run rate; ordering them was only meaningful while the stance was
+    /// itself a rate. See `the_tame_rung_advertises_its_payoff_above_the_dip_and_wild_sustain`.
     #[test]
-    fn the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst() {
+    fn the_forecast_ceilings_are_the_escapement_stock_and_stay_ordered() {
         let fauna = FaunaConfig::builtin();
         let ladder = LadderConfig::builtin();
         // A healthy slow breeder at capacity (Wild-Aurochs-shaped): MSY < body_mass, so it banks credit.
@@ -6027,11 +5956,11 @@ mod tests {
 
         let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
 
-        // Extractive ladder — steady multiples of MSY, unperturbed by the banked animal.
+        // Extractive ladder — deeper floor, more stock standing above it, unperturbed by the stale bank.
         assert!(
             forecast.ceiling_sustain.provisions < forecast.ceiling_surplus.provisions
                 && forecast.ceiling_surplus.provisions < forecast.ceiling_deplete.provisions,
-            "extractive ceilings must be the steady MSY multiples in order, not the banked burst: \
+            "extractive ceilings must ascend with the floor, and must not read the stale bank: \
              sustain {} surplus {} deplete {}",
             forecast.ceiling_sustain.provisions,
             forecast.ceiling_surplus.provisions,
@@ -6047,16 +5976,16 @@ mod tests {
             .ceiling_under(FollowPolicy::Sustain, Some(Improvement::Corral))
             .provisions;
         assert!(
-            tame_dip < forecast.pastoral_yield.provisions,
-            "the Tame dip must read below its payoff (Preparing < then): dip {} payoff {}",
+            tame_dip < forecast.ceiling_sustain.provisions,
+            "the Tame dip must read below the stance it rides: dip {} vs sustain {}",
             tame_dip,
-            forecast.pastoral_yield.provisions,
+            forecast.ceiling_sustain.provisions,
         );
         assert!(
-            corral_dip < forecast.managed_yield.provisions,
-            "the Corral dip must read below its payoff: dip {} payoff {}",
+            corral_dip < forecast.ceiling_sustain.provisions,
+            "the Corral dip must read below the stance it rides: dip {} vs sustain {}",
             corral_dip,
-            forecast.managed_yield.provisions,
+            forecast.ceiling_sustain.provisions,
         );
         // **The dip rides whichever stance is selected** (§2.2) — the constant this arc removed. A
         // Deplete builder's dip is a fraction of Deplete's larger ceiling, not of Sustain's.
@@ -6067,15 +5996,21 @@ mod tests {
                 > tame_dip,
             "a Deplete-while-taming crew takes MORE now — that is what stalls its own meter"
         );
-        // The intensification ladder, visible at a single turn despite the full bank.
+        // The rung PAYOFFS still climb — the axis on which the ladder is expressible at a single turn.
         assert!(
-            forecast.ceiling_sustain.provisions < forecast.pastoral_yield.provisions
-                && forecast.pastoral_yield.provisions < forecast.managed_yield.provisions,
-            "the ladder must climb Sustain < Tame payoff < Corral payoff even with a full bank: \
-             sustain {} tame {} corral {}",
-            forecast.ceiling_sustain.provisions,
+            forecast.pastoral_yield.provisions < forecast.managed_yield.provisions,
+            "the payoff ladder must climb Tame < Corral: tame {} corral {}",
             forecast.pastoral_yield.provisions,
             forecast.managed_yield.provisions,
+        );
+        // The stale bank changed nothing: the ceiling is exactly the escapement stock.
+        assert!(
+            (forecast.ceiling_sustain.provisions
+                - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
+                .abs()
+                < 1e-4,
+            "the Sustain ceiling is `B - K/2`, not `B - K/2 + credit`: {}",
+            forecast.ceiling_sustain.provisions,
         );
     }
 

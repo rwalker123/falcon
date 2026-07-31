@@ -48,9 +48,11 @@ const NEUTRAL_MULTIPLIER: f32 = 1.0;
 /// A completed improvement meter.
 const RUNG_COMPLETE: f32 = 1.0;
 
-/// **The patch's standing crop as a fraction of its capacity**: `K/2`, the MSY operating point, so a
-/// Sustain gather takes the largest skim the curve offers.
-const MSY_STANDING_CROP: f32 = 0.5;
+/// **The patch's standing crop as a fraction of its capacity** — deliberately **above** Sustain's
+/// escapement floor (`K/2`), so a Sustain gather has standing stock to take. At `K/2` exactly a
+/// Sustain row is honestly `+0.00` (`docs/plan_harvest_floor.md` §1), which would make every rate
+/// these tests measure a division by nothing.
+const STOCKED_STANDING_CROP: f32 = 0.8;
 
 /// f32 slack on a share (normalized) or a rate (a chain of ~3 multiplications).
 const EPSILON: f32 = 1e-4;
@@ -966,7 +968,7 @@ fn seat_patch(app: &mut App, coord: UVec2, crop: Option<&str>) {
     patch.species = crop.map(str::to_string);
     patch.cultivation_progress = if crop.is_some() { RUNG_COMPLETE } else { 0.0 };
     patch.field_progress = 0.0;
-    patch.biomass = patch.carrying_capacity * MSY_STANDING_CROP;
+    patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
 }
 
 /// The default crop the tended rung would auto-pick on this tile — the same

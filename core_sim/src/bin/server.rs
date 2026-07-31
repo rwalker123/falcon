@@ -6371,6 +6371,13 @@ mod tests {
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
 
+    /// The biomass a **stocked patch** fixture is seeded at, as a fraction of `K` — deliberately
+    /// **above** Sustain's escapement floor (`fauna::MSY_BIOMASS_FRACTION`, `0.5`), so a Sustain
+    /// gather has standing stock to take. `0.5` is the one biomass at which a Sustain row honestly
+    /// reads `+0.00` (`docs/plan_harvest_floor.md` §1), which is exactly what these fixtures must not
+    /// measure.
+    const STOCKED_PATCH_FRACTION: f32 = 0.8;
+
     /// A snapshot broadcaster bound to an ephemeral loopback port — enough to satisfy the
     /// world-build path's broadcast without a real client.
     fn loopback_snapshot_server() -> Arc<SnapshotServer> {
@@ -7763,7 +7770,9 @@ mod tests {
             let patch = registry
                 .patch_mut(coord)
                 .expect("sowable ground has a patch");
-            patch.biomass = patch.carrying_capacity * 0.5;
+            // **Above Sustain's escapement floor** — at `K/2` exactly a Sustain row is
+            // honestly `+0.00`, and a dip on nothing is nothing.
+            patch.biomass = patch.carrying_capacity * STOCKED_PATCH_FRACTION;
             patch.cultivation_progress = 1.0;
             patch.field_progress = 0.4;
             patch.owner = Some(FactionId(0));
@@ -7806,10 +7815,15 @@ mod tests {
         );
         let sow_dip = sustain_ceiling * patch.sow_build_fraction;
         assert!(
-            sow_dip > 0.0 && sow_dip < patch.tended_yield,
-            "sowing a tended patch pays a fraction of what it would otherwise hand you: {sow_dip} vs {}",
-            patch.tended_yield
+            sow_dip > 0.0 && sow_dip < sustain_ceiling,
+            "sowing pays a FRACTION of the stance the crew is holding while it builds: {sow_dip} vs \
+             {sustain_ceiling}"
         );
+        // **Deliberately not compared against `tended_yield`.** Since the harvest floor a stance row
+        // is constant escapement — a *stock* — while `tendedYield`/`fieldYield` are long-run rates;
+        // ordering a stock against a rate is not a statement about anything
+        // (`docs/plan_harvest_floor.md` §1). The payoff comparison that still means something is
+        // rate-against-rate, below.
         assert!(
             patch.field_yield > patch.tended_yield,
             "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
@@ -8976,7 +8990,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
         // Half cap → a clear positive MSY skim; Thriving is the phase that biomass implies.
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
@@ -9025,7 +9039,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
@@ -9158,7 +9172,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
@@ -9202,7 +9216,7 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 

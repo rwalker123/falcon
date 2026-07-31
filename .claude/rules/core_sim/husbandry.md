@@ -41,13 +41,22 @@ invariant.
 
 > #### The ladder is monotone in the LONG-RUN rate, NOT in any single turn — do not "fix" this back
 >
-> Since slice 8 a **Sustain** hunt is **constant escapement on whole animals**: the herd hands over
-> `B − K/2`, which is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2`
-> = **`K/2` for every rung — `r` cancels out entirely**, so a full herd's first harvest is *identical*
-> wild, pastoral and penned. **That is correct and load-bearing.** The surplus standing above the
-> escapement point is *accumulated stock*, and stock does not care how fast you breed. What the ladder
-> buys is that **the next animal comes sooner** — so *"management buys a growth rate"* is now literally
-> and exclusively true, rather than being smeared across a stock term.
+> A **Sustain** hunt is **constant escapement on whole animals**: the herd hands over `B − K/2`, which
+> is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2` = **`K/2` for every rung —
+> `r` cancels out entirely**, so a full herd's first harvest is *identical* wild, pastoral and penned.
+> **That is correct and load-bearing.** The surplus standing above the escapement point is
+> *accumulated stock*, and stock does not care how fast you breed. What the ladder buys is that **the
+> next animal comes sooner** — so *"management buys a growth rate"* is now literally and exclusively
+> true, rather than being smeared across a stock term.
+>
+> **`docs/plan_harvest_floor.md` slice 1 made this true of the WILD hunt too, and changed nothing
+> here.** It generalised the pen's harvest rule to a floor the stance names (`Surplus 0.30·K`,
+> `Deplete 0.15·K`, `Eradicate 0`), so every rung on both webs is now the shape this callout already
+> described. What the arc **did** change is which comparisons are meaningful: a stance ceiling is a
+> stock and a rung payoff (`pastoralYield`, `corralYield`) is a long-run rate, so the two cannot be
+> ordered against each other at a single turn — the ladder lives on the payoff axis, and the 600-turn
+> average is where it is measured (`the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, and the
+> plan's own `stance_probe` property tests).
 >
 > A single turn therefore cannot see the ladder at **either** biomass: at `B = K` you read the
 > rung-blind stock, and at `B = K/2` you read a **pulse** — zero for any species whose one-turn MSY is
@@ -97,7 +106,8 @@ invariant.
   free (`pasture_fraction → 1`, larder → 0); a **wholly-barren** footprint keeps the herd's frozen `K`
   and pays the full larder bill (the pre-2d worst case, preserved). See "Phase 2d".
 - **`fauna::herd_ecology(herd, fauna)` and `fauna::herd_capacity(herd, fauna)` are THE single source of
-  that mapping.** `regrow_biomass`, `hunt_policy_ceiling`, `hunt_forecast`, `refresh_ecology_phase`,
+  that mapping.** `regrow_biomass`, `hunt_escapement_ceiling` (capacity only — the take reads no
+  ecology at all), `hunt_forecast`, `refresh_ecology_phase`,
   the expedition ceiling/bound/simulation — **every** consumer resolves through them. **No call site may
   re-derive an ecology or a capacity**: a second copy of this mapping is exactly how a forecast starts
   promising a number the take won't pay (see "Pre-commit Yield Forecast").
@@ -203,9 +213,10 @@ gated, **paid** verb, so both food webs read the same:
   `huntTripEstimates` row, because an expedition's mission carries a `FollowPolicy` and therefore
   cannot name it at all.
 - **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
-  `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` (`hunt_policy_ceiling`, through
-  the *same* shared MSY helper — the crew is gentling the herd, not harvesting it; a fraction of MSY is
-  a sustainable draw, so the herd stays healthy), and `domestication_progress` accrues that rung's
+  `yield_fraction_while_building × the herd's Sustain escapement ceiling` (`hunt_escapement_ceiling`,
+  through the *same* shared helper — the crew is gentling the herd, not harvesting it; a fraction of a
+  draw that stops at `K/2` is itself a draw that stops at `K/2`, so the herd stays healthy), and
+  `domestication_progress` accrues that rung's
   `progress_per_turn` **× the species' `taming_rate`** (slice 3c — 0.04 × 1.0 → 25 turns for a rabbit, × 0.2
   → 125 for a Steppe Runner) via the shared `RungDef::build_accrual` seam. **Gates:** the
   faction knows **Herding**, the species' `husbandry_ceiling` allows domestication (Grazing 2d-δ), and
@@ -296,7 +307,7 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   worked with `Improvement::Corral` (animal-only) in flight **costs a yield dip while the pen is
   built**: the take
   ceiling is the `animal:pen` rung's `yield_fraction_while_building ×` **the selected stance's** rate
-  (`hunt_policy_rate`, reusing the **shared** MSY helper — the crew is building, not hunting; a
+  (`hunt_escapement_ceiling`, reusing the **shared** helper — the crew is building, not hunting; a
   fraction of a *Sustain* draw is a sustainable draw, so a Sustain builder's herd stays healthy, while
   a Deplete builder's does not — issue #442 §2.2) and `corral_progress` accrues
   that rung's `progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**

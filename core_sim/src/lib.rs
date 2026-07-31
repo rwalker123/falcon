@@ -148,9 +148,9 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, build_prey_index,
-    carnivore_k_at, forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed,
-    herd_hunt_yield, herded_fraction, herders_needed, hunt_credit_ceiling, hunt_policies_for,
-    hunt_policy_rate, hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt,
+    carnivore_k_at, escapement_ceiling, forecast_expected_take, herd_capacity, herd_ecology,
+    herd_herders_needed, herd_hunt_yield, herded_fraction, herders_needed, hunt_escapement_ceiling,
+    hunt_policies_for, hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt,
     project_realized_hunt, quantise_animal_take, repopulate_fauna, spawn_initial_herds, AnimalTake,
     EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, PreyDatum,
     RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,

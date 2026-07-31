@@ -41,7 +41,7 @@ pub struct HuntPolicyCeilingState {
     pub policy: String,
     /// BAND / local-hunt ceiling, in provisions/turn. Produced by projecting the herd's
     /// `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — i.e. the
-    /// per-policy biomass ceiling `fauna::hunt_policy_ceiling` converted by the species' own
+    /// per-stance biomass ceiling `fauna::hunt_escapement_ceiling` converted by the species' own
     /// `HuntYield::apply` (which retired the global `fauna::hunt_provisions`),
     /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
     #[serde(default)]

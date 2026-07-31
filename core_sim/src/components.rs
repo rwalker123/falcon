@@ -1325,7 +1325,60 @@ pub enum FollowPolicy {
     Eradicate,
 }
 
+/// **Surplus's transitional escapement floor** — the herd/patch is drawn down to `0.30·K`.
+///
+/// **Transitional: deleted in slice 2**, when the floor becomes a value carried on the labor
+/// assignment and the stance axis stops naming one. It is the number
+/// `fauna_config.json`'s `hunt.surplus_escapement_fraction` already ships, so mapping the stance onto
+/// it leaves the expedition raid's take bit-identical
+/// (`follow_policy_escapement_floors_match_the_shipped_config` pins that).
+const SURPLUS_ESCAPEMENT_FLOOR: f32 = 0.30;
+
+/// **Deplete's transitional escapement floor** — drawn down to `0.15·K`, the Allee brink, where the
+/// stock's own depensation takes over from the hunt.
+///
+/// **Transitional: deleted in slice 2.** It is `fauna_config.json`'s `ecology.collapse_fraction`,
+/// the value the expedition raid already floors Deplete at — and 0.15 rather than the design doc's
+/// first-draft 0.1 precisely so the resident band and the raid can share one table.
+const DEPLETE_ESCAPEMENT_FLOOR: f32 = 0.15;
+
+/// **Eradicate's transitional escapement floor** — none. Every last unit of stock is takeable, which
+/// is what makes denial an end state rather than a deep draw-down.
+///
+/// **Transitional: deleted in slice 2.** Under constant escapement Eradicate needs no special case
+/// at all: it is the floor-`0` instance of the one expression every stance now uses.
+const ERADICATE_ESCAPEMENT_FLOOR: f32 = 0.0;
+
 impl FollowPolicy {
+    /// **The stance's escapement floor, as a fraction of `K`** — the line a take stops at, and since
+    /// the harvest-floor arc's slice 1 the *whole* of what a stance means to a take path
+    /// (`docs/plan_harvest_floor.md` §1): `take = min(crew throughput, max(0, B − floor·K))` on both
+    /// food webs, through [`crate::fauna::escapement_ceiling`].
+    ///
+    /// | stance | floor | leaves |
+    /// |---|---|---|
+    /// | **Sustain** | [`crate::fauna::MSY_BIOMASS_FRACTION`] | `K/2` — the most productive biomass |
+    /// | **Surplus** | [`SURPLUS_ESCAPEMENT_FLOOR`] | `0.30·K` |
+    /// | **Deplete** | [`DEPLETE_ESCAPEMENT_FLOOR`] | `0.15·K` — the Allee brink |
+    /// | **Eradicate** | [`ERADICATE_ESCAPEMENT_FLOOR`] | nothing |
+    ///
+    /// **This table is TRANSITIONAL and comes out in slice 2**, when the floor moves onto the labor
+    /// assignment as a value the player sets and the extractive stances are deleted. It exists so
+    /// slice 1 can change the take path's *shape* without moving the wire, the commands or the
+    /// client.
+    ///
+    /// It is deliberately the table `systems::expeditions::hunt_expedition_floor` has always used —
+    /// a greedy raid was constant escapement from the day it shipped — so the two floor tables
+    /// collapse into this one instead of drifting.
+    pub fn escapement_floor(self) -> f32 {
+        match self {
+            FollowPolicy::Sustain => crate::fauna::MSY_BIOMASS_FRACTION,
+            FollowPolicy::Surplus => SURPLUS_ESCAPEMENT_FLOOR,
+            FollowPolicy::Deplete => DEPLETE_ESCAPEMENT_FLOOR,
+            FollowPolicy::Eradicate => ERADICATE_ESCAPEMENT_FLOOR,
+        }
+    }
+
     /// Every stance, in player-facing order (gentlest → harshest) — **the whole enum**, and the one
     /// list every "iterate this source's rungs" site walks: the snapshot's per-patch
     /// `forage_policy_ceilings`, the per-herd `hunt_policy_ceilings`, and the per-herd
@@ -1346,14 +1399,15 @@ impl FollowPolicy {
     /// [`FollowPolicy::teaches_knowledge`], which turns on the same restraint/overdraw split — the two
     /// are pinned against each other by `follow_policy_overdrawing_is_the_inverse_of_stewardship`).
     ///
-    /// Since slice 8 every hunt policy is **escapement to a floor** (`fauna::hunt_policy_floor`), so
-    /// this is simply *"is that floor below the source's sustainable operating point?"*:
+    /// Every stance on both webs is **escapement to a floor** ([`FollowPolicy::escapement_floor`]),
+    /// so this is simply *"is that floor below the source's sustainable operating point?"*:
     /// - **`Sustain`** — floor `K/2`, the MSY point itself. It cannot overdraw: the take lands the
     ///   herd **exactly** on its most-productive biomass and never below. Sustainable *by
     ///   construction*, so a ⚠ there would be meaningless — which is the whole reason this predicate
     ///   exists rather than the client comparing `actual > sustainable` (a lumpy whole-animal take
     ///   exceeds the long-run MSY rate on every kill turn while being perfectly sustainable).
-    /// - **`Surplus` / `Deplete`** — floor at the collapse (Allee) threshold: a real draw-down.
+    /// - **`Surplus` / `Deplete`** — floors *below* `K/2` (`0.30·K`, then the Allee brink `0.15·K`):
+    ///   a real draw-down, and the deeper the floor the deeper the draw.
     /// - **`Eradicate`** — no floor at all.
     ///
     /// **An [`Improvement`] never changes the answer.** A build dips the *selected stance's* ceiling
@@ -1715,6 +1769,49 @@ mod tests {
             FollowPolicy::Sustain.teaches_knowledge(),
             "Sustain takes only the regrowth — it is the one stance that is also stewardship"
         );
+    }
+
+    /// **The transitional floor table IS the expedition raid's** — asserted against the shipped
+    /// `fauna_config.json`, because that is what makes the two tables collapsible into one
+    /// (`systems::expeditions::hunt_expedition_floor` now delegates here rather than reading config).
+    ///
+    /// If someone retunes `hunt.surplus_escapement_fraction` or `ecology.collapse_fraction`, this
+    /// fails and tells them the resident band's transitional floors moved with the raid's. Slice 2
+    /// deletes both the table and the keys, at which point this test goes with them.
+    #[test]
+    fn follow_policy_escapement_floors_match_the_shipped_config() {
+        let fauna = crate::fauna_config::FaunaConfig::builtin();
+        assert_eq!(
+            FollowPolicy::Sustain.escapement_floor(),
+            crate::fauna::MSY_BIOMASS_FRACTION,
+            "Sustain stops at the most productive biomass — the same constant the pen harvests on"
+        );
+        assert_eq!(
+            FollowPolicy::Surplus.escapement_floor(),
+            fauna.hunt.surplus_escapement_fraction,
+            "Surplus's floor is the raid's `hunt.surplus_escapement_fraction`"
+        );
+        assert_eq!(
+            FollowPolicy::Deplete.escapement_floor(),
+            fauna.ecology.collapse_fraction,
+            "Deplete's floor is the raid's `ecology.collapse_fraction` — the Allee brink, 0.15 and \
+             not the design doc's first-draft 0.1"
+        );
+        assert_eq!(
+            FollowPolicy::Eradicate.escapement_floor(),
+            0.0,
+            "Eradicate leaves nothing standing — the floor-0 case every other stance is a variation of"
+        );
+        // Strictly descending, which is what makes "a deeper stance takes more" true by construction
+        // on both webs (`FaunaConfig::validate` pins the config half of the same ordering).
+        for pair in FollowPolicy::ALL.windows(2) {
+            assert!(
+                pair[0].escapement_floor() > pair[1].escapement_floor(),
+                "{:?} must leave more standing than {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
     }
 
     /// **Kind-exclusivity, pinned.** Every [`Improvement`] is place-bound work on ONE food web

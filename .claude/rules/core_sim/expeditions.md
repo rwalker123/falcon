@@ -136,23 +136,28 @@ mission:
   completion reports **why** (no sustainable take / no take possible), never a cheerful zero.
 > #### A hunting expedition is a GREEDY RAID, not a resident band's throttled skim (playtest fix)
 >
-> A resident band (`systems::hunt_take`) takes its policy's per-turn **rate** into the kill-credit
-> bank — worker-independent, so a second hunter only added pack to fill and made the *trip* longer
-> (the playtest bug). A detached party instead **grabs the herd's standing surplus above the policy's
-> floor in a burst and comes home**, so more hunters take more animals in **fewer-or-equal** turns.
-> This replaces the MSY-rate ceiling on the **expedition path only** (`expedition_take_biomass` /
-> `hunt_trip_forecast`); `hunt_take` and `hunt_policy_rate` are untouched.
+> A resident band used to take its policy's per-turn **rate** into a kill-credit bank —
+> worker-independent, so a second hunter only added pack to fill and made the *trip* longer (the
+> playtest bug). A detached party instead **grabs the herd's standing surplus above the policy's floor
+> in a burst and comes home**, so more hunters take more animals in **fewer-or-equal** turns.
 >
-> - **The floor is per-policy** (`hunt_expedition_floor`, `FaunaConfig::validate`-ordered
+> **Since `docs/plan_harvest_floor.md` slice 1 the resident band uses the raid's SHAPE** — both are
+> constant escapement to `FollowPolicy::escapement_floor` — so what still separates them is pace, not
+> model: a raid works one herd with its whole party until the surplus is gone, a band works it a turn
+> at a time. **`hunt_expedition_floor` therefore delegates to that one table** and no longer reads
+> config; there is one floor table for both paths, not two that can drift.
+>
+> - **The floor is per-policy** (`hunt_expedition_floor` → `FollowPolicy::escapement_floor`, whose
+>   transitional numbers `FaunaConfig::validate` keeps ordered
 >   `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`): Sustain `K/2` (0.50·K),
->   Surplus `hunt.surplus_escapement_fraction·K` (0.30), Deplete `ecology.collapse_fraction·K` (0.15),
->   Eradicate `0`. A deeper policy leaves a leaner herd — *"Surplus/Deplete raid deeper"*. (Expedition
->   Deplete no longer drives extinction — it strips to 0.15·K and stops; extinction is the *resident*
->   band's multiples-of-MSY axis, unchanged.)
+>   Surplus `0.30·K`, Deplete `0.15·K`, Eradicate `0`. A deeper policy leaves a leaner herd —
+>   *"Surplus/Deplete raid deeper"*. (Deplete drives no extinction on **either** path now — it strips
+>   to 0.15·K and stops. Extinction is the floor-`0` case, i.e. **Eradicate**, on both paths.)
 > - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
 >   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
->   `hunt_credit`, and the bank meters *when* the next whole animal is **ready** (a body heavier than one
->   turn's work takes `body / throughput` turns). Once one is banked (`affordable >= 1`) the party
+>   `hunt_credit` — **the field's one remaining writer**, since the resident band stopped banking — and
+>   the bank meters *when* the next whole animal is **ready** (a body heavier than one turn's work takes
+>   `body / throughput` turns). Once one is banked (`affordable >= 1`) the party
 >   **kills it even if the pack cannot seat it whole**, carries the pack's worth, and **wastes the
 >   remainder** — exactly the resident band's `max(1, carryable)` rule (`fauna::quantise_animal_take`): a
 >   1-hunter party on an 800-biomass mammoth (16 food) whose pack holds only `per_worker_carry` = 4 food
@@ -264,11 +269,13 @@ mission:
   ceiling); factoring them onto `FollowPolicy::is_investment` fixed the drift, and typing the two sets
   apart removed the question. Guarded by
   `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
-- **Shared take helpers** (`fauna.rs`, slice 8b): **`hunt_policy_rate(policy, biomass_before_regrowth,
-  cap, ecology, fauna, ladder)`** is THE per-turn take **rate** (Sustain `sustainable_yield`, Surplus/
-  Deplete `mult × MSY`, Eradicate the whole stock, Tame/Corral the dip × Sustain's rate, Cultivate/Sow
-  `0`), and **`hunt_credit_ceiling(policy, biomass, credit, rate)`** turns it into this turn's affordable
-  whole-animal take against the herd's banked `hunt_credit` — see "The hunt policy axis" for the model.
+- **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(policy, improvement, biomass, cap,
+  ladder)`** is THE take ceiling on the animal web — `max(0, B − policy.escapement_floor()·K) ×
+  build_dip`, the stock standing above the stance's floor — and `quantise_animal_take` rounds it to
+  whole animals. It takes **no ecology and no `FaunaConfig`**, which is what makes the take
+  `r`-independent structurally rather than by convention; see "The hunt policy axis" in `fauna.md`.
+  The expedition keeps its own `credit` accumulator for the *party's* processing throughput
+  (`expedition_take_biomass`), which is a different quantity from the retired resident bank.
   **`HuntYield::apply(take, output_multiplier)`** (via `FaunaConfig::hunt_yield_for`, which retired the global `hunt_provisions`) is the single per-species biomass→(food, trade) conversion (an
   `f32`; the take path quantizes it onto the larder's `Scalar` grid). The rate is the *building*-phase
   ceiling: a

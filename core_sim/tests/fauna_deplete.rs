@@ -9,18 +9,18 @@ use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;
 use bevy::MinimalPlugins;
 
+use core_sim::hunt_escapement_ceiling;
 use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
+    DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
+    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, NO_BUILD_UNDERWAY_DIP, NO_IMPROVEMENT_UNDERWAY,
+    TileRegistry, WellbeingConfigHandle, NO_IMPROVEMENT_UNDERWAY,
 };
-use core_sim::{hunt_credit_ceiling, hunt_policy_rate};
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
 /// never binds, so the take is set entirely by the policy ceiling.
@@ -288,19 +288,67 @@ fn deplete_and_surplus_decline_faster_than_sustain_holds() {
     );
 }
 
-/// **Sustained deplete hunting drives a herd EXTINCT** (slice 8b — extinction is real and on-map again).
+/// **Deplete strips a herd to the Allee brink and PINS it there; ERADICATE is what ends it.**
 ///
-/// Deplete takes `deplete_multiplier × MSY` (2.5×) every turn — constant catch 2.5× the herd's *maximum*
-/// regrowth, so there is no equilibrium: the herd declines past the Allee threshold into the
-/// depensation crash and despawns. This is the depletion mechanic the ordered-escapement cut had to
-/// defer (a floor Deplete never crossed could only *pin* a herd at the brink); multiples of MSY restore
-/// it. A slow breeder makes the extinction unambiguous within the test's horizon.
+/// Under constant escapement a stance *is* its floor (`docs/plan_harvest_floor.md` §1), so where a
+/// herd ends up is decided by that one number and nothing else: Deplete's transitional floor is
+/// `ecology.collapse_fraction · K`, the depensation threshold, so a Deplete hunt takes everything
+/// above it and then takes only the trickle the brink regrows — a Collapsing remnant that survives.
+/// **Extinction is the floor-`0` case**: Eradicate leaves nothing standing, the herd falls under
+/// `extinction_floor · K`, and `advance_herds` despawns it.
+///
+/// That is a deliberate change of meaning. The retired axis made Deplete a *constant catch* of
+/// `2.5 × MSY`, which has no equilibrium and therefore drove extinction as a side effect of
+/// arithmetic; a floor is a statement about where you stop, and one placed at the brink stops at the
+/// brink. Slow breeders make both traces legible within the horizon.
 #[test]
-fn deplete_hunt_drives_collapse() {
-    /// Below the ~0.25 collapse threshold — deer/megafauna, the commercially-hunted slow game a 2.5×
-    /// cull cannot outrun. (A fast breeder is driven extinct too, just faster; slow makes the trace
-    /// legible.)
+fn deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it() {
+    /// Below the ~0.25 collapse threshold — deer/megafauna, the slow game a heavy cull cannot outrun.
     const SLOW_BREEDER_R: f32 = 0.05;
+    /// Long enough for either outcome to have resolved several times over.
+    const HORIZON_TURNS: u32 = 40;
+
+    // --- Deplete: stripped to the brink, still alive.
+    let mut app = spawn_world();
+    let (herd, _other) = prime_two_stationary_herds(&mut app);
+    let cap = {
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
+        h.regrowth_rate = SLOW_BREEDER_R;
+        h.carrying_capacity
+    };
+    spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
+    run_turns(&mut app, HORIZON_TURNS);
+    let collapse_fraction = app
+        .world
+        .resource::<FaunaConfigHandle>()
+        .get()
+        .ecology
+        .collapse_fraction;
+    let remnant = biomass_ratio(&app, &herd)
+        .map(|ratio| ratio * cap)
+        .expect("a Deplete hunt leaves a remnant standing at its floor, it does not end the herd");
+    assert!(
+        (remnant - collapse_fraction * cap).abs() < cap * 0.05,
+        "Deplete pins the herd at its `collapse_fraction · K` floor ({}): got {remnant}",
+        collapse_fraction * cap
+    );
+    // The phase is classified after Logistics regrowth, so a herd pinned at the brink reads the band
+    // just above it — distressed, never Thriving, which is the warning the player is owed.
+    let phase = app
+        .world
+        .resource::<HerdRegistry>()
+        .find(&herd)
+        .map(|h| h.ecology_phase);
+    assert!(
+        matches!(
+            phase,
+            Some(EcologyPhase::Stressed) | Some(EcologyPhase::Collapsing)
+        ),
+        "a herd held at the Allee brink is visibly distressed, never Thriving: {phase:?}"
+    );
+
+    // --- Eradicate: nothing left standing, and the herd is gone.
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
     {
@@ -308,12 +356,11 @@ fn deplete_hunt_drives_collapse() {
         let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
         h.regrowth_rate = SLOW_BREEDER_R;
     }
-    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
-    run_turns(&mut app, 40);
-
+    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Eradicate, FactionId(0));
+    run_turns(&mut app, HORIZON_TURNS);
     assert!(
         app.world.resource::<HerdRegistry>().find(&herd).is_none(),
-        "deplete hunting should drive the group extinct"
+        "an Eradicate hunt takes the whole standing stock and the herd despawns"
     );
     // Once the herd is gone the assignment lapses.
     assert!(
@@ -360,7 +407,6 @@ fn deplete_hunt_does_not_domesticate() {
 /// skim) is exactly the failure mode this guards.
 #[test]
 fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
-    let fauna = FaunaConfigHandle::default().get();
     let ladder = LadderConfig::builtin();
     const CAP: f32 = 4000.0;
     // The four *sustaining/extracting* policies in ascending harshness — the ladder the player reads.
@@ -371,30 +417,20 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
         FollowPolicy::Eradicate,
     ];
 
-    // Fast AND slow: the ordering must not depend on the breeding rate at all.
+    // Fast AND slow: the ordering must not depend on the breeding rate at all — and since the harvest
+    // floor it *cannot*, because the ceiling has no `r` term to depend on. Swept anyway: the sweep is
+    // the guard against anyone putting one back.
     for r in [0.35f32, 0.05] {
-        let mut ecology = fauna.ecology;
-        ecology.regrowth_rate = r;
         // B = K (clears every floor → strict), just above K/2, K/2, and down at the brink.
         for frac in [1.0f32, 0.55, 0.51, 0.50, 0.30, 0.16] {
             let biomass = CAP * frac;
-            // The affordable TAKE this turn from an empty bank (credit 0): each policy's rate banked
-            // and clamped to the standing stock (`hunt_credit_ceiling`). Ordering the *takes* is the
-            // guarantee — the raw rate is unclamped, so a small remnant's `2.5×MSY` Deplete rate can
-            // exceed its whole stock; the take cannot (it is `min(rate, biomass)`, `≤ Eradicate = B`).
+            // The TAKE this turn: the stock standing above each stance's escapement floor
+            // (`hunt_escapement_ceiling`). A deeper floor leaves less standing, so it takes more —
+            // the ordering is now a property of the floor table rather than of a multiplier ladder.
             let takes: Vec<f32> = axis
                 .iter()
                 .map(|p| {
-                    let rate = hunt_policy_rate(
-                        *p,
-                        NO_IMPROVEMENT_UNDERWAY,
-                        biomass,
-                        CAP,
-                        &ecology,
-                        &fauna,
-                        &ladder,
-                    );
-                    hunt_credit_ceiling(*p, NO_BUILD_UNDERWAY_DIP, biomass, 0.0, rate)
+                    hunt_escapement_ceiling(*p, NO_IMPROVEMENT_UNDERWAY, biomass, CAP, &ladder)
                 })
                 .collect();
             for pair in takes.windows(2) {
@@ -433,17 +469,21 @@ fn seat_measure_herd(app: &mut App, id: &str, biomass: f32, cap: f32, r: f32, bo
     herd.hunt_credit = 0.0;
 }
 
-/// **A FULL herd (B = K) under Sustain yields ~MSY and declines gently toward `K/2` — it does NOT
-/// stick at `K` yielding nothing** (slice 8b playtest bug).
+/// **A FULL herd (B = K) under Sustain lands on `K/2` and then pays ~MSY forever — it does NOT stick
+/// at `K` yielding nothing** (the original playtest bug), **and it never goes below `K/2`**.
 ///
-/// The bug: Sustain's rate written as `min(MSY, regen(B))` is `min(MSY, 0) = 0` at `B = K` (regrowth is
-/// zero at capacity), so a full herd yields nothing, never drops below `K`, and stays stuck forever
-/// (observed on full Crag Goat / Red Deer herds). The fix is `regen(min(B, K/2))` = **MSY at capacity**
-/// (the existing `sustainable_yield` semantics). This runs the **full turn** — `advance_herds`
-/// (regrowth, which is 0 at `K`) then the take — so the `regen(K) = 0` interaction is live; the
-/// weaker `sustain_hunt_at_capacity_yields_msy` runs only the take and so cannot exhibit it.
+/// The bug: a Sustain rate written as `min(MSY, regen(B))` is `min(MSY, 0) = 0` at `B = K` (regrowth is
+/// zero at capacity), so a full herd yielded nothing, never dropped below `K`, and stayed stuck forever
+/// (observed on full Crag Goat / Red Deer herds). Constant escapement answers it head-on: a full herd
+/// is **all** surplus above the floor.
+///
+/// The **first** harvest is therefore the accumulated stock, not a rate — a real windfall, and the
+/// steady MSY only starts once the herd is standing on its floor. So the averaging window here begins
+/// *after* the drawdown, which is what makes the ~MSY claim a statement about the steady state rather
+/// than about one big turn. This runs the **full turn** (`advance_herds` regrowth, then the take), so
+/// the `regen(K) = 0` interaction is live.
 #[test]
-fn a_full_herd_under_sustain_yields_msy_and_declines_not_stuck_at_k() {
+fn a_full_herd_under_sustain_settles_on_half_k_and_then_pays_msy() {
     for (label, k, r, body) in [
         ("Crag Goat", 130.0f32, 0.22f32, 20.0f32),
         ("Red Deer", 1200.0f32, 0.10f32, 60.0f32),
@@ -458,37 +498,57 @@ fn a_full_herd_under_sustain_yields_msy_and_declines_not_stuck_at_k() {
         };
         let msy_provisions = r * k / 4.0 * provisions_per_biomass;
 
-        // Long enough for the kill-credit pulse to average out (Crag Goat MSY 7.15 biomass < body 20
-        // waits ~3 turns per kill), stopping above K/2 so the rate is a full MSY throughout. Read the
-        // ACTUAL provisions off the yield telemetry, not inferred from biomass (near K the herd's own
-        // regrowth is below MSY, so a biomass-delta estimate would over-count the take).
-        let mut total = 0.0;
-        for _ in 0..30 {
-            run_turns(&mut app, 1);
-            total += app
-                .world
+        let take_this_turn = |app: &App| {
+            app.world
                 .get::<LaborAllocation>(band)
                 .unwrap()
                 .last_yields
                 .first()
                 .map(|y| y.actual)
-                .unwrap_or(0.0);
+                .unwrap_or(0.0)
+        };
+
+        // **The opening windfall.** `HUNT_WORKERS` is unbounded throughput, so one turn clears the
+        // whole standing surplus and lands the herd on its floor (within one body — whole animals).
+        run_turns(&mut app, 1);
+        let first = take_this_turn(&app);
+        let after_first = biomass_ratio(&app, &herd).map(|x| x * k).unwrap();
+        assert!(
+            first > msy_provisions,
+            "{label}: the first harvest of a full herd is its accumulated stock, not a rate: \
+             {first} vs MSY {msy_provisions}"
+        );
+        assert!(
+            (after_first - k * 0.5).abs() <= body,
+            "{label}: one Sustain turn lands a full herd ON `K/2` ({}), within a whole animal — got \
+             {after_first}",
+            k * 0.5
+        );
+
+        // **Then the steady state.** Long enough for the whole-animal pulse to average out (a Crag
+        // Goat's MSY of 7.15 biomass is under its body of 20, so it pays every ~3 turns). Read the
+        // ACTUAL provisions off the yield telemetry, not inferred from biomass.
+        const STEADY_TURNS: u32 = 30;
+        let mut total = 0.0;
+        for _ in 0..STEADY_TURNS {
+            run_turns(&mut app, 1);
+            total += take_this_turn(&app);
         }
         let end = biomass_ratio(&app, &herd).map(|x| x * k).unwrap();
-        let avg = total / 30.0;
+        let avg = total / STEADY_TURNS as f32;
 
         assert!(
             (avg - msy_provisions).abs() < msy_provisions * 0.15,
-            "{label}: a full herd yields ~MSY ({msy_provisions}) on Sustain, NOT 0 — got {avg}/turn"
+            "{label}: at its floor a Sustain hunt pays ~MSY ({msy_provisions}), NOT 0 — got {avg}/turn"
         );
         assert!(
-            end < k * 0.98,
-            "{label}: a full herd declines under Sustain (not stuck at K={k}) — got {end}"
-        );
-        assert!(
-            end > k * 0.5 - body,
-            "{label}: …but only GENTLY, settling toward K/2 ({}), never crashing — got {end}",
+            end >= k * 0.5 - body,
+            "{label}: Sustain never draws a herd below `K/2` ({}) — got {end}",
             k * 0.5
+        );
+        assert!(
+            end < k * 0.6,
+            "{label}: …and it holds there rather than drifting back to K — got {end}"
         );
     }
 }

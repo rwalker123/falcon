@@ -46,25 +46,27 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   stock and recovers via normal regrowth instead of sticking at `0` forever. The floor is below
   `collapse_fraction`, so Eradicate still crashes a patch hard into the Collapsing band — it just
   can't hold it permanently at `0`.
-- **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the per-policy ecology
-  ceiling, caps it by gather throughput (`workers × per_worker_biomass_capacity × seasonal_weight`),
-  clamps to the patch's biomass, **subtracts the take**, and converts to provisions
-  (`take × provisions_per_biomass × output_multiplier`). Foraging honors the **full policy axis**
-  (Sustain/Surplus/Deplete/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
-  rungs: **Sustain** = the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at the
-  most-productive biomass K/2, so a patch *at carrying capacity* still yields a positive skim and a
-  collapsed patch yields nothing; Sustain draws the patch toward K/2); **Surplus** = that ×
-  `surplus_multiplier` (slow
-  decline); **Deplete** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
-  the `Forage` arm sells the take as trade goods (`take × market.trade_goods_per_biomass ×
-  market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Deplete
-  only**); **Eradicate** = `eradicate.take_fraction × biomass` (strip the patch, no floor, no trade
-  goods — denial). The `Forage` arm of `advance_labor_allocation` (Population) passes the
-  assignment's policy into `forage_take` and writes the real `sustainable =
-  sustainable_yield(biomass_before, cap, forage.ecology) × provisions_per_biomass ×
-  output_multiplier` (MSY-based) into the
-  yield telemetry, so a non-Sustain gather reads `actual > sustainable` (the over-forage ⚠) exactly
-  as an over-hunt does.
+- **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the stance's **escapement
+  ceiling** (`forage_escapement_ceiling`), caps it by gather throughput
+  (`workers × per_worker_biomass_capacity × seasonal_weight`), clamps to the patch's biomass,
+  **subtracts the take**, and converts to provisions
+  (`take × provisions_per_biomass × output_multiplier`).
+  **Since `docs/plan_harvest_floor.md` slice 1 the whole axis is ONE expression parameterised by a
+  floor** — `max(0, B − floor·K) × build_dip`, the exact twin of `fauna::hunt_escapement_ceiling` —
+  with the floor read off the transitional `FollowPolicy::escapement_floor` table: **Sustain** `K/2`,
+  **Surplus** `0.30·K`, **Deplete** `0.15·K`, **Eradicate** `0`. A deeper floor leaves less standing
+  and so takes more; the `Forage` arm still sells the take as trade goods, with `Deplete` keeping its
+  `market.trade_goods_multiplier` markup pending slice 2.
+  **It is `r`-INDEPENDENT and takes no `EcologyConfig`**, which is what makes the rung-2 payoff read
+  as what it is: a tended patch does not get a bigger ceiling, it *refills faster*, so it has more
+  stock standing above the floor next turn.
+  The `Forage` arm of `advance_labor_allocation` (Population) writes the real
+  `sustainable = sustainable_yield(biomass_before, cap, patch_ecology) × provisions_per_biomass ×
+  output_multiplier` (MSY-based) into the yield telemetry as the **long-run reference line the player
+  reads beside the take** — **not** as the ⚠ predicate. The first harvest of a stocked patch is its
+  accumulated stock and legitimately exceeds one turn's regrowth under *every* stance, Sustain
+  included, so the over-forage ⚠ is `FollowPolicy::overdraws` (a fact about the stance's floor),
+  exactly as it is on the animal web.
 - **Config** (`labor_config.json` `forage`): **`capacity_by_biome`** (the per-biome capacity table —
   see "The two food webs"; **validated total** over every `TerrainType` by `LaborConfig::validate`),
   `per_worker_biomass_capacity`,
@@ -72,10 +74,14 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), a
   `reseed_floor_fraction` (0.02 — the reseed standing crop as a fraction of `carrying_capacity`, so a
   crashed patch recovers from a seed stock rather than sticking at `0`; below `collapse_fraction`),
-  plus the **policy axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`):
+  plus the **policy axis** levers (mirroring fauna's `follow`/`market`/`hunt`):
   `surplus_multiplier` (1.6),
   `market: { take_fraction 0.20, trade_goods_multiplier 4.0, trade_goods_per_biomass 0.005 }`,
-  `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**,
+  `eradicate: { take_fraction 0.30 }`. **`surplus_multiplier`, `market.take_fraction` and
+  `eradicate.take_fraction` are DEAD LEVERS with no reader** since the harvest floor replaced the
+  four per-stance rates with four floors — they stay in the file until slice 2 removes them along
+  with the extractive stances themselves. `market.trade_goods_multiplier` and
+  `market.trade_goods_per_biomass` are still live (the Deplete trade markup). The old flat `forage.per_worker_yield` lever is **retired**,
   and so is the flat `forage.carrying_capacity` (120 on every food-module tile) it was replaced by:
   a **constant** human web could not diverge from the spatial animal one, so *"your best farm is not
   your best pasture"* was untrue **by construction**. Per-biome (not per-`FoodModule`) is deliberate —

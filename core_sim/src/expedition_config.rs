@@ -62,7 +62,7 @@ pub struct ExpeditionConfig {
 /// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
 /// migratory herd, takes a **productive** hunt's worth of biomass each turn (`workers ×
 /// per_worker_biomass_capacity`, capped per policy — **Sustain** by the shared MSY *flow* ceiling
-/// (`fauna::hunt_policy_ceiling`, the same take a resident band's Hunt arm makes), the depleting
+/// (`fauna::hunt_escapement_ceiling`, the same take a resident band's Hunt arm makes), the depleting
 /// policies by their *stock* headroom down to their floor; see `hunt_expedition_ceiling`),
 /// accumulates food up to a carry cap, and delivers it. The take **policy** is chosen
 /// per-expedition at launch (on the mission), not here.

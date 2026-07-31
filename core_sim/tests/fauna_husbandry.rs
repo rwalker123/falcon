@@ -1737,15 +1737,21 @@ fn sub_unit_pastoral_yield_credits_larder() {
     let mut app = spawn_world();
     let id = prime_thriving_herd(&mut app);
     domesticate(&mut app, &id);
-    // Seat the herd exactly one animal above its Sustain escapement point, so the take is the
-    // **smallest whole take that exists**: one body. `reseat` refreshes the phase, and (20 + 1)/40
-    // is comfortably Thriving.
+    // Seat the herd a little over one animal above its Sustain escapement point, so the take is the
+    // **smallest whole take that exists**: one body. `reseat` refreshes the phase, and the seat is
+    // comfortably Thriving.
+    //
+    // **The margin is load-bearing, not slack.** The escapement ceiling is `B − K/2`, a subtraction
+    // of two near-equal `f32`s, so seating *exactly* `K/2 + body` yields a room a few parts per
+    // million under one body and the herd correctly (but uninterestingly) waits a turn. The margin
+    // puts the fixture on the mechanic instead of on the rounding.
+    const ONE_ANIMAL_WITH_MARGIN: f32 = 1.5;
     let body_mass = herd_of(&app, &id).body_mass;
     reseat(
         &mut app,
         &id,
         SUB_UNIT_CAP,
-        SUB_UNIT_CAP * MSY_BIOMASS_FRACTION + body_mass,
+        SUB_UNIT_CAP * MSY_BIOMASS_FRACTION + body_mass * ONE_ANIMAL_WITH_MARGIN,
     );
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 

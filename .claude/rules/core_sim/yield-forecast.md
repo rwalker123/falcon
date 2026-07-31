@@ -103,21 +103,23 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > The cohort field survives as the expedition **outfit** lever (rough carry arithmetic before a target
 > is chosen); for a chosen target the sim exports the answer in `huntTripEstimates`.
 
-> **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
-> TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
-> `hunt_credit_ceiling`, so each extractive/investment ceiling is `min(hunt_policy_rate, biomass)` —
-> the sustainable rate the confirmed-allocation row already headlines (`sustainable_yield`) — **not**
-> the credit-inclusive `min(credit + rate, biomass)` this-turn burst the take path cashes. For a slow
-> breeder whose MSY < `body_mass` (e.g. Wild Aurochs, `r ≈ 0.09`) the bank accumulates ~a whole animal,
-> and quoting `credit + rate` inflated every extractive ceiling by that banked amount — reading the Tame
-> dip *above* its own payoff and Sustain *above* Tame, inverting the ladder. Steady, the compose
-> forecast agrees with the resolved headline (no jump between them) and the aurochs ladder reads in
-> order: `Sustain 0.72 < Surplus 1.08 < Deplete 1.80`, Tame dip `+0.36 → payoff +1.44`, Corral payoff
-> `2.88`. **Eradicate is unchanged** (its rate is the whole stock `B`; it bypasses the bank). The take
-> path (`hunt_take` / `hunt_credit_ceiling`) keeps the bank untouched — only the readout is steady.
-> Pinned by `fauna::tests::the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst` (a full-bank
-> herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
-> continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
+> **A stance ceiling is now a STOCK, on both webs — `max(0, B − floor·K)`.** Since
+> `docs/plan_harvest_floor.md` slice 1 the four rows on each list are the stock standing above each
+> stance's escapement floor (`fauna::hunt_escapement_ceiling` / `forage::forage_escapement_ceiling`),
+> which is **exactly** what the take path pays: the readout and the take are one call, not two numbers
+> kept in step. The retired steady-rate-vs-banked-burst distinction went with the kill-credit bank the
+> resident take path no longer reads (`Herd::hunt_credit`), and `hunt_forecast`'s
+> `the_forecast_ceilings_are_the_escapement_stock_and_stay_ordered` pins the replacement.
+>
+> **Two readings therefore changed shape, and consumers must not order them against each other:**
+> - **A ceiling row can exceed `sustainable`.** The first harvest of an untouched source is its
+>   accumulated stock, so `actual > sustainable` under *every* stance including Sustain. `sustainable`
+>   stays on the row as the long-run MSY reference; the ⚠ is `FollowPolicy::overdraws`.
+> - **A ceiling row cannot be compared with a rung PAYOFF** (`tendedYield`, `fieldYield`,
+>   `pastoralYield`, `corralYield`). Those are long-run rates and carry `r`; a stance ceiling is
+>   `r`-free (`B − floor·K` is `K/2` on every rung at `B = K`). "Preparing +X → then +Y" is therefore
+>   a stock beside a rate today, which the client's ladder redesign (`docs/plan_harvest_floor.md` §7,
+>   slice 4) resolves.
 
 > ### THE CEILING LISTS ARE FOUR STANCE ROWS; A BUILD DIP IS A FRACTION (issue #442)
 >
@@ -141,20 +143,19 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > and today's equality (0.25/0.25, 0.50/0.50) is a coincidence.
 >
 > **THE DIP IS APPLIED INSIDE THE STANDING-STOCK CLAMP — `min(rate × dip, stock)`, never
-> `min(rate, stock) × dip`.** That is the order both take paths use (`hunt_take` folds the dip into
-> `hunt_policy_rate` and *then* runs `hunt_credit_ceiling`'s biomass clamp; `forage_take` dips inside
-> `forage_policy_ceiling` and *then* clamps to `patch.biomass`), so the forecast has to store the two
-> terms apart: the four `ceiling_*` rows are the **pre-clamp** stance rates and
+> `min(rate, stock) × dip`** — the order both take paths use (each dips inside its own
+> `*_escapement_ceiling` and *then* clamps to the standing stock). The forecast keeps the two terms
+> apart accordingly: the four `ceiling_*` rows are the **pre-clamp** stance ceilings and
 > `SourceYieldForecast::stock_cap` is the bound, which `ceiling_for` applies (so the wire value is
-> unchanged) and `ceiling_under` applies *second*. Dipping an already-clamped row under-reports by
-> exactly the ratio the clamp cut, and it is reachable on any drawn-down source under a stance whose
-> rate is biomass-independent — measured on a pastoral `crag_goat` at `B = 0.20·K` under Deplete +
-> Corral: previewed `0.10·K`, paid `0.1375·K`. Pinned web-agnostically by
-> `fauna::tests::the_build_dip_is_applied_inside_the_standing_stock_clamp` and, end to end, by the
-> `hunt_forecast_equals_actual_take…` sweep's **drawn-down** stock level (at `B = K` the clamp never
-> binds, so the sweep could not see the ordering at all). The plant dials cannot reach the window
-> today — Deplete/Eradicate are fractions *of* biomass and Sustain/Surplus are bounded by `r·B` at
-> `r = 0.25` — so that half is latent, not absent.
+> unchanged) and `ceiling_under` applies *second*.
+>
+> **The clamp is now INERT on both webs, and that is asserted rather than assumed.** An escapement
+> ceiling is `B − floor·K`, so `room × dip ≤ room ≤ B` for any floor `≥ 0` and any dip `≤ 1` — the two
+> orders agree everywhere, including on the drawn-down sources where the retired rate-based ceilings
+> did not commute (measured then on a pastoral `crag_goat` at `B = 0.20·K` under Deplete + Corral:
+> previewed `0.10·K`, paid `0.1375·K`). The `hunt_forecast_equals_actual_take…` sweep asserts
+> `ceiling_under == ceiling_for × dip` on every row at both stock levels, which is the positive form
+> of the same guarantee. `stock_cap` stays populated for wire stability and as belt-and-braces.
 >
 > A **rung-3 managed** source has `stock_cap: None` (it is never drawn down) and reports both
 > fractions as **`0`** (`BuildDips::NOTHING_LEFT_TO_BUILD` → `NO_BUILD_REMAINING_FRACTION`), which is
@@ -221,11 +222,11 @@ projection* is the sustained MSY. Pinned by
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
-- forage (`forage.rs`): `forage_policy_ceiling` (the 4 stances × the build dip, biomass) · `forage_per_worker_biomass`
+- forage (`forage.rs`): `forage_escapement_ceiling` (the stance's floor × the build dip, biomass) · `forage_per_worker_biomass`
   (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
   `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
   `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
-- fauna (`fauna.rs`): `hunt_policy_rate` (the 4 stances × the build dip) · the species'
+- fauna (`fauna.rs`): `hunt_escapement_ceiling` (the stance's floor × the build dip) · the species'
   `HuntYield::apply` (which retired the global `hunt_provisions`) ·
   **`managed_yield_biomass`** (the husbandry harvest, via `pen_yield_biomass`) · **`herd_ecology` /
   `herd_capacity`** (which ecology/capacity a herd lives under — *no call site may re-derive either*) —

@@ -17,20 +17,19 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, available_workers,
-    build_headless_app, herd_hunt_yield, hunt_credit_ceiling, hunt_policy_rate,
-    hunt_source_yield_preview, hunt_take, hunt_trip_forecast, recapture_snapshot_in_place,
-    scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
-    spawn_initial_world, BandTravel, CommandEventLog, CultureManager, DiscoveryProgressLedger,
-    Expedition, ExpeditionConfig, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase,
-    FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle, FollowPolicy, ForageRegistry,
-    GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, Scalar,
-    SimulationConfig, SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
-    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, NO_BUILD_UNDERWAY_DIP,
-    NO_IMPROVEMENT_UNDERWAY,
+    build_headless_app, herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview,
+    hunt_take, hunt_trip_forecast, recapture_snapshot_in_place, scalar_from_f32, scalar_one,
+    scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandTravel,
+    CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig,
+    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory,
+    FaunaConfig, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry,
+    Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborConfig,
+    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
+    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
+    WellbeingConfigHandle, FOOD, NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -936,33 +935,26 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     // herd was standing there holding*, so the exported ceiling had to be explicitly clamped or the
     // preview over-stated it.
     //
-    // Slice 8 makes that unreachable **by construction**, and the reason is the same one that killed
-    // both flows: **every rule on the axis is now a STOCK rule bounded by `B`** — Sustain is
-    // `B − K/2`, Surplus/Deplete are `fraction × B`, Eradicate is `take_from(B)` (itself `.min(B)`). No
-    // `r`, however hot, can lift any of them above the biomass, because none of them reads `r` as a
-    // rate at all.
+    // The harvest floor makes that unreachable **by construction**, and by the strongest available
+    // argument: every stance's ceiling is now `max(0, B − floor·K) × dip`, which is `≤ B` for any
+    // floor `≥ 0` and any dip `≤ 1` — and it **cannot read `r` at all**, the growth rate having been
+    // removed from the take path's signature.
     //
     // The pass is kept (retargeted from "the clamp fires" to "nothing can make it need to fire"): it
     // still sweeps the whole preview==take matrix at an off-nominal lever, and it now pins the
     // stronger property. `assert_band_preview_matches_hunt_take` asserts the bound on every row.
     set_fauna_regrowth_rate(&mut app, CLAMP_BINDING_REGROWTH_RATE);
     {
-        let fauna = app.world.resource::<FaunaConfigHandle>().get();
         for policy in FollowPolicy::ALL {
             assert!(
-                {
-                    let rate = hunt_policy_rate(
-                        policy,
-                        NO_IMPROVEMENT_UNDERWAY,
-                        depleted_biomass,
-                        depleted_cap,
-                        &fauna.ecology,
-                        &fauna,
-                        &LadderConfig::builtin(),
-                    );
-                    hunt_credit_ceiling(policy, NO_BUILD_UNDERWAY_DIP, depleted_biomass, 0.0, rate)
-                } <= depleted_biomass,
-                "{policy:?}: the credit ceiling can never exceed the herd's own biomass, at any \
+                hunt_escapement_ceiling(
+                    policy,
+                    NO_IMPROVEMENT_UNDERWAY,
+                    depleted_biomass,
+                    depleted_cap,
+                    &LadderConfig::builtin(),
+                ) <= depleted_biomass,
+                "{policy:?}: the escapement ceiling can never exceed the herd's own biomass, at any \
                  regrowth rate"
             );
         }

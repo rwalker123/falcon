@@ -160,8 +160,8 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   `fauna::advance_husbandry` (both Logistics; **the one-turn lag is deliberate** — each reads a flag
   the labor arm wrote *last* turn: `ForagePatch::tended_this_turn` / `Herd::tamed_this_turn`); the pen
   has **no** decay (`decay_per_turn: 0.0` — an untended pen escapes outright rather than bleeding).
-  The dip: **one seam, `LadderConfig::build_dip(improvement)`**, read by `forage::forage_policy_ceiling`
-  and `fauna::hunt_policy_rate` alike — so **forecast == actual** for free (see "Pre-commit Yield
+  The dip: **one seam, `LadderConfig::build_dip(improvement)`**, read by
+  `forage::forage_escapement_ceiling` and `fauna::hunt_escapement_ceiling` alike — so **forecast == actual** for free (see "Pre-commit Yield
   Forecast"). **Extending** a pen (2d-β) reads the *same* `animal:pen` rung, so a ring can never drift
   from the initial build.
 - **The dip multiplies the SELECTED STANCE, not a hardcoded Sustain** (issue #442,
@@ -172,12 +172,13 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   the player holds — the identical formula with the constant removed. `SourceYieldForecast` carries
   the pair as `build_dips: BuildDips`, and `ceiling_under(policy, improvement)` is the one lookup
   every take path and every assign-time seed uses; the four `ceiling_*` rows stay the *undipped*
-  stance rates. **`hunt_credit_ceiling` takes the dip as its own argument** because Eradicate
-  bypasses the bank and reads the current standing stock rather than the banked rate — without it,
-  Eradicate would be the one stance the dip did not reach (caught by the forecast==actual sweep).
-  **And the dip lands INSIDE the standing-stock clamp** — `min(rate × dip, stock)` — which is what
+  stance ceilings. **Eradicate needs no special case for it** — since the harvest floor every stance is
+  the same expression and Eradicate is simply its `floor = 0` instance, so the dip reaches it like any
+  other (it used to need the fraction passed separately, because Eradicate alone was a stock while the
+  other three were rates).
+  **And the dip lands INSIDE the standing-stock clamp** — `min(ceiling × dip, stock)` — which is what
   the rows being pre-clamp buys; see "THE CEILING LISTS ARE FOUR STANCE ROWS" in
-  `yield-forecast.md` for the discrepancy the other order produced and the sweep that now sees it.
+  `yield-forecast.md`, where that clamp is now inert on both webs and asserted to be.
 - **Completion CLEARS the improvement — ONE seam for all four rungs.** A build verb only means "the
   crew is preparing, not harvesting", so once a meter fills it names a rung that can never accomplish
   anything more on that source and the dip would be charged forever for nothing. Each of the four
