@@ -682,3 +682,84 @@ fn abandoned_preparation_decays() {
          {banked} -> {decayed}"
     );
 }
+
+/// **Two crews on one patch: the rung completes ONCE and clears BOTH verbs** (PR #448 review).
+///
+/// `handle_cultivate` sets the improvement on **every** band of the faction working the tile, so a
+/// completion is always a many-bands event even though only one crew's accrual crosses `1.0`. Two
+/// things had to be separated for that to read correctly, and this pins both:
+///
+/// - **The feed line rides the TRANSITION.** It used to fire on a post-accrual `is_cultivated()`,
+///   which is true for every band once *anyone* has finished — so the player was told "Cultivated
+///   patch at (x, y)" once per crew. `ForagePatch::accrue_cultivation` now answers *"did this call
+///   finish it"*, `Herd::accrue_corral`'s convention.
+/// - **Clearing the verb does NOT.** Whoever finished it, a rung with nothing left to build must
+///   hand the verb back — otherwise the crew that lost the race keeps paying
+///   `yield_fraction_while_building` on prepared ground, which is issue #420 all over again for the
+///   second band.
+#[test]
+fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let first = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    let second = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    // A token second crew. `Cultivate` accrues per *assignment*, not per worker, so one hand is
+    // enough to hold the verb — and two full `FORAGE_WORKERS` crews draw the patch out of Thriving,
+    // which stalls the very meter this test needs to finish.
+    set_forage_workers(&mut app, second, TOKEN_SECOND_CREW);
+
+    // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
+    // band that did not finish it needs to notice (its clear is decided at the top of its own
+    // iteration, so a crew processed *before* the finisher clears on the following turn).
+    let (_, progress_per_turn, _) = cultivation_config(&app);
+    let turns = (1.0 / progress_per_turn).ceil() as u32 + 1;
+    run_turns_with_forage(&mut app, turns);
+
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "fixture: the patch must be tended by now (progress {})",
+        progress_of(&app, coord)
+    );
+    for (label, band) in [("the finisher", first), ("the second crew", second)] {
+        assert_eq!(
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+            None,
+            "{label} must hand the verb back — there is nothing left to cultivate here"
+        );
+    }
+    assert_eq!(
+        completion_announcements(&app, "Cultivated patch at"),
+        1,
+        "one patch was cultivated, so the player is told once — not once per crew"
+    );
+}
+
+/// How many times the feed log announced `needle`. The player-facing half of the completion seam:
+/// the event log is what the notification system reads, so a duplicate there is a duplicate on
+/// screen.
+fn completion_announcements(app: &App, needle: &str) -> usize {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.label.contains(needle))
+        .count()
+}
+
+/// A token crew for the second band on a shared source: enough to hold an assignment (and therefore
+/// an improvement) without its share of the draw-down changing what the first band is measuring.
+const TOKEN_SECOND_CREW: u32 = 1;
+
+/// Re-staff a band's Forage assignment in place — the test-side twin of `assign_labor`'s worker
+/// count, which since issue #442 never touches the improvement beside it.
+fn set_forage_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band forages")
+        .assignments[0]
+        .workers = workers;
+}

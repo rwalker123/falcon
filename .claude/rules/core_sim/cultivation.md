@@ -134,8 +134,14 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
     `status=complete action=cultivate x=… y=…`; the `retired_policy=` token went with the constant
     (issue #442 — the pass used to rewrite `policy` to `HARVEST_POLICY_AFTER_BUILD`). **This is the
     one seam for all four build verbs** — `Sow`, `Tame` and `Corral` clear identically, from the same
-    post-loop pass; the plant rung-3 helper `accrue_field` returns a completion `bool` for it,
-    mirroring `Herd::accrue_corral`.
+    post-loop pass; **every accrue helper on both webs now returns a "this call finished it" `bool`**
+    (`ForagePatch::accrue_cultivation` / `accrue_field`, `Herd::accrue_domestication`), mirroring
+    `Herd::accrue_corral`, so the feed line rides the *transition* rather than a post-hoc
+    `is_cultivated()` that is true for every crew once anyone has finished.
+    **Clearing the verb is a separate question from announcing it**, because `cultivate`/`sow` set the
+    improvement on every band working the tile — see "Completion CLEARS the improvement" in
+    `intensification.md` for the once-per-source "nothing left to build" test that hands a
+    non-finishing crew's verb back, and why it has to sit ahead of the Field arm's early return.
     A gate that **lapses mid-build** is untouched by this and still keeps its build verb (a patch that
     drops out of Thriving holds its progress and simply stops accruing) — nothing is finished there,
     so there is nothing to hand off.

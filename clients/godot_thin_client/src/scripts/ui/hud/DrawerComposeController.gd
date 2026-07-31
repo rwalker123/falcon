@@ -466,12 +466,12 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
     var noun := SourceForecast.MAX_USEFUL_NOUN_ONE if useful == 1 else SourceForecast.MAX_USEFUL_NOUN_MANY
     return {"cap": useful, "note": SourceForecast.MAX_USEFUL_NOTE_FORMAT % [useful, noun]}
 
-## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its three states
-## this source is in, plus the deal it offers. Shared verbatim by both webs: the plant ladder
-## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same three states
-## and the same forecast, because they are the same decision about different stock.
+## **THE IMPROVEMENT CONTROL** (issue #442 §3) — the second axis, in whichever ONE of its states this
+## source is in, plus the deal it offers. Shared verbatim by both webs: the plant ladder
+## (Cultivate → Sow) and the animal one (Tame → Corral) get the same control, the same states and the
+## same forecast, because they are the same decision about different stock.
 ##
-## The three states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
+## The states and their precedence (see `HudWidgets.build_improvement_control` for the shape):
 ##   RUNNING first — something is being built here, so nothing else is on offer. Its face carries the
 ##       meter, and a WARN pause line appears when the source has left Thriving, which is the ONE
 ##       silent rule on this axis: the meter accrues only while the source is Thriving, and that is
@@ -481,8 +481,9 @@ func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: i
 ##       (`_tame_stalled_hint`) because the plant web had no control to hang it on.
 ##   DONE next — the source stands on a built rung, so the state gets a static label, and the NEXT
 ##       rung's checkbox renders beneath it if there is one.
-##   OFFERED last — an unchecked box naming the next rung and its terms, its gate reasons beneath it
-##       when it has any (shown, unchecked, explained — a greyed control alone does not teach).
+##   OFFERED last — an unchecked box naming the next rung and its terms. When that rung is GATED the
+##       box is not built at all: the reason takes the control's slot as a plain label (the fourth
+##       state, `IMPROVEMENT_STATE_GATED` — see the gated branch below for why).
 ##
 ## `payoff_face` is the caller's per-rung terms Callable (`improvement -> String`), because the plant
 ## web substitutes the CROP the rung would commit to and the animal web quotes the herd. `extra_rows`
@@ -765,12 +766,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     if band.is_empty():
         band = resolved
         _compose.set_hunt_band(int(band.get("entity", -1)))
-    # THE BAND'S STANDING RUNG ON THIS HERD, or "" when it does not hunt this herd at all. The staffing
-    # test is what makes it meaningful: `policy_for_hunt` answers with the DEFAULT for an unstaffed
-    # source, so calling it blind would make every fresh sheet look as though the band were standing on
-    # Sustain — and the reset below would then never fire on a genuinely stale composition.
-    var standing_hunt := _band_labor.policy_for_hunt(band, herd_id) \
-        if _band_labor.workers_for_hunt(band, herd_id) > 0 else ""
     # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING here. It seeds
     # the improvement control so a herd mid-Tame opens with its box checked rather than looking
     # untouched, and it is what the commit compares against to decide whether a verb needs sending.
@@ -1321,12 +1316,6 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if band.is_empty():
         band = resolved
         _compose.set_forage_band(int(band.get("entity", -1)))
-    # THE BAND'S STANDING RUNG ON THIS PATCH, or "" when it does not work this tile at all. The staffing
-    # test is what makes it meaningful: `policy_for_forage` answers with the DEFAULT for an unstaffed
-    # source, so calling it blind would make every fresh sheet look as though the band were standing on
-    # Sustain — and the reset below would then never fire on a genuinely stale composition.
-    var standing_forage := _band_labor.policy_for_forage(band, x, y) \
-        if _band_labor.workers_for_forage(band, x, y) > 0 else ""
     # THE SECOND AXIS's standing value (issue #442) — what the band is already BUILDING on this patch.
     # Unlike the stance it needs no staffing test: `improvement_for_forage` reads the assignment's own
     # field and answers "" when there is no assignment at all.
@@ -1587,8 +1576,30 @@ func _live_tile_info(subject_key: String, fallback: Dictionary) -> Dictionary:
 ## while the sheet's own stepper beside it said "Herders".
 func _herd_crew_noun(herd: Dictionary) -> String:
     return HudComposeVocab.HERD_CREW_LABEL \
-        if SourceForecast.is_managed_hunt_source(herd, _compose.hunt_improvement()) \
+        if SourceForecast.is_managed_hunt_source(herd, _herd_improvement_axis(herd)) \
         else HudComposeVocab.HUNT_CREW_LABEL
+
+## The IMPROVEMENT axis **for this herd** — the composed value only while the compose state is keyed
+## to it, else the band's own standing build on it.
+##
+## `_hunt_improvement` is ONE slot shared by every herd, and neither `begin_hunt_source` nor
+## `reset_hunt_source` clears it, so it survives a source change. Reading it blind names the crew after
+## whichever herd was composed LAST: tick Corral on a pen-ready herd, select a wild one, and its header
+## read `ASSIGN HERDERS` over the stepper the SAME render labelled `Hunters` — the header/stepper
+## disagreement `_herd_crew_noun` was written to remove, with the sides swapped. The stale read is not
+## confined to the sheet either: `build_herd_drawer_actions` names the drawer's `Assign … ▸` button from
+## the same call, in the read state, with no sheet open at all.
+##
+## Guarding on the KEY rather than clearing the slot is what keeps a same-source re-open honest: a box
+## the player just ticked is still on this herd's compose, so it must survive. It is also ordering-proof
+## — `open_herd_compose` resolves the eyebrow BEFORE `_build_herd_assign_controls` re-seeds, and on a
+## source change this answers with exactly what that re-seed is about to write (`improvement_for_hunt`
+## on the resolved band, which is the band a source change defaults the picker to).
+func _herd_improvement_axis(herd: Dictionary) -> String:
+    var herd_id := String(herd.get("id", ""))
+    if _compose.hunt_key() == herd_id:
+        return _compose.hunt_improvement()
+    return _band_labor.improvement_for_hunt(_resolve_assign_band(), herd_id)
 
 func open_forage_compose(tile_info: Dictionary) -> void:
     if not _forage_compose_available(tile_info):

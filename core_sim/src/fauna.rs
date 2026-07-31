@@ -612,16 +612,22 @@ impl Herd {
     /// is precisely what the ladder exists to delete. Going through the accrual instead means a test
     /// fixture obeys the husbandry ceiling like everything else — you cannot fabricate a
     /// domesticated `wild` herd.
-    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32) {
+    ///
+    /// **Returns `true` only when THIS call finished the rung**, matching [`Herd::accrue_corral`] and
+    /// `ForagePatch::accrue_cultivation`: `handle_tame` sets the verb on every band hunting the herd,
+    /// so a post-hoc `is_domesticated()` test would push one "Tamed the …" feed line per band.
+    pub fn accrue_domestication(&mut self, faction: FactionId, amount: f32) -> bool {
         if self.is_domesticated() || !self.can_domesticate() {
-            return;
+            return false;
         }
         if self.owner.is_none() {
             self.owner = Some(faction);
         }
-        if self.owner == Some(faction) {
-            self.domestication_progress = (self.domestication_progress + amount).min(1.0);
+        if self.owner != Some(faction) {
+            return false;
         }
+        self.domestication_progress = (self.domestication_progress + amount).min(1.0);
+        self.is_domesticated()
     }
 
     // `decay_domestication` is DELETED (`docs/plan_fauna_neglect_escape.md` §2.1). Its only caller was
@@ -3662,8 +3668,11 @@ fn starve_underfed_pen(
 /// - `expected(workers, policy) = min(workers × per_worker_yield, ceiling(policy))`
 /// - `max_useful_workers(policy) = ceil(ceiling(policy) / per_worker_yield)`
 ///
-/// Each `ceiling_*` is the policy ceiling **already clamped to the source's remaining biomass**, so
-/// that `min` IS the take the sim pays. **Forecast == actual is an invariant**: the forecast and
+/// Each `ceiling_*` is the stance's **pre-clamp** offer and [`SourceYieldForecast::stock_cap`] is
+/// the standing stock it cannot exceed; [`SourceYieldForecast::ceiling_for`] applies the clamp, so
+/// what a reader gets IS the take the sim pays. **The clamp is a lookup, not a stored row, because
+/// the DIP has to land inside it** — see [`SourceYieldForecast::ceiling_under`].
+/// **Forecast == actual is an invariant**: the forecast and
 /// the take path (`hunt_take` / `forage::forage_take`) share the same ceiling + conversion helpers
 /// (`hunt_policy_ceiling` × the species' `HuntYield`, `forage_policy_ceiling`/`forage_provisions`) — never
 /// duplicate the formulas, or the UI will lie.
@@ -3688,16 +3697,30 @@ pub struct SourceYieldForecast {
     /// ceiling binds. `0.0` means no worker can extract anything this turn (e.g. a zero seasonal
     /// weight) — consumers must not divide by it; ask [`SourceYieldForecast::ratio_axis`] instead.
     pub per_worker_yield: YieldAccounts,
-    /// Yield/turn cap under **Sustain** (the MSY skim).
+    /// Yield/turn cap under **Sustain** (the MSY skim), **before the standing-stock clamp**.
     pub ceiling_sustain: YieldAccounts,
-    /// Yield/turn cap under **Surplus**.
+    /// Yield/turn cap under **Surplus**, before the clamp.
     pub ceiling_surplus: YieldAccounts,
-    /// Yield/turn cap under **Deplete**.
+    /// Yield/turn cap under **Deplete**, before the clamp.
     pub ceiling_deplete: YieldAccounts,
     /// Yield/turn cap under **Eradicate** — the whole standing stock. **No longer zeroed**: since
     /// #337 denial is the END STATE, not a promise the carcasses were thrown away, so this row is the
     /// windfall the take path actually pays (`hunt_credit_ceiling` already returned the whole stock).
     pub ceiling_eradicate: YieldAccounts,
+    /// **The standing stock no stance can out-take** — the source's remaining biomass through the
+    /// same conversion every row above uses, or `None` for a rung-3 managed source (whose production
+    /// *is* its cap, and which never draws its stock down at all).
+    ///
+    /// **Why the clamp is stored apart from the rows instead of baked into them.** The take path
+    /// dips the stance's rate and *then* clamps — `min(rate × dip, B)` — because the dip is a factor
+    /// on the rate the crew is working at, not on the stock the source holds. A pre-clamped row can
+    /// only ever produce `min(rate, B) × dip`, which is **strictly smaller** whenever the stock binds
+    /// undipped but not dipped (a drawn-down herd under Surplus/Deplete, whose rate is a multiple of
+    /// `peak_regrowth(K)` and therefore independent of `B`). That is a live under-report of the
+    /// preview against the take, and it is reachable exactly on the (non-Sustain stance ×
+    /// improvement) pairs issue #442 legalised. Keeping the raw rate and the cap as separate terms is
+    /// what lets [`SourceYieldForecast::ceiling_under`] apply them in the take path's order.
+    pub stock_cap: Option<YieldAccounts>,
     /// **The two build dips of this source's web** — each rung's `yield_fraction_while_building`,
     /// carried here so a reader can price a build without holding the ladder
     /// ([`SourceYieldForecast::ceiling_under`]).
@@ -3783,11 +3806,20 @@ impl SourceYieldForecast {
             ceiling_surplus: production,
             ceiling_deplete: production,
             ceiling_eradicate: production,
+            // **A managed source is never drawn down**, so there is no standing stock for a stance to
+            // out-take and nothing for the clamp to do — `production` is both what it offers and all
+            // it offers. (Storing `Some(production)` would read the same today and would quietly
+            // become a second, redundant statement of the same number.)
+            stock_cap: None,
             // Nothing is left to build on a rung-3 source, so there is no dip to price — every
             // ceiling, dipped or not, is the managed yield it pays now. Honest *here*, unlike on a
             // rung-2 source, because there is genuinely nothing left to build: the plant web's
             // rung-2 patch takes the policy-live path instead (`forage::forage_forecast`).
-            build_dips: BuildDips::UNDIPPED,
+            //
+            // **`NOTHING_LEFT_TO_BUILD`, not the identity `1.0`** (PR #448 review): the two are the
+            // same multiplier and *different facts*, and the wire has to be able to say the second
+            // one. See `intensification::NO_BUILD_REMAINING_FRACTION`.
+            build_dips: BuildDips::NOTHING_LEFT_TO_BUILD,
             managed_yield: production,
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
@@ -3802,13 +3834,28 @@ impl SourceYieldForecast {
     /// **This is the stance's whole ceiling.** A crew that is also building pays a fraction of it —
     /// ask [`SourceYieldForecast::ceiling_under`], which is the lookup every take path and every
     /// assign-time seed uses.
+    ///
+    /// The stored row is the stance's rate *before* the standing-stock clamp; this applies the clamp
+    /// ([`SourceYieldForecast::stock_cap`]), so the answer is what the source can actually hand over.
     pub fn ceiling_for(&self, policy: FollowPolicy) -> YieldAccounts {
+        self.clamped_to_stock(self.stance_rate(policy))
+    }
+
+    /// The stance's **pre-clamp** rate — the raw row, the only reader of which is this type.
+    fn stance_rate(&self, policy: FollowPolicy) -> YieldAccounts {
         match policy {
             FollowPolicy::Sustain => self.ceiling_sustain,
             FollowPolicy::Surplus => self.ceiling_surplus,
             FollowPolicy::Deplete => self.ceiling_deplete,
             FollowPolicy::Eradicate => self.ceiling_eradicate,
         }
+    }
+
+    /// Clamp an offer to the source's standing stock. Component-wise, which is sound for the same
+    /// reason [`YieldAccounts::min`] is: both operands are the same biomass through the same
+    /// non-negative rates, so every account agrees on which side binds.
+    fn clamped_to_stock(&self, offer: YieldAccounts) -> YieldAccounts {
+        self.stock_cap.map_or(offer, |cap| offer.min(cap))
     }
 
     /// **THE ceiling an assignment actually pays**: the selected stance's ceiling, dipped by the
@@ -3821,13 +3868,23 @@ impl SourceYieldForecast {
     /// is [`SourceYieldForecast::managed`], whose every ceiling already **is** `managed_yield` and
     /// whose dips are the identity, so this one lookup covers both sides of every investment without
     /// a second formula.
+    ///
+    /// **THE DIP LANDS BEFORE THE CLAMP, because that is the order the take path applies them in**
+    /// (`systems::hunt_take` folds it into `hunt_policy_rate` and *then* runs
+    /// `hunt_credit_ceiling`'s biomass clamp; `forage_take` dips inside `forage_policy_ceiling` and
+    /// *then* clamps to `patch.biomass`). Dipping the already-clamped row instead — `min(rate, B) ×
+    /// d` rather than `min(rate × d, B)` — under-reports whenever the stock binds the undipped rate
+    /// but not the dipped one, which is reachable on any drawn-down source under a stance whose rate
+    /// is biomass-independent. See [`SourceYieldForecast::stock_cap`].
     pub fn ceiling_under(
         &self,
         policy: FollowPolicy,
         improvement: Option<Improvement>,
     ) -> YieldAccounts {
-        self.ceiling_for(policy)
-            .scale(self.build_dips.of(improvement))
+        self.clamped_to_stock(
+            self.stance_rate(policy)
+                .scale(self.build_dips.of(improvement)),
+        )
     }
 
     /// **Does this source pay in whole animals?** [`SourceYieldForecast::body_mass_yield`] carries the
@@ -4419,10 +4476,31 @@ pub fn hunt_credit_ceiling(
     credit: f32,
     rate: f32,
 ) -> f32 {
+    hunt_stance_offer(policy, build_dip, biomass, credit, rate).clamp(0.0, biomass.max(0.0))
+}
+
+/// **[`hunt_credit_ceiling`] WITHOUT its standing-stock clamp** — what the stance offers before the
+/// herd's size has its say. Split out so [`hunt_forecast`] can store the offer and let
+/// [`SourceYieldForecast::ceiling_under`] apply the dip *inside* the clamp, matching the take path's
+/// order; nobody else should reach for it, because an unclamped offer can name animals that do not
+/// exist.
+///
+/// Both arms are the same two facts [`hunt_credit_ceiling`] documents: **Eradicate bypasses the
+/// bank** and offers the whole standing stock (which is why it needs `build_dip` here — the dip is
+/// not in its `rate`), and every other policy offers `credit + rate` with the dip already folded in
+/// by [`hunt_policy_rate`]. Eradicate's offer is `≤ biomass` because
+/// `yield_fraction_while_building` is validated `< 1`, so clamping it changes nothing.
+fn hunt_stance_offer(
+    policy: FollowPolicy,
+    build_dip: f32,
+    biomass: f32,
+    credit: f32,
+    rate: f32,
+) -> f32 {
     if matches!(policy, FollowPolicy::Eradicate) {
         (biomass.max(0.0) * build_dip).max(0.0)
     } else {
-        (credit + rate).clamp(0.0, biomass.max(0.0))
+        credit + rate
     }
 }
 
@@ -4716,8 +4794,12 @@ pub(crate) fn hunt_forecast(
             fauna,
             ladder,
         );
+        // **Stored UNCLAMPED**, with the clamp carried beside it as `stock_cap` — `ceiling_for`
+        // applies it, and `ceiling_under` applies it *after* the dip, which is the order the take
+        // path uses (PR #448 review). `hunt_stance_offer` is `hunt_credit_ceiling` minus that clamp,
+        // so Eradicate still reads the whole standing stock rather than the (unused) rate.
         hunt_yield.apply(
-            hunt_credit_ceiling(policy, NO_BUILD_UNDERWAY_DIP, herd.biomass, 0.0, rate),
+            hunt_stance_offer(policy, NO_BUILD_UNDERWAY_DIP, herd.biomass, 0.0, rate),
             output_multiplier,
         )
     };
@@ -4729,6 +4811,10 @@ pub(crate) fn hunt_forecast(
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
+        // The standing stock `hunt_credit_ceiling` clamps every banked policy to — the *current*
+        // biomass, not the pre-regrowth reading the rates were sized against, exactly as the take
+        // path reads it.
+        stock_cap: Some(hunt_yield.apply(herd.biomass.max(0.0), output_multiplier)),
         // The animal web's two build dips (`Tame`, then `Corral`), as the FACTORS they are: the
         // ceiling a builder pays is `stance × dip`, so the four rows above stay the whole story and
         // the dip rides whichever stance the player holds (§2.2).
@@ -5614,6 +5700,107 @@ mod tests {
         assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 2);
         herd.biomass = 12.0; // 12 ≤ (2−1)·12 − 0 = 12 → drops immediately with no band
         assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 1);
+    }
+
+    /// **The build dip lands BEFORE the standing-stock clamp** — `min(rate × d, cap)`, never
+    /// `min(rate, cap) × d` (PR #448 review). Asserted on the shared [`SourceYieldForecast`]
+    /// accessor rather than on either web's forecast builder, because `ceiling_under` is the one
+    /// lookup both take paths are mirrored by: `fauna::hunt_take` folds the dip into
+    /// `hunt_policy_rate` and *then* clamps, and `forage::forage_take` dips inside
+    /// `forage_policy_ceiling` and *then* clamps to `patch.biomass`.
+    ///
+    /// **This is also the plant web's whole guard.** With today's forage dials no stance rate can
+    /// exceed the standing crop (Deplete/Eradicate are fractions *of* biomass, Sustain/Surplus are
+    /// bounded by `r·B` at `r = 0.25`), so the plant clamp never binds and no patch fixture can
+    /// distinguish the two orders. The defect is latent there, not absent — a `surplus_multiplier`
+    /// above ~4, or a `take_fraction` above 1, makes it live — so the ordering is pinned here, where
+    /// the rate and the cap are inputs rather than consequences of a config.
+    #[test]
+    fn the_build_dip_is_applied_inside_the_standing_stock_clamp() {
+        // A stance whose rate is well ABOVE the stock (so the clamp binds undipped) and a dip that
+        // brings it back BELOW it (so the clamp must not bind dipped) — the window the two orders
+        // disagree in, stated directly.
+        const STANCE_RATE: f32 = 100.0;
+        const STOCK: f32 = 40.0;
+        const DIP: f32 = 0.25;
+        let forecast = SourceYieldForecast {
+            ceiling_deplete: plant_food_only(STANCE_RATE),
+            stock_cap: Some(plant_food_only(STOCK)),
+            build_dips: BuildDips {
+                rung_two: Some(DIP),
+                rung_three: Some(DIP),
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            forecast.ceiling_for(FollowPolicy::Deplete).provisions,
+            STOCK,
+            "the undipped stance is stock-bound — the fixture's premise"
+        );
+        assert_eq!(
+            forecast
+                .ceiling_under(FollowPolicy::Deplete, Some(Improvement::Cultivate))
+                .provisions,
+            STANCE_RATE * DIP,
+            "a builder pays a fraction of its RATE, clamped to the stock — not a fraction of the \
+             clamped stock, which under-reports by the ratio the clamp cut"
+        );
+        // And the clamp still binds when the dipped rate genuinely exceeds the stock.
+        let starved = SourceYieldForecast {
+            stock_cap: Some(plant_food_only(STANCE_RATE * DIP / 2.0)),
+            ..forecast
+        };
+        assert_eq!(
+            starved
+                .ceiling_under(FollowPolicy::Deplete, Some(Improvement::Cultivate))
+                .provisions,
+            STANCE_RATE * DIP / 2.0,
+            "the clamp is not skipped — it is applied second"
+        );
+    }
+
+    /// A rung-3 managed source has **no stock cap and no dips left to offer** — every stance, dipped
+    /// or not, reads the one managed production. The `stock_cap: None` arm of
+    /// [`SourceYieldForecast::ceiling_for`], and the reason `managed` can carry
+    /// [`BuildDips::NOTHING_LEFT_TO_BUILD`] without paying its crew zero.
+    #[test]
+    fn a_managed_source_is_unclamped_and_undipped_on_every_rung() {
+        const PRODUCTION: f32 = 7.0;
+        let forecast = SourceYieldForecast::managed(
+            plant_food_only(PRODUCTION),
+            plant_food_only(1.0),
+            YieldAccounts::ZERO,
+        );
+        for policy in FollowPolicy::ALL {
+            for improvement in [
+                None,
+                Some(Improvement::Cultivate),
+                Some(Improvement::Sow),
+                Some(Improvement::Tame),
+                Some(Improvement::Corral),
+            ] {
+                assert_eq!(
+                    forecast.ceiling_under(policy, improvement).provisions,
+                    PRODUCTION,
+                    "a finished source pays its managed yield under {policy:?} + {improvement:?}"
+                );
+            }
+        }
+        assert_eq!(
+            forecast.build_dips,
+            BuildDips::NOTHING_LEFT_TO_BUILD,
+            "and it says so on the wire, rather than publishing the identity as if a build were on \
+             offer"
+        );
+    }
+
+    /// `plant_food_only`'s local twin — a food-only account, so these forecast-shape tests read as
+    /// arithmetic rather than as a species' yield vector.
+    fn plant_food_only(provisions: f32) -> YieldAccounts {
+        YieldAccounts {
+            provisions,
+            ..YieldAccounts::ZERO
+        }
     }
 
     // ---- Grazing Phase 2b-i ----------------------------------------------------------------

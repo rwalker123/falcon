@@ -142,9 +142,15 @@ func _player_knowledge() -> Dictionary:
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
 ## the optimistic pending-labor write and `_after_pending_change()`.
+##
+## `improvement` NEVER reaches the command (issue #442) — it is recorded on the OPTIMISTIC PENDING
+## overlay alone. The adapter has to carry it anyway: the trailing default is `IMPROVEMENT_NONE`, so
+## omitting the argument writes "building nothing" over whatever the source is actually building, and
+## `effective_worker_map` then reads that "" back for the rest of the turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
-        policy: String, species: String = "") -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species)
+        policy: String, species: String = "",
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species, improvement)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -1155,11 +1161,22 @@ func _find_work_model(models: Array, key: String) -> Dictionary:
 
 ## Re-send this source's `assign_labor` at a new worker count (and optionally a new policy) — the
 ## same emit the old Current-actions stepper made.
+##
+## **THE IMPROVEMENT RIDES EVERY CREW EDIT** (issue #442). `assign_labor` deliberately does not touch
+## the second axis, so a `+`/`−`/Unassign/stance pick that let the pending overlay default to
+## `IMPROVEMENT_NONE` would blank the axis for the rest of the turn: the row's build badge and its
+## `⌃`-vs-progress slot would flip back to advertising the very rung already under way, and
+## `herd_crew_floor` would drop from `herders_needed_if_managed` to the ownership-gated
+## `herders_needed`, capping the `+` below the keepers the sim demands. The row MODEL already carries
+## the value `effective_worker_map` resolved (confirmed assignment overlaid with any pending edit), so
+## it is restated from there rather than re-derived — re-deriving could disagree with the board the
+## player is clicking on.
 func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int, policy: String = "") -> void:
     var kind := String(model.get("kind", ""))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
         String(model.get("herd_id", "")),
-        policy if policy != "" else String(model.get("policy", "")))
+        policy if policy != "" else String(model.get("policy", "")),
+        "", String(model.get("improvement", "")))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:

@@ -3,6 +3,7 @@ use crate::fauna_config::HuntYield;
 use crate::forage::{
     field_fodder, field_trade_goods, plant_policy_forecasts, tended_fodder, tended_trade_goods,
 };
+use crate::intensification::NO_BUILD_REMAINING_FRACTION;
 use sim_schema::ForagePolicyCeilingState;
 
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
@@ -380,8 +381,18 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // the dip now multiplies whichever stance the crew holds, so the wire carries the
                 // factor and the client applies it to the selected row. Read off the *same*
                 // `SourceYieldForecast::build_dips` the take path prices a build with.
-                tame_build_fraction: forecast.build_dips.rung_two,
-                corral_build_fraction: forecast.build_dips.rung_three,
+                //
+                // A **penned** herd has nothing left to build, and says so with the out-of-range
+                // `NO_BUILD_REMAINING_FRACTION` rather than the identity `1.0`, which claimed the
+                // build was free *and* still on offer.
+                tame_build_fraction: forecast
+                    .build_dips
+                    .rung_two
+                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                corral_build_fraction: forecast
+                    .build_dips
+                    .rung_three
+                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
             }
         })
         .collect()
@@ -514,8 +525,16 @@ pub(crate) fn snapshot_forage_patches(
                 // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
                 // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
                 // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
-                cultivate_build_fraction: forecast.build_dips.rung_two,
-                sow_build_fraction: forecast.build_dips.rung_three,
+                // A **Field** has nothing left to build; see the herd twin above for why that is
+                // `NO_BUILD_REMAINING_FRACTION` and not the identity.
+                cultivate_build_fraction: forecast
+                    .build_dips
+                    .rung_two
+                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
+                sow_build_fraction: forecast
+                    .build_dips
+                    .rung_three
+                    .unwrap_or(NO_BUILD_REMAINING_FRACTION),
                 // The two investment rungs' PAYOFF twins — each projected at **its own** rung
                 // (`tended_*` at rung 2, `field_*` at rung 3), never at the rung the patch happens to
                 // stand on. That is the #433 rule, and getting it wrong is the exact defect #433

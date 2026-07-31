@@ -229,6 +229,28 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   the build meter. A **navigable hex is not in that list**: legality reads `tile_flora_composition`,
   which blends the channel's basket with the underlying biome's, so a navigable river over an
   alluvial plain offers `wild_emmer` and is cultivable like the valley it cut.
+- **A named crop is judged wherever a command can change the (crop, rung) pair — which is TWO
+  places, because since issue #442 no single command sets both.**
+  - **`assign_labor`** sets the crop, so its stance validator judges it **at the entry rung
+    `PlantTended`** (`cultivation_ceiling` is a ladder — `allows_sow` implies `allows_cultivate` — so
+    tended is the weaker gate, and the stance command does not yet know which verb will follow). It
+    fires **only when a crop is actually named**: absent means the auto-pick, and refusing an unnamed
+    selection would make an ordinary wild gather on an all-`wild` basket (the fisheries, the alpine
+    peaks) impossible. This is also the only path that sees a re-selection dropped onto a build
+    already in flight.
+  - **`cultivate` / `sow`** set the rung, so they judge **the crops the crews already hold** — every
+    distinct one on the source, at that verb's own rung — rather than the auto-pick. It is the only
+    place a `tended`-ceiling crop can be refused for `Sow`, and crops are per band, so "the first
+    band answers for all" (`abandon_improvement`'s rule, sound because at most one *improvement* is
+    ever in flight) does not transfer.
+  > **The failure mode both exist to prevent is a SILENT STALL.** A crop this rung refuses makes
+  > `resolve_committed_species` return `Err`, so `patch.commit_species` is never called,
+  > `patch.species` stays `None`, the rung's `eligible` gate is false and **the build meter never
+  > advances, forever, with nothing said**. The split briefly left the Forage arm of
+  > `validate_labor_policy` returning `Ok(())` unconditionally while both build commands passed
+  > `species: None`, so no command path validated a player's crop at all — and the guard test went on
+  > passing because it fed `validate_improvement` a `Some(species)` **no command could supply**.
+  > Assert a command-path rejection through the command, never through the validator it calls.
 - **Weeding — the composition moves, `K` NEVER DOES** (#433). `carrying_capacity` is
   `tile_forage_capacity` at every rung; the write is **`advance_forage_regrowth`'s**, once a turn,
   recomputed fresh from the tile — the plant twin of `fauna::ecological_carrying_capacity`, so it is

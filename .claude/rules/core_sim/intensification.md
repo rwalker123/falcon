@@ -95,6 +95,11 @@ live in two slots:
     site and pointedly **no `Thriving` check**. A *stalled* build on unhealthy ground is exactly when
     a player reaches for it, and copying `cultivate`'s gates would make the remedy unreachable in that
     case. Its only rejections are "not a source kind" and "nothing is being built there";
+  - **fails closed at PARSE time on an unknown source kind** (`CommandParseError::UnexpectedToken`),
+    matching `assign_labor`'s identical `forage`/`hunt` grammar and `cancel_order`. The kind decides
+    the *arity*, so a catch-all forage arm read the tile arity for any token: `abandon_improvement 1
+    foo` reported "missing argument: target_x" — an argument unrelated to the mistake — and the
+    4-token form parsed clean, with the server's rejection arriving asynchronously in the feed;
   - **does not touch the meter.** Each web already has a rule for a source nobody is improving, and
     this hands the source back to it — the same state an out-of-range lapse reaches. **Plant meters
     bleed** (`advance_cultivation` applies the rung's `decay_per_turn = 0.01`, so a part-prepared patch
@@ -147,9 +152,12 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   the player holds — the identical formula with the constant removed. `SourceYieldForecast` carries
   the pair as `build_dips: BuildDips`, and `ceiling_under(policy, improvement)` is the one lookup
   every take path and every assign-time seed uses; the four `ceiling_*` rows stay the *undipped*
-  stance ceilings. **`hunt_credit_ceiling` takes the dip as its own argument** because Eradicate
+  stance rates. **`hunt_credit_ceiling` takes the dip as its own argument** because Eradicate
   bypasses the bank and reads the current standing stock rather than the banked rate — without it,
   Eradicate would be the one stance the dip did not reach (caught by the forecast==actual sweep).
+  **And the dip lands INSIDE the standing-stock clamp** — `min(rate × dip, stock)` — which is what
+  the rows being pre-clamp buys; see "THE CEILING LISTS ARE FOUR STANCE ROWS" in
+  `yield-forecast.md` for the discrepancy the other order produced and the sweep that now sees it.
 - **Completion CLEARS the improvement — ONE seam for all four rungs.** A build verb only means "the
   crew is preparing, not harvesting", so once a meter fills it names a rung that can never accomplish
   anything more on that source and the dip would be charged forever for nothing. Each of the four
@@ -160,6 +168,17 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   pass runs **before** the lapsed-assignment removal, which invalidates indices. A rung whose gate
   merely **lapses mid-build** is untouched — nothing completed, so the source keeps its verb and its
   progress.
+  - **It clears EVERY band's verb, and announces ONCE.** The two facts are separate, and conflating
+    them is what broke: the four verb commands set the improvement on *every* band working the
+    source, so a completion is always a many-bands event even though only one crew's accrual crosses
+    `1.0`. So (a) each build arm's **feed line** rides the *transition* — `accrue_cultivation` /
+    `accrue_field` / `accrue_domestication` all answer *"did this call finish it"*, `accrue_corral`'s
+    long-standing convention — and (b) a separate **"nothing left to build"** test runs once per
+    worked source, *before* the arm branches by rung, and clears the verb whoever finished it. The
+    placement is load-bearing: a finished Field and a penned herd take a managed branch that
+    `continue`s past the build blocks entirely, so a second crew's `Sow`/`Corral` was **permanent**
+    (only `abandon_improvement` could clear it) while the rung-2 shapes merely self-healed a turn
+    late with a duplicate feed line.
   > **It used to rewrite `policy` onto a module constant `HARVEST_POLICY_AFTER_BUILD`
   > (`FollowPolicy::Sustain`)**, because the build verb had occupied the stance slot and completion had
   > to hand *something* back — so the sim silently replaced the player's stated policy on a turn they

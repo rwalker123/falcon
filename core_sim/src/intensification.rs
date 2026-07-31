@@ -86,35 +86,54 @@ pub const RUNG_TIMESCALE_UNSCALED: f32 = 1.0;
 /// arm, where the number says nothing about which multiplier is being declined.
 pub const NO_BUILD_UNDERWAY_DIP: f32 = 1.0;
 
+/// **The dip a source with NOTHING LEFT TO BUILD publishes on the wire** — a Field, a penned herd.
+/// `snapshot.fbs` documents a build fraction as `0 < f < 1`, so this sits deliberately *outside*
+/// that range and means *"this rung is not on offer here"*; the client's compose sheet already
+/// declines to quote a deal on a non-positive fraction
+/// (`SourceForecast.gd::improvement_forecast`), so the sentinel needs no client change to be read
+/// correctly. Publishing the identity `1.0` instead said two false things at once: that a finished
+/// source's build costs nothing, and that it is still available.
+///
+/// **It is a WIRE value, never a multiplier.** [`BuildDips::of`] still answers
+/// [`NO_BUILD_UNDERWAY_DIP`] for a rung there is nothing to build, because a ceiling scaled by `0`
+/// would pay a managed source's crew nothing.
+pub const NO_BUILD_REMAINING_FRACTION: f32 = 0.0;
+
 /// **One food web's two build dips**, carried on a `fauna::SourceYieldForecast` so a forecast can
 /// price a build without holding the ladder — the pre-commit twin of [`LadderConfig::build_dip`].
 ///
 /// Two slots, not four, because the improvements are **kind-exclusive**: a plant source is only ever
 /// asked about `Cultivate`/`Sow` and an animal one about `Tame`/`Corral`, so "rung 2" and "rung 3"
 /// name the pair unambiguously for whichever branch the source belongs to.
+///
+/// **A slot is `None` when the source has nothing left to build there** — the rung-3 managed shape
+/// ([`crate::fauna::SourceYieldForecast::managed`]). That state has to be *representable*: it is not
+/// the same fact as "the dip happens to be 1.0", and the wire distinguishes them
+/// ([`NO_BUILD_REMAINING_FRACTION`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BuildDips {
-    /// The rung-2 verb's `yield_fraction_while_building` (`Cultivate` on plants, `Tame` on animals).
-    pub rung_two: f32,
-    /// The rung-3 verb's (`Sow` on plants, `Corral` on animals).
-    pub rung_three: f32,
+    /// The rung-2 verb's `yield_fraction_while_building` (`Cultivate` on plants, `Tame` on animals),
+    /// or `None` when this source has nothing left to build at that rung.
+    pub rung_two: Option<f32>,
+    /// The rung-3 verb's (`Sow` on plants, `Corral` on animals), same convention.
+    pub rung_three: Option<f32>,
 }
 
 impl Default for BuildDips {
-    /// A default-constructed forecast prices no build — the identity, matching
-    /// [`BuildDips::UNDIPPED`]. (`SourceYieldForecast` derives `Default` for its test fixtures.)
+    /// A default-constructed forecast offers no build — matching [`BuildDips::NOTHING_LEFT_TO_BUILD`].
+    /// (`SourceYieldForecast` derives `Default` for its test fixtures.)
     fn default() -> Self {
-        Self::UNDIPPED
+        Self::NOTHING_LEFT_TO_BUILD
     }
 }
 
 impl BuildDips {
-    /// **Nothing left to build** — both dips the identity. The value a rung-3 managed source carries
-    /// (a Field, a penned herd): its policy axis has collapsed onto one managed number, and quoting a
-    /// dip on it would price a build that cannot be started.
-    pub const UNDIPPED: Self = Self {
-        rung_two: NO_BUILD_UNDERWAY_DIP,
-        rung_three: NO_BUILD_UNDERWAY_DIP,
+    /// **Nothing left to build** — the value a rung-3 managed source carries (a Field, a penned
+    /// herd): its policy axis has collapsed onto one managed number, and quoting a dip on it would
+    /// price a build that cannot be started.
+    pub const NOTHING_LEFT_TO_BUILD: Self = Self {
+        rung_two: None,
+        rung_three: None,
     };
 
     /// Read one branch's pair off the ladder.
@@ -124,18 +143,23 @@ impl BuildDips {
             RungBranch::Animal => (Improvement::Tame, Improvement::Corral),
         };
         Self {
-            rung_two: ladder.build_dip(Some(rung_two)),
-            rung_three: ladder.build_dip(Some(rung_three)),
+            rung_two: Some(ladder.build_dip(Some(rung_two))),
+            rung_three: Some(ladder.build_dip(Some(rung_three))),
         }
     }
 
     /// The dip an assignment carrying `improvement` multiplies its stance's ceiling by —
-    /// [`NO_BUILD_UNDERWAY_DIP`] when it is building nothing.
+    /// [`NO_BUILD_UNDERWAY_DIP`] when it is building nothing, and equally when the rung it names has
+    /// nothing left to build (a crew standing on a finished source is harvesting, not preparing).
     pub fn of(self, improvement: Option<Improvement>) -> f32 {
         match improvement {
             None => NO_BUILD_UNDERWAY_DIP,
-            Some(Improvement::Cultivate | Improvement::Tame) => self.rung_two,
-            Some(Improvement::Sow | Improvement::Corral) => self.rung_three,
+            Some(Improvement::Cultivate | Improvement::Tame) => {
+                self.rung_two.unwrap_or(NO_BUILD_UNDERWAY_DIP)
+            }
+            Some(Improvement::Sow | Improvement::Corral) => {
+                self.rung_three.unwrap_or(NO_BUILD_UNDERWAY_DIP)
+            }
         }
     }
 }

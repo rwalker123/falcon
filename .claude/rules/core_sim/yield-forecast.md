@@ -138,8 +138,31 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > `build_dips: BuildDips` (two slots — rung 2 and rung 3 of the source's own web, since improvements are
 > kind-exclusive). `ceiling_for(policy)` remains the *undipped* stance lookup the four rows publish.
 > Two rungs keep two numbers for `ceiling_tame`'s original reason: the dials are independently tunable
-> and today's equality (0.25/0.25, 0.50/0.50) is a coincidence. A **rung-3 managed** source reports
-> both fractions as the identity (`BuildDips::UNDIPPED`) — there is nothing left to build on it.
+> and today's equality (0.25/0.25, 0.50/0.50) is a coincidence.
+>
+> **THE DIP IS APPLIED INSIDE THE STANDING-STOCK CLAMP — `min(rate × dip, stock)`, never
+> `min(rate, stock) × dip`.** That is the order both take paths use (`hunt_take` folds the dip into
+> `hunt_policy_rate` and *then* runs `hunt_credit_ceiling`'s biomass clamp; `forage_take` dips inside
+> `forage_policy_ceiling` and *then* clamps to `patch.biomass`), so the forecast has to store the two
+> terms apart: the four `ceiling_*` rows are the **pre-clamp** stance rates and
+> `SourceYieldForecast::stock_cap` is the bound, which `ceiling_for` applies (so the wire value is
+> unchanged) and `ceiling_under` applies *second*. Dipping an already-clamped row under-reports by
+> exactly the ratio the clamp cut, and it is reachable on any drawn-down source under a stance whose
+> rate is biomass-independent — measured on a pastoral `crag_goat` at `B = 0.20·K` under Deplete +
+> Corral: previewed `0.10·K`, paid `0.1375·K`. Pinned web-agnostically by
+> `fauna::tests::the_build_dip_is_applied_inside_the_standing_stock_clamp` and, end to end, by the
+> `hunt_forecast_equals_actual_take…` sweep's **drawn-down** stock level (at `B = K` the clamp never
+> binds, so the sweep could not see the ordering at all). The plant dials cannot reach the window
+> today — Deplete/Eradicate are fractions *of* biomass and Sustain/Surplus are bounded by `r·B` at
+> `r = 0.25` — so that half is latent, not absent.
+>
+> A **rung-3 managed** source has `stock_cap: None` (it is never drawn down) and reports both
+> fractions as **`0`** (`BuildDips::NOTHING_LEFT_TO_BUILD` → `NO_BUILD_REMAINING_FRACTION`), which is
+> deliberately outside the documented `0 < f < 1` dip range: *"this rung is not offerable here"*. It
+> published the identity `1.0` until PR #448, which said the build was free **and** still available;
+> the client's compose sheet already declines to quote a deal on a non-positive fraction, so the
+> sentinel needed no client change. `BuildDips::of` still answers the identity for a `None` slot —
+> the wire value and the multiplier are different questions.
 
 `ForagePatchState.tendedYield` and, on a herd, `corralYield` are what the source will pay **once the
 improvement completes**, so with the dip above the client shows **"preparing X → then Y"** *before* the

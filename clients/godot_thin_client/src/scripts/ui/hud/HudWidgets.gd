@@ -476,31 +476,34 @@ const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 ## or running (`button_pressed` tells them apart) and a `Label` is done.
 const IMPROVEMENT_CONTROL_META := "improvement"
 
-## **THE IMPROVEMENT CONTROL** (issue #442) — the second axis's whole widget, in the ONE of three
-## states the caller resolved, plus its gate reasons / pause line beneath.
+## **THE IMPROVEMENT CONTROL** (issue #442) — the second axis's whole widget, in the ONE of four
+## states the caller resolved, plus its trailing notes.
 ##
 ## `state` is `IMPROVEMENT_STATE_*`. The face and the tooltip are the CALLER's words (it knows the
-## rung, its payoff and its meter); what lives here is the SHAPE the three states share, so the two
-## webs cannot drift into two different-looking controls:
+## rung, its payoff, its meter and — when gated — its reason); what lives here is the SHAPE the four
+## states share, so the two webs cannot drift into two different-looking controls:
 ##
-##   OFFERED — an unchecked `CheckBox`, enabled iff ungated. A gated one is **shown, unchecked and
-##             explained**, exactly as a gated rung is: disabled, its reasons in the tooltip AND
-##             spelled out beneath it, because a greyed control alone does not teach.
+##   OFFERED — an unchecked, enabled `CheckBox` naming the rung and its terms.
+##   GATED   — a **`Label`, not a disabled checkbox**, whose text IS the reason the caller resolved;
+##             the tooltip is the rung's hint, NOT the reasons. See the const's own note for why the
+##             greyed-checkbox form was retired.
 ##   RUNNING — a checked, **LIVE** `CheckBox`: unchecking abandons the build (`abandon_improvement`).
 ##   DONE    — a plain `Label`. Nothing to uncheck, nothing to clear.
 ##
 ## **UNCHECKING IS NEVER GATED, AND THAT IS LOAD-BEARING.** The abandon path asks for no knowledge, no
 ## ceiling, no site and pointedly no `Thriving` check, because abandoning a STALLED build is exactly
 ## when a player reaches for it — so `notes` on a RUNNING control (the WARN pause line) must NOT
-## disable it, unlike `notes` on an OFFERED one (unmet prerequisites, which genuinely block). A
+## disable it, which is why the `disabled` rule below tests the state and not just the notes. A
 ## condition that greys a running box is a bug, not a safeguard.
 ##
 ## `on_toggle` is called with **the improvement's NEW value** — the rung's key when a box is checked,
 ## `IMPROVEMENT_NONE` when one is unchecked — so a caller writes the value it is given rather than
 ## re-deriving the direction from the control's state.
 ##
-## `notes` render beneath in the hint style — gate reasons when offered, the WARN-amber pause line
-## when running (`warn_notes` picks the tint). Returns the whole block, so a caller adds one child.
+## `notes` render beneath in the hint style — the WARN-amber pause line when running (`warn_notes`
+## picks the tint), and on a GATED control the SECOND and later gate reasons, the first having become
+## the control's own text. An OFFERED control passes none: an offer with an unmet prerequisite is a
+## GATED one. Returns the whole block, so a caller adds one child.
 const IMPROVEMENT_STATE_OFFERED := "offered"
 const IMPROVEMENT_STATE_RUNNING := "running"
 const IMPROVEMENT_STATE_DONE := "done"

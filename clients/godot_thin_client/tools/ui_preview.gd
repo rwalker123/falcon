@@ -224,6 +224,20 @@ const REOPEN_TAMING_DOMESTICATION := 0.04
 # USEFULNESS and renders the "max N workers useful here" note rather than the labor-bound one.
 const REOPEN_IDLE_WORKERS := 12
 const REOPEN_WORKING_AGE := 24
+# The CREW-NOUN guard's pen-ready herd (`herd_compose_crew_noun_after_pen`) — the one the player ticks
+# Corral on FIRST, so it is the source of the improvement the NEXT herd's header must not inherit. Its
+# id is deliberately distinct from `_herd_fixture`'s, since a same-id re-open is not a source change and
+# would not stage the bug.
+const CREW_NOUN_PEN_HERD_ID := "game_aurochs_crewnoun"
+## The crew the WILD herd of that pair would owe if it were ever tamed — its ownership-gated count is 0.
+const CREW_NOUN_WILD_WOULD_BE_HERDERS := 3
+# The quick-hunt axis guard's herd, and idle workers for the shortcut to have something to send (the
+# `quick_hunt_note` state beside it deliberately runs at 0, which is the no-op case).
+const QUICK_HUNT_HERD_ID := "game_aurochs_quickhunt"
+const QUICK_HUNT_IDLE_WORKERS := 3
+# `_band_fixture` carries no `band_id` (nothing else here emits a command), and `Hud._emit_assign_labor`
+# REFUSES a band without one — so the shortcut would no-op silently and the guard would pass on nothing.
+const QUICK_HUNT_BAND_ID := 9041
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -3191,6 +3205,40 @@ func _ready() -> void:
 	await _settle()
 	await _save("quick_hunt_note")
 
+	# State 5a — PNG-LESS companion: **the shortcut must not blank the improvement axis** (issue #442).
+	# `assign_labor` deliberately does not carry the second axis, so between the double-click and the
+	# next snapshot the OPTIMISTIC PENDING overlay is the only thing holding it — and an emit that lets
+	# it default to `IMPROVEMENT_NONE` flashes a running pen off the work board (and drops the herding
+	# crew floor from the would-be count to the ownership-gated one) for the whole turn. No frame:
+	# a board rendered from a blanked axis looks like a perfectly ordinary board, so only the overlay
+	# can testify. The band hunts ONE herd and is already building its pen; the precondition assertion
+	# is what stops the second one passing on a band that had nothing to keep.
+	# `Hud._resolve_assign_band` prefers the SELECTED player unit over `player_band()`, and an earlier
+	# state left one selected — so clear it, or the shortcut resolves to a band that is building nothing
+	# and the assertion below judges the wrong band. (The next state clears it too; this is not restored.)
+	_hud.clear_selection()
+	var quick_hunt_band := _band_fixture()
+	quick_hunt_band["band_id"] = QUICK_HUNT_BAND_ID
+	quick_hunt_band["idle_workers"] = QUICK_HUNT_IDLE_WORKERS
+	quick_hunt_band["labor_assignments"] = [{
+		"kind": "hunt", "workers": 2, "policy": "sustain",
+		"improvement": SourceForecast.IMPROVEMENT_CORRAL,
+		"fauna_id": QUICK_HUNT_HERD_ID, "target_x": 66, "target_y": 10,
+	}]
+	_hud._band_labor._player_band = quick_hunt_band
+	_assert_hud("precondition: the quick-hunt band really is building a pen on that herd",
+		_hud._band_labor.improvement_for_hunt(quick_hunt_band, QUICK_HUNT_HERD_ID)
+			== SourceForecast.IMPROVEMENT_CORRAL)
+	_hud.quick_assign_hunters(QUICK_HUNT_HERD_ID)
+	var quick_hunt_pending: Dictionary = _hud._band_labor.pending_assigns_for(
+		int(quick_hunt_band.get("entity", -1))).get(
+			_hud._band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, QUICK_HUNT_HERD_ID), {})
+	_assert_hud("a quick-hunt keeps the pen the band is already building on that herd",
+		String(quick_hunt_pending.get("improvement", "")) == SourceForecast.IMPROVEMENT_CORRAL)
+	# Leave the overlay as it was found — a snapshot with a NEWER turn is what confirms a pending edit.
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	_hud._band_labor._player_band = _band_fixture()
+
 	# State 6 — turn orb, ALL-CLEAR: a player band with zero idle workers → empty
 	# attention registry → the orb calm-pulses (dashed cyan arc), the caption reads
 	# "Turn 42 · ▸ all clear", and no badge shows.
@@ -3930,6 +3978,65 @@ func _ready() -> void:
 	_hud._band_labor._player_band = _band_fixture()
 	_hud._band_labor._player_bands = []
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
+	# ---- THE CREW NOUN AND THE PREVIOUS HERD'S IMPROVEMENT ---------------------------------------
+	# `ComposeState._hunt_improvement` is ONE slot shared by every herd, and neither `begin_hunt_source`
+	# nor `reset_hunt_source` clears it — so a noun resolved from it names the crew after whichever herd
+	# was composed LAST. Tick Corral on a pen-ready herd, then select a WILD one: `is_managed_hunt_source`
+	# read true against the leftover, the header said `ASSIGN HERDERS`, and the stepper built by the very
+	# same render — from the improvement `_build_herd_assign_controls` had just RE-SEEDED — said `Hunters`.
+	# That is the disagreement `_herd_crew_noun` was written to remove, with the sides swapped.
+	#
+	# The two herds must differ in ID (a same-id re-open is not a source change and stages nothing) and
+	# the second must be genuinely UNMANAGED — `_herd_fixture` is 40% tamed, unpenned, owing no keepers,
+	# so `is_managed_hunt_source` is false on its own axis and can only read true off the leftover.
+	# A PNG carries the header; the assertions carry the stepper AGREEING with it, since a header alone
+	# cannot show a disagreement.
+	var crew_noun_pen := _corral_ready_herd_fixture()
+	crew_noun_pen["id"] = CREW_NOUN_PEN_HERD_ID
+	crew_noun_pen["label"] = "Aurochs (%s)" % CREW_NOUN_PEN_HERD_ID
+	crew_noun_pen["species"] = "Aurochs"
+	var crew_noun_wild := _herd_fixture()
+	# It DECLARES the unmanaged half of the herder pair — owed no keepers (the ownership-gated 0) while
+	# naming the crew it WOULD owe if tamed. That is the still-wild tameable shape, the one case the
+	# field-pair guard admits an unequal pair in, and it is what makes the claim precise: this herd's own
+	# axis says "hunters", so a header reading HERDERS can only have got it from the previous herd.
+	crew_noun_wild[HERDERS_NEEDED_KEY] = 0
+	crew_noun_wild[HERDERS_NEEDED_IF_MANAGED_KEY] = CREW_NOUN_WILD_WOULD_BE_HERDERS
+	_hud.update_herds([crew_noun_pen, crew_noun_wild])
+	_hud.show_herd_selection(crew_noun_pen)
+	await _settle()
+	# Tick Corral on the pen-ready herd — `_compose_herd` opens, sets the axis (what the checkbox's
+	# `on_toggle` writes) and re-opens, so the sheet really is composing a pen when we leave it.
+	_compose_herd(crew_noun_pen, COMPOSE_COUNT_UNSET, "", SourceForecast.IMPROVEMENT_CORRAL)
+	await _settle()
+	_assert_hud("precondition: the pen-ready herd's sheet really is composing a Corral",
+		_hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_CORRAL)
+	_hud._drawercompose.close_compose_sheet()
+	# Now the WILD herd, selected through the real path so its drawer actions rebuild.
+	_hud.show_herd_selection(crew_noun_wild)
+	await _settle()
+	_assert_hud("the wild herd's drawer button asks for hunters, not the penned herd's herders",
+		_find_button_by_text(_hud.herd_assign_controls,
+			HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()) != null)
+	_hud._drawercompose.open_herd_compose(crew_noun_wild)
+	await _settle()
+	await _save("herd_compose_crew_noun_after_pen")
+	_assert_hud("…and the sheet's eyebrow reads ASSIGN HUNTERS, not the previous herd's HERDERS",
+		_hud._drawercompose._compose_sheet._header.text.contains(
+			(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()).to_upper()))
+	# The independent half: the STEPPER names itself from the axis the sheet re-seeded, so reading that
+	# axis back proves the header agrees with the stepper rather than the two being wrong together.
+	_assert_hud("…and the stepper it agrees with is built on THIS herd's own (empty) improvement axis",
+		_hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_NONE
+		and _has_label_containing(_hud._drawercompose._compose_sheet, HudComposeVocab.HUNT_CREW_LABEL))
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
+	# RESTORE the roster this block replaced rather than clearing it: `_guard_frame_herd_fields` scans
+	# every herd the HUD holds as each later frame renders, so emptying it here would quietly retire
+	# those scans from the last states of the run.
+	_hud.update_herds(_world_herds_fixture())
 
 	# WORLD-BOUNDARY GUARD — `Hud.reset_world_state()`, the HUD half of the stale-world fix.
 	# A freshly generated world sends `intensification_knowledge: []`, which MERGES to nothing, so the

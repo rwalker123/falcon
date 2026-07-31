@@ -590,6 +590,10 @@ func _ready() -> void:
 	# A BUILDING row lights its STANCE like any other — the state that used to light nothing.
 	_assert_lit_rung(INVESTMENT_ROW_STANCE)
 	_assert_policy_pick_confirms(INVESTMENT_ROW_HERD_ID, false)
+	# THE OTHER HALF OF "a stance re-pick leaves the improvement alone": the pick must also not DROP it.
+	# The frame above judges what is DRAWN; this judges what the edit WRITES, which no PNG can show — a
+	# board rendered from a blanked axis looks like a perfectly ordinary board.
+	_assert_crew_edit_keeps_improvement(INVESTMENT_ROW_HERD_ID, INVESTMENT_ROW_IMPROVEMENT)
 
 	# The CONTROL: the very same picker on the row that is building NOTHING. Its two assertions are
 	# now identical to the pair above, which IS the claim — the improvement axis is invisible here.
@@ -1963,6 +1967,70 @@ func _assert_lit_rung(standing: String) -> void:
 		print("band_panel_preview: assert OK — exactly one rung lit, and it is '%s'" % standing)
 	else:
 		push_error("band_panel_preview: expected only '%s' lit in the picker but got %s" % [standing, str(lit)])
+
+## Drop every optimistic pending assign through the REAL path — a snapshot whose turn is NEWER than the
+## edit is what confirms it — so an assertion that issues one leaves the board as it found it, and the
+## next one starts from the CONFIRMED assignments rather than from its neighbour's leftovers.
+func _clear_pending_labor() -> void:
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+
+## **THE IMPROVEMENT MUST SURVIVE A CREW EDIT** (issue #442). `assign_labor` deliberately does not carry
+## the second axis, so between the click and the next snapshot the OPTIMISTIC PENDING overlay is the ONLY
+## thing holding it — and an emit that omits the argument writes `IMPROVEMENT_NONE` over a running build,
+## which `effective_worker_map` then reads back for the rest of the turn. Every work-board crew edit funnels
+## through `_emit_work_assign` (the row `−/+`, the inspector's Unassign link, a stance pick), so driving it
+## once covers all three.
+##
+## Two claims, and the FIRST is what stops the second being vacuous — a row that never carried the
+## improvement would "keep" it trivially:
+##   1. the confirmed row really is mid-build: it carries the improvement AND renders the BUILDING badge;
+##   2. after the edit the row is PENDING and still carries both — it has not flipped back to advertising
+##      the very rung already under way (`next_rung_ready` excludes the verb in flight, so a blanked axis
+##      re-offers it), and `herd_crew_floor` still keys on the would-be crew rather than the gated one.
+func _assert_crew_edit_keeps_improvement(herd_id: String, improvement: String) -> void:
+	_clear_pending_labor()
+	# The band is staged LOCALLY rather than read off `_panel_band`, and that is deliberate: an emit
+	# re-renders the SELECTED player band into the panel (`Hud._after_pending_change` →
+	# `_render_selection_panel`), so the picker assertion above has already swung `_panel_band` to
+	# whichever band an earlier state selected. Both calls under test take the band as a PARAMETER, and
+	# the only shared state either touches is the pending overlay keyed by this band's entity — cleared
+	# on the way out — so this leaves every following frame exactly as it found it.
+	var band: Dictionary = _stamp_band_ids([_investment_policy_band_fixture()])[0]
+	var before := _find_work_model_for_herd(band, herd_id)
+	if before.is_empty():
+		push_error("band_panel_preview: no Hunt work row for '%s' — fixture drifted?" % herd_id)
+		return
+	if String(before.get("improvement", "")) != improvement or String(before.get("building_glyph", "")) == "":
+		push_error(("band_panel_preview: the '%s' row is not mid-build before the edit "
+			+ "(improvement '%s', building glyph '%s') — the crew-edit assertion would be vacuous")
+			% [herd_id, String(before.get("improvement", "")), String(before.get("building_glyph", ""))])
+		return
+	# The REAL row-stepper path, at one worker more than it stands on — the `+` a player presses.
+	_hud._bandpanel._emit_work_assign(band, before, int(before.get("workers", 0)) + 1)
+	var after := _find_work_model_for_herd(band, herd_id)
+	if not bool(after.get("pending", false)):
+		push_error("band_panel_preview: the crew edit on '%s' recorded no pending assign to judge" % herd_id)
+	elif String(after.get("improvement", "")) != improvement:
+		push_error(("band_panel_preview: a crew edit on '%s' dropped the improvement — the row now reads "
+			+ "'%s' instead of '%s', so its build badge vanishes and the rung it is already climbing is "
+			+ "re-offered for the rest of the turn")
+			% [herd_id, String(after.get("improvement", "")), improvement])
+	elif String(after.get("building_glyph", "")) == "":
+		push_error(("band_panel_preview: a crew edit on '%s' kept the improvement but lost the BUILDING "
+			+ "badge — the row stopped showing the verb under way") % herd_id)
+	else:
+		print("band_panel_preview: assert OK — a pending crew edit keeps the '%s' build on the '%s' row"
+			% [improvement, herd_id])
+	_clear_pending_labor()
+
+## The work-board model for the row hunting `herd_id`, or {} — the models are rebuilt per call, so a row
+## has to be re-found after every edit rather than held across one.
+func _find_work_model_for_herd(band: Dictionary, herd_id: String) -> Dictionary:
+	for model_variant in _hud._bandpanel._work_source_models(band, _hud._band_labor.effective_idle(band)):
+		var model: Dictionary = model_variant
+		if String(model.get("herd_id", "")) == herd_id:
+			return model
+	return {}
 
 ## Close any modal the preview opened, so the next state renders unobstructed.
 func _dismiss_dialogs() -> void:

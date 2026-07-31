@@ -286,32 +286,43 @@ impl ForagePatch {
     /// Clamped to 1.0 — reaching it makes the patch a tended crop from the *next* turn's payout on
     /// (the accrual runs after this turn's take, so the pre-commit forecast can't lie). No-op once the
     /// patch is cultivated. Mirrors `Herd::accrue_corral`.
-    pub(crate) fn accrue_cultivation(&mut self, faction: FactionId, amount: f32) {
+    ///
+    /// **Returns `true` only when THIS call finished the rung** — `accrue_corral`'s convention, and
+    /// load-bearing for the feed line: `handle_cultivate` sets the verb on *every* band working the
+    /// patch, so a post-hoc `is_cultivated()` test would announce "Cultivated patch at (x, y)" once
+    /// per band. Whether a band's *improvement* should be cleared is a different question (it should,
+    /// whoever finished it) and is answered separately by the caller.
+    pub(crate) fn accrue_cultivation(&mut self, faction: FactionId, amount: f32) -> bool {
         if self.is_cultivated() {
-            return;
+            return false;
         }
         if self.owner.is_none() {
             self.owner = Some(faction);
         }
-        if self.owner == Some(faction) {
-            self.cultivation_progress = (self.cultivation_progress + amount).min(RUNG_COMPLETE);
+        if self.owner != Some(faction) {
+            return false;
         }
+        self.cultivation_progress = (self.cultivation_progress + amount).min(RUNG_COMPLETE);
+        self.is_cultivated()
     }
 
     /// Accrue **Field**-build progress for `faction` (the sowing band, working the patch with
     /// [`crate::components::Improvement::Sow`] in flight) — the exact twin of `accrue_cultivation` one
     /// rung up, with the same
-    /// owner-locking, the same clamp, and the same "no-op once complete". Mirrors `Herd::accrue_corral`.
-    pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32) {
+    /// owner-locking, the same clamp, the same "no-op once complete", and the same
+    /// this-call-finished-it return.
+    pub(crate) fn accrue_field(&mut self, faction: FactionId, amount: f32) -> bool {
         if self.is_field() {
-            return;
+            return false;
         }
         if self.owner.is_none() {
             self.owner = Some(faction);
         }
-        if self.owner == Some(faction) {
-            self.field_progress = (self.field_progress + amount).min(RUNG_COMPLETE);
+        if self.owner != Some(faction) {
+            return false;
         }
+        self.field_progress = (self.field_progress + amount).min(RUNG_COMPLETE);
+        self.is_field()
     }
 
     /// Decay cultivation progress toward zero by `amount`. Applies to **any** patch — a completed
@@ -2257,6 +2268,12 @@ pub(crate) fn forage_forecast(
     // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
     // below is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
+    // **Stored UNCLAMPED**, with the standing crop carried beside it as `stock_cap` (PR #448
+    // review). `forage_take` dips inside `forage_policy_ceiling` and *then* clamps to
+    // `patch.biomass`, so the forecast has to keep the two terms apart for `ceiling_under` to apply
+    // them in that order — clamping here would make a dipped preview `min(rate, B) × d` against the
+    // take's `min(rate × d, B)`. The animal twin (`fauna::hunt_forecast`) is where that discrepancy
+    // is live today; the plant dials keep it latent, not impossible.
     let ceiling = |policy| {
         plant_food_only(forage_provisions(
             forage_policy_ceiling(
@@ -2269,7 +2286,7 @@ pub(crate) fn forage_forecast(
                 forage,
                 ladder,
             )
-            .clamp(0.0, patch.biomass),
+            .max(0.0),
             rate,
             output_multiplier,
         ))
@@ -2285,6 +2302,13 @@ pub(crate) fn forage_forecast(
         ceiling_surplus: ceiling(FollowPolicy::Surplus),
         ceiling_deplete: ceiling(FollowPolicy::Deplete),
         ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
+        // The standing crop `forage_take` clamps its take to, through the same conversion the rows
+        // above use.
+        stock_cap: Some(plant_food_only(forage_provisions(
+            patch.biomass.max(0.0),
+            rate,
+            output_multiplier,
+        ))),
         // **The plant web's two build dips, as the FACTORS they are** (issue #442 §2.2). They used
         // to be three more ceiling *rows* — `ceiling_prepare` (Cultivate), `ceiling_sow` and a
         // permanently-zero `ceiling_tame` — each the rung's fraction of the **Sustain** ceiling,

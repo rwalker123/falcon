@@ -843,3 +843,69 @@ fn sow_seeds_nothing_without_seed_selection() {
     );
     assert_eq!(field_progress_of(&app, coord), 0.0);
 }
+
+/// **Two crews on one tile: the Field completes ONCE and clears BOTH verbs** (PR #448 review) — the
+/// rung-3 twin of `forage_cultivation`'s
+/// `a_completed_cultivation_announces_once_and_clears_every_bands_verb`, and the rung the defect was
+/// *unrecoverable* on.
+///
+/// `handle_sow` sets the improvement on **every** band of the faction working the tile. Once the
+/// Field stands, the Forage arm takes its managed branch and `continue`s **before** the `Sow` block,
+/// so a band that did not finish the build never reached `accrue_field` — and therefore never
+/// reached the completion seam that hands the verb back. Its `Sow` was permanent: only
+/// `abandon_improvement` could clear it, and until someone did, the crew paid
+/// `yield_fraction_while_building` forever on a finished Field. The rung-2 shape self-healed (a
+/// tended patch still falls through to the wild path); this one could not, which is why the
+/// "nothing left to build" test is asked once per source ahead of the rung branch rather than inside
+/// each build block.
+#[test]
+fn a_completed_field_clears_the_sow_verb_for_every_band_that_was_building_it() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_seed_selection(&mut app, FactionId(0));
+    let first = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    let second = spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
+    // A token second crew — enough to hold an assignment (and therefore an improvement) without its
+    // share of the draw-down changing what the first band is building against.
+    app.world
+        .get_mut::<LaborAllocation>(second)
+        .expect("the second band forages")
+        .assignments[0]
+        .workers = TOKEN_SECOND_CREW;
+
+    // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
+    // band that did not finish it needs to notice (its clear is decided at the top of its own
+    // iteration, so a crew processed *before* the finisher clears on the following turn).
+    let (progress_per_turn, _) = field_build(&app);
+    run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32 + 1);
+
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_field(),
+        "fixture: the Field must stand by now (progress {})",
+        field_progress_of(&app, coord)
+    );
+    for (label, band) in [("the finisher", first), ("the second crew", second)] {
+        assert_eq!(
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+            None,
+            "{label} must hand the verb back — there is nothing left to sow here"
+        );
+    }
+    assert_eq!(
+        app.world
+            .resource::<CommandEventLog>()
+            .iter()
+            .filter(|entry| entry.label.contains("Field sown at"))
+            .count(),
+        1,
+        "one Field was sown, so the player is told once — not once per crew"
+    );
+}
+
+/// A token crew for the second band on a shared source: enough to hold an assignment (and therefore
+/// an improvement) without its share of the draw-down changing what the first band is measuring.
+const TOKEN_SECOND_CREW: u32 = 1;

@@ -1235,6 +1235,12 @@ table ForagePatchState {
   // The two rungs keep two numbers because their dials are independently tunable; folding them onto
   // one would pass every forecast==actual test by today's coincidence (both 0.25) and lie the moment
   // either is retuned.
+  //
+  // `0` (the default) means NOTHING LEFT TO BUILD at that rung — a Field publishes it on both — and
+  // is deliberately outside the `0 < f < 1` range a real dip lives in, so the two states cannot be
+  // confused. It used to publish the identity `1.0` there, which said the build was free AND still
+  // on offer. Consumers must treat a non-positive fraction as "this rung is not offerable here" and
+  // quote no deal, never as a `× 0` dip.
   cultivateBuildFraction:float = 0;
   sowBuildFraction:float = 0;
 }
@@ -1755,6 +1761,8 @@ table HerdTelemetryState {
   // being a `huntPolicyCeilings` row. `huntPolicyCeilings` is now exactly the four stance rows, and
   //   preparing(stance, rung) = huntPolicyCeilings[stance] × <rung>BuildFraction
   // is the "Preparing +X" the compose sheet renders beside `pastoralYield` / `corralYield`'s "→ +Y".
+  // `0` = NOTHING LEFT TO BUILD at that rung (a penned herd publishes it on both) — see the
+  // `ForagePatchState` twins for why the sentinel sits outside the `0 < f < 1` dip range.
   tameBuildFraction:float = 0;
   corralBuildFraction:float = 0;
 }

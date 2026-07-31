@@ -214,10 +214,12 @@ fn run_plant_build(policy: FollowPolicy, verb: Improvement) -> PlantBuildOutcome
             };
             let accrual = rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED);
             if accrual > 0.0 {
-                match verb {
+                // The completion bool is the labor arm's feed-line trigger; this probe reads the
+                // meter itself just below, so it is deliberately discarded here.
+                let _completed_this_turn = match verb {
                     Improvement::Cultivate => patch.accrue_cultivation(PROBE_FACTION, accrual),
                     _ => patch.accrue_field(PROBE_FACTION, accrual),
-                }
+                };
                 let done = match verb {
                     Improvement::Cultivate => patch.is_cultivated(),
                     _ => patch.is_field(),

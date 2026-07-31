@@ -45,14 +45,28 @@ not a second radio group — and the picker does not grow.
 
 ### 2.1 A non-Sustain stance IS allowed while building
 
-The player may hold any stance while an improvement runs. Deplete-while-cultivating is sayable, and
-it **defeats itself through the ecology rather than through a gate**: the build meter accrues only
-while the source is Thriving, and Deplete is what drives it out of Thriving. The consequence is
-already implemented on both webs, and the vocabulary for saying so already exists
-(`_tame_stalled_hint` states exactly this on the animal side).
+The player may hold any stance while an improvement runs, and it is not gated. The reasoning was
+that it **defeats itself through the ecology rather than through a gate** — the build meter accrues
+only while the source is Thriving, and a harsher stance drives it out of Thriving.
 
-Forbidding it was the alternative. Rejected: it re-creates in the UI the very coupling this change
-removes from the model, and it needs a new gate to enforce something the ecology already enforces.
+> **THAT REASONING DID NOT SURVIVE MEASUREMENT.** Measured after the fact by
+> `core_sim/src/forage/stance_probe.rs` (`#[ignore]`d; run with
+> `cargo test -p core_sim --lib stance_probe -- --ignored --nocapture --test-threads=1`):
+>
+> - **On plants there is no self-punishment at all.** Dipped ×0.25, all four stances stay Thriving
+>   for the entire build and all four complete in exactly 25 turns; Eradicate pays **16.62 food to
+>   Sustain's 4.40 (3.8×)** and leaves the patch at 0.68 K. The harshest stance is strictly dominant
+>   and costs nothing.
+> - **On animals it bites only fast breeders.** Wild Boar's Deplete+Tame completes on schedule at
+>   0.556 K paying 2.5×; Steppe Runner's completes too. The test that pins the stall uses a Rabbit at
+>   K/2 — true of its fixture, not of the web.
+> - **Rung 3 has no health gate on either web** (sown ground starts Collapsing, deliberately), so
+>   `Sow` and `Corral` complete under every stance.
+>
+> The ungated decision **stands** — a gate here would re-create in the UI the coupling this change
+> removes from the model — but it stands as an open BALANCE question, not as a solved one. Levers:
+> `forage.market.take_fraction`, the rungs' `yield_fraction_while_building`, and whether rung 3
+> should take rung 2's Thriving gate. Recorded in `.claude/rules/core_sim/intensification.md`.
 
 ### 2.2 The dip generalises
 
@@ -60,23 +74,42 @@ Today the during-build yield is `yield_fraction_while_building × the **Sustain*
 (`components.rs`), and Sustain is hardcoded because it is the only stance a builder can be in.
 
 **Now: `yield_fraction_while_building × the SELECTED STANCE's ceiling.`** The same formula with the
-constant removed. This is what makes §2.1 self-punishing without a rule: a Deplete builder takes
-more now, leaves Thriving sooner, and stalls their own meter.
+constant removed — a builder is paid a fraction of the stance they actually hold, rather than a
+fraction of a stance the model assumed. (It was expected to make §2.1 self-punishing; measurement
+says it does not, and §2.1 records what it does instead.)
 
 ## 3. The compose sheet
 
 **Stance row** — four rungs, radio, unchanged in appearance. It never moves on its own.
 
-**Improvement row** — one of three states, in this order of precedence:
+**Improvement row** — one of four states. **Precedence is Running → Done → Offered**: a build in
+flight pre-empts everything, and a completed rung becomes a label with the next rung's control
+beneath it.
 
-1. **Offered** — an unchecked checkbox naming the next rung and its terms
-   (`🌱 Cultivate this patch · ~25 turns · then 1.20 food/turn`). Gate reasons render beneath it
-   exactly as they do on a rung today; a gated improvement is shown, unchecked, and explained.
-2. **Running** — checked, with the meter and a remaining-turns estimate
-   (`🌱 Cultivating — 60% · ~10 turns left`). If the source has left Thriving, a WARN line states
-   the pause, its cause and the ease-off remedy.
-3. **Done** — a static state label (`🌾 Tended Patch`), with the *next* rung's checkbox beneath it
-   if there is one. Nothing to uncheck, nothing to clear.
+1. **Running** — a checked, LIVE checkbox carrying the build meter (`🌱 Cultivating — 60%`).
+   Unchecking abandons the build (`abandon_improvement`, §5). If the source has left Thriving, a WARN
+   line states the pause, its cause and the ease-off remedy. **It stays live however loudly its notes
+   read** — abandoning a stalled build is the main reason to abandon one.
+2. **Done** — a static state label (`🌾 Tended Patch`), with the *next* rung's control beneath it if
+   there is one. Nothing to uncheck, nothing to clear.
+3. **Offered** — an unchecked checkbox naming the next rung and its terms
+   (`🌱 Cultivate this patch · then 1.20 food/turn`).
+4. **Gated** — **a LABEL, not a disabled checkbox**, whose own text IS the first unmet prerequisite
+   (`🌱 Your people know Cultivation 0% — ♻ Sustain-forage a wild patch to learn it`). The offer
+   wording is not shown at all, and the crop picker does not render: committing is what is refused,
+   so there is nothing to configure. Further reasons keep the note treatment beneath.
+   **The shape carries the meaning** — a checkbox is a CHOICE, an unmet prerequisite is a FACT, and
+   Done is a label for the same reason.
+
+> **AS-BUILT, and both corrections came from playtest.** This section first specified a *greyed
+> checkbox* for the gated state, matching how a gated stance rung looked. Shipped that way it put an
+> offer the player cannot accept directly above the sentence explaining that they cannot accept it,
+> over a live and fully clickable crop list — so the gated state became its own shape.
+>
+> It also specified **turn estimates** on the faces (`· ~25 turns`, `· ~10 turns left`). **There is
+> no build rate on the wire**: `progress_per_turn` is sim-side ladder config and is not published, so
+> the control states the rung, its terms and its meter percent instead. No rate was invented. Adding
+> one means publishing the rung's per-turn accrual, which nothing needs yet.
 
 **The forecast states the whole deal**, because the baseline is now still on screen:
 

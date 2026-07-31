@@ -176,10 +176,14 @@ paths:
     the domestication (Husbandry) row but replaces the whole corral/pen readout with the dim `Herdable,
     not pennable` hint; `"pen"` renders the full ladder. The hints are colon-free, so
     `DetailFormat.detail_bbcode` renders them as dim informational sentences.
-  - **Assign controls** (`_build_herd_assign_controls`): the **Corral** rung is filtered OUT of the
-    local-hunt policy picker for any non-`"pen"` species (`.filter`, so `HUNT_POLICY_OPTIONS` is
-    untouched) — an OUTRIGHT hide, not a greyed "learn Herding" gate, because penning is *impossible*
-    for the species, not merely unlearned. The Extend-pen action is implicitly gated (it only shows on a
+  - **Assign controls** (`_build_herd_assign_controls`): the **Corral** rung is withheld for any
+    non-`"pen"` species — an OUTRIGHT hide, not a greyed "learn Herding" gate, because penning is
+    *impossible* for the species, not merely unlearned. **It is no longer a filter on the policy
+    picker (#442)**: the picker offers the four STANCES unconditionally, the build verbs left it for
+    the improvement control, and the husbandry ceiling now decides `admits` inside
+    `RungGates._next_rung` — the predicate that chooses the ONE rung on offer. Changing
+    husbandry-ceiling behaviour means editing that; there is no `.filter` on the picker to find, and
+    `HUNT_POLICY_OPTIONS` is deleted. The Extend-pen action is implicitly gated (it only shows on a
     `corralled` herd, which is pen-ceiling by construction).
   ui_preview: `herd_ceiling_wild` (hunt-only, no husbandry track + hint, no Corral policy) /
   `herd_ceiling_pastoral` (domestication kept, "Herdable, not pennable", no Corral policy) —

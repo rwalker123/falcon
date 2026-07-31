@@ -343,6 +343,23 @@ pub fn advance_labor_allocation(
                     if let Some(chosen) = committing.as_deref() {
                         patch.commit_species(chosen);
                     }
+                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it.** The four
+                    // accrual arms below only record a completion the *acting* band achieved, but
+                    // `handle_cultivate`/`handle_sow` set the improvement on **every** band working
+                    // the source, so a second crew is left holding a verb for a rung another crew
+                    // climbed. Stated once, here, before the Field arm's early return — which is what
+                    // made a finished Field permanently un-clearable for a second band's `Sow`, the
+                    // one case that could not self-heal (PR #448 review).
+                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it.** The four
+                    // accrual arms below only record a completion the *acting* band achieved, but
+                    // `handle_cultivate`/`handle_sow` set the improvement on **every** band working
+                    // the source, so a second crew is left holding a verb for a rung another crew
+                    // climbed. Stated once, here, before the Field arm's early return — which is what
+                    // made a finished Field permanently un-clearable for a second band's `Sow`, the
+                    // one case that could not self-heal (PR #448 review).
+                    if improvement.is_some_and(|verb| forage_rung_already_built(patch, verb)) {
+                        completed.push(idx);
+                    }
                     // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung N+1.**
                     // One call, driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
@@ -619,21 +636,22 @@ pub fn advance_labor_allocation(
                             eligible,
                             RUNG_TIMESCALE_UNSCALED,
                         );
-                        if accrual > 0.0 {
-                            patch.accrue_cultivation(faction, accrual);
-                            if patch.is_cultivated() {
-                                completed.push(idx);
-                                event_log.push(CommandEventEntry::new(
-                                    tick.0,
-                                    CommandEventKind::Cultivate,
-                                    faction,
-                                    format!("Cultivated patch at ({}, {})", tile.x, tile.y),
-                                    Some(format!(
-                                        "status=complete action=cultivate x={} y={}",
-                                        tile.x, tile.y
-                                    )),
-                                ));
-                            }
+                        // **The feed line rides the TRANSITION, not the state.** `accrue_cultivation`
+                        // answers "did this call finish it", so a second band working an
+                        // already-tended patch clears its verb (above) without announcing the
+                        // cultivation a second time.
+                        if accrual > 0.0 && patch.accrue_cultivation(faction, accrual) {
+                            completed.push(idx);
+                            event_log.push(CommandEventEntry::new(
+                                tick.0,
+                                CommandEventKind::Cultivate,
+                                faction,
+                                format!("Cultivated patch at ({}, {})", tile.x, tile.y),
+                                Some(format!(
+                                    "status=complete action=cultivate x={} y={}",
+                                    tile.x, tile.y
+                                )),
+                            ));
                         }
                     }
                     // **Sow — the rung-3 investment**, the twin of Cultivate above and the
@@ -821,6 +839,14 @@ pub fn advance_labor_allocation(
                     else {
                         continue;
                     };
+                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it** — the
+                    // animal twin of the Forage arm's identical check, and stated before the pen's
+                    // tend branch `continue`s for the same reason: `handle_corral` sets the verb on
+                    // every band hunting the herd, so the band that did not finish the pen would
+                    // otherwise hold `Corral` on a penned herd forever (PR #448 review).
+                    if improvement.is_some_and(|verb| hunt_rung_already_built(herd, verb)) {
+                        completed.push(idx);
+                    }
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
                     // feed/harvest or the wild take mutates it), so it equals the assign-time seed
@@ -1181,18 +1207,18 @@ pub fn advance_labor_allocation(
                             eligible,
                             fauna.taming_rate_for(&herd.species),
                         );
-                        if accrual > 0.0 {
-                            herd.accrue_domestication(faction, accrual);
-                            if herd.is_domesticated() {
-                                completed.push(idx);
-                                event_log.push(CommandEventEntry::new(
-                                    tick.0,
-                                    CommandEventKind::Tame,
-                                    faction,
-                                    format!("Tamed the {} herd", herd.species),
-                                    Some(format!("status=complete action=tame herd={}", herd.id)),
-                                ));
-                            }
+                        // The TRANSITION, not the state (the Cultivate arm's rule): a second band
+                        // taming the same herd clears its verb via the already-built check above
+                        // without re-announcing the taming.
+                        if accrual > 0.0 && herd.accrue_domestication(faction, accrual) {
+                            completed.push(idx);
+                            event_log.push(CommandEventEntry::new(
+                                tick.0,
+                                CommandEventKind::Tame,
+                                faction,
+                                format!("Tamed the {} herd", herd.species),
+                                Some(format!("status=complete action=tame herd={}", herd.id)),
+                            ));
                         }
                     }
                     // **Corral — the investment** (the animal twin of Cultivate). The crew is
@@ -1553,6 +1579,32 @@ fn managed_crew_needed(herders_needed: u32, take_workers: u32) -> u32 {
     herders_needed.max(take_workers)
 }
 
+/// **Has this patch already climbed the rung `improvement` builds?** The plant half of the
+/// completion seam's "nothing left to build" test, asked once per worked source *before* the arm
+/// branches by rung — so it reaches a finished Field, whose managed branch returns early and never
+/// visits the build blocks.
+///
+/// It answers **`false` for the animal verbs**, which is the honest reading rather than a defensive
+/// one: nothing has been built toward `Tame` on a patch and nothing ever will be. That state is
+/// unreachable anyway — `validate_improvement` refuses a cross-web verb at every command path — and
+/// answering `true` would silently *clear* a mis-set verb instead of leaving the evidence in place.
+fn forage_rung_already_built(patch: &ForagePatch, improvement: Improvement) -> bool {
+    match improvement {
+        Improvement::Cultivate => patch.is_cultivated(),
+        Improvement::Sow => patch.is_field(),
+        Improvement::Tame | Improvement::Corral => false,
+    }
+}
+
+/// The animal twin of [`forage_rung_already_built`], with the same cross-web rule.
+fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
+    match improvement {
+        Improvement::Tame => herd.is_domesticated(),
+        Improvement::Corral => herd.is_corralled(),
+        Improvement::Cultivate | Improvement::Sow => false,
+    }
+}
+
 /// **The `plant:field` rung's build step**, factored out because the Forage arm reaches it from two
 /// places — sowing a *wild/bare* patch (the take path) and sowing an *already tended* one (the managed
 /// path) — and the two must not drift into different gates, rates or completion side-effects.
@@ -1584,8 +1636,9 @@ fn accrue_field(
     if accrual <= 0.0 {
         return false;
     }
-    patch.accrue_field(faction, accrual);
-    if patch.is_field() {
+    // The TRANSITION, not the state — `ForagePatch::accrue_field` answers "did this call finish it",
+    // so a second band cannot re-announce a Field the first one sowed.
+    if patch.accrue_field(faction, accrual) {
         event_log.push(CommandEventEntry::new(
             tick,
             CommandEventKind::Sow,
@@ -3261,69 +3314,91 @@ mod labor_yield_tests {
     /// legitimately take *more* this turn (it cashes the bank) than the steady readout advertises — that
     /// lumpiness is the take's, not the forecast's — so the invariant is asserted on a fresh herd, and
     /// the `hunt_credit == 0` precondition below is load-bearing, not incidental.
+    ///
+    /// **It sweeps TWO stock levels, and the drawn-down one is the whole point** (PR #448 review).
+    /// At `B = K` the standing-stock clamp never binds, so the sweep could not see *where* the build
+    /// dip is applied: `min(rate, B) × d` and `min(rate × d, B)` are the same number when `rate < B`.
+    /// [`DRAWN_DOWN_BIOMASS`] sits inside the window where they differ — below the undipped
+    /// Surplus/Deplete rate (a multiple of `peak_regrowth(K)`, so biomass-independent) and above the
+    /// dipped one — which is exactly the (non-Sustain stance × improvement) pair issue #442 legalised.
+    /// The `saw_stock_bound_dip` assertion below pins that the window was actually entered, so this
+    /// cannot degrade into a second copy of the `B = K` case.
     #[test]
     fn hunt_forecast_equals_actual_take_for_every_policy_and_staffing() {
-        const BIG_HERD_CAP: f32 = 1_000.0;
         let mut saw_labor_bound = false;
         let mut saw_ceiling_bound = false;
-        for policy in FollowPolicy::ALL {
-            for improvement in HUNT_IMPROVEMENTS {
-                for workers in [1u32, 2, 20] {
-                    let (mut world, tile) = world_with_source(CAP);
-                    reseat_herd(&mut world, BIG_HERD_CAP, BIG_HERD_CAP);
-                    let herd = world
-                        .resource::<HerdRegistry>()
-                        .find(HERD_ID)
-                        .cloned()
-                        .expect("seeded herd");
-                    assert_eq!(
+        let mut saw_stock_bound_dip = false;
+        for biomass in [BIG_HERD_CAP, DRAWN_DOWN_BIOMASS] {
+            for policy in FollowPolicy::ALL {
+                for improvement in HUNT_IMPROVEMENTS {
+                    for workers in [1u32, 2, 20] {
+                        let (mut world, tile) = world_with_source(CAP);
+                        reseat_herd(&mut world, biomass, BIG_HERD_CAP);
+                        let herd = world
+                            .resource::<HerdRegistry>()
+                            .find(HERD_ID)
+                            .cloned()
+                            .expect("seeded herd");
+                        assert_eq!(
                     herd.hunt_credit, 0.0,
                     "forecast == actual is the empty-bank invariant: the steady readout matches the \
                      take only when no banked credit is waiting to be cashed"
                 );
-                    let fauna = world.resource::<FaunaConfigHandle>().get();
-                    let per_worker = world
-                        .resource::<LaborConfigHandle>()
-                        .get()
-                        .hunt
-                        .per_worker_biomass_capacity;
-                    let forecast = hunt_forecast(
-                        &herd,
-                        &fauna,
-                        &LadderConfig::builtin(),
-                        per_worker,
-                        NEUTRAL_OUTPUT_MULT,
-                    );
-                    drop(fauna);
+                        let fauna = world.resource::<FaunaConfigHandle>().get();
+                        let per_worker = world
+                            .resource::<LaborConfigHandle>()
+                            .get()
+                            .hunt
+                            .per_worker_biomass_capacity;
+                        let forecast = hunt_forecast(
+                            &herd,
+                            &fauna,
+                            &LadderConfig::builtin(),
+                            per_worker,
+                            NEUTRAL_OUTPUT_MULT,
+                        );
+                        drop(fauna);
 
-                    let band = spawn_band(
-                        &mut world,
-                        tile,
-                        vec![LaborAssignment {
-                            target: LaborTarget::Hunt {
-                                fauna_id: HERD_ID.to_string(),
-                                policy,
-                            },
-                            workers,
-                            improvement,
-                        }],
-                    );
-                    world.run_system_once(advance_labor_allocation);
-                    let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+                        let band = spawn_band(
+                            &mut world,
+                            tile,
+                            vec![LaborAssignment {
+                                target: LaborTarget::Hunt {
+                                    fauna_id: HERD_ID.to_string(),
+                                    policy,
+                                },
+                                workers,
+                                improvement,
+                            }],
+                        );
+                        world.run_system_once(advance_labor_allocation);
+                        let actual =
+                            world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
-                    let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
-                    let ceiling = forecast.ceiling_under(policy, improvement).provisions;
-                    if labor_term < ceiling {
-                        saw_labor_bound = true;
-                    } else {
-                        saw_ceiling_bound = true;
+                        let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
+                        let ceiling = forecast.ceiling_under(policy, improvement).provisions;
+                        if labor_term < ceiling {
+                            saw_labor_bound = true;
+                        } else {
+                            saw_ceiling_bound = true;
+                        }
+                        // **The dip-inside-the-clamp window, observed rather than assumed.** Under
+                        // the wrong order `ceiling_under` is exactly `ceiling_for × dip`, so any
+                        // case where it is strictly *larger* is one the old order got wrong.
+                        let dip = forecast.build_dips.of(improvement);
+                        if ceiling
+                            > forecast.ceiling_for(policy).provisions * dip + FORECAST_EPSILON
+                        {
+                            saw_stock_bound_dip = true;
+                        }
+                        let expected = expected_yield(&forecast, workers, policy, improvement);
+                        assert!(
+                            (actual - expected).abs() < FORECAST_EPSILON,
+                            "hunt forecast must equal the actual take (B={biomass}, {policy:?} + \
+                             {improvement:?}, {workers} workers): forecast={expected} \
+                             actual={actual} ({forecast:?})"
+                        );
                     }
-                    let expected = expected_yield(&forecast, workers, policy, improvement);
-                    assert!(
-                        (actual - expected).abs() < FORECAST_EPSILON,
-                        "hunt forecast must equal the actual take ({policy:?} + {improvement:?}, \
-                     {workers} workers): forecast={expected} actual={actual} ({forecast:?})"
-                    );
                 }
             }
         }
@@ -3331,7 +3406,27 @@ mod labor_yield_tests {
             saw_labor_bound && saw_ceiling_bound,
             "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
         );
+        assert!(
+            saw_stock_bound_dip,
+            "the drawn-down rows must actually enter the window where the standing stock binds the \
+             undipped stance but not the dipped one — otherwise this sweep is blind to the order \
+             the dip and the clamp are applied in"
+        );
     }
+
+    /// Carrying capacity the hunt forecast sweep re-seats its herd at: large enough that the
+    /// Eradicate ceiling exceeds a single hunter's throughput (a labor-bound case), while 20 hunters
+    /// overstaff every policy (the ceiling binds).
+    const BIG_HERD_CAP: f32 = 1_000.0;
+
+    /// **A herd drawn down INTO the window where the dip and the standing-stock clamp do not
+    /// commute.** With the fixture's `r = 0.05` and `K = 1000` the undipped Deplete rate is
+    /// `2.5 × peak_regrowth(K) = 31.25` and the dipped one (both animal rungs dip 0.50) is `15.625`,
+    /// so any biomass strictly between them is stock-bound undipped and rate-bound dipped. `15.0`
+    /// sits there with room on both sides, and — with `TEST_GAME_BODY_MASS = 5.0` — the two orders
+    /// quantise to a **different number of animals** (3 against 1), so the discrepancy survives the
+    /// whole-animal rounding rather than being swallowed by it.
+    const DRAWN_DOWN_BIOMASS: f32 = 15.0;
 
     /// **The rung-3 shape: the POLICY axis collapses, the WORKER cap does not** (slice 7). A **Field**
     /// and a **pen** are yours — you control their reproduction, so no policy takes more or less than

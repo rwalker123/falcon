@@ -805,8 +805,14 @@ func quick_assign_hunters(herd_id: String) -> void:
     if idle <= 0:
         _note_command_feed("Quick-hunt", "No idle workers to assign to %s." % herd_id)
         return
+    # The improvement the band is ALREADY building on this herd rides the edit (issue #442): the
+    # shortcut sets a crew and a stance, and letting the pending overlay default to `IMPROVEMENT_NONE`
+    # would flash a running pen off the work board (and drop the herding-crew floor) for a turn.
+    # Double-clicking a herd nobody hunts yet answers "" here, which is the honest value.
     _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, idle,
-        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id, SourceForecast.DEFAULT_HUNT_POLICY)
+        int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id,
+        SourceForecast.DEFAULT_HUNT_POLICY, "",
+        _band_labor.improvement_for_hunt(band, herd_id))
 
 func update_overlay_legend(legend: Dictionary) -> void:
     _legend.update(legend)

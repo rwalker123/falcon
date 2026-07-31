@@ -951,8 +951,10 @@ static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
 ##
 ## `useful_floor` IS WHAT KEEPS THE TWIN PROMISE HONEST. The compose side folds a managed herd's
 ## herding crew into its usefulness ceiling; a row that did not would flag a herd under-herded and then
-## disable the very `+` that fixes it. A HUNT caller therefore passes `herd_crew_floor(herd, forecast)`
-## — the one definition of that number — and a FORAGE caller passes nothing, a patch owing no crew.
+## disable the very `+` that fixes it. A HUNT caller therefore passes
+## `herd_crew_floor(herd, building)` — the one definition of that number, keyed on the IMPROVEMENT
+## axis (`building` is a bool: the assignment's own `improvement != ""` on a worked row, the composed
+## improvement on the compose sheet) — and a FORAGE caller passes nothing, a patch owing no crew.
 ## The floor is a RAISE, never a new cap, and an UNBOUNDED forecast stays unbounded; a wild herd
 ## reports 0, so `max(useful, 0)` is a no-op there.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int,

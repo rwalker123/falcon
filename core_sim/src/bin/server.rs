@@ -1661,14 +1661,20 @@ fn seed_source_yield(
 /// Validate a labor target's **stance** against the source it names, returning a player-facing
 /// rejection reason (`Err`) or `Ok`.
 ///
-/// **Since issue #442 the stance axis has exactly one rule left**, and it is a *species* rule rather
-/// than a policy one: `fauna::hunt_policies_for` prunes a [`fauna::HuntYield::yields_nothing`] quarry
-/// — worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
-/// rate at which to collect nothing. Everything this function used to check was about the **build
-/// verbs**, which are no longer stances: the kind-exclusivity check (`Cultivate` on a herd) and the
-/// four per-rung gates moved to [`validate_improvement`], where they belong to the axis that carries
-/// them. That split is what makes a crew change a *stance-side* edit which never re-asserts a
-/// paused build's start gate (`docs/plan_investment_rung_toggle.md` §6).
+/// **Since issue #442 the stance axis has two rules, and neither is about a policy.**
+/// - **Hunt:** `fauna::hunt_policies_for` prunes a [`fauna::HuntYield::yields_nothing`] quarry —
+///   worth neither meat nor pelt — down to `Eradicate` alone, because every other rung would be a
+///   rate at which to collect nothing.
+/// - **Forage:** the **crop the player named**, if they named one. `assign_labor` is the only
+///   command that can *set* `LaborTarget::Forage::species`, so it is the only place a bad selection
+///   can be caught at the moment it is made — and the only place that sees a re-selection dropped
+///   onto a build already in flight.
+///
+/// Everything else this function used to check was about the **build verbs**, which are no longer
+/// stances: the kind-exclusivity check (`Cultivate` on a herd) and the four per-rung gates moved to
+/// [`validate_improvement`], where they belong to the axis that carries them. That split is what
+/// makes a crew change a *stance-side* edit which never re-asserts a paused build's start gate
+/// (`docs/plan_investment_rung_toggle.md` §6).
 fn validate_labor_policy(
     app: &bevy::prelude::App,
     faction: FactionId,
@@ -1698,7 +1704,24 @@ fn validate_labor_policy(
             }
             Ok(())
         }
-        LaborTarget::Forage { .. } | LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
+        LaborTarget::Forage { tile, species, .. } => {
+            // **Judge the crop the player NAMED, and only then.** Absent means "pick the tile's
+            // dominant legal plant for me", which cannot be wrong and — crucially — must not drag
+            // an ordinary wild gather into the ladder's refusals: ground whose whole basket is
+            // `wild` is perfectly gatherable, and rejecting `assign_labor` there would make the
+            // open-water fisheries and the alpine peaks unworkable.
+            //
+            // **At `PlantTended`, the ladder's ENTRY rung.** `cultivation_ceiling` is a ladder
+            // (`allows_sow` implies `allows_cultivate`), so tended is the weaker of the two gates:
+            // judging at `PlantField` here would refuse a crop the player may legitimately intend
+            // to `cultivate`, and the stance command does not yet know which verb will follow.
+            // `handle_sow` re-judges the crew's crop at its own rung.
+            let Some(named) = species.as_deref() else {
+                return Ok(());
+            };
+            validate_species_selection(app, *tile, Some(named), RungKey::PlantTended)
+        }
+        LaborTarget::Scout | LaborTarget::Warrior => Ok(()),
     }
 }
 
@@ -3160,6 +3183,89 @@ fn handle_answer_fork(
     }
 }
 
+/// **The forage source at `tile`, as the improvement commands name it.** `same_source` matches on
+/// the tile alone, so the stance and crop slots are placeholders — this exists so the two build
+/// verbs cannot accidentally *carry* a stance or a crop into `set_improvement_on_working_bands`, and
+/// so "the command names a source, not an assignment" is stated once.
+fn forage_source(tile: UVec2) -> LaborTarget {
+    LaborTarget::Forage {
+        tile,
+        policy: FollowPolicy::default(),
+        species: None,
+    }
+}
+
+/// **Gate a plant build verb against the crops the CREWS actually hold**, not against the auto-pick.
+///
+/// `cultivate`/`sow` name a tile and nothing else, so they used to hand [`validate_improvement`] a
+/// `species: None` target — which judges what `resolve_committed_species` would pick *for* the
+/// player. The crop that will really be committed is the one riding each band's
+/// `LaborTarget::Forage::species`, and if this rung refuses it the labor arm silently declines to
+/// commit: `patch.species` stays `None`, the rung's `eligible` gate is false, and **the build meter
+/// never advances, with no player-facing feedback**. So every distinct crop held on the source is
+/// judged, and the first refusal is the command's.
+///
+/// **Every crop, not just the first band's** — unlike `abandon_improvement`'s "the first band answers
+/// for all of them", which is sound because at most one *improvement* is ever in flight on a source.
+/// Crops are per band and can genuinely differ, and a second band's illegal pick stalls exactly the
+/// same way the first's would.
+///
+/// With **no band working the source** the list is `[None]`, so the auto-pick is judged exactly as
+/// before and the gates above the species check (knowledge, phase, ownership, the site rule) keep
+/// their precedence over the command's own "no band is foraging" rejection.
+fn validate_forage_improvement_for_crews(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+    improvement: Improvement,
+) -> Result<(), String> {
+    // The crop list is collected first (a `World::query` needs unique access), so the validation
+    // below sees the same immutable world every other gate does.
+    for species in crops_named_on_forage_source(app, faction, tile) {
+        let target = LaborTarget::Forage {
+            tile,
+            policy: FollowPolicy::default(),
+            species,
+        };
+        validate_improvement(app, faction, &target, improvement)?;
+    }
+    Ok(())
+}
+
+/// The distinct crop selections this faction's bands carry on the forage source at `tile`, in a
+/// stable order. `[None]` when nobody works it — see [`validate_forage_improvement_for_crews`] for
+/// why that is the *no-crew* answer rather than an empty list.
+fn crops_named_on_forage_source(
+    app: &mut bevy::prelude::App,
+    faction: FactionId,
+    tile: UVec2,
+) -> Vec<Option<String>> {
+    let source = forage_source(tile);
+    let mut crops: Vec<Option<String>> = Vec::new();
+    for (_, allocation) in app
+        .world
+        .query::<(&PopulationCohort, &LaborAllocation)>()
+        .iter(&app.world)
+        .filter(|(cohort, _)| cohort.faction == faction)
+    {
+        for assignment in &allocation.assignments {
+            if !assignment.target.same_source(&source) || assignment.workers == 0 {
+                continue;
+            }
+            let LaborTarget::Forage { species, .. } = &assignment.target else {
+                continue;
+            };
+            if !crops.contains(species) {
+                crops.push(species.clone());
+            }
+        }
+    }
+    if crops.is_empty() {
+        crops.push(None);
+    }
+    crops
+}
+
 /// **Set the Cultivate improvement** on the forage patch at `tile` for the band(s) already working it
 /// (Intensification — "Cultivate & Corral as explicit policies"). This is the command form of what
 /// the client's policy picker does; it does **not** claim or complete anything.
@@ -3173,16 +3279,12 @@ fn handle_answer_fork(
 /// Gates (via the shared `validate_labor_policy`): the faction must know **Cultivation**, and the
 /// patch must be **Thriving**, not already cultivated, and not another faction's.
 fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    // The source, named by the tile. Its stance and its crop are the band's, not the command's: this
-    // sets only the improvement, and `same_source` matches on the tile alone.
-    let target = LaborTarget::Forage {
-        tile,
-        policy: FollowPolicy::default(),
-        // The command form names no crop, so the gate below judges the auto-pick and the band keeps
-        // whatever it selected.
-        species: None,
-    };
-    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Cultivate) {
+    // The source, named by the tile. Its stance is the band's, not the command's: this sets only the
+    // improvement, and `same_source` matches on the tile alone. The **crop** is the band's too, and
+    // is therefore what the gate has to judge — see `crops_named_on_forage_source`.
+    if let Err(reason) =
+        validate_forage_improvement_for_crews(app, faction, tile, Improvement::Cultivate)
+    {
         warn!(
             target: "shadow_scale::command",
             command = "cultivate",
@@ -3196,8 +3298,12 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
         return;
     }
 
-    let switched =
-        set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Cultivate));
+    let switched = set_improvement_on_working_bands(
+        app,
+        faction,
+        &forage_source(tile),
+        Some(Improvement::Cultivate),
+    );
     if switched == 0 {
         emit_command_failure(
             app,
@@ -3258,14 +3364,12 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 /// Selection**, and the tile must not already be a Field or another people's — plus the rejection when
 /// **no band is foraging** it.
 fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
-    let target = LaborTarget::Forage {
-        tile,
-        policy: FollowPolicy::default(),
-        // As in `handle_cultivate`: the command sets the *improvement*, and the crop the band already
-        // selected on this tile is untouched.
-        species: None,
-    };
-    if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Sow) {
+    // As in `handle_cultivate`: the command sets the *improvement* and leaves the crew's stance and
+    // crop alone — which is exactly why the crop it must gate on is the crew's, judged at **this**
+    // verb's rung. A `tended`-ceiling crop is legal to cultivate and illegal to sow, so this is the
+    // only place that distinction can be drawn.
+    if let Err(reason) = validate_forage_improvement_for_crews(app, faction, tile, Improvement::Sow)
+    {
         warn!(
             target: "shadow_scale::command",
             command = "sow",
@@ -3279,7 +3383,12 @@ fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
         return;
     }
 
-    let switched = set_improvement_on_working_bands(app, faction, &target, Some(Improvement::Sow));
+    let switched = set_improvement_on_working_bands(
+        app,
+        faction,
+        &forage_source(tile),
+        Some(Improvement::Sow),
+    );
     if switched == 0 {
         emit_command_failure(
             app,
@@ -6758,49 +6867,177 @@ mod tests {
     /// a build this faction owns, which is the exemption's own precondition). So this seats a real
     /// tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge — and
     /// asks for a plant that does not exist: an early return would accept it.
+    ///
+    /// **It is driven through `handle_cultivate`, not `validate_improvement` directly** (PR #448
+    /// review). It used to hand the validator `species: Some("not_a_plant")` by hand — an input **no
+    /// command path could supply**, because the `cultivate` command names no crop and passed `None`.
+    /// So the test went on passing while the behaviour it was written to protect was, for a while,
+    /// gone entirely. The crop now rides the *band's* assignment, which is where a player's
+    /// selection genuinely lives, and the assertion is on the **rejection the feed carries**.
     #[test]
     fn a_paused_build_is_exempt_from_the_phase_check_and_nothing_else() {
-        let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
+
+        // The control: with the band naming no crop, the paused build re-checks (the phase check is
+        // the only thing that was refusing it, and it is now exempt).
+        let mut control = paused_build_worked_by_a_band(faction, coord, None);
+        handle_cultivate(&mut control, faction, coord);
+        assert!(
+            !cultivate_failure_detail_contains(&control, "not thriving")
+                && !cultivate_failure_detail_contains(&control, "know no plant"),
+            "control: a paused build whose crew named no crop is re-checkable"
+        );
+
+        let mut named = paused_build_worked_by_a_band(faction, coord, Some("not_a_plant"));
+        handle_cultivate(&mut named, faction, coord);
+        assert!(
+            cultivate_failure_detail_contains(&named, "know no plant"),
+            "a build underway skips the PHASE check only — the species gate below it still runs"
+        );
+    }
+
+    /// A paused (part-prepared, non-Thriving) build on `coord` this faction owns, with one band
+    /// foraging it under `crop`. The fixture the phase-exemption tests drive the real `cultivate`
+    /// command against.
+    fn paused_build_worked_by_a_band(
+        faction: FactionId,
+        coord: UVec2,
+        crop: Option<&str>,
+    ) -> bevy::prelude::App {
+        let mut app = build_headless_app();
         seed_grid_with_baskets(&mut app, PHASE_GATE_GRID);
         seed_thriving_patch(&mut app, coord);
         seed_paused_build(&mut app, coord, Some(faction));
         grant_cultivation(&mut app, faction);
-
-        // The control: with no selection named, the paused build re-crews (the phase check is the
-        // only thing that was refusing it, and it is now exempt).
-        let permitted = validate_improvement(
-            &app,
+        spawn_resident_working_band(
+            &mut app,
             faction,
-            &LaborTarget::Forage {
+            LaborTarget::Forage {
+                tile: coord,
+                policy: FollowPolicy::Sustain,
+                species: crop.map(str::to_string),
+            },
+        );
+        app
+    }
+
+    /// **A crop the player NAMED is judged by the command path that carries it** (PR #448 review).
+    ///
+    /// `assign_labor` is the only command that can set `LaborTarget::Forage::species`, and after the
+    /// stance/improvement split its validator stopped looking at the Forage arm at all — so
+    /// `assign_labor … forage <x> <y> sustain not_a_plant 5` was **accepted**. The bad crop then rode
+    /// the assignment into the labor arm, where `resolve_committed_species` refused it, the patch
+    /// never committed, the Cultivate rung's `eligible` gate stayed false, and the build meter sat at
+    /// zero **forever with nothing said**. All three of the pre-split refusals are asserted, because
+    /// they are three different mistakes with three different fixes.
+    #[test]
+    fn assign_labor_rejects_a_crop_this_ground_cannot_grow() {
+        let faction = FactionId(0);
+        let coord = UVec2::new(1, 1);
+
+        // The control first: the same command with no crop named is accepted, so the rejections
+        // below cannot be the verb being broken outright.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        assign_forage_crop(&mut app, faction, coord, None);
+        assert!(
+            !forage_failure_detail_contains(&app, "know no plant"),
+            "control: naming no crop is the auto-pick, which is always legal"
+        );
+
+        // 1. A plant that does not exist at all.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        assign_forage_crop(&mut app, faction, coord, Some("not_a_plant"));
+        assert!(
+            forage_failure_detail_contains(&app, "know no plant"),
+            "an unknown crop is refused where it is named"
+        );
+
+        // 2. A real plant that cannot be tended — a wild harvest, gathered where it grows.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        assign_forage_crop(&mut app, faction, coord, Some(WILD_CEILING_SPECIES));
+        assert!(
+            forage_failure_detail_contains(&app, "wild harvest"),
+            "a `wild`-ceiling plant can never be committed, so naming it is refused"
+        );
+
+        // 3. A real, tendable plant that does not grow on this ground.
+        let mut app = forage_ground_with_baskets(faction, coord);
+        let elsewhere = a_tendable_species_absent_from(&app, coord);
+        assign_forage_crop(&mut app, faction, coord, Some(&elsewhere));
+        assert!(
+            forage_failure_detail_contains(&app, "does not grow at"),
+            "a crop this tile's basket does not carry is refused, naming the tile"
+        );
+    }
+
+    /// A `wild`-ceiling species from the shipped roster — one that reaches neither plant rung, so
+    /// naming it as a crop is always the `CeilingTooLow` refusal. Named by key rather than resolved
+    /// at runtime because the *point* of the assertion is that this particular kind of plant is
+    /// refused; if the roster ever retires it, this test should fail loudly rather than silently
+    /// stop testing the case.
+    const WILD_CEILING_SPECIES: &str = "oak_mast";
+
+    /// A tendable species the tile at `coord` does **not** grow — the `NotHere` refusal's input,
+    /// resolved against the live roster + the tile's own realized basket so it cannot go stale.
+    fn a_tendable_species_absent_from(app: &bevy::prelude::App, coord: UVec2) -> String {
+        let flora = app.world.resource::<FloraConfigHandle>().get();
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let ground = app
+            .world
+            .resource::<TileRegistry>()
+            .index(coord.x, coord.y)
+            .and_then(|entity| app.world.get::<Tile>(entity))
+            .expect("the fixture seeded this tile");
+        let here = tile_flora_composition(&flora, &labor.forage, ground, map_seed);
+        flora
+            .species
+            .iter()
+            .find(|(key, def)| {
+                def.cultivation_ceiling.allows_cultivate()
+                    && !here.iter().any(|share| &&share.species == key)
+            })
+            .map(|(key, _)| key.clone())
+            .expect("the roster carries a tendable plant this tile does not grow")
+    }
+
+    /// Ground with a real basket and a band already foraging it — the state `assign_labor` edits.
+    fn forage_ground_with_baskets(faction: FactionId, coord: UVec2) -> bevy::prelude::App {
+        let mut app = build_headless_app();
+        seed_grid_with_baskets(&mut app, PHASE_GATE_GRID);
+        seed_thriving_patch(&mut app, coord);
+        spawn_resident_working_band(
+            &mut app,
+            faction,
+            LaborTarget::Forage {
                 tile: coord,
                 policy: FollowPolicy::Sustain,
                 species: None,
             },
-            Improvement::Cultivate,
         );
-        assert!(
-            permitted.is_ok(),
-            "control: a paused build with no crop named is re-checkable: {permitted:?}"
-        );
+        app
+    }
 
-        let verdict = validate_improvement(
-            &app,
+    /// Re-issue the band's forage assignment naming `crop` — the real `assign_labor` command path,
+    /// which is the only one that can carry a species.
+    fn assign_forage_crop(
+        app: &mut bevy::prelude::App,
+        faction: FactionId,
+        coord: UVec2,
+        crop: Option<&str>,
+    ) {
+        handle_assign_labor(
+            app,
             faction,
-            &LaborTarget::Forage {
-                tile: coord,
-                policy: FollowPolicy::Sustain,
-                species: Some("not_a_plant".to_string()),
-            },
-            Improvement::Cultivate,
-        );
-        assert!(
-            verdict
-                .as_ref()
-                .is_err_and(|reason| reason.contains("know no plant")),
-            "a build underway skips the PHASE check only — the species gate below it still runs: \
-             {verdict:?}"
+            None,
+            "forage".to_string(),
+            BAND_WORKERS,
+            Some(coord.x),
+            Some(coord.y),
+            None,
+            Some("sustain".to_string()),
+            crop.map(str::to_string),
         );
     }
 
