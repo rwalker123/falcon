@@ -27,8 +27,8 @@ use crate::{
     },
     hashing::FnvHasher,
     intensification::{
-        BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef, RungKey, RungMovement,
-        NEGLECT_NONE, NO_BUILD_UNDERWAY_DIP, NO_NEGLECT_GRACE,
+        source_crew_needed, BuildDips, LadderConfig, LadderConfigHandle, RungBranch, RungDef,
+        RungKey, RungMovement, NEGLECT_NONE, NO_BUILD_UNDERWAY_DIP, NO_NEGLECT_GRACE,
     },
     mapgen::WorldGenSeed,
     orders::FactionId,
@@ -474,7 +474,8 @@ pub struct Herd {
     /// dip and drops only on a genuine multi-band fall.
     ///
     /// It is **the source every consumer reads** ([`herd_herders_needed`] → the `herded_fraction`
-    /// decay, `managed_crew_needed`, the `herdersNeeded` snapshot field). **Authoritative sim state**
+    /// decay, [`crate::intensification::source_crew_needed`], the `herdersNeeded` snapshot field).
+    /// **Authoritative sim state**
     /// (like `corral_progress`), so a rollback restores the remembered requirement rather than
     /// re-flickering for a turn. `0` also means "not yet stabilized" — a
     /// freshly-tamed or newly-spawned managed herd, for which [`herd_herders_needed`]
@@ -4300,9 +4301,18 @@ fn forecast_production_and_take(
 ///   (no ⚠), exactly as the Field/corral arms record it,
 /// - `wasted` = the uncollected signal ([`forecast_production_and_take`]): the production the crew
 ///   could not carry home,
-/// - `workers_needed` = the overstaffing signal, inverted from the expected take by the per-worker
-///   throughput (a ratio, so provisions-space matches the resolution path's biomass-space result),
+/// - `workers_needed` = the whole crew ([`source_crew_needed`]): the caller's `standing_crew` floored
+///   against the take-side count, itself the expected take inverted by the per-worker throughput (a
+///   ratio, so provisions-space matches the resolution path's biomass-space result),
 /// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
+///
+/// **`standing_crew` is what the source is owed whether or not it pays this turn** — a herd's
+/// `herders_needed` on the animal web, the building rung's [`LadderConfig::build_crew`] on the plant
+/// one. Both webs pass it through the *same* [`source_crew_needed`] the resolved arms of
+/// `advance_labor_allocation` use, which is what keeps the assign-time seed and the post-turn row
+/// reporting the same number: the plant half used to be omitted here, so a freshly-composed
+/// `Cultivate` read "only 1 of 2 working" (the dipped take, inverted) until the next turn overwrote
+/// it with the build crew.
 ///
 /// **`managed` is rung 3 only** (slice 7): it marks "this source's harvest cannot overdraw", and only
 /// the rungs you own qualify. A *tended* patch is still a wild stand on a better curve — it draws
@@ -4315,7 +4325,7 @@ pub(crate) fn forecast_source_yield(
     forecast: &SourceYieldForecast,
     sustainable: f32,
     managed: bool,
-    herders_needed: u32,
+    standing_crew: u32,
     workers: u32,
     policy: FollowPolicy,
     improvement: Option<Improvement>,
@@ -4344,34 +4354,46 @@ pub(crate) fn forecast_source_yield(
         realized,
         realized_trade,
         wasted: (production.provisions - actual.provisions).max(0.0),
-        // **A whole-animal (hunt) source reports its whole CREW: `max(herders, steady carry crew)`** —
-        // the SAME `managed_crew_needed` shape the resolved Hunt arm records, so the assign-time seed and
-        // the post-turn row agree (no "1 of N" on a pending Tame). `actual` is the lumpy quantised take —
-        // `0` on a wait turn for a slow breeder whose MSY < `body_mass` — so inverting it collapses
-        // `workers_needed` and contradicts `wasted`; the steady peak-drop crew ([`hunt_haul_workers`],
-        // off the policy's steady ceiling) equals the client's `_max_useful_workers`. The caller passes
-        // the herder term ownership-INDEPENDENTLY while an improvement is in flight (`would_be_herders_needed`), so
-        // a not-yet-owned Tame source seeds its real crew; `0` for a wild herd, collapsing the `max` to
-        // the haul side. A **continuous** source (every plant patch/Field, `body_mass_yield == 0`) is
-        // un-lumpy, so it keeps the ordinary overstaffing inversion (its herder term is `0`).
+        // **Every source reports its whole CREW: [`source_crew_needed`] = `max(standing, take)`** — the
+        // SAME shape both resolved arms of `advance_labor_allocation` record, so the assign-time seed
+        // and the post-turn row agree (no "1 of N" on a pending Tame or Cultivate). The `standing_crew`
+        // is the caller's: a herd's `herders_needed` on the animal web, the building rung's
+        // `LadderConfig::build_crew` on the plant one. The animal caller sizes the herder term
+        // ownership-INDEPENDENTLY while an improvement is in flight (`would_be_herders_needed`), so a
+        // not-yet-owned Tame source seeds its real crew; a wild herd's is `0`, collapsing the `max` to
+        // the take side.
+        //
+        // The take side differs by whether the source is lumpy. A **whole-animal** (hunt) source uses
+        // the steady peak-drop carry crew ([`hunt_haul_workers`], off the policy's steady ceiling,
+        // which equals the client's `_max_useful_workers`): `actual` is the quantised take — `0` on a
+        // wait turn for a slow breeder whose MSY < `body_mass` — so inverting it collapses the count
+        // and contradicts `wasted`. A **continuous** source (every plant patch/Field,
+        // `body_mass_yield == 0`) is un-lumpy, so it keeps the ordinary overstaffing inversion.
         //
         // Both branches count on [`SourceYieldForecast::ratio_axis`] rather than on provisions: a
         // staffing count is a RATIO, and dividing a wolf's zero food take by its zero per-worker food
         // rate is the `0/0` the vector model exists to make impossible. Every edible species divides
         // exactly the numbers it divided before #337.
         workers_needed: match forecast.ratio_axis() {
-            Some(axis) if forecast.quantises() => herders_needed.max(hunt_haul_workers(
-                forecast.ceiling_under(policy, improvement).component(axis),
-                forecast.body_mass_yield.component(axis),
-                forecast.per_worker_yield.component(axis),
-            )),
-            Some(axis) => workers_needed_for_take(
-                actual.component(axis),
-                forecast.per_worker_yield.component(axis),
-                workers,
+            Some(axis) if forecast.quantises() => source_crew_needed(
+                standing_crew,
+                hunt_haul_workers(
+                    forecast.ceiling_under(policy, improvement).component(axis),
+                    forecast.body_mass_yield.component(axis),
+                    forecast.per_worker_yield.component(axis),
+                ),
             ),
-            // A source that yields nothing in either currency needs nobody.
-            None => 0,
+            Some(axis) => source_crew_needed(
+                standing_crew,
+                workers_needed_for_take(
+                    actual.component(axis),
+                    forecast.per_worker_yield.component(axis),
+                    workers,
+                ),
+            ),
+            // A source that yields nothing in either currency still has to be kept: a build crew (or a
+            // herd's keepers) is owed whether or not the source pays this turn.
+            None => standing_crew,
         },
         overdraws: !managed && policy.overdraws(),
     }
@@ -4446,7 +4468,7 @@ pub fn hunt_source_yield_preview(
     // `workers_needed` would collapse to the haul crew ("1 of N" on a pending Tame).
     // `would_be_herders_needed` is the real crew regardless of recorded ownership; a pure harvest stays
     // ownership-gated (wild = 0). This is the SAME rule the resolved Hunt arm applies at its
-    // `managed_crew_needed`, so seed == resolved. **The question is now "is a build running", asked of
+    // `source_crew_needed`, so seed == resolved. **The question is now "is a build running", asked of
     // the improvement axis** — it used to be `policy.is_investment()`, which the split retires.
     let herders_needed = if improvement.is_some() {
         would_be_herders_needed(herd, fauna)
@@ -4722,7 +4744,8 @@ pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32
 ///
 /// A slow breeder whose MSY < `body_mass` (a Wild Aurochs, `r ≈ 0.09`, body 80) drops **0** animals on
 /// a wait turn while its kill-credit accumulates — so inverting `carried` collapses `workers_needed` to
-/// `0` (and, for a managed herd, to the bare herder count via [`crate::systems::managed_crew_needed`]).
+/// `0` (and, for a managed herd, to the bare herder count via
+/// [`crate::intensification::source_crew_needed`]).
 /// That contradicts the *same row's* `wasted_yield`, which correctly reports the waste an understaffed
 /// crew leaves standing: the panel then says `workersNeeded: 1` beside a 50%-`wastedYield` at 1 worker
 /// — *drop workers* and *add workers* on one row. Sizing the crew off the **steady rate** instead makes

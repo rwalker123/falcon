@@ -209,7 +209,8 @@ projection* is the sustained MSY. Pinned by
   `crew_needed`. **The same number is the build's denominator** — plant accrual is
   `progress_per_turn × min(workers / crew_needed, 1)` — so staffing the cap the panel offers is what
   buys the rung's stated build length, and under-staffing costs turns rather than nothing. Sim-side
-  the floor is `systems::labor::source_crew_needed`, one `max()` for both webs.
+  the floor is `intensification::source_crew_needed`, one `max()` for both webs **and for both halves
+  of the row** — see "The crew floor is ONE definition" below.
 - A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the policy axis
   collapses**: every ceiling is its managed yield (`SourceYieldForecast::managed`). **The worker cap does
   not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =
@@ -287,6 +288,38 @@ client's compose-time "Expected yield" row promises. Shape:
   `resolved_{forage,hunt}_yield_equals_the_seeded_yield` (the no-jump property),
   `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
+
+### The crew floor is ONE definition, reachable from BOTH halves of the row
+
+`workers_needed` is written in **two** places — the resolved turn (`advance_labor_allocation`'s three
+telemetry arms) and the assign-time seed (`forage::forage_source_yield_preview` /
+`fauna::hunt_source_yield_preview` → `fauna::forecast_source_yield`) — so the crew rule has to live
+where both can reach it. It does: **`intensification::source_crew_needed(standing_crew, take_workers)
+= max(...)`**, on the rung engine, with the *standing* half supplied per web:
+
+| web | standing crew | resolved by |
+|---|---|---|
+| plant | the building rung's `crew_needed` | **`LadderConfig::build_crew(improvement)`** — `NO_BUILD_CREW` for a pure gather, and for both animal rungs, which size a crew off the herd |
+| animal | the herd's `herders_needed` | `fauna::herd_herders_needed`, or `would_be_herders_needed` while a build is in flight (the ownership-lag rule above) |
+
+**The seed used to pass `0` for the plant standing crew**, so `forecast_source_yield`'s continuous
+branch inverted the *dipped* take alone: a patch staffed to the `plant:tended` rung's crew of 2 had its
+compose sheet say *"max 2 workers useful here"* (which reads `cultivateCrewNeeded` off the wire) while
+the tile card beside it said *"only 1 of 2 working"* — **the same patch, the same frame, the same
+(correct) yield**. It self-healed on the next turn's resolve, which is exactly why it survived: the row
+was wrong only while the player was looking at it. Pinned as a *relation* by
+`labor::a_patch_being_cultivated_seeds_the_same_build_crew_the_turn_resolves` and its animal twin
+`labor::a_wild_herd_being_tamed_reports_its_full_crew_without_the_ownership_lag` — **a test that reads
+only the resolved turn cannot see this class of bug at all.**
+
+Two consequences worth stating, because both are places the floor now applies where it visibly did not:
+- **A source that yields nothing in either currency reports its standing crew, not `0`.** A build crew
+  (or a herd's keepers) is owed whether or not the source pays this turn — which is what the resolved
+  arms already said.
+- **A finished Field still floors on a stale verb.** The once-per-source "nothing left to build" test
+  hands a second crew's `Sow` back *after* the Field arm's early return, so for one turn a band can
+  hold a verb for a rung that is already built, and the seed prices that same stale verb. Whichever
+  number is right there, both halves say it.
 
 ### An out-of-range source is ABANDONED, not parked at `+0.00`
 

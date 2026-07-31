@@ -8,10 +8,6 @@ use super::*;
 /// an assumption to revisit rather than a silently under-crewed fence.
 const PEN_EXTEND_CREW: u32 = 1;
 
-/// **No improvement is being built on this source**, so its build contributes no crew demand and
-/// [`source_crew_needed`] collapses to the take-side count — the pre-crew-axis behaviour, verbatim.
-const NO_BUILD_CREW: u32 = 0;
-
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
 /// system stays under Bevy's 16-parameter ceiling as new configs join it (Predators Phase 0 added
 /// combat + creatures). Each is resolved to its `Arc` once at the top of the system.
@@ -378,13 +374,6 @@ pub fn advance_labor_allocation(
                     // climbed. Stated once, here, before the Field arm's early return — which is what
                     // made a finished Field permanently un-clearable for a second band's `Sow`, the
                     // one case that could not self-heal (PR #448 review).
-                    // **NOTHING LEFT TO BUILD → hand the verb back, whoever finished it.** The four
-                    // accrual arms below only record a completion the *acting* band achieved, but
-                    // `handle_cultivate`/`handle_sow` set the improvement on **every** band working
-                    // the source, so a second crew is left holding a verb for a rung another crew
-                    // climbed. Stated once, here, before the Field arm's early return — which is what
-                    // made a finished Field permanently un-clearable for a second band's `Sow`, the
-                    // one case that could not self-heal (PR #448 review).
                     if improvement.is_some_and(|verb| forage_rung_already_built(patch, verb)) {
                         completed.push(idx);
                     }
@@ -555,16 +544,25 @@ pub fn advance_labor_allocation(
                             // The understaffing signal — "add hands here" — and the reason a rich
                             // Field is a real labor sink rather than a free ration.
                             wasted: (production - paid).max(0.0),
-                            workers_needed: workers_needed_for_take(
-                                paid,
-                                managed_per_worker_yield(
-                                    patch,
-                                    &tile_composition,
-                                    &labor.forage,
-                                    &flora,
-                                    mult_f,
+                            // **Floored at the build crew like every other row**, even though a Field
+                            // has nothing left to build: a second crew's verb is handed back by the
+                            // once-per-source "nothing left to build" test *after* this arm's early
+                            // return, so for one turn a band can hold a `Sow` on a finished Field —
+                            // and the assign-time seed prices that same stale verb. Whichever number
+                            // is right, both halves must say it (`forecast_source_yield`).
+                            workers_needed: source_crew_needed(
+                                ladder.build_crew(improvement),
+                                workers_needed_for_take(
+                                    paid,
+                                    managed_per_worker_yield(
+                                        patch,
+                                        &tile_composition,
+                                        &labor.forage,
+                                        &flora,
+                                        mult_f,
+                                    ),
+                                    workers,
                                 ),
-                                workers,
                             ),
                             // A managed rung-3 harvest cannot overdraw — no ⚠, whatever the policy.
                             overdraws: false,
@@ -773,9 +771,11 @@ pub fn advance_labor_allocation(
                     // **Floored at the build's own crew**, the plant twin of a herd's `herders_needed`
                     // (see [`source_crew_needed`]): while an improvement runs the take is the DIP, so
                     // inverting it alone told the player a 25-turn build wanted fewer hands than
-                    // gathering the same ground.
+                    // gathering the same ground. Read through `LadderConfig::build_crew`, the *same*
+                    // lookup `forage::forage_source_yield_preview` seeds with, so the row this turn
+                    // writes cannot disagree with the row the compose that staffed it wrote.
                     let workers_needed = source_crew_needed(
-                        forage_build_crew(improvement, tended_rung, field_rung),
+                        ladder.build_crew(improvement),
                         workers_needed_for_take(take, per_worker_biomass, workers),
                     );
                     let production = forage_policy_ceiling(
@@ -1165,7 +1165,7 @@ pub fn advance_labor_allocation(
                             realized: hunt_realized.provisions,
                             arrivals,
                             wasted: pen_yield.apply(take.wasted, mult_f).provisions,
-                            // **ONE CREW doing both jobs** ([`managed_crew_needed`]): big enough to
+                            // **ONE CREW doing both jobs** ([`source_crew_needed`]): big enough to
                             // mind the heads *and* to haul the meat. The haul side is the **steady
                             // peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off the pen's
                             // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
@@ -1354,7 +1354,7 @@ pub fn advance_labor_allocation(
                     // an animal nobody killed is still alive out there, so it was never produced and
                     // cannot have been wasted (`fauna::forecast_production_and_take`).
                     //
-                    // **A MANAGED herd reports its whole CREW** ([`managed_crew_needed`]) — the
+                    // **A MANAGED herd reports its whole CREW** ([`source_crew_needed`]) — the
                     // herders who mind it are the ones who take from it, and the crew must be big
                     // enough for both jobs. A **wild** herd is untouched by the herder term:
                     // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
@@ -1589,44 +1589,6 @@ pub fn advance_labor_allocation(
     }
 }
 
-/// **The crew a MANAGED (pastoral or penned) source needs**: `max(herders, take)` — one crew, sized by
-/// whichever of its two jobs binds.
-///
-/// # ONE need, not two — but "one need" means one CREW, not one formula
-///
-/// The same people mind the herd *and* slaughter it, so a managed source reports **one** number and
-/// staffs **one** team. But that team has to be big enough to do **both** jobs, and the two jobs scale
-/// on **different units**:
-///
-/// ```text
-/// herding = per HEAD     — one herder minds 12 aurochs   (animals_per_herder)
-/// hauling = per BIOMASS  — one hauler carries 40 biomass  (per_worker_biomass_capacity)
-/// ```
-///
-/// **That asymmetry is real and must not be "simplified" away.** A shepherd minds ~300 sheep and could
-/// not carry three of them; an aurochs herder minds 12 head (960 biomass) but hauls 40. So neither
-/// count dominates the other across the roster — small-bodied species are herder-bound (a fowl pen
-/// needs 13 pairs of eyes for 3.3 provisions), big-bodied ones are haul-bound (one aurochs herder
-/// would leave half the pen rotting). `max()` is what makes the answer true in both regimes.
-///
-/// **Reporting only the herder count made the UI contradict itself**: `workersNeeded: 1` beside
-/// `wastedYield: 0.80` — *drop workers* and *add workers*, at the same time, on the same row. Two
-/// separate *needs* (staff a herding team **and** a butchering team) is what was ruled out; this is not
-/// that. `+` would be two teams; `max` is one crew that can cover its busiest job.
-///
-/// **Wild hunting is untouched by construction**: a wild herd isn't yours to maintain, so
-/// `fauna::herd_herders_needed` is `0` and this collapses to the take-side count — the shipped
-/// behaviour, verbatim. (`hunt = reach + carry`; `harvest = maintain + take`.)
-///
-/// **The plant web reads it too, with the build crew as the standing half.** A crew *preparing* a
-/// patch is paid the investment dip, so inverting that (dipped) take gave `workers_needed = 1` where
-/// the same patch's wild Sustain gather wants 2 — the panel asked for **fewer** people to do **more**
-/// work, and flagged the second worker as overstaffing. The rung's own `crew_needed`
-/// ([`RungDef::build_crew_needed`]) is that standing half, exactly as `herders_needed` is on a herd.
-fn source_crew_needed(standing_crew: u32, take_workers: u32) -> u32 {
-    standing_crew.max(take_workers)
-}
-
 /// **Say what the band just stopped doing** — the feed line for an assignment
 /// [`LaborAllocation::normalize`] trimmed away because the band no longer has the workers for it.
 ///
@@ -1696,27 +1658,6 @@ fn announce_dropped_assignment(
             assignment.workers,
         )),
     ));
-}
-
-/// **The crew the improvement in flight on a forage patch demands** — the plant twin of
-/// `fauna::herd_herders_needed`, resolved off the rung the verb builds rather than off the source's
-/// size (a patch has no size; a rung has a job).
-///
-/// [`NO_BUILD_CREW`] when nothing is being built here, or when the rung declares no crew — so a pure
-/// harvest's staffing answer is unchanged, and the floor can only ever *raise* the count.
-fn forage_build_crew(
-    improvement: Option<Improvement>,
-    tended_rung: &RungDef,
-    field_rung: &RungDef,
-) -> u32 {
-    match improvement {
-        Some(Improvement::Cultivate) => tended_rung.build_crew_needed(),
-        Some(Improvement::Sow) => field_rung.build_crew_needed(),
-        // The animal verbs cannot ride a Forage assignment (`Improvement::valid_for_forage`), and a
-        // patch with no verb is being gathered, not built.
-        _ => None,
-    }
-    .unwrap_or(NO_BUILD_CREW)
 }
 
 /// **Has this patch already climbed the rung `improvement` builds?** The plant half of the
@@ -2256,7 +2197,9 @@ mod labor_yield_tests {
         SimulationTick, TileRegistry,
     };
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
+    use crate::systems::workers_needed_for_take;
     use crate::wellbeing_config::WellbeingConfigHandle;
+    use crate::NO_IMPROVEMENT_UNDERWAY;
     use bevy::math::UVec2;
     use bevy::prelude::{Entity, World};
     use bevy_ecs::system::RunSystemOnce;
@@ -2824,7 +2767,7 @@ mod labor_yield_tests {
     /// The name's original claim (`workers_needed == 1` for both, "maintenance labor, not scaling
     /// gather") is dead twice over: slice 7 retired `TENDED_SOURCE_WORKERS_NEEDED = 1` for the payout,
     /// and slice 8 gave the pen a **standing, herd-sized herder demand**. What the pen reports now is
-    /// [`managed_crew_needed`] — **one crew sized by whichever of its two jobs binds**: enough hands to
+    /// [`source_crew_needed`] — **one crew sized by whichever of its two jobs binds**: enough hands to
     /// *mind* the heads (`ceil(animals / animals_per_herder)`) **and** to *haul* the meat
     /// (`ceil(take / per_worker_throughput)`). Herding is per head, hauling is per biomass, so neither
     /// term dominates across the roster — this fixture's pen happens to be **haul**-bound.
@@ -3043,6 +2986,136 @@ mod labor_yield_tests {
         assert_eq!(
             tame_seed.workers_needed, resolved.workers_needed,
             "seed == resolved (no jump between the pending assign and the turn it resolves)"
+        );
+    }
+
+    /// **A patch being CULTIVATED reports its build crew from the assign-time seed, not the dipped
+    /// take** — the plant twin of the taming-startup-lag test above, and the invariant that pins the
+    /// seed and the resolved row against *each other*.
+    ///
+    /// The two halves computed `workers_needed` in two places and only one knew about the build crew:
+    /// the resolved Forage arm floored on the rung's `crew_needed` while the assign-time seed
+    /// (`forage::forage_source_yield_preview` → `fauna::forecast_source_yield`) inverted the take
+    /// alone. A build is paid the **dip**, so that inversion lands *below* the crew: on a patch staffed
+    /// to the rung's own crew, the compose sheet said *"max 2 workers useful here"* while the tile
+    /// card beside it said *"only 1 of 2 working"* — **in the same frame**, on the same patch, both
+    /// quoting the same (correct) yield. It self-healed the next turn, which is exactly why it
+    /// survived: it was wrong only while the player was looking at it.
+    ///
+    /// So this asserts the *relation* rather than either number alone — a test that reads only the
+    /// resolved turn cannot see this class of bug at all.
+    #[test]
+    fn a_patch_being_cultivated_seeds_the_same_build_crew_the_turn_resolves() {
+        let (mut world, tile) = world_with_source(CAP);
+        // The same committed-crop ground the other rung-2 payoff tests stand on, so the dipped take
+        // is priced off a realization a crop is actually at home in (#433).
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+
+        let crew = {
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            ladder
+                .rung(RungKey::PlantTended)
+                .build_crew_needed()
+                .expect("the plant tended rung declares a build crew")
+        };
+        assert!(
+            crew >= 2,
+            "the rung's crew must be non-trivial to observe the fix: {crew}"
+        );
+
+        // The seed the compose writes, for a build and for the pure gather beside it. Both hold the
+        // same Sustain stance — the axis under test is the improvement.
+        let composition = source_tile_composition(&world);
+        let seed = |improvement: Option<Improvement>, world: &World| {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let flora = world
+                .resource::<crate::flora_config::FloraConfigHandle>()
+                .get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let registry = world.resource::<ForageRegistry>();
+            crate::forage::forage_source_yield_preview(
+                registry.patch(SOURCE).expect("the fixture seeded a patch"),
+                &composition,
+                &labor.forage,
+                &flora,
+                &ladder,
+                SEASONAL_WEIGHT,
+                NEUTRAL_OUTPUT_MULT,
+                crew,
+                FollowPolicy::Sustain,
+                improvement,
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
+            )
+        };
+        let cultivate_seed = seed(Some(Improvement::Cultivate), &world);
+        let gather_seed = seed(NO_IMPROVEMENT_UNDERWAY, &world);
+
+        // **The count the un-floored seed used to report** — the dipped take inverted by the crew's
+        // own throughput, the exact arithmetic `forecast_source_yield`'s continuous branch does. It
+        // must come in *below* the crew, or the floor is invisible and this test asserts nothing.
+        let per_worker = {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let flora = world
+                .resource::<crate::flora_config::FloraConfigHandle>()
+                .get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let registry = world.resource::<ForageRegistry>();
+            forage_forecast(
+                registry.patch(SOURCE).expect("the fixture seeded a patch"),
+                &composition,
+                &labor.forage,
+                &flora,
+                &ladder,
+                SEASONAL_WEIGHT,
+                NEUTRAL_OUTPUT_MULT,
+            )
+            .per_worker_yield
+            .provisions
+        };
+        let dipped_take_crew = workers_needed_for_take(cultivate_seed.actual, per_worker, crew);
+        assert!(
+            dipped_take_crew < crew,
+            "the dipped take must invert below the build crew, or the floor is invisible: \
+             take crew {dipped_take_crew} vs build crew {crew}"
+        );
+        assert_eq!(
+            cultivate_seed.workers_needed, crew,
+            "the assign-time seed reports the build's own crew, not the dipped take's: \
+             {cultivate_seed:?}"
+        );
+        // The contrast: a pure gather on the same patch has no build, so it keeps the plain
+        // overstaffing inversion — the floor can only ever *raise* a building source's count.
+        assert_eq!(
+            gather_seed.workers_needed,
+            workers_needed_for_take(gather_seed.actual, per_worker, crew),
+            "a pure gather is unfloored (no build, no standing crew): {gather_seed:?}"
+        );
+
+        // The RESOLVED row: a real Cultivate crew of `crew` foragers, one turn.
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    policy: FollowPolicy::Sustain,
+                    species: None,
+                },
+                workers: crew,
+                improvement: Some(Improvement::Cultivate),
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let resolved = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
+        assert_eq!(
+            resolved.workers_needed, crew,
+            "the resolved row reports the build crew too: {resolved:?}"
+        );
+        assert_eq!(
+            cultivate_seed.workers_needed, resolved.workers_needed,
+            "seed == resolved (the compose sheet and the tile card cannot disagree in one frame)"
         );
     }
 

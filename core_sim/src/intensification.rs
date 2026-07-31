@@ -87,6 +87,47 @@ pub const NO_CREW: u32 = 0;
 /// rung's stated rate exactly as before the crew axis existed.
 pub const FULL_CREW_SCALE: f32 = 1.0;
 
+/// **No improvement is being built on this source**, so its build contributes no crew demand and
+/// [`source_crew_needed`] collapses to the take-side count — the pre-crew-axis behaviour, verbatim.
+/// Also what a rung whose web sizes its crew off the *source* rather than the rung reports (both
+/// animal rungs — see [`RungDef::build_crew_needed`]).
+pub const NO_BUILD_CREW: u32 = 0;
+
+/// **THE crew a worked source demands: `max(standing crew, take crew)`** — one crew that can cover
+/// its busiest job, and the single definition **both** the resolved turn (`advance_labor_allocation`)
+/// and the assign-time seed (`forage::forage_source_yield_preview` /
+/// `fauna::hunt_source_yield_preview`, through `fauna::forecast_source_yield`) report through. It
+/// lives here, on the rung engine, because the *standing* half is a rung's own
+/// [`RungDef::build_crew_needed`] on the plant web and a herd's `herders_needed` on the animal one —
+/// neither module can own a rule the other must obey.
+///
+/// **The two halves are different units and neither dominates**, which is why this is a `max` and not
+/// a sum or a pick:
+///
+/// ```text
+/// herding = per HEAD     — one herder minds 12 aurochs   (animals_per_herder)
+/// hauling = per BIOMASS  — one hauler carries 40 biomass  (per_worker_biomass_capacity)
+/// building = per RUNG    — a Cultivate wants 2 pairs of hands whatever the patch pays
+/// ```
+///
+/// A shepherd minds ~300 sheep and could not carry three of them; an aurochs herder minds 12 head
+/// (960 biomass) but hauls 40. `+` would be two separate teams; `max` is one crew sized by whichever
+/// job binds.
+///
+/// **Reporting only one half made the UI contradict itself.** On the animal web, the herder count
+/// alone read `workersNeeded: 1` beside `wastedYield: 0.80` — *drop workers* and *add workers*, at
+/// the same time, on the same row. On the plant web, a crew *preparing* a patch is paid the
+/// investment dip, so inverting that (dipped) take gave `workers_needed = 1` where the same patch's
+/// wild Sustain gather wants 2: the panel asked for **fewer** people to do **more** work, and flagged
+/// the second worker as overstaffing.
+///
+/// **Wild hunting is untouched by construction**: a wild herd isn't yours to maintain, so
+/// `fauna::herd_herders_needed` is [`NO_CREW`] and this collapses to the take-side count — the
+/// shipped behaviour, verbatim. (`hunt = reach + carry`; `harvest = maintain + take`.)
+pub fn source_crew_needed(standing_crew: u32, take_workers: u32) -> u32 {
+    standing_crew.max(take_workers)
+}
+
 /// **How many more turns of neglect this source can absorb before the penalty bites** —
 /// `(grace_turns + 1) - neglect_turns`, floored at zero, and THE one place that arithmetic lives so
 /// the two webs (and the wire) cannot disagree about what a grace means.
@@ -805,6 +846,22 @@ impl LadderConfig {
                 .yield_fraction_while_building()
                 .expect("a rung a verb builds is an investment — it has a build meter")
         })
+    }
+
+    /// **THE standing crew an assignment's build demands** — the building rung's
+    /// [`RungDef::build_crew_needed`], or [`NO_BUILD_CREW`] when the crew is only harvesting, or when
+    /// the rung declares no crew (both animal rungs, whose web sizes a crew off the *herd*).
+    ///
+    /// One lookup for both webs and for both halves of the yield row — the resolved turn and the
+    /// assign-time seed — so a freshly-composed assignment cannot report a different crew from the
+    /// turn that resolves it. It is the exact shape of [`Self::build_dip`], and for the same reason:
+    /// the number belongs to the rung the verb builds, so no call site should pair a verb with a
+    /// `RungKey` by hand. Read as the **standing** half of [`source_crew_needed`], so it can only
+    /// ever *raise* a source's `workers_needed`.
+    pub fn build_crew(&self, improvement: Option<Improvement>) -> u32 {
+        improvement
+            .and_then(|improvement| self.rung_for(improvement).build_crew_needed())
+            .unwrap_or(NO_BUILD_CREW)
     }
 
     /// A rung by branch + id, if it exists.

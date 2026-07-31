@@ -214,12 +214,15 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   share the one driver (no new weight, no re-balance).
 - **The build DEMANDS A CREW, and scales with it.** `plant:tended`'s `crew_needed` is **2** and
   `plant:field`'s is **3**, and both do two jobs (`RungBuild::crew_needed`):
-  - **They floor the source's `workers_needed`** (`systems::labor::source_crew_needed`, the same
+  - **They floor the source's `workers_needed`** (`intensification::source_crew_needed`, the same
     `max(standing crew, take crew)` a managed herd's `herders_needed` has always used, with
-    `forage_build_crew` supplying the plant half). Without the floor the count came only from the
-    harvest — and while a build runs the ceiling is the **dip** — so committing to a 25-turn
-    improvement asked for **one** forager where the same wild patch under Sustain asks for two, and
-    flagged the second worker as overstaffing. *Doing more work required fewer people.*
+    `LadderConfig::build_crew(improvement)` supplying the plant half). Without the floor the count came
+    from the harvest alone — and while a build runs the ceiling is the **dip** — so committing to a
+    25-turn improvement asked for **one** forager where the same wild patch under Sustain asks for two,
+    and flagged the second worker as overstaffing. *Doing more work required fewer people.* **The floor
+    has to reach the assign-time SEED as well as the resolved turn**, or the compose sheet and the tile
+    card contradict each other in one frame — see "The crew floor is ONE definition" in
+    `yield-forecast.md`.
   - **They scale the accrual**: `progress_per_turn × min(workers / crew_needed, 1)`, `herded_fraction`'s
     exact shape, inside `RungDef::build_accrual`. So **"25 turns" means "25 turns at full crew"** — a
     Cultivate run by one hand takes 50, a Sow by two takes ~38 and by one 75. Without it the crew

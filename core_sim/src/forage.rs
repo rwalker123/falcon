@@ -2737,9 +2737,13 @@ pub fn forage_source_yield_preview(
         &forecast,
         sustainable,
         patch.is_field(),
-        // A forage patch has no herders — the crew is purely the gatherers, so the herder term is 0 and
-        // `workers_needed` keeps the continuous overstaffing inversion.
-        0,
+        // **The plant web's standing crew is the BUILD's** — a patch has no herders, so what a crew is
+        // owed regardless of the take is whatever rung it is preparing (`LadderConfig::build_crew`,
+        // `NO_BUILD_CREW` for a pure gather). This is the *same* seam the resolved Forage arm floors
+        // on, which is the point: the seed used to pass `0` here, so a freshly-composed `Cultivate`
+        // inverted the dipped take alone and reported "only 1 of 2 working" against the compose
+        // sheet's own "max 2 workers useful here" — until the next turn resolved and overwrote it.
+        ladder.build_crew(improvement),
         workers,
         policy,
         improvement,

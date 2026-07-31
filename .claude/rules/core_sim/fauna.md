@@ -484,7 +484,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   and drops only on a genuine multi-band fall — wild = 0 unchanged (a wild herd isn't yours to
 >   maintain). `herd_herders_needed` reads this stabilized field (falling back to the raw ceil only for
 >   a not-yet-stabilized managed herd — the turn it is tamed, or a test fixture), so **every** consumer
->   (`herded_fraction` decay, `managed_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
+>   (`herded_fraction` decay, `source_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
 >   wire field is unchanged, just no longer churning.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
 >   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
@@ -494,7 +494,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
 > - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
 >   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
->   (`systems::labor::managed_crew_needed`) — but that team must be big enough for **both** jobs, which
+>   (`intensification::source_crew_needed`, shared with the plant web, where the standing half is the
+>   building rung's crew instead) — but that team must be big enough for **both** jobs, which
 >   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
 >   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
 >   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
