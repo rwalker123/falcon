@@ -71,6 +71,40 @@ paths:
     `turn_orb_starving_pen` renders exactly that pair.
   - The detail line is deliberately terse: orb rows **clip at `POPOVER_WIDTH`**, and appending the
     keeper's name ("· Band 1") pushed this row past it (rendered, seen cut, shortened).
+  - **`unworked_rung`** (warn) — an IMPROVED plant source sitting with no foragers: a Tended Patch or
+    Field whose tending is now on the neglect clock. **This producer exists because there is nowhere
+    else the warning could live** — the work board lists ASSIGNMENTS, and an unworked patch has none,
+    so it is not "understaffed" there, it is absent. A player can only be told by something that finds
+    them, which is what the orb is for.
+    **The urgency rides the detail TEXT, not a card row** (`"the tending lapses in 3 turns"`) — a
+    deliberate call: a persistent countdown on the tile card would be a permanent readout of a
+    condition that is usually irrelevant.
+  - **`under_crewed_herd`** (warn) — the animal twin: a managed herd below its keeper count, on the
+    same clock. Label names the species, detail names BOTH counts and the countdown
+    (`"2 of 4 keepers — sheds in 3 turns"`). Ownership is established the `starving_pen` way — through
+    the band's own labor assignments, never a scan of `herds`, which would alarm on a rival's herd.
+  - **BOTH read the wire's countdown; neither computes one.** `neglectGraceRemaining` is
+    `(grace + 1) − neglect`, so **`0` means the penalty is biting NOW** and `N > 0` means it bites in
+    N more unworked turns. **`hasNeglectGrace == false` means nothing is at risk** — a wild patch, a
+    wild herd — and that bool is the whole reason the zero is safe to publish: without it, "nothing to
+    lose" and "losing it this turn" would both read `0`. **A source with the bool false renders no
+    countdown at all.** Rows sort biting-now above still-counting-down.
+    ui_preview `turn_orb_unworked_rung`.
+
+  ### A producer that asks "is this source WORKED?" must be handed THIS snapshot's roster
+
+  `_unworked_rung_attention(player_bands)` and `_under_crewed_herd_attention(band, player_bands)` take
+  the incoming roster and thread it into `HudBandLaborState.forage_effort_at(x, y, bands)` /
+  `hunt_effort_on(herd_id, bands)`, whose `bands` parameter means "fold the crews over THIS list";
+  empty (every other caller) means the ingested one. **That is forced by the build-before-ingest
+  ordering above** — the producers run before `ingest_snapshot_bands`, so `current_player_bands()` is
+  still LAST turn's, and a crew the client has not ingested yet reads as absent: every improved patch
+  the player is working alarms as unworked, and an under-crewed row quotes last turn's keeper count
+  (`0 of 4` for a band being seen for the first time, i.e. on the first snapshot after a load). The
+  JUMP routing deliberately keeps the default — `on_turn_orb_focus` runs on a click, long after the
+  ingest, where the ingested roster IS the current one. Both halves are pinned by ui_preview's
+  `turn_orb_unworked_rung`, whose fixture carries a WORKED patch as a negative control precisely so a
+  roster read that sees no crews fails the row COUNT.
 
   The fourth (`_awaiting_orders_attention`) runs over the **EXPEDITIONS** split out of that loop:
   - **`awaiting_orders`** (warn) — an expedition in `ExpeditionPhase::Awaiting`: parked at its

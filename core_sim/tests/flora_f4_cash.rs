@@ -355,6 +355,7 @@ fn spawn_forager(
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

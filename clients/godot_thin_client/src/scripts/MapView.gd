@@ -248,7 +248,7 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # retains the terrain memory, not what is happening on the tile right now.
 const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
-	"cultivation_progress", "is_cultivated", "patch_has_owner", "patch_owner",
+	"patch_cultivation_progress", "patch_is_cultivated", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
 	"patch_per_worker_yield", "patch_tended_yield",
 	# Plant rung 3 (the Field + Sow) — redacted exactly as their rung-2 twins above are: the two
@@ -268,6 +268,20 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"patch_forage_policy_fodder_ceilings", "patch_forage_policy_per_worker",
 	"patch_forage_policy_per_worker_trade", "patch_forage_policy_per_worker_fodder",
 	"patch_tended_trade", "patch_tended_fodder", "patch_field_trade", "patch_field_fodder",
+	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
+	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
+	# reason `patch_sow_site_refusal` is: they are only ever read to compose the improvement forecast,
+	# and that control is already withheld on a hex the player cannot see. ONE rule for the whole
+	# patch payload beats a pair of exceptions.
+	"patch_cultivate_build_fraction", "patch_sow_build_fraction",
+	# THE NEGLECT GRACE + the two build CREWS (#442). The grace is live patch state by construction
+	# (it counts the turns since anyone worked this ground), and the crews are patch config like the
+	# dips beside them — both redacted under the one rule the whole patch payload follows, since both
+	# are only ever read to drive the improvement control, which a hex the player cannot see does not
+	# render. Redacting the grace is also what keeps a remembered tile from counting down a lapse it
+	# has no way to observe.
+	"patch_has_neglect_grace", "patch_neglect_grace_remaining",
+	"patch_cultivate_crew_needed", "patch_sow_crew_needed",
 	"units", "herds", "unit_count", "herd_count",
 	"harvest_tasks", "harvest_active", "scout_tasks", "scout_active",
 ]
@@ -2659,8 +2673,14 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 	# Hud._tile_terrain_lines for the "Cultivation N%" / "🌾 Tended Patch" row.
 	if forage_patch_lookup.has(tile_key):
 		var patch: Dictionary = forage_patch_lookup[tile_key]
-		info["cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
-		info["is_cultivated"] = bool(patch.get("is_cultivated", false))
+		# **`patch_`-PREFIXED, like every other patch field** (issue #442). This pair was the ONE
+		# exception in this cross-ref — stamped bare while its rung-3 twins `patch_field_progress` /
+		# `patch_is_field` were prefixed — and that inconsistency had to be written down in
+		# `RungGates.forage_gates_from_patch` and re-learned by every reader. `SourceForecast`'s
+		# improvement helpers spell a key as `prefix + name` uniformly, so the exception would have
+		# meant a done-test that silently answered "not built" on a tended patch.
+		info["patch_cultivation_progress"] = float(patch.get("cultivation_progress", 0.0))
+		info["patch_is_cultivated"] = bool(patch.get("is_cultivated", false))
 		info["patch_has_owner"] = bool(patch.get("has_owner", false))
 		info["patch_owner"] = int(patch.get("owner", 0))
 		info["patch_ecology_phase"] = String(patch.get("ecology_phase", ""))
@@ -2706,6 +2726,26 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
 		info["patch_field_trade"] = float(patch.get("field_trade", 0.0))
 		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
+		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor a crew's take is multiplied by while it
+		# builds that rung. They are NOT rows of `patch_forage_policy_ceilings` any more (that dict is
+		# exactly the four stances): an improvement is its own axis, so the dip multiplies whichever
+		# stance the crew holds, and `SourceForecast.improvement_forecast` is the one place that
+		# multiplication happens.
+		info["patch_cultivate_build_fraction"] = float(patch.get("cultivate_build_fraction", 0.0))
+		info["patch_sow_build_fraction"] = float(patch.get("sow_build_fraction", 0.0))
+		# THE NEGLECT GRACE (#442) — the COUNTDOWN to the ground reverting, with its own presence bool.
+		# `has_neglect_grace == false` means nothing is built here to lose (the common case, a wild
+		# patch), and it is what keeps the honest "reverting NOW" zero from reading as "nothing at
+		# risk": every reader tests the bool BEFORE the number. Both travel `patch_`-prefixed like the
+		# rest of the payload.
+		info["patch_has_neglect_grace"] = bool(patch.get("has_neglect_grace", false))
+		info["patch_neglect_grace_remaining"] = int(patch.get("neglect_grace_remaining", 0))
+		# THE TWO BUILD CREWS (#442) — what each plant rung's build demands, and the FLOOR under the
+		# compose sheet's worker cap (the plant twin of a managed herd's `herders_needed`). Without it
+		# a build asked for fewer hands than gathering the same ground, because while a build runs the
+		# ceiling the cap divides is the DIP.
+		info["patch_cultivate_crew_needed"] = int(patch.get("cultivate_crew_needed", 0))
+		info["patch_sow_crew_needed"] = int(patch.get("sow_crew_needed", 0))
 		# WHAT GROWS HERE — the tile's named plant composition (share-descending, already sorted
 		# server-side; never re-sorted here). It is the patch's STANDING basket: seeded from the
 		# biome, then REWEIGHTED as a commitment's build lands (issue #433 — a Tended Patch weeds the

@@ -18,7 +18,8 @@ use core_sim::{
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, TRADE_GOODS,
+    TileRegistry, WellbeingConfigHandle, NO_BUILD_UNDERWAY_DIP, NO_IMPROVEMENT_UNDERWAY,
+    TRADE_GOODS,
 };
 use core_sim::{hunt_credit_ceiling, hunt_policy_rate};
 
@@ -174,6 +175,7 @@ fn spawn_hunter(
                         policy,
                     },
                     workers: HUNT_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },
@@ -387,8 +389,16 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             let takes: Vec<f32> = axis
                 .iter()
                 .map(|p| {
-                    let rate = hunt_policy_rate(*p, biomass, CAP, &ecology, &fauna, &ladder);
-                    hunt_credit_ceiling(*p, biomass, 0.0, rate)
+                    let rate = hunt_policy_rate(
+                        *p,
+                        NO_IMPROVEMENT_UNDERWAY,
+                        biomass,
+                        CAP,
+                        &ecology,
+                        &fauna,
+                        &ladder,
+                    );
+                    hunt_credit_ceiling(*p, NO_BUILD_UNDERWAY_DIP, biomass, 0.0, rate)
                 })
                 .collect();
             for pair in takes.windows(2) {

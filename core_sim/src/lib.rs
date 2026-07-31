@@ -97,10 +97,10 @@ pub use combat_config::{
 };
 pub use components::{
     available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, FollowPolicy, KnowledgeFragment, LaborAllocation, LaborAssignment,
-    LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort,
-    PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
-    FODDER, FOOD, TRADE_GOODS,
+    ExpeditionPhase, FollowPolicy, Improvement, KnowledgeFragment, LaborAllocation,
+    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
+    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
+    TownCenter, TradeLink, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{
@@ -197,10 +197,10 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    knows, load_intensification_ladder_from_env, LadderConfig, LadderConfigHandle,
+    knows, load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
     LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
     RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,
@@ -738,7 +738,14 @@ pub fn build_headless_app() -> App {
                 // backbone above does not, so it runs alongside it. Each declares the one edge it
                 // actually has rather than inheriting the whole chain.
                 advance_forage_regrowth.after(systems::simulate_logistics),
-                advance_cultivation.after(advance_forage_regrowth),
+                // The second edge is the feed line: `advance_cultivation` announces a lost plant
+                // rung and `advance_husbandry` a lost pen / an under-herded flock, so the two now
+                // share `CommandEventLog` and the order they append in is observable. The plant
+                // pass goes first, matching the order the two webs already read in the Population
+                // stage.
+                advance_cultivation
+                    .after(advance_forage_regrowth)
+                    .before(advance_husbandry),
                 advance_graze_regrowth.after(advance_herd_grazing),
                 supply::balance_supply_networks.after(advance_herds),
                 systems::trade_knowledge_diffusion.after(repopulate_fauna),

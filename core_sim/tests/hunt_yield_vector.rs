@@ -27,7 +27,7 @@ use core_sim::{
     ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
-    TRADE_GOODS,
+    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 
 /// The four **extractive** rungs — the intensity ladder. Every one of them must pay the species'
@@ -190,6 +190,7 @@ fn spawn_hunters(
                         policy,
                     },
                     workers,
+                    improvement: None,
                 }],
                 ..Default::default()
             },
@@ -421,7 +422,7 @@ fn a_yields_nothing_species_offers_eradicate_only() {
     assert!(!wolf.edible() && wolf.tradeable());
     assert_eq!(
         core_sim::hunt_policies_for(wolf),
-        &FollowPolicy::HUNT_POLICIES,
+        &FollowPolicy::ALL,
         "a wolf shows the whole ladder and is paid in pelts"
     );
 }
@@ -565,6 +566,7 @@ fn spawn_resident_hunters(
                         policy,
                     },
                     workers,
+                    improvement: None,
                 }],
                 ..Default::default()
             },
@@ -589,6 +591,7 @@ fn precommit_pair(app: &App, id: &str, policy: FollowPolicy, workers: u32) -> (f
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
         policy,
+        NO_IMPROVEMENT_UNDERWAY,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
     );

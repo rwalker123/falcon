@@ -197,6 +197,13 @@ fn create_populations<'a>(
                         } else {
                             Some(builder.create_string(&assignment.policy))
                         };
+                        // The second axis (issue #442). Absent rather than `""` when the crew is
+                        // building nothing, matching how `policy`/`faunaId` treat an empty value.
+                        let improvement = if assignment.improvement.is_empty() {
+                            None
+                        } else {
+                            Some(builder.create_string(&assignment.improvement))
+                        };
                         // An unprojected row ships no vector at all, so the client can tell "no
                         // schedule" from "a schedule of zeros" (a real famine forecast).
                         let arrival_schedule = if assignment.arrival_schedule.is_empty() {
@@ -222,6 +229,8 @@ fn create_populations<'a>(
                                 arrivalSchedule: arrival_schedule,
                                 tradeYield: assignment.trade_yield,
                                 realizedTradeYield: assignment.realized_trade_yield,
+                                // The improvement axis — appended last (append-only wire).
+                                improvement,
                             },
                         )
                     })

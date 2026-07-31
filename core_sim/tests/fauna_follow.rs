@@ -138,6 +138,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::pre
                         policy,
                     },
                     workers: HUNT_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

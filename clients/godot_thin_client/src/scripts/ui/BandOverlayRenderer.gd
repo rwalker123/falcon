@@ -282,11 +282,15 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# The party's own people are the crew on that herd, and they SUM with any
 						# resident band hunting it — one source, one number.
 						crew[qkey] = int(crew.get(qkey, 0)) + int(band.get("size", 0))
-						var qpolicy := String(band.get("expedition_hunt_policy", ""))
+						# A DETACHED PARTY BUILDS NOTHING — it follows the herd and hauls food home,
+						# so its improvement axis is structurally empty and its quarry's badge can
+						# only ever show a rung on OFFER, never one under way (issue #442). It carries
+						# a hunt STANCE (`expedition_hunt_policy`), which the rung answers never read.
 						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
 						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
-							qpolicy, int(crew[qkey]), radius, origin)
-						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd, qpolicy, false)
+							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin)
+						_note_if_hidden(qkey, Vector2i(qx, qrow), LABOR_KIND_HUNT, qherd,
+							SourceForecast.IMPROVEMENT_NONE, false)
 			# A party carries no `labor_assignments` of its own; its one source is the quarry above.
 			continue
 		for entry_variant in _labor_assignments_of_marker(band):
@@ -307,10 +311,10 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				_draw_worked_mark(tcol, trow, fkey, FORAGE_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(tcol, trow, fkey, LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
-					String(entry.get("policy", "")), int(crew[fkey]), radius, origin)
+					String(entry.get("improvement", "")), int(crew[fkey]), radius, origin)
 				_note_if_hidden(fkey, Vector2i(tx, trow), LABOR_KIND_FORAGE,
 					_view.forage_patch_lookup.get(Vector2i(tx, trow), {}),
-					String(entry.get("policy", "")), bool(entry.get("overdraws", false)))
+					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
 			elif kind == LABOR_KIND_HUNT:
 				# Herds MIGRATE, so the herd's LIVE tile is the authority; the assignment's launch-time
 				# target is only the fallback for a herd that left the visible fauna set.
@@ -328,9 +332,9 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 				crew[hkey] = int(crew.get(hkey, 0)) + int(entry.get("workers", 0))
 				_draw_worked_mark(hcol, hrow, hkey, HUNT_WORKED_COLOR, selected, radius, origin)
 				_queue_source_badge(hcol, hrow, hkey, LABOR_KIND_HUNT, herd,
-					String(entry.get("policy", "")), int(crew[hkey]), radius, origin)
+					String(entry.get("improvement", "")), int(crew[hkey]), radius, origin)
 				_note_if_hidden(hkey, Vector2i(hx, hrow), LABOR_KIND_HUNT, herd,
-					String(entry.get("policy", "")), bool(entry.get("overdraws", false)))
+					String(entry.get("improvement", "")), bool(entry.get("overdraws", false)))
 
 ## Fold a worked source the marker cap HID into its tile's roll-up, so the `+N` chip can report it.
 ## A source with a visible slot returns immediately — its own badge already says everything.
@@ -338,15 +342,17 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 ## NOT called at far zoom in any meaningful sense: `compute_slots` returns early there, so every key
 ## answers -1 but `_secondary_overflow` is empty too and no chip draws. The roll-up is therefore only
 ## ever read where a chip exists, which is exactly what it describes.
-func _note_if_hidden(key: String, tile: Vector2i, kind: String, source: Dictionary, policy: String,
-		overdraws: bool) -> void:
+## `improvement` is the SECOND AXIS (issue #442) — the verb this crew is BUILDING, "" for none. The
+## rung answers key on it, never on the harvest stance, which no longer names a build at all.
+func _note_if_hidden(key: String, tile: Vector2i, kind: String, source: Dictionary,
+		improvement: String, overdraws: bool) -> void:
 	if _view.secondary_slot_of(key) >= 0:
 		return
 	var state: Dictionary = _hidden_source_state.get(tile, {"worked": false, "ready": false, "warn": false})
 	state["worked"] = true
 	if overdraws:
 		state["warn"] = true
-	if not source.is_empty() and not RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge).is_empty():
+	if not source.is_empty() and not RungGates.next_rung_ready(kind, source, improvement, _view.faction_knowledge).is_empty():
 		state["ready"] = true
 	_hidden_source_state[tile] = state
 
@@ -376,7 +382,7 @@ func _label_anchor(col: int, row: int, key: String, radius: float, origin: Vecto
 ## cap, or LOD-suppressed at far zoom). What the chip hides is the chip's job to report, not a badge's
 ## to draw somewhere arbitrary.
 func _queue_source_badge(col: int, row: int, key: String, kind: String, source: Dictionary,
-		policy: String, crew: int, radius: float, origin: Vector2) -> void:
+		improvement: String, crew: int, radius: float, origin: Vector2) -> void:
 	var slot := _view.secondary_slot_of(key)
 	if slot < 0:
 		return
@@ -385,9 +391,9 @@ func _queue_source_badge(col: int, row: int, key: String, kind: String, source: 
 	var ready: Dictionary = {}
 	var building: Dictionary = {}
 	if not source.is_empty():
-		building = RungGates.rung_in_progress(kind, source, policy)
+		building = RungGates.rung_in_progress(kind, source, improvement)
 		if building.is_empty():
-			ready = RungGates.next_rung_ready(kind, source, policy, _view.faction_knowledge)
+			ready = RungGates.next_rung_ready(kind, source, improvement, _view.faction_knowledge)
 	var center := _view.secondary_slot_center(_view._hex_center(col, row, radius, origin), slot, radius)
 	# One entry per source key: a later band working the same source replaces the earlier queue rather
 	# than stacking a second plate on the same marker.

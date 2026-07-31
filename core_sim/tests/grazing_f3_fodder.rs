@@ -201,6 +201,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: FollowPolicy)
                         policy,
                     },
                     workers: KEEPER_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

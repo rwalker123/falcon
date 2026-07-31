@@ -343,6 +343,36 @@ message SendHuntExpeditionCommand {
 // gate decides whether that is the world it wanted.
 message ResyncCommand {}
 
+// ABANDON a running improvement: clear the build verb off every band of this faction working the
+// named source, leaving the harvest STANCE and the crew exactly as they are.
+//
+// The counterpart of `cultivate` / `sow` / `tame` / `corral` — the one command that passes `None`
+// where those four pass a verb. It exists because the two-axis split (issue #442) otherwise removed a
+// capability the old model had by accident: when the build verb WAS the policy, changing your mind
+// meant picking another policy, and a 25-turn commitment could always be walked away from.
+//
+// UNGATED, deliberately. Abandonment is not a rung transition, so it asks for no knowledge, no
+// species ceiling, no site and no ecology phase — a STALLED build on unhealthy ground is exactly when
+// a player reaches for this, and gating it on the same conditions that started the build would make
+// the remedy unreachable in precisely that case.
+//
+// It does NOT zero the meter. Each web already has a rule for a source nobody is improving, and this
+// simply hands the source back to it: a plant meter bleeds at the rung's `decay_per_turn` (an
+// abandoned part-prepared patch reverts toward 0 over ~100 turns), while `domestication_progress` is
+// monotone-up and the pen rung's decay is 0, so an animal meter is kept. Identical to what already
+// happens when an assignment lapses out of range.
+//
+// Names a SOURCE, not a verb — `kind` picks the web ("forage" uses target_x/target_y, "hunt" uses
+// fauna_id), because at most one improvement is ever in flight on a source, so naming the source
+// names the thing being abandoned.
+message AbandonImprovementCommand {
+  uint32 faction_id = 1;
+  string kind = 2;      // "forage" | "hunt"
+  uint32 target_x = 3;  // forage only
+  uint32 target_y = 4;  // forage only
+  string fauna_id = 5;  // hunt only
+}
+
 message ExportMapCommand {
   // Optional destination path. When absent the server writes a
   // timestamped file into the gitignored exports/ scratch directory.
@@ -420,5 +450,7 @@ message CommandEnvelope {
     // 43 is held by `new_game`, so `set_fog` takes 44 (24 and 30 are reserved, not free).
     SetFogEnabledCommand set_fog = 44;
     ResyncCommand resync = 45;
+    // 45 is held by `resync`, so `abandon_improvement` takes 46 (append-only; never renumber).
+    AbandonImprovementCommand abandon_improvement = 46;
   }
 }

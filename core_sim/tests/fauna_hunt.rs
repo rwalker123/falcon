@@ -129,6 +129,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                         policy: FollowPolicy::Eradicate,
                     },
                     workers: HUNT_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

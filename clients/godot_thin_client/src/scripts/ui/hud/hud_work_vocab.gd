@@ -246,9 +246,9 @@ const WORK_INSPECTOR_HEIGHT := 118.0
 ## The inspector with its policy picker open (an extra rung row + its hint).
 const WORK_INSPECTOR_POLICY_HEIGHT := 186.0
 
-## …plus the standing-investment line (`WORK_INSPECT_STANDING_INVESTMENT_FORMAT`), which only renders
-## on a source standing on an investment rung. One `ALLOC_SECTION_FONT_SIZE` line and its separation.
-const WORK_INSPECTOR_STANDING_LINE_HEIGHT := 22.0
+## There is no taller variant of that any more: `WORK_INSPECTOR_STANDING_LINE_HEIGHT` reserved room
+## for a WARN line naming a rung the picker could not show, and issue #442 removed the state — a
+## `policy` is always one of the four, so every open picker draws the same height.
 
 ## Gaps the work column always spends: head→chips, chips→board, board→(inspector | nothing).
 const WORK_ZONE_GAP_COUNT := 3.0
@@ -435,16 +435,11 @@ const WORK_INSPECT_ASSIGNED_FORMAT := "%d assigned"
 
 const WORK_INSPECT_SENTENCE_SEPARATOR := " · "
 
-## The inspector's picker offers the four EXTRACTIVE rungs only — the INVESTMENT rungs are ladder
-## COMMITMENTS made at the source's own compose control, where their gates and payoff forecasts live.
-## So a source STANDING on an investment rung highlights none of the four, which without a word reads
-## as an unset control on a very-much-set assignment. These two say what is actually true: the rung
-## it stands on, and that picking here ENDS it (a part-built pen/field is discarded, not paused).
-const WORK_INSPECT_STANDING_INVESTMENT_FORMAT := "Currently %s — picking a rung here ends it."
-
-const WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT := "End %s on %s and take at %s instead? The work done toward it is lost."
-
-const WORK_INSPECT_END_INVESTMENT_CONFIRM_OK := "End it"
+## **THE STANDING-INVESTMENT LINE AND ITS DISCARD CONFIRM ARE GONE** (issue #442). Three consts
+## lived here — the WARN sentence, the confirm prompt and its OK label — and all three existed to
+## handle a work row standing on a rung the picker did not offer, which is a state a `policy` that
+## is always a stance cannot reach. A stance re-pick no longer discards anything: `assign_labor`
+## leaves the improvement axis alone, so the pick is an ordinary change of take on every row.
 
 const PAGER_PREV_GLYPH := "‹"
 

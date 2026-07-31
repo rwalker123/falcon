@@ -615,23 +615,38 @@ static func herders_value_hex(value: String) -> String:
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
-## Player-facing cultivation label for a forage patch. A fully-tended patch shows a crop glyph; an
-## in-progress patch shows the percentage. Mirrors `husbandry_label`; `detail_bbcode` tints a Tended
-## value via `cultivation_value_hex`.
-static func cultivation_label(progress: float, cultivated: bool) -> String:
+## Player-facing cultivation label for a forage patch — THREE states, not two. A fully-tended patch
+## shows a crop glyph; a meter below complete reads as a BUILD while somebody is building it and as a
+## LOSS while nobody is. Mirrors `husbandry_label`; `detail_bbcode` tints via `cultivation_value_hex`.
+##
+## **"Preparing 99%" WAS THE MOST MISLEADING ROW ON THE CARD.** A meter that is bleeding back toward
+## wild wore the same word, in the same neutral ink, as a fresh build one turn from done — the two
+## states differ only in which DIRECTION the number is moving, which a percentage cannot show. So the
+## decaying case gets its own word (the sim's own: an abandoned rung "goes feral — the ground is
+## reverting") and WARN ink.
+##
+## `building` is the DISTINGUISHING FACT and must be the improvement axis, never the meter: a patch is
+## reverting exactly when its meter is short of complete and no crew is building that rung
+## (`HudBandLaborState.forage_effort_at(...).improvement`). A test on progress alone cannot tell the
+## two apart at any value.
+static func cultivation_label(progress: float, cultivated: bool, building: bool = false) -> String:
     if cultivated or progress >= CULTIVATION_PROGRESS_COMPLETE:
         return "%s Tended Patch" % CULTIVATION_GLYPH
-    # Lead with the build VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
+    # Lead with the VERB, exactly as the herd's Husbandry row reads "Domesticating N%" — a bare
     # percentage buried in the tile card was easy to miss and broke parity with the animal side.
-    return "%s %d%%" % [
-        HudFloraVocab.CULTIVATION_PREPARING_LABEL, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE)),
-    ]
+    var verb := HudFloraVocab.CULTIVATION_PREPARING_LABEL if building \
+        else HudFloraVocab.RUNG_REVERTING_LABEL
+    return "%s %d%%" % [verb, int(round(progress * HudConst.PROGRESS_PERCENT_SCALE))]
 
-## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, normal ink while it's
-## still being cultivated. Matched on the label from `cultivation_label`.
+## BBCode hex for a "Cultivation" value: signal (positive) for a tended patch, WARN while the meter is
+## reverting (nobody is building it and the ground is going back), normal ink while it is being built.
+## Matched on the label from `cultivation_label`.
 static func cultivation_value_hex(value: String) -> String:
-    if value.to_lower().contains("tended"):
+    var normalized := value.to_lower()
+    if normalized.contains("tended"):
         return HudStyle.SIGNAL_HEX
+    if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
+        return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
 ## Player-facing label for the plant RUNG-3 meter — the patch twin of `corral_label` and the rung
@@ -639,16 +654,25 @@ static func cultivation_value_hex(value: String) -> String:
 ## same building-verb convention as the pen's "Building 40%" / the fence's "Fencing 60%"; once
 ## complete it is a **Field**, badged with its own glyph so it reads as a DIFFERENT THING from a
 ## 🌾 Tended Patch rather than as a bigger number — which is the whole point of rung 3.
-static func field_label(progress: float, is_field: bool) -> String:
+##
+## THREE states here too, and the decaying one shares `cultivation_label`'s word rather than inventing
+## a rung-specific one: what is happening is the same fact on both rungs — the ground is going back —
+## and the ROW's name already says which rung is losing it.
+static func field_label(progress: float, is_field: bool, building: bool = false) -> String:
     if is_field or progress >= FIELD_PROGRESS_COMPLETE:
         return "%s %s" % [field_glyph(), FIELD_BADGE_LABEL]
-    return "%s %d%%" % [FIELD_SOWING_LABEL, HudFormat.progress_percent(progress)]
+    var verb := FIELD_SOWING_LABEL if building else HudFloraVocab.RUNG_REVERTING_LABEL
+    return "%s %d%%" % [verb, HudFormat.progress_percent(progress)]
 
-## BBCode hex for a "Field" value: signal (positive) for a completed Field, normal ink while the crop
-## is still going in. Matched on the label from `field_label`, mirroring `cultivation_value_hex`.
+## BBCode hex for a "Field" value: signal (positive) for a completed Field, WARN while it reverts,
+## normal ink while the crop is still going in. Matched on the label from `field_label`, mirroring
+## `cultivation_value_hex`.
 static func field_value_hex(value: String) -> String:
-    if value.to_lower().contains(FIELD_BADGE_LABEL.to_lower()):
+    var normalized := value.to_lower()
+    if normalized.contains(FIELD_BADGE_LABEL.to_lower()):
         return HudStyle.SIGNAL_HEX
+    if normalized.contains(HudFloraVocab.RUNG_REVERTING_LABEL.to_lower()):
+        return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
 ## The tile card's "What grows here" SECTION — a quiet header row naming the section, then one

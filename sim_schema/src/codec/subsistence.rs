@@ -211,6 +211,13 @@ fn create_herds<'a>(
                 preySenseRadius: herd.prey_sense_radius,
                 // Ownership-independent would-be herder count (taming-startup-lag fix) — appended last.
                 herdersNeededIfManaged: herd.herders_needed_if_managed,
+                // The two build dips as FRACTIONS (issue #442) — the dip multiplies the selected
+                // stance's row, so it is no longer a row of its own. Appended last.
+                tameBuildFraction: herd.tame_build_fraction,
+                corralBuildFraction: herd.corral_build_fraction,
+                // The neglect grace — appended last.
+                hasNeglectGrace: herd.has_neglect_grace,
+                neglectGraceRemaining: herd.neglect_grace_remaining,
             },
         );
         entries.push(entry);
@@ -287,6 +294,14 @@ fn create_forage_patches<'a>(
                 tendedFodder: patch.tended_fodder,
                 fieldTrade: patch.field_trade,
                 fieldFodder: patch.field_fodder,
+                // The two build dips as FRACTIONS (issue #442) — appended last.
+                cultivateBuildFraction: patch.cultivate_build_fraction,
+                sowBuildFraction: patch.sow_build_fraction,
+                // The neglect grace + the two build crews — appended last.
+                hasNeglectGrace: patch.has_neglect_grace,
+                neglectGraceRemaining: patch.neglect_grace_remaining,
+                cultivateCrewNeeded: patch.cultivate_crew_needed,
+                sowCrewNeeded: patch.sow_crew_needed,
             },
         );
         entries.push(entry);

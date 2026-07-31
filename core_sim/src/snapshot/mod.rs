@@ -930,6 +930,7 @@ mod tests {
                         species: None,
                     },
                     workers: 10,
+                    improvement: None,
                 },
                 LaborAssignment {
                     target: LaborTarget::Hunt {
@@ -937,6 +938,7 @@ mod tests {
                         policy: crate::components::FollowPolicy::Sustain,
                     },
                     workers: 5,
+                    improvement: None,
                 },
             ],
             last_yields: vec![
@@ -1024,6 +1026,7 @@ mod tests {
                     species: None,
                 },
                 workers: 10,
+                improvement: None,
             }],
             last_yields: Vec::new(),
             last_pen_feed_upkeep: 0.0,
@@ -1055,13 +1058,50 @@ mod tests {
             policy: FollowPolicy::Deplete,
             species: None,
         };
-        let assignment = LaborAssignment { target, workers: 6 };
+        let assignment = LaborAssignment {
+            target,
+            workers: 6,
+            improvement: None,
+        };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
         assert_eq!(state.policy, "deplete", "policy serialized");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
         // and it existed solely for `restore_world_from_snapshot` — the server never reads labor
         // assignments back off the wire, it reads them from the checkpoint. Keeping a decoder alive
         // for a test to call is the shape this arc removed, so the return leg went with it.
+    }
+
+    /// **The two axes reach the wire as two fields** (issue #442): `policy` carries the stance and
+    /// `improvement` the build verb, `""` when there is none. A row that carried a build verb in
+    /// `policy` is now unrepresentable, which is the whole point — the client no longer has to
+    /// re-split one field into "is this a build or a stance?".
+    #[test]
+    fn the_stance_and_the_improvement_are_separate_wire_fields() {
+        use crate::components::{FollowPolicy, Improvement};
+        let assignment = LaborAssignment {
+            target: LaborTarget::Forage {
+                tile: UVec2::new(7, 9),
+                policy: FollowPolicy::Deplete,
+                species: None,
+            },
+            workers: 6,
+            improvement: Some(Improvement::Cultivate),
+        };
+        let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
+        assert_eq!(state.policy, "deplete", "the stance rides `policy`");
+        assert_eq!(
+            state.improvement, "cultivate",
+            "the build verb rides its own field — never `policy`"
+        );
+
+        // A pure harvest says so with an empty string, not by omitting a stance.
+        let harvesting = LaborAssignment {
+            improvement: None,
+            ..assignment
+        };
+        let state = labor_assignment_to_state(&harvesting, &SourceYield::ZERO);
+        assert_eq!(state.policy, "deplete");
+        assert_eq!(state.improvement, "", "no build in flight");
     }
 
     #[test]

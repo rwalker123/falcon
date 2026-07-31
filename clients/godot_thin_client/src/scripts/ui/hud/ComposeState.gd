@@ -10,7 +10,7 @@ extends RefCounted
 ## THREE GROUPS, deliberately kept apart:
 ##   • `forage_*` — the tile card's "assign foragers" block. Read/written inside ONE builder.
 ##   • `hunt_*`   — the herd drawer's "assign hunters/herders" block. Two reads leak out of its
-##                  builder (`_tame_stalled_hint`, `_herd_crew_noun`) — see `hunt_policy()`.
+##                  builder (`_herd_crew_noun`, the improvement control's deal) — see `hunt_policy()`.
 ##   • `party_*`  — the Band panel's PARTIES-zone compose sheet (quarry + autofill). It is NOT drawer
 ##                  state, so it sits in its own section and can travel to a band-panel extraction
 ##                  without unpicking the drawer's.
@@ -37,6 +37,11 @@ var _forage_count: int = 0
 # consumed, never set by a −/+ tick, so manual counts survive the rebuild.
 var _forage_autofill := false
 var _forage_policy: String = ""
+# **THE SECOND AXIS** (issue #442) — the improvement this compose will COMMIT TO on the patch, or
+# `IMPROVEMENT_NONE` for "build nothing". Seeded from the standing assignment's own `improvement` when
+# the source changes, then toggled by the improvement checkbox; committing sends its own verb beside
+# `assign_labor`, which never touches this axis.
+var _forage_improvement: String = ""
 # The crop the composed Cultivate/Sow will commit this patch to (flora roster S1); "" = send nothing,
 # which is VALID and yields the sim's own default (`default_species_for_rung` — the highest-share
 # legal plant). Re-resolved every render, so it can never name a plant this tile/rung cannot take.
@@ -48,6 +53,8 @@ var _forage_band: int = -1
 var _hunt_key: String = ""
 var _hunt_count: int = 0
 var _hunt_policy: String = ""
+# The hunt twin of `_forage_improvement` — same contract, the animal ladder's verbs.
+var _hunt_improvement: String = ""
 # The hunt twin of `_forage_autofill` — same one-shot contract.
 var _hunt_autofill := false
 var _hunt_band: int = -1
@@ -85,6 +92,10 @@ func forage_policy() -> String:
 func forage_species() -> String:
 	return _forage_species
 
+## The improvement this compose will commit to on the patch — `IMPROVEMENT_NONE` for none.
+func forage_improvement() -> String:
+	return _forage_improvement
+
 func forage_band() -> int:
 	return _forage_band
 
@@ -100,9 +111,12 @@ func begin_forage_source(key: String, band_entity: int) -> void:
 ## Re-seed the composed count + policy from the newly-resolved band's staffing on the new tile. The
 ## crop selection is cleared with them: a crop pick belongs to the PATCH it was made on, and a new
 ## tile has a different basket.
-func seed_forage(count: int, policy: String) -> void:
+## `improvement` re-seeds from the standing assignment's OWN second-axis field, so a patch already
+## being cultivated opens with its box checked rather than looking untouched.
+func seed_forage(count: int, policy: String, improvement: String) -> void:
 	_forage_count = count
 	_forage_policy = policy
+	_forage_improvement = improvement
 	_forage_species = ""
 
 ## Forget which tile the forage compose belongs to, so the NEXT render takes the source-changed path
@@ -122,6 +136,9 @@ func set_forage_count(count: int) -> void:
 
 func set_forage_species(species: String) -> void:
 	_forage_species = species
+
+func set_forage_improvement(improvement: String) -> void:
+	_forage_improvement = improvement
 
 ## Arm the auto-fill one-shot (a policy CLICK, never a stepper tick).
 func arm_forage_autofill() -> void:
@@ -152,7 +169,8 @@ func hunt_key() -> String:
 func hunt_count() -> int:
 	return _hunt_count
 
-## PUBLIC beyond the herd drawer: `_tame_stalled_hint` and `_herd_crew_noun` read it from outside the
+## PUBLIC beyond the herd drawer: `_herd_crew_noun` and the improvement control's deal (which prices
+## its dip against the held STANCE — issue #442) read it from outside the
 ## builder. (An earlier note here also claimed `build_policy_picker` fell back to THIS policy when
 ## given no explicit selection, letting a work-inspector or party-compose render inherit the drawer's
 ## rung. That branch was DEAD CODE and is gone — `selected` is a required param and the picker reads
@@ -164,6 +182,10 @@ func hunt_policy() -> String:
 func hunt_band() -> int:
 	return _hunt_band
 
+## The improvement this compose will commit to on the herd — `IMPROVEMENT_NONE` for none.
+func hunt_improvement() -> String:
+	return _hunt_improvement
+
 # ---- Hunt mutators -------------------------------------------------------------------------------
 
 ## A DIFFERENT herd is being composed — the hunt twin of `begin_forage_source` (same two-step reason).
@@ -171,10 +193,12 @@ func begin_hunt_source(key: String, band_entity: int) -> void:
 	_hunt_key = key
 	_hunt_band = band_entity
 
-## Re-seed the composed count + policy from the newly-resolved band's staffing on the new herd.
-func seed_hunt(count: int, policy: String) -> void:
+## Re-seed the composed count + stance + improvement from the newly-resolved band's staffing on the
+## new herd — the hunt twin of `seed_forage`.
+func seed_hunt(count: int, policy: String, improvement: String) -> void:
 	_hunt_count = count
 	_hunt_policy = policy
+	_hunt_improvement = improvement
 
 ## The hunt twin of `reset_forage_source` — forget the herd so the next render re-seeds.
 func reset_hunt_source() -> void:
@@ -185,6 +209,9 @@ func set_hunt_band(entity: int) -> void:
 
 func set_hunt_policy(policy: String) -> void:
 	_hunt_policy = policy
+
+func set_hunt_improvement(improvement: String) -> void:
+	_hunt_improvement = improvement
 
 func set_hunt_count(count: int) -> void:
 	_hunt_count = count

@@ -251,15 +251,18 @@ mission:
   Sustain leaves K/2, deeper policies raid deeper, surplus caps the take, no-surplus reads 0) are pinned
   by the sibling tests in that file.
 - **Lives off its kills** — no launch provisions, no per-turn upkeep (upkeep is scout-only).
-- **The investment policies are NOT an expedition concept.** `Cultivate`/`Corral` are place-bound work
-  a *resident* band does (prepare a patch, build a pen, then tend it) — a detached party cannot pen a
-  herd and walk home. `handle_send_hunt_expedition` **rejects** them at launch (alongside an
-  unparseable token), so the expedition's whole axis is `FollowPolicy::EXTRACTIVE` (the four extractive
-  rungs). `systems::hunt_expedition_floor`'s investment arm is therefore **unreachable**, and yields
-  **`f32::INFINITY` (⇒ zero surplus ⇒ the party takes *nothing*) + a `debug_assert!`** rather than
-  quietly falling back to a real floor: if that validation ever regresses the party takes *nothing* and
-  the hole is loud, instead of a plausible-looking trip hiding it. (An unreachable arm must fail loudly,
-  never quietly do something plausible.) Guarded by
+- **The improvements are NOT an expedition concept, and since issue #442 that is a TYPE-LEVEL fact.**
+  `Cultivate`/`Sow`/`Tame`/`Corral` are place-bound work a *resident* band does (prepare a patch, build
+  a pen, then tend it) — a detached party cannot pen a herd and walk home. They are now an
+  `Improvement`, and `ExpeditionMission::Hunt` carries a **`FollowPolicy`**, which has no such variant:
+  the expedition's whole axis is `FollowPolicy::ALL` (the four stances) *by construction*, and
+  `handle_send_hunt_expedition` rejects a build verb through the ordinary parse rather than a
+  membership test. **`hunt_expedition_floor`'s unreachable investment arm and its `debug_assert!` are
+  deleted with it** — the guarantee they approximated is exact now. Their history is worth keeping:
+  both this launch gate and that `matches!` were hand-written verb lists, and both had rotted (the gate
+  silently accepted `tame`, which then sailed past the assert and took a plausible pastoral-dip
+  ceiling); factoring them onto `FollowPolicy::is_investment` fixed the drift, and typing the two sets
+  apart removed the question. Guarded by
   `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
 - **Shared take helpers** (`fauna.rs`, slice 8b): **`hunt_policy_rate(policy, biomass_before_regrowth,
   cap, ecology, fauna, ladder)`** is THE per-turn take **rate** (Sustain `sustainable_yield`, Surplus/
@@ -378,11 +381,11 @@ describes the trip), so the sim exports the **answer** it simulated, and the cli
 lookup**:
 - `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
   turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
-  per **huntable** herd, one entry per `FollowPolicy::EXTRACTIVE` × every legal party size
+  per **huntable** herd, one entry per `FollowPolicy::ALL` × every legal party size
   (`1..=expedition_config.max_party_size`, so 4 × 8 = 32 rows/herd; `policy` is a free-form string like
-  `species`, so a new policy needs no schema change). **The four extractive rungs ONLY** — the investment
-  policies are launch-rejected (above), so a `Cultivate`/`Corral` row would be a number for a trip that
-  cannot be launched. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
+  `species`, so a new stance needs no schema change). **The four stances, and there is nothing else to
+  exclude** — an improvement is not a `FollowPolicy` (issue #442), so a build-verb row is
+  unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
   surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
   (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
   the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
@@ -396,10 +399,9 @@ lookup**:
   a row still carries a real `turnsToFill` and a `deliveredTrade` payload. **Travel is excluded** — the
   number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
-  — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::HUNT_POLICIES`: the four
-  extractive rungs **plus `Corral`** (a legitimate *band* Hunt policy — its deliberately dipped yield
-  is exactly what the player must see before committing to a 25-turn pen). `Cultivate` is Forage-only,
-  so a herd has **no** cultivate row. Each is the worker-independent ceiling for the herd's current
+  — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::ALL`: the four stances. The
+  `tame`/`corral` dip rows went with issue #442 — a dip multiplies whichever stance the crew holds, so
+  it ships as `tameBuildFraction` / `corralBuildFraction` instead (see "Pre-commit Yield Forecast"). Each is the worker-independent ceiling for the herd's current
   state, in provisions/turn, **clamped to the herd's remaining biomass** — a tautology now (every floor
   is `≥ 0`, so `B − floor ≤ B`), kept as belt-and-braces against a hot-reloaded floor above `1`. A herd
   below a policy's floor exports `0` for it (a herd at the brink spares nothing to Sustain *or* Surplus).

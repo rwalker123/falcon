@@ -20,7 +20,7 @@ use core_sim::{
     spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
     wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
     FactionInventory, FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -162,32 +162,34 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     (entity, coord)
 }
 
-/// Switch a band's (single) Forage assignment to `policy` — what the client's picker does. (The
-/// *finishing* case needs no picker since issue #420: completion retires the build verb itself.)
-fn set_forage_policy(app: &mut App, band: bevy::prelude::Entity, policy: FollowPolicy) {
+/// Check or clear the **improvement** on a band's (single) Forage assignment — what the client's
+/// checkbox does. Since issue #442 this touches only the improvement slot: the stance and the crew
+/// stay put, and completion clears the box itself.
+fn set_forage_improvement(
+    app: &mut App,
+    band: bevy::prelude::Entity,
+    improvement: Option<Improvement>,
+) {
     let mut allocation = app
         .world
         .get_mut::<LaborAllocation>(band)
         .expect("band forages");
-    let assignment = allocation
+    allocation
         .assignments
         .first_mut()
-        .expect("a Forage assignment");
-    let LaborTarget::Forage {
-        policy: current, ..
-    } = &mut assignment.target
-    else {
-        panic!("the fixture band forages");
-    };
-    *current = policy;
+        .expect("a Forage assignment")
+        .improvement = improvement;
 }
 
+/// A band foraging `patch`. `improvement` is the second axis; the **stance** is `Sustain` throughout
+/// this file, which measures the `Cultivate` build rather than the harvest pressure beside it.
 fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
+    let policy = FollowPolicy::Sustain;
     app.world
         .spawn((
             PopulationCohort {
@@ -226,6 +228,7 @@ fn spawn_forager(
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
+                    improvement,
                 }],
                 ..Default::default()
             },
@@ -241,6 +244,16 @@ fn run_turns_with_forage(app: &mut App, turns: u32) {
         app.world.run_system_once(advance_cultivation);
         app.world.run_system_once(advance_labor_allocation);
     }
+}
+
+/// **The `plant:tended` rung's neglect grace**, read off the shipped ladder rather than restated as a
+/// literal — the consecutive un-worked turns the feral bleed forgives before it starts.
+fn tended_grace(app: &App) -> u32 {
+    app.world
+        .resource::<LadderConfigHandle>()
+        .get()
+        .rung(RungKey::PlantTended)
+        .neglect_grace_turns()
 }
 
 /// Turns with no active band: only the Logistics-stage systems run.
@@ -280,19 +293,28 @@ fn cultivation_config(app: &App) -> (f32, f32, f32) {
         tended
             .yield_fraction_while_building()
             .expect("the tended rung is an investment"),
-        tended.build_accrual(FollowPolicy::Cultivate, true, RUNG_TIMESCALE_UNSCALED),
+        // Staffed to the rung's full crew, so this is the rung's stated rate rather than an
+        // under-crewed fraction of it (the build now scales by `min(workers / crew_needed, 1)`).
+        tended.build_accrual(
+            Some(Improvement::Cultivate),
+            true,
+            RUNG_TIMESCALE_UNSCALED,
+            tended
+                .build_crew_needed()
+                .expect("the tended rung declares a crew"),
+        ),
         tended.build_decay(RUNG_TIMESCALE_UNSCALED),
     )
 }
 
-/// One turn of the pipeline under `policy` on a fresh identical world; returns the provisions the
-/// band was paid. Lets a test compare the Cultivate **dip** against the Sustain baseline without
-/// re-deriving the MSY formula anywhere.
-fn one_turn_yield(policy: FollowPolicy) -> f32 {
+/// One turn of the pipeline under `improvement` on a fresh identical world; returns the provisions
+/// the band was paid. Lets a test compare the Cultivate **dip** against the undipped Sustain baseline
+/// without re-deriving the MSY formula anywhere.
+fn one_turn_yield(improvement: Option<Improvement>) -> f32 {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, policy);
+    spawn_forager(&mut app, tile, coord, improvement);
     run_turns_with_forage(&mut app, 1);
     provisions_f32(&mut app)
 }
@@ -304,7 +326,7 @@ fn one_turn_yield(policy: FollowPolicy) -> f32 {
 fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    spawn_forager(&mut app, tile, coord, None);
 
     run_turns_with_forage(&mut app, 5);
     let learned = app
@@ -343,8 +365,8 @@ fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
 /// gathering — and the reduced take is *sustainable*, so the patch stays Thriving throughout.
 #[test]
 fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() {
-    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
-    let cultivating_yield = one_turn_yield(FollowPolicy::Cultivate);
+    let sustain_yield = one_turn_yield(None);
+    let cultivating_yield = one_turn_yield(Some(Improvement::Cultivate));
     assert!(
         sustain_yield > 0.0,
         "baseline Sustain yield must be positive"
@@ -362,7 +384,7 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
     // so it is a sustainable take, not a depletion.
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     let (_, progress_per_turn, _) = cultivation_config(&app);
     run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
     assert_eq!(
@@ -392,7 +414,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         .carrying_capacity;
 
     // A wild Sustain gather commits nothing — rung 1 never picks a crop.
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, None);
     run_turns_with_forage(&mut app, 1);
     assert_eq!(
         app.world
@@ -404,7 +426,7 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
         "gathering the wild basket is not a commitment"
     );
 
-    set_forage_policy(&mut app, band, FollowPolicy::Cultivate);
+    set_forage_improvement(&mut app, band, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 1);
     let patch = app
         .world
@@ -458,12 +480,12 @@ fn cultivate_commits_the_ground_to_a_plant_and_leaves_rung_one_untouched() {
 /// patch then pays the full tended yield — strictly more than the wild Sustain skim it replaced.
 #[test]
 fn cultivate_completes_then_pays_the_tended_yield() {
-    let sustain_yield = one_turn_yield(FollowPolicy::Sustain);
+    let sustain_yield = one_turn_yield(None);
 
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     let (_, progress_per_turn, _) = cultivation_config(&app);
 
     // Progress accrues at the full rate — no net-of-decay drag while the crew is working it.
@@ -488,11 +510,11 @@ fn cultivate_completes_then_pays_the_tended_yield() {
         assert_eq!(registry.cultivated_count(FactionId(0)), 1);
     }
 
-    // **Harvest it to read the payoff.** Since issue #420 the sim retires `Cultivate` onto the
-    // harvest rung on the completing turn, so this is a no-op re-assert — kept because this test
-    // measures the *payoff* and must read it off the harvest rung whatever put the band there. The
-    // retire itself is pinned in `systems::labor::labor_yield_tests`.
-    set_forage_policy(&mut app, band, FollowPolicy::Sustain);
+    // **Harvest it to read the payoff.** Since issue #420 completion clears the improvement itself,
+    // so this is a no-op re-assert — kept because this test measures the *payoff* and must read it
+    // off an undipped harvest whatever put the band there. The clearing itself is pinned in
+    // `systems::labor::labor_yield_tests`.
+    set_forage_improvement(&mut app, band, None);
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let tended_yield = provisions_f32(&mut app) - before;
@@ -519,7 +541,7 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     // (a) No knowledge.
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 5);
     assert_eq!(
         progress_of(&app, coord),
@@ -532,7 +554,7 @@ fn cultivate_accrues_nothing_without_knowledge_or_on_a_stressed_patch() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
     run_turns_with_forage(&mut app, 3);
     let banked = progress_of(&app, coord);
     assert!(banked > 0.0);
@@ -579,7 +601,7 @@ fn tended_patch_pays_its_tending_band_place_local_and_draws_down() {
     grant_cultivation_knowledge(&mut app, FactionId(0));
     // Sustain, not Cultivate: this test reads the finished rung's *harvest*, on a patch seated
     // already-complete — the rung a band that really built it is retired onto (issue #420).
-    spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    spawn_forager(&mut app, tile, coord, None);
     assert_eq!(provisions_f32(&mut app), 0.0, "larder starts empty");
 
     // The decay pass pays nothing and spares the worked patch.
@@ -629,7 +651,18 @@ fn untended_cultivated_patch_goes_feral() {
         patch.owner = Some(FactionId(0));
     }
 
-    // No forager band → the patch is never worked. One untended Logistics turn reverts it to wild.
+    // No forager band → the patch is never worked. Nothing happens for the rung's grace; the turn
+    // after it, the bleed starts and the patch drops below `1.0` — it reverts to wild.
+    let grace = tended_grace(&app);
+    run_turns_untended(&mut app, grace);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "the grace turns cost the patch nothing — it is still a tended patch"
+    );
     run_turns_untended(&mut app, 1);
     assert!(
         !app.world
@@ -637,7 +670,7 @@ fn untended_cultivated_patch_goes_feral() {
             .patch(coord)
             .unwrap()
             .is_cultivated(),
-        "an untended tended patch reverts to a wild gather patch after one turn"
+        "the first turn past the grace reverts a farm to a wild gather patch"
     );
 
     // Keep neglecting it → progress fully decays and ownership lapses (~1/decay_per_turn turns).
@@ -657,7 +690,7 @@ fn abandoned_preparation_decays() {
     let mut app = spawn_world();
     let (tile, coord) = prime_thriving_patch(&mut app);
     grant_cultivation_knowledge(&mut app, FactionId(0));
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Cultivate);
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
 
     run_turns_with_forage(&mut app, 5);
     let banked = progress_of(&app, coord);
@@ -666,16 +699,412 @@ fn abandoned_preparation_decays() {
     // The `tended_this_turn` flag is a deliberate one-turn-lag signal (Logistics runs before
     // Population), so the first Logistics pass after the band leaves still sees the flag set from its
     // last worked turn and spares the patch. Decay bites from the turn after that.
+    //
+    // **And the rung's `grace_turns` sit on top of that lag**: the neglect counter has to exceed the
+    // grace before anything bleeds, so the bleeding turns are `turns − lag − grace`.
     app.world.despawn(band);
-    const ABANDONED_TURNS: u32 = 3;
+    const ABANDONED_TURNS: u32 = 6;
     const SPARED_LAG_TURNS: u32 = 1;
+    let grace = tended_grace(&app);
+    assert!(
+        ABANDONED_TURNS > SPARED_LAG_TURNS + grace,
+        "the fixture must run past the grace, or it would pin nothing"
+    );
     run_turns_untended(&mut app, ABANDONED_TURNS);
     let (_, _, decay) = cultivation_config(&app);
     let decayed = progress_of(&app, coord);
-    let expected_decay = decay * (ABANDONED_TURNS - SPARED_LAG_TURNS) as f32;
+    let expected_decay = decay * (ABANDONED_TURNS - SPARED_LAG_TURNS - grace) as f32;
     assert!(
         (banked - decayed - expected_decay).abs() < 1e-5,
         "an abandoned preparation decays by decay_per_turn/turn (after the one-turn flag lag): \
          {banked} -> {decayed}"
+    );
+}
+
+/// **Two crews on one patch: the rung completes ONCE and clears BOTH verbs** (PR #448 review).
+///
+/// `handle_cultivate` sets the improvement on **every** band of the faction working the tile, so a
+/// completion is always a many-bands event even though only one crew's accrual crosses `1.0`. Two
+/// things had to be separated for that to read correctly, and this pins both:
+///
+/// - **The feed line rides the TRANSITION.** It used to fire on a post-accrual `is_cultivated()`,
+///   which is true for every band once *anyone* has finished — so the player was told "Cultivated
+///   patch at (x, y)" once per crew. `ForagePatch::accrue_cultivation` now answers *"did this call
+///   finish it"*, `Herd::accrue_corral`'s convention.
+/// - **Clearing the verb does NOT.** Whoever finished it, a rung with nothing left to build must
+///   hand the verb back — otherwise the crew that lost the race keeps paying
+///   `yield_fraction_while_building` on prepared ground, which is issue #420 all over again for the
+///   second band.
+#[test]
+fn a_completed_cultivation_announces_once_and_clears_every_bands_verb() {
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let first = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    let second = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    // A token second crew. `Cultivate` accrues per *assignment*, not per worker, so one hand is
+    // enough to hold the verb — and two full `FORAGE_WORKERS` crews draw the patch out of Thriving,
+    // which stalls the very meter this test needs to finish.
+    set_forage_workers(&mut app, second, TOKEN_SECOND_CREW);
+
+    // Long enough for the meter to fill however the two crews' accruals interleave, plus the turn a
+    // band that did not finish it needs to notice (its clear is decided at the top of its own
+    // iteration, so a crew processed *before* the finisher clears on the following turn).
+    let (_, progress_per_turn, _) = cultivation_config(&app);
+    let turns = (1.0 / progress_per_turn).ceil() as u32 + 1;
+    run_turns_with_forage(&mut app, turns);
+
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .unwrap()
+            .is_cultivated(),
+        "fixture: the patch must be tended by now (progress {})",
+        progress_of(&app, coord)
+    );
+    for (label, band) in [("the finisher", first), ("the second crew", second)] {
+        assert_eq!(
+            app.world.get::<LaborAllocation>(band).unwrap().assignments[0].improvement,
+            None,
+            "{label} must hand the verb back — there is nothing left to cultivate here"
+        );
+    }
+    assert_eq!(
+        completion_announcements(&app, "Cultivated patch at"),
+        1,
+        "one patch was cultivated, so the player is told once — not once per crew"
+    );
+}
+
+/// How many times the feed log announced `needle`. The player-facing half of the completion seam:
+/// the event log is what the notification system reads, so a duplicate there is a duplicate on
+/// screen.
+fn completion_announcements(app: &App, needle: &str) -> usize {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|entry| entry.label.contains(needle))
+        .count()
+}
+
+/// A token crew for the second band on a shared source: enough to hold an assignment (and therefore
+/// an improvement) without its share of the draw-down changing what the first band is measuring.
+const TOKEN_SECOND_CREW: u32 = 1;
+
+/// Re-staff a band's Forage assignment in place — the test-side twin of `assign_labor`'s worker
+/// count, which since issue #442 never touches the improvement beside it.
+fn set_forage_workers(app: &mut App, band: bevy::prelude::Entity, workers: u32) {
+    app.world
+        .get_mut::<LaborAllocation>(band)
+        .expect("the band forages")
+        .assignments[0]
+        .workers = workers;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The neglect grace, the newest-first unwind, the feral feed line, and the build crew
+// ---------------------------------------------------------------------------------------------
+
+/// Read a patch's live neglect counter — the field the grace is measured against.
+fn neglect_turns_of(app: &App, coord: UVec2) -> u16 {
+    app.world
+        .resource::<ForageRegistry>()
+        .patch(coord)
+        .expect("patch")
+        .neglect_turns
+}
+
+/// Seat a completed tended patch at `coord`, owned by faction 0, with a clean neglect counter — the
+/// fixture every grace test below starts from.
+fn seat_tended_patch(app: &mut App, coord: UVec2) {
+    let mut registry = app.world.resource_mut::<ForageRegistry>();
+    let patch = registry.patch_mut(coord).expect("patch");
+    patch.cultivation_progress = 1.0;
+    patch.owner = Some(FactionId(0));
+    patch.neglect_turns = 0;
+}
+
+/// **The grace is CONSECUTIVE neglect, not a lifetime budget** — one worked turn wipes the counter,
+/// so a crew that comes and goes never accumulates its way into the bleed.
+///
+/// The counter is asserted directly rather than through the meter, because the meter cannot
+/// distinguish "the grace reset" from "the grace has not run out yet".
+#[test]
+fn working_a_patch_resets_its_neglect_counter() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    seat_tended_patch(&mut app, coord);
+    let grace = tended_grace(&app);
+    assert!(grace > 0, "this test needs a rung that forgives something");
+
+    run_turns_untended(&mut app, grace);
+    assert_eq!(
+        u32::from(neglect_turns_of(&app, coord)),
+        grace,
+        "the counter climbs one per un-worked turn"
+    );
+
+    // One worked turn — the flag the labor arm would set — and the counter is back to nothing.
+    app.world
+        .resource_mut::<ForageRegistry>()
+        .patch_mut(coord)
+        .expect("patch")
+        .tended_this_turn = true;
+    run_turns_untended(&mut app, 1);
+    assert_eq!(
+        neglect_turns_of(&app, coord),
+        0,
+        "a worked turn forgives the neglect outright"
+    );
+
+    // ...and the full grace is available again from scratch: still tended after another `grace` turns.
+    run_turns_untended(&mut app, grace);
+    assert!(
+        app.world
+            .resource::<ForageRegistry>()
+            .patch(coord)
+            .expect("patch")
+            .is_cultivated(),
+        "the grace is spent from zero again, not from where it left off"
+    );
+}
+
+/// **The turn the bleed bites, and the turn before it** — the boundary, pinned from both sides on the
+/// meter itself. A grace test that only ever looks at one side of the boundary proves nothing.
+#[test]
+fn the_feral_bleed_starts_exactly_one_turn_past_the_grace() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    seat_tended_patch(&mut app, coord);
+    let grace = tended_grace(&app);
+
+    run_turns_untended(&mut app, grace);
+    assert_eq!(
+        progress_of(&app, coord),
+        1.0,
+        "the last forgiven turn leaves the meter untouched"
+    );
+
+    run_turns_untended(&mut app, 1);
+    let (_, _, decay) = cultivation_config(&app);
+    assert!(
+        (progress_of(&app, coord) - (1.0 - decay)).abs() < 1e-6,
+        "the first turn past the grace bleeds exactly one turn's decay: {}",
+        progress_of(&app, coord)
+    );
+}
+
+/// **A lost rung is announced.** Crossing back below `1.0` destroys a 25-turn investment's payoff, so
+/// the feed says so — once, on the transition, the way the animal web has always announced a lost pen.
+/// The long bleed to zero that follows adds nothing further.
+#[test]
+fn losing_a_tended_patch_pushes_one_feed_line() {
+    let mut app = spawn_world();
+    let (_tile, coord) = prime_thriving_patch(&mut app);
+    seat_tended_patch(&mut app, coord);
+    let grace = tended_grace(&app);
+
+    run_turns_untended(&mut app, grace);
+    assert_eq!(
+        completion_announcements(&app, "gone feral"),
+        0,
+        "nothing is announced while the grace holds — nothing has been lost"
+    );
+
+    run_turns_untended(&mut app, 1);
+    assert_eq!(
+        completion_announcements(&app, "gone feral"),
+        1,
+        "the turn the patch reverts, the player is told"
+    );
+
+    // The rest of the bleed is not news.
+    let (_, _, decay) = cultivation_config(&app);
+    run_turns_untended(&mut app, (1.0 / decay).ceil() as u32 + 2);
+    assert_eq!(
+        completion_announcements(&app, "gone feral"),
+        1,
+        "the loss is announced once, not every turn of the bleed"
+    );
+    let entry = app
+        .world
+        .resource::<CommandEventLog>()
+        .iter()
+        .find(|e| e.label.contains("gone feral"))
+        .expect("the feral line")
+        .clone();
+    let detail = entry.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains("status=feral") && detail.contains("action=cultivate"),
+        "the line rides the rung's own verb channel: {detail}"
+    );
+}
+
+/// **The build accrues at `min(workers / crew_needed, 1)` — the crew is a real multiplier, not a
+/// label.** Pinned at BOTH full crew and half crew, because a test that only ever runs a full crew
+/// cannot see whether the multiplier exists at all.
+#[test]
+fn a_cultivate_build_accrues_in_proportion_to_its_crew() {
+    let crew = {
+        let app = spawn_world();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        ladder
+            .rung(RungKey::PlantTended)
+            .build_crew_needed()
+            .expect("the tended rung declares a crew")
+    };
+    assert!(
+        crew >= 2,
+        "the fixture needs a crew it can under-staff: {crew}"
+    );
+
+    let progress_after = |workers: u32| -> f32 {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+        set_forage_workers(&mut app, band, workers);
+        run_turns_with_forage(&mut app, 1);
+        progress_of(&app, coord)
+    };
+
+    let (_, full_rate, _) = cultivation_config(&spawn_world());
+    let full = progress_after(crew);
+    let half = progress_after(1);
+    assert!(
+        (full - full_rate).abs() < 1e-6,
+        "a full crew builds at the rung's stated rate: {full} vs {full_rate}"
+    );
+    assert!(
+        (half - full_rate / crew as f32).abs() < 1e-6,
+        "one worker of a crew of {crew} builds at 1/{crew} of it: {half}"
+    );
+}
+
+/// **A build's crew FLOORS the source's `workers_needed`** — the plant twin of a managed herd's
+/// `herders_needed`. Without it the count was inverted from the *dipped* take, so committing to a
+/// 25-turn improvement asked for fewer hands than gathering the same ground and flagged the second
+/// worker as overstaffing.
+#[test]
+fn a_running_build_demands_at_least_its_crew() {
+    let crew = {
+        let app = spawn_world();
+        let ladder = app.world.resource::<LadderConfigHandle>().get();
+        ladder
+            .rung(RungKey::PlantTended)
+            .build_crew_needed()
+            .expect("the tended rung declares a crew")
+    };
+
+    let mut app = spawn_world();
+    let (tile, coord) = prime_thriving_patch(&mut app);
+    grant_cultivation_knowledge(&mut app, FactionId(0));
+    let band = spawn_forager(&mut app, tile, coord, Some(Improvement::Cultivate));
+    set_forage_workers(&mut app, band, crew);
+    run_turns_with_forage(&mut app, 1);
+
+    let needed = app
+        .world
+        .get::<LaborAllocation>(band)
+        .expect("band allocation")
+        .last_yields[0]
+        .workers_needed;
+    assert!(
+        needed >= crew,
+        "a running Cultivate wants at least its crew of {crew}, not {needed}"
+    );
+}
+
+/// **The WIRE's countdown is the turn the sim actually bites** — asserted on the published snapshot,
+/// not on the seam, because the seam has its own tests above and what is at stake here is the
+/// artifact the client renders "lapses in N turns" from.
+///
+/// The pairing is the point: a countdown that merely decremented would pass a test that only read
+/// the wire. This walks the real Logistics pass and asserts that the **first** turn the published
+/// remaining reads `0` is the **first** turn the meter moves — so the two cannot drift.
+#[test]
+fn the_published_neglect_countdown_hits_zero_on_the_turn_the_meter_moves() {
+    let mut app = core_sim::build_headless_app();
+    app.update(); // the real Startup chain: worldgen, patch seeding, one capture.
+
+    // Any seeded patch will do — the grace is the rung's, not the tile's.
+    let coord = *app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .keys()
+        .min_by_key(|tile| (tile.y, tile.x))
+        .expect("worldgen seeds forage patches");
+    seat_tended_patch(&mut app, coord);
+    let grace = tended_grace(&app);
+
+    let published = |app: &mut App| -> (bool, u32) {
+        app.world
+            .run_system_once(core_sim::recapture_snapshot_in_place);
+        let row = app
+            .world
+            .resource::<core_sim::SnapshotHistory>()
+            .last_snapshot()
+            .expect("a capture")
+            .forage_patches
+            .iter()
+            .find(|patch| patch.x == coord.x && patch.y == coord.y)
+            .expect("the fixture patch is on the wire")
+            .clone();
+        (row.has_neglect_grace, row.neglect_grace_remaining)
+    };
+
+    // Un-neglected, the wire offers the whole grace plus the turn it bites on.
+    assert_eq!(published(&mut app), (true, grace + 1));
+
+    let mut first_zero = None;
+    let mut first_move = None;
+    for turn in 1..=(grace + 3) {
+        app.world.run_system_once(advance_cultivation);
+        let (has, remaining) = published(&mut app);
+        assert!(has, "a tended patch always has something at risk");
+        if remaining == 0 && first_zero.is_none() {
+            first_zero = Some(turn);
+        }
+        if progress_of(&app, coord) < 1.0 && first_move.is_none() {
+            first_move = Some(turn);
+        }
+    }
+    assert_eq!(
+        first_zero,
+        Some(grace + 1),
+        "the countdown reaches zero on the turn the penalty starts, not before"
+    );
+    assert_eq!(
+        first_move, first_zero,
+        "and that is the same turn the meter actually moves — the wire cannot drift from the gate"
+    );
+
+    // A wild patch has nothing at risk, and says so with the bool rather than a zero that would read
+    // as "reverting now".
+    let wild = *app
+        .world
+        .resource::<ForageRegistry>()
+        .patches
+        .iter()
+        .find(|(_, patch)| patch.owner.is_none() && patch.cultivation_progress == 0.0)
+        .expect("most patches are wild")
+        .0;
+    app.world
+        .run_system_once(core_sim::recapture_snapshot_in_place);
+    let wild_row = app
+        .world
+        .resource::<core_sim::SnapshotHistory>()
+        .last_snapshot()
+        .expect("a capture")
+        .forage_patches
+        .iter()
+        .find(|patch| patch.x == wild.x && patch.y == wild.y)
+        .expect("on the wire")
+        .clone();
+    assert!(
+        !wild_row.has_neglect_grace,
+        "a wild patch has no improvement to lose"
     );
 }

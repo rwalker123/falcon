@@ -365,7 +365,7 @@ two flags — which makes the incoherent "pennable but not tameable" state unrep
   `can_domesticate()`, so a `wild` species never tames and never picks up an `owner` (robust regardless
   of call site). (2) **The `domesticate` claim** — `handle_domesticate` rejects a `wild` species
   ("{Species} is wild game — hunt-only…"). (3) **The `corral` / `extend_pen` commands + the `Corral`
-  policy accrual** — `validate_labor_policy` (shared by `handle_corral` and `assign_labor … corral`) and
+  policy accrual** — `validate_improvement`'s `Corral` arm (the one gate `handle_corral` routes through) and
   the `Corral` accrual in `advance_labor_allocation` both require `can_pen()` (only `pen`), so a
   `pastoral` species tames and roams but the pen path is closed ("{Species} cannot be penned").
   `handle_extend_pen` carries the same check belt-and-braces (unreachable via the gated corral path).

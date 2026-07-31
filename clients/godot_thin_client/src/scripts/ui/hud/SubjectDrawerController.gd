@@ -299,12 +299,19 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
     # never invent a state on a patch that isn't being worked.
-    if bool(tile_info.get("is_cultivated", false)):
+    # WHICH RUNG THE PLAYER IS ACTUALLY BUILDING HERE — folded across every band, not just the panel
+    # one, because a patch several bands can reach may be worked by none of them in particular. It is
+    # what separates a meter that is FILLING from one that is BLEEDING, which no percentage can show:
+    # an abandoned improvement reverts, and it used to wear the build's own word and ink while doing it.
+    var building_rung := String(_band_labor.forage_effort_at(
+        int(tile_info.get("x", -1)), int(tile_info.get("y", -1))).get("improvement", ""))
+    if bool(tile_info.get("patch_is_cultivated", false)):
         lines.append("Cultivation: %s" % DetailFormat.cultivation_label(1.0, true))
-    elif tile_info.has("cultivation_progress"):
-        var cultivation_progress := float(tile_info["cultivation_progress"])
+    elif tile_info.has("patch_cultivation_progress"):
+        var cultivation_progress := float(tile_info["patch_cultivation_progress"])
         if cultivation_progress > 0.0:
-            lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress, false))
+            lines.append("Cultivation: %s" % DetailFormat.cultivation_label(cultivation_progress,
+                false, building_rung == SourceForecast.IMPROVEMENT_CULTIVATE))
     # PLANT RUNG 3 — the Field, on its OWN row beside Cultivation. The patch carries TWO independent
     # build meters (a Field may stand on ground that was never tended: seed travels, so `Sow` needs no
     # prior patch), so they are two rows, never one merged "progress" number. This is the per-source
@@ -316,7 +323,8 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     elif tile_info.has("patch_field_progress"):
         var field_progress := float(tile_info["patch_field_progress"])
         if field_progress > 0.0:
-            lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(field_progress, false)])
+            lines.append("%s: %s" % [HudFloraVocab.FIELD_ROW, DetailFormat.field_label(
+                field_progress, false, building_rung == SourceForecast.IMPROVEMENT_SOW)])
     return lines
 
 func _format_food_kind_label(kind_value: String) -> String:

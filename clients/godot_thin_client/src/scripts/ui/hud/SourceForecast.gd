@@ -38,9 +38,24 @@ const OUTPUT_FULL := 1.0
 # warrior are band-wide roles with no source forecast); `source_yield_readout` branches on them.
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
-# EXTRACTIVE take policies — the four rungs that take from a wild source without changing it. Shared
-# by forage + hunt (and the only ones a hunting EXPEDITION can carry: a detached party builds no pen).
+# THE HARVEST STANCES — how hard a crew pulls on a source, and the WHOLE of the `policy` axis since
+# issue #442. Shared by forage + hunt, by a resident band and a detached party alike, because the
+# other axis (what is being BUILT on the source) is now its own field. Nothing filters this list any
+# more: it was six on the compose sheet and four on an expedition precisely because the build verbs
+# were crammed in here, and that difference is gone.
 const LABOR_HUNT_POLICIES := ["sustain", "surplus", "deplete", "eradicate"]
+# THE IMPROVEMENTS — the second axis: what a crew is building on the source, at most one at a time and
+# always the source's NEXT rung. `IMPROVEMENT_NONE` ("") is the wire's own spelling of "building
+# nothing", so a caller never has to distinguish it from an absent field.
+const IMPROVEMENT_NONE := ""
+const IMPROVEMENT_CULTIVATE := "cultivate"
+const IMPROVEMENT_SOW := "sow"
+const IMPROVEMENT_TAME := "tame"
+const IMPROVEMENT_CORRAL := "corral"
+# The plant ladder and the animal ladder, each in RUNG ORDER (low → high). Kept apart because the two
+# webs never share a rung, and read by nothing that needs "all four".
+const FORAGE_IMPROVEMENTS := [IMPROVEMENT_CULTIVATE, IMPROVEMENT_SOW]
+const HUNT_IMPROVEMENTS := [IMPROVEMENT_TAME, IMPROVEMENT_CORRAL]
 # The Sustain rung by name: the default compose policy, and the ceiling every unknown rung falls back
 # to in `forecast_inputs`.
 const LABOR_POLICY_SUSTAIN := "sustain"
@@ -54,6 +69,15 @@ const DOMESTICATION_COMPLETE := 1.0
 # shape test (`has("hunt_policy_ceilings")`) would misread a herd whose snapshot omitted the list.
 const SOURCE_KIND_HERD := "herd"
 const SOURCE_KIND_FORAGE := "forage"
+
+## THE ONE MAPPING between the two kind vocabularies — an ASSIGNMENT's `kind` (`LABOR_KIND_*`, the
+## sim's own word) and a FORECAST's (`SOURCE_KIND_*`). They coincide on the plant web (`"forage"` both
+## ways) and differ on the animal one (`"hunt"` the labor, `"herd"` the source), which is exactly the
+## shape that lets a mix-up pass unnoticed on half the code and fail silently on the other half: a
+## `"hunt"` handed to `forecast_inputs` takes the FORAGE branch, finds no per-policy row, and answers
+## "this source has no forecast". A caller holding a labor kind converts here rather than by hand.
+static func source_kind_for_labor(labor_kind: String) -> String:
+    return SOURCE_KIND_FORAGE if labor_kind == LABOR_KIND_FORAGE else SOURCE_KIND_HERD
 
 # Whole-percent scale for a 0..1 share. The displayed numbers must ALWAYS sum to this: naive rounding
 # can land on 99 or 101, and the remainder is absorbed into the largest share (the first entry — the
@@ -205,19 +229,14 @@ const FORECAST_PER_WORKER_KEY := "per_worker_yield"
 const FORECAST_PER_WORKER_TRADE_KEY := "per_worker_trade"
 const FORECAST_FOOD_PER_ANIMAL_KEY := "food_per_animal"
 const FORECAST_TRADE_PER_ANIMAL_KEY := "trade_per_animal"
-# The PAYOFF the investment buys — the food/turn the source pays once prepared (one worker suffices).
-# Only the investment rungs have one; an extractive rung's forecast is a single number.
+# The PAYOFF an IMPROVEMENT buys — the food/turn the source pays once the rung is built (one worker
+# suffices). Keyed by improvement, and read ONLY as a payoff lookup: it is no longer how any surface
+# asks "is this a build?" (issue #442 — that question is now answered by the assignment's own
+# `improvement` field, or by which control the player is looking at).
 #
-# `tame` → `pastoral_yield`: the sim now exports the Tame rung's payoff (the pastoral MSY once the herd
-# is tamed), the pastoral twin of `corral_yield`, so Tame renders the same dip→payoff pair as its three
-# siblings. Tame's DURING-BUILDING dip has no scalar ceiling field (there is no `ceilingTame`); it rides
-# the `hunt_policy_ceilings` LIST, so `forecast_inputs` resolves Tame's dip through `hunt_policy_ceiling`.
-#
-# **THERE IS NO CEILING-KEY TABLE ANY MORE, on either web** (#426). `FORECAST_CEILING_KEYS` mapped a
-# forage policy to one of six flat `ceiling_*` scalars; those are retired `(deprecated)` wire slots
-# now, and a patch resolves every rung through its per-policy ROW exactly as a herd resolves every
-# rung through its list. So the two webs finally answer "what does this rung cap at?" the same way,
-# and neither has a scalar a new rung could be wired to by mistake.
+# **THERE IS NO CEILING-KEY TABLE ANY MORE, on either web** (#426) and no dip ROW either (#442). The
+# during-build dip is composed — `stance ceiling × <rung>_build_fraction` — in exactly one place,
+# `improvement_forecast`, and paired with the payoff below.
 const FORECAST_PAYOFF_KEYS := {
     "cultivate": "tended_yield",
     "corral": "corral_yield",
@@ -249,8 +268,52 @@ const FORECAST_PAYOFF_FODDER_KEYS := {
 # population that eats from the keeper's larder every turn (`pen_upkeep`), and `corral_yield` is the
 # GROSS take with that feed NOT deducted — so advertising the payoff bare would promise a number the
 # player never banks. A tended patch has no running cost, hence no entry.
+#
+# **This asymmetry is deliberate and permanent** (spec §4): the Corral done-state label carries the
+# pen's per-turn upkeep and the Tame one does not, because a penned herd cannot graze and a pastoral
+# one still can. Do not make the two webs match here.
 const FORECAST_FEED_KEYS := {
     "corral": "pen_upkeep",
+}
+# THE DURING-BUILD DIP, as a FRACTION of the selected stance's ceiling — one wire field per
+# improvement (issue #442). The two rungs of a web keep two numbers because their dials are
+# independently tunable; folding them onto one would pass every forecast==actual test by today's
+# coincidence and lie the moment either is retuned.
+const FORECAST_BUILD_FRACTION_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivate_build_fraction",
+    IMPROVEMENT_SOW: "sow_build_fraction",
+    IMPROVEMENT_TAME: "tame_build_fraction",
+    IMPROVEMENT_CORRAL: "corral_build_fraction",
+}
+# The identity dip — what a ceiling is multiplied by when NO build is under way. The sim's
+# `NO_BUILD_UNDERWAY_DIP`, spelled once here so "not building" is a value rather than a branch.
+const NO_BUILD_DIP := 1.0
+# THE PLANT BUILD CREW each improvement demands — the plant twin of a managed herd's `herders_needed`,
+# and the FLOOR under the worker cap (`plant_crew_floor`). Only the plant rungs declare one: the animal
+# rungs take their crew from the herd's own size, which is why there is no `IMPROVEMENT_TAME` row here
+# rather than a zero one — a missing key is the honest "this web answers elsewhere".
+const FORECAST_CREW_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivate_crew_needed",
+    IMPROVEMENT_SOW: "sow_crew_needed",
+}
+# The per-source BUILD METER each improvement fills, 0..1. The one place that mapping is written down
+# (`RungGates.rung_in_progress` reads it, so the compose sheet, the work board and the map badge can
+# never quote different meters for one verb).
+const FORECAST_BUILD_METER_KEYS := {
+    IMPROVEMENT_CULTIVATE: "cultivation_progress",
+    IMPROVEMENT_SOW: "field_progress",
+    IMPROVEMENT_TAME: "domestication",
+    IMPROVEMENT_CORRAL: "corral_progress",
+}
+# The wire flag/meter that says an improvement's rung is ALREADY BUILT — what turns the control's
+# Running state into its Done state. A bool for the plant rungs (never infer a rung from its float);
+# the animal rungs read `corralled` and a full `domestication` meter, since taming has no bool of its
+# own. `DONE_FLAG_KEYS` holds the bools; `IMPROVEMENT_TAME` is handled against
+# `DOMESTICATION_COMPLETE` by `improvement_is_done`, which is the one definition.
+const FORECAST_DONE_FLAG_KEYS := {
+    IMPROVEMENT_CULTIVATE: "is_cultivated",
+    IMPROVEMENT_SOW: "is_field",
+    IMPROVEMENT_CORRAL: "corralled",
 }
 # Below this a component's rate is zero — nothing to divide by. NOT the same question as "did the wire
 # carry a forecast", which `known` now answers separately (see `forecast_inputs`).
@@ -360,7 +423,13 @@ const HUNT_WASTE_SUFFIX_FORMAT := " · ⚠ %d%% wasted"
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
 # no-surplus raid, which has no upside at all, disables.
-const SEND_HUNTING_EXPEDITION_BUTTON := "Send hunting party"
+#
+# **THE `Send` STEM IS LOAD-BEARING and the base label sheds only its redundant words.** The three
+# variants below rewrite this same button as `Send Anyway (…)` / `Send (brings nothing home)`, so the
+# resting face has to be the same verb they vary; what it does NOT have to do is restate the sheet's own
+# `ASSIGN HUNTERS <herd>` header or name the party a second time. (The disabled no-surplus face is the
+# one that leaves the stem, and deliberately: it is a refusal, not a send.)
+const SEND_HUNTING_EXPEDITION_BUTTON := "Send Expedition"
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
 # A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
 # but the button names it a long haul rather than quoting a turn count the client can't bound.
@@ -615,14 +684,17 @@ static func herd_axis_rates(herd: Dictionary, policy: String) -> Dictionary:
     }
 
 ## PRE-COMMIT FORECAST (the compose-time counterpart to `source_yield_readout`'s post-hoc note).
-## Pull the source's per-worker yield + the take ceiling for `policy` — both food/turn at its
-## CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
+## Pull the source's per-worker yield + the take ceiling for the STANCE `policy` — both food/turn at
+## its CURRENT biomass, at output_multiplier 1.0. `src` is a herd dict (bare keys) or a tile_info (the
 ## patch's fields, `patch_`-prefixed); `known` is false for a dead-season source or an older
 ## snapshot that carries no forecast fields, in which case callers show no row and apply no cap.
-## An INVESTMENT policy additionally carries `investment: true` and the payoff the preparation buys,
-## as a PAIR like every other yield in this model: `payoff` (food/turn) and `payoff_trade`
-## (trade goods/turn, herd rungs only — the plant web projects no trade rate), so
-## `_forecast_yield_row` can state the deal instead of one number.
+##
+## **`policy` IS ALWAYS ONE OF THE FOUR STANCES** (issue #442). This used to answer for a build verb
+## too, carrying `investment` / `payoff*` / `feed*` alongside — and that overload is exactly what the
+## split removed: a build's dip and payoff are a function of the IMPROVEMENT *and* the stance
+## together, which no single-policy lookup can express. `improvement_forecast` composes those, and it
+## is written in terms of this.
+##
 ## `kind` is the caller-stated SOURCE_KIND_*; `prefix` only spells the scalar keys (the two are
 ## independent — a forage patch reaches here under either forage prefix).
 ## One cell out of a per-policy FORAGE row dict — the plant twin of `hunt_policy_ceiling`, and the one
@@ -652,7 +724,39 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
     var rows: Dictionary = src.get(prefix + FORAGE_ROW_CEILING, {})
     return not rows.is_empty()
 
-static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String) -> Dictionary:
+## **THE ONE PLACE A BUILD'S CEILING DIP IS RESOLVED** — `<rung>BuildFraction` off the source, or
+## `NO_BUILD_DIP` when nothing is in flight. It is the client twin of `LadderConfig::build_dip`, and
+## every ceiling in this file goes through it, so the compose sheet, the work board and the deal line
+## cannot apply the dip differently (or, as they did, three of them not at all).
+##
+## A `<= 0` fraction is the wire saying it does not describe this rung's build on this source — a
+## species that can never be penned, a patch with no such rung. That is NOT "the build pays zero", so
+## it answers the identity rather than collapsing every ceiling to nothing; `improvement_forecast`
+## makes the same call the other way, declining to quote a deal it cannot price.
+static func build_dip(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_FRACTION_KEYS.has(improvement):
+        return NO_BUILD_DIP
+    var fraction := float(src.get(
+        prefix + String(FORECAST_BUILD_FRACTION_KEYS[improvement]), 0.0))
+    return fraction if fraction > 0.0 else NO_BUILD_DIP
+
+## **`improvement` IS THE DIP, AND LEAVING IT OUT WAS A THREE-SURFACE BUG.** While a build runs the
+## sim's ceiling is `stance ceiling × <rung>BuildFraction` — the stance-only answer is the ceiling of a
+## crew that is NOT building, which is exactly not the crew asking. Passed, every ceiling here (and
+## therefore `axis_ceiling`) carries the dip, so the compose stepper's cap, the green forecast line and
+## the overdraw verdict resolved off this all agree with the sim rather than with each other.
+## `IMPROVEMENT_NONE` (the default) is the identity, so a pure harvest reads exactly as before.
+##
+## **`improvement_forecast` deliberately does NOT pass one.** Its first term is the un-dipped stance
+## baseline — the `1.27 → 0.32 while building → 5.76` deal — and dipping it there would quote the dip
+## twice and erase the number the whole three-term line exists to show.
+static func forecast_inputs(src: Dictionary, kind: String, prefix: String, policy: String,
+        improvement: String = IMPROVEMENT_NONE) -> Dictionary:
+    # The dip factor for the rung in flight, or 1.0 when nothing is being built here. A 0/absent
+    # fraction means the wire does not describe this rung's build on this source, which is NOT "the
+    # build pays nothing" — so it falls back to the identity and the ceilings stay undipped, exactly
+    # as `improvement_forecast` declines to quote a deal it cannot price.
+    var dip := build_dip(src, prefix, improvement)
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     # The DIP ceiling paid while the source is prepared. The two source kinds carry it differently, so
     # branch on the kind the CALLER STATED — the prefix cannot answer this (a herd and a raw wire
@@ -676,35 +780,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         # `ceiling*` scalars it replaced are deprecated slots, exactly as the herd's were. Read through
         # the row so the food half and its two non-food siblings below cannot come from different places.
         ceiling = maxf(forage_row_cell(src, prefix, FORAGE_ROW_CEILING, policy), 0.0)
-    # "Is this an investment rung?" is asked of the PAYOFF table and nothing else — the one table that
-    # names exactly the four rungs that build toward something. It used to be asked of a Sustain-
-    # fallback ceiling key, which silently answered "no" for `tame` (the one investment rung with no
-    # ceiling scalar), and that whole class of question disappeared with the ceiling table.
-    var investment: bool = policy in FORECAST_PAYOFF_KEYS
-    var payoff := 0.0
-    if investment:
-        payoff = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[policy]), 0.0))
-    # The payoff's non-food components — a VECTOR like every other yield in this model. Trade reaches
-    # all four rungs; fodder is plant-only (see the two key tables). A rung with no twin in a table
-    # resolves to 0.0 and renders as nothing, which is the rule, not a gap.
-    var payoff_trade := 0.0
-    if investment and policy in FORECAST_PAYOFF_TRADE_KEYS:
-        payoff_trade = float(src.get(prefix + String(FORECAST_PAYOFF_TRADE_KEYS[policy]), 0.0))
-    var payoff_fodder := 0.0
-    if investment and policy in FORECAST_PAYOFF_FODDER_KEYS:
-        payoff_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[policy]), 0.0))
-    # The rung's RUNNING COST (Corral only — the pen's feed). `feed_rung` says the payoff is a GROSS
-    # figure that a per-turn cost is paid out of; `feed` is that cost, and is 0 — i.e. unknown, not
-    # free — while the herd is still un-penned (see FORECAST_FEED_KEYS).
-    var feed_rung: bool = policy in FORECAST_FEED_KEYS
-    var feed := 0.0
-    if feed_rung:
-        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[policy]), 0.0))
     # WHOLE-ANIMAL HUNT: a take of whole animals via a kill-credit bank (`food_per_animal` = one animal's
     # yield in food; 0/absent for a forage patch). The peak-turn carry need is quantized to whole bodies
-    # (see `max_useful_workers`), so it must fire ONLY for an extractive hunt of a live herd — never a
-    # forage patch (no food_per_animal), an investment rung (Tame/Corral collapse to 1), or a corralled
-    # herd (managed `worker_tend` harvest, whose forecast already collapses every ceiling to per_worker).
+    # (see `max_useful_workers`), so it must fire ONLY for a hunt of a live, un-penned herd — never a
+    # forage patch (no food_per_animal) or a corralled herd (managed `worker_tend` harvest, whose
+    # forecast already collapses every ceiling to per_worker). It no longer excludes a "build rung":
+    # the stance is always a stance now, and a crew building a pen still takes whole animals while it
+    # does so — the dip scales the ceiling, it does not change the rhythm.
     var food_per_animal := float(src.get(prefix + FORECAST_FOOD_PER_ANIMAL_KEY, 0.0))
     # THE SECOND PRODUCT (issue #337) and THE THIRD (#426). A herd carries a per-worker TRADE rate, a
     # per-policy trade ceiling and a per-animal trade quantum beside the food ones; a **forage patch now
@@ -736,21 +818,22 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
             forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_TRADE, policy), 0.0)
         per_worker_fodder = maxf(
             forage_row_cell(src, prefix, FORAGE_ROW_PER_WORKER_FODDER, policy), 0.0)
+    # **THE DIP RIDES THE CEILINGS ONLY, PER ACCOUNT** — never the per-worker rates. The sim caps a
+    # build's take at `min(workers × per_worker, ceiling × dip)` (`forage::forage_take`), so a crew is
+    # as productive per head while it builds; what shrinks is how much the ground will give up. Applied
+    # here, before the axis triple is derived, so `axis_ceiling` and every consumer of it — the worker
+    # cap, the preview line, the overdraw test — read one dipped number.
+    ceiling *= dip
+    ceiling_trade *= dip
+    ceiling_fodder *= dip
     var trade_axis: bool = not has_component(per_worker) and has_component(per_worker_trade)
     var axis_per_worker := per_worker_trade if trade_axis else per_worker
     var axis_ceiling := ceiling_trade if trade_axis else ceiling
     var axis_per_animal := trade_per_animal if trade_axis else food_per_animal
-    var whole_animal: bool = axis_per_animal > 0.0 and not investment \
-        and not bool(src.get("corralled", false))
+    var whole_animal: bool = axis_per_animal > 0.0 and not bool(src.get("corralled", false))
     return {
         "per_worker": per_worker,
         "ceiling": ceiling,
-        "payoff": payoff,
-        "payoff_trade": payoff_trade,
-        "payoff_fodder": payoff_fodder,
-        "investment": investment,
-        "feed_rung": feed_rung,
-        "feed": feed,
         "food_per_animal": food_per_animal,
         "per_worker_trade": per_worker_trade,
         "ceiling_trade": ceiling_trade,
@@ -772,6 +855,100 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, polic
         # compose sheet answered by going silent on the one state it most needed to report.
         "known": forecast_is_known(src, kind, prefix),
     }
+
+## **THE WHOLE DEAL AN IMPROVEMENT OFFERS, composed in ONE place** (issue #442) — the stance the crew
+## is holding, the dipped take it accepts while it builds, and the payoff the finished rung pays:
+##
+##     +0.96  →  +0.24 while building  →  +1.20 /turn
+##      stance          preparing              payoff
+##
+## `preparing = stanceCeiling × <rung>BuildFraction`, **per account**, exactly as the take is capped
+## per account: a hay meadow's fodder dips by the same factor its food does, and quoting the food
+## component alone would have understated a fodder crop's build to nothing. The stance term is the
+## number the old "Preparing: +X → then +Y" line structurally could not show, because a build verb
+## used to BE the policy — there was no stance left to quote.
+##
+## Returns `{}` when `improvement` is `IMPROVEMENT_NONE` or the source carries no forecast, so a caller
+## renders no deal rather than a deal made of zeros. `stance` is the four-rung harvest stance the crew
+## holds; the two are independent, and a non-Sustain stance beside a running build is LEGAL (it defeats
+## itself through the ecology — the meter accrues only while the source is Thriving).
+##
+## The `feed` term is the pen's per-turn upkeep and rides ONLY the Corral rung (`FORECAST_FEED_KEYS`) —
+## the one asymmetry between the two webs, and a deliberate one.
+static func improvement_forecast(src: Dictionary, kind: String, prefix: String, stance: String,
+        improvement: String) -> Dictionary:
+    if improvement == IMPROVEMENT_NONE or not FORECAST_PAYOFF_KEYS.has(improvement):
+        return {}
+    var stance_forecast := forecast_inputs(src, kind, prefix, stance)
+    if not bool(stance_forecast["known"]):
+        return {}
+    # The dip factor. 0/absent means the wire does not describe this rung's build on this source
+    # (a species that can never be penned, an older snapshot) — the deal is then unquotable, so say
+    # nothing rather than render a `× 0` dip that reads as "building pays you nothing".
+    var fraction := float(src.get(
+        prefix + String(FORECAST_BUILD_FRACTION_KEYS[improvement]), 0.0))
+    if fraction <= 0.0:
+        return {}
+    var payoff := float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[improvement]), 0.0))
+    # The payoff's non-food components — a VECTOR like every other yield in this model. Trade reaches
+    # all four rungs; fodder is plant-only (no animal pays it — a structural zero, not a gap). A rung
+    # with no twin in a table resolves to 0.0 and renders as nothing, which is the rule.
+    var payoff_trade := 0.0
+    if FORECAST_PAYOFF_TRADE_KEYS.has(improvement):
+        payoff_trade = float(src.get(prefix + String(FORECAST_PAYOFF_TRADE_KEYS[improvement]), 0.0))
+    var payoff_fodder := 0.0
+    if FORECAST_PAYOFF_FODDER_KEYS.has(improvement):
+        payoff_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[improvement]), 0.0))
+    var feed_rung: bool = FORECAST_FEED_KEYS.has(improvement)
+    var feed := 0.0
+    if feed_rung:
+        feed = float(src.get(prefix + String(FORECAST_FEED_KEYS[improvement]), 0.0))
+    return {
+        "improvement": improvement,
+        "stance": stance,
+        "build_fraction": fraction,
+        # The stance's OWN forecast, carried whole so a caller can price the crew's real take through
+        # `expected_yield_account` per account rather than quoting a bare ceiling the crew may not
+        # reach. The dip is that take multiplied by `build_fraction` — the sim applies the fraction to
+        # the yield, so applying it to the capped take is the same arithmetic in the same order.
+        "stance_forecast": stance_forecast,
+        # THE THREE TERMS, each a full account vector. `stance_*` is what the crew takes today,
+        # `preparing_*` what it takes while the rung is built, `payoff_*` what the built rung pays.
+        "stance_ceiling": float(stance_forecast["ceiling"]),
+        "stance_ceiling_trade": float(stance_forecast["ceiling_trade"]),
+        "stance_ceiling_fodder": float(stance_forecast["ceiling_fodder"]),
+        "preparing": float(stance_forecast["ceiling"]) * fraction,
+        "preparing_trade": float(stance_forecast["ceiling_trade"]) * fraction,
+        "preparing_fodder": float(stance_forecast["ceiling_fodder"]) * fraction,
+        "payoff": payoff,
+        "payoff_trade": payoff_trade,
+        "payoff_fodder": payoff_fodder,
+        "feed_rung": feed_rung,
+        "feed": feed,
+    }
+
+## Is this improvement's rung ALREADY BUILT on this source? The test that turns the improvement
+## control's Running state into its Done state, and the one definition of it.
+##
+## The plant rungs answer from their own bool (`is_cultivated` / `is_field`) — **never from the float
+## beside it**, which is a build meter and reads 1.0 for one turn before the flag flips. `Tame` has no
+## bool on the wire, so it reads a full `domestication` meter; `Corral` has both and takes the bool.
+## `prefix` spells the keys, so this works against a `patch_`-prefixed tile_info and a bare herd alike.
+static func improvement_is_done(src: Dictionary, prefix: String, improvement: String) -> bool:
+    if improvement == IMPROVEMENT_TAME:
+        return float(src.get(prefix + FORECAST_BUILD_METER_KEYS[IMPROVEMENT_TAME], 0.0)) \
+            >= DOMESTICATION_COMPLETE
+    if not FORECAST_DONE_FLAG_KEYS.has(improvement):
+        return false
+    return bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false))
+
+## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
+## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
+static func improvement_progress(src: Dictionary, prefix: String, improvement: String) -> float:
+    if not FORECAST_BUILD_METER_KEYS.has(improvement):
+        return 0.0
+    return clampf(float(src.get(
+        prefix + String(FORECAST_BUILD_METER_KEYS[improvement]), 0.0)), 0.0, 1.0)
 
 ## Workers beyond this produce nothing at this source under the selected policy —
 ## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
@@ -818,16 +995,36 @@ static func max_useful_workers(forecast: Dictionary) -> int:
 ## knows nothing about that: it answers "2 workers saturate this herd's take", and the row's `+` then
 ## goes dead two below the crew the sim is asking for — while the SAME row renders the under-herded ⚠.
 ##
-## An INVESTMENT rung reads the ownership-INDEPENDENT `herders_needed_if_managed` instead, because the
-## rung is what MAKES the herd managed: a still-wild herd reports `herders_needed == 0` right up until
-## the Population stage sets ownership, so the plain field would pin the player at the 1-worker prep
-## count and the herd would read under-herded the moment it became theirs. The two fields are equal on
-## an already-managed herd, so this is safe either way. Keyed on the forecast's own `investment` flag
-## rather than a policy-name table, so this file stays free of the compose vocabulary.
-static func herd_crew_floor(herd: Dictionary, forecast: Dictionary) -> int:
-    if bool(forecast.get("investment", false)):
+## A crew that is BUILDING an improvement reads the ownership-INDEPENDENT `herders_needed_if_managed`
+## instead, because the improvement is what MAKES the herd managed: a still-wild herd reports
+## `herders_needed == 0` right up until the Population stage sets ownership, so the plain field would
+## pin the player at the 1-worker prep count and the herd would read under-herded the moment it became
+## theirs. The two fields are equal on an already-managed herd, so this is safe either way.
+##
+## `building` is the IMPROVEMENT axis (issue #442) — the assignment's own `improvement != ""` on a
+## worked row, the composed improvement on the compose sheet. It used to be read off the forecast's
+## `investment` flag, which only existed while a build verb was a value of `policy`.
+static func herd_crew_floor(herd: Dictionary, building: bool) -> int:
+    if building:
         return int(herd.get("herders_needed_if_managed", 0))
     return int(herd.get("herders_needed", 0))
+
+## **The PLANT twin of `herd_crew_floor`** (issue #442) — the crew the rung being built on this patch
+## demands (`<rung>CrewNeeded`), as a FLOOR on the compose stepper's worker cap. Same shape, same
+## contract, same one definition: a RAISE, never a new cap, and `0` for a patch that is only being
+## gathered.
+##
+## It exists because the dip and the cap fight each other. While a build runs the ceiling the cap
+## divides is `stance × buildFraction`, so `ceil(ceiling / perWorker)` collapses — a 25-turn
+## improvement asked for FEWER hands than gathering the same ground, and the sim's own
+## `source_crew_needed` (`max(build crew, take crew)`) then reported the row overstaffed at the count
+## the sheet had just capped it to. The rung's crew is the standing half of exactly that `max`.
+##
+## `prefix` spells the keys, so this reads a `patch_`-prefixed tile_info and a raw wire patch alike.
+static func plant_crew_floor(patch: Dictionary, prefix: String, improvement: String) -> int:
+    if not FORECAST_CREW_KEYS.has(improvement):
+        return 0
+    return int(patch.get(prefix + String(FORECAST_CREW_KEYS[improvement]), 0))
 
 ## Per-SOURCE `+`-gate for a CONFIRMED Current-actions Forage/Hunt row — the worked-row twin of the
 ## compose stepper's `max_useful_workers` cap (`DrawerComposeController._forecast_worker_cap`), and
@@ -841,8 +1038,10 @@ static func herd_crew_floor(herd: Dictionary, forecast: Dictionary) -> int:
 ##
 ## `useful_floor` IS WHAT KEEPS THE TWIN PROMISE HONEST. The compose side folds a managed herd's
 ## herding crew into its usefulness ceiling; a row that did not would flag a herd under-herded and then
-## disable the very `+` that fixes it. A HUNT caller therefore passes `herd_crew_floor(herd, forecast)`
-## — the one definition of that number — and a FORAGE caller passes nothing, a patch owing no crew.
+## disable the very `+` that fixes it. A HUNT caller therefore passes
+## `herd_crew_floor(herd, building)` — the one definition of that number, keyed on the IMPROVEMENT
+## axis (`building` is a bool: the assignment's own `improvement != ""` on a worked row, the composed
+## improvement on the compose sheet) — and a FORAGE caller passes nothing, a patch owing no crew.
 ## The floor is a RAISE, never a new cap, and an UNBOUNDED forecast stays unbounded; a wild herd
 ## reports 0, so `max(useful, 0)` is a no-op there.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int,
@@ -871,10 +1070,16 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 ## `forecast_inputs`' own (`per_worker`/`ceiling`, `per_worker_trade`/`ceiling_trade`,
 ## `per_worker_fodder`/`ceiling_fodder`) — passed in rather than switched on here, so adding a fourth
 ## account is a call site, not an edit to this function.
+## **`ceiling_scale` GOES INSIDE THE `min`, AND THAT IS THE WHOLE POINT OF THE PARAMETER.** A build's
+## dip is a factor on the CEILING (`forage::forage_take` caps at `min(workers × per_worker, ceiling ×
+## dip)`), so scaling the already-capped take instead — `min(…) × dip` — is a different number
+## whenever the crew is labour-bound below the dipped ceiling, and the client under-reported by exactly
+## the dip there. `NO_BUILD_DIP` (the default) leaves every non-build caller bit-identical.
 static func expected_yield_account(forecast: Dictionary, workers: int, band: Dictionary,
-        per_worker_key: String, ceiling_key: String) -> float:
+        per_worker_key: String, ceiling_key: String,
+        ceiling_scale: float = NO_BUILD_DIP) -> float:
     var raw := minf(float(workers) * float(forecast.get(per_worker_key, 0.0)),
-        float(forecast.get(ceiling_key, 0.0)))
+        float(forecast.get(ceiling_key, 0.0)) * ceiling_scale)
     return raw * float(band.get("output_multiplier", OUTPUT_FULL))
 
 ## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:
@@ -969,14 +1174,17 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
 ## surfaces can no longer disagree: without this clause the sheet's stepper and title said "Hunters"
 ## directly beside a drawer demanding 4 herders every turn.
 ##
-## Deliberately NOT `policy == LABOR_POLICY_TAME`: a still-WILD herd being tamed reports
+## Deliberately NOT `improvement == IMPROVEMENT_TAME`: a still-WILD herd being tamed reports
 ## `herders_needed == 0`, is not yet owned, and its crew genuinely hunts at a reduced take that turn —
 ## "Hunters" is the honest word there. Corral is different because it BUILDS the pen the keepers hold.
-static func is_managed_hunt_source(herd: Dictionary, policy: String) -> bool:
+##
+## The last clause reads the IMPROVEMENT axis (issue #442), not the stance: a crew building a pen is
+## keeping animals whether it is holding Sustain or Deplete while it does so.
+static func is_managed_hunt_source(herd: Dictionary, improvement: String) -> bool:
     return bool(herd.get("corralled", false)) \
         or float(herd.get("domestication", 0.0)) >= DOMESTICATION_COMPLETE \
         or int(herd.get("herders_needed", 0)) > 0 \
-        or policy == LABOR_POLICY_CORRAL
+        or improvement == IMPROVEMENT_CORRAL
 
 ## A herd's player-facing name (species → label → id). One definition, shared by the targeting banner's
 ## forecast line and the command-feed refusal, so a herd is never called two different things.

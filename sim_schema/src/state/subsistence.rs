@@ -179,21 +179,22 @@ pub struct HerdTelemetryState {
     /// never touches this. `0` on a herd that never offers Corral.
     #[serde(default)]
     pub corral_trade: f32,
-    /// Per-policy **band / local-hunt** take ceilings for this herd's current state — one entry per
-    /// [`FollowPolicy`] valid on a Hunt assignment: the four extractive rungs **plus Corral**
-    /// (`Cultivate` is forage-only, so a herd has no cultivate row). Phase-correct: a penned herd's
-    /// rows all read its corral yield. The **only** wire representation of a herd's per-policy
-    /// ceilings — a free-form `policy` string means a new policy needs no schema change. With the
+    /// Per-**stance** band / local-hunt take ceilings for this herd's current state — one entry per
+    /// [`FollowPolicy`], i.e. the four harvest stances. **Four rows since issue #442**: the `tame`
+    /// and `corral` dips used to ride here and are now the `*_build_fraction` factors, because a dip
+    /// multiplies whichever stance the crew holds. Phase-correct: a penned herd's rows all read its
+    /// corral yield. The **only** wire representation of a herd's per-stance
+    /// ceilings — a free-form `policy` string means a new stance needs no schema change. With the
     /// cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
     /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
     /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
     #[serde(default)]
     pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
     /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
-    /// entry per (**extractive** policy × party size `1..=max_party_size`), so the outfit UI is a
-    /// **table lookup** and the client does no arithmetic at all. The investment policies
-    /// (Cultivate/Corral) are place-bound band work that `send_hunt_expedition` rejects, so they get
-    /// no rows here. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
+    /// entry per (stance × party size `1..=max_party_size`), so the outfit UI is a **table lookup**
+    /// and the client does no arithmetic at all. The improvements are place-bound band work an
+    /// expedition cannot do — since issue #442 its mission cannot even name one — so there is nothing
+    /// to exclude. Empty for a non-huntable herd. See [`HuntTripEstimateState`] for why the trip is
     /// simulated rather than divided. Derived at capture. Appended last.
     #[serde(default)]
     pub hunt_trip_estimates: Vec<HuntTripEstimateState>,
@@ -357,6 +358,34 @@ pub struct HerdTelemetryState {
     /// one-turn lag. Equals `herders_needed` for a herd already managed. Appended last (append-only).
     #[serde(default)]
     pub herders_needed_if_managed: u32,
+    /// **The `Tame` rung's build dip, as the FRACTION it is** (issue #442) — the `animal:pastoral`
+    /// rung's `yield_fraction_while_building`.
+    ///
+    /// **The dip is no longer a `hunt_policy_ceilings` row.** It used to ride there as a fifth row
+    /// (`tame`), which could only ever state the fraction against **Sustain** — correct while a build
+    /// verb *was* the policy, and false the moment a builder could hold any stance. The improvement is
+    /// its own axis now, so the client multiplies:
+    /// `preparing(stance) = hunt_policy_ceilings[stance] × tame_build_fraction`, and pairs it with
+    /// [`Self::pastoral_yield`] for the "Preparing +X → then +Y" line.
+    #[serde(default)]
+    pub tame_build_fraction: f32,
+    /// **The `Corral` rung's build dip, as a fraction** — the twin of [`Self::tame_build_fraction`],
+    /// paired with [`Self::corral_yield`]. Two fields because the rungs' dials are independently
+    /// tunable; one shared number would agree by today's coincidence and lie after a retune.
+    #[serde(default)]
+    pub corral_build_fraction: f32,
+    /// **Is there anything here to neglect?** `false` for a **wild** herd — nobody's to keep, so it
+    /// never sheds and [`Self::neglect_grace_remaining`] means nothing. Read this first, exactly as
+    /// [`ForagePatchState::owner`]'s `has_owner` companion is read first.
+    #[serde(default)]
+    pub has_neglect_grace: bool,
+    /// **Turns of neglect this herd can still absorb before animals start leaving** — the countdown,
+    /// not the counter, so no client subtracts anything: `0` = the shed is running *now*, `N > 0` =
+    /// it starts in N more turns of too-few-keepers. A properly herded herd reads its rung's full
+    /// grace + 1 ("let them go and you have this long"). The animal twin of
+    /// [`ForagePatchState::neglect_grace_remaining`].
+    #[serde(default)]
+    pub neglect_grace_remaining: u32,
 }
 
 impl Default for HerdTelemetryState {
@@ -408,6 +437,10 @@ impl Default for HerdTelemetryState {
             aggression: 0.0,
             prey_sense_radius: 0,
             herders_needed_if_managed: 0,
+            tame_build_fraction: 0.0,
+            corral_build_fraction: 0.0,
+            has_neglect_grace: false,
+            neglect_grace_remaining: 0,
         }
     }
 }
@@ -535,6 +568,38 @@ pub struct ForagePatchState {
     /// Fodder/turn a **completed Field** would pay — the whole yield of a `hay_grass` Field.
     #[serde(default)]
     pub field_fodder: f32,
+    /// **The `Cultivate` rung's build dip, as the FRACTION it is** (issue #442) — the `plant:tended`
+    /// rung's `yield_fraction_while_building`, and the plant twin of
+    /// [`HerdTelemetryState::tame_build_fraction`]. The dip stopped being a
+    /// [`Self::forage_policy_ceilings`] row when the improvement became its own axis:
+    /// `preparing(stance) = forage_policy_ceilings[stance] × cultivate_build_fraction`, paired with
+    /// [`Self::tended_yield`] for "Preparing +X → then +Y".
+    #[serde(default)]
+    pub cultivate_build_fraction: f32,
+    /// **The `Sow` rung's build dip, as a fraction** — the twin of
+    /// [`Self::cultivate_build_fraction`], paired with [`Self::field_yield`].
+    #[serde(default)]
+    pub sow_build_fraction: f32,
+    /// **Is there anything here to neglect?** `false` for a wild patch (both improvement meters at
+    /// zero), which is most of them. Read this before [`Self::neglect_grace_remaining`].
+    #[serde(default)]
+    pub has_neglect_grace: bool,
+    /// **Turns of neglect this patch can still absorb before its improvement starts reverting** — the
+    /// countdown, not the counter: `0` = the ground is going feral *now*, `N > 0` = it starts in N
+    /// more un-worked turns. Describes whichever rung would bleed next, since the plant web unwinds
+    /// **newest-first** (a Field's meter empties before the tended ground beneath it loses anything).
+    #[serde(default)]
+    pub neglect_grace_remaining: u32,
+    /// **The crew the `Cultivate` build wants** (`plant:tended`'s `crew_needed`). It floors the
+    /// compose sheet's worker cap — while a build runs the ceiling is the *dip*, so inverting it
+    /// alone asked for fewer hands than gathering the same ground — and the build's progress scales
+    /// by `min(workers / this, 1)`, so the rung's stated 25 turns is its **full-crew** duration.
+    #[serde(default)]
+    pub cultivate_crew_needed: u32,
+    /// **The crew the `Sow` build wants** (`plant:field`'s `crew_needed`) — the twin of
+    /// [`Self::cultivate_crew_needed`]; two fields because the rungs' dials are independently tunable.
+    #[serde(default)]
+    pub sow_crew_needed: u32,
 }
 
 /// **One rung's ceiling on one tile, in every account that tile's basket pays** (issue #426) — the

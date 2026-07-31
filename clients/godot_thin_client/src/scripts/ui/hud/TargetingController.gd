@@ -391,7 +391,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 
 ## Is `herd` a valid quarry for a DETACHED party from `band`? A hunting party exists precisely for
 ## game the band cannot work from home, so the answer is the SAME split the herd drawer makes when it
-## chooses between "Assign Local Hunt" and the expedition branch: strictly beyond the band's
+## chooses between "Hunt Here" and the expedition branch: strictly beyond the band's
 ## `hunt_reach`, wrap-aware, measured from the band's own tile. THE single definition — the pick, the
 ## sheet's re-validation and MapView's glow all route through it (the map must never promise a target
 ## the pick refuses). An unknown distance (missing tiles) is NOT a quarry, mirroring the drawer's

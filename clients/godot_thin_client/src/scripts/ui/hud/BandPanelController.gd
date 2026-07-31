@@ -142,9 +142,15 @@ func _player_knowledge() -> Dictionary:
 
 ## Issue a labor assignment. Retained on HudLayer because it owns the `assign_labor_requested` emit,
 ## the optimistic pending-labor write and `_after_pending_change()`.
+##
+## `improvement` NEVER reaches the command (issue #442) — it is recorded on the OPTIMISTIC PENDING
+## overlay alone. The adapter has to carry it anyway: the trailing default is `IMPROVEMENT_NONE`, so
+## omitting the argument writes "building nothing" over whatever the source is actually building, and
+## `effective_worker_map` then reads that "" back for the rest of the turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
-        policy: String, species: String = "") -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species)
+        policy: String, species: String = "",
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species, improvement)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -888,36 +894,16 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
         _emit_work_assign(band, model, 0)))
     col.add_child(links)
     if _work_policy_open:
-        # The four EXTRACTIVE rungs only. The investment rungs (cultivate/sow/tame/corral) are ladder
-        # COMMITMENTS made at the source's own compose control, where their knowledge gates and payoff
-        # forecasts live; changing an existing assignment's take needs no gate.
-        var standing := String(model.get("policy", ""))
-        if standing in HudComposeVocab.INVESTMENT_POLICIES:
-            # The picker highlights NOTHING on an investment assignment (the standing rung is not one
-            # of the four), and an unhighlighted radio reads as unset. This line is what explains it.
-            col.add_child(HudWidgets.build_status_part(
-                HudWorkVocab.WORK_INSPECT_STANDING_INVESTMENT_FORMAT % HudFormat.policy_face(standing), HudStyle.WARN))
+        # THE FOUR STANCES, and nothing else to say about them. The "you are standing on an investment
+        # rung the picker cannot show" line and the discard-confirm that went with it are gone (issue
+        # #442): a stance re-pick no longer touches the improvement axis at all, so there is no build
+        # to warn about discarding. An improvement is still committed at the source's own compose
+        # control, where its gates and payoff forecast live.
         col.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
-            _on_work_policy_picked(band, model, policy),
-            standing, SourceForecast.LABOR_HUNT_POLICIES, {}, {}, HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+            _commit_work_policy(band, model, policy),
+            String(model.get("policy", "")), SourceForecast.LABOR_HUNT_POLICIES, {},
+            HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
     return strip
-
-## A rung picked in the work inspector. On the ordinary (EXTRACTIVE) standing policy this re-sends the
-## assignment immediately, exactly as it always has. On an INVESTMENT one the pick DISCARDS a ladder
-## build worth ~25 turns, so it asks first — the same `_confirm_destructive` treatment "Unassign all
-## work" and "Recall all parties" get. The picker stays open until the answer comes back, so a cancel
-## leaves the frame exactly as it was rather than silently closing on a change that never happened.
-func _on_work_policy_picked(band: Dictionary, model: Dictionary, policy: String) -> void:
-    if String(model.get("policy", "")) in HudComposeVocab.INVESTMENT_POLICIES:
-        _confirm_destructive(
-            HudWorkVocab.WORK_INSPECT_END_INVESTMENT_CONFIRM_FORMAT % [
-                HudFormat.policy_face(String(model.get("policy", ""))),
-                String(model.get("label", "")),
-                HudFormat.policy_face(policy)],
-            HudWorkVocab.WORK_INSPECT_END_INVESTMENT_CONFIRM_OK,
-            func() -> void: _commit_work_policy(band, model, policy))
-        return
-    _commit_work_policy(band, model, policy)
 
 func _commit_work_policy(band: Dictionary, model: Dictionary, policy: String) -> void:
     _work_policy_open = false
@@ -925,12 +911,11 @@ func _commit_work_policy(band: Dictionary, model: Dictionary, policy: String) ->
 
 ## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
 ## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
-func _work_inspector_height(model: Dictionary) -> float:
-    if not _work_policy_open:
-        return HudWorkVocab.WORK_INSPECTOR_HEIGHT
-    if String(model.get("policy", "")) in HudComposeVocab.INVESTMENT_POLICIES:
-        return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT + HudWorkVocab.WORK_INSPECTOR_STANDING_LINE_HEIGHT
-    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT
+func _work_inspector_height(_model: Dictionary) -> float:
+    # ONE open height now: the standing-investment line the taller variant reserved room for is gone
+    # with the axis split (see `_build_work_inspector`), so every open picker is the same four rungs.
+    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open \
+        else HudWorkVocab.WORK_INSPECTOR_HEIGHT
 
 ## The board row's single-slot rate string — food when the source pays food, else its trade rate with
 ## the trade glyph, and "" when the row carries no confirmed yield at all. One definition, since the
@@ -982,13 +967,16 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var y := int(m.get("y", -1))
         var herd_id := String(m.get("herd_id", ""))
         var policy := String(m.get("policy", "")).strip_edges().to_lower()
+        # THE SECOND AXIS (issue #442) — what this crew is BUILDING here, "" for nothing. It is what
+        # the rung marks and the herding-crew floor key on now; `policy` is purely the harvest stance.
+        var improvement := String(m.get("improvement", "")).strip_edges().to_lower()
         var icon := ""
         var label := ""
         var cap := {}
         var live_herd := {}
         var patch := {}
         if kind == SourceForecast.LABOR_KIND_FORAGE:
-            if not (policy in HudBandLaborState.FORAGE_POLICY_OPTIONS):
+            if not (policy in SourceForecast.LABOR_HUNT_POLICIES):
                 policy = SourceForecast.DEFAULT_HUNT_POLICY
             # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
@@ -998,11 +986,18 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+            # THE ROW'S OWN IMPROVEMENT DIPS ITS CEILING, and its rung's build crew floors the count —
+            # the plant twins of the herd branch below, and the same reason: while a build runs the sim
+            # caps the take at `stance ceiling × buildFraction` and asks for `max(build crew, take
+            # crew)` hands. A stance-only forecast here let the board's `+` add workers the sim then
+            # reported idle on the same row.
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy), workers, idle)
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement), workers, idle,
+                SourceForecast.plant_crew_floor(
+                    patch, HudComposeVocab.BARE_FORECAST_PREFIX, improvement))
         else:
-            if not (policy in HudBandLaborState.HUNT_POLICY_OPTIONS):
+            if not (policy in SourceForecast.LABOR_HUNT_POLICIES):
                 policy = _band_labor.policy_for_hunt(band, herd_id)
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
@@ -1010,15 +1005,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # Herds MIGRATE, so the cap reads the herd's LIVE dict from `_band_labor.world_herds()` rather than the
             # assignment's launch-time target.
             live_herd = _band_labor.find_world_herd(herd_id)
+            # The IMPROVEMENT dips the ceiling here too (see the forage branch): a crew building a pen
+            # is paid `stance × corralBuildFraction`, so a stance-only forecast caps this row above
+            # what the sim will pay it.
             var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy)
+                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement)
             # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
             # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
             # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the
             # number; the forage branch above passes none, a patch owing no crew.
             cap = SourceForecast.source_worker_cap_state(hunt_forecast, workers, idle,
-                SourceForecast.herd_crew_floor(live_herd, hunt_forecast))
+                SourceForecast.herd_crew_floor(
+                    live_herd, improvement != SourceForecast.IMPROVEMENT_NONE))
         var note := String(yld.get("note", ""))
         var rung := _work_source_rung(kind, patch, live_herd)
         # THE RUNG ON OFFER — a third axis, orthogonal to both `marks` (the verb in flight) and
@@ -1027,9 +1026,9 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var rung_source: Dictionary = patch if kind == SourceForecast.LABOR_KIND_FORAGE else live_herd
         # A rung UNDER WAY takes the slot from a rung on OFFER — they are one axis in two states, and
         # mutually exclusive by construction (`next_rung_ready` excludes the verb in flight).
-        var building := RungGates.rung_in_progress(kind, rung_source, policy)
+        var building := RungGates.rung_in_progress(kind, rung_source, improvement)
         var ready := {} if not building.is_empty() \
-            else RungGates.next_rung_ready(kind, rung_source, policy, _player_knowledge())
+            else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
         var marks := FoodIcons.for_policy(policy)
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
@@ -1063,7 +1062,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
-            "policy": policy, "x": x, "y": y, "herd_id": herd_id,
+            "policy": policy, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
@@ -1176,11 +1175,22 @@ func _find_work_model(models: Array, key: String) -> Dictionary:
 
 ## Re-send this source's `assign_labor` at a new worker count (and optionally a new policy) — the
 ## same emit the old Current-actions stepper made.
+##
+## **THE IMPROVEMENT RIDES EVERY CREW EDIT** (issue #442). `assign_labor` deliberately does not touch
+## the second axis, so a `+`/`−`/Unassign/stance pick that let the pending overlay default to
+## `IMPROVEMENT_NONE` would blank the axis for the rest of the turn: the row's build badge and its
+## `⌃`-vs-progress slot would flip back to advertising the very rung already under way, and
+## `herd_crew_floor` would drop from `herders_needed_if_managed` to the ownership-gated
+## `herders_needed`, capping the `+` below the keepers the sim demands. The row MODEL already carries
+## the value `effective_worker_map` resolved (confirmed assignment overlaid with any pending edit), so
+## it is restated from there rather than re-derived — re-deriving could disagree with the board the
+## player is clicking on.
 func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int, policy: String = "") -> void:
     var kind := String(model.get("kind", ""))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
         String(model.get("herd_id", "")),
-        policy if policy != "" else String(model.get("policy", "")))
+        policy if policy != "" else String(model.get("policy", "")),
+        "", String(model.get("improvement", "")))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
 func _focus_work_source(model: Dictionary) -> void:
@@ -1513,7 +1523,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
         rerender(), _send_hunt_policy, SourceForecast.LABOR_HUNT_POLICIES,
-        {}, SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
+        SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
     sheet.add_child(HudWidgets.alloc_hint_label(String(HudComposeVocab.SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
     # Party size, capped at the raid's max-useful plateau for THIS herd + policy (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill.

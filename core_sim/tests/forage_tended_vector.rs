@@ -252,6 +252,7 @@ fn spawn_forager_with_workers(
                         species: None,
                     },
                     workers,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

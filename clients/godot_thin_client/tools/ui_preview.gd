@@ -104,19 +104,27 @@ const LOCAL_HUNT_HUNTERS := 6
 ## 0.8 per-worker carry = 3 carriers to haul one body. The dial is clamped to it exactly as it is
 ## for the player, so this — not 6 — is what a guard on those frames can assert.
 const LOCAL_HUNT_CAPPED_CREW := 3
+## The crews the two BOUND frames are composed at, and the numbers their steppers must SHOW: one
+## bound by the band's idle labor, one by the maximum party size. Named because each is asserted
+## against the rendered value, so the dial and the expectation are one number rather than two.
+const LABOR_BOUND_CREW := 3
+const PARTY_SIZE_BOUND_CREW := 2
 ## The crew the TWO-PRODUCT frames (issue #337) are composed with — the wolf's pelts-only pair and the
 ## oracle deer's food+trade control. Two hunters is the oracle's own no-waste point (food_per_animal
 ## 1.23 ÷ the band's 0.8 per-worker carry ⇒ 2 carriers haul one whole body), so the frame the trade
 ## components are read on carries no waste term to argue with; the wolf rides the same crew so the
 ## inedible quarry and the both-products control are compared at ONE party size.
 const PELT_FRAME_HUNTERS := 2
-## The two INVESTMENT-rung payoff faces the Wild Boar frame is judged on (issue #397), spelled out as
+## The two INVESTMENT-rung payoff terms the Wild Boar frame is judged on (issue #397), spelled out as
 ## literal strings rather than rebuilt from `SourceForecast.picker_products` — an assertion that
-## re-derives the face through the very formatter under test asserts nothing. `→` is the payoff arrow
-## (`HudComposeVocab.POLICY_PAYOFF_COMPACT`), food leads, and each half appears because the boar pays
-## both; the pre-fix face was the food clause alone.
-const BOAR_TAME_PAYOFF_FACE := "→ 1.48 food · 0.37 trade"
-const BOAR_CORRAL_PAYOFF_FACE := "→ 2.95 food · 0.74 trade"
+## re-derives the terms through the very formatter under test asserts nothing. Food leads, and each
+## half appears because the boar pays both; the pre-fix face was the food clause alone.
+##
+## They moved off the PICKER's rung face onto the IMPROVEMENT control's own (issue #442), which is why
+## the payoff ARROW is gone from them: the control's face already reads
+## `◎ Tame this herd · then <terms>`, so a second arrow inside the terms said "then → 1.48" twice.
+const BOAR_TAME_PAYOFF_FACE := "1.48 food · 0.37 trade"
+const BOAR_CORRAL_PAYOFF_FACE := "2.95 food · 0.74 trade"
 ## The three forage-rung faces `_hay_meadow_tile_fixture` / `_dead_season_tile_fixture` are judged on
 ## (issue #426), spelled out as literals for the same reason as the boar pair above. The first two are
 ## the THREE-account line the plant web grew a column for, in wire order (provisions · trade goods ·
@@ -203,6 +211,41 @@ const PEN_FED_STARVING := 0.40
 # assignment and the auto-max assertion all read them from here rather than repeating bare 1s and 2s.
 const UNDER_HERDED_CORRAL_HERDERS_NEEDED := 2
 const UNDER_HERDED_CORRAL_HERDERS_STAFFED := 1
+# The species name every orb row that names a herd must quote. `Hud._herd_label_for_id` resolves
+# `game_deer_07` through the roster, the current selection and the world-herd list in that order, and
+# every fixture carrying that id declares the same `species` — so the alert text is asserted against the
+# ONE string all three lookups answer, never against a hand-typed copy of it.
+const RED_DEER_LABEL := "Red Deer"
+# The unworked-rung / under-crewed state's wire numbers (`turn_orb_unworked_rung`).
+# `neglectGraceRemaining` ships as `(grace + 1) - neglect`, so every one of these is a COUNTDOWN to the
+# penalty, never a count of neglected turns:
+#   • NEGLECT_GRACE_SOON — the tended patch has 2 turns left. Deliberately not 1: the countdown
+#     interpolates `ATTENTION_TURN_PLURAL_SUFFIX`, and at 1 the suffix is empty, so a row that dropped
+#     the plural entirely would still match.
+#   • NEGLECT_GRACE_NOW — the wire's `0`, which is "the ground is reverting THIS turn", the most urgent
+#     reading there is. It must never render as a `0`-turn countdown.
+#   • NEGLECT_GRACE_FULL — what a source that IS being kept reads (the rung's whole window). The worked
+#     control carries it, so its silence is the WORKED test and not an incidentally absent countdown.
+#   • NEGLECT_GRACE_HERD — the animal web's twin, on the under-crewed herd; plural for the same reason.
+# The third patch of the set has NO number here at all: it carries `has_neglect_grace == false`
+# (nothing at risk), which is the one reading the pair of fields exists to keep distinct from the zero.
+const NEGLECT_GRACE_SOON := 2
+const NEGLECT_GRACE_NOW := 0
+const NEGLECT_GRACE_FULL := 4
+const NEGLECT_GRACE_HERD := 3
+# The under-crewed herd's staffing PAIR — 2 keepers standing where the sim demands 4. Like the
+# corral-deficit pair above they must DISAGREE for the alert to fire at all, and both halves are read
+# back off the RENDERED row (`2 of 4 keepers — sheds in 3 turns`).
+const UNDER_CREWED_HERD_STAFFED := 2
+const UNDER_CREWED_HERD_NEEDED := 4
+# What the orb's registry must hold in that state: THREE unworked-rung rows out of six staged patches
+# (the wild one, the rival's and the worked one raise nothing) plus the ONE under-crewed herd row.
+# Counted rather than searched, because a producer that alarmed on every source would satisfy every
+# positive assertion in the block without this one.
+const UNWORKED_EXPECTED_ROWS := 4
+# Somebody else's faction — the owner of the "not ours" control patch. Derived from the player's id so
+# the two can never be written equal, which would silently turn that negative control into a positive.
+const RIVAL_FACTION_ID := HudConst.PLAYER_FACTION_ID + 1
 # The stale-DATA reopen guard's herd (`herd_compose_reopen_fresh`), staged on ONE id across two turns.
 # Turn N it is still WILD — not owned, so the ownership-gated crew is 0 and only the would-be crew is
 # real. Turn N+1 the sim has taken ownership: a real crew of 4 (both halves equal, as the sim exports
@@ -216,6 +259,20 @@ const REOPEN_TAMING_DOMESTICATION := 0.04
 # USEFULNESS and renders the "max N workers useful here" note rather than the labor-bound one.
 const REOPEN_IDLE_WORKERS := 12
 const REOPEN_WORKING_AGE := 24
+# The CREW-NOUN guard's pen-ready herd (`herd_compose_crew_noun_after_pen`) — the one the player ticks
+# Corral on FIRST, so it is the source of the improvement the NEXT herd's header must not inherit. Its
+# id is deliberately distinct from `_herd_fixture`'s, since a same-id re-open is not a source change and
+# would not stage the bug.
+const CREW_NOUN_PEN_HERD_ID := "game_aurochs_crewnoun"
+## The crew the WILD herd of that pair would owe if it were ever tamed — its ownership-gated count is 0.
+const CREW_NOUN_WILD_WOULD_BE_HERDERS := 3
+# The quick-hunt axis guard's herd, and idle workers for the shortcut to have something to send (the
+# `quick_hunt_note` state beside it deliberately runs at 0, which is the no-op case).
+const QUICK_HUNT_HERD_ID := "game_aurochs_quickhunt"
+const QUICK_HUNT_IDLE_WORKERS := 3
+# `_band_fixture` carries no `band_id` (nothing else here emits a command), and `Hud._emit_assign_labor`
+# REFUSES a band without one — so the shortcut would no-op silently and the guard would pass on nothing.
+const QUICK_HUNT_BAND_ID := 9041
 # The three fog-of-war states MapView tags onto tile_info (mirrors Hud.VISIBILITY_*).
 const VIS_ACTIVE := "active"
 const VIS_DISCOVERED := "discovered"
@@ -238,6 +295,11 @@ const RIVER_MASK_TWO_CLASS := (
 )
 
 var _hud: HudLayer
+
+## Every compose spine captured this run, keyed by the sheet it came from (see `_record_compose_spine`).
+## A DICT rather than two fields because the parity assertion is about the RELATION between them, and a
+## missing capture must fail loudly rather than compare an empty array against another empty one.
+var _compose_spines := {}
 
 func _ready() -> void:
 	# FREEZE ANIMATION TIME — the same treatment `map_preview` and `blend_probe` carry, and taken for
@@ -667,6 +729,9 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
+	# THE FORAGE HALF of the compose-order invariant (see `_compose_spine`): capture this sheet's control
+	# spine, to be compared against the local-hunt sheet's when that renders further down.
+	_record_compose_spine(COMPOSE_SPINE_KEY_FORAGE)
 
 	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
 	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
@@ -849,7 +914,7 @@ func _ready() -> void:
 	# forecast states the DEAL instead of a single number — "Preparing: +0.24 /turn → then +1.20 /turn"
 	# (ceiling_cultivate → tended_yield) — and the stepper caps at 1 worker (a managed source needs one).
 	_hud.show_tile_selection(_food_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate")
@@ -860,7 +925,7 @@ func _ready() -> void:
 	# and greyed (they climb no rung), and Ground Nut 14% stays fully pressable: a small share is a bad
 	# choice, not an illegal one. Judge legibility + fit here, not on the 3-entry reference tile.
 	_hud.show_tile_selection(_long_basket_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_long_basket_tile_fixture())
 	await _settle()
@@ -876,13 +941,19 @@ func _ready() -> void:
 		sheet_overflow, _hud._drawercompose._compose_sheet._card.size.y])
 	_assert_hud("a 5-plant crop picker leaves the Forage button on screen (sheet does not scroll)",
 		sheet_overflow <= 1.0)
-	# The height that bought those rows came from collapsing the OTHER rung's reasons — but ONLY while a
-	# COMMITTING rung is composed. Assert both halves here: Sow (not composed) is one short locked line,
-	# and its prerequisites are no longer spelled out on the card.
-	_assert_hud("composing Cultivate collapses the locked Sow rung to one line",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
-	_assert_hud("…and that rung's full prerequisites leave the card",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, "Seed Selection"))
+	# The height that bought those rows used to come from COLLAPSING the other rung's gate reasons; the
+	# improvement control bought it outright (issue #442) by offering ONE rung instead of six, so no
+	# other rung's prerequisites are on the card to collapse in the first place. That is the claim now.
+	#
+	# ASKED OF THE CONTROLS, not of the sheet's text. This searched the whole sheet for the words "Seed
+	# Selection" — which passes if the sheet failed to open at all, and would go on passing if a second
+	# rung rendered wearing any other reason. The claim is about how many improvement CONTROLS there
+	# are, so it counts them: the composed Cultivate, and nothing for the rung above it.
+	_assert_hud("only ONE improvement is offered, so no second rung's prerequisites crowd the card",
+		_find_improvement_control(_hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CULTIVATE) != null
+		and _find_improvement_control(_hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_SOW) == null)
 
 	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE FORECAST. The "→ then" term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
@@ -911,7 +982,7 @@ func _ready() -> void:
 	# below 1.0×, so the whole list is warn-inked and the hint says why — and every row stays PRESSABLE.
 	# The ratio is here to stop a bad idea being invisible, never to forbid it.
 	_hud.show_tile_selection(_marginal_basket_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_marginal_basket_tile_fixture())
 	await _settle()
@@ -922,7 +993,7 @@ func _ready() -> void:
 	# every SHIPPED basket fits whole, which would otherwise leave this path rendered by nothing. The
 	# `Forage` button must still be on screen — that is what the cap protects, at any basket length.
 	_hud.show_tile_selection(_overlong_basket_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_overlong_basket_tile_fixture())
 	await _settle()
@@ -949,7 +1020,7 @@ func _ready() -> void:
 	# The FIRST compose settles the source key; the policy and count must be set after it, because a
 	# source change re-seeds both from the band's standing assignment and would overwrite them.
 	_compose_forage(_food_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_count(0)
 	_compose_forage(_food_tile_fixture())
 	await _settle()
@@ -957,8 +1028,8 @@ func _ready() -> void:
 	var unstaffed_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Forage")
 	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
 		unstaffed_btn != null and unstaffed_btn.disabled)
-	_assert_hud("…and the forecast drops the 'then' promise it cannot keep",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, "Preparing:"))
+	_assert_hud("…and the deal drops the sequence it cannot promise at zero crew",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
 	_assert_hud("…while still showing what the tile would pay once prepared",
 		_has_label_containing(_hud._drawercompose._compose_sheet, UNSTAFFED_COPY_NEEDLE))
 
@@ -970,7 +1041,7 @@ func _ready() -> void:
 	_hud._compose.reset_forage_source()
 	_hud.show_tile_selection(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_count(0)
 	_compose_forage(_food_tile_fixture())
 	await _settle()
@@ -1030,7 +1101,7 @@ func _ready() -> void:
 		% _hud.subject_body.get_combined_minimum_size().y)
 	_hud.show_tile_selection(_four_species_committed_tile_fixture())
 	_compose_forage(_four_species_committed_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_compose_forage(_four_species_committed_tile_fixture())
 	await _settle()
 	await _save("forage_crop_committed")
@@ -1101,7 +1172,7 @@ func _ready() -> void:
 	_hud._compose.reset_forage_source()
 	_hud._compose.set_forage_count(1)
 
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud.show_tile_selection(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
 	await _settle()
@@ -1123,20 +1194,29 @@ func _ready() -> void:
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": 0.0,
 	}])
+	# **THE TILE HAS TO BE A TENDED ONE NOW** (issue #442). Only ONE improvement is ever offered — the
+	# source's next rung — so on a WILD patch with Cultivation known, Cultivate is what the control
+	# offers and Sow is not reached at all. A tended patch has its rung-2 built, which makes Sow the
+	# next rung and puts this frame's subject back on screen. That is the change working, not a loss:
+	# the old picker showed all six rungs at once and had to grey four of them to say so.
 	_hud._compose.set_forage_policy("sustain")
-	_hud.show_tile_selection(_food_tile_fixture())
-	_compose_forage(_food_tile_fixture())
+	_hud._compose.set_forage_improvement("")
+	_hud._compose.reset_forage_source()
+	_hud.show_tile_selection(_tended_tile_fixture())
+	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("forage_sow_locked")
-	# THE BLAST-RADIUS GUARD for the collapse. This frame exists to show a NON-composed rung's full
-	# prerequisites — two reasons a player must tell apart, one fixed by practice and one only by moving
-	# — while composing Sustain. Sustain commits nothing, so no crop picker competes for the height and
-	# the collapse must NOT fire here. If this ever reads "locked (2 requirements unmet)", the opt-in has
-	# leaked out of the committing rungs and this frame's whole subject is in a tooltip.
-	_assert_hud("a non-committing compose still spells out a locked rung's prerequisites",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "Seed Selection"))
-	_assert_hud("…and does not collapse it to a one-liner",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
+	# The gated rung still TEACHES IN FULL — the reason is spelled out beneath the unchecked box, which
+	# is the whole point of showing a gated improvement rather than hiding it, and it survived the move
+	# off the picker unchanged.
+	var sow_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
+	_assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
+		sow_box != null and not (sow_box is CheckBox))
+	_assert_hud("…with its unmet prerequisite as the control's OWN text, not an offer above it",
+		sow_box is Label and (sow_box as Label).text.contains("Seed Selection"))
+	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
+	_assert_hud("…above a DONE label for the rung already built",
+		_find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate") is Label)
 
 	# Seed Selection completes → the one-shot feed nudge fires ("Seed Selection learned — The Sow
 	# policy is now available — but only on rich, well-watered ground.").
@@ -1168,7 +1248,7 @@ func _ready() -> void:
 	# while the crop is in the ground (pure investment; there is no standing stand to take a fraction
 	# of), then 2× a tended patch. That asymmetry IS rung 3's bargain.
 	_hud.show_tile_selection(_sowable_tile_fixture())
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_compose_forage(_sowable_tile_fixture())
 	await _settle()
 	await _save("forage_sow")
@@ -1178,7 +1258,7 @@ func _ready() -> void:
 	# legal here and Hazel/Ground Nut join the greyed rows: the two frames side by side are what prove
 	# the gate reads the composed rung's own flag rather than one "can be farmed" bit.
 	_hud.show_tile_selection(_sowable_long_basket_tile_fixture())
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_sowable_long_basket_tile_fixture())
 	await _settle()
@@ -1189,7 +1269,7 @@ func _ready() -> void:
 	# instead shows "Hay Grass 30% · 1.8 hay". The provisions crop beside it (Wild Emmer) keeps its
 	# unchanged "70% · 3.2×" ratio — proof a normal crop's row is untouched.
 	_hud.show_tile_selection(_fodder_basket_tile_fixture())
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_fodder_basket_tile_fixture())
 	await _settle()
@@ -1201,7 +1281,7 @@ func _ready() -> void:
 	# unchanged "70% · 3.2×" ratio — proof a normal crop's row is untouched (twin of the fodder frame).
 	_hud.show_tile_selection(_cash_basket_tile_fixture())
 	_compose_forage(_cash_basket_tile_fixture())   # settle the source key first (it changed)
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_cash_basket_tile_fixture())
 	await _settle()
@@ -1213,7 +1293,7 @@ func _ready() -> void:
 	# beside `forage_crop_picker_cash`, the pair is the visible proof of the whole slice — read both.
 	_hud.show_tile_selection(_cash_variant_basket_tile_fixture())
 	_compose_forage(_cash_variant_basket_tile_fixture())   # settle the source key first (it changed)
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_cash_variant_basket_tile_fixture())
 	await _settle()
@@ -1232,7 +1312,7 @@ func _ready() -> void:
 	# calories, which is the cost its trade clause is the benefit of.
 	_hud.show_tile_selection(_cash_basket_tile_fixture())
 	_compose_forage(_cash_basket_tile_fixture())   # settle the source key first (it changed)
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_hud._compose.set_forage_species("")
 	_compose_forage(_cash_basket_tile_fixture())
 	await _settle()
@@ -1258,7 +1338,7 @@ func _ready() -> void:
 	# prep line is GONE (the forecast now reads the Sustain harvest, +/turn). This is the fix for the panel
 	# lying: Cultivate used to stay enabled and keep paying the low prep dip on a finished patch.
 	_hud.show_tile_selection(_tended_tile_fixture())
-	_hud._compose.set_forage_policy("cultivate")
+	_hud._compose.set_forage_improvement("cultivate")
 	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_done")
@@ -1267,7 +1347,7 @@ func _ready() -> void:
 	# Field — ♻ Sustain-forage it to harvest", mirroring the finished-patch case one rung up (Cultivate is
 	# greyed here too — the ground is both tended AND a Field).
 	_hud.show_tile_selection(_field_tile_fixture())
-	_hud._compose.set_forage_policy("sow")
+	_hud._compose.set_forage_improvement("sow")
 	_compose_forage(_field_tile_fixture())
 	await _settle()
 	await _save("forage_sow_done")
@@ -1358,58 +1438,282 @@ func _ready() -> void:
 	_hud._compose.set_forage_policy("sustain")
 	_hud._compose.set_forage_species("")
 
-	# ---- THE SHEET RENDERS THE POLICY THE BAND IS ON (issue #420) --------------------------------
-	# State 6b-cultivate-paused — THE PRIMARY FRAME. This is the case the sim deliberately leaves
-	# alone: a patch that drops out of Thriving mid-build KEEPS its standing Cultivate assignment and
-	# merely pauses accrual (`.claude/rules/core_sim/cultivation.md` — "neither lost nor silently
-	# switched"). The sheet has to say the same thing: 🌱 Cultivate renders SELECTED **and** GATED,
-	# with the ease-off-and-regrow remedy under it, and is NOT repainted as Sustain. Repainting it
-	# claimed the band had been switched, and every number below (the rung faces, the max-useful
-	# ceiling, the stepper cap) was then computed for Sustain while the sim worked the patch at the
-	# Cultivate prep dip. Contrast `forage_cultivate_stressed` above: the SAME gated rung on the SAME
-	# phase, but with no standing assignment — there the fallback to Sustain is still correct.
+	# ---- THE IMPROVEMENT CONTROL: three states, one axis (issue #442 §3) ------------------------
+	# State 442-cultivate-running — the RUNNING state. A patch with a standing Cultivate improvement
+	# renders a CHECKED box carrying the build meter, with the stance row above it untouched. The stance
+	# is Sustain here; the frame below it says Deplete, and the two are equally legal.
 	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
+	_hud._compose.reset_forage_source()
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	# CEILING-BOUND ON PURPOSE, and it is what makes the frame beneath this one legible. Both terms of
+	# the deal are `min(crew x per_worker, ceiling)`, so at a small crew LABOR binds and every stance
+	# quotes the same take — the two frames would then differ only in which rung is lit. Saturating the
+	# patch puts the CEILING in charge, which is the term the stance actually moves.
+	_hud._compose.set_forage_count(IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("improvement_running_plant")
+	var sustain_deal := _label_text_containing(
+		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+	var running_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
+	_assert_hud("a running Cultivate renders a CHECKED improvement box",
+		running_box is CheckBox and (running_box as CheckBox).button_pressed)
+	_assert_hud("…carrying the build meter the sim reports (60%)",
+		_improvement_face(_hud._drawercompose._compose_sheet, "cultivate").contains("60%"))
+	# READ OFF THE RENDERED PICKER, not off the compose model: the model is the input this frame sets,
+	# so asserting it back proves only that the harness can write a field. What the frame claims is that
+	# the stance ROW still shows Sustain lit beside a running build.
+	_assert_hud("…and the stance row is untouched, still on the band's own Sustain",
+		_rung_is_selected(_find_policy_rung(_hud._drawercompose._compose_sheet,
+			SourceForecast.LABOR_POLICY_SUSTAIN)))
+	# THREE TERMS, COUNTED. Testing that the middle term appears somewhere in the sheet says nothing
+	# about the other two — the two-term line this replaced would have satisfied it just as well once
+	# the words changed. The deal is `A → B while building → C`, so the line must carry BOTH arrows.
+	_assert_hud("…and the deal states all THREE terms, the baseline the old line could not show",
+		sustain_deal.count(IMPROVEMENT_DEAL_TERM_SEPARATOR) == IMPROVEMENT_DEAL_SEPARATORS)
+	# **THE RUNNING BOX IS LIVE, AND IS NEVER GATED.** Unchecking abandons the build, and the abandon
+	# path asks for nothing — no knowledge, no ceiling, no site, no Thriving — because abandoning a
+	# STALLED build is the case it exists for. A disabled box here would be the regression the split
+	# introduced by accident (under the old model, picking another policy always walked a build away).
+	_assert_hud("a running improvement's box is LIVE — unchecking is always allowed",
+		running_box is CheckBox and not (running_box as CheckBox).disabled)
+
+	# State 442-deplete-beside-cultivate — **THE FRAME THE WHOLE TWO-AXIS MODEL EXISTS TO MAKE SAYABLE.**
+	# The same running Cultivate with a DEPLETE stance: legal, un-gated, and self-defeating through the
+	# ecology rather than through a rule. The dip rides Deplete's LARGER ceiling, so the "while building"
+	# term is strictly bigger than the Sustain frame's — which is exactly the trap: you take more now and
+	# drive the patch out of Thriving, stalling your own meter.
+	_hud._compose.set_forage_policy("deplete")
+	_hud._compose.set_forage_count(IMPROVEMENT_STANCE_FRAME_FORAGERS)
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("improvement_deplete_while_building")
+	var deplete_deal := _label_text_containing(
+		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+	print("ui_preview: deal  sustain=%s  deplete=%s" % [sustain_deal, deplete_deal])
+	_assert_hud("…and the RENDERED deal moves with the stance, not just the model behind it",
+		sustain_deal != "" and deplete_deal != "" and sustain_deal != deplete_deal)
+	# BOTH AXES, READ OFF THEIR OWN CONTROLS. This asserted the two compose-model fields the frame had
+	# just written, which is true whatever the sheet rendered — and "no gate, no repaint" is precisely a
+	# claim about the rendering: the Deplete rung must be lit AND live, with the Cultivate box still
+	# checked beside it.
+	var deplete_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "deplete")
+	var building_box := _find_improvement_control(_hud._drawercompose._compose_sheet,
+		SourceForecast.IMPROVEMENT_CULTIVATE)
+	_assert_hud("Deplete stands beside a running Cultivate — no gate, no repaint",
+		deplete_rung != null and not deplete_rung.disabled and _rung_is_selected(deplete_rung)
+		and building_box is CheckBox and (building_box as CheckBox).button_pressed)
+	var deplete_dip := SourceForecast.improvement_forecast(_seeded_food_tile(),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		"deplete", "cultivate")
+	var sustain_dip := SourceForecast.improvement_forecast(_seeded_food_tile(),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		"sustain", "cultivate")
+	_assert_hud("…and the dip rides the SELECTED stance's ceiling, not a hardcoded Sustain",
+		float(deplete_dip["preparing"]) > float(sustain_dip["preparing"]))
+
+	# State 442-build-crew — **THE SHEET AND THE SIM, ON ONE NUMBER.** `forecast_inputs` used to take a
+	# STANCE ONLY, so while a build ran the sheet read the UNDIPPED ceiling and three surfaces went wrong
+	# together: the stepper let the player dial workers the sim reports idle, the green line quoted a take
+	# the sim does not pay, and the overdraw verdict compared an undipped take against the Sustain bar.
+	# The two cap paths are documented as twins that "can never gate differently" — and they could not,
+	# because they were wrong in the SAME way, agreeing with each other while contradicting the sim.
+	# So the control here is the SIM's answer: `workers_needed`, read back off the very assignment the
+	# sheet is composed over.
+	_hud._compose.set_forage_policy("sustain")
+	_hud._compose.set_forage_count(BUILD_CREW_DIALED_FORAGERS)
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("improvement_build_crew")
+	var sim_workers_needed := int((HudBandLaborState.labor_assignments_of(
+		_hud._band_labor.player_band())[0] as Dictionary)["workers_needed"])
+	var rendered_cap := _stepper_value(_hud._drawercompose._compose_sheet)
+	print("ui_preview: build crew  sim workers_needed=%d  rendered cap=%d" % [
+		sim_workers_needed, rendered_cap])
+	# ONE equality, BOTH halves of the fix. Without the DIP the cap is ceil(0.96/0.32) = 3; without the
+	# CREW FLOOR it is ceil(0.24/0.32) = 1; only the pair lands on the sim's 2.
+	_assert_hud("the compose stepper caps at the crew the SIM asks for (%d), not at an undipped ceiling"
+		% sim_workers_needed, rendered_cap == sim_workers_needed)
+	# THE WORKED-ROW TWIN, on the SAME forecast. `source_worker_cap_state` is the Band panel's gate, and
+	# the two are only genuinely one ceiling if it goes dead at exactly that count — asserted on either
+	# side of it so "always false" cannot pass.
+	var build_forecast := SourceForecast.forecast_inputs(_seeded_food_tile(),
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		"sustain", SourceForecast.IMPROVEMENT_CULTIVATE)
+	var build_floor := SourceForecast.plant_crew_floor(_seeded_food_tile(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE)
+	var row_below: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
+		sim_workers_needed - 1, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+	var row_at: bool = bool(SourceForecast.source_worker_cap_state(build_forecast,
+		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
+	_assert_hud("…and the WORK BOARD's `+` gates at the same count — live below it, dead at it",
+		row_below and not row_at)
+	# THE GREEN LINE AND THE DEAL'S MIDDLE TERM, both read off the RENDERED sheet. They are two different
+	# producers over one patch and one crew; the fix is only real if they now carry the same figure —
+	# and it is the sim's `min(w × per_worker, ceiling × dip)`, not the undipped labour take.
+	var build_green := _label_text_containing(
+		_hud._drawercompose._compose_sheet, SourceForecast.YIELD_TOOLTIP_RENEWABLE)
+	var build_deal := _label_text_containing(
+		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+	print("ui_preview: build crew  green=%s  deal=%s" % [build_green, build_deal])
+	_assert_hud("the green forecast line quotes the DIPPED take the sim pays (%s)"
+		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE))
+	_assert_hud("…and the deal's 'while building' term is the SAME number, not a second answer",
+		build_deal.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % BUILD_CREW_DIPPED_TAKE)
+		and build_deal.contains(IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
+
+	# THE ABANDON, plant side — driven here rather than on the frame above because committing CLOSES
+	# the sheet and writes a pending assign, which the Deplete frame beside it reads.
+	await _assert_abandon_emits(SourceForecast.LABOR_KIND_FORAGE, "cultivate",
+		"abandon_improvement %d forage %d %d" % [HudConst.PLAYER_FACTION_ID,
+			int(_food_tile_fixture()["x"]), int(_food_tile_fixture()["y"])])
+
+	# State 442-cultivate-paused — the PAUSED build. The sim deliberately leaves this alone: a patch that
+	# drops out of Thriving mid-build KEEPS its improvement and merely pauses accrual
+	# (`.claude/rules/core_sim/cultivation.md` — "neither lost nor silently switched"). The control has to
+	# say the same thing: the box stays CHECKED and a WARN line states the pause, its cause and the
+	# ease-off remedy. This is the `_tame_stalled_hint` treatment, now on the plant web too.
+	_hud._compose.set_forage_policy("sustain")
 	_hud._compose.reset_forage_source()
 	_hud.show_tile_selection(_stressed_tile_fixture())
 	_compose_forage(_stressed_tile_fixture())
 	await _settle()
-	await _save("forage_cultivate_paused")
-	var paused_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "cultivate")
-	_assert_hud("a paused Cultivate build still renders as the composed rung",
-		paused_rung != null and _rung_is_selected(paused_rung))
-	_assert_hud("…and renders GATED, so clearing it is the player's act",
-		paused_rung != null and paused_rung.disabled)
-	_assert_hud("…with the remedy that clears it spelled out on the card",
-		_has_label_containing(_hud._drawercompose._compose_sheet, PAUSED_CULTIVATE_REMEDY_NEEDLE))
+	await _save("improvement_paused_plant")
+	var paused_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
+	_assert_hud("a paused build keeps its box CHECKED — progress is not lost",
+		paused_box is CheckBox and (paused_box as CheckBox).button_pressed)
+	_assert_hud("…and the WARN line names the pause, its cause and the ease-off remedy",
+		_has_label_containing(_hud._drawercompose._compose_sheet, IMPROVEMENT_PAUSED_NEEDLE))
+	# **THE SHARPEST CASE FOR THE UNGATED RULE.** A STALLED build is exactly when a player reaches for
+	# the abandon, so a paused box must stay LIVE — and this is the one frame where greying it would
+	# look defensible (the source has left Thriving, which is what gates the build's own START). The
+	# notes here are a loud WARN line, so this also pins that `notes` do not disable a RUNNING control
+	# the way they disable an OFFERED one.
+	_assert_hud("a PAUSED build's box is still live — abandoning a stalled build is the whole point",
+		paused_box is CheckBox and not (paused_box as CheckBox).disabled)
 
-	# State 6b-cultivate-done-standing — the DEFENSIVE twin: the same standing Cultivate on a patch
-	# whose build has FINISHED. `RungGates.forage_gates` retires the rung ("Already a Tended Patch — ♻
-	# Sustain-forage it to harvest") and it still renders selected + gated, so the sheet, the stepper
-	# and the `Now N` header all speak about ONE policy — the "Now 2 over a cap of 1" incoherence was
-	# two numbers computed for two different rungs. The sim retires a completed rung onto Sustain, so
-	# this state should not arise in a live game; it guards the client half regardless.
-	var tended_tile := _tended_tile_fixture()
-	var tended_band := _cultivating_forage_band_fixture(int(tended_tile["x"]), int(tended_tile["y"]))
-	var tended_crew := int((tended_band["labor_assignments"][0] as Dictionary)["workers"])
-	_hud._band_labor._player_band = tended_band
+	# State 442-cultivate-done — the DONE state. A finished patch's rung becomes a static LABEL (no box
+	# to uncheck, nothing to clear), and the NEXT rung's checkbox renders beneath it. This is the state
+	# that retired #420 outright: a label cannot be selected-and-gated.
+	# SOWABLE ground, not the reference patch. The claim below is that the ladder CONTINUES beneath a
+	# done label — which needs a next rung that is genuinely on offer. `_tended_tile_fixture` is built
+	# on the reference tile, whose `sow_site_refusal` is "too_dry", so Sow there can only ever be
+	# gated: the assertion would be testing the gated shape while claiming to test the offered one.
+	var tended_tile := _sowable_tile_fixture()
+	# `patch_`-PREFIXED, like every other key on a tile_info dict — the unprefixed spellings are the
+	# RAW wire patch's, and setting those here leaves `improvement_is_done` reading nothing at all.
+	tended_tile["patch_cultivation_progress"] = 1.0
+	tended_tile["patch_is_cultivated"] = true
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture(
+		int(tended_tile["x"]), int(tended_tile["y"]))
 	_hud._compose.reset_forage_source()
 	_hud.show_tile_selection(tended_tile)
 	_compose_forage(tended_tile)
 	await _settle()
-	await _save("forage_cultivate_done_standing")
-	var done_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "cultivate")
-	_assert_hud("a finished patch's standing Cultivate still renders as the composed rung",
-		done_rung != null and _rung_is_selected(done_rung))
-	_assert_hud("…and renders GATED with the harvest remedy",
-		done_rung != null and done_rung.disabled
-		and _has_label_containing(_hud._drawercompose._compose_sheet, TENDED_CULTIVATE_REMEDY_NEEDLE))
-	_assert_hud("…and the dialed crew and the `Now N` header agree, being one rung's numbers",
-		_hud._compose.forage_count() == tended_crew
-		and _has_label_containing(_hud._drawercompose._compose_sheet,
-			HudComposeVocab.COMPOSE_NOW_STAFFED_FORMAT % [tended_crew, ""]))
+	await _save("improvement_done_plant")
+	var done_label := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
+	_assert_hud("a finished Cultivate is a static LABEL, not a checkbox",
+		done_label is Label and not (done_label is CheckBox))
+	_assert_hud("…naming the state the build left the patch in",
+		_improvement_face(_hud._drawercompose._compose_sheet, "cultivate").contains(
+			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
+	# The ladder CONTINUES: an offerable next rung is a live checkbox, which is also what separates the
+	# done state from a dead end. A gated next rung would be a Label — see `forage_sow_locked` — so
+	# this assertion only means something on ground that will take seed.
+	var next_rung := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
+	_assert_hud("…and the NEXT rung's LIVE checkbox sits beneath it",
+		next_rung is CheckBox and not (next_rung as CheckBox).disabled)
+
+	# State 442-offered-gated — the OFFERED state with an unmet prerequisite. A gated improvement is
+	# SHOWN, UNCHECKED and EXPLAINED, exactly as a gated rung always was: discovering the rung exists and
+	# what it costs to unlock must not require already having unlocked it.
+	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._compose.reset_forage_source()
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 0.35, "herding": 1.0, "seed_selection": 0.0, "penning": 0.0,
+	}])
+	_hud.show_tile_selection(_food_tile_fixture())
+	_compose_forage(_food_tile_fixture())
+	await _settle()
+	await _save("improvement_offered_gated")
+	var gated_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
+	# **A GATED RUNG IS A LABEL, NOT A DISABLED CHECKBOX** — the control's SHAPE says whether this is a
+	# choice or a fact, and an unmet prerequisite is a fact. The greyed-checkbox form this replaced put
+	# an offer the player cannot accept ("Cultivate this patch · then 0.04 food …") directly above the
+	# sentence explaining that they cannot accept it.
+	_assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
+		gated_box != null)
+	_assert_hud("…as a LABEL rather than a checkbox, because it is a state and not a choice",
+		not (gated_box is CheckBox))
+	_assert_hud("…whose own text is the REASON, so nothing offers what cannot be taken",
+		gated_box is Label and (gated_box as Label).text.contains(CULTIVATION_LOCKED_NEEDLE))
+	_assert_hud("…and the offer wording is gone entirely, not merely greyed",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, GATED_OFFER_NEEDLE))
+	# THE CROP LIST IS PART OF COMMITTING, so a refused commitment offers none. Shipped once with the
+	# picker rendered under the disabled box: four live, clickable crop rows beneath a checkbox whose
+	# own note read "Your people know Cultivation 0%" — the card refusing the act and inviting the
+	# player to configure it in the same breath. The gate NOTE stays (it answers "why not?"); the
+	# CONFIGURATION goes. Found in play, not by the harness, which is why the assertion exists now.
+	_assert_hud("…and offers no crop to commit to, committing being what is refused",
+		_find_crop_row(_hud._drawercompose._compose_sheet, GATED_CROP_NEEDLE) == null)
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
+	}])
+
+	# ---- THE THIRD METER STATE: BUILDING vs REVERTING (issue #442) ------------------------------
+	# **"Preparing 99%" WAS THE MOST MISLEADING LINE ON THE CARD.** A meter that is bleeding back toward
+	# wild wore the build's own word in the build's own neutral ink, so gaining and losing read
+	# identically — the two differ only in which DIRECTION the number is moving, which a percentage
+	# cannot show. Judged as an A/B on ONE patch at ONE meter value, because the claim is precisely that
+	# the same number reads differently depending on whether a crew is on it: the only thing that moves
+	# between these two frames is who the player band is working.
+	var meter_tile := _food_tile_fixture()
+	meter_tile["patch_cultivation_progress"] = REVERTING_METER_PROGRESS
+	#   (a) BUILDING — the band's own Cultivate assignment is on this tile. Neutral ink, build verb.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture()
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_hud.clear_selection()
+	_hud.show_tile_selection(meter_tile)
+	await _settle()
+	await _save("tile_meter_building")
+	var building_row := _hud.tile_detail.text
+	# **WORD AND TINT IN ONE NEEDLE.** `detail_bbcode` renders a row's value as
+	# `[color=#HEX]<value>[/color]`, so asserting the whole tinted cell pins both halves at once — and it
+	# has to, because the old row was not merely mis-WORDED, it was mis-COLOURED: a bleeding meter wore
+	# the neutral ink of a build one turn from done. A bare hex search would match any INK row on the
+	# card; this one can only be satisfied by the cultivation value itself.
+	_assert_hud("a meter a crew IS building reads as a BUILD, in neutral ink",
+		building_row.contains(_meter_value_markup(
+			HudFloraVocab.CULTIVATION_PREPARING_LABEL, HudStyle.INK_HEX)))
+	#   (b) REVERTING — the SAME patch at the SAME percentage with nobody building it. The band is
+	#   working a different tile, so the patch is improved, unworked and bleeding.
+	_hud._band_labor._player_band = _cultivating_forage_band_fixture(
+		METER_AWAY_TILE_X, int(meter_tile["y"]))
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_hud.clear_selection()
+	_hud.show_tile_selection(meter_tile)
+	await _settle()
+	await _save("tile_meter_reverting")
+	var reverting_row := _hud.tile_detail.text
+	print("ui_preview: meter rows  building=%s  reverting=%s" % [
+		_detail_excerpt(building_row, CULTIVATION_ROW_KEY),
+		_detail_excerpt(reverting_row, CULTIVATION_ROW_KEY)])
+	_assert_hud("the SAME meter with nobody on it reads as a LOSS, in WARN ink — not a build",
+		reverting_row.contains(_meter_value_markup(
+			HudFloraVocab.RUNG_REVERTING_LABEL, HudStyle.WARN_HEX)))
+	# THE NEGATIVE, with the positive above it as its companion (a whole-text search alone would also
+	# pass on a card that rendered no cultivation row at all): the build's word must be REPLACED, not
+	# merely joined — a row reading both would be the same ambiguity in longer form.
+	_assert_hud("…and the build's own word is GONE from the row, not merely joined by another",
+		not reverting_row.contains(HudFloraVocab.CULTIVATION_PREPARING_LABEL))
 
 	# Restore the unassigned near band + a plain Sustain compose for the range states below.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
+	_hud._band_labor._player_bands = []
 	_hud._compose.reset_forage_source()
 	_hud._compose.set_forage_count(1)
 	_hud._compose.set_forage_policy("sustain")
@@ -1507,7 +1811,7 @@ func _ready() -> void:
 
 	# State 3 — a huntable herd selected on a food tile, WITHIN the band's hunt reach: the "Assign
 	# hunters" controls (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
-	# sustain/surplus/deplete/eradicate policy picker, and the local "Assign Local Hunt" button). A
+	# sustain/surplus/deplete/eradicate policy picker, and the local "Hunt Here" button). A
 	# Thriving herd shows a neutral ecology readout in the drawer.
 	# Push both fixtures as the known-herd roster so the open-ended Attack/Defense bars have a
 	# reference to normalize against (Elevation-style) — the mammoth holds the roster max.
@@ -1676,33 +1980,53 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_ceiling_pastoral")
 
-	# ---- Corral: the hunt INVESTMENT rung (gated, then enabled) ----------------------------------
-	# State 3c-corral-locked-both — BOTH halves of the Corral gate unmet: the MULTI-reason layout — a
-	# "🐄 Corral needs:" header with one indented "· <reason>" bullet per unmet prerequisite.
+	# ---- Corral: the hunt INVESTMENT rung, gated then ungated -------------------------------------
+	# THE PAIR IS ONE A/B: the same FULLY TAMED herd, and the only thing that moves between the two
+	# frames is the faction's Penning. That is the whole claim — Corral is gated on PENNING and on
+	# nothing else — and it is why Herding is fully known in both.
 	#
-	# THE §4.3 GATE RESHUFFLE IS WHAT THIS FRAME NOW GUARDS. Corral is gated on **PENNING** (35%), NOT
-	# on Herding — Herding gates Tame alone. The two reasons are also deliberately DIFFERENT KINDS:
-	#   · a KNOWLEDGE reason — "Your people know Penning 35%", fixed by PRACTICE (♻ Sustain-hunt a
-	#     tamed herd), and whose meter lives in the top-bar knowledge strip.
-	#   · a SOURCE reason — "This herd is 40% tamed", fixed by the 🐾 Tame VERB, and whose meter lives
-	#     in this herd's own drawer.
-	# Herding is fully known here precisely so the frame proves Corral is NOT keyed to it.
+	# **THE FIXTURE HAD TO CHANGE, not the description** (issue #442). These two frames used to stage a
+	# 40%-tamed herd and document a gated Corral wearing its "This herd is 40% tamed" SOURCE reason; on
+	# a herd that is not yet tamed the control now offers 🐾 Tame — the next rung — so no Corral gate
+	# rendered in either frame and both described a subject they no longer showed. A gated Corral needs
+	# Corral to BE the next rung, which needs Tame retired, which needs the herd fully tamed. That is
+	# also why the SOURCE half of the gate is no longer reachable in this control at all: the moment it
+	# would apply, Tame is what is offered instead, and the remedy is a checkbox rather than a sentence.
+	#
+	# State 3c-corral-gated — the KNOWLEDGE half, which IS reachable: the herd is ready and the people
+	# are not. 🐄 Corral renders as a Label whose own text is the reason — "Your people know Penning
+	# 35% — ♻ Sustain-hunt a tamed herd to learn it" — beneath the ◎ Pastoral DONE label for the rung
+	# this herd has already climbed. The two meters that reason bridges are the subject of
+	# `two_meter_split` below.
 	_hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.35,
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": CORRAL_GATE_PENNING,
 	}])
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
-	await _save("herd_corral_locked_both")
+	await _save("herd_corral_gated")
+	# ASKED OF THE CONTROL, never of the sheet at large: "Penning" also appears in a hint's craft clause
+	# and in the top-bar strip, so a whole-sheet text search proves nothing about the gate (it is
+	# exactly how the `two_meter_split` assertion below used to pass for the wrong reason).
+	var corral_gated := _find_improvement_control(_hud._drawercompose._compose_sheet,
+		SourceForecast.IMPROVEMENT_CORRAL)
+	_assert_hud("an unaffordable Corral is SHOWN as a state, not offered as a choice",
+		corral_gated is Label and not (corral_gated is CheckBox))
+	_assert_hud("…and the reason on it is PENNING at its live percent, never the fully-known Herding",
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
+			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
+				HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
+					HudFormat.progress_percent(CORRAL_GATE_PENNING),
+					FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)]])
+	# …and the rung it has already climbed reads as the STATE it is, above the one it cannot start.
+	_assert_hud("…beneath the DONE label for the rung this herd has climbed",
+		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME).contains(
+			String(HudComposeVocab.IMPROVEMENT_DONE_LABELS[HudConst.LABOR_POLICY_TAME])))
 
-	# State 3c-corral-locked — the SAME herd (domestication 0.4) once Penning is fully known: only the
-	# SOURCE half of the gate remains, so 🐄 Corral greys with the single compact one-liner
-	# "🐄 Corral — This herd is 40% tamed — 🐾 Tame it to finish".
-	#
-	# That remedy is the single most load-bearing copy fix in this slice. It used to read "♻ Sustain-hunt
-	# this Thriving herd to finish taming it" — the exact hidden rule this whole arc exists to kill.
-	# Sustain has not tamed anything since slice 3a; the Tame VERB does.
+	# State 3c-corral-ungated — the SAME herd once Penning is fully known. Nothing about the ANIMAL
+	# changed, so if the box does not go live the gate is keyed to something it should not be.
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 1.0,
 	}])
@@ -1710,7 +2034,27 @@ func _ready() -> void:
 	_hud.show_herd_selection(_corral_locked_herd_fixture())
 	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
-	await _save("herd_corral_locked")
+	await _save("herd_corral_ungated")
+	var corral_ungated := _find_improvement_control(_hud._drawercompose._compose_sheet,
+		SourceForecast.IMPROVEMENT_CORRAL)
+	_assert_hud("Penning alone unlocks Corral — the same herd now offers it as a live choice",
+		corral_ungated is CheckBox and not (corral_ungated as CheckBox).disabled
+		and not (corral_ungated as CheckBox).button_pressed)
+	# **AN UNTICKED BOX HAS TO BE THERE TO BE TICKED.** Godot's stock `unchecked` art is a FILLED
+	# near-black square drawn for a LIGHT surface, so on this console it reserved its width and painted
+	# nothing: an offer that read as a line of prose with no control on it. Measure the thing that was
+	# actually wrong — CONTRAST against the panel — rather than the presence of an override: the first
+	# cut of the fix set `icon_normal_color`, which a CheckBox ignores entirely, and an override-shaped
+	# assertion would have passed on it.
+	_assert_hud("an offered rung's box is VISIBLE against the panel, not black on black",
+		_checkbox_indicator_contrast(corral_ungated, "unchecked")
+		>= CHECKBOX_INDICATOR_MIN_CONTRAST)
+	# The ticked half needs a DIFFERENT question asked of it: the stock `checked` art is a light chip and
+	# already clears the contrast bar, so re-using that measure here would pass with the fix removed —
+	# a vacuous assertion. What the designer asked for is that a running build be unmistakable, so pin
+	# the HUE: ticked reads in `SIGNAL`, the colour this HUD uses for nothing but live state.
+	_assert_hud("…and the ticked art reads in SIGNAL, so a running build is unmistakably running",
+		_checkbox_tick_colour_gap(corral_ungated) <= CHECKBOX_TICK_COLOUR_TOLERANCE)
 
 	# State 3d-corral — a fully-domesticated, not-yet-penned herd with the pen 40% built: 🐄 Corral is
 	# ENABLED and selected, the forecast states the deal ("Preparing: +0.23 /turn → then +1.50 /turn
@@ -1724,7 +2068,7 @@ func _ready() -> void:
 	# running cost rather than saying "before feed".
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_corral_ready_herd_fixture())
-	_compose_herd(_corral_ready_herd_fixture(), COMPOSE_COUNT_UNSET, "corral")
+	_compose_herd(_corral_ready_herd_fixture(), COMPOSE_COUNT_UNSET, "", "corral")
 	await _settle()
 	await _save("herd_corral")
 
@@ -1754,13 +2098,18 @@ func _ready() -> void:
 	# one-shot, then re-open so it is consumed against the COMPOSED Corral. Arming before the first open
 	# spends the one-shot on the re-seeded rung instead, and dialing an explicit count would overwrite
 	# whatever auto-max produced — the frame must show auto-max REACHING the cap, not advertising it.
-	_compose_herd(_under_herded_corral_fixture(), COMPOSE_COUNT_UNSET, "corral")
+	_compose_herd(_under_herded_corral_fixture(), COMPOSE_COUNT_UNSET, "", "corral")
 	_hud._compose.arm_hunt_autofill()
 	_compose_herd(_under_herded_corral_fixture())
 	await _settle()
 	await _save("herd_corral_under_herded")
-	_assert_hud("auto-max fills the corral crew to the herder-deficit cap of 2, proving it is reachable",
-		_hud._compose.hunt_count() == UNDER_HERDED_CORRAL_HERDERS_NEEDED)
+	# The claim is REACHABILITY, and it is the herder FLOOR that guarantees it: auto-max fills to the
+	# cap, and the cap is never below the crew the sim demands. It is no longer EQUAL to that crew,
+	# because the cap is now the SELECTED STANCE's take-useful raised to the floor (issue #442) rather
+	# than a build verb's 1-worker prep count raised to it — a crew building a pen still hunts, and the
+	# stance says how hard. Asserting equality would pin the old overload's arithmetic.
+	_assert_hud("auto-max fills the corral crew to at least the herder deficit, proving it is reachable",
+		_hud._compose.hunt_count() >= UNDER_HERDED_CORRAL_HERDERS_NEEDED)
 	# Restore the reference band (4 herders on game_deer_07) for everything downstream.
 	_hud._band_labor._player_band = _band_fixture()
 
@@ -1770,7 +2119,7 @@ func _ready() -> void:
 	# amber with "⚠ Too depleted to pen", never suppress the zero as if it were missing data.
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_depleted_corral_herd_fixture())
-	_compose_herd(_depleted_corral_herd_fixture(), COMPOSE_COUNT_UNSET, "corral")
+	_compose_herd(_depleted_corral_herd_fixture(), COMPOSE_COUNT_UNSET, "", "corral")
 	await _settle()
 	await _save("herd_corral_depleted")
 
@@ -1781,26 +2130,51 @@ func _ready() -> void:
 	#   • FACTION KNOWLEDGE — the top-bar strip, prefixed "⚒ Your people know:". Herding ✔ known,
 	#     Penning still learning at 45%. This is your PEOPLE's craft: faction-wide, permanent, earned
 	#     by practice. It appears NOWHERE else — never in the drawer below.
-	#   • PER-SOURCE PROGRESS — this herd's own "Husbandry: Domesticating 40%" row, down in its
-	#     drawer. Local to THIS animal, and it decays if abandoned.
+	#   • PER-SOURCE PROGRESS — this herd's own "Husbandry: 🐄 Domesticated" row, down in its drawer.
+	#     Local to THIS animal, and it decays if abandoned.
 	# The bridge between them is the gated 🐄 Corral's reason line, which names the knowledge, its live
 	# percent, and the practice that fills it — the one line that teaches the whole ladder.
+	#
+	# **THE HERD IS FULLY TAMED, and it has to be** (issue #442). The frame staged a 40%-tamed herd
+	# while the bridge line was a rung of the policy picker; the improvement control offers the NEXT
+	# rung, so on a part-tamed herd it offers 🐾 Tame and no gate reason renders at all — the frame kept
+	# its subject in its comment and lost it on screen. Retiring Tame is what makes Corral the rung on
+	# offer, and a Corral gated on Penning is the only shape this bridge has. It also sharpens the
+	# contrast the frame exists for: the ANIMAL is ready and the PEOPLE are not, so the two meters are
+	# unmistakably about different things.
 	_hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": 0.45,
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12,
+		"penning": TWO_METER_PENNING,
 	}])
 	_hud._compose.reset_hunt_source()
-	_hud.show_herd_selection(_taming_herd_fixture())
-	_compose_herd(_taming_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
+	_hud.show_herd_selection(_fully_tamed_herd_fixture())
+	_compose_herd(_fully_tamed_herd_fixture())
 	await _settle()
 	await _save("two_meter_split")
-	# THE HERD-SIDE BLAST-RADIUS GUARD. `HudWidgets.build_policy_picker` is SHARED with the hunt/expedition pickers,
-	# and this frame's whole subject is the gated Corral's reason line — naming the knowledge, its live
-	# percent and the practice that fills it — while TAME is the composed rung. The collapse is opt-in and
-	# only the forage compose opts in, so the hunt picker must be byte-for-byte unchanged.
-	_assert_hud("the hunt picker still spells out the gated Corral's reason (collapse is forage-only)",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "Penning"))
-	_assert_hud("…and collapses nothing on the herd side",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
+	# THE TWO-METER SPLIT'S OWN INVARIANT, asked of the three SPECIFIC controls that carry it. The pair
+	# that stood here searched the WHOLE SHEET for the word "Penning" and was matching the Sustain
+	# HINT's craft clause, not the gate reason it claimed to test — the shape this sweep exists to
+	# remove. Each half below names its own surface, so a regression says which one moved.
+	_assert_hud("the FACTION's craft lives in the top-bar strip",
+		_hud.intensification_label.visible
+		and _hud.intensification_label.text.contains(
+			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+	_assert_hud("…and THIS HERD's own progress lives in its own drawer's Husbandry row",
+		_has_label_containing(_hud.occupant_detail,
+			DetailFormat.husbandry_label(DetailFormat.HUSBANDRY_PROGRESS_COMPLETE)))
+	_assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
+		not _has_label_containing(_hud.occupant_detail,
+			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
+	# THE BRIDGE — the one line where the two meet, and the ONE place a knowledge percent reaches the
+	# sheet. Read off the Corral control itself, at its live percent, so neither the hint text nor the
+	# top-bar strip can satisfy it.
+	_assert_hud("…and the gated Corral's own text is the bridge: the craft, its live percent, the practice",
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
+			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
+				HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
+					HudFormat.progress_percent(TWO_METER_PENNING),
+					FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)]])
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Deplete/Eradicate/Corral, ENABLED (Herding is known) and selected on a
@@ -1817,7 +2191,7 @@ func _ready() -> void:
 	# remedy (ease off — the opposite of "work harder").
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_taming_stalled_herd_fixture())
-	_compose_herd(_taming_stalled_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
+	_compose_herd(_taming_stalled_herd_fixture(), COMPOSE_COUNT_UNSET, "", "tame")
 	await _settle()
 	await _save("herd_tame_stalled")
 
@@ -1839,7 +2213,7 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(_tame_worker_cap_herd_fixture())
 	# Tame is DIALED IN through `_compose_herd`, which survives the source-change re-seed — see its doc.
-	_compose_herd(_tame_worker_cap_herd_fixture(), COMPOSE_COUNT_UNSET, "tame")
+	_compose_herd(_tame_worker_cap_herd_fixture(), COMPOSE_COUNT_UNSET, "", "tame")
 	await _settle()
 	await _save("herd_tame_worker_cap")
 	# Tame floors the cap on the would-be crew (10), NOT the Tame-prep useful (1): the sheet's max-useful
@@ -1861,47 +2235,122 @@ func _ready() -> void:
 	_assert_hud("…the would-be herder crew (10) does not leak into an extractive rung",
 		not _has_label_containing(_hud._drawercompose._compose_sheet, "max 10 workers useful"))
 
-	# State 6b-tame-done-standing — THE HUNT-SIDE TWIN of `forage_cultivate_done_standing` (issue #420),
-	# and the one frame that renders the RE-ADMISSION path. A fully tamed herd RETIRES ◎ Tame from the
-	# picker outright (the husbandry-ceiling pass hides an unreachable rung rather than greying it), so a
-	# band still standing on Tame would otherwise see no trace of its own order and the sheet would fall
-	# back to Sustain. The rung is re-admitted for the standing band ALONE, SELECTED and GATED with
-	# "Already fully tamed — ♻ Sustain-hunt it to harvest", beside the now-available 🐄 Corral that is
-	# genuinely what comes next.
-	var tamed_herd := _fully_tamed_herd_fixture()
-	var tamed_band := _tame_standing_band_fixture()
-	_hud._band_labor._player_band = tamed_band
-	_hud._band_labor._player_bands = [tamed_band]
+	# State 442-tame-running — THE ANIMAL WEB's running improvement, the exact twin of
+	# `improvement_running_plant`. Same control, same three states, same forecast: the two ladders are
+	# one grammar (spec §4), and rendering them together is what proves it.
+	_hud._band_labor._player_band = _tame_standing_band_fixture()
+	_hud._band_labor._player_bands = [_tame_standing_band_fixture()]
 	_hud._compose.reset_hunt_source()
-	_hud.show_herd_selection(tamed_herd)
-	_compose_herd(tamed_herd)
+	_hud.show_herd_selection(_taming_herd_fixture())
+	_compose_herd(_taming_herd_fixture())
 	await _settle()
-	await _save("herd_tame_done_standing")
-	var tame_rung := _find_policy_rung(_hud._drawercompose._compose_sheet, "tame")
-	_assert_hud("a finished Tame the band still stands on is re-admitted to the picker",
-		tame_rung != null and _rung_is_selected(tame_rung))
-	_assert_hud("…GATED, with the harvest remedy that clears it",
-		tame_rung != null and tame_rung.disabled
-		and _has_label_containing(_hud._drawercompose._compose_sheet, TAMED_HERD_REMEDY_NEEDLE))
+	await _save("improvement_running_animal")
+	var tame_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "tame")
+	_assert_hud("a running Tame renders a CHECKED improvement box, as Cultivate does",
+		tame_box is CheckBox and (tame_box as CheckBox).button_pressed)
+	# Counted, like its plant twin: "the same three-term deal" is a claim about all three, and the
+	# middle term's presence alone would survive losing either of the others.
+	_assert_hud("…and states the same three-term deal the plant web does",
+		_label_text_containing(_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+			.count(IMPROVEMENT_DEAL_TERM_SEPARATOR) == IMPROVEMENT_DEAL_SEPARATORS)
+	_assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
+		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
+	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
+	# WEB (`hunt` → herd id) while the SET verbs target by VERB — and `corral` is a herd's rung
+	# addressed by a TILE, so a formatter that reused the set-verb rule would send coordinates here.
+	await _assert_abandon_emits(SourceForecast.LABOR_KIND_HUNT, HudConst.LABOR_POLICY_TAME,
+		"abandon_improvement %d hunt %s" % [HudConst.PLAYER_FACTION_ID,
+			String(_taming_herd_fixture()["id"])])
 
-	# COMPANION — the re-admission is for the STANDING rung ONLY. The same fully tamed herd, composed by
-	# a band that works it under SUSTAIN: ◎ Tame must be absent from the picker entirely, which is what
-	# proves the frame above is a targeted exception keyed on the band's OWN rung, not a blanket
-	# un-hiding of an out-of-ceiling rung on any staffed herd.
-	_hud._band_labor._player_band = tame_cap_band
-	_hud._band_labor._player_bands = [tame_cap_band]
+	# State 442-tame-done — the animal DONE state, and **THE ONE ASYMMETRY THAT SURVIVES** (spec §4):
+	# a fully tamed herd's ◎ Pastoral label carries NO upkeep, because a pastoral herd still grazes.
+	# Its Corral twin below does, because a penned one cannot. The next rung's box (🐄 Corral) sits
+	# beneath the label, which is what the done state is for.
+	var tamed_herd := _fully_tamed_herd_fixture()
 	_hud._compose.reset_hunt_source()
 	_hud.show_herd_selection(tamed_herd)
 	_compose_herd(tamed_herd)
 	await _settle()
-	await _save("herd_tame_done_other_rung")
-	_assert_hud("a band standing on another rung sees no Tame on a fully tamed herd (retired, not greyed)",
-		_find_policy_rung(_hud._drawercompose._compose_sheet, "tame") == null)
+	await _save("improvement_done_animal")
+	var pastoral_label := _find_improvement_control(_hud._drawercompose._compose_sheet, "tame")
+	_assert_hud("a finished Tame is a static LABEL, not a checkbox",
+		pastoral_label is Label and not (pastoral_label is CheckBox))
+	_assert_hud("…and carries NO upkeep — a pastoral herd still grazes (the asymmetry, held)",
+		pastoral_label != null
+		and not _improvement_face(_hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).contains(UPKEEP_NEEDLE))
+	_assert_hud("…with the next rung, Corral, offered beneath it",
+		_find_improvement_control(_hud._drawercompose._compose_sheet, "corral") is CheckBox)
+
+	# State 442-corral-done — the OTHER half of that asymmetry: a PENNED herd's 🐄 label DOES carry the
+	# pen's per-turn fodder upkeep, because a penned herd cannot graze and someone feeds it every turn.
+	# A standing obligation belongs with the standing state. The two frames must NOT be made to match.
+	_hud._band_labor._player_band = _band_fixture()
+	_hud._band_labor._player_bands = [_band_fixture()]
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_domesticated_herd_fixture())
+	_compose_herd(_domesticated_herd_fixture())
+	await _settle()
+	await _save("improvement_done_penned")
+	var penned_label := _find_improvement_control(_hud._drawercompose._compose_sheet, "corral")
+	_assert_hud("a finished Corral is a static LABEL",
+		penned_label is Label and not (penned_label is CheckBox))
+	_assert_hud("…and DOES carry the pen's upkeep — the one asymmetry between the two webs",
+		_improvement_face(_hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CORRAL).contains(UPKEEP_NEEDLE))
+
+	# ---- THE TWO ZERO-CREW SUBMITS, HUNT SIDE ----------------------------------------------------
+	# The forage pair above (`forage_unstaffed` / `forage_unassign`) is one half of a rule that belongs
+	# to BOTH sheets: `workers == 0` means two different things depending on whether this band already
+	# works the source, and the sim skips validation entirely at 0 — so the unassign is always legal.
+	# The hunt sheet had ONE state for both, a live button that sent a command changing nothing, and no
+	# rename on the source it does work. These two frames are judged as a pair, exactly as the forage
+	# ones are.
+	#
+	# State hunt-unstaffed (A) — 0 hunters on a herd this band does NOT hunt. Pressing would send a
+	# no-op, so the button is DEAD and still wears the verb.
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_investment_pair_boar_herd())
+	_compose_herd(_investment_pair_boar_herd(), ZERO_CREW)
+	await _settle()
+	await _save("herd_hunt_unstaffed")
+	var hunt_noop_btn := _find_button_by_text(_hud._drawercompose._compose_sheet,
+		HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON)
+	_assert_hud("0 hunters on a herd this band does not hunt disables the submit (it would be a no-op)",
+		hunt_noop_btn != null and hunt_noop_btn.disabled)
+
+	# State hunt-unassign (B) — the SAME 0 on a herd this band DOES hunt (4 standing hunters on
+	# `game_deer_07`): that is the sim's unassign, not a no-op. The button stays live and is RENAMED,
+	# and the improvement control is GONE — what abandoning costs is already on the card in the rung's
+	# own hint, so offering to START a build in the act of abandoning the source says two opposite
+	# things at once. The positive-crew open below it is what makes that absence a CHANGE and not a
+	# sheet that simply never offers this herd a rung.
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(_taming_herd_fixture())
+	_compose_herd(_taming_herd_fixture())
+	await _settle()
+	_assert_hud("precondition: at its standing crew the same herd IS offered its next rung",
+		_find_improvement_control(_hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME) != null)
+	_compose_herd(_taming_herd_fixture(), ZERO_CREW)
+	await _settle()
+	await _save("herd_hunt_unassign")
+	var hunt_unassign_btn := _find_button_by_text(_hud._drawercompose._compose_sheet,
+		HudComposeVocab.UNASSIGN_BUTTON)
+	_assert_hud("0 hunters on a herd this band hunts stays live, renamed Unassign",
+		hunt_unassign_btn != null and not hunt_unassign_btn.disabled)
+	_assert_hud("…and offers no improvement to start in the act of abandoning the source",
+		_find_improvement_control(_hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME) == null
+		and _find_improvement_control(_hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CORRAL) == null)
 
 	# Back to a plain Sustain compose for the band-picker / distance states below.
 	_hud._band_labor._player_band = _band_fixture()
 	_hud._band_labor._player_bands = []
+	_hud._compose.set_hunt_count(1)
 	_hud._compose.set_hunt_policy("sustain")
+	_hud._compose.set_hunt_improvement("")
 	_hud._compose.reset_hunt_source()
 
 	# State 3f — TWO player bands: the "Assign hunters" controls' "Band:" dropdown lists both
@@ -1932,7 +2381,7 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 
 	# State 3h — distance-aware herd-hunt, SINGLE far band: a lone band ~27 tiles from the herd (beyond
-	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send Hunting
+	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send
 	# Expedition", a distance hint shows, the stepper reads "Party", and Assign emits
 	# send_hunt_expedition (party = the stepper), NOT assign_labor.
 	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
@@ -1943,9 +2392,13 @@ func _ready() -> void:
 	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_expedition")
+	# The EXPEDITION branch reads in the same grammar as the two local sheets as far as it goes — it
+	# builds no improvement control (a detached party builds nothing), so only the shared HEAD is
+	# claimed here, which is exactly what `_record_compose_spine` asserts.
+	_record_compose_spine(COMPOSE_SPINE_KEY_EXPEDITION)
 
 	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
-	# the herd (distance 0 ≤ reach 7) → "Assign Local Hunt" + assign_labor. The band-picker selection —
+	# the herd (distance 0 ≤ reach 7) → "Hunt Here" + assign_labor. The band-picker selection —
 	# not the herd — drives it (the resolved/default band is the near one here).
 	_hud._band_labor._player_bands = _hunt_distance_bands()
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
@@ -1957,7 +2410,7 @@ func _ready() -> void:
 	await _save("herd_hunt_band_near")
 
 	# State 3j — same two bands, FAR band selected via the picker (entity 812, ~27 tiles away): the SAME
-	# herd now offers "Send Hunting Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
+	# herd now offers "Send Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
 	# WHICH band is selected flips the label + command + band-entity target, not the herd.
 	_hud._compose.set_hunt_band(int(_hunt_distance_bands()[1]["entity"]))   # FAR band
 	_compose_herd(_hunt_distance_herd())
@@ -1977,7 +2430,7 @@ func _ready() -> void:
 	# `hunt_trip_estimates` cell for (policy, party size). The client does no arithmetic here — the sim
 	# forward-simulated each trip and exported the turns. Party 4:
 	#   3k viable      — Sustain on a Thunder Mammoth: the sim's cell says 6 turns → cyan line, normal
-	#                    primary "Send Hunting Expedition" button.
+	#                    primary "Send Expedition" button.
 	#   3l not viable  — Sustain on Red Deer: 54 turns > warn 20 → amber line + the button itself goes
 	#                    "armed" and names the cost: "Send Anyway (≈54 turns)".
 	#   3m surplus     — the SAME Red Deer on Surplus: a Surplus party strips the herd's stock headroom
@@ -2026,7 +2479,7 @@ func _ready() -> void:
 	# (not the pack) binds — that plateau IS max-useful. The clean Wild Boar carries the server's measured
 	# raid (hauls its whole kill, no waste). The picker buttons read each policy's MAX food/turn, ascending.
 	#   3p boar raid   — a 1-hunter raid: "delivers ≈5 Wild Boar over ≈7 turns · ~20 food" (no waste), cyan +
-	#                    primary "Send Hunting Expedition"; picker "up to +10.67 / +13.33 / +14.67 /turn".
+	#                    primary "Send Expedition"; picker "up to +10.67 / +13.33 / +14.67 /turn".
 	#   3q max useful  — 2 hunters: "delivers ≈8 Wild Boar over ≈8 turns · ~32 food"; a 3rd delivers NO more
 	#                    food (the surplus binds), so the stepper caps at 2 and the `+` note reads
 	#                    "max 2 workers useful here — more would be idle". The silent-idle-hunter gap, closed.
@@ -2096,11 +2549,11 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(bison)
-	_compose_herd(bison, 3, "sustain")
+	_compose_herd(bison, LABOR_BOUND_CREW, "sustain")
 	await _settle()
 	await _save("herd_hunt_labor_bound")
 	_assert_hud("the labor-bound frame renders the 3-hunter crew idle labor caps it at",
-		_hud._compose.hunt_count() == 3)
+		_stepper_value(_hud._drawercompose._compose_sheet) == LABOR_BOUND_CREW)
 	#   3u Deplete — SAME herd + band, policy flipped: the plateau rises to 7 → "3 of 7 useful", proving the
 	#              ceiling tracks the selected policy. Key unchanged so the policy override sticks.
 	_hud._compose.set_hunt_policy("deplete")
@@ -2118,11 +2571,11 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(bison)
-	_compose_herd(bison, 2, "sustain")
+	_compose_herd(bison, PARTY_SIZE_BOUND_CREW, "sustain")
 	await _settle()
 	await _save("herd_hunt_party_size_bound")
 	_assert_hud("the party-size-bound frame renders the 2-hunter crew the max party size caps it at",
-		_hud._compose.hunt_count() == 2)
+		_stepper_value(_hud._drawercompose._compose_sheet) == PARTY_SIZE_BOUND_CREW)
 	# Restore the far band + sustain for the states that follow.
 	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
@@ -2151,8 +2604,13 @@ func _ready() -> void:
 	_compose_herd(local_herd, LOCAL_HUNT_HUNTERS)
 	await _settle()
 	await _save("herd_hunt_local_sustain")
+	# THE HUNT HALF, and the parity check itself: both sheets must ask WHICH STANCE before HOW MANY
+	# PEOPLE, and in the same order throughout. The hunt sheet staffed first until the consistency pass;
+	# a frame cannot hold that claim, which is why it is asserted rather than eyeballed.
+	_record_compose_spine(COMPOSE_SPINE_KEY_HUNT)
+	_assert_compose_order_parity(COMPOSE_SPINE_KEY_FORAGE, COMPOSE_SPINE_KEY_HUNT)
 	_assert_hud("the local-hunt frames render the dialed-in crew (capped), not the re-seeded 1",
-		_hud._compose.hunt_count() == LOCAL_HUNT_CAPPED_CREW)
+		_stepper_value(_hud._drawercompose._compose_sheet) == LOCAL_HUNT_CAPPED_CREW)
 
 	# Flip the policy picker to Deplete — the same click path the player takes; the preview line
 	# re-computes live off the new ceiling.
@@ -2303,15 +2761,27 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_hud.show_herd_selection(payoff_boar)
-	_compose_herd(payoff_boar, PELT_FRAME_HUNTERS, "tame")
+	# TAME RUNNING: its own payoff rides the deal line beneath the checked box.
+	_compose_herd(payoff_boar, PELT_FRAME_HUNTERS, "", "tame")
 	await _settle()
 	await _save("herd_investment_both_products")
-	# The rungs are found by `HudWidgets.POLICY_RUNG_META`, never by button text: the face is an
-	# empty-`text` Button under a two-Label stack, so a text search finds nothing at all.
-	_assert_hud("Tame's payoff face names BOTH products, food leading",
-		_policy_rung_metric(_hud._drawercompose._compose_sheet, "tame") == BOAR_TAME_PAYOFF_FACE)
-	_assert_hud("Corral's payoff face names BOTH products, food leading",
-		_policy_rung_metric(_hud._drawercompose._compose_sheet, "corral") == BOAR_CORRAL_PAYOFF_FACE)
+	_assert_hud("Tame's payoff names BOTH products, food leading",
+		_label_text_containing(_hud._drawercompose._compose_sheet,
+			IMPROVEMENT_DEAL_MIDDLE_NEEDLE).ends_with(BOAR_TAME_PAYOFF_FACE))
+	# CORRAL OFFERED: the boar is fully tamed here, so Tame is DONE and Corral is the rung on offer —
+	# its payoff quoted on the checkbox's own face, which is where a not-yet-started rung states terms.
+	var penned_boar := _investment_pair_boar_herd()
+	penned_boar["domestication"] = 1.0
+	_hud._compose.reset_hunt_source()
+	_hud.show_herd_selection(penned_boar)
+	_compose_herd(penned_boar, PELT_FRAME_HUNTERS)
+	await _settle()
+	await _save("herd_investment_corral_offer")
+	var corral_offer := _find_improvement_control(_hud._drawercompose._compose_sheet, "corral")
+	_assert_hud("Corral's offered face names BOTH products, food leading",
+		corral_offer is CheckBox
+		and _improvement_face(_hud._drawercompose._compose_sheet,
+			SourceForecast.IMPROVEMENT_CORRAL).ends_with(BOAR_CORRAL_PAYOFF_FACE))
 
 	# Reset so later states render their usual single-band dropdown + default band/policy.
 	_hud._band_labor._player_bands = []
@@ -2478,7 +2948,7 @@ func _ready() -> void:
 	await _save("tile_panel_compose_forage")
 
 	# tile_panel_compose_herd — the herd sheet on the EXPEDITION branch (the band is beyond hunt
-	# reach): the raid forecast + "Send Hunting Expedition" must survive the move to the sheet intact.
+	# reach): the raid forecast + "Send Expedition" must survive the move to the sheet intact.
 	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._compose.reset_hunt_source()
@@ -2886,6 +3356,40 @@ func _ready() -> void:
 	await _settle()
 	await _save("quick_hunt_note")
 
+	# State 5a — PNG-LESS companion: **the shortcut must not blank the improvement axis** (issue #442).
+	# `assign_labor` deliberately does not carry the second axis, so between the double-click and the
+	# next snapshot the OPTIMISTIC PENDING overlay is the only thing holding it — and an emit that lets
+	# it default to `IMPROVEMENT_NONE` flashes a running pen off the work board (and drops the herding
+	# crew floor from the would-be count to the ownership-gated one) for the whole turn. No frame:
+	# a board rendered from a blanked axis looks like a perfectly ordinary board, so only the overlay
+	# can testify. The band hunts ONE herd and is already building its pen; the precondition assertion
+	# is what stops the second one passing on a band that had nothing to keep.
+	# `Hud._resolve_assign_band` prefers the SELECTED player unit over `player_band()`, and an earlier
+	# state left one selected — so clear it, or the shortcut resolves to a band that is building nothing
+	# and the assertion below judges the wrong band. (The next state clears it too; this is not restored.)
+	_hud.clear_selection()
+	var quick_hunt_band := _band_fixture()
+	quick_hunt_band["band_id"] = QUICK_HUNT_BAND_ID
+	quick_hunt_band["idle_workers"] = QUICK_HUNT_IDLE_WORKERS
+	quick_hunt_band["labor_assignments"] = [{
+		"kind": "hunt", "workers": 2, "policy": "sustain",
+		"improvement": SourceForecast.IMPROVEMENT_CORRAL,
+		"fauna_id": QUICK_HUNT_HERD_ID, "target_x": 66, "target_y": 10,
+	}]
+	_hud._band_labor._player_band = quick_hunt_band
+	_assert_hud("precondition: the quick-hunt band really is building a pen on that herd",
+		_hud._band_labor.improvement_for_hunt(quick_hunt_band, QUICK_HUNT_HERD_ID)
+			== SourceForecast.IMPROVEMENT_CORRAL)
+	_hud.quick_assign_hunters(QUICK_HUNT_HERD_ID)
+	var quick_hunt_pending: Dictionary = _hud._band_labor.pending_assigns_for(
+		int(quick_hunt_band.get("entity", -1))).get(
+			_hud._band_labor.pending_key(SourceForecast.LABOR_KIND_HUNT, -1, -1, QUICK_HUNT_HERD_ID), {})
+	_assert_hud("a quick-hunt keeps the pen the band is already building on that herd",
+		String(quick_hunt_pending.get("improvement", "")) == SourceForecast.IMPROVEMENT_CORRAL)
+	# Leave the overlay as it was found — a snapshot with a NEWER turn is what confirms a pending edit.
+	_hud._band_labor.reconcile_pending(_hud._band_labor.current_turn() + 1)
+	_hud._band_labor._player_band = _band_fixture()
+
 	# State 6 — turn orb, ALL-CLEAR: a player band with zero idle workers → empty
 	# attention registry → the orb calm-pulses (dashed cyan arc), the caption reads
 	# "Turn 42 · ▸ all clear", and no badge shows.
@@ -3109,7 +3613,8 @@ func _ready() -> void:
 				# BOTH PRODUCTS (issue #337): the hide sells beside the meat, so the drawer's standing
 				# summary must read `+0.84 /turn · ⇄ +0.12` — food leading, trade shown only because it
 				# is non-zero. Same `SourceForecast.source_yield_readout` the Band panel's rows use.
-				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral",
+				{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "sustain",
+					"improvement": "corral",
 					"target_x": 66, "target_y": 10, "actual_yield": 0.84, "sustainable_yield": 0.84,
 					"trade_yield": 0.12, "realized_trade_yield": 0.12},
 			]},
@@ -3117,9 +3622,113 @@ func _ready() -> void:
 	_hud.turn_orb.open_popover()
 	await _settle()
 	await _save("turn_orb_starving_pen")
+	# **THIS PRODUCER WAS DEAD, AND THE FRAME COULD NOT SAY SO** (issue #442). It found its pens by
+	# `policy == "corral"`, and the axis split made `policy` always one of the four STANCES — the build
+	# verb moved to `improvement` — so the test could never again be true and no starving pen had been
+	# reported since. A PNG of an orb with one row in it looks entirely reasonable, which is why the
+	# assertion is the only thing that could have caught it. Read off the RENDERED rows.
+	var pen_rows := _orb_rows()
+	_assert_hud("the starving-pen producer still fires after the stance/improvement split",
+		_orb_row_with(pen_rows, HudAttentionVocab.ATTENTION_PEN_LABEL_FORMAT % RED_DEER_LABEL) != null)
 	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
 
 	_hud.turn_orb.toggle_popover()   # close, so later states render without it
+
+	# State 7d — turn orb, THE UNWORKED-RUNG + UNDER-CREWED producers (issue #442). A built rung nobody
+	# is working is the one loss the WORK BOARD structurally cannot report: that board lists
+	# ASSIGNMENTS, and an unworked patch has none, so it is ABSENT from the board rather than flagged on
+	# it. The orb is the generic "something needs you" hub, so this is where it has to live — and the
+	# URGENCY rides the row's own words, not a standing counter the player would learn to watch.
+	#
+	# The fixture is built as a set of CONTROLS, because every claim here is about which sources produce
+	# a row and which do not:
+	#   (70,20) tended, owned, unworked, grace 2   → a row, counting down
+	#   (71,20) FIELD,  owned, unworked, grace 0   → a row, the penalty biting NOW
+	#   (72,20) tended, owned, unworked, NO grace  → a row with NO countdown at all (the bool's whole job)
+	#   (73,20) WILD,   owned, unworked            → NO row: nothing has been built here to lose
+	#   (74,20) tended, NOT ours                   → NO row: a rival's ground is not our alarm
+	#   (66,10) tended, owned, WORKED by the band  → NO row: it is being kept
+	_hud.turn_orb.toggle_popover()
+	_hud.turn_orb.set_attention([])
+	_hud.update_forage_patches(_neglect_patches_fixture())
+	_hud.update_herds([_under_crewed_herd_fixture()])
+	_hud.update_band_alerts([
+		{"faction": 0, "entity": 811, "size": 40, "turns_of_food": 99.0, "activity": "forage",
+			"current_x": 66, "current_y": 10, "idle_workers": 0,
+			"labor_assignments": [
+				# The WORKED control — the same rung on the same kind of ground, kept.
+				{"kind": "forage", "workers": 2, "target_x": 66, "target_y": 10, "policy": "sustain",
+					"improvement": "", "actual_yield": 1.20, "sustainable_yield": 1.20},
+				# The UNDER-CREWED herd: 2 keepers where the sim asks 4.
+				{"kind": "hunt", "workers": UNDER_CREWED_HERD_STAFFED, "fauna_id": "game_deer_07",
+					"policy": "sustain", "improvement": "",
+					"target_x": 68, "target_y": 15, "actual_yield": 0.60, "sustainable_yield": 0.60},
+			]},
+	])
+	_hud.turn_orb.open_popover()
+	await _settle()
+	await _save("turn_orb_unworked_rung")
+	var neglect_rows := _orb_rows()
+	for row in neglect_rows:
+		print("ui_preview: orb row  %s | %s" % [String(row["label"]), String(row["detail"])])
+	var lapsing_soon: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 70, 20])
+	var lapsing_now: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["sow"], 71, 20])
+	var no_grace: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNWORKED_LABEL_FORMAT % [
+			HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"], 72, 20])
+	_assert_hud("an unworked Tended Patch raises a row naming the rung and the hex",
+		lapsing_soon != null)
+	# **THE COUNTDOWN, at N > 0.** The number is the wire's own `(grace + 1) - neglect`; the client does
+	# no subtraction, so a row quoting anything else means someone re-derived it.
+	_assert_hud("…whose urgency is IN THE TEXT — `%s`"
+		% (HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
+			NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]),
+		lapsing_soon != null and String(lapsing_soon["detail"]) == (
+			HudAttentionVocab.ATTENTION_LAPSE_SOON_FORMAT % [
+				NEGLECT_GRACE_SOON, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]))
+	# **AND AT ZERO, which is NOT "nothing at risk".** `0` is the wire's "the penalty is biting NOW" —
+	# the most urgent reading there is — so it must never render as a `0`-turn countdown.
+	_assert_hud("a rung at grace 0 says the ground is reverting NOW, never `in 0 turns`",
+		lapsing_now != null and String(lapsing_now["detail"]) == HudAttentionVocab.ATTENTION_LAPSE_NOW)
+	# **AND THE BOOL, which is the whole reason the pair is two fields.** `has_neglect_grace == false`
+	# means nothing is at risk; rendered as a countdown it would collide with the biting-now zero and
+	# read as the loudest row on the card. Asserted by DIGITS, so no phrasing of a number can pass.
+	_assert_hud("a source with NO neglect grace renders no countdown at all — not even a zero",
+		no_grace != null and not _contains_digit(String(no_grace["detail"])))
+	# THE THREE NEGATIVE CONTROLS, counted rather than searched: a producer that alarmed on everything
+	# would satisfy every positive assertion above.
+	_assert_hud("a wild patch, a rival's ground and a WORKED rung raise nothing (%d rows, not %d)"
+		% [neglect_rows.size(), _neglect_patches_fixture().size()],
+		neglect_rows.size() == UNWORKED_EXPECTED_ROWS)
+	# THE ANIMAL HALF — under-crewed rather than unworked, because a herd carries no owner on the wire
+	# and only the band's own assignment can attribute it.
+	var herd_row: Variant = _orb_row_with(neglect_rows,
+		HudAttentionVocab.ATTENTION_UNDER_CREWED_LABEL_FORMAT % RED_DEER_LABEL)
+	_assert_hud("a managed herd below its keeper count raises a row naming both counts",
+		herd_row != null and String(herd_row["detail"]) == (
+			HudAttentionVocab.ATTENTION_UNDER_CREWED_DETAIL_FORMAT % [
+				UNDER_CREWED_HERD_STAFFED, UNDER_CREWED_HERD_NEEDED,
+				HudAttentionVocab.ATTENTION_SHED_SOON_FORMAT % [
+					NEGLECT_GRACE_HERD, HudAttentionVocab.ATTENTION_TURN_PLURAL_SUFFIX]]))
+	# MOST URGENT FIRST — the rows are sorted on the wire's countdown, so the ground reverting NOW sits
+	# above the one with turns left. `ATTENTION_UNWORKED_MAX_ROWS` caps the list, and a cap that kept an
+	# arbitrary three would be worse than none.
+	# BOTH ROWS PINNED PRESENT FIRST. `find()` answers -1 for a missing row, and -1 is less than every
+	# real index — so the bare comparison PASSES when the biting-now row is absent, which is the one
+	# failure this assertion exists to catch. Presence is carried by the earlier row assertions, but an
+	# assertion that reads as an ordering claim must not be satisfiable by an absence.
+	var now_at := neglect_rows.find(lapsing_now)
+	var soon_at := neglect_rows.find(lapsing_soon)
+	_assert_hud("…and the biting-now row sorts above the one still counting down",
+		now_at >= 0 and soon_at >= 0 and now_at < soon_at)
+	_hud.turn_orb.toggle_popover()
+	_hud.update_forage_patches([])              # restore: no patches for the states below
+	_hud.update_herds(_world_herds_fixture())   # restore the shared world-herd list
+	_hud.turn_orb.set_attention([])
 
 	# State 8 — reserved-space docking (Slice 1 refactor): a left-edge reservation of
 	# RESERVED_PROBE_WIDTH px insets the whole HUD (LayoutRoot.offset_left), so the top/bottom
@@ -3565,23 +4174,24 @@ func _ready() -> void:
 	# double-open, done here through the button because the button's closure is what is under test).
 	reopen_btn.pressed.emit()
 	await _settle()
-	_hud._compose.set_hunt_policy(HudConst.LABOR_POLICY_TAME)
+	_hud._compose.set_hunt_improvement(HudConst.LABOR_POLICY_TAME)
 	reopen_btn.pressed.emit()
 	await _settle()
 	# BASELINE — the pre-tame numbers, so the assertions below are proven to be a CHANGE and not a
 	# coincidence. Both sentences are built from the shipped formats, so they read what the player reads.
-	var tame_icon := FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)
-	var stale_tamed_line := HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [0, tame_icon]
-	var fresh_tamed_line := HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
-		HudFormat.progress_percent(REOPEN_TAMING_DOMESTICATION), tame_icon]
-	var stale_cap_note := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
-		REOPEN_WILD_WOULD_BE_HERDERS, SourceForecast.MAX_USEFUL_NOUN_MANY]
-	var fresh_cap_note := SourceForecast.MAX_USEFUL_NOTE_FORMAT % [
-		REOPEN_TAMING_HERDERS, SourceForecast.MAX_USEFUL_NOUN_MANY]
+	# **THE RUNNING IMPROVEMENT'S METER IS THE WITNESS** (issue #442). It was the gated Corral rung's
+	# "This herd is N% tamed" reason line, which only existed while a build verb was a picker rung; the
+	# meter on the checked Tame box states the SAME number, is the thing the player actually reads, and
+	# is unambiguously per-herd — so a stale captured dict shows through it just as plainly.
+	var stale_meter := HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
+		FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME),
+		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[HudConst.LABOR_POLICY_TAME]), 0]
+	var fresh_meter := HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
+		FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME),
+		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[HudConst.LABOR_POLICY_TAME]),
+		HudFormat.progress_percent(REOPEN_TAMING_DOMESTICATION)]
 	_assert_hud("precondition: the WILD herd's sheet quotes its own untamed meter",
-		_has_label_containing(_hud._drawercompose._compose_sheet, stale_tamed_line))
-	_assert_hud("precondition: …and caps Tame at the wild would-be crew of 3",
-		_has_label_containing(_hud._drawercompose._compose_sheet, stale_cap_note))
+		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME) == stale_meter)
 	# The player closes the sheet and ends the turn. Closing matters: with the sheet OPEN the snapshot's
 	# `refresh_compose_sheet` rebuilds it against `_selection.herd()` and self-heals, which is exactly
 	# why the bug reads as "one turn behind" rather than as a permanent lie.
@@ -3603,17 +4213,85 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_compose_reopen_fresh")
 	_assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
-		_has_label_containing(_hud._drawercompose._compose_sheet, fresh_tamed_line)
-		and not _has_label_containing(_hud._drawercompose._compose_sheet, stale_tamed_line))
-	_assert_hud("…and caps Tame at the herd's live crew of 4, not the pre-tame 3",
-		_has_label_containing(_hud._drawercompose._compose_sheet, fresh_cap_note)
-		and not _has_label_containing(_hud._drawercompose._compose_sheet, stale_cap_note))
+		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME) == fresh_meter)
+	# The HERDERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
+	# so the two cannot both pass off one stale-or-fresh dict by coincidence.
+	#
+	# **IT HAS TO BE THE ROW, NOT THE NUMBER.** This searched the drawer OR the sheet for the digit "4"
+	# — which the fresh meter beside it ("Tame — 4%") already contains, so it passed off the very
+	# witness it was meant to be independent of, and would have passed off a coordinate or a yield just
+	# as happily. The Herders row's whole rendered value is the only text that can testify: it names the
+	# demand, and it names it in the row the claim is about. Assigned is READ rather than assumed — this
+	# band hunts a different herd, so the deficit form is what renders, and hardcoding it would pin the
+	# fixture's staffing instead of the herd's demand.
+	_assert_hud("…and the drawer's herder demand is the live one (4), not the pre-tame 0",
+		_has_label_containing(_hud.occupant_detail, DetailFormat.herders_label(
+			_hud._band_labor.assigned_herders_for(REOPEN_HERD_ID), REOPEN_TAMING_HERDERS)))
 	_hud._drawercompose.close_compose_sheet()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_policy(SourceForecast.DEFAULT_HUNT_POLICY)
 	_hud._band_labor._player_band = _band_fixture()
 	_hud._band_labor._player_bands = []
 	_hud.update_intensification([{"faction": 0, "cultivation": 0.55, "herding": 1.0}])
+
+	# ---- THE CREW NOUN AND THE PREVIOUS HERD'S IMPROVEMENT ---------------------------------------
+	# `ComposeState._hunt_improvement` is ONE slot shared by every herd, and neither `begin_hunt_source`
+	# nor `reset_hunt_source` clears it — so a noun resolved from it names the crew after whichever herd
+	# was composed LAST. Tick Corral on a pen-ready herd, then select a WILD one: `is_managed_hunt_source`
+	# read true against the leftover, the header said `ASSIGN HERDERS`, and the stepper built by the very
+	# same render — from the improvement `_build_herd_assign_controls` had just RE-SEEDED — said `Hunters`.
+	# That is the disagreement `_herd_crew_noun` was written to remove, with the sides swapped.
+	#
+	# The two herds must differ in ID (a same-id re-open is not a source change and stages nothing) and
+	# the second must be genuinely UNMANAGED — `_herd_fixture` is 40% tamed, unpenned, owing no keepers,
+	# so `is_managed_hunt_source` is false on its own axis and can only read true off the leftover.
+	# A PNG carries the header; the assertions carry the stepper AGREEING with it, since a header alone
+	# cannot show a disagreement.
+	var crew_noun_pen := _corral_ready_herd_fixture()
+	crew_noun_pen["id"] = CREW_NOUN_PEN_HERD_ID
+	crew_noun_pen["label"] = "Aurochs (%s)" % CREW_NOUN_PEN_HERD_ID
+	crew_noun_pen["species"] = "Aurochs"
+	var crew_noun_wild := _herd_fixture()
+	# It DECLARES the unmanaged half of the herder pair — owed no keepers (the ownership-gated 0) while
+	# naming the crew it WOULD owe if tamed. That is the still-wild tameable shape, the one case the
+	# field-pair guard admits an unequal pair in, and it is what makes the claim precise: this herd's own
+	# axis says "hunters", so a header reading HERDERS can only have got it from the previous herd.
+	crew_noun_wild[HERDERS_NEEDED_KEY] = 0
+	crew_noun_wild[HERDERS_NEEDED_IF_MANAGED_KEY] = CREW_NOUN_WILD_WOULD_BE_HERDERS
+	_hud.update_herds([crew_noun_pen, crew_noun_wild])
+	_hud.show_herd_selection(crew_noun_pen)
+	await _settle()
+	# Tick Corral on the pen-ready herd — `_compose_herd` opens, sets the axis (what the checkbox's
+	# `on_toggle` writes) and re-opens, so the sheet really is composing a pen when we leave it.
+	_compose_herd(crew_noun_pen, COMPOSE_COUNT_UNSET, "", SourceForecast.IMPROVEMENT_CORRAL)
+	await _settle()
+	_assert_hud("precondition: the pen-ready herd's sheet really is composing a Corral",
+		_hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_CORRAL)
+	_hud._drawercompose.close_compose_sheet()
+	# Now the WILD herd, selected through the real path so its drawer actions rebuild.
+	_hud.show_herd_selection(crew_noun_wild)
+	await _settle()
+	_assert_hud("the wild herd's drawer button asks for hunters, not the penned herd's herders",
+		_find_button_by_text(_hud.herd_assign_controls,
+			HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()) != null)
+	_hud._drawercompose.open_herd_compose(crew_noun_wild)
+	await _settle()
+	await _save("herd_compose_crew_noun_after_pen")
+	_assert_hud("…and the sheet's eyebrow reads ASSIGN HUNTERS, not the previous herd's HERDERS",
+		_hud._drawercompose._compose_sheet._header.text.contains(
+			(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudComposeVocab.HUNT_CREW_LABEL.to_lower()).to_upper()))
+	# The independent half: the STEPPER names itself from the axis the sheet re-seeded, so reading that
+	# axis back proves the header agrees with the stepper rather than the two being wrong together.
+	_assert_hud("…and the stepper it agrees with is built on THIS herd's own (empty) improvement axis",
+		_hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_NONE
+		and _has_label_containing(_hud._drawercompose._compose_sheet, HudComposeVocab.HUNT_CREW_LABEL))
+	_hud._drawercompose.close_compose_sheet()
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
+	# RESTORE the roster this block replaced rather than clearing it: `_guard_frame_herd_fields` scans
+	# every herd the HUD holds as each later frame renders, so emptying it here would quietly retire
+	# those scans from the last states of the run.
+	_hud.update_herds(_world_herds_fixture())
 
 	# WORLD-BOUNDARY GUARD — `Hud.reset_world_state()`, the HUD half of the stale-world fix.
 	# A freshly generated world sends `intensification_knowledge: []`, which MERGES to nothing, so the
@@ -3675,33 +4353,34 @@ func _ready() -> void:
 	var rr_forever_wild := {"domestication": 0.0, "husbandry_ceiling": "wild"}
 	# UNGATED: knowledge is the difference, nothing else.
 	_assert_hud("ready — a Thriving wild patch offers Cultivate once Cultivation is known",
-		String(RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_all).get("policy", "")) == "cultivate")
+		String(RungGates.next_rung_ready("forage", rr_wild_patch, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "cultivate")
 	_assert_hud("ready — the same patch offers NOTHING while Cultivation is unlearned",
-		RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_none).is_empty())
+		RungGates.next_rung_ready("forage", rr_wild_patch, RUNG_BUILDING_NOTHING, rr_knows_none).is_empty())
 	# HIGHEST RUNG FIRST — the claim, on the only shape that can carry it (see rr_wild_sowable).
 	_assert_hud("ready — a wild patch clearing BOTH gates answers the HIGHER rung (Sow, not Cultivate)",
-		String(RungGates.next_rung_ready("forage", rr_wild_sowable, "sustain", rr_knows_all).get("policy", "")) == "sow")
+		String(RungGates.next_rung_ready("forage", rr_wild_sowable, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "sow")
 	# And the retire rule that makes the tended case mutually exclusive in the first place.
 	_assert_hud("ready — a tended patch offers Sow, its Cultivate rung being retired as finished",
-		String(RungGates.next_rung_ready("forage", rr_tended_sowable, "sustain", rr_knows_all).get("policy", "")) == "sow")
+		String(RungGates.next_rung_ready("forage", rr_tended_sowable, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "sow")
 	# OFFERED, the LAND half: the wild patch above is refused for Sow by the ground itself.
 	_assert_hud("ready — dry ground withholds Sow even with Seed Selection known",
-		String(RungGates.next_rung_ready("forage", rr_wild_patch, "sustain", rr_knows_all).get("policy", "")) != "sow")
+		String(RungGates.next_rung_ready("forage", rr_wild_patch, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) != "sow")
 	# NOT ALREADY RUNNING: the verb in flight is progress, not an opportunity.
 	_assert_hud("ready — a patch already being cultivated offers nothing (the verb is in flight)",
 		RungGates.next_rung_ready("forage", rr_wild_patch, "cultivate", rr_knows_all).is_empty())
 	# The animal web: same three conditions, one knowledge per transition.
 	_assert_hud("ready — a wild herd offers Tame once Herding is known",
-		String(RungGates.next_rung_ready("hunt", rr_wild_herd, "sustain", rr_knows_all).get("policy", "")) == "tame")
+		String(RungGates.next_rung_ready("hunt", rr_wild_herd, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "tame")
 	_assert_hud("ready — a fully tamed herd advances to Corral, not back to Tame",
-		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, "sustain", rr_knows_all).get("policy", "")) == "corral")
+		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, RUNG_BUILDING_NOTHING, rr_knows_all).get("policy", "")) == "corral")
 	# OFFERED, the SPECIES half: a "wild"-ceiling animal never climbs, however much we know.
 	_assert_hud("ready — a wild-ceiling species offers nothing at any knowledge level",
-		RungGates.next_rung_ready("hunt", rr_forever_wild, "sustain", rr_knows_all).is_empty())
+		RungGates.next_rung_ready("hunt", rr_forever_wild, RUNG_BUILDING_NOTHING, rr_knows_all).is_empty())
 	# The mark names the rung with the SAME glyph the policy picker uses, never a private one.
 	# THE RUNG UNDER WAY — the state that used to render nothing. `next_rung_ready` excludes the verb
 	# in flight (a patch mid-Cultivate is progress, not an opportunity), which was right and left the
 	# in-flight case unmarked, so an actively-cultivated patch looked emptier than an untouched one.
+	# **THE GATE'S THIRD ARGUMENT IS THE IMPROVEMENT AXIS** (issue #442), never the harvest stance.
 	var rr_building_patch := {
 		"ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
 		"cultivation_progress": 0.42, "sow_site_refusal": "too_dry",
@@ -3710,9 +4389,12 @@ func _ready() -> void:
 	_assert_hud("building — a patch under Cultivate reports that verb and its meter",
 		RungGates.rung_in_progress("forage", rr_building_patch, "cultivate") == \
 			{"policy": "cultivate", "glyph": FoodIcons.for_policy("cultivate"), "progress": 0.42})
-	# Keyed on the POLICY, not on a non-zero meter: a half-built patch nobody is working is a standing
-	# rung, which is what the rung glyph is for.
-	_assert_hud("building — the same patch under Sustain is NOT building (a meter is not work)",
+	# Keyed on the IMPROVEMENT, not on a non-zero meter: a half-built patch nobody is working is a
+	# standing rung, which is what the rung glyph is for. The stance says nothing about it either way —
+	# passing a stance here answers `{}`, which is the whole point of the split (issue #442).
+	_assert_hud("building — the same patch building NOTHING is not building (a meter is not work)",
+		RungGates.rung_in_progress("forage", rr_building_patch, RUNG_BUILDING_NOTHING).is_empty())
+	_assert_hud("building — a STANCE in the improvement slot answers nothing, never a meter",
 		RungGates.rung_in_progress("forage", rr_building_patch, "sustain").is_empty())
 	# Each verb names its OWN meter — reading the wrong one would report a confident wrong number.
 	_assert_hud("building — Sow reads field_progress, not the cultivation meter beside it",
@@ -3726,7 +4408,29 @@ func _ready() -> void:
 		RungGates.next_rung_ready("forage", rr_building_patch, "cultivate", rr_knows_all).is_empty() \
 			and not RungGates.rung_in_progress("forage", rr_building_patch, "cultivate").is_empty())
 	_assert_hud("ready — the answer carries the policy's own glyph",
-		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, "sustain", rr_knows_all).get("glyph", "")) == FoodIcons.for_policy("corral"))
+		String(RungGates.next_rung_ready("hunt", rr_tamed_herd, RUNG_BUILDING_NOTHING, rr_knows_all).get("glyph", "")) == FoodIcons.for_policy("corral"))
+	# THE OFFER TWIN (issue #442) — `next_rung_offered` shares `next_rung_ready`'s ordering and differs
+	# on the gate alone, which is the difference between a MARK (promises the verb is available) and the
+	# compose CONTROL (teaches that the verb exists and what it costs). A gated rung must therefore be
+	# absent from one and present, with its reasons, in the other.
+	_assert_hud("offered — an unlearned Cultivate is still OFFERED, so the control can teach it",
+		String(RungGates.next_rung_offered("forage", rr_wild_patch, RUNG_BUILDING_NOTHING,
+			rr_knows_none).get("policy", "")) == "cultivate")
+	_assert_hud("…carrying the reason that explains the lock",
+		not RungGates.next_rung_offered("forage", rr_wild_patch, RUNG_BUILDING_NOTHING,
+			rr_knows_none).get("reasons", []).is_empty())
+	_assert_hud("offered — the SAME rung is withheld from the READY answer a mark reads",
+		RungGates.next_rung_ready("forage", rr_wild_patch, RUNG_BUILDING_NOTHING,
+			rr_knows_none).is_empty())
+	# Highest-first is SHARED, so the sowable-wild-ground answer must agree across both entry points.
+	_assert_hud("offered — highest rung first, exactly as the mark orders it",
+		String(RungGates.next_rung_offered("forage", rr_wild_sowable, RUNG_BUILDING_NOTHING,
+			rr_knows_all).get("policy", "")) == "sow")
+	# A species that can never climb is withheld from BOTH — an unreachable prerequisite must never be
+	# offered gated, because greying it would imply the lock could be lifted.
+	_assert_hud("offered — a wild-ceiling species is offered nothing, gated or otherwise",
+		RungGates.next_rung_offered("hunt", rr_forever_wild, RUNG_BUILDING_NOTHING,
+			rr_knows_none).is_empty())
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -3982,6 +4686,52 @@ func _turn_orb_advance_button() -> Button:
 	var btn := footer.get_child(0)
 	return btn as Button
 
+## **THE RENDERED reason rows of the open popover**, in the order they are drawn, each as
+## `{label, detail}` read off the two Labels themselves — never off `TurnOrb._entries`. A registry read
+## would pass on a row the popover never drew, and it would also skip the sort `set_attention` applies,
+## so a claim about which row sits ABOVE which could not be made against it. The popover body is a
+## header, one Button per entry, and a footer whose Advance button is nested one level deeper — so the
+## body's DIRECT Button children are exactly the reason rows.
+func _orb_rows() -> Array:
+	var rows: Array = []
+	var pop := _hud.turn_orb._popover
+	if pop == null or pop.get_child_count() == 0:
+		return rows
+	for row_node in pop.get_child(0).get_children():
+		if not (row_node is Button) or row_node.get_child_count() == 0:
+			continue
+		# The row is stripe · icon · text stack · jump, and the text stack is the only VBox in it, so
+		# the label/detail pair is reached structurally rather than by counting siblings.
+		for cell in row_node.get_child(0).get_children():
+			if not (cell is VBoxContainer) or cell.get_child_count() < 2:
+				continue
+			rows.append({
+				"label": String((cell.get_child(0) as Label).text),
+				"detail": String((cell.get_child(1) as Label).text),
+			})
+			break
+	return rows
+
+## The rendered row whose label is EXACTLY `label`, or `null`. Rows are found by the words the player
+## reads, so a producer that fired with different text is a miss rather than a silent match.
+func _orb_row_with(rows: Array, label: String) -> Variant:
+	for row_variant in rows:
+		var row: Dictionary = row_variant
+		if String(row["label"]) == label:
+			return row
+	return null
+
+const DIGIT_CHARACTERS := "0123456789"
+
+## Does this rendered string carry ANY digit? The "renders no countdown at all" claim is asserted on
+## DIGITS rather than on an absent phrase, so no rewording of a number — `0`, `in 0 turns`, `0 left` —
+## can satisfy it.
+func _contains_digit(text: String) -> bool:
+	for i in text.length():
+		if DIGIT_CHARACTERS.contains(text[i]):
+			return true
+	return false
+
 ## The Telling: a pending fork on the wire, in the per-faction shape the native decoder produces
 ## (`[{faction, forks: [...]}]`). Copy is verbatim from beat_definitions.json —
 ## `sedentarization.soft_drift` / `soft_drift.long_chase` — with `{beast.plural}` resolved the way
@@ -4043,18 +4793,24 @@ func _compose_forage(tile_info: Dictionary) -> void:
 ## second open re-renders with `hunt_key` unchanged, so `source_changed` is false and the dialed
 ## values survive into the render (still subject to the stepper's own cap clamp, as in the game).
 ## Omit both to render whatever the re-seed produces — which is what the raid states deliberately want.
-func _compose_herd(herd: Dictionary, count: int = COMPOSE_COUNT_UNSET, policy: String = "") -> void:
+## `improvement` is the SECOND AXIS (issue #442) — a build verb is no longer a value of `policy`, so a
+## frame that used to dial `policy: "tame"` dials this instead, and may dial a STANCE beside it. The
+## re-open contract is unchanged: dial after the first open, then re-open so the render sees it.
+func _compose_herd(herd: Dictionary, count: int = COMPOSE_COUNT_UNSET, policy: String = "",
+		improvement: String = "") -> void:
 	# The compose sheet is where the pair actually BITES (`_forecast_worker_cap`'s floor), and a herd
 	# can be composed without ever being the selected subject — so check the argument here too, not
 	# only through the per-frame scan in `_save`.
 	_guard_herd_fields(herd, "compose_herd")
 	_hud._drawercompose.open_herd_compose(herd)
-	if count == COMPOSE_COUNT_UNSET and policy == "":
+	if count == COMPOSE_COUNT_UNSET and policy == "" and improvement == "":
 		return
 	if count != COMPOSE_COUNT_UNSET:
 		_hud._compose.set_hunt_count(count)
 	if policy != "":
 		_hud._compose.set_hunt_policy(policy)
+	if improvement != "":
+		_hud._compose.set_hunt_improvement(improvement)
 	_hud._drawercompose.open_herd_compose(herd)
 
 ## A synthetic PRESSED mouse-button event, for driving a Control's real `gui_input` handler. The
@@ -4095,7 +4851,6 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 ## assert on a value that must CHANGE (the forecast's "→ then" term) rather than merely be present.
 ## The forecast's dip→payoff arrow. Deliberately NOT the bare word "then": the Cultivate policy hint
 ## rendered on the same card ("…then a much higher tended yield") contains it too.
-const FORECAST_THEN_NEEDLE := "→ then"
 ## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
 const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
 ## Slack allowed when asserting a control sits INSIDE its card (`_rect_contains`): a control laid out
@@ -4104,10 +4859,89 @@ const CLIP_TOLERANCE_PX := 1.0
 ## The two remedies a STANDING-but-gated Cultivate must still spell out (issue #420). Each is the tail
 ## of its `HudFloraVocab` reason, so the assertion reads the sentence the player reads and not just the
 ## rung's presence: the paused build's ease-off advice, and the finished patch's harvest advice.
-const PAUSED_CULTIVATE_REMEDY_NEEDLE := "let it regrow to Thriving"
-const TENDED_CULTIVATE_REMEDY_NEEDLE := "Already a Tended Patch"
-## The herd twin of the pair above — the reason a RE-ADMITTED Tame rung must carry.
-const TAMED_HERD_REMEDY_NEEDLE := "Already fully tamed"
+## The three IMPROVEMENT-CONTROL needles (issue #442), each pinning a phrase only ONE of the control's
+## states can produce, so a passing assertion cannot be satisfied by the frame merely rendering.
+## `IMPROVEMENT_DEAL_MIDDLE_NEEDLE` is the term the two-term "Preparing: X → then Y" line structurally
+## could not carry — the stance baseline the dip is measured against — so its presence IS the
+## three-term forecast.
+const IMPROVEMENT_DEAL_MIDDLE_NEEDLE := "while building"
+## The deal line's own separator, and how many of them a THREE-term line carries (`A → B → C`).
+## Counting them is what makes "all three terms" an assertion rather than a claim about one of them.
+const IMPROVEMENT_DEAL_TERM_SEPARATOR := "→"
+const IMPROVEMENT_DEAL_SEPARATORS := 2
+## The improvement DEAL line, matched on the WARN-amber middle term that only it can produce. It was
+## `"→ then"` while the forecast had two terms; the three-term line spells the same promise as
+## `A → B while building → C`, so `IMPROVEMENT_DEAL_MIDDLE_NEEDLE` is the needle and this is its alias
+## at the crop-substitution call sites, which are asking a different question of the same line.
+const FORECAST_THEN_NEEDLE := IMPROVEMENT_DEAL_MIDDLE_NEEDLE
+
+const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
+const CULTIVATION_LOCKED_NEEDLE := "know Cultivation"
+## A crop `_food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
+## gated offer. Naming a real crop matters: a needle no basket contains would make the assertion pass
+## whether the list rendered or not.
+const GATED_CROP_NEEDLE := "Wild Grain"
+## The offer wording that must NOT appear while the rung is gated — the imperative the gated state
+## exists to remove. Kept as a literal so a reworded offer cannot silently pass this assertion.
+const GATED_OFFER_NEEDLE := "Cultivate this patch"
+## The Corral done-label's upkeep clause — asserted PRESENT on the penned frame and ABSENT on the
+## pastoral one, which is the only way to pin an asymmetry rather than merely one side of it.
+const UPKEEP_NEEDLE := "fodder/turn upkeep"
+## `RungGates`' third argument is the IMPROVEMENT axis, and these probes pass "this crew is building
+## nothing". Named rather than a bare "" so a reader cannot mistake it for an omitted stance.
+const RUNG_BUILDING_NOTHING := ""
+## The faction's PENNING on the two corral-gate frames and on `two_meter_split`. Named because each is
+## asserted against the rendered gate reason's percent, so the fixture value and the expected string
+## are one number rather than two that can drift. Deliberately DIFFERENT between the two states, so a
+## frame quoting the other one's percent fails rather than passing off a shared constant.
+const CORRAL_GATE_PENNING := 0.35
+const TWO_METER_PENNING := 0.45
+## The crew the two zero-crew submits are composed at. Named because 0 is the WHOLE subject of those
+## frames — it is the sim's unassign on a worked source and a no-op on an unworked one — and a bare 0
+## beside `COMPOSE_COUNT_UNSET` reads like an omission.
+const ZERO_CREW := 0
+## The crew the two stance-beside-a-build frames are DIALED at — past every stance's cap, so the sheet's
+## own clamp decides the crew and the deal's terms are the CEILING rather than the number typed here.
+## It used to be described as "enough to saturate the patch on EVERY stance (Eradicate 4.80 / 0.32 =
+## 15)", which stopped being true when the cap learned about the dip (#442): a BUILDING crew is capped
+## on `stance × 0.25`, so Sustain clamps to 2 (the build crew) and Deplete to 3. Both frames still show
+## the ceiling binding — that is what the clamp guarantees — and the pair still differs only by stance.
+const IMPROVEMENT_STANCE_FRAME_FORAGERS := 15
+## **THE SIM'S OWN `workers_needed` FOR A CULTIVATING CREW ON THE REFERENCE PATCH.** Its derivation from
+## the ladder's and the fixture's numbers is on `_cultivating_forage_band_fixture`, which ships it on the
+## wire; `improvement_build_crew` asserts the compose cap equals what the sheet READS BACK off that
+## assignment, so the control is the sim's published answer rather than a number the harness chose twice.
+const CULTIVATE_SIM_WORKERS_NEEDED := 2
+## Dialed past every plausible cap on that frame, so what the stepper renders IS the cap.
+const BUILD_CREW_DIALED_FORAGERS := 9
+## Idle workers handed to the WORKED-ROW cap twin, so IDLE never becomes the binding term and the two
+## probes differ only by the count under test. Any number above the cap does; this one is not the band's.
+const BUILD_CREW_IDLE_ON_HAND := 9
+## **THE METER VALUE THE BUILDING/REVERTING PAIR IS JUDGED AT — deliberately NEAR COMPLETE.** "Preparing
+## 96%" beside "Reverting 96%" is the exact ambiguity the third state exists to remove: at a high
+## percentage the two states are most alike and the stakes are highest, since what is nearly finished is
+## also what there is most to lose. Both frames render this ONE number, so the word and the tint are the
+## only things that can differ between them.
+const REVERTING_METER_PROGRESS := 0.96
+const REVERTING_METER_PERCENT := 96
+## The tile the band works INSTEAD in the reverting frame — any tile that is not the one being judged.
+## The patch under test is then improved, owned and unworked, which is the whole condition.
+const METER_AWAY_TILE_X := 64
+## The tile card's cultivation ROW key, for the run-log excerpt. Not an assertion input: the assertions
+## match the rendered VALUE markup, which no other row can produce.
+const CULTIVATION_ROW_KEY := "Cultivation"
+## How much of a rendered detail card to echo around a row key when reporting. Enough for the value
+## cell and its colour tag, short enough to stay one log line.
+const DETAIL_EXCERPT_CHARS := 96
+const DETAIL_EXCERPT_ABSENT := "<row absent>"
+## The take that crew is paid — `min(2 × 0.32, 0.96 × 0.25)` = the DIPPED ceiling, 0.24 food/turn. It is
+## the number the green forecast line, the deal's middle term and the sim's own `actual_yield` must all
+## carry; before the dip reached the forecast the green line quoted 0.64 (the undipped labour take) while
+## the deal beside it said 0.24 — the same patch, the same crew, two different answers on one sheet.
+const BUILD_CREW_DIPPED_TAKE := "0.24"
+## **The three "already built" remedy needles went with the gate reasons they pinned** (issue #442):
+## a completed rung is a static DONE LABEL now, not a greyed picker button, so there is no dead end to
+## explain and nothing for a needle to find. `IMPROVEMENT_DONE_LABELS` is what those frames assert on.
 ## The herder crew on the fully-tamed herd: the herd's `herders_needed` pair AND the workers the
 ## standing Tame assignment staffs, so the two cannot disagree about how many hands are on it.
 const TAMED_HERD_CREW := 4
@@ -4161,16 +4995,37 @@ func _label_text_containing(root: Node, needle: String) -> String:
 		return ""
 	if root is Label and (root as Label).text.contains(needle):
 		return (root as Label).text
+	# RichTextLabels carry the BBCode SOURCE in `text`, which is what a needle spanning a `[color]`
+	# span (the improvement deal's WARN-amber middle term) has to be matched against — the improvement
+	# deal and the local yield previews are all `HudWidgets.forecast_label`s.
+	if root is RichTextLabel and (root as RichTextLabel).text.contains(needle):
+		return (root as RichTextLabel).text
 	for child in root.get_children():
 		var found := _label_text_containing(child, needle)
 		if found != "":
 			return found
 	return ""
 
+## One rung-meter row's rendered VALUE CELL — `[color=#HEX]<verb> 96%[/color]`, exactly as
+## `DetailFormat.detail_bbcode` emits it. Word and tint in ONE needle, because the decaying state was a
+## failure of BOTH and an assertion that pinned only one of them would pass on half a fix.
+func _meter_value_markup(verb: String, hex: String) -> String:
+	return "[color=#%s]%s %d%%[/color]" % [hex, verb, REVERTING_METER_PERCENT]
+
+## A readable slice of a rendered detail card's BBCode around one row key — for the run log, so a
+## failing meter assertion shows what the card actually SAID rather than only that it disagreed.
+func _detail_excerpt(bbcode: String, key: String) -> String:
+	var at := bbcode.find(key)
+	if at < 0:
+		return DETAIL_EXCERPT_ABSENT
+	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
+
 func _has_label_containing(root: Node, text: String) -> bool:
 	if root == null:
 		return false
 	if root is Label and (root as Label).text.contains(text):
+		return true
+	if root is RichTextLabel and (root as RichTextLabel).text.contains(text):
 		return true
 	for child in root.get_children():
 		if _has_label_containing(child, text):
@@ -4240,6 +5095,152 @@ func _policy_picker_columns(root: Node) -> int:
 	var grid := btn.get_parent().get_parent()
 	return (grid as GridContainer).columns if grid is GridContainer else 0
 
+## Find the IMPROVEMENT control anywhere under `root`, by `HudWidgets.IMPROVEMENT_CONTROL_META` — its
+## identity, never its face (which carries a live meter and a payoff and so changes every frame). The
+## NODE TYPE is half the assertion: a `CheckBox` is offered or running (`button_pressed` tells those
+## apart) and a plain `Label` is done, which is exactly the three-state contract. Returns the Control,
+## so a caller can type-test it.
+## The luminance gap an improvement checkbox's indicator must clear against the panel it sits on.
+## 0.25 of the full range is far below what the fix delivers (~0.5 for both states) and far above what
+## the defect scored: Godot's stock `unchecked` art is `#191919` at half alpha, which composites over
+## `PANEL_SOLID` to a gap of ~0.001 — invisible, which is exactly the bug.
+const CHECKBOX_INDICATOR_MIN_CONTRAST := 0.25
+
+## How visible one of a CheckBox's indicator states is: composite every pixel of the art it would draw
+## over `HudStyle.PANEL_SOLID` at that pixel's own alpha, and keep the largest luminance distance from
+## the panel. **Measured off the art, not off a theme override**, because "the box is invisible" is a
+## claim about pixels — an assertion phrased as "an override is set" would have passed on a
+## `icon_normal_color` override, which a `CheckBox` ignores.
+func _checkbox_indicator_contrast(control: Control, icon: String) -> float:
+	var box := control as CheckBox
+	if box == null:
+		return 0.0
+	var tex := box.get_theme_icon(icon)
+	if tex == null:
+		return 0.0
+	var img := tex.get_image()
+	if img == null:
+		return 0.0
+	var panel := HudStyle.PANEL_SOLID
+	var panel_luminance := panel.get_luminance()
+	var best := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			var over := panel.lerp(Color(px.r, px.g, px.b), px.a)
+			best = maxf(best, absf(over.get_luminance() - panel_luminance))
+	return best
+
+## How far the TICKED art's colour may sit from `HudStyle.SIGNAL` once brightness is divided out.
+## Godot's stock tick chip is neutral grey, which scores ~0.65 on this measure, so 0.1 separates
+## "recoloured to the live token" from "whatever the theme shipped" with room to spare.
+const CHECKBOX_TICK_COLOUR_TOLERANCE := 0.1
+
+## The ticked indicator's own colour, compared to `SIGNAL` with BRIGHTNESS DIVIDED OUT: take the art's
+## most prominent pixel, scale it and `SIGNAL` so each has a largest channel of 1, and measure the
+## distance. Brightness is normalised away because the chip's absolute level comes from the stock art
+## being recoloured rather than redrawn; what is being pinned is that a running build wears the
+## console's live colour instead of the stock theme's grey.
+func _checkbox_tick_colour_gap(control: Control) -> float:
+	var box := control as CheckBox
+	if box == null:
+		return 1.0
+	var tex := box.get_theme_icon("checked")
+	if tex == null:
+		return 1.0
+	var img := tex.get_image()
+	if img == null:
+		return 1.0
+	var best := Color(0, 0, 0, 0)
+	var best_weight := 0.0
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			var weight := px.get_luminance() * px.a
+			if weight > best_weight:
+				best_weight = weight
+				best = px
+	return _unit_channel(best).distance_to(_unit_channel(HudStyle.SIGNAL))
+
+## A colour as a hue-only vector: its RGB scaled so the largest channel is 1. `Vector3.ONE` (neutral
+## white/grey) for a black input, which reads as "no colour of its own" — the right answer for the
+## degenerate case and the same answer a grey chip gives.
+func _unit_channel(c: Color) -> Vector3:
+	var peak: float = maxf(maxf(c.r, c.g), c.b)
+	if peak <= 0.0:
+		return Vector3.ONE
+	return Vector3(c.r, c.g, c.b) / peak
+
+## **UNCHECK THE RUNNING BOX AND CHECK WHAT THE CLIENT WOULD TRANSMIT** — driven through the REAL
+## control and the REAL formatter, not through the handler each would have called.
+##
+## The chain is the player's: press the live `CheckBox` (which flips it and fires `toggled`), press
+## the sheet's own commit button, capture the payload off `HudLayer.improvement_requested`, and run it
+## through `Main.format_abandon_improvement` — the pure static `Main._on_hud_improvement` dispatches
+## to. Asserting the LINE rather than the payload is what makes this test the shipped representation:
+## the payload could carry a perfectly good herd id and still be formatted into the tile-targeted
+## grammar, which is exactly the mistake the two webs' differing targeting rules invite.
+##
+## Restores the composed improvement afterwards, so the frame that just rendered is not disturbed for
+## whatever asserts against it next.
+func _assert_abandon_emits(kind: String, improvement: String, want_line: String) -> void:
+	var sheet := _hud._drawercompose._compose_sheet
+	var box := _find_improvement_control(sheet, improvement)
+	if not (box is CheckBox):
+		_assert_hud("abandon (%s): a running improvement box to uncheck" % kind, false)
+		return
+	var captured: Array[Dictionary] = []
+	var sink := func(payload: Dictionary) -> void: captured.append(payload)
+	_hud.improvement_requested.connect(sink)
+	(box as CheckBox).button_pressed = false
+	# **SETTLE BEFORE LOOKING FOR THE COMMIT BUTTON.** Unchecking rebuilds the whole control block,
+	# and the builder clears its host with `queue_free()` — a DEFERRED removal, so until the frame
+	# ends the stale nodes are still children and a synchronous search finds the OLD button first.
+	# Pressing that one runs a closure built against the pre-uncheck composition, which emits nothing
+	# (`composed == standing`) and reads exactly like "the abandon path is not wired up".
+	await _settle()
+	var commit := _find_button_by_text(sheet, HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON) \
+		if kind == SourceForecast.LABOR_KIND_HUNT \
+		else _find_button_by_text(sheet, HudComposeVocab.FORAGE_ASSIGN_BUTTON)
+	if commit == null:
+		_hud.improvement_requested.disconnect(sink)
+		_assert_hud("abandon (%s): the sheet's commit button" % kind, false)
+		return
+	commit.pressed.emit()
+	_hud.improvement_requested.disconnect(sink)
+	if captured.is_empty():
+		_assert_hud("abandon (%s): unchecking a running build emits a command" % kind, false)
+		return
+	var line := String(MAIN_SCRIPT.format_abandon_improvement(captured[0]).get("line", ""))
+	print("ui_preview: abandon %s -> %s" % [kind, line])
+	_assert_hud("unchecking a running %s build transmits `%s`" % [kind, want_line],
+		line == want_line)
+	# Committing also fired `assign_labor`, whose OPTIMISTIC pending entry would tint every later
+	# frame's rows amber. Drop it — the probe is about the command, not about the overlay.
+	_hud._band_labor._pending_labor.clear()
+
+## The improvement control's FACE text, whichever of its three node shapes it is in — the handle the
+## meter assertions read. "" when the control is absent.
+func _improvement_face(root: Node, improvement: String) -> String:
+	var control := _find_improvement_control(root, improvement)
+	if control is CheckBox:
+		return (control as CheckBox).text
+	if control is Label:
+		return (control as Label).text
+	return ""
+
+func _find_improvement_control(root: Node, improvement: String) -> Control:
+	if root == null:
+		return null
+	if root is Control and (root as Control).get_meta(
+			HudWidgets.IMPROVEMENT_CONTROL_META, "") == improvement:
+		return root as Control
+	for child in root.get_children():
+		var found := _find_improvement_control(child, improvement)
+		if found != null:
+			return found
+	return null
+
 func _find_policy_rung(root: Node, policy: String) -> Button:
 	if root == null:
 		return null
@@ -4261,6 +5262,111 @@ func _face_lines(root: Node) -> Array[String]:
 	for child in root.get_children():
 		lines.append_array(_face_lines(child))
 	return lines
+
+# ---- the compose sheets' SHARED VERTICAL GRAMMAR ------------------------------------------------
+# The forage sheet and the hunt sheet ask the same two questions in the same act — WHICH STANCE, and
+# WITH HOW MANY PEOPLE — and they must ask them in the same order, because a player moving between the
+# two is reading one control layout, not two. The hunt sheet used to put its crew stepper directly
+# under the band picker, i.e. staff first and decide after; both now read
+#   band picker → stance picker → (hint) → crew stepper → … → improvement.
+#
+# A FRAME CANNOT HOLD THAT CLAIM. Two PNGs side by side show the order to a human who thinks to look,
+# and nothing fails when one of them moves — which is exactly how they drifted apart. So the invariant
+# is asserted as a SPINE: the ordered structural controls of the open sheet, with the prose between
+# them (hints, cap notes, forecasts, gate reasons, the plant web's crop rows) deliberately EXCLUDED.
+# The two webs legitimately say different things in different places; what must match is the order in
+# which the controls come.
+const COMPOSE_SPINE_BAND := "band"
+const COMPOSE_SPINE_POLICY := "policy"
+const COMPOSE_SPINE_STEPPER := "stepper"
+const COMPOSE_SPINE_IMPROVEMENT := "improvement"
+## What EVERY compose sheet must open with — both webs, and the hunt sheet's local and expedition
+## branches alike. The expedition branch builds no improvement control (a detached party builds
+## nothing), so the shared claim is the HEAD; the two LOCAL sheets are additionally compared in full.
+const COMPOSE_SPINE_HEAD: Array[String] = [
+	COMPOSE_SPINE_BAND, COMPOSE_SPINE_POLICY, COMPOSE_SPINE_STEPPER,
+]
+## The three sheets whose spines this run captures, as `_compose_spines` keys. Named consts because the
+## capture sites and the parity check sit ~1,600 lines apart, and a typo in either would silently
+## compare a spine against nothing.
+const COMPOSE_SPINE_KEY_FORAGE := "forage"
+const COMPOSE_SPINE_KEY_HUNT := "local hunt"
+const COMPOSE_SPINE_KEY_EXPEDITION := "hunt expedition"
+## The `−` face `HudWidgets.add_stepper_controls` gives every stepper's decrement button (U+2212, not a
+## hyphen). It is the one structural handle on a stepper row — unlike a rung or an improvement box, a
+## stepper carries no meta — so the walk below finds it by that face.
+const COMPOSE_STEPPER_MINUS_FACE := "−"
+
+## The open compose sheet's spine, in tree order. Each recognized control is tagged and NOT descended
+## into: a rung's cell holds Labels, an improvement control holds its own rows, and neither is a spine
+## control in its own right. A policy PICKER emits one tag however many rungs it holds.
+func _compose_spine(root: Node) -> Array[String]:
+	var spine: Array[String] = []
+	_collect_compose_spine(root, spine)
+	return spine
+
+func _collect_compose_spine(node: Node, spine: Array[String]) -> void:
+	if node == null:
+		return
+	if node is Control and (node as Control).has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+		spine.append(COMPOSE_SPINE_IMPROVEMENT)
+		return
+	if node is OptionButton:
+		spine.append(COMPOSE_SPINE_BAND)
+		return
+	if node is Button and (node as Button).has_meta(HudWidgets.POLICY_RUNG_META):
+		if spine.is_empty() or spine[spine.size() - 1] != COMPOSE_SPINE_POLICY:
+			spine.append(COMPOSE_SPINE_POLICY)
+		return
+	if node is Button and (node as Button).text == COMPOSE_STEPPER_MINUS_FACE:
+		spine.append(COMPOSE_SPINE_STEPPER)
+		return
+	for child in node.get_children():
+		_collect_compose_spine(child, spine)
+
+## Capture the open sheet's spine under `key`, and assert the shared HEAD on the spot so a failure
+## names the sheet that broke rather than only the pair. An EMPTY spine fails too — a sheet that never
+## opened would otherwise make the parity comparison vacuously true.
+func _record_compose_spine(key: String) -> void:
+	var spine := _compose_spine(_hud._drawercompose._compose_sheet)
+	_compose_spines[key] = spine
+	_assert_hud("the %s compose sheet opens band → stance → crew (spine %s)" % [key, str(spine)],
+		spine.slice(0, COMPOSE_SPINE_HEAD.size()) == COMPOSE_SPINE_HEAD)
+
+## THE PARITY ASSERTION: the two LOCAL compose sheets must read in the same control order, start to
+## finish. Both keys must have been recorded — comparing two missing spines would pass while proving
+## nothing, which is the failure mode a frame-only check already has.
+func _assert_compose_order_parity(forage_key: String, hunt_key: String) -> void:
+	var have_both := _compose_spines.has(forage_key) and _compose_spines.has(hunt_key)
+	_assert_hud("both compose spines were captured before the parity check (%s, %s)"
+		% [forage_key, hunt_key], have_both)
+	if not have_both:
+		return
+	var forage_spine: Array = _compose_spines[forage_key]
+	var hunt_spine: Array = _compose_spines[hunt_key]
+	_assert_hud(("the forage and local-hunt sheets read in the SAME control order — forage %s, hunt %s"
+		% [str(forage_spine), str(hunt_spine)]), forage_spine == hunt_spine)
+
+## The crew a stepper is SHOWING — the value Label `HudWidgets.add_stepper_controls` lays between the
+## `−` and the `+`. Structural, like the spine walk: a stepper carries no meta, so it is found by that
+## `−` face and the value is its next sibling.
+##
+## It exists because "the frame renders the N-worker crew" was being asserted against
+## `ComposeState.hunt_count()` — the model the harness itself had just dialed. That is a real test of
+## the CLAMP (the render writes the clamped count back), but it is not a test of the readout, and a
+## stepper drawing any other number would pass it. `STEPPER_VALUE_ABSENT` on a missing stepper, so a
+## sheet that never opened fails an equality claim rather than satisfying it.
+const STEPPER_VALUE_ABSENT := -1
+func _stepper_value(root: Node) -> int:
+	var minus := _find_button_by_text(root, COMPOSE_STEPPER_MINUS_FACE)
+	if minus == null or minus.get_parent() == null:
+		return STEPPER_VALUE_ABSENT
+	var siblings := minus.get_parent().get_children()
+	var index := siblings.find(minus)
+	if index < 0 or index + 1 >= siblings.size():
+		return STEPPER_VALUE_ABSENT
+	var value: Node = siblings[index + 1]
+	return int((value as Label).text) if value is Label else STEPPER_VALUE_ABSENT
 
 ## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
 func _count_buttons_by_text(root: Node, text: String) -> int:
@@ -4567,7 +5673,7 @@ func _band_fixture() -> Dictionary:
 		"work_range": 2,
 		# Hunt reach (work_range + hunt leash) — large enough here that BOTH the reference herd_fixture
 		# (9 tiles from this band's pos) and the occupied-hex herd (16 tiles) stay WITHIN reach, so those
-		# herd states render the LOCAL "Assign Local Hunt" controls (the far-herd expedition path has its
+		# herd states render the LOCAL "Hunt Here" controls (the far-herd expedition path has its
 		# own dedicated fixtures, _hunt_distance_bands).
 		"hunt_reach": 16,
 		"scout_reveal_radius": 2,
@@ -4620,7 +5726,7 @@ func _pen_keeper_band_fixture() -> Dictionary:
 		{"kind": "forage", "workers": 5, "target_x": 71, "target_y": 18, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "workers_needed": 1},
 		# A managed source: one keeper, take == sustainable (escapement); Corral is managed, so the
 		# sim-answered `overdraws` is false → no ⚠ and no overstaff note.
-		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 5.40, "sustainable_yield": 5.40, "workers_needed": 1, "overdraws": false},
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "sustain", "improvement": "corral", "target_x": 70, "target_y": 17, "actual_yield": 5.40, "sustainable_yield": 5.40, "workers_needed": 1, "overdraws": false},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -4642,7 +5748,7 @@ func _starving_pen_band_fixture() -> Dictionary:
 		# so the one-line summary must read `+0.84 /turn · ⇄ +0.12` — food leading, trade only because
 		# it is non-zero. It comes from the SAME `SourceForecast.source_yield_readout` the Band panel's
 		# rows use, so the two surfaces cannot state different products for one assignment.
-		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1, "overdraws": false, "trade_yield": 0.12, "realized_trade_yield": 0.12},
+		{"kind": "hunt", "workers": 1, "fauna_id": "game_deer_07", "policy": "sustain", "improvement": "corral", "target_x": 70, "target_y": 17, "actual_yield": 0.84, "sustainable_yield": 0.84, "workers_needed": 1, "overdraws": false, "trade_yield": 0.12, "realized_trade_yield": 0.12},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -4874,12 +5980,22 @@ func _forage_range_bands() -> Array:
 ## the (66,10) reference — the finished Tended Patch at (67,11) — would read as UNSTAFFED there, i.e.
 ## exactly the "not standing" case those frames must not render. Both defaults keep every existing
 ## caller on the reference tile.
+## **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.**
+## Derived here by the sim's rule rather than picked, so the assertion on `improvement_build_crew` has a
+## control it did not write itself. For this patch under Sustain + Cultivate
+## (`_food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96, cultivate fraction 0.25, crew 2):
+##   take        = min(w × 0.32, 0.96 × 0.25) = 0.24   (`forage::forage_take` — the dip is INSIDE the min)
+##   take crew   = ceil(0.24 / 0.32)          = 1      (`systems::labor::workers_needed_for_take`)
+##   workers_needed = max(build crew 2, take crew 1) = 2  (`systems::labor::source_crew_needed`)
+## It read `1` — the answer from before either half existed — which is exactly the number the client's
+## old stance-only, floor-less cap agreed with.
 func _cultivating_forage_band_fixture(x: int = 66, y: int = 10) -> Dictionary:
 	var band: Dictionary = _forage_range_bands()[0]
 	band["labor_assignments"] = [{
-		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "policy": "cultivate",
+		"kind": "forage", "workers": 1, "target_x": x, "target_y": y, "policy": "sustain",
+		"improvement": "cultivate",
 		"actual_yield": 0.24, "sustainable_yield": 0.96, "realized_yield": 0.24,
-		"workers_needed": 1, "overdraws": false,
+		"workers_needed": CULTIVATE_SIM_WORKERS_NEEDED, "overdraws": false,
 	}]
 	return band
 
@@ -5374,7 +6490,7 @@ func _seed_forage_rows(tile: Dictionary) -> Dictionary:
 	# cap would move under a state that says nothing about either.
 	var standing: Dictionary = tile.get("patch_forage_policy_ceilings", {})
 	var ceilings := {}
-	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
+	for policy in SourceForecast.LABOR_HUNT_POLICIES:
 		ceilings[policy] = float(tile.get("patch_ceiling_%s" % policy,
 			standing.get(policy, 0.0)))
 	var zeros := {}
@@ -5388,9 +6504,29 @@ func _seed_forage_rows(tile: Dictionary) -> Dictionary:
 	tile["patch_forage_policy_per_worker"] = per_worker_rows
 	tile["patch_forage_policy_per_worker_trade"] = zeros.duplicate()
 	tile["patch_forage_policy_per_worker_fodder"] = zeros.duplicate()
+	# **THE TWO BUILD DIPS ARE FRACTIONS NOW, NOT ROWS** (issue #442). `patch_ceiling_cultivate` /
+	# `patch_ceiling_sow` remain the fixture-authoring shorthand — a fixture states the dip as the
+	# absolute rate its comments explain — and this converts each to the wire's fraction-of-the-stance
+	# form by dividing by the SUSTAIN ceiling, which is exactly what the old row was (the dip was
+	# `fraction x the Sustain/MSY ceiling`, Sustain being the only stance a builder could hold). So
+	# every existing fixture's numbers survive the change unmoved. A fixture that states a fraction
+	# outright wins; a barren patch (Sustain 0) leaves it 0, i.e. "no build described here".
+	var sustain := float(ceilings.get(SourceForecast.LABOR_POLICY_SUSTAIN, 0.0))
+	for rung in SourceForecast.FORAGE_IMPROVEMENTS:
+		var key := "patch_%s_build_fraction" % rung
+		if not tile.has(key):
+			var dip := float(tile.get("patch_ceiling_%s" % rung, 0.0))
+			tile[key] = (dip / sustain) if sustain > 0.0 else 0.0
+		tile.erase("patch_ceiling_%s" % rung)
 	for policy in ceilings:
 		tile.erase("patch_ceiling_%s" % policy)
 	return tile
+
+## The staple tile as the COMPOSE SHEET sees it — `_food_tile_fixture` already runs through
+## `_seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
+## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
+func _seeded_food_tile() -> Dictionary:
+	return _food_tile_fixture()
 
 func _food_tile_fixture() -> Dictionary:
 	var tile := {
@@ -5409,8 +6545,8 @@ func _food_tile_fixture() -> Dictionary:
 		# A discovered Wondrous Site on this tile → the Tile card shows a "Site: …" line.
 		"site_name": "Verdant Basin",
 		# Forage patch being worked toward cultivation → the Tile card's "Cultivation 60%" row.
-		"cultivation_progress": 0.6,
-		"is_cultivated": false,
+		"patch_cultivation_progress": 0.6,
+		"patch_is_cultivated": false,
 		"patch_has_owner": true,
 		"patch_owner": 0,
 		"patch_ecology_phase": "thriving",
@@ -5432,6 +6568,18 @@ func _food_tile_fixture() -> Dictionary:
 		# Both are food/turn at output_multiplier 1.0, like the ceilings above.
 		"patch_ceiling_cultivate": 0.24,
 		"patch_tended_yield": 1.20,
+		# THE BUILD CREWS (#442) — `intensification_ladder.json`'s own `crew_needed` for the two plant
+		# rungs (tended 2, field 3), which is what the compose stepper FLOORS its cap on. Not decoration:
+		# the dip shrinks the ceiling the cap divides, so without a crew a Cultivate composed here caps
+		# at ONE forager while the sim asks for two — the exact disagreement the pair of them fixes.
+		"patch_cultivate_crew_needed": 2,
+		"patch_sow_crew_needed": 3,
+		# THE NEGLECT GRACE (#442) — the countdown to this rung reverting. The reference patch IS being
+		# worked (a crew is cultivating it), so it reads the plant:tended rung's full `grace + 1` = 3:
+		# "walk away and you have this long". `has_neglect_grace` is what makes the number readable at
+		# all — a wild patch would ship `false`, not a zero.
+		"patch_has_neglect_grace": true,
+		"patch_neglect_grace_remaining": 3,
 		# Plant RUNG 3 — the Field + the Sow verb. This reference tile is ordinary prairie steppe:
 		# rich enough to forage, but it will NOT take seed (rung 3 moves seed, it cannot fertilize or
 		# irrigate), so the sim's `sow_site_refusal` verdict rides here and the Sow option is gated
@@ -5515,8 +6663,8 @@ func _committed_crop_tile_fixture() -> Dictionary:
 ## row: you can watch Oak Mast fall 25% -> 2% as the work lands.
 func _weeded_crop_tile_fixture() -> Dictionary:
 	var tile := _committed_crop_tile_fixture()
-	tile["cultivation_progress"] = 1.0
-	tile["is_cultivated"] = true
+	tile["patch_cultivation_progress"] = 1.0
+	tile["patch_is_cultivated"] = true
 	var basket: Array = []
 	for entry_variant in tile["patch_composition"]:
 		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
@@ -5544,7 +6692,7 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["patch_committed_species"] = "wild_emmer"
 	tile["patch_committed_display_name"] = "Wild Emmer"
-	tile["cultivation_progress"] = 0.04
+	tile["patch_cultivation_progress"] = 0.04
 	tile["patch_composition"] = [
 		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.47,
 			"can_cultivate": true, "can_sow": true,
@@ -5890,8 +7038,8 @@ func _forecast_herd(id: String, species: String, phase: String, sustain_ceiling:
 ## Biomass is well below capacity, mirroring a patch foraged past its regrowth.
 func _stressed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
-	tile["cultivation_progress"] = 0.0
-	tile["is_cultivated"] = false
+	tile["patch_cultivation_progress"] = 0.0
+	tile["patch_is_cultivated"] = false
 	tile["patch_ecology_phase"] = "stressed"
 	tile["patch_biomass"] = 22.0
 	return tile
@@ -5902,8 +7050,8 @@ func _tended_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["x"] = 67
 	tile["y"] = 11
-	tile["cultivation_progress"] = 1.0
-	tile["is_cultivated"] = true
+	tile["patch_cultivation_progress"] = 1.0
+	tile["patch_is_cultivated"] = true
 	tile["patch_ecology_phase"] = "thriving"
 	# A TENDED patch reports every policy ceiling == per_worker_yield, so max-useful collapses to 1
 	# worker regardless of policy — the stepper caps at 1 ("max 1 workers useful here").
@@ -5959,8 +7107,8 @@ func _sow_too_poor_tile_fixture() -> Dictionary:
 ## both are the SOURCE's own, which is the per-source half of the two-meter split.
 func _sowing_tile_fixture() -> Dictionary:
 	var tile := _sowable_tile_fixture()
-	tile["cultivation_progress"] = 1.0
-	tile["is_cultivated"] = true
+	tile["patch_cultivation_progress"] = 1.0
+	tile["patch_is_cultivated"] = true
 	tile["patch_field_progress"] = 0.45
 	tile["patch_is_field"] = false
 	return tile
@@ -6074,9 +7222,10 @@ func _dead_season_tile_fixture() -> Dictionary:
 	tile = _seed_forage_rows(tile)
 	return tile
 
-## A herd mid-TAME on a pen-ceiling species: the 🐾 Tame rung is available and selected, the herd's
-## OWN meter reads 40% (`domestication`), and Corral is still gated on Penning. This is the frame the
-## TWO-METER SPLIT is judged on — see the `two_meter_split` state.
+## A herd mid-TAME on a pen-ceiling species: the 🐾 Tame rung is available and selected, and the herd's
+## OWN meter reads 40% (`domestication`). It is the base of the taming family below; the TWO-METER
+## SPLIT is staged on its fully-tamed variant, since only a retired Tame lets the gated Corral — the
+## bridge between the two meters — render at all (see `two_meter_split`).
 func _taming_herd_fixture() -> Dictionary:
 	var fixture := _herd_fixture()
 	fixture["husbandry_ceiling"] = "pen"
@@ -6123,11 +7272,14 @@ func _taming_stalled_herd_fixture() -> Dictionary:
 ## take-useful (7, driven by the carry model) so the "no leak" companion is meaningful: composing Tame
 ## floors the cap UP to the 10-crew, while composing the extractive Sustain must stay at its own 7 — a
 ## crew-floor leak into Sustain would instead bump it to 10, which the companion asserts does NOT happen.
-## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which is the
-## point the husbandry-ceiling pass RETIRES ◎ Tame from the picker (its per-source meter is full and
-## 🐄 Corral is what comes next) and `RungGates.hunt_gates` answers "Already fully tamed …" for it. It is
-## managed at that point, so it carries a real herder crew through `_set_managed_herders` — the field
-## pair every herd fixture owes the frame guard.
+## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which RETIRES
+## ◎ Tame (its per-source meter is full, so the improvement control shows it as the DONE state) and
+## makes 🐄 Corral the rung on offer. It is managed at that point, so it carries a real herder crew
+## through `_set_managed_herders` — the field pair every herd fixture owes the frame guard.
+##
+## **It is also the only shape on which a Corral GATE can render**, which is why `two_meter_split`
+## stages it: a gate reason needs the rung to be the one on offer, and Corral only ever is once Tame
+## has retired.
 func _fully_tamed_herd_fixture() -> Dictionary:
 	var fixture := _taming_herd_fixture()
 	fixture["domestication"] = SourceForecast.DOMESTICATION_COMPLETE
@@ -6142,7 +7294,7 @@ func _tame_standing_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["labor_assignments"] = [{
 		"kind": "hunt", "workers": TAMED_HERD_CREW, "fauna_id": _taming_herd_fixture()["id"],
-		"policy": "tame", "target_x": 70, "target_y": 17,
+		"policy": "sustain", "improvement": "tame", "target_x": 70, "target_y": 17,
 		"actual_yield": 0.45, "sustainable_yield": 0.45,
 		"workers_needed": TAMED_HERD_CREW, "overdraws": false,
 	}]
@@ -6300,9 +7452,13 @@ func _herd_fixture() -> Dictionary:
 			"surplus": 1.80,
 			"deplete": 2.70,
 			"eradicate": 4.50,
-			"tame": 0.23,
-			"corral": 0.23,
 		},
+		# **THE TWO BUILD DIPS, AS FRACTIONS** (issue #442) — they were `tame` / `corral` ROWS of the
+		# list above, each the 0.23 a builder took because Sustain (0.90) was the only stance a builder
+		# could hold. 0.23 / 0.90 is that same dip stated as the factor it always was, and it now
+		# multiplies WHICHEVER stance the crew holds: a Deplete builder takes 2.70 x 0.256 = 0.69.
+		"tame_build_fraction": 0.23 / 0.90,
+		"corral_build_fraction": 0.23 / 0.90,
 		# The TRADE half of the same list (issue #337) — the decoder fills both dicts in one pass over
 		# the one wire list, so a fixture that carries the food rows must carry these or the picker
 		# under-reports what the rung pays.
@@ -6313,8 +7469,6 @@ func _herd_fixture() -> Dictionary:
 			"surplus": 0.27,
 			"deplete": 0.41,
 			"eradicate": 0.68,
-			"tame": 0.03,
-			"corral": 0.03,
 		},
 		"tile_info": _food_tile_fixture(),
 	}
@@ -6747,12 +7901,19 @@ func _small_game_herd_fixture() -> Dictionary:
 	fixture["tile_info"] = _compact_herd_tile()
 	return fixture
 
-## A still-WILD herd (domestication 0.4) on the same compact tile as the corral-ready one: the Corral
-## rung is gated on the herd half of its prerequisite, so the picker greys it with "Herd must be
-## domesticated" (the faction already knows Herding).
+## A FULLY TAMED, not-yet-penned herd with no pen started, on the same compact tile as the corral-ready
+## one — the ONE shape that can put a GATED 🐄 Corral on screen (issue #442).
+##
+## It was a still-wild herd (domestication 0.4) while a gated rung was a greyed button of the policy
+## picker, and every rung showed at once. The improvement control offers the source's NEXT rung, so a
+## part-tamed herd is offered 🐾 Tame and Corral is not rendered at all — which quietly emptied both
+## corral-gate frames. Retiring Tame (a full meter) is what makes Corral the rung on offer; the only
+## thing left that can gate it is the faction's PENNING, which is exactly the knowledge bridge the two
+## frames document. The SOURCE half of `RungGates.hunt_gates`' Corral reason is consequently
+## unreachable in this control now — the moment it would apply, Tame is offered instead, and a
+## checkbox is a better remedy than a sentence.
 func _corral_locked_herd_fixture() -> Dictionary:
 	var fixture := _corral_ready_herd_fixture()
-	fixture["domestication"] = 0.4
 	fixture["corral_progress"] = 0.0
 	return fixture
 
@@ -6852,8 +8013,10 @@ func _depleted_corral_herd_fixture() -> Dictionary:
 	# a depleted variant must restate them here rather than shadowing them with flat scalars.
 	var depleted_ceilings: Dictionary = (fixture["hunt_policy_ceilings"] as Dictionary).duplicate()
 	depleted_ceilings["sustain"] = 0.10
-	depleted_ceilings["corral"] = 0.05
 	fixture["hunt_policy_ceilings"] = depleted_ceilings
+	# The dip is a SHARE of whatever stance is held, so a shrunken herd needs no dip override at all —
+	# the 0.05-against-0.10 this used to restate is exactly the inherited 0.256 fraction of the new
+	# Sustain ceiling. That the override became unnecessary is the fraction form paying for itself.
 	fixture["corral_yield"] = 0.0     # below K/2 → the escapement harvest takes NOTHING
 	fixture["pen_upkeep"] = 0.14      # …and it would still have to be fed
 	return fixture
@@ -6868,6 +8031,57 @@ func _starving_pen_herd_fixture() -> Dictionary:
 	fixture["biomass"] = 310.0
 	fixture["pen_fed_fraction"] = PEN_FED_STARVING
 	return fixture
+
+## The SAME penned herd, UNDER-CREWED (`turn_orb_unworked_rung`): 2 keepers standing where the sim
+## demands 4, so the shed clock has started and `neglect_grace_remaining` is counting down.
+##
+## **IT IS FULLY FED, ON PURPOSE.** A starving pen fires `_starving_pen_attention`'s own row off the very
+## same herd, and the row COUNT is the negative control for the whole block — two producers on one herd
+## would make it unreadable and would let an over-eager unworked scan hide inside the total. Its tile is
+## the world-herd list's `(68, 15)` (matching the band's hunt assignment) and deliberately not the
+## worked patch's `(66, 10)`, so the two webs' jump targets stay distinguishable.
+func _under_crewed_herd_fixture() -> Dictionary:
+	var fixture := _domesticated_herd_fixture()
+	fixture["x"] = 68
+	fixture["y"] = 15
+	_set_managed_herders(fixture, UNDER_CREWED_HERD_NEEDED)
+	fixture["has_neglect_grace"] = true
+	fixture["neglect_grace_remaining"] = NEGLECT_GRACE_HERD
+	return fixture
+
+## **THE UNWORKED-RUNG CONTROL SET** (`turn_orb_unworked_rung`) — six patches in the wire shape
+## `forage_patches_to_array` produces, of which only THREE may raise a row. Every field here is one the
+## producer actually reads, and each patch differs from the one above it in exactly ONE of them, so a
+## failure names the condition that broke rather than "the fixture changed":
+##   (70,20) tended · ours · unworked · grace 2      → a row, counting down
+##   (71,20) FIELD  · ours · unworked · grace 0      → a row, the penalty biting NOW
+##   (72,20) tended · ours · unworked · NO grace     → a row with no countdown at all
+##   (73,20) WILD   · ours · unworked                → silent: nothing has been built here to lose
+##   (74,20) tended · a RIVAL's · unworked           → silent: a rival's ground is not our alarm
+##   (66,10) tended · ours · WORKED by the band      → silent: it is being kept
+## The worked control carries the FULL grace window rather than omitting the pair, so its silence can
+## only come from the crew on it — an absent countdown would have silenced it for the wrong reason.
+func _neglect_patches_fixture() -> Array:
+	return [
+		{"x": 70, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_SOON},
+		{"x": 71, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": true,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
+		{"x": 72, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": false, "neglect_grace_remaining": 0},
+		{"x": 73, "y": 20, "ecology_phase": "thriving", "is_cultivated": false, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": false, "neglect_grace_remaining": 0},
+		{"x": 74, "y": 20, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": RIVAL_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_NOW},
+		{"x": 66, "y": 10, "ecology_phase": "thriving", "is_cultivated": true, "is_field": false,
+			"has_owner": true, "owner": HudConst.PLAYER_FACTION_ID,
+			"has_neglect_grace": true, "neglect_grace_remaining": NEGLECT_GRACE_FULL},
+	]
 
 ## A SELF-FEEDING pen on lush land (Grazing 2d-γ): a radius-2 fenced footprint (19 tiles) whose grazing
 ## covers the herd's entire feed, so `pen_pasture_fraction` 1.0 and the NET larder bill `pen_larder_bill`
