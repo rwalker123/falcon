@@ -362,12 +362,26 @@ const FORAGE_ASSIGN_BUTTON := "Forage"
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
-# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a tile this band
-# already works it is a legitimate unassign and says so, and at 0 on a tile it does not work it is a
-# no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the unassign.
-const FORAGE_UNASSIGN_BUTTON := "Unassign"
+# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a source this
+# band already works it is a legitimate unassign and says so, and at 0 on a source it does not work it
+# is a no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the
+# unassign.
+#
+# **ONE WORD, BOTH SHEETS.** The forage sheet and the LOCAL hunt sheet reach the same three states from
+# the same rule, so the face is defined once: two consts holding "Unassign" is exactly how the two
+# sheets drift apart. (The EXPEDITION branch is not in this family — a raid is a launch, not an
+# edit of a standing assignment, so a party of 0 is simply refused.)
+const UNASSIGN_BUTTON := "Unassign"
 
 const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
+
+# The hunt web's twin, per CREW NOUN — a wild herd is staffed by hunters and a managed one by herders
+# (`HERD_CREW_LABEL`), so the dead button's explanation names whoever the stepper above it just asked
+# for. Keyed by the crew label the sheet already resolved, so the two can never disagree.
+const HUNT_NOOP_HINTS := {
+    HUNT_CREW_LABEL: "Nobody assigned yet — send at least one hunter.",
+    HERD_CREW_LABEL: "Nobody assigned yet — send at least one herder.",
+}
 
 # ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
 # Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live

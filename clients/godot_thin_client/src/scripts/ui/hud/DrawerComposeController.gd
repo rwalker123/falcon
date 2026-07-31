@@ -897,6 +897,20 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
+    # WOULD THIS SUBMIT CHANGE ANYTHING? — the forage sheet's rule, on the hunt web, because
+    # `workers == 0` means the SAME two different things here (the sim's `assign_labor` skips validation
+    # entirely at 0, so the unassign is always legal). `current` is the pending-aware standing crew on
+    # this herd for THIS band, so:
+    #   • 0 on a herd this band does NOT hunt → the command would do nothing. Dead button, still the
+    #     verb, and the reason spelled out beside it.
+    #   • 0 on a herd it DOES hunt → the sim's unassign. Live button, renamed, and NO improvement
+    #     control (below) — a panel offering to start a build in the act of abandoning the source
+    #     argues with itself.
+    # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
+    # EXPEDITION IS NOT IN THIS FAMILY: a raid is a launch, not an edit of a standing assignment, so
+    # there is no crew to hand back and a party of 0 is simply refused (the disable below).
+    var is_unassign := not is_expedition and _compose.hunt_count() <= 0 and current > 0
+    var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     if is_expedition:
         # LIVE turns-to-fill for the party + policy currently dialed. This block re-renders on every
@@ -934,16 +948,27 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             band, herd, _compose.hunt_policy(), _compose.hunt_count())
         if yield_line != "":
             target.add_child(HudWidgets.forecast_label(yield_line))
-        # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies.
-        _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
-            HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy(), composed_improvement,
-            band, _compose.hunt_count(), crew_label,
-            func(improvement: String) -> void:
-                _compose.set_hunt_improvement(improvement)
-                _build_herd_assign_controls(_live_herd(herd_id, herd), target),
-            target)
-        assign_btn.text = HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON
+        # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
+        # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated
+        # in the rung's own hint ("It must stay staffed or the herd goes wild again"), so a second
+        # warning at the moment of unassigning states one fact twice.
+        if not is_unassign:
+            _build_improvement_control(SourceForecast.LABOR_KIND_HUNT, herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_policy(), composed_improvement,
+                band, _compose.hunt_count(), crew_label,
+                func(improvement: String) -> void:
+                    _compose.set_hunt_improvement(improvement)
+                    _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+                target)
+        # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only
+        # when the cap note has not already said it, so the panel never states one fact twice.
+        if is_noop and cap_note == "":
+            target.add_child(HudWidgets.alloc_hint_label(
+                String(HudComposeVocab.HUNT_NOOP_HINTS.get(crew_label, ""))))
+        assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
+            else HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON
         HudStyle.apply_button(assign_btn, "primary")
+        assign_btn.disabled = is_noop
     if is_expedition:
         assign_btn.set_meta(HudWidgets.SEND_HUNT_CONFIRM_META, true)
         # A hunting expedition needs a positive party; a local hunt allows 0 (removes the assignment).
@@ -1453,7 +1478,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if is_noop and cap_note == "":
         target.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.FORAGE_NOOP_HINT))
     var assign_btn := Button.new()
-    assign_btn.text = HudComposeVocab.FORAGE_UNASSIGN_BUTTON if is_unassign else HudComposeVocab.FORAGE_ASSIGN_BUTTON
+    assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign else HudComposeVocab.FORAGE_ASSIGN_BUTTON
     HudStyle.apply_button(assign_btn, "primary")
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range or is_noop
@@ -1554,8 +1579,16 @@ func _live_tile_info(subject_key: String, fallback: Dictionary) -> Dictionary:
 
 ## The crew noun the sheet's stepper uses for this herd — herders on a MANAGED (corralled/pastoral)
 ## herd, hunters on a wild one. Read by the drawer button too, so the two always agree.
+##
+## **It reads the IMPROVEMENT axis, never the stance** (issue #442). `is_managed_hunt_source`'s second
+## argument is the composed improvement — its `== corral` clause is what makes a herd the player is
+## penning read as managed before the pen exists — and handing it `hunt_policy()` made that clause
+## permanently false (no stance is ever spelled `corral`), so the drawer button said "Assign hunters"
+## while the sheet's own stepper beside it said "Herders".
 func _herd_crew_noun(herd: Dictionary) -> String:
-    return HudComposeVocab.HERD_CREW_LABEL if SourceForecast.is_managed_hunt_source(herd, _compose.hunt_policy()) else HudComposeVocab.HUNT_CREW_LABEL
+    return HudComposeVocab.HERD_CREW_LABEL \
+        if SourceForecast.is_managed_hunt_source(herd, _compose.hunt_improvement()) \
+        else HudComposeVocab.HUNT_CREW_LABEL
 
 func open_forage_compose(tile_info: Dictionary) -> void:
     if not _forage_compose_available(tile_info):

@@ -121,6 +121,32 @@ stance click re-renders and may auto-fill the crew) and the forecast still reads
 The **expedition branch follows the same spine**, its stance hint slot carrying the distance refusal;
 it builds no improvement control, a detached party building nothing.
 
+**A CREW OF 0 IS THREE STATES, on BOTH local sheets.** `workers == 0` means two different things and
+the sim settles which: `assign_labor` skips validation entirely at 0, so an unassign is always legal.
+The submit is therefore gated on whether it would CHANGE anything, never on the raw count (a
+client-side floor of 1 would fix the no-op and break the unassign the Work zone's own Unassign link
+depends on):
+
+| crew | source worked by this band? | button | improvement control |
+|---|---|---|---|
+| > 0 | either | the verb (`Forage` / `Hunt Here`) | rendered |
+| 0 | **yes** | `UNASSIGN_BUTTON`, **live** | **suppressed** |
+| 0 | no | the verb, **dead** + a hint explaining it | rendered |
+
+`HudComposeVocab.UNASSIGN_BUTTON` is ONE const for both sheets — two consts holding "Unassign" is how
+the two drift apart — and the hunt web's dead-button hint is per CREW NOUN (`HUNT_NOOP_HINTS`, keyed by
+the crew label the sheet already resolved, so a managed herd asks for a herder and a wild one for a
+hunter). The hint yields to a cap note that has already explained the stepper, so the panel never states
+one fact twice. **The improvement suppression is the same judgement on both webs**: what abandoning
+costs is stated in the rung's own hint, so offering to START a build in the act of abandoning the source
+both states one fact twice and says two opposite things. The `current` the test reads is the
+PENDING-AWARE standing crew (`effective_*_workers`), so a just-issued assign counts. **The EXPEDITION
+branch is deliberately not in this family** — a raid is a launch, not an edit of a standing assignment,
+so there is no crew to hand back and a party of 0 is simply refused. ui_preview: `forage_unstaffed` /
+`forage_unassign` and their twins `herd_hunt_unstaffed` / `herd_hunt_unassign`, the latter pair asserting
+the rename, the dead button AND the absent improvement control (with a positive-crew open beside it, so
+the absence is a change rather than a sheet that never offers that herd a rung).
+
 **`ui_preview` asserts the ORDER, because a frame cannot.** `_compose_spine` reduces an open sheet to
 its structural controls — band picker, stance picker, crew stepper, improvement, each found by meta or
 by node type, with the prose between them deliberately excluded — and the three sheets' spines are
@@ -892,8 +918,10 @@ discard is precisely what this axis split removed.
       investment rungs' picker buttons wear the `→ +Y/turn` PAYOFF (Tame `→ pastoralYield`, Corral
       `→ corralYield`) via `_hunt_policy_takes` — NOT the during-building dip, which reads below Sustain
       and was identical for both, making taming/penning look worse than hunting. The payoff shows even on
-      a gated/greyed rung (the gate-reason line explains the lock). ui_preview `herd_tame` /
-      `two_meter_split` (gated Corral still quotes its payoff).
+      a gated/greyed rung (the gate-reason line explains the lock). ui_preview `herd_tame`. **The
+      gated case moved off the picker with the axis split**: a gated improvement's control text IS its
+      reason and quotes no payoff at all (`herd_corral_gated`), the number being noise at the moment
+      you are told you cannot act on it.
     - **Progress meters — one row per rung, never merged.** Tile card: `Cultivation N%` → `🌾 Tended
       Patch`, joined by its own **`Field`** row — `Sowing N%` → the SIGNAL-tinted **`▦ Field`**
       (`patch_field_progress` / `patch_is_field`, `_field_label` / `_field_value_hex`). Herd drawer:
@@ -990,12 +1018,18 @@ discard is precisely what this axis split removed.
     - ui_preview: `forage_cultivate` (enabled + the Preparing→then forecast + the feed nudge) /
       `forage_cultivate_locked` (1 reason — knowledge + its Sustain-forage remedy) /
       `forage_cultivate_stressed` (1 reason — the ease-off-and-regrow ecology remedy) / `herd_corral`
-      (enabled + `Corral: Building 40%`) / `herd_corral_locked` (1 reason — the herd 40% tamed +
-      **`◎ Tame it to finish`**, the copy fix: it used to say "♻ Sustain-hunt this Thriving herd",
-      the hidden rule the arc exists to kill) / `herd_corral_locked_both` (**2 reasons** — the `🐄
-      Corral needs:` header + bullets, gated on **Penning** with Herding fully known, so the frame
-      guards the §4.3 reshuffle). Slice 6b adds: **`two_meter_split`** (THE headline frame — the
-      top-bar knowledge strip + this herd's own meter + the bridging gate reason, all at once) /
+      (enabled + `Corral: Building 40%`) / **`herd_corral_gated` + `herd_corral_ungated`** (the
+      Penning gate as an A/B on ONE fully-tamed herd: the reason as the control's own text, then the
+      live box once Penning is known — nothing about the animal changes between them, which is the
+      claim). They replaced `herd_corral_locked` / `herd_corral_locked_both`, whose 40%-tamed herd
+      documented a gated Corral that #442 no longer renders: only ONE rung is offered, so a part-tamed
+      herd is offered **Tame** and Corral never appears. **The SOURCE half of the Corral gate is
+      consequently unreachable in this control** — `This herd is N% tamed — ◎ Tame it to finish` can
+      only apply while Tame is what the control offers — and the KNOWLEDGE half is the whole of what a
+      gated Corral can say. (`RungGates.hunt_gates` still answers both; the work board and the map read
+      it for other purposes.) Slice 6b adds: **`two_meter_split`** (THE headline frame — the
+      top-bar knowledge strip + this herd's own DONE meter + the bridging gate reason, all at once, on
+      the fully-tamed herd that gate needs) /
       `herd_tame` / `herd_tame_stalled` / `forage_sow` (enabled, `Preparing: +0.02 → then +2.40` —
       near-zero dip, 2× tended payoff) / `forage_sow_locked` (2 reasons, one fixed by practice and one
       only by moving) / `forage_sow_too_dry` / `forage_sow_too_poor` (the two refusals must read

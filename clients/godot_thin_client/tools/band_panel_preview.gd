@@ -614,6 +614,11 @@ func _ready() -> void:
 	_panel.set_active_tab(&"work")
 	await _settle()
 	await _save("band_panel_under_herded")
+	# ASSERTED WHILE ITS BAND IS STILL STAGED. This call sat ~45 lines further down, below the
+	# rung-ready block that replaces the panel band — so it looked for a Hunt row on a herd nobody
+	# worked and reported "no Hunt work row for game_aurochs_uh" on every run. A guard that fails for
+	# want of its own subject says nothing about the flag it was written to pin.
+	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
 
 	# THE RUNG-READY MARK ON THE WORK BOARD (issue #412) — the panel twin of the map badge. Three rows,
 	# and the CONTRAST is what the frame is for: a tended patch on willing ground offers `⌃▦`, a fully
@@ -655,7 +660,6 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_assert_under_herded_work_row(UNDER_HERDED_WORK_HERD_ID)
 
 	# THE HERDER FLOOR — the board must not flag a problem and then disable its own remedy. A managed
 	# Wild Fowl herd grew to owe 3 keepers while its take saturates at 2 workers, and the row is staffed
