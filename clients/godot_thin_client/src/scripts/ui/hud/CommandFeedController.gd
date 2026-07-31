@@ -33,6 +33,22 @@ const KIND_STYLE := {
 	"hunt_danger": {"glyph": "⚠", "color": HudStyle.HUNT_DANGER_ACCENT},
 }
 
+# **AN INVESTMENT LOST, ON A CHANNEL THAT OTHERWISE CARRIES GOOD NEWS** (issue #442). A rung going
+# feral and an assignment dropped because the band ran out of people ride their VERB's own kind
+# (`cultivate` / `sow` / `forage` / `hunt`) — deliberately, so a rung's whole life reads on one
+# channel — which means the loss rendered byte-identically to the completion that preceded it on the
+# same line. `KIND_STYLE` cannot separate them, because the kind is the same.
+#
+# What DOES separate them is the sim's own `status=` token in the detail. This table is keyed on that
+# token, consulted only when the kind's own style did not claim the row, and matched as a whole
+# `key=value` fragment (never a bare substring — `feral` alone would also match a species named for
+# one). WARN amber rather than the raid crimson: this is a loss the player caused by looking away and
+# can still reverse, not an attack.
+const DETAIL_STATUS_STYLE := {
+	"status=feral": {"glyph": "⚠", "color": HudStyle.WARN},
+	"status=lapsed": {"glyph": "⚠", "color": HudStyle.WARN},
+}
+
 var _panel: PanelCard = null
 var _scroll: ScrollContainer = null
 var _label: RichTextLabel = null
@@ -100,7 +116,7 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 	# Threat/casualty kinds render as an alert: glyph + label tinted with the matching overlay hue.
 	# Any kind absent from KIND_STYLE keeps the byte-identical plain-bold rendering.
 	var prefix_markup := "[b]%s[/b]" % prefix
-	var style_variant: Variant = KIND_STYLE.get(kind, null)
+	var style_variant: Variant = KIND_STYLE.get(kind, _detail_status_style(detail))
 	if style_variant is Dictionary:
 		var style: Dictionary = style_variant
 		var accent_hex: String = (style["color"] as Color).to_html(false)
@@ -112,6 +128,19 @@ func _append_entry(tick: int, kind: String, label: String, detail: String) -> vo
 		message += "\n[i]%s[/i]" % detail
 	_entries.append(message)
 	_trim()
+
+## The alert style a detail's `status=` token asks for, or `null`. Matched on the whole `key=value`
+## fragment against the SPACE-DELIMITED detail the sim writes (`"status=feral reason=untended …"`), so
+## a token can only match the field it names — a substring test on `feral` would also fire on a
+## species key or a tile label that happened to contain the word.
+static func _detail_status_style(detail: String) -> Variant:
+	if detail == "":
+		return null
+	var tokens := detail.split(" ", false)
+	for token in tokens:
+		if DETAIL_STATUS_STYLE.has(token):
+			return DETAIL_STATUS_STYLE[token]
+	return null
 
 func _trim() -> void:
 	while _entries.size() > COMMAND_FEED_LIMIT:

@@ -484,7 +484,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   and drops only on a genuine multi-band fall — wild = 0 unchanged (a wild herd isn't yours to
 >   maintain). `herd_herders_needed` reads this stabilized field (falling back to the raw ceil only for
 >   a not-yet-stabilized managed herd — the turn it is tamed, or a test fixture), so **every** consumer
->   (`herded_fraction` decay, `managed_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
+>   (`herded_fraction` decay, `source_crew_needed`, the `herdersNeeded` snapshot field) is steady; the
 >   wire field is unchanged, just no longer churning.
 > - **Heads, not tonnes.** The denominator is per-**animal** (`SpeciesDef::animals_per_herder`,
 >   per-species: fowl/rabbit 200, crag_goat 80, boar 15, steppe_runner/marsh_grazer 15, aurochs 12;
@@ -494,7 +494,8 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
 > - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
 >   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
->   (`systems::labor::managed_crew_needed`) — but that team must be big enough for **both** jobs, which
+>   (`intensification::source_crew_needed`, shared with the plant web, where the standing half is the
+>   building rung's crew instead) — but that team must be big enough for **both** jobs, which
 >   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
 >   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
 >   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
@@ -598,8 +599,11 @@ one-task-per-band model (`reassign_band` + `HarvestAssignment`/`ScoutAssignment`
 and their systems `advance_harvest_assignments`/`advance_scout_assignments`/`advance_fauna_pursuits`,
 plus the `scout`/`forage`/`hunt_fauna`/`follow_herd` command handlers) is **removed**. A band is now a
 **labor pool**: a `LaborAllocation` component (`components.rs`) partitions its whole working-age workers
-(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy }`, `Hunt { fauna_id,
-policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. `advance_labor_allocation`
+(`available_workers(working)` = `floor`) across `LaborTarget`s — `Forage { tile, policy, species }`,
+`Hunt { fauna_id, policy }`, `Scout`, `Warrior` — with the invariant `Σ workers ≤ available`. Each
+staffed row is a `LaborAssignment { target, workers, improvement }`: **`policy` is the harvest STANCE
+and `improvement` is what the crew is BUILDING**, two independent axes since issue #442 — see "An
+assignment has TWO axes" in `intensification.md`. `advance_labor_allocation`
 (`systems.rs`, Population stage, replacing the three retired systems) resolves per-worker yields each
 turn: Forage = `workers × per_worker_yield × seasonal_weight` from an in-range `FoodModuleTag` tile;
 Hunt take = `min(workers × per_worker_biomass_capacity, policy_ceiling)` (reusing the per-policy ecology
@@ -624,7 +628,7 @@ summarizes `activity` (target-kind with most workers) + `huntMode` (largest Hunt
 pre-3b client. Husbandry re-homes here — but **Sustain no longer tames** (slice 3a): a **`Tame`** Hunt
 fills the meter, while any stewardship policy on a Thriving source earns the knowledge that source's
 current **rung** teaches (slice 4 — see "The knowledge pattern"). The
-**investment policies** `Cultivate` (Forage-only) / `Corral` (Hunt-only) also resolve here — a reduced
+**improvements** `Cultivate` (plant-only) / `Corral` (animal-only) also resolve here — a reduced
 take while the improvement is prepared, then the managed yield; see "Cultivation" / "Corral". Config:
 `labor_config.json`. Client allocation panel is PR 3b.
 
@@ -659,15 +663,17 @@ elsewhere). Seeded per-turn from `map_seed ^ tick ^ salt` (deterministic under r
 `Herd` carries `domestication_progress` (0–1, `1.0` = domesticated) and `owner:
 Option<FactionId>`, exported as `HerdTelemetryState.domestication`.
 - *Accrual — the **`Tame`** verb, not a side effect of hunting*: in `advance_labor_allocation`
-  (Population), a Hunt assignment carrying **`FollowPolicy::Tame`** on a **Thriving** herd adds the
+  (Population), a Hunt assignment carrying **`Improvement::Tame`** on a **Thriving** herd adds the
   `animal:pastoral` rung's `progress_per_turn` × the species' `taming_rate` for the acting faction
   (sets `owner` on first accrual; only the owner accrues; gated on **Herding** + the species'
   husbandry ceiling). At `1.0` the herd domesticates. **A `Sustain` hunt tames nothing** — it only
   *teaches* the faction Herding. That de-conflation is slice 3a; see "The `Tame` verb".
-- *Decay*: `advance_husbandry` (`fauna.rs`, `TurnStage::Logistics` after `advance_herds` — runs
-  *before* the same turn's accrual, so a `Tame`-worked herd nets `progress_per_turn − decay_per_turn`
-  and an abandoned one only decays by the `animal:pastoral` rung's `decay_per_turn`, clearing `owner`
-  at 0).
+- *Decay*: **there is none.** `domestication_progress` is monotone-up since the neglect-escape arc —
+  neglect sheds **animals**, never tameness — and as of the neglect-grace slice the `animal:pastoral`
+  rung's `decay_per_turn` is **`null`** rather than the `0.01` it used to carry, because nothing read
+  it (`RungDef::build_decay`'s only production call sites are the two plant rungs). What
+  `advance_husbandry` does to a neglected herd is the **shed**, gated on the rung's `grace_turns` —
+  see "Herding is standing labor" in `husbandry.md`.
 - *Yield*: **none here — passive-free pastoral is RETIRED** (intensification ladder slice 3b, §3:
   every rung is worker-driven). A tamed herd used to pay its owner the pastoral MSY **with no worker
   at all**, split evenly across the owner's bands; `advance_husbandry` now pays **nothing** and a

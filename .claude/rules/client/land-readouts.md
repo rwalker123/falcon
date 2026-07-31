@@ -200,23 +200,18 @@ paths:
   in the fixture) keeps the scroll path RENDERED so it cannot rot unseen. The marginal-crop warning rides
   each row's TOOLTIP rather than a standing hint line for the same budget reason (a line under the list
   costs ~40px, and the commit button is what pays). **What bought the rows was collapsing the OTHER
-  rung's gate reasons — and that collapse is OPT-IN, deliberately narrow** (`HudWidgets.build_policy_picker`'s
-  trailing `collapse_other_gates`, default **false**): three wrapped paragraphs explaining why *Sow* is
-  refused while the player composes a *Cultivate* answer a question they did not ask and cost about a
-  third of the card, so the forage compose asks for the collapse **only while a COMMITTING rung is
-  selected** — i.e. exactly when the crop picker is on the card competing for height. **Every other
-  picker (hunt, expedition, work board) and every non-committing forage compose is unchanged**, because
-  spelled-out reasons are also how the ladder TEACHES: `forage_cultivate_locked`, `forage_sow_locked`,
-  `herd_corral_locked*` and `two_meter_split` all exist precisely to show a NON-composed rung's full
-  prerequisites, and a blanket collapse would put each of those frames' whole subject in a tooltip. When
-  it does fire, the other rung reads `▦ Sow — locked (2 requirements unmet)` with the full list in the
-  line's own tooltip (via `HudWidgets.set_label_tooltip` — a `Label` ignores the mouse by default, so a bare
-  `tooltip_text` there is a silent no-op). **Four ui_preview ASSERTIONS pin all of this** and must stay
-  green: `forage_crop_picker` asserts the sheet has nothing left to scroll (i.e. `Forage` is on screen —
-  it caught a 124px regression eyeballing would have shipped) **and** that the collapse fired where it
-  was bought; `forage_crop_picker_overlong` asserts the same at 8 plants; and `forage_sow_locked` +
-  `two_meter_split` assert the collapse did **not** leak — the blast-radius guard for the shared picker.
-  Change the row count and let the assertions answer, never assume. (Byte-diffing frames is **not** a
+  rung's gate reasons, and issue #442 bought them outright instead** — the picker holds four stances
+  and no gates at all, so there is no second rung's prerequisites on the card to collapse.
+  `HudWidgets.build_policy_picker`'s `gates` parameter, its `collapse_other_gates` opt-in and the
+  `▦ Sow — locked (2 requirements unmet)` rendering are all deleted (`labor-ui.md` → "What this
+  deleted"); only ONE improvement is ever offered, and its reasons are the improvement control's own
+  text. **The ui_preview ASSERTIONS that pinned the height claim survive and must stay green**:
+  `forage_crop_picker` asserts the sheet has nothing left to scroll (i.e. `Forage` is on screen — it
+  caught a 124px regression eyeballing would have shipped) **and**, in place of the retired collapse
+  check, that exactly one improvement control is on the card (the Cultivate box present, no Sow box —
+  asked of the CONTROLS, since the whole-sheet text search it replaced passed on an empty sheet);
+  `forage_crop_picker_overlong` asserts the same at 8 plants. Change the row count and let the
+  assertions answer, never assume. (Byte-diffing frames is **not** a
   valid instrument here — the harness has time-based pulses, so most frames differ run to run.) ui_preview: `forage_crop_picker` (Cultivate, the 5-plant navigable-hex basket —
   default lands on the highest-share legal row `1.4×`, a WARN `0.7×` still pressable, greyed rows with no
   ratio, the list scrolling internally + the assertion) / `forage_crop_marginal` (the all-marginal
@@ -308,7 +303,10 @@ paths:
     and the one line that teaches the ladder: a KNOWLEDGE reason names the track, its live percent
     and the **practice** that fills it (`Your people know Penning 45% — ♻ Sustain-hunt a tamed herd
     to learn it`); a SOURCE reason names the meter and the **verb** that fills it (`This herd is 40%
-    tamed — ◎ Tame it to finish`). Judge on `two_meter_split.png`.
+    tamed — ◎ Tame it to finish`). Judge on `two_meter_split.png`, which since #442 stages a FULLY
+    TAMED herd: the improvement control offers one rung, so a gated Corral needs Tame retired, and the
+    KNOWLEDGE reason is the only one that surface can show. The SOURCE reason still renders where the
+    gates are read for other purposes; it is `RungGates.hunt_gates`' answer, not the control's.
   - **The `KNOWLEDGE_UNLOCK_NOTES` one-shot feed nudge** fires per track on a real `<1 → >=1`
     transition (player faction only). Note `herding`'s note now names **Tame**, not Corral — see the
     gate reshuffle below.

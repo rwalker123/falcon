@@ -280,6 +280,27 @@ pub(crate) fn herds_to_array(
         // The trade half of the Tame payoff, the twin of `corral_trade` above — one pair, rendered
         // component-by-component only when non-zero, so Tame's face carries both products.
         let _ = dict.insert("pastoral_trade", herd.pastoralTrade());
+        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the animal twins of `ForagePatchState`'s
+        // `cultivate_build_fraction` / `sow_build_fraction`. The dip stopped being a
+        // `hunt_policy_ceilings` ROW (that list is exactly the four stances now) because a crew may
+        // hold ANY stance while it builds, so the dip has to multiply whichever stance is selected:
+        //     preparing(stance, rung) = hunt_policy_ceilings[stance] × <rung>_build_fraction
+        // Composed in ONE place client-side (`SourceForecast.improvement_forecast`) and paired with
+        // `pastoral_yield` / `corral_yield` as the "→ then +Y" half of the deal.
+        let _ = dict.insert("tame_build_fraction", herd.tameBuildFraction());
+        let _ = dict.insert("corral_build_fraction", herd.corralBuildFraction());
+        // THE NEGLECT GRACE (issue #442) — the animal twin of `ForagePatchState`'s pair. A COUNTDOWN,
+        // not a counter: `0` = the shed is biting NOW, `N > 0` = it bites in N more un-herded turns,
+        // and a herd whose keepers are present reads the rung's full `grace + 1` ("walk away and you
+        // have this long"). **`has_neglect_grace = false` means NOTHING IS AT RISK** — a wild herd,
+        // which is the common case — and it exists precisely because "nothing at risk" would
+        // otherwise collide with the "biting now" zero. Read the bool first; the countdown is
+        // meaningless without it, exactly as `owner` is without `has_owner`.
+        let _ = dict.insert("has_neglect_grace", herd.hasNeglectGrace());
+        let _ = dict.insert(
+            "neglect_grace_remaining",
+            i64::from(herd.neglectGraceRemaining()),
+        );
         array.push(&dict.to_variant());
     }
     array
@@ -449,6 +470,37 @@ pub(crate) fn forage_patches_to_array(
         let _ = dict.insert("tended_fodder", patch.tendedFodder());
         let _ = dict.insert("field_trade", patch.fieldTrade());
         let _ = dict.insert("field_fodder", patch.fieldFodder());
+        // THE BUILD DIPS, AS FRACTIONS (issue #442) — the plant twins of `HerdTelemetryState`'s
+        // `tame_build_fraction` / `corral_build_fraction`; see there for why the dip stopped being a
+        // `forage_policy_ceilings` row. `MapView` cross-refs both onto `tile_info` (as `patch_*`)
+        // exactly as it does the payoffs they pair with.
+        let _ = dict.insert("cultivate_build_fraction", patch.cultivateBuildFraction());
+        let _ = dict.insert("sow_build_fraction", patch.sowBuildFraction());
+        // THE NEGLECT GRACE (issue #442) — how many more un-worked turns this patch can absorb before
+        // its improvement starts reverting. A COUNTDOWN, not a counter, so no client does the
+        // subtraction: `0` = the ground is reverting RIGHT NOW, `N > 0` = it starts in N more
+        // un-worked turns, and a patch worked this turn reads the rung's full `grace + 1`.
+        // **`has_neglect_grace = false` means NOTHING IS AT RISK HERE** (a wild patch, both meters at
+        // zero) and is the common case — read the bool first, or the honest "biting now" zero and the
+        // "nothing to lose" case become indistinguishable. It describes whichever rung would bleed
+        // NEXT, the plant web unwinding newest-first (a Field's meter goes before the tended ground
+        // under it).
+        let _ = dict.insert("has_neglect_grace", patch.hasNeglectGrace());
+        let _ = dict.insert(
+            "neglect_grace_remaining",
+            i64::from(patch.neglectGraceRemaining()),
+        );
+        // THE BUILD CREWS (issue #442) — the crew each plant rung's build actually wants. It FLOORS
+        // the compose sheet's worker cap (`max(ceil(ceiling / perWorker), <rung>CrewNeeded)`, the
+        // plant twin of `SourceForecast.herd_crew_floor`), because while a build runs the ceiling is
+        // the DIP — so without the floor a 25-turn improvement asked for FEWER hands than gathering
+        // the same ground. Build progress also scales with it (`min(workers / crew, 1)`), so an
+        // under-crewed build simply takes proportionally longer. `0` = this rung declares no crew.
+        let _ = dict.insert(
+            "cultivate_crew_needed",
+            i64::from(patch.cultivateCrewNeeded()),
+        );
+        let _ = dict.insert("sow_crew_needed", i64::from(patch.sowCrewNeeded()));
         array.push(&dict.to_variant());
     }
     array

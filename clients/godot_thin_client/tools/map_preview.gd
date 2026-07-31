@@ -2008,7 +2008,9 @@ func _snapshot_work_ready() -> Dictionary:
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
 		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
-			entry["policy"] = "cultivate"
+			# The BUILD BADGE keys on the IMPROVEMENT axis, not the stance (issue #442): the crew holds
+			# Sustain while it cultivates, and the badge reads the second field.
+			entry["improvement"] = "cultivate"
 			entry["overdraws"] = false
 	for herd_variant in snap["herds"]:
 		var herd: Dictionary = herd_variant

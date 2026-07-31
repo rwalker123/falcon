@@ -122,6 +122,19 @@ pub struct LaborAssignmentState {
     /// [`Self::arrival_schedule`].
     #[serde(default)]
     pub realized_trade_yield: f32,
+    /// **What this crew is BUILDING on the source** — the second, independent axis of an assignment
+    /// (issue #442, `docs/plan_investment_rung_toggle.md`): `""` | `"cultivate"` | `"sow"` |
+    /// `"tame"` | `"corral"`.
+    ///
+    /// [`Self::policy`] is now always one of the four harvest **stances** and is **never rewritten by
+    /// the sim**. The four build verbs used to be values of `policy`, so committing to an improvement
+    /// vacated the player's stated stance and completion had to hand one back; with the axes split,
+    /// completion clears **this** field and leaves `policy` alone.
+    ///
+    /// Persisted intent, like [`Self::policy`] and [`Self::species`]: it rides the rollback record, so
+    /// a rewind restores a half-finished build's verb rather than dropping it.
+    #[serde(default)]
+    pub improvement: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

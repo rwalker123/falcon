@@ -44,12 +44,6 @@ static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictio
     if phase != HudFloraVocab.ECOLOGY_PHASE_THRIVING:
         var phase_label := phase.capitalize() if phase != "" else HudFloraVocab.GATE_PHASE_UNKNOWN_LABEL
         cultivate_reasons.append(HudFloraVocab.GATE_REASON_PATCH_THRIVING_FORMAT % phase_label)
-    # A finished patch retires Cultivate outright: the build is DONE (Sustain harvests it, and Sow is the
-    # next rung if unlocked). This SUPERSEDES the prep prerequisites — a tended patch's Thriving/knowledge
-    # gates are moot — so it replaces the reason list rather than piling on.
-    if bool(tile_info.get("is_cultivated", false)):
-        cultivate_reasons.clear()
-        cultivate_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_TENDED_FORMAT % sustain_icon)
     if not cultivate_reasons.is_empty():
         gates[HudConst.LABOR_POLICY_CULTIVATE] = cultivate_reasons
     var sow_reasons: Array[String] = []
@@ -60,10 +54,6 @@ static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictio
     var refusal := sow_site_refusal_reason(tile_info)
     if refusal != "":
         sow_reasons.append(refusal)
-    # A finished Field retires Sow, same as a finished patch retires Cultivate.
-    if bool(tile_info.get("patch_is_field", false)):
-        sow_reasons.clear()
-        sow_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_FIELD_FORMAT % sustain_icon)
     if not sow_reasons.is_empty():
         gates[HudConst.LABOR_POLICY_SOW] = sow_reasons
     return gates
@@ -85,10 +75,10 @@ static func sow_site_refusal_reason(tile_info: Dictionary) -> String:
 ## gates Tame** (it no longer gates Corral, and taming is no longer ungated), and the **new Penning
 ## gates Corral**. Corral additionally needs THIS herd tamed — the per-source half of the split.
 ##
-## Deliberately NOT gated: the herd being Thriving. Taming a herd whose phase swings under hunting
-## would be un-actionable, so the sim just PAUSES the meter instead — see
-## `DrawerComposeController._tame_stalled_hint`, which is how the player is told rather than left to
-## guess.
+## Deliberately NOT gated: the source being Thriving. Building on a source whose phase swings as it is
+## worked would be un-actionable, so the sim just PAUSES the meter instead — see
+## `DrawerComposeController._improvement_paused_note`, the WARN line the improvement control renders
+## on BOTH webs, which is how the player is told rather than left to guess.
 ##
 ## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
 ## ANOTHER faction reads as available here while the sim rejects the assign.
@@ -101,14 +91,6 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
     if herding < HudConst.KNOWLEDGE_COMPLETE:
         tame_reasons.append(HudFloraVocab.GATE_REASON_HERDING_KNOWLEDGE_FORMAT % [
             HudFormat.progress_percent(herding), sustain_icon])
-    # A fully tamed herd retires Tame, exactly as a finished patch retires Cultivate — the build is
-    # DONE, and re-running the verb would only pay its prep rate forever. It SUPERSEDES the knowledge
-    # prerequisite (moot once the meter is full), so it replaces the reason list rather than piling on.
-    # The rung is normally HIDDEN at this point (`_build_herd_assign_controls`'s ceiling pass), so this
-    # reason is read only when a band standing on Tame has it re-admitted so it can be seen and cleared.
-    if domestication >= SourceForecast.DOMESTICATION_COMPLETE:
-        tame_reasons.clear()
-        tame_reasons.append(HudFloraVocab.GATE_REASON_ALREADY_TAMED_FORMAT % sustain_icon)
     if not tame_reasons.is_empty():
         gates[HudConst.LABOR_POLICY_TAME] = tame_reasons
     var corral_reasons: Array[String] = []
@@ -126,15 +108,15 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
 ## than the `patch_`-prefixed `tile_info` cross-ref.
 ##
-## The cross-ref's prefixing is MIXED and always has been — `MapView._tile_info_at` stamps
-## `patch_ecology_phase` / `patch_is_field` / `patch_sow_site_refusal` but plain `is_cultivated` — so
-## this adapter is the ONE place that mapping is written down. Callers holding a wire patch (the map's
-## mark pass, the work board) come through here; nobody re-spells the keys at a call site.
+## **The cross-ref's prefixing is UNIFORM now** (issue #442): `patch_is_cultivated` /
+## `patch_cultivation_progress` joined their already-prefixed rung-3 twins when
+## `SourceForecast.improvement_is_done` started spelling every key as `prefix + name` and the lone
+## exception would have made it answer "not built" on a tended patch. So this adapter is a plain
+## re-spelling of the two keys `forage_gates` still reads, and there is no longer a mixed convention
+## to write down.
 static func forage_gates_from_patch(patch: Dictionary, knowledge: Dictionary) -> Dictionary:
     return forage_gates({
-        "is_cultivated": bool(patch.get("is_cultivated", false)),
         "patch_ecology_phase": String(patch.get("ecology_phase", "")),
-        "patch_is_field": bool(patch.get("is_field", false)),
         "patch_sow_site_refusal": String(patch.get("sow_site_refusal", "")),
     }, knowledge)
 
@@ -145,70 +127,119 @@ static func forage_gates_from_patch(patch: Dictionary, knowledge: Dictionary) ->
 ## rung, plus the two "is this rung offered at all" passes that sit beside it there. Three conditions,
 ## all of which must hold (docs/plan_worked_source_marks.md §3):
 ##
-##  1. **OFFERED** — the species or the land admits the rung. Hunt: the husbandry ceiling ("wild" /
-##     "pastoral" / "pen"), the SAME filter `_build_herd_assign_controls` applies. Forage: at least one
-##     composition entry that `can_cultivate` / `can_sow`, the species-global legality flag.
+##  1. **ADMITTED** — the species or the land admits the rung, and it is not already BUILT. Hunt: the
+##     husbandry ceiling ("wild" / "pastoral" / "pen"). Forage: at least one composition entry that
+##     `can_cultivate` / `can_sow`, the species-global legality flag.
 ##  2. **UNGATED** — `forage_gates` / `hunt_gates` return no reason for it (knowledge complete, the
-##     per-source prerequisite met, the rung not already finished, the ground willing).
-##  3. **NOT ALREADY RUNNING** — the source's current policy is not that verb. A patch mid-Cultivate is
+##     per-source prerequisite met, the ground willing).
+##  3. **NOT ALREADY RUNNING** — the source's `improvement` is not that verb. A patch mid-Cultivate is
 ##     progress, not an opportunity, and marking it would never clear.
 ##
-## **HIGHEST RUNG FIRST**, the ordering `BandPanelController._work_source_rung` already depends on and
-## for the same reason: a herd that can be corralled can also technically be re-tamed, and answering
-## with the lower rung would erase the distinction the mark exists to draw.
-static func next_rung_ready(kind: String, source: Dictionary, policy: String,
-        knowledge: Dictionary) -> Dictionary:
-    var current := policy.strip_edges().to_lower()
+## `improvement` is the SECOND AXIS (issue #442), not the harvest stance — `""` for a crew building
+## nothing. It was the `policy` field while a build verb was a value of it.
+static func next_rung_ready(kind: String, source: Dictionary, improvement: String,
+        knowledge: Dictionary, prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX) -> Dictionary:
+    return _next_rung(kind, source, prefix, improvement, knowledge, false)
+
+## THE OFFER TEST — the ONE improvement the compose sheet's control puts in front of the player, as
+## `{policy, glyph, reasons}`; `reasons` is empty when the rung is ready to start and carries its unmet
+## prerequisites when it is not.
+##
+## The difference from `next_rung_ready` is condition 2 alone, and it is the difference between a MARK
+## and a CONTROL. A mark promises the verb is available, so a gated rung must not wear one. The control
+## is how the player DISCOVERS the rung exists and what it costs to unlock, so a gated improvement is
+## **shown, unchecked and explained**, exactly as a gated policy rung has always been.
+##
+## **THE ORDERING LIVES HERE, ONCE, and both answers read it** (`_next_rung`): highest rung first among
+## those that are ready, falling back to the LOWEST admitted-but-gated rung when none is. Highest-first
+## is what makes sowable wild ground offer `Sow` rather than `Cultivate` — both clear their gates
+## there, and answering with the lower rung would erase the distinction. Lowest-first for the gated
+## fallback is the mirror of the same reasoning: if you can start nothing, the useful thing to name is
+## the NEAREST rung you could work toward, not the furthest.
+static func next_rung_offered(kind: String, source: Dictionary, improvement: String,
+        knowledge: Dictionary, prefix: String = HudComposeVocab.BARE_FORECAST_PREFIX) -> Dictionary:
+    return _next_rung(kind, source, prefix, improvement, knowledge, true)
+
+## The shared body of the two answers above. `allow_gated` is the whole difference between them.
+static func _next_rung(kind: String, source: Dictionary, prefix: String, improvement: String,
+        knowledge: Dictionary, allow_gated: bool) -> Dictionary:
+    var current := improvement.strip_edges().to_lower()
+    var gates := {}
+    var admitted: Array[String] = []
     if kind == SourceForecast.LABOR_KIND_FORAGE:
-        var gates := forage_gates_from_patch(source, knowledge)
-        if current != HudConst.LABOR_POLICY_SOW and not gates.has(HudConst.LABOR_POLICY_SOW) \
-                and _any_crop_allows(source, "can_sow"):
-            return _ready(HudConst.LABOR_POLICY_SOW)
-        if current != HudConst.LABOR_POLICY_CULTIVATE and not gates.has(HudConst.LABOR_POLICY_CULTIVATE) \
-                and _any_crop_allows(source, "can_cultivate"):
-            return _ready(HudConst.LABOR_POLICY_CULTIVATE)
-        return {}
-    if kind == SourceForecast.LABOR_KIND_HUNT:
-        var hunt := hunt_gates(source, knowledge)
+        gates = forage_gates(source, knowledge) if prefix == HudComposeVocab.FORAGE_FORECAST_PREFIX \
+            else forage_gates_from_patch(source, knowledge)
+        # HIGHEST RUNG FIRST. `can_sow` / `can_cultivate` are SPECIES-GLOBAL legality ("can this plant
+        # ever climb this rung"), never "is it wise here" — a marginal share must not suppress a rung.
+        for rung in [SourceForecast.IMPROVEMENT_SOW, SourceForecast.IMPROVEMENT_CULTIVATE]:
+            if rung != current and not SourceForecast.improvement_is_done(source, prefix, rung) \
+                    and _any_crop_allows(source, prefix, CROP_LEGALITY_FLAGS[rung]):
+                admitted.append(rung)
+    elif kind == SourceForecast.LABOR_KIND_HUNT:
+        gates = hunt_gates(source, knowledge)
+        # The husbandry CEILING says how far up the ladder this SPECIES can climb, and a rung above it
+        # is withheld OUTRIGHT rather than gated: no amount of knowledge or work will ever pen an
+        # aurochs whose ceiling is "pastoral", so offering it gated would imply a reachable prerequisite.
         var ceiling := SourceForecast.husbandry_ceiling(source)
-        if current != SourceForecast.LABOR_POLICY_CORRAL and not hunt.has(SourceForecast.LABOR_POLICY_CORRAL) \
-                and ceiling == SourceForecast.HUSBANDRY_CEILING_PEN:
-            return _ready(SourceForecast.LABOR_POLICY_CORRAL)
-        if current != HudConst.LABOR_POLICY_TAME and not hunt.has(HudConst.LABOR_POLICY_TAME) \
-                and ceiling != SourceForecast.HUSBANDRY_CEILING_WILD:
-            return _ready(HudConst.LABOR_POLICY_TAME)
-        return {}
+        for rung in [SourceForecast.IMPROVEMENT_CORRAL, SourceForecast.IMPROVEMENT_TAME]:
+            var admits := ceiling == SourceForecast.HUSBANDRY_CEILING_PEN \
+                if rung == SourceForecast.IMPROVEMENT_CORRAL \
+                else ceiling != SourceForecast.HUSBANDRY_CEILING_WILD
+            if rung != current and admits \
+                    and not SourceForecast.improvement_is_done(source, prefix, rung):
+                admitted.append(rung)
+    for rung in admitted:
+        if not gates.has(rung):
+            return _ready(rung)
+    if allow_gated and not admitted.is_empty():
+        var nearest: String = admitted[admitted.size() - 1]
+        var answer := _ready(nearest)
+        answer["reasons"] = gate_reasons_for(gates, nearest)
+        return answer
     return {}
+
+## The species-GLOBAL legality flag each plant rung reads off a composition entry — the one place that
+## mapping is written down.
+const CROP_LEGALITY_FLAGS := {
+    SourceForecast.IMPROVEMENT_SOW: "can_sow",
+    SourceForecast.IMPROVEMENT_CULTIVATE: "can_cultivate",
+}
+
+## The unmet-prerequisite reasons a gates dict holds for one rung, as a typed `Array[String]` — the
+## shape `HudWidgets.build_improvement_control` renders beneath the box.
+static func gate_reasons_for(gates: Dictionary, rung: String) -> Array[String]:
+    var raw: Variant = gates.get(rung, null)
+    var reasons: Array[String] = []
+    if raw is Array:
+        for reason in (raw as Array):
+            reasons.append(String(reason))
+    return reasons
 
 ## THE RUNG UNDER WAY — the twin of `next_rung_ready`, as `{policy, glyph, progress}` (progress 0..1),
 ## or `{}` when this source is not building anything.
 ##
-## `next_rung_ready` deliberately answers `{}` for a source whose policy IS the verb: a patch
+## `next_rung_ready` deliberately answers `{}` for a source already building that verb: a patch
 ## mid-Cultivate is progress, not an opportunity. That reasoning is right and the CONSEQUENCE was
 ## wrong — it left the in-flight case with no mark at all, so a patch you are actively cultivating
 ## looked exactly like a patch nobody has touched, while the untouched one beside it advertised `⌃`.
 ## The two answers are one axis in two states, and the badge shows whichever applies.
 ##
-## Keyed on the POLICY, not on a non-zero meter: a half-built patch nobody works is not "in progress",
-## and its standing rung is what the rung glyph is for. Each investment verb names the meter it fills —
-## the one place that mapping is written down.
-static func rung_in_progress(kind: String, source: Dictionary, policy: String) -> Dictionary:
-    var current := policy.strip_edges().to_lower()
-    var meter := ""
-    if kind == SourceForecast.LABOR_KIND_FORAGE:
-        if current == HudConst.LABOR_POLICY_CULTIVATE:
-            meter = "cultivation_progress"
-        elif current == HudConst.LABOR_POLICY_SOW:
-            meter = "field_progress"
-    elif kind == SourceForecast.LABOR_KIND_HUNT:
-        if current == HudConst.LABOR_POLICY_TAME:
-            meter = "domestication"
-        elif current == SourceForecast.LABOR_POLICY_CORRAL:
-            meter = "corral_progress"
-    if meter == "":
+## Keyed on the IMPROVEMENT, not on a non-zero meter: a half-built patch nobody works is not "in
+## progress", and its standing rung is what the rung glyph is for. `SourceForecast` names the meter
+## each verb fills — one definition, so this and the compose control quote the same percent.
+##
+## The `kind` guard keeps the two webs' verbs apart: a herd has no `cultivation_progress`, and an
+## improvement reaching the wrong web would answer a meter of 0 rather than nothing at all.
+static func rung_in_progress(kind: String, source: Dictionary, improvement: String) -> Dictionary:
+    var current := improvement.strip_edges().to_lower()
+    var web: Array = SourceForecast.FORAGE_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_FORAGE \
+        else SourceForecast.HUNT_IMPROVEMENTS if kind == SourceForecast.LABOR_KIND_HUNT \
+        else []
+    if not (current in web):
         return {}
     var answer := _ready(current)
-    answer["progress"] = clampf(float(source.get(meter, 0.0)), 0.0, 1.0)
+    answer["progress"] = SourceForecast.improvement_progress(
+        source, HudComposeVocab.BARE_FORECAST_PREFIX, current)
     return answer
 
 ## Whether ANY plant in this patch's composition may climb the rung `flag` names — species-GLOBAL
@@ -219,8 +250,8 @@ static func rung_in_progress(kind: String, source: Dictionary, policy: String) -
 ## An ABSENT composition answers **false**, which is the honest reading: the flags ride every
 ## `ForagePatchState`, so a patch without them is one the client cannot vouch for, and the mark exists
 ## to promise the verb is available.
-static func _any_crop_allows(patch: Dictionary, flag: String) -> bool:
-    var composition: Variant = patch.get("composition", [])
+static func _any_crop_allows(patch: Dictionary, prefix: String, flag: String) -> bool:
+    var composition: Variant = patch.get(prefix + "composition", [])
     if not (composition is Array):
         return false
     for entry_variant in composition:

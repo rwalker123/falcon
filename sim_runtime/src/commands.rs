@@ -166,6 +166,23 @@ pub enum CommandPayload {
         target_x: u32,
         target_y: u32,
     },
+    /// **Abandon a running improvement** — clear the build verb off every band of `faction_id`
+    /// working the named source, leaving the harvest stance and the crew untouched (issue #442).
+    ///
+    /// The one command that passes `None` where `Cultivate`/`Sow`/`Tame`/`Corral` pass a verb. It is
+    /// **ungated**: abandonment is not a rung transition, and a *stalled* build on unhealthy ground is
+    /// exactly when a player reaches for it. It does not zero the meter — each web's existing
+    /// unworked-source rule takes over (see `AbandonImprovementCommand` in `command.proto`).
+    ///
+    /// Names a **source**, not a verb: `kind` is `"forage"` (uses `target_x`/`target_y`) or `"hunt"`
+    /// (uses `fauna_id`), because at most one improvement is ever in flight on a source.
+    AbandonImprovement {
+        faction_id: u32,
+        kind: String,
+        target_x: u32,
+        target_y: u32,
+        fauna_id: String,
+    },
     ExtendPen {
         faction_id: u32,
         target_x: u32,
@@ -610,6 +627,19 @@ impl CommandEnvelope {
                 target_x: *target_x,
                 target_y: *target_y,
             }),
+            CommandPayload::AbandonImprovement {
+                faction_id,
+                kind,
+                target_x,
+                target_y,
+                fauna_id,
+            } => pb::command_envelope::Command::AbandonImprovement(pb::AbandonImprovementCommand {
+                faction_id: *faction_id,
+                kind: kind.clone(),
+                target_x: *target_x,
+                target_y: *target_y,
+                fauna_id: fauna_id.clone(),
+            }),
             CommandPayload::Corral {
                 faction_id,
                 target_x,
@@ -958,6 +988,15 @@ impl CommandEnvelope {
                 target_x: cmd.target_x,
                 target_y: cmd.target_y,
             },
+            pb::command_envelope::Command::AbandonImprovement(cmd) => {
+                CommandPayload::AbandonImprovement {
+                    faction_id: cmd.faction_id,
+                    kind: cmd.kind,
+                    target_x: cmd.target_x,
+                    target_y: cmd.target_y,
+                    fauna_id: cmd.fauna_id,
+                }
+            }
             pb::command_envelope::Command::ExtendPen(cmd) => CommandPayload::ExtendPen {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,

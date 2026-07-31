@@ -98,6 +98,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
                 species: None,
             },
             workers: GATHERERS,
+            improvement: None,
         }],
         ..Default::default()
     });

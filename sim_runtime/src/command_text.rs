@@ -166,25 +166,31 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "tame",
         aliases: &[],
-        summary: "Set the Tame policy on the bands hunting a wild herd: an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
+        summary: "Set the Tame improvement on the bands hunting a wild herd (their harvest stance is left alone): an investment that pays a reduced take while the herd is gentled, then makes it pastoral livestock (needs Herding knowledge, earned by Sustain hunting, and a species that can be domesticated).",
         usage: "tame <faction_id> <herd_id>",
     },
     CommandVerbHelp {
         verb: "cultivate",
         aliases: &[],
-        summary: "Set the Cultivate policy on the bands foraging a Thriving patch: an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
+        summary: "Set the Cultivate improvement on the bands foraging a Thriving patch (their harvest stance is left alone): an investment that pays a reduced yield while the crop is prepared, then a higher tended yield (needs Cultivation knowledge, earned by Sustain foraging).",
         usage: "cultivate <faction_id> <x> <y>",
     },
     CommandVerbHelp {
         verb: "sow",
         aliases: &[],
-        summary: "Set the Sow policy on the bands foraging a tile: an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
+        summary: "Set the Sow improvement on the bands foraging a tile (their harvest stance is left alone): an investment that builds a Field, out-yielding a tended patch. It PLACES the source — even ground with no forage site on it will take seed — but only where the land is ALREADY very fertile and near fresh water (the river valleys, ~1% of the map): rung 3 can carry seed, not water or fertilizer. Needs Seed Selection knowledge, earned by working tended patches.",
         usage: "sow <faction_id> <x> <y>",
+    },
+    CommandVerbHelp {
+        verb: "abandon_improvement",
+        aliases: &["abandon"],
+        summary: "Abandon the improvement a band is building on a source: the crew keeps working it under the harvest stance you chose, and stops paying the build dip. Always allowed — abandoning a STALLED build is exactly when you want it. Accumulated progress is not zeroed; it is left to whatever the source does when nobody is improving it (a plant meter bleeds away, an animal meter is kept).",
+        usage: "abandon_improvement <faction_id> forage <x> <y> | abandon_improvement <faction_id> hunt <herd_id>",
     },
     CommandVerbHelp {
         verb: "corral",
         aliases: &[],
-        summary: "Set the Corral policy on the bands hunting your domesticated herd at a tile: an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
+        summary: "Set the Corral improvement on the bands hunting your domesticated herd at a tile (their harvest stance is left alone): an investment that pays a reduced take while the pen is built, then pins the herd there (needs Penning knowledge, earned by working herds you have already TAMED — Herding gates tame, not corral).",
         usage: "corral <faction_id> <x> <y>",
     },
     CommandVerbHelp {
@@ -857,6 +863,53 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_x: parse_u32(x_str, "sow target_x")?,
                 target_y: parse_u32(y_str, "sow target_y")?,
             })
+        }
+        "abandon_improvement" | "abandon" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let faction_id = parse_u32(faction_str, "abandon_improvement faction")?;
+            let kind = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("kind"))?
+                .to_ascii_lowercase();
+            // The source is named the way its web names it: a patch by tile, a herd by id — so the
+            // `kind` decides the arity, and an unknown one has no arity to read. **It fails closed
+            // here**, matching `assign_labor`'s identical `forage`/`hunt` grammar and `cancel_order`:
+            // the server does reject an unknown kind, but only *asynchronously* in the feed, and a
+            // catch-all forage arm turns a typo into either the wrong diagnosis
+            // (`abandon_improvement 1 foo` reporting a missing `target_x`) or a command that parses
+            // and is rejected somewhere else entirely.
+            match kind.as_str() {
+                "hunt" => {
+                    let fauna_id = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
+                    Ok(CommandPayload::AbandonImprovement {
+                        faction_id,
+                        kind,
+                        target_x: 0,
+                        target_y: 0,
+                        fauna_id: fauna_id.to_string(),
+                    })
+                }
+                "forage" => {
+                    let x_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_x"))?;
+                    let y_str = parts
+                        .next()
+                        .ok_or(CommandParseError::MissingArgument("target_y"))?;
+                    Ok(CommandPayload::AbandonImprovement {
+                        faction_id,
+                        kind,
+                        target_x: parse_u32(x_str, "abandon_improvement target_x")?,
+                        target_y: parse_u32(y_str, "abandon_improvement target_y")?,
+                        fauna_id: String::new(),
+                    })
+                }
+                _ => Err(CommandParseError::UnexpectedToken(kind)),
+            }
         }
         "corral" => {
             let faction_str = parts
@@ -1739,6 +1792,48 @@ mod tests {
         assert!(matches!(
             parse_command_line("cancel_order 1 42 bogus"),
             Err(CommandParseError::UnexpectedToken(token)) if token == "bogus"
+        ));
+    }
+
+    /// **Both source kinds parse at their own arity** — the control for the rejection below, so that
+    /// test cannot pass by the verb being broken outright.
+    #[test]
+    fn parse_abandon_improvement_reads_each_webs_arity() {
+        assert_eq!(
+            parse_command_line("abandon_improvement 1 forage 4 7").unwrap(),
+            CommandPayload::AbandonImprovement {
+                faction_id: 1,
+                kind: "forage".to_string(),
+                target_x: 4,
+                target_y: 7,
+                fauna_id: String::new(),
+            }
+        );
+        assert_eq!(
+            parse_command_line("abandon 1 hunt game_test").unwrap(),
+            CommandPayload::AbandonImprovement {
+                faction_id: 1,
+                kind: "hunt".to_string(),
+                target_x: 0,
+                target_y: 0,
+                fauna_id: "game_test".to_string(),
+            }
+        );
+    }
+
+    /// Fail closed on an unknown source kind, exactly as `assign_labor`'s identical `forage`/`hunt`
+    /// grammar does. A catch-all forage arm read the tile arity for *any* token, so a typo either
+    /// reported an argument unrelated to the mistake (`... 1 foo` -> "missing argument: target_x") or
+    /// parsed clean at four tokens and was rejected asynchronously in the feed.
+    #[test]
+    fn parse_abandon_improvement_rejects_an_unknown_source_kind() {
+        assert!(matches!(
+            parse_command_line("abandon_improvement 1 foo"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
+        ));
+        assert!(matches!(
+            parse_command_line("abandon_improvement 1 foo 4 7"),
+            Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
         ));
     }
 }

@@ -262,6 +262,7 @@ pub fn advance_expeditions(
                         &mut herds.herds[idx],
                         workers,
                         FollowPolicy::Sustain,
+                        NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
                         &fauna,
                         &ladder,
@@ -603,23 +604,12 @@ pub fn advance_expeditions(
                             FollowPolicy::Deplete => (surplus_spent, full || near_band_gate),
                             // Eradicate never delivers — it grinds to extinction (→ lost-herd guard).
                             FollowPolicy::Eradicate => (false, false),
-                            // The investment policies are **not an expedition concept**: every
-                            // rung-transition is place-bound work a resident band does, and
-                            // `send_hunt_expedition` rejects them at launch — so this is unreachable (and
-                            // `hunt_expedition_floor` `debug_assert!`s if it ever is reached). It takes
-                            // nothing (infinite floor ⇒ zero surplus), so end the trip immediately rather
-                            // than loop forever taking zero: the party comes home empty and says so.
-                            //
-                            // **Listed rather than `is_investment()`-derived, deliberately**: this is an
-                            // EXHAUSTIVE match, so a new `FollowPolicy` **fails to compile** here until
-                            // someone says how a trip under it ends. A predicate guard would need a
-                            // catch-all and would silently hand a new verb this behaviour — trading the
-                            // compiler's forcing for the very rot that broke `hunt_expedition_floor`.
-                            // Exhaustive matches don't drift; `matches!` lists do.
-                            FollowPolicy::Cultivate
-                            | FollowPolicy::Sow
-                            | FollowPolicy::Tame
-                            | FollowPolicy::Corral => (true, false),
+                            // **The build verbs have no arm here any more, and cannot get one**
+                            // (issue #442): every rung-transition is place-bound work a resident band
+                            // does, and an expedition's mission carries a [`FollowPolicy`], which no
+                            // longer *names* a build verb. What used to be an unreachable arm — kept
+                            // exhaustive precisely so a new verb could not inherit a plausible answer
+                            // — is now a statement the type system makes for free.
                         };
 
                         if done {
@@ -826,13 +816,13 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 /// | **Deplete** | `ecology.collapse_fraction · K` | `0.15·K` (the Allee brink) |
 /// | **Eradicate** | `0` | nothing — the whole stock is surplus |
 ///
-/// The two **investment** policies are **not an expedition concept at all**: `Cultivate`/`Corral` are
-/// place-bound work a *resident* band does (prepare a patch, build a pen and then tend it) — a
-/// detached party cannot pen a herd and walk home — so `send_hunt_expedition` **rejects** them at
-/// launch and this arm is unreachable. It deliberately returns a floor of **`f32::INFINITY`** (⇒ zero
-/// standing surplus ⇒ the party takes *nothing*) rather than a real floor: if that launch validation
-/// ever regresses, the trip is empty and the hole is loud, instead of a plausible-looking raid hiding
-/// it. `debug_assert!` makes a debug build scream; release degrades safely rather than panicking.
+/// **The improvements are not an expedition concept at all, and since issue #442 that is a type-level
+/// fact rather than a runtime gate.** `Cultivate`/`Sow`/`Tame`/`Corral` are place-bound work a
+/// *resident* band does (prepare a patch, build a pen and then tend it) — a detached party cannot pen
+/// a herd and walk home. They used to be `FollowPolicy` variants, so this function needed an
+/// unreachable arm returning an infinite floor plus a `debug_assert!` to catch the launch gate
+/// rotting; they are now an [`crate::components::Improvement`], which `ExpeditionMission::Hunt` has no
+/// slot for, so the arm and the assert are gone and the guarantee they approximated is exact.
 fn hunt_expedition_floor(
     policy: FollowPolicy,
     carrying_capacity: f32,
@@ -845,17 +835,6 @@ fn hunt_expedition_floor(
         FollowPolicy::Surplus => k * fauna.hunt.surplus_escapement_fraction,
         FollowPolicy::Deplete => k * ecology.collapse_fraction,
         FollowPolicy::Eradicate => 0.0,
-        // Investment / plant-only policies are launch-rejected (send_hunt_expedition + valid_for_hunt).
-        // An INFINITE floor means "no surplus to take" — the party takes nothing and the regressed
-        // guard is loud, exactly as the retired `0.0` *ceiling* was.
-        FollowPolicy::Tame | FollowPolicy::Corral | FollowPolicy::Cultivate | FollowPolicy::Sow => {
-            debug_assert!(
-                false,
-                "non-extractive policy {} reached a hunting expedition — send_hunt_expedition must reject it",
-                policy.as_str()
-            );
-            f32::INFINITY
-        }
     }
 }
 
@@ -1015,6 +994,7 @@ pub fn hunt_take(
     herd: &mut Herd,
     workers: u32,
     policy: FollowPolicy,
+    improvement: Option<Improvement>,
     per_worker_biomass_capacity: f32,
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
@@ -1028,15 +1008,28 @@ pub fn hunt_take(
     // (`fauna::hunt_forecast`), which reads the same credit + rate, so forecast == actual.
     // Sustain's rate is sized against the **pre-regrowth** biomass (slice 8b — so a below-K/2 herd
     // holds, not leaks); the credit ceiling then clamps to the current stock.
+    // **The dip rides the caller's improvement** (issue #442 §2.2): a resident band gentling or
+    // fencing this herd passes its verb and pays `fraction × its own stance's` rate; an expedition
+    // passes [`NO_IMPROVEMENT_UNDERWAY`], because a rung-transition is place-bound work a detached
+    // party cannot do — and since #442 its mission type cannot even name one.
     let rate = fauna::hunt_policy_rate(
         policy,
+        improvement,
         herd.biomass_before_regrowth,
         herd_capacity(herd, fauna),
         &herd_ecology(herd, fauna),
         fauna,
         ladder,
     );
-    let ceiling = fauna::hunt_credit_ceiling(policy, herd.biomass, herd.hunt_credit, rate);
+    let ceiling = fauna::hunt_credit_ceiling(
+        policy,
+        // Eradicate reads the standing stock rather than the banked rate, so it needs the dip
+        // separately; every other arm has it folded into `rate` already.
+        ladder.build_dip(improvement),
+        herd.biomass,
+        herd.hunt_credit,
+        rate,
+    );
     // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the *bank* can
     // afford, bounded by what it can haul but never below one — so a party that cannot carry a whole
     // animal still takes one and wastes the rest, and a bank that cannot yet spare one leaves the herd

@@ -133,6 +133,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
                 policy: FollowPolicy::Sustain,
             },
             workers: workers.max(1),
+            improvement: None,
         }],
         ..Default::default()
     });

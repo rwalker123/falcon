@@ -63,12 +63,20 @@ const KIND_STARVING_PEN := "starving_pen"
 # A narrative fork awaiting an answer (The Telling). Non-locating — it opens a panel, not a hex —
 # and the only `blocking` producer today.
 const KIND_DECISION := "decision"
+# A built rung with nobody on it — a Tended Patch / Field the player owns and has stopped working, or
+# a managed herd short of its keepers. Two kinds rather than one so each web wears the glyph its own
+# ladder already uses (the compose sheet's rung faces, the work board's rung mark), which is what lets
+# the row say WHICH investment is bleeding before the label is read.
+const KIND_UNWORKED_RUNG := "unworked_rung"
+const KIND_UNDER_CREWED_HERD := "under_crewed_herd"
 const KIND_ICON := {
 	KIND_IDLE_WORKERS: "🛠",
 	KIND_STARVING: "🍖",
 	KIND_LOSING_POPULATION: "📉",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
+	KIND_UNWORKED_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
+	KIND_UNDER_CREWED_HERD: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_TAME],
 	# A question put to the people, awaiting their answer. Line art, NOT the ❔ emoji: emoji
 	# presentation renders as tofu/a blob at row size (the hazard that forced MagnifierButton and
 	# the policy icons to hand-draw). Verified at true size in `turn_orb_fork_blocks.png`.

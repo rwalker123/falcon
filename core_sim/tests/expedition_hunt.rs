@@ -29,7 +29,8 @@ use core_sim::{
     SimulationConfig, SimulationTick, SizeClass, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, VisibilityConfig,
-    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
+    VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD, NO_BUILD_UNDERWAY_DIP,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -794,16 +795,14 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
             .find(|h| &h.id == id)
             .unwrap_or_else(|| panic!("{case}: herd {id} is in the snapshot"));
 
-        assert!(
-            !exported
-                .hunt_policy_ceilings
-                .iter()
-                .any(|c| c.policy == FollowPolicy::Cultivate.as_str()),
-            "{case}: {id}: Cultivate is forage-only — a herd has no cultivate ceiling row"
+        assert_eq!(
+            exported.hunt_policy_ceilings.len(),
+            FollowPolicy::ALL.len(),
+            "{case}: {id}: the ceiling list is exactly the four STANCE rows (issue #442) — the \
+             Tame/Corral dips are the `tameBuildFraction`/`corralBuildFraction` factors now"
         );
-        // Every policy a Hunt assignment accepts — the four extractive rungs AND Corral, whose
-        // deliberately dipped yield the player must see before committing to the pen.
-        for policy in FollowPolicy::HUNT_POLICIES {
+        // Every stance a Hunt assignment accepts.
+        for policy in FollowPolicy::ALL {
             let ceiling = exported
                 .hunt_policy_ceilings
                 .iter()
@@ -842,6 +841,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         output_multiplier,
                         workers,
                         policy,
+                        NO_IMPROVEMENT_UNDERWAY,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
                     )
@@ -861,6 +861,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &mut herd,
                     workers,
                     policy,
+                    NO_IMPROVEMENT_UNDERWAY,
                     labor.hunt.per_worker_biomass_capacity,
                     &fauna,
                     &LadderConfig::builtin(),
@@ -947,18 +948,19 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     set_fauna_regrowth_rate(&mut app, CLAMP_BINDING_REGROWTH_RATE);
     {
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
-        for policy in FollowPolicy::HUNT_POLICIES {
+        for policy in FollowPolicy::ALL {
             assert!(
                 {
                     let rate = hunt_policy_rate(
                         policy,
+                        NO_IMPROVEMENT_UNDERWAY,
                         depleted_biomass,
                         depleted_cap,
                         &fauna.ecology,
                         &fauna,
                         &LadderConfig::builtin(),
                     );
-                    hunt_credit_ceiling(policy, depleted_biomass, 0.0, rate)
+                    hunt_credit_ceiling(policy, NO_BUILD_UNDERWAY_DIP, depleted_biomass, 0.0, rate)
                 } <= depleted_biomass,
                 "{policy:?}: the credit ceiling can never exceed the herd's own biomass, at any \
                  regrowth rate"

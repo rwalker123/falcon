@@ -240,6 +240,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                         policy: FollowPolicy::Sustain,
                     },
                     workers: KEEPER_WORKERS,
+                    improvement: None,
                 }],
                 ..Default::default()
             },

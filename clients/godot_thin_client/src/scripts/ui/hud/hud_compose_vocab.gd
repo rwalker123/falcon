@@ -21,19 +21,7 @@ const FORAGE_POLICY_HINTS := {
     # What it costs — a fast decline, short of stripping the patch — is what tells it from Eradicate.
     "deplete": "Deplete — draw the patch down hard; much more now, and a fast decline.",
     "eradicate": "Eradicate — strip the patch bare.",
-    "cultivate": "Cultivate — prepare this patch: low yield while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
-    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
-    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
-    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
-    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
-    # neglected Field reverts to WILD, not to a free tended patch.
-    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
 }
-
-# Taming pauses (it does not fail, and it does not lose progress) while the herd is not Thriving. The
-# verb is deliberately NOT gated on that — a herd's phase swings as you hunt it — so this line is the
-# only thing standing between the player and a hidden rule. %s = the herd's live `ecology_phase`.
-const TAME_STALLED_HINT_FORMAT := "⚠ Taming is paused — the herd is %s, and it only gentles while Thriving. Progress is not lost: ease your hunters off and it resumes as the herd recovers."
 
 # Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
 # +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its
@@ -77,10 +65,17 @@ const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
-# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
-# carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
-# because a resident Sustain hunt on a thriving herd accrues HUSBANDRY toward livestock (and feeds
-# Sedentarization's `domestication` input), the single most under-communicated payoff in the system.
+# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line below it carries the
+# NUMBER; these carry the CONSEQUENCE for the HERD, which is otherwise invisible.
+#
+# **THEY NO LONGER TEACH THE LADDER, and that is deliberate.** Sustain's hint used to end "…is also how
+# your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one", and
+# Eradicate's opened its end-state clause with "No craft is learned". The gated IMPROVEMENT line sitting
+# directly above the commit button says the same thing better and at the only moment it is actionable
+# (`◎ Your people know Herding 0% — ♻ Sustain-hunt a wild herd to learn it`), since it renders exactly
+# while the knowledge is incomplete and disappears once it is not. Two surfaces stating one rule left the
+# hunt sheet's hints markedly longer than the forage sheet's for no information; a hint's job here is the
+# rung's own consequence — the Deplete decline, Eradicate's permanence — and nothing else.
 #
 # These are the BAND's payoffs and must not be reused for an expedition: the Hunting expedition arm
 # accrues NO HUSBANDRY — a Sustain *expedition* teaches its faction nothing, where a resident band's
@@ -97,12 +92,12 @@ const PEN_FENCING_LABEL := "Fencing %d%%"
 # on a worked Hunt row's tooltip — those rows are always a resident band's.
 const LOCAL_HUNT_POLICY_HINTS := {
     # Sustain USED to claim it tamed the herd ("on a thriving herd the hunt also tames it… livestock
-    # that pays food every turn without being hunted down"). BOTH halves of that are now false and
-    # the sentence is the reason this whole arc exists: slice 3a split the conflated branch, so
-    # Sustain TEACHES the faction Herding but tames nothing (the `tame` verb fills the herd's own
-    # meter), and slice 3b retired passive-free pastoral, so a tamed herd pays only through workers.
-    # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
-    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
+    # that pays food every turn without being hunted down"), then that it taught the next rung's craft.
+    # The first was false (slice 3a split the conflated branch: the `tame` verb fills the herd's meter,
+    # Sustain does not); the second is TRUE but belongs to the improvement line, which says it while the
+    # knowledge is still incomplete. What is left is the rung's own consequence, in the forage twin's
+    # register (`FORAGE_POLICY_HINTS["sustain"]` — one clause for the take, one for the source).
+    "sustain": "Sustain — take only the herd's renewable yield; it stays healthy.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     # Deplete is the ladder's third rung, named for the PRESSURE it applies rather than what it
     # produces (docs/plan_hunt_yield_model.md §2) — every rung sells the species' trade goods, so
@@ -114,8 +109,27 @@ const LOCAL_HUNT_POLICY_HINTS := {
     # payoff on the ladder. Denial is the END STATE (the species is gone, for everyone), never a promise
     # that the carcasses were thrown away, so the old "No food … no trade" line was false twice over.
     # The payoff is stated in whatever the SPECIES pays, not in food: a wolf is inedible and settles up
-    # in trade goods alone. "No craft is learned" stays TRUE — husbandry accrues on Sustain only.
-    "eradicate": "Eradicate — the last hunt: one final haul takes the herd's whole standing stock, the biggest payoff of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. No craft is learned, and the herd is gone for good, for you and for everyone else.",
+    # in trade goods alone. It opened its end clause with "No craft is learned" — true, but craft is the
+    # improvement line's subject (see the header), and the PERMANENCE is what this rung has to carry.
+    "eradicate": "Eradicate — the last hunt: one final haul takes the herd's whole standing stock, the biggest payoff of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. The herd is gone for good, for you and for everyone else.",
+}
+
+# WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement checkbox's tooltip, one entry per
+# rung, BOTH webs in one table.
+#
+# These four were rows of `FORAGE_POLICY_HINTS` / `LOCAL_HUNT_POLICY_HINTS` while the build verbs were
+# values of `policy`. They are their own table now for the reason the whole change exists: a stance
+# hint answers "how hard am I pulling?" and these answer "what am I building?", and the two questions
+# stopped sharing a control. The expedition/local split does not reach here at all — a detached party
+# builds nothing, so it has no improvement control to hang a hint on.
+const IMPROVEMENT_HINTS := {
+    "cultivate": "Cultivate — prepare this patch: a reduced take while you work it, then a much higher tended yield. It must stay staffed or it goes feral.",
+    # Sow is plant RUNG 3 — the twin of Corral. Its hint must carry the two things that make it a
+    # different bargain from Cultivate: it pays ~nothing while the crop is in the ground (there is no
+    # standing stand to take a fraction of), and it out-yields a tended patch ~2×. The "goes feral"
+    # warning is one rule for the whole plant web — an abandoned patch bleeds BOTH meters, so a
+    # neglected Field reverts to WILD, not to a free tended patch.
+    "sow": "Sow — plant a Field on this ground: almost no food while the crop grows, then twice a tended patch's yield. It must stay staffed or it goes feral all the way back to wild.",
     # Tame is animal RUNG 2 — the verb that replaced the hidden Sustain side effect. Its payoff is
     # NOT "free food": 3b retired the passive rung, so the honest promise is yield PER WORKER (~1.5×
     # off the same crew) plus proximity (the herd drifts to the band instead of being chased).
@@ -162,21 +176,117 @@ const POLICY_PAYOFF_FULL_FORMAT := "builds toward %s/turn"
 # (`POLICY_CAP_FORMAT` via `SourceForecast.extractive_take`): each policy's MAX obtainable food/turn, computed in
 # `SourceForecast.expedition_policy_takes` as the max over party sizes of delivered_food / trip_turns. No bespoke
 # raid-animals face any more — the three pickers read identically.
-# The INVESTMENT rungs by name — "does this rung trade a dip now for a better source later?". This is
-# the test for *which yield row a rung gets*, and it is deliberately NOT `policy in
-# FORECAST_PAYOFF_KEYS`: `tame` is an investment rung that has no quotable payoff (above), so the
-# payoff map cannot answer this question. An investment rung must never render the extractive
-# "renewable / ⚠ overdraws the herd" preview — it is drawn sustainably by construction, and the
-# verdict would argue with the dip row.
-const INVESTMENT_POLICIES := ["cultivate", "sow", "tame", "corral"]
+# ---- THE IMPROVEMENT CONTROL (issue #442) -----------------------------------------------------
+#
+# The second axis's whole vocabulary. `INVESTMENT_POLICIES` used to live here — the named set every
+# surface consulted to ask "is this policy really a build?" — and it is GONE: the wire answers that
+# now, with a field of its own. Nothing below is a set-membership test.
+#
+# THE CONTROL HAS THREE STATES and each gets one line, in this order of precedence:
+#   1. OFFERED  — an unchecked checkbox naming the next rung and its terms.
+#   2. RUNNING  — checked, with the build meter; a WARN pause line when the source has left Thriving.
+#   3. DONE     — a static state label, with the NEXT rung's checkbox beneath it if there is one.
 
-# The investment forecast states the DEAL, not a single yield: "Preparing: +0.09 /turn → then +1.20 /turn".
-# Tame renders through it too (dip from `hunt_policy_ceilings["tame"]`, payoff = `pastoral_yield`), with
-# no feed term (Tame has no running cost).
-const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
+# What checking the box COMMITS TO, per improvement — the verb phrased against its own subject, so
+# "Cultivate" reads as an act on this patch rather than as a rung name floating in a list.
+const IMPROVEMENT_OFFER_LABELS := {
+    "cultivate": "Cultivate this patch",
+    "sow": "Sow a field here",
+    "tame": "Tame this herd",
+    "corral": "Pen this herd",
+}
+
+# What is HAPPENING while it builds — the present participle, so the running line reads as work under
+# way rather than as an option still on offer.
+const IMPROVEMENT_RUNNING_LABELS := {
+    "cultivate": "Cultivating",
+    "sow": "Sowing",
+    "tame": "Taming",
+    "corral": "Building the pen",
+}
+
+# The STATE the finished rung leaves the source in — a noun, because nothing is happening any more.
+# These are the same four words the work board's rung marks use, and they carry the same glyphs
+# (`DetailFormat`'s, resolved at the call site) so a Tended Patch reads identically on the compose
+# sheet, in the Band panel and on the map.
+const IMPROVEMENT_DONE_LABELS := {
+    "cultivate": "Tended Patch",
+    "sow": "Field",
+    "tame": "Pastoral",
+    "corral": "Penned",
+}
+
+# `<glyph> <verb phrase> · then <payoff>` — the offered checkbox's face. The terms are what makes it a
+# DEAL rather than a dare, and they are quoted from the sim's own payoff for this source and crop.
+const IMPROVEMENT_OFFER_FORMAT := "%s %s · then %s"
+
+# The same face where the wire quotes no payoff at all (a species/crop that pays nothing at this rung,
+# an older snapshot): the verb alone, never a fabricated "· then +0.00".
+const IMPROVEMENT_OFFER_BARE_FORMAT := "%s %s"
+
+## A GATED rung's whole line: the rung's glyph, then the unmet prerequisite in the gate's own words.
+## The rung is NOT named here and that is the point — naming it ("Cultivate this patch") reads as an
+## offer, and this state exists precisely because there is no offer to make yet. The glyph keeps the
+## improvement axis visible and identifiable without making a promise.
+const IMPROVEMENT_GATED_FORMAT := "%s %s"
+
+# `<glyph> <participle> — 60%` — the running checkbox's face. The percent comes from the SAME
+# `SourceForecast.improvement_progress` the map badge and the work board read, so the three can never
+# quote different meters.
+const IMPROVEMENT_RUNNING_FORMAT := "%s %s — %d%%"
+
+# `<glyph> <state noun>` — the done label. Static: there is nothing to uncheck and nothing to clear.
+const IMPROVEMENT_DONE_FORMAT := "%s %s"
+
+# **THE ONE ASYMMETRY BETWEEN THE TWO WEBS, and it is deliberate** (spec §4): a penned herd cannot
+# graze, so someone feeds it every turn. That standing obligation belongs with the standing state, so
+# the Corral done label carries it and the Tame one does not. Do not make these match.
+const IMPROVEMENT_DONE_UPKEEP_FORMAT := "%s %s · %s fodder/turn upkeep"
+
+# WHAT UNCHECKING A RUNNING IMPROVEMENT DOES, per web — the second half of the running control's
+# tooltip (`abandon_improvement <faction> forage <x> <y>` / `… hunt <herd_id>`).
+#
+# **UNCHECKING IS ALWAYS LEGAL.** There is no knowledge, ceiling, site or Thriving gate on the abandon
+# path, deliberately: abandoning a STALLED build is exactly when a player reaches for it, so gating it
+# on the conditions that STARTED the build would make the remedy unreachable in the one case it is
+# for. Nothing here may render a gate reason, and nothing may grey the box.
+#
+# **IT IS NOT A CANCEL-AND-REFUND, AND THE TWO WEBS GENUINELY DIFFER** — so one shared sentence would
+# have to lie to one of them. The command does not touch the meter at all; it hands the source back to
+# its own existing rule, which is the same state walking the band away reaches:
+#   • PLANT  — `cultivation_progress` / `field_progress` BLEED at the rung's `decay_per_turn` on every
+#     turn nobody is improving the patch. Slow (~100 turns to zero), but real, and the copy must not
+#     imply the work is banked.
+#   • ANIMAL — the meter is KEPT (`domestication` is monotone-up and the pen rung's decay is 0), so the
+#     copy may say so plainly.
+# Neither line promises progress BACK, because neither web gives any.
+const IMPROVEMENT_ABANDON_HINTS := {
+    "forage": "Unchecking stops the work — the crew keeps foraging at the stance you chose and stops paying the build dip. Nothing is refunded, and an unworked patch's progress slowly bleeds away.",
+    "hunt": "Unchecking stops the work — the crew keeps hunting at the stance you chose and stops paying the build dip. Nothing is refunded, but the progress already made is kept.",
+}
+
+# Joins the rung's own hint to the abandon consequence in the running control's tooltip. The two are
+# different questions ("what does this rung buy?" / "what happens if I stop?") and read as two lines.
+const IMPROVEMENT_TOOLTIP_SEPARATOR := "\n\n"
+
+# WHY THE METER IS NOT MOVING. A build accrues only while its source is Thriving, and that is
+# deliberately NOT a gate on starting it (a source's phase swings as it is worked, so refusing the
+# verb would be un-actionable churn) — the sim just PAUSES the meter, losing nothing. This line is the
+# only thing standing between the player and a hidden rule, so it states the pause, names the cause
+# (the live phase) and names the remedy, which is the opposite of "work harder".
+#
+# It was `TAME_STALLED_HINT_FORMAT`, animal-only, because the plant web had no control to hang it on.
+# Both webs pause identically and both say so now. %s = the source's live `ecology_phase`.
+const IMPROVEMENT_PAUSED_FORMAT := "⚠ Paused — the source is %s, and this only advances while Thriving. Progress is not lost: ease off and it resumes as the source recovers."
+
+# THE WHOLE DEAL, in three terms: what you take now, what you take while you build, what the built
+# rung pays. `+0.96 → +0.24 while building → +1.20 /turn`, the middle term WARN-amber because it is
+# the dip. The first term is the number the old two-term line structurally could not show — a build
+# verb WAS the policy then, so there was no stance left to quote.
+const IMPROVEMENT_DEAL_FORMAT := "%s → [color=%s]%s while building[/color] → %s"
 
 # The same deal for a rung that also carries a running feed cost:
-#   "Preparing: +0.75 /turn → then +5.40 /turn − 1.74 feed"
+#   "+0.75 → +0.19 while building → +5.40 /turn − 1.74 feed"
 # `pen_upkeep` answers "what would this pen cost?" for an UNPENNED herd too (a projection at the
 # herd's current biomass, on the SAME basis `corral_yield` uses — see `fauna::pen_upkeep`), so the
 # pre-commit row quotes the real running cost at the moment the player actually decides. The
@@ -184,7 +294,7 @@ const INVESTMENT_FORECAST_FORMAT := "Preparing: %s → then %s"
 # no ecology. (Before the sim exported that projection this row said "before feed"; it no longer
 # has to.) A herd with no `pen_upkeep` (no pen feed to charge) degrades to the plain no-feed format
 # above rather than printing a fabricated "− 0.00 feed".
-const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
+const IMPROVEMENT_DEAL_FEED_FORMAT := "%s → [color=%s]%s while building[/color] → %s − %s feed"
 
 # A ZERO PAYOFF IS DATA, NOT A MISSING NUMBER — and it is the single most valuable thing this row can
 # say. The pen's harvest is constant ESCAPEMENT (take only the biomass standing above `K/2`), so a
@@ -196,18 +306,17 @@ const INVESTMENT_FORECAST_FEED_FORMAT := "Preparing: %s → then %s − %s feed"
 # a zero payoff a net LOSS rather than merely a nothing.
 # (The "is it zero" floor is the shared `SourceForecast.FOOD_FLOW_MIN` — one definition of "below this, there is no
 # flow here", used by the band ledger's rows and by this row alike.)
-# AT ZERO WORKERS THERE IS NO "PREPARING" TO STATE. `Preparing` is staffing-scaled (workers ×
-# per_worker) while the `→ then` payoff is not, so an unstaffed forecast used to read
-# "Preparing: +0.00 /turn → then +1.22 /turn" — a sequence the player is emphatically NOT on track for,
-# since an unstaffed build meter never advances at all. The payoff itself stays on screen (it is how you
-# decide whether the source is worth staffing), but as a CONDITION rather than an imminent arrival.
-# Short on purpose: the moment ONE worker is on it the full "Preparing: … → then …" line renders, so a
-# long unstaffed sentence earns nothing. Crew-named, so a herd rung says hunters/herders.
-const INVESTMENT_FORECAST_UNSTAFFED_FORMAT := "Assign %s — %s"
+# AT ZERO WORKERS THERE IS NO SEQUENCE TO STATE. Both the stance term and the dip are staffing-scaled
+# while the `→` payoff is not, so an unstaffed deal used to read "+0.00 → +0.00 while building →
+# +1.22" — a sequence the player is emphatically NOT on track for, since an unstaffed build meter
+# never advances at all. The payoff itself stays on screen (it is how you decide whether the source is
+# worth staffing), but as a CONDITION rather than an imminent arrival. Crew-named, so a herd rung says
+# hunters/herders.
+const IMPROVEMENT_DEAL_UNSTAFFED_FORMAT := "Assign %s — %s"
 
-const INVESTMENT_FORECAST_UNSTAFFED_FEED_FORMAT := "Assign %s — %s − %s feed"
+const IMPROVEMENT_DEAL_UNSTAFFED_FEED_FORMAT := "Assign %s — %s − %s feed"
 
-const INVESTMENT_FORECAST_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
+const IMPROVEMENT_DEAL_DEPLETED_NOTE := "⚠ Too depleted to pen — it would eat feed and pay nothing until the herd rebuilds."
 
 # How a forecast dict SPELLS its field keys — a key spelling, nothing more.
 #
@@ -239,7 +348,13 @@ const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, t
 # offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
 # it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
 # wrap-aware hex distance from the selected band's own tile.
-const ASSIGN_LOCAL_HUNT_BUTTON := "Assign Local Hunt"
+#
+# **THE COMMIT BUTTON IS A VERB, and it does not restate the sheet's own header.** The sheet is already
+# titled `ASSIGN HUNTERS <herd>`, so "Assign Local Hunt" spent its whole width saying what the eyebrow
+# above it had just said; the forage twin has read the bare verb `Forage` all along, and the two sheets
+# now match in grammar as they do in control order. "Here" is what carries the local-vs-expedition
+# distinction — the only thing "Local" was contributing — against the expedition branch's `Send …`.
+const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
@@ -247,12 +362,26 @@ const FORAGE_ASSIGN_BUTTON := "Forage"
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
-# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a tile this band
-# already works it is a legitimate unassign and says so, and at 0 on a tile it does not work it is a
-# no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the unassign.
-const FORAGE_UNASSIGN_BUTTON := "Unassign"
+# submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a source this
+# band already works it is a legitimate unassign and says so, and at 0 on a source it does not work it
+# is a no-op and the button is dead. A client-side floor of 1 would fix the no-op and break the
+# unassign.
+#
+# **ONE WORD, BOTH SHEETS.** The forage sheet and the LOCAL hunt sheet reach the same three states from
+# the same rule, so the face is defined once: two consts holding "Unassign" is exactly how the two
+# sheets drift apart. (The EXPEDITION branch is not in this family — a raid is a launch, not an
+# edit of a standing assignment, so a party of 0 is simply refused.)
+const UNASSIGN_BUTTON := "Unassign"
 
 const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
+
+# The hunt web's twin, per CREW NOUN — a wild herd is staffed by hunters and a managed one by herders
+# (`HERD_CREW_LABEL`), so the dead button's explanation names whoever the stepper above it just asked
+# for. Keyed by the crew label the sheet already resolved, so the two can never disagree.
+const HUNT_NOOP_HINTS := {
+    HUNT_CREW_LABEL: "Nobody assigned yet — send at least one hunter.",
+    HERD_CREW_LABEL: "Nobody assigned yet — send at least one herder.",
+}
 
 # ---- THE COMPOSE SHEET (docs/plan_tile_panel_layout.md §10-§15) -------------------------------
 # Composing is modal by nature — open, decide, commit, done — so the two ~270px compose blocks live
@@ -375,8 +504,10 @@ const CANCEL_SCOPE_ROLES := "roles"
 # provisions into the party's larder, the trade goods onto `Expedition::carried_trade` and out to the
 # faction stockpile at the next drop-off/fold-back), but accrues **NO HUSBANDRY**: a known v1 gap,
 # tracked server-side. So these hints may state a trade payoff and must never promise a craft, even
-# though the resident-band Sustain does teach one (see `LOCAL_HUNT_POLICY_HINTS`). That remaining
-# asymmetry is real; blurring it would have the UI promise the player a payoff the sim never pays.
+# though a resident band's Sustain hunt does teach one — the local sheet says so on its IMPROVEMENT
+# line's gate reason ("♻ Sustain-hunt a wild herd to learn it"), a control the expedition branch does
+# not build, rather than in either hint table. That asymmetry is real; blurring it would have the UI
+# promise the player a payoff the sim never pays.
 const SEND_HUNT_POLICY_HINTS := {
 	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
 	# hunt takes, so the herd stays healthy indefinitely. The trade-off is speed: MSY is a small flow,
@@ -455,10 +586,17 @@ const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
 const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
 
 # The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
-# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer (always shown on an
-# extractive hunt rung) naming the averaging span, computed from the SELECTED policy's ceiling by
-# `_hunt_avg_window_turns` so it never blinks out as workers change (a faster policy averages over a
-# different span, so the line reflects the composed action, not a Sustain-wide claim).
+# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer naming the
+# averaging span, computed PER RUNG from that rung's own ceiling by `_hunt_avg_window_turns` (a faster
+# policy averages over a different span), so it is worker-independent and never blinks out.
+#
+# **IT LIVES IN THE RUNG BUTTON'S TOOLTIP, not in the panel body** — appended under the tooltip's
+# name + metric line by `HudWidgets.build_policy_picker` (the `note` key of the rung's take pair, which
+# `_hunt_policy_takes` fills and the forage/expedition pickers leave unset). It is load-bearing — a
+# player who reads "0.68 food/turn" off a mammoth and then goes six turns with nothing would reasonably
+# conclude the readout lied — but it is a caveat on ONE number, and as a standing body line it cost the
+# hunt sheet a full wrapped sentence that the forage sheet has no counterpart for. A tooltip is where a
+# caveat on a figure belongs; the figure it qualifies is on the same control.
 const HUNT_AVG_WINDOW_FORMAT := "This estimate is a long-run average over ~%d turns — you take whole animals, so per-turn delivery varies."
 
 # The averaging window's upper clamp: near-integer animals/turn rates make the "extra animal" cycle span
