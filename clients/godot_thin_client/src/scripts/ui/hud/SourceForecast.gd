@@ -412,7 +412,13 @@ const HUNT_WASTE_SUFFIX_FORMAT := " · ⚠ %d%% wasted"
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
 # no-surplus raid, which has no upside at all, disables.
-const SEND_HUNTING_EXPEDITION_BUTTON := "Send hunting party"
+#
+# **THE `Send` STEM IS LOAD-BEARING and the base label sheds only its redundant words.** The three
+# variants below rewrite this same button as `Send Anyway (…)` / `Send (brings nothing home)`, so the
+# resting face has to be the same verb they vary; what it does NOT have to do is restate the sheet's own
+# `ASSIGN HUNTERS <herd>` header or name the party a second time. (The disabled no-surplus face is the
+# one that leaves the stem, and deliberately: it is a refusal, not a send.)
+const SEND_HUNTING_EXPEDITION_BUTTON := "Send Expedition"
 const SEND_HUNT_ANYWAY_TURNS_FORMAT := "Send Anyway (≈%d turns)"
 # A LONG raid (`turnsToFill == 0`, ran the whole horizon still delivering) still lands animals — enabled,
 # but the button names it a long haul rather than quoting a turn count the client can't bound.

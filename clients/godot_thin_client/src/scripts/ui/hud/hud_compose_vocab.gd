@@ -65,10 +65,17 @@ const PEN_EXTEND_TOOLTIP := "Fence another ring around the pen: the keeper works
 
 const PEN_FENCING_LABEL := "Fencing %d%%"
 
-# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line above it already
-# carries the NUMBER; these carry the CONSEQUENCE, which is otherwise invisible — above all Sustain's,
-# because a resident Sustain hunt on a thriving herd accrues HUSBANDRY toward livestock (and feeds
-# Sedentarization's `domestication` input), the single most under-communicated payoff in the system.
+# The policy hint under a LOCAL (resident-band) hunt's picker. The live yield line below it carries the
+# NUMBER; these carry the CONSEQUENCE for the HERD, which is otherwise invisible.
+#
+# **THEY NO LONGER TEACH THE LADDER, and that is deliberate.** Sustain's hint used to end "…is also how
+# your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one", and
+# Eradicate's opened its end-state clause with "No craft is learned". The gated IMPROVEMENT line sitting
+# directly above the commit button says the same thing better and at the only moment it is actionable
+# (`◎ Your people know Herding 0% — ♻ Sustain-hunt a wild herd to learn it`), since it renders exactly
+# while the knowledge is incomplete and disappears once it is not. Two surfaces stating one rule left the
+# hunt sheet's hints markedly longer than the forage sheet's for no information; a hint's job here is the
+# rung's own consequence — the Deplete decline, Eradicate's permanence — and nothing else.
 #
 # These are the BAND's payoffs and must not be reused for an expedition: the Hunting expedition arm
 # accrues NO HUSBANDRY — a Sustain *expedition* teaches its faction nothing, where a resident band's
@@ -85,12 +92,12 @@ const PEN_FENCING_LABEL := "Fencing %d%%"
 # on a worked Hunt row's tooltip — those rows are always a resident band's.
 const LOCAL_HUNT_POLICY_HINTS := {
     # Sustain USED to claim it tamed the herd ("on a thriving herd the hunt also tames it… livestock
-    # that pays food every turn without being hunted down"). BOTH halves of that are now false and
-    # the sentence is the reason this whole arc exists: slice 3a split the conflated branch, so
-    # Sustain TEACHES the faction Herding but tames nothing (the `tame` verb fills the herd's own
-    # meter), and slice 3b retired passive-free pastoral, so a tamed herd pays only through workers.
-    # What Sustain honestly does is teach — which is exactly the ladder's first rung, so it says so.
-    "sustain": "Sustain — takes only the herd's renewable yield, so it stays healthy forever. Working a herd this way is also how your people learn the next rung's craft: Herding on a wild herd, Penning on a tamed one.",
+    # that pays food every turn without being hunted down"), then that it taught the next rung's craft.
+    # The first was false (slice 3a split the conflated branch: the `tame` verb fills the herd's meter,
+    # Sustain does not); the second is TRUE but belongs to the improvement line, which says it while the
+    # knowledge is still incomplete. What is left is the rung's own consequence, in the forage twin's
+    # register (`FORAGE_POLICY_HINTS["sustain"]` — one clause for the take, one for the source).
+    "sustain": "Sustain — take only the herd's renewable yield; it stays healthy.",
     "surplus": "Surplus — more food now; the herd slowly declines. The fuller larder pushes the band toward settling.",
     # Deplete is the ladder's third rung, named for the PRESSURE it applies rather than what it
     # produces (docs/plan_hunt_yield_model.md §2) — every rung sells the species' trade goods, so
@@ -102,8 +109,9 @@ const LOCAL_HUNT_POLICY_HINTS := {
     # payoff on the ladder. Denial is the END STATE (the species is gone, for everyone), never a promise
     # that the carcasses were thrown away, so the old "No food … no trade" line was false twice over.
     # The payoff is stated in whatever the SPECIES pays, not in food: a wolf is inedible and settles up
-    # in trade goods alone. "No craft is learned" stays TRUE — husbandry accrues on Sustain only.
-    "eradicate": "Eradicate — the last hunt: one final haul takes the herd's whole standing stock, the biggest payoff of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. No craft is learned, and the herd is gone for good, for you and for everyone else.",
+    # in trade goods alone. It opened its end clause with "No craft is learned" — true, but craft is the
+    # improvement line's subject (see the header), and the PERMANENCE is what this rung has to carry.
+    "eradicate": "Eradicate — the last hunt: one final haul takes the herd's whole standing stock, the biggest payoff of any rung, in whatever that species pays — meat, ⇄ trade goods, or both. The herd is gone for good, for you and for everyone else.",
 }
 
 # WHAT COMMITTING TO AN IMPROVEMENT BUYS AND COSTS — the improvement checkbox's tooltip, one entry per
@@ -340,7 +348,13 @@ const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, t
 # offers a LOCAL hunt when it's within the SELECTED band's hunt_reach, or a hunting EXPEDITION when
 # it's beyond. One compose control (worker/party stepper + policy), two labels/commands keyed off the
 # wrap-aware hex distance from the selected band's own tile.
-const ASSIGN_LOCAL_HUNT_BUTTON := "Assign Local Hunt"
+#
+# **THE COMMIT BUTTON IS A VERB, and it does not restate the sheet's own header.** The sheet is already
+# titled `ASSIGN HUNTERS <herd>`, so "Assign Local Hunt" spent its whole width saying what the eyebrow
+# above it had just said; the forage twin has read the bare verb `Forage` all along, and the two sheets
+# now match in grammar as they do in control order. "Here" is what carries the local-vs-expedition
+# distinction — the only thing "Local" was contributing — against the expedition branch's `Send …`.
+const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
@@ -476,8 +490,10 @@ const CANCEL_SCOPE_ROLES := "roles"
 # provisions into the party's larder, the trade goods onto `Expedition::carried_trade` and out to the
 # faction stockpile at the next drop-off/fold-back), but accrues **NO HUSBANDRY**: a known v1 gap,
 # tracked server-side. So these hints may state a trade payoff and must never promise a craft, even
-# though the resident-band Sustain does teach one (see `LOCAL_HUNT_POLICY_HINTS`). That remaining
-# asymmetry is real; blurring it would have the UI promise the player a payoff the sim never pays.
+# though a resident band's Sustain hunt does teach one — the local sheet says so on its IMPROVEMENT
+# line's gate reason ("♻ Sustain-hunt a wild herd to learn it"), a control the expedition branch does
+# not build, rather than in either hint table. That asymmetry is real; blurring it would have the UI
+# promise the player a payoff the sim never pays.
 const SEND_HUNT_POLICY_HINTS := {
 	# Sustain is the MAXIMUM SUSTAINABLE YIELD flow — the same per-turn skim a resident band's Sustain
 	# hunt takes, so the herd stays healthy indefinitely. The trade-off is speed: MSY is a small flow,
@@ -556,10 +572,17 @@ const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
 const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
 
 # The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
-# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer (always shown on an
-# extractive hunt rung) naming the averaging span, computed from the SELECTED policy's ceiling by
-# `_hunt_avg_window_turns` so it never blinks out as workers change (a faster policy averages over a
-# different span, so the line reflects the composed action, not a Sustain-wide claim).
+# WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer naming the
+# averaging span, computed PER RUNG from that rung's own ceiling by `_hunt_avg_window_turns` (a faster
+# policy averages over a different span), so it is worker-independent and never blinks out.
+#
+# **IT LIVES IN THE RUNG BUTTON'S TOOLTIP, not in the panel body** — appended under the tooltip's
+# name + metric line by `HudWidgets.build_policy_picker` (the `note` key of the rung's take pair, which
+# `_hunt_policy_takes` fills and the forage/expedition pickers leave unset). It is load-bearing — a
+# player who reads "0.68 food/turn" off a mammoth and then goes six turns with nothing would reasonably
+# conclude the readout lied — but it is a caveat on ONE number, and as a standing body line it cost the
+# hunt sheet a full wrapped sentence that the forage sheet has no counterpart for. A tooltip is where a
+# caveat on a figure belongs; the figure it qualifies is on the same control.
 const HUNT_AVG_WINDOW_FORMAT := "This estimate is a long-run average over ~%d turns — you take whole animals, so per-turn delivery varies."
 
 # The averaging window's upper clamp: near-integer animals/turn rates make the "extra animal" cycle span

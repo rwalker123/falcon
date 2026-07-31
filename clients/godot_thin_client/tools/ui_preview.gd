@@ -242,6 +242,11 @@ const RIVER_MASK_TWO_CLASS := (
 
 var _hud: HudLayer
 
+## Every compose spine captured this run, keyed by the sheet it came from (see `_record_compose_spine`).
+## A DICT rather than two fields because the parity assertion is about the RELATION between them, and a
+## missing capture must fail loudly rather than compare an empty array against another empty one.
+var _compose_spines := {}
+
 func _ready() -> void:
 	# FREEZE ANIMATION TIME — the same treatment `map_preview` and `blend_probe` carry, and taken for
 	# the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a HUD refactor
@@ -670,6 +675,9 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
+	# THE FORAGE HALF of the compose-order invariant (see `_compose_spine`): capture this sheet's control
+	# spine, to be compared against the local-hunt sheet's when that renders further down.
+	_record_compose_spine(COMPOSE_SPINE_KEY_FORAGE)
 
 	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
 	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
@@ -1626,7 +1634,7 @@ func _ready() -> void:
 
 	# State 3 — a huntable herd selected on a food tile, WITHIN the band's hunt reach: the "Assign
 	# hunters" controls (a "Band:" dropdown naming the actor band, a Hunters −/+ count, the
-	# sustain/surplus/deplete/eradicate policy picker, and the local "Assign Local Hunt" button). A
+	# sustain/surplus/deplete/eradicate policy picker, and the local "Hunt Here" button). A
 	# Thriving herd shows a neutral ecology readout in the drawer.
 	# Push both fixtures as the known-herd roster so the open-ended Attack/Defense bars have a
 	# reference to normalize against (Elevation-style) — the mammoth holds the roster max.
@@ -1917,14 +1925,23 @@ func _ready() -> void:
 	_compose_herd(_taming_herd_fixture(), COMPOSE_COUNT_UNSET, "", "tame")
 	await _settle()
 	await _save("two_meter_split")
-	# THE HERD-SIDE BLAST-RADIUS GUARD. `HudWidgets.build_policy_picker` is SHARED with the hunt/expedition pickers,
-	# and this frame's whole subject is the gated Corral's reason line — naming the knowledge, its live
-	# percent and the practice that fills it — while TAME is the composed rung. The collapse is opt-in and
-	# only the forage compose opts in, so the hunt picker must be byte-for-byte unchanged.
-	_assert_hud("the hunt picker still spells out the gated Corral's reason (collapse is forage-only)",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "Penning"))
-	_assert_hud("…and collapses nothing on the herd side",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, "locked ("))
+	# THE TWO-METER SPLIT'S OWN INVARIANT — retargeted, because the pair that stood here was passing on
+	# the WRONG LABEL. It read "the hunt picker still spells out the gated Corral's reason (collapse is
+	# forage-only)" and asserted the word "Penning" somewhere in the sheet; but the picker's gate
+	# machinery went with issue #442, NOTHING is gated in this frame (Herding is fully known and Tame is
+	# what is running), and the word it was matching came from the Sustain HINT's craft clause — the
+	# sentence the compose-sheet consistency pass removed as redundant with the improvement line. Its
+	# companion ("collapses nothing on the herd side") tested for `locked (`, a rendering #442 also
+	# deleted, so it could no longer fail either.
+	#
+	# What the frame actually proves is the split itself, and that IS assertable: the sheet carries THIS
+	# HERD's own meter, and the FACTION's craft belongs to the top-bar strip — a knowledge percent
+	# reaches the sheet only through a GATED rung's reason, and no rung here is gated.
+	_assert_hud("the two-meter frame's sheet carries THIS herd's own progress meter",
+		_improvement_face(_hud._drawercompose._compose_sheet, "tame").contains("40%"))
+	_assert_hud("…and names no faction craft, nothing in this frame being gated",
+		not _has_label_containing(_hud._drawercompose._compose_sheet, "Penning")
+			and not _has_label_containing(_hud._drawercompose._compose_sheet, "Herding"))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Deplete/Eradicate/Corral, ENABLED (Herding is known) and selected on a
@@ -2081,7 +2098,7 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 
 	# State 3h — distance-aware herd-hunt, SINGLE far band: a lone band ~27 tiles from the herd (beyond
-	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send Hunting
+	# its hunt_reach 7). The affordance fully replaces the local option — the button reads "Send
 	# Expedition", a distance hint shows, the stepper reads "Party", and Assign emits
 	# send_hunt_expedition (party = the stepper), NOT assign_labor.
 	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
@@ -2092,9 +2109,13 @@ func _ready() -> void:
 	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_expedition")
+	# The EXPEDITION branch reads in the same grammar as the two local sheets as far as it goes — it
+	# builds no improvement control (a detached party builds nothing), so only the shared HEAD is
+	# claimed here, which is exactly what `_record_compose_spine` asserts.
+	_record_compose_spine(COMPOSE_SPINE_KEY_EXPEDITION)
 
 	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
-	# the herd (distance 0 ≤ reach 7) → "Assign Local Hunt" + assign_labor. The band-picker selection —
+	# the herd (distance 0 ≤ reach 7) → "Hunt Here" + assign_labor. The band-picker selection —
 	# not the herd — drives it (the resolved/default band is the near one here).
 	_hud._band_labor._player_bands = _hunt_distance_bands()
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
@@ -2106,7 +2127,7 @@ func _ready() -> void:
 	await _save("herd_hunt_band_near")
 
 	# State 3j — same two bands, FAR band selected via the picker (entity 812, ~27 tiles away): the SAME
-	# herd now offers "Send Hunting Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
+	# herd now offers "Send Expedition" (party cap = min(idle 6, max party 8) = 6), proving that
 	# WHICH band is selected flips the label + command + band-entity target, not the herd.
 	_hud._compose.set_hunt_band(int(_hunt_distance_bands()[1]["entity"]))   # FAR band
 	_compose_herd(_hunt_distance_herd())
@@ -2126,7 +2147,7 @@ func _ready() -> void:
 	# `hunt_trip_estimates` cell for (policy, party size). The client does no arithmetic here — the sim
 	# forward-simulated each trip and exported the turns. Party 4:
 	#   3k viable      — Sustain on a Thunder Mammoth: the sim's cell says 6 turns → cyan line, normal
-	#                    primary "Send Hunting Expedition" button.
+	#                    primary "Send Expedition" button.
 	#   3l not viable  — Sustain on Red Deer: 54 turns > warn 20 → amber line + the button itself goes
 	#                    "armed" and names the cost: "Send Anyway (≈54 turns)".
 	#   3m surplus     — the SAME Red Deer on Surplus: a Surplus party strips the herd's stock headroom
@@ -2175,7 +2196,7 @@ func _ready() -> void:
 	# (not the pack) binds — that plateau IS max-useful. The clean Wild Boar carries the server's measured
 	# raid (hauls its whole kill, no waste). The picker buttons read each policy's MAX food/turn, ascending.
 	#   3p boar raid   — a 1-hunter raid: "delivers ≈5 Wild Boar over ≈7 turns · ~20 food" (no waste), cyan +
-	#                    primary "Send Hunting Expedition"; picker "up to +10.67 / +13.33 / +14.67 /turn".
+	#                    primary "Send Expedition"; picker "up to +10.67 / +13.33 / +14.67 /turn".
 	#   3q max useful  — 2 hunters: "delivers ≈8 Wild Boar over ≈8 turns · ~32 food"; a 3rd delivers NO more
 	#                    food (the surplus binds), so the stepper caps at 2 and the `+` note reads
 	#                    "max 2 workers useful here — more would be idle". The silent-idle-hunter gap, closed.
@@ -2300,6 +2321,11 @@ func _ready() -> void:
 	_compose_herd(local_herd, LOCAL_HUNT_HUNTERS)
 	await _settle()
 	await _save("herd_hunt_local_sustain")
+	# THE HUNT HALF, and the parity check itself: both sheets must ask WHICH STANCE before HOW MANY
+	# PEOPLE, and in the same order throughout. The hunt sheet staffed first until the consistency pass;
+	# a frame cannot hold that claim, which is why it is asserted rather than eyeballed.
+	_record_compose_spine(COMPOSE_SPINE_KEY_HUNT)
+	_assert_compose_order_parity(COMPOSE_SPINE_KEY_FORAGE, COMPOSE_SPINE_KEY_HUNT)
 	_assert_hud("the local-hunt frames render the dialed-in crew (capped), not the re-seeded 1",
 		_hud._compose.hunt_count() == LOCAL_HUNT_CAPPED_CREW)
 
@@ -2639,7 +2665,7 @@ func _ready() -> void:
 	await _save("tile_panel_compose_forage")
 
 	# tile_panel_compose_herd — the herd sheet on the EXPEDITION branch (the band is beyond hunt
-	# reach): the raid forecast + "Send Hunting Expedition" must survive the move to the sheet intact.
+	# reach): the raid forecast + "Send Expedition" must survive the move to the sheet intact.
 	_hud._band_labor._player_bands = [_hunt_distance_bands()[1]]   # only the FAR band
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
 	_hud._compose.reset_hunt_source()
@@ -4569,6 +4595,90 @@ func _face_lines(root: Node) -> Array[String]:
 		lines.append_array(_face_lines(child))
 	return lines
 
+# ---- the compose sheets' SHARED VERTICAL GRAMMAR ------------------------------------------------
+# The forage sheet and the hunt sheet ask the same two questions in the same act — WHICH STANCE, and
+# WITH HOW MANY PEOPLE — and they must ask them in the same order, because a player moving between the
+# two is reading one control layout, not two. The hunt sheet used to put its crew stepper directly
+# under the band picker, i.e. staff first and decide after; both now read
+#   band picker → stance picker → (hint) → crew stepper → … → improvement.
+#
+# A FRAME CANNOT HOLD THAT CLAIM. Two PNGs side by side show the order to a human who thinks to look,
+# and nothing fails when one of them moves — which is exactly how they drifted apart. So the invariant
+# is asserted as a SPINE: the ordered structural controls of the open sheet, with the prose between
+# them (hints, cap notes, forecasts, gate reasons, the plant web's crop rows) deliberately EXCLUDED.
+# The two webs legitimately say different things in different places; what must match is the order in
+# which the controls come.
+const COMPOSE_SPINE_BAND := "band"
+const COMPOSE_SPINE_POLICY := "policy"
+const COMPOSE_SPINE_STEPPER := "stepper"
+const COMPOSE_SPINE_IMPROVEMENT := "improvement"
+## What EVERY compose sheet must open with — both webs, and the hunt sheet's local and expedition
+## branches alike. The expedition branch builds no improvement control (a detached party builds
+## nothing), so the shared claim is the HEAD; the two LOCAL sheets are additionally compared in full.
+const COMPOSE_SPINE_HEAD: Array[String] = [
+	COMPOSE_SPINE_BAND, COMPOSE_SPINE_POLICY, COMPOSE_SPINE_STEPPER,
+]
+## The three sheets whose spines this run captures, as `_compose_spines` keys. Named consts because the
+## capture sites and the parity check sit ~1,600 lines apart, and a typo in either would silently
+## compare a spine against nothing.
+const COMPOSE_SPINE_KEY_FORAGE := "forage"
+const COMPOSE_SPINE_KEY_HUNT := "local hunt"
+const COMPOSE_SPINE_KEY_EXPEDITION := "hunt expedition"
+## The `−` face `HudWidgets.add_stepper_controls` gives every stepper's decrement button (U+2212, not a
+## hyphen). It is the one structural handle on a stepper row — unlike a rung or an improvement box, a
+## stepper carries no meta — so the walk below finds it by that face.
+const COMPOSE_STEPPER_MINUS_FACE := "−"
+
+## The open compose sheet's spine, in tree order. Each recognized control is tagged and NOT descended
+## into: a rung's cell holds Labels, an improvement control holds its own rows, and neither is a spine
+## control in its own right. A policy PICKER emits one tag however many rungs it holds.
+func _compose_spine(root: Node) -> Array[String]:
+	var spine: Array[String] = []
+	_collect_compose_spine(root, spine)
+	return spine
+
+func _collect_compose_spine(node: Node, spine: Array[String]) -> void:
+	if node == null:
+		return
+	if node is Control and (node as Control).has_meta(HudWidgets.IMPROVEMENT_CONTROL_META):
+		spine.append(COMPOSE_SPINE_IMPROVEMENT)
+		return
+	if node is OptionButton:
+		spine.append(COMPOSE_SPINE_BAND)
+		return
+	if node is Button and (node as Button).has_meta(HudWidgets.POLICY_RUNG_META):
+		if spine.is_empty() or spine[spine.size() - 1] != COMPOSE_SPINE_POLICY:
+			spine.append(COMPOSE_SPINE_POLICY)
+		return
+	if node is Button and (node as Button).text == COMPOSE_STEPPER_MINUS_FACE:
+		spine.append(COMPOSE_SPINE_STEPPER)
+		return
+	for child in node.get_children():
+		_collect_compose_spine(child, spine)
+
+## Capture the open sheet's spine under `key`, and assert the shared HEAD on the spot so a failure
+## names the sheet that broke rather than only the pair. An EMPTY spine fails too — a sheet that never
+## opened would otherwise make the parity comparison vacuously true.
+func _record_compose_spine(key: String) -> void:
+	var spine := _compose_spine(_hud._drawercompose._compose_sheet)
+	_compose_spines[key] = spine
+	_assert_hud("the %s compose sheet opens band → stance → crew (spine %s)" % [key, str(spine)],
+		spine.slice(0, COMPOSE_SPINE_HEAD.size()) == COMPOSE_SPINE_HEAD)
+
+## THE PARITY ASSERTION: the two LOCAL compose sheets must read in the same control order, start to
+## finish. Both keys must have been recorded — comparing two missing spines would pass while proving
+## nothing, which is the failure mode a frame-only check already has.
+func _assert_compose_order_parity(forage_key: String, hunt_key: String) -> void:
+	var have_both := _compose_spines.has(forage_key) and _compose_spines.has(hunt_key)
+	_assert_hud("both compose spines were captured before the parity check (%s, %s)"
+		% [forage_key, hunt_key], have_both)
+	if not have_both:
+		return
+	var forage_spine: Array = _compose_spines[forage_key]
+	var hunt_spine: Array = _compose_spines[hunt_key]
+	_assert_hud(("the forage and local-hunt sheets read in the SAME control order — forage %s, hunt %s"
+		% [str(forage_spine), str(hunt_spine)]), forage_spine == hunt_spine)
+
 ## How many Buttons under `root` wear this face — the "is the same order offered twice?" test.
 func _count_buttons_by_text(root: Node, text: String) -> int:
 	if root == null:
@@ -4874,7 +4984,7 @@ func _band_fixture() -> Dictionary:
 		"work_range": 2,
 		# Hunt reach (work_range + hunt leash) — large enough here that BOTH the reference herd_fixture
 		# (9 tiles from this band's pos) and the occupied-hex herd (16 tiles) stay WITHIN reach, so those
-		# herd states render the LOCAL "Assign Local Hunt" controls (the far-herd expedition path has its
+		# herd states render the LOCAL "Hunt Here" controls (the far-herd expedition path has its
 		# own dedicated fixtures, _hunt_distance_bands).
 		"hunt_reach": 16,
 		"scout_reveal_radius": 2,

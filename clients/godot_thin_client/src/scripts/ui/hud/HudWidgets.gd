@@ -463,7 +463,7 @@ const POLICY_RUNG_META := "policy"
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
 ## the rung meta above, only more so: this button's face is the raid VERDICT
-## (`SourceForecast.style_send_hunt_button` writes "Send Hunting Expedition" / "Send Anyway (≈54
+## (`SourceForecast.style_send_hunt_button` writes "Send Expedition" / "Send Anyway (≈54
 ## turns)" / "Send (brings nothing home)" / "Herd too lean to raid"), so text is the one thing a
 ## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
@@ -634,6 +634,13 @@ static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Labe
 ## has no prerequisite and never retires, so every one of the four is always live. Unmet prerequisites
 ## belong to the IMPROVEMENT axis now, and `HudWidgets.build_improvement_control` renders them in the
 ## same shown-unchecked-and-explained shape this used to.
+##
+## A rung's `takes` entry may carry a THIRD key beside `compact`/`full` — **`note`**, a caveat on the
+## metric appended under the tooltip's name + metric line. It exists for the hunt sheet's averaging-
+## window disclaimer (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which qualifies the rate on the very
+## face it hangs off, and which as a standing body line made the hunt sheet read a paragraph longer than
+## the forage sheet beside it. It is per RUNG, not per picker, because the span the rate averages over
+## is a property of the rung; a picker whose takes carry no `note` (forage, expedition) is unchanged.
 static func build_policy_picker(
     on_pick: Callable,
     selected: String,
@@ -681,6 +688,8 @@ static func build_policy_picker(
         var take: Variant = takes.get(policy_key, null)
         var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
+        # The optional per-rung tooltip caveat (see the header) — the hunt sheet's averaging window.
+        var note := String((take as Dictionary).get("note", "")) if take is Dictionary else ""
         var is_selected := policy_key == current
         var variant := "primary" if is_selected else "ghost"
         # `policy` meta, not the face string: the face is presentation (it grew a name, then a second
@@ -698,7 +707,7 @@ static func build_policy_picker(
         var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
             if full != "" else policy_key.capitalize()
         btn.pressed.connect(func() -> void: on_pick.call(policy_key))
-        btn.tooltip_text = name_line
+        btn.tooltip_text = HudFormat.join_tooltip_lines([name_line, note])
         # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
         # equal width and fill the panel content width.
         var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric,

@@ -271,6 +271,13 @@ func _format_animal_rate(value: float) -> String:
 ##   the face, framed "up to X/turn" in the tooltip — the ceiling it is, distinct from the crew's
 ##   carry-aware delivered line below the picker. Read straight off the sim; never re-derived.
 ##
+## **THE HUNT SIDE ALSO FILLS THE PAIR'S OPTIONAL `note`** — the averaging-window disclaimer
+## (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which the picker appends under the rung's tooltip metric
+## line. It is a caveat on THIS rung's rate (a hunt lands whole animals, so a per-turn figure is a
+## long-run average), so it rides the rung's own take pair rather than a body line: keyed per rung,
+## since `_hunt_avg_window_turns` spans differ by stance, and omitted when the window is unknown. The
+## forage twin fills no note — a patch's take is smooth, and there is nothing to average.
+##
 ## **The build verbs' PAYOFF faces left this function with them** (issue #442). Tame and Corral were a
 ## second loop here, wearing `→ 1.48 food · 0.37 trade` because a build verb was a rung of this picker;
 ## the improvement control states the same payoff as its own terms now, and the list this reads is
@@ -289,7 +296,15 @@ func _hunt_policy_takes(herd: Dictionary) -> Dictionary:
         # non-zero. A wolf's four rungs therefore read as four ascending TRADE caps rather than four
         # `+0.00`s — the false reading that said an inedible species was worth nothing on every rung.
         var trade_rate := SourceForecast.hunt_policy_trade_ceiling(herd, String(policy))
-        takes[String(policy)] = SourceForecast.extractive_take_pair(rate, maxf(trade_rate, 0.0))
+        var pair := SourceForecast.extractive_take_pair(rate, maxf(trade_rate, 0.0))
+        # The averaging window this rung's rate is an average OVER, as the pair's tooltip `note`. Only
+        # for a STANCE the picker actually offers — the sim exports a ceiling row per `HUNT_POLICIES`,
+        # which still includes the two build verbs, and those are the improvement control's now.
+        var window_turns := _hunt_avg_window_turns(herd, String(policy)) \
+            if String(policy) in SourceForecast.LABOR_HUNT_POLICIES else 0
+        if window_turns > 0:
+            pair["note"] = HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns
+        takes[String(policy)] = pair
     return takes
 
 
@@ -841,6 +856,39 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var crew_label := HudComposeVocab.HERD_CREW_LABEL \
         if SourceForecast.is_managed_hunt_source(herd, composed_improvement) \
         else HudComposeVocab.HUNT_CREW_LABEL
+    # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
+    # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
+    # Deplete < Eradicate). Worker-independent on both branches (the expedition's is the max over party
+    # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
+    var policy_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if is_expedition \
+        else _hunt_policy_takes(herd)
+    # **STANCE FIRST, THEN THE CREW — the SAME vertical grammar the forage sheet reads in.** The stepper
+    # used to sit directly under the band picker, so the hunt sheet asked "how many hunters?" before it
+    # asked what they would be doing, and the two compose sheets disagreed about the order of the one
+    # decision they both make. You choose the action, then staff it. Nothing about the mechanics moved:
+    # the cap is still recomputed from the composed stance (a policy click re-renders and may auto-fill
+    # the crew) and the forecast below still reads the current crew — only the position changed.
+    target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
+        _compose.set_hunt_policy(policy)
+        # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
+        _compose.arm_hunt_autofill()
+        _build_herd_assign_controls(_live_herd(herd_id, herd), target), _compose.hunt_policy(), hunt_options, policy_takes))
+    # The hint under the picker is per BRANCH, never shared: a resident band and a detached party earn
+    # DIFFERENT payoffs from the same policy word (both trade the take since #337, but only the band's
+    # Sustain builds husbandry — an expedition accrues none), so one shared line would promise the
+    # expedition player a payoff the sim never pays. The expedition's slot carries the distance refusal
+    # instead — it is that branch's answer to "what does this stance mean here?".
+    if is_expedition:
+        target.add_child(HudWidgets.alloc_hint_label(
+            "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
+            % [_herd_label_for_id(herd_id), distance, reach]))
+    else:
+        # What this stance DOES for a resident band (the forecast line further down carries the number;
+        # this carries the consequence for the herd). Deliberately NOT the expedition hints.
+        target.add_child(HudWidgets.alloc_hint_label(
+            String(HudComposeVocab.LOCAL_HUNT_POLICY_HINTS.get(_compose.hunt_policy(), ""))))
+    # THE CREW, beneath the stance it staffs — with its cap note, which explains THIS stepper's dead `+`
+    # and therefore travels with it.
     target.add_child(HudWidgets.build_worker_stepper(
         "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
@@ -849,25 +897,6 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # Ascending per-policy takes under BOTH pickers so all three (forage / local hunt / expedition) wear
-    # the same "up to X/turn" button metric: each policy's MAX obtainable food/turn (Sustain < Surplus <
-    # Deplete < Eradicate). Worker-independent on both branches (the expedition's is the max over party
-    # sizes of delivered_food / trip_turns, so it never changes as the Party stepper steps).
-    var policy_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if is_expedition \
-        else _hunt_policy_takes(herd)
-    target.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
-        _compose.set_hunt_policy(policy)
-        # Picking a policy auto-fills the crew to that policy's max-useful (consumed next rebuild).
-        _compose.arm_hunt_autofill()
-        _build_herd_assign_controls(_live_herd(herd_id, herd), target), _compose.hunt_policy(), hunt_options, policy_takes))
-    # The policy hint is rendered per BRANCH below, never here: a resident band and a detached party
-    # earn DIFFERENT payoffs from the same policy word (both trade the take since #337, but only the
-    # band's Sustain builds husbandry — an expedition accrues none), so one shared hint line under the
-    # picker would promise the expedition player a payoff the sim never pays.
-    if is_expedition:
-        target.add_child(HudWidgets.alloc_hint_label(
-            "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
-            % [_herd_label_for_id(herd_id), distance, reach]))
     var assign_btn := Button.new()
     if is_expedition:
         # LIVE turns-to-fill for the party + policy currently dialed. This block re-renders on every
@@ -891,22 +920,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         if no_surplus:
             target.add_child(HudWidgets.alloc_hint_label(reason))
     else:
-        # What this policy DOES for a resident band (the forecast line below carries the number; this
-        # carries the consequence — above all what Sustain actually teaches, which is otherwise
-        # invisible). Deliberately NOT the expedition hints: a party earns neither.
-        target.add_child(HudWidgets.alloc_hint_label(
-            String(HudComposeVocab.LOCAL_HUNT_POLICY_HINTS.get(_compose.hunt_policy(), ""))))
-        # Averaging-window disclaimer — the delivered rate above is a long-run average of lumpy
-        # whole-animal delivery (you take WHOLE animals, so per-turn delivery varies). ALWAYS shown, as
-        # a STABLE herd-level statement: the span is keyed off the selected stance's flow ceiling
-        # (`_hunt_avg_window_turns`), so it never moves as the Hunters count steps up and never blinks
-        # out. Skipped only when the window is unknown (missing food_per_animal / ceiling). It is no
-        # longer suppressed on a build rung: a stance is always a stance now, and the crew hauls whole
-        # animals whether or not a pen is going up beside them.
-        var window_turns := _hunt_avg_window_turns(herd, _compose.hunt_policy())
-        if window_turns > 0:
-            target.add_child(HudWidgets.alloc_hint_label(
-                HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns))
+        # The averaging-window disclaimer USED TO STAND HERE, as a wrapped body line under the hint: the
+        # delivered rate is a long-run average of lumpy whole-animal delivery. It is a caveat on ONE
+        # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_policy_takes`
+        # fills the take pair's `note`) — the panel is where the hunt sheet could least afford a sentence
+        # the forage sheet has no counterpart for. The window computation is unchanged.
         # LIVE per-turn yield for the STANCE being composed (no carry cap on a local hunt, so
         # turns-to-fill is meaningless — food/turn is the number that decides it). Every stance renders
         # it now: the "one yield row per rung" split existed because a build verb occupied the same

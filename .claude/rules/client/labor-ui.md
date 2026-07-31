@@ -105,6 +105,64 @@ on the bands **already working** the source, so a verb aimed at an unworked one 
 **re-staffing gap**: changing the crew of a *paused* build used to re-issue a command whose gates the
 pause had failed, so the crew could not be changed at all.
 
+### The two compose sheets read in ONE grammar
+
+The forage sheet and the local-hunt sheet ask the same two questions in the same act, and a player
+moving between them is reading ONE control layout. They now do, top to bottom:
+
+```
+band picker → stance picker → stance hint → crew stepper (+ its cap note) → forecast → improvement → commit
+```
+
+The hunt sheet used to put its crew stepper directly under the band picker — staff first, decide
+after — which is the wrong order for the decision and a gratuitous difference besides. **Only the
+POSITION moved**: the cap is still recomputed from the composed stance before the stepper renders (a
+stance click re-renders and may auto-fill the crew) and the forecast still reads the current crew.
+The **expedition branch follows the same spine**, its stance hint slot carrying the distance refusal;
+it builds no improvement control, a detached party building nothing.
+
+**`ui_preview` asserts the ORDER, because a frame cannot.** `_compose_spine` reduces an open sheet to
+its structural controls — band picker, stance picker, crew stepper, improvement, each found by meta or
+by node type, with the prose between them deliberately excluded — and the three sheets' spines are
+captured at `food_tile` / `herd_hunt_expedition` / `herd_hunt_local_sustain`. Every sheet must open on
+the shared HEAD (`band → policy → stepper`) and the two LOCAL spines must be EQUAL. Sabotage-verified:
+putting the stepper back above the picker fails all three, naming the order it found.
+
+**A stance hint states the rung's consequence for the SOURCE, and does not teach the ladder.** The
+hunt Sustain hint carried "…is also how your people learn the next rung's craft: Herding on a wild
+herd, Penning on a tamed one", and Eradicate opened its end clause with "No craft is learned". Both are
+true and both are the **improvement line's** subject: a gated improvement control renders
+`◎ Your people know Herding 0% — ♻ Sustain-hunt a wild herd to learn it` directly above the commit
+button, exactly while the knowledge is incomplete, and disappears when it is not. Two surfaces stating
+one rule left the hunt hints markedly longer than the forage hints they sit beside for no information.
+What must NOT be cut is a rung's own consequence — the Deplete decline, Eradicate's permanence, the
+Corral feed cost.
+
+**The averaging-window disclaimer lives in the rung BUTTON'S TOOLTIP** (`HUNT_AVG_WINDOW_FORMAT`,
+appended under the tooltip's `<Name> — <metric>` line via the OPTIONAL `note` key of the rung's take
+pair, which `_hunt_policy_takes` fills and the forage/expedition pickers leave unset). It is
+load-bearing — a hunt lands WHOLE animals, so a player who reads `0.68 food/turn` off a mammoth and
+then goes six turns with nothing would reasonably conclude the readout lied — but it is a caveat on ONE
+number, and as a standing body line it cost the hunt sheet a wrapped sentence the forage sheet has no
+counterpart for. The window computation is unchanged (`_hunt_avg_window_turns`, per rung, unknown
+windows skipped); only where it renders moved.
+
+**The commit button is a VERB and never restates the sheet's own header.** The sheet is already titled
+`ASSIGN HUNTERS <herd>` / `ASSIGN FORAGERS <patch>`. So: forage `Forage` (unchanged), local hunt
+**`Hunt Here`** (was "Assign Local Hunt" — "Here" is what carries the local-vs-expedition distinction),
+expedition **`Send Expedition`** (was "Send hunting party"). **The `Send` STEM is load-bearing**:
+`SourceForecast.style_send_hunt_button` rewrites that same button with the raid verdict — `Send Anyway
+(≈54 turns)` / `Send Anyway (long raid)` / `Send (brings nothing home)` — so the resting face must be
+the verb they vary. The disabled `Herd too lean to raid` is the one face that leaves the stem, and
+deliberately: it is a refusal, not a send. Harnesses reach the send button through
+`HudWidgets.SEND_HUNT_CONFIRM_META`, never by face, which is why a rename does not touch
+`tools/command_guard.gd`.
+
+**The forage sheet's green forecast line is NOT redundant with the rung face, and stays.** The face
+shows the stance's worker-INDEPENDENT ceiling; the green line is what the CURRENT crew takes, scaled by
+the band's `output_multiplier`, and it carries the sustainability verdict that becomes
+`⚠ … — overdraws the patch`. They coincide only at the cap.
+
 ### What this deleted
 
 Each existed only to undo the overload:
@@ -365,8 +423,9 @@ discard is precisely what this axis split removed.
     selected unit's destination draws (no clutter). Covered by `marker_field_guard`
     (`travel_target_x`/`travel_target_y`/`is_traveling`) and `map_preview` states `map_travel_band` /
     `map_travel_seam` (seam-crossing) / `map_travel_expedition`.
-  - **Band-picker dropdown** (`_build_band_picker`, on BOTH assign controls, above the worker
-    stepper so it reads "which band → how many workers"): a `Band:` `OptionButton` listing every
+  - **Band-picker dropdown** (`_build_band_picker`, on BOTH assign controls, at the TOP of the sheet —
+    above the stance picker and the worker stepper alike, so it reads "which band → which stance → how
+    many workers"): a `Band:` `OptionButton` listing every
     `_player_bands` cohort by positional name ("Band N", via `HudFormat.band_display_name`; the cohort has
     no label field), item metadata = the band `entity`. The selection is the **actor band**:
     `_hunt_assign_band` / `_forage_assign_band` hold the picked entity (defaulting to
@@ -378,21 +437,23 @@ discard is precisely what this axis split removed.
     actor is explicit). Lists **all** player bands — in-range filtering (Forage `work_range` / Hunt
     `work_range` + leash) is deferred to the multi-band slice (needs hunt-leash reach in the snapshot).
   - **`%HerdAssignControls`** (herd drawer, huntable herds, `_build_herd_assign_controls`): the
-    band-picker, then a **distance-aware** "Assign hunters" **compose** control — a `−/+` worker/party
-    count (`_hunt_assign_count`) + a **policy picker** (`HudWidgets.build_policy_picker`, `_hunt_assign_policy`,
-    default `sustain`). **The two policy axes are separated BY BRANCH, and the sim enforces it:** a
+    band-picker, then a **distance-aware** "Assign hunters" **compose** control — a **policy picker**
+    (`HudWidgets.build_policy_picker`, `_hunt_assign_policy`, default `sustain`) and, BENEATH it, the
+    `−/+` worker/party count (`_hunt_assign_count`); stance first, then the crew that staffs it, the same
+    order the forage sheet reads in. **The two policy axes are separated BY BRANCH, and the sim enforces it:** a
     **local** hunt offers `HUNT_POLICY_OPTIONS` (the four extractive rungs **+ the `Corral` investment
     rung**, gated by `_hunt_policy_gates`), while a hunting **EXPEDITION** offers only the extractive
     `LABOR_HUNT_POLICIES` — a detached party follows the herd and builds no pen, `send_hunt_expedition`
     REJECTS Corral server-side, and the sim exports no `hunt_trip_estimates` row for it, so a Corral
     ETA could only ever be a lie. The
-    **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (the band's real payoffs:
-    Sustain → the herd stays healthy AND, on a thriving herd, **builds husbandry toward livestock**;
-    Surplus → more food now, pushes settling; Deplete → draws the herd down hard, much more
-    food now and a fast decline it will not recover from while it lasts — deliberately not oversold;
-    Eradicate → **the last hunt**: the whole standing stock in one haul, the biggest payoff of any rung,
-    in whatever the species pays (meat, ⇄ trade goods, or both), no craft learned, and the herd gone for
-    good — denial is the END STATE, not a promise that the carcasses were thrown away (#337)). **These are
+    **local** branch renders `LOCAL_HUNT_POLICY_HINTS` under the picker (each rung's consequence FOR THE
+    HERD: Sustain → take only the renewable yield, it stays healthy; Surplus → more food now, pushes
+    settling; Deplete → draws the herd down hard, much more food now and a fast decline it will not
+    recover from while it lasts — deliberately not oversold; Eradicate → **the last hunt**: the whole
+    standing stock in one haul, the biggest payoff of any rung, in whatever the species pays (meat, ⇄
+    trade goods, or both), and the herd gone for good — denial is the END STATE, not a promise that the
+    carcasses were thrown away (#337)). **They no longer teach the LADDER** — see "The two compose sheets
+    read in ONE grammar" above. **These are
     NOT the expedition hints** (`SEND_HUNT_POLICY_HINTS`): an expedition's Hunting arm banks **both
     products** since #337 (one `HuntYield::apply` per kill — provisions into the party's larder, trade
     goods onto `Expedition::carried_trade` and into the faction stockpile at the drop-off/fold-back), but
@@ -406,9 +467,9 @@ discard is precisely what this axis split removed.
     both** — one shared line under the picker would promise an expedition player the band's payoffs. The
     button + command switch on the **wrap-aware hex distance** from the **SELECTED band's** own tile
     to the herd vs that band's **`hunt_reach`** (= `work_range` + hunt leash, decoded as `hunt_reach`
-    and flowed onto the marker): **within reach** → a `Hunters` stepper + **"Assign Local Hunt"** →
+    and flowed onto the marker): **within reach** → a `Hunters` stepper + **"Hunt Here"** →
     `assign_labor hunt <herd_id> <policy> <workers>`; **beyond reach** → a `Party` stepper (cap
-    `min(idle_workers, max_expedition_party_size)`) + a distance hint + **"Send Hunting Expedition"** →
+    `min(idle_workers, max_expedition_party_size)`) + a distance hint + **"Send Expedition"** →
     `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> <policy>` (emitted directly, no
     herd-targeting step — the herd is already selected). Every part of the decision (distance, reach,
     band-entity target) keys off the band the picker selects, explicitly threaded — never the faction's
@@ -482,14 +543,16 @@ discard is precisely what this axis split removed.
     Sustain ceiling (the shared `_is_overdraw` test). When the crew can't carry even one whole animal the
     surplus meat rots → a **separate** WARN-amber `· ⚠ N% wasted` suffix (`waste_pct`, its own flag,
     rendered amber even on a green line; overdraw + waste can co-occur). Because the animal rate is a
-    long-run average of lumpy whole-animal delivery, EVERY extractive rung shows a **STABLE, always-on
-    averaging-WINDOW disclaimer** under the policy picker — `HUNT_AVG_WINDOW_FORMAT`: `This estimate is a
-    long-run average over ~<X> turns — you take whole animals, so per-turn delivery varies.` X =
-    `_hunt_avg_window_turns(herd, policy)`, derived from the SELECTED policy's raw flow ceiling (NOT the
+    long-run average of lumpy whole-animal delivery, EVERY extractive rung carries a **STABLE
+    averaging-WINDOW disclaimer IN ITS BUTTON TOOLTIP** — `HUNT_AVG_WINDOW_FORMAT`: `This estimate is a
+    long-run average over ~<X> turns — you take whole animals, so per-turn delivery varies.` (It stood as
+    its own line under the picker until the compose-sheet consistency pass moved it onto the rung whose
+    metric it qualifies — see "The two compose sheets read in ONE grammar" above.) X =
+    `_hunt_avg_window_turns(herd, policy)`, derived from THAT rung's raw flow ceiling (NOT the
     crew's current delivered rate), so it is **worker-independent and never blinks out** as the Hunters
     count steps up: `g = ceiling ÷ food_per_animal`; slow/big game (`g < 1`) → `ceil(1/g)` (deer Sustain →
-    ~2, mammoth Sustain → ~7), fast game → `ceil(1/frac)`, clamped to `HUNT_WINDOW_MAX_TURNS` (12). Keyed on
-    the composed policy (a faster policy averages over a different span), extractive rungs only (an
+    ~2, mammoth Sustain → ~7), fast game → `ceil(1/frac)`, clamped to `HUNT_WINDOW_MAX_TURNS` (12). Keyed per
+    rung (a faster policy averages over a different span), extractive rungs only (an
     investment rung shows a dip→payoff, not a cadence), skipped when the window is unknown (missing
     food_per_animal / ceiling → returns 0). The resident band applies its
     morale/discontent productivity modifier at payout, an expedition does not; when `food_per_animal` is
@@ -916,9 +979,10 @@ discard is precisely what this axis split removed.
       **`herd_hunt_delivered_waste`** (1 hunter can't carry one whole deer → green `≈0.65 Red Deer/turn ·
       renewable` + amber `· ⚠ 35% wasted`) / **`herd_hunt_automax`** (a policy click auto-fills the crew to
       the max-useful cap — count sits at 4) / **`herd_hunt_big_game_window`** (mammoth: auto-max staffs the
-      20 carriers, `≈0.15 Woolly Mammoth/turn` + the averaging-window disclaimer `This estimate is a
-      long-run average over ~7 turns — you take whole animals, so per-turn delivery varies.`; the deer
-      `delivered_*` states carry the same disclaimer reading ~2 turns at every worker count) /
+      20 carriers, `≈0.15 Woolly Mammoth/turn`; its Sustain rung's TOOLTIP carries the averaging-window
+      disclaimer, `This estimate is a long-run average over ~7 turns — you take whole animals, so
+      per-turn delivery varies.`, which a rendered frame cannot show — the deer states' rungs carry the
+      same note reading ~2 turns, at every worker count) /
       `herd_hunt_local_sustain` +
       `herd_hunt_local_overdraw` (green vs amber `⚠ … — overdraws the herd`) / `hunt_crew_herders`
       (a corralled herd → "Herders" stepper + "Assign herders") / `knowledge_penning_climbing`
@@ -1213,7 +1277,7 @@ empty-state that tests food alone.**
 
 **Frames.** `ui_preview`: **`herd_hunt_pelts_only`** (the frame the arc is judged on — a wolf's four
 rungs read `0.90 / 1.35 / 1.95 / 2.70 trade`, no food line, no zeros, and the animals-first preview +
-averaging-window disclaimer still render off the TRADE quantum) · **`herd_hunt_both_products`** (the
+averaging-window disclaimer — in the rung tooltips — still derive off the TRADE quantum) · **`herd_hunt_both_products`** (the
 same picker on a deer: `2.33 food · 0.34 trade`, food leading) · **`herd_investment_both_products`**
 (its INVESTMENT twin — a Wild Boar whose Tame reads `→ 1.48 food · 0.37 trade` and whose greyed Corral
 reads `→ 2.95 food · 0.74 trade`, asserted as literal strings against the rungs found by
