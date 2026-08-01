@@ -1008,6 +1008,7 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
+	_assert_compose_sheet_fits("food_tile")
 
 	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
 	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
@@ -1700,6 +1701,7 @@ func _ready() -> void:
 	_compose_forage(hay_meadow)
 	await _settle()
 	await _save("forage_three_accounts")
+	_assert_compose_sheet_fits("forage_three_accounts")
 	_assert_hud("a forage rung names all three accounts, in wire order",
 		_policy_rung_metric(_hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK) == HAY_PEAK_FACE)
@@ -1752,6 +1754,7 @@ func _ready() -> void:
 	_compose_forage(dead_season)
 	await _settle()
 	await _save("forage_dead_season")
+	_assert_compose_sheet_fits("forage_dead_season")
 	# THE "GOES SILENT" HALF OF THE ISSUE, and it needs the PREVIEW line rather than the rungs: a rung
 	# renders whether or not it has a metric (name-only is a legal face), so asserting the picker
 	# exists passes even with the bug restored. The preview line is what actually disappeared — it
@@ -1806,6 +1809,7 @@ func _ready() -> void:
 	_compose_forage(full_patch)
 	await _settle()
 	await _save("floor_chart_full")
+	_assert_compose_sheet_fits("floor_chart_full")
 	_assert_hud("a floor above the stock is BLOCKED — the source binds, not the crew",
 		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
 	_assert_hud("…and there is nothing to clear, so that target reads zero rather than a crew",
@@ -2916,6 +2920,7 @@ func _ready() -> void:
 	_compose_herd(_hunt_distance_herd())
 	await _settle()
 	await _save("herd_hunt_expedition")
+	_assert_compose_sheet_fits("herd_hunt_expedition")
 	# The EXPEDITION branch reads in the same grammar as the two local sheets as far as it goes — it
 	# builds no improvement control (a detached party builds nothing), so only the shared HEAD is
 	# claimed here, which is exactly what `_record_compose_spine` asserts.
@@ -3128,6 +3133,7 @@ func _ready() -> void:
 	_compose_herd(local_herd, LOCAL_HUNT_HUNTERS)
 	await _settle()
 	await _save("herd_hunt_local_sustain")
+	_assert_compose_sheet_fits("herd_hunt_local_sustain")
 	# THE HUNT HALF, and the parity check itself: both sheets must ask WHICH STANCE before HOW MANY
 	# PEOPLE, and in the same order throughout. The hunt sheet staffed first until the consistency pass;
 	# a frame cannot hold that claim, which is why it is asserted rather than eyeballed.
@@ -3224,6 +3230,7 @@ func _ready() -> void:
 	_compose_herd(window_herd)
 	await _settle()
 	await _save("herd_hunt_big_game_window")
+	_assert_compose_sheet_fits("herd_hunt_big_game_window")
 
 	# 3w — THE INEDIBLE QUARRY (issue #337). A wolf pays PELTS AND NO MEAT: `provisions == 0` on every
 	# rung, a real trade ceiling on all four. This is the frame the whole arc is judged on. The picker's
@@ -3240,6 +3247,7 @@ func _ready() -> void:
 	_compose_herd(wolf, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await _settle()
 	await _save("herd_hunt_pelts_only")
+	_assert_compose_sheet_fits("herd_hunt_pelts_only")
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
 	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
 	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food
@@ -8897,3 +8905,68 @@ func _terrain_legend_fixture() -> Dictionary:
 		],
 		"stats": {},
 	}
+
+# ---- the compose sheet's WIDTH invariant ------------------------------------
+
+## **NO ROW OF AN OPEN COMPOSE SHEET MAY DEMAND MORE THAN THE CARD'S USABLE WIDTH.** The card is an
+## `AutoSizingPanel`, i.e. a plain `Control`: a child's minimum width never reaches it, so a row wider
+## than the card does not push the card open — it renders past the card's own rect, and whichever
+## clip or edge it meets first cuts it off. That is what a screenshot showed and an assertion did not:
+## the local-hunt sheet's three intent presets demanded 384px inside a card declared 340, and the
+## widest rows (the 3-up preset grid, the full-width commit button) were the ones sliced.
+##
+## The check is a MEASUREMENT against the card's real width, not against the nominal `CARD_WIDTH` —
+## the fix is that the card GROWS, so pinning the constant would fail every sheet that legitimately
+## did. Usable = the card's fitted width less the panel stylebox's left+right margins and the scroll
+## gutter, i.e. exactly the room `_fit_width` promised the rows.
+##
+## The HEADER row is measured with the body's: it sits outside the scroll and carries the subject's
+## name, so a long species is content the card must be wide enough for too.
+func _assert_compose_sheet_fits(state: String) -> void:
+	var sheet: ComposeSheet = _hud._drawercompose._compose_sheet
+	if sheet == null or not sheet.visible:
+		_assert_hud("%s has an open compose sheet to measure" % state, false)
+		return
+	var style := HudStyle.card_stylebox()
+	var gutter := sheet._scroll.get_v_scroll_bar().get_combined_minimum_size().x
+	var usable: float = sheet._card.size.x - style.content_margin_left - style.content_margin_right \
+		- gutter
+	var rows: Array[Control] = [sheet._header_row]
+	for child in sheet._body.get_children():
+		if child is Control:
+			rows.append(child as Control)
+	var worst: float = 0.0
+	var worst_row := ""
+	for row in rows:
+		var demand := row.get_combined_minimum_size().x
+		if demand > worst:
+			worst = demand
+			worst_row = "%s %s" % [row.get_class(), _widest_control_face(row)]
+	_assert_hud("%s: the widest compose row fits the card (%.0f demanded, %.0f usable of a %.0f card) — %s"
+		% [state, worst, usable, sheet._card.size.x, worst_row],
+		worst <= usable + COMPOSE_FIT_SLACK)
+
+## A pixel of slack, so a row that lands exactly on the card's inner edge is not a failure. Anything
+## that actually clips overruns by whole glyphs, never by a rounding remainder.
+const COMPOSE_FIT_SLACK := 1.0
+
+## The deepest descendant setting a row's minimum width, named by its face — so a failure says WHICH
+## control is too wide rather than only that the row is.
+func _widest_control_face(root: Control) -> String:
+	var best: Control = root
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			stack.append(child)
+			if child is Control and (child as Control).get_combined_minimum_size().x \
+					> best.get_combined_minimum_size().x:
+				best = child as Control
+	var face := ""
+	if best is Button:
+		face = (best as Button).text
+	elif best is Label:
+		face = (best as Label).text
+	elif best is RichTextLabel:
+		face = (best as RichTextLabel).get_parsed_text()
+	return "%s(%.0f) %s" % [best.get_class(), best.get_combined_minimum_size().x, face.substr(0, 40)]
