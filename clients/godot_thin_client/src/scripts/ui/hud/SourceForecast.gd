@@ -374,14 +374,24 @@ const FORECAST_REGROWTH_SAMPLES_KEY := "regrowth_samples"
 # target rounds up to, and it is in the same units as the curve and the throughput above — unlike
 # `food_per_animal`, which is that quantum already converted into provisions.
 const FORECAST_BODY_MASS_KEY := "body_mass"
-# **THE PHASE IS ON THE WIRE; ITS BOUNDARIES ARE NOT.** Both webs publish the source's CURRENT
-# `ecologyPhase` as a word (Thriving / Stressed / Collapsing) and neither publishes the fractions of
-# `K` that separate them (`ecology.collapse_fraction` / `stressed_fraction` are sim-side config). So
-# the chart paints the standing stock in the phase's own tier colour — one data point, honestly
-# placed — and draws NO phase-zone bands, which would need two thresholds this client does not have.
-# Inventing them here would put a second copy of the sim's phase model in GDScript, which is the same
-# mistake the sampled growth curve exists to prevent.
+# **THE PHASE, AND WHERE ITS BOUNDARIES ARE — both on the wire now.** `ecology_phase` is the source's
+# CURRENT band as a word (Thriving / Stressed / Collapsing); the two fractions below are the cut points
+# `classify_ecology_phase` used to reach it, **in the same units the floor is in** (fractions of `K`).
+# That is what makes them drawable: a floor and a phase band are the same kind of object, so the chart
+# can lay the bands behind the floor line on ONE y-axis instead of tinting a single data point.
+#
+# They are read PER SOURCE and never cached as a pair of client constants — a herd's cuts come from the
+# RUNG it stands on (wild / pastoral / pen each carry their own ecology block), so one global pair would
+# be right for a wild herd and wrong for a penned one. Copying the sim's `collapse_fraction` /
+# `stressed_fraction` into GDScript is the same mistake the sampled growth curve exists to prevent.
 const FORECAST_ECOLOGY_PHASE_KEY := "ecology_phase"
+const FORECAST_COLLAPSE_FRACTION_KEY := "collapse_fraction"
+const FORECAST_STRESSED_FRACTION_KEY := "stressed_fraction"
+# The three phase WORDS the sim publishes (`EcologyPhase::as_str`), so a zone this layer derives and a
+# phase the source itself reports are tinted through ONE vocabulary (`DetailFormat.ecology_tier_color`).
+const ECOLOGY_PHASE_COLLAPSING := "collapsing"
+const ECOLOGY_PHASE_STRESSED := "stressed"
+const ECOLOGY_PHASE_THRIVING := "thriving"
 # **A RUNG-3 MANAGED SOURCE HAS NO ESCAPEMENT ROOM AND IGNORES THE FLOOR ENTIRELY** (sim
 # `SourceYieldForecast::managed`): a Field and a Pen are YOURS — you control their reproduction, so
 # there is no wild stock to stop short of and the axis honestly collapses onto the one managed
@@ -956,6 +966,31 @@ static func peak_regrowth_between(samples: PackedFloat32Array, low: float, high:
             peak = maxf(peak, samples[i])
     return peak
 
+## **THE PHASE LADDER AS DRAWABLE ZONES** (§7.3) — the source's own cut points, bottom-up, as
+## `[{low, high, phase}]` in fractions of `K`: `B/K < collapse` is Collapsing, `< stressed` is
+## Stressed, the rest is Thriving. It is a re-statement of the wire's two fractions in the chart's
+## coordinates and nothing more — the CLASSIFICATION still belongs to the sim, which publishes the
+## word a source currently wears; this only says where that word would change hands.
+##
+## Empty when the ladder is not a ladder (either fraction absent — the `0` default — or out of order),
+## because a half-published pair would paint a zone whose edge is not a threshold. The three phase
+## words are the sim's own, so the caller tints a zone through the same `ecology_tier_color` the
+## standing-stock band and the roster dot already use.
+##
+## On the ANIMAL web the first boundary is also the Allee point — the stock `regrowth_samples` turns
+## negative at — so the zone edge and the curve's sign change are two views of one cliff. They come
+## from one config field in the sim; if a render ever shows them apart, the disagreement is real.
+static func phase_zones(src: Dictionary, prefix: String) -> Array[Dictionary]:
+    var collapse := clampf(float(src.get(prefix + FORECAST_COLLAPSE_FRACTION_KEY, 0.0)), 0.0, 1.0)
+    var stressed := clampf(float(src.get(prefix + FORECAST_STRESSED_FRACTION_KEY, 0.0)), 0.0, 1.0)
+    if collapse <= 0.0 or stressed <= collapse:
+        return []
+    return [
+        {"low": 0.0, "high": collapse, "phase": ECOLOGY_PHASE_COLLAPSING},
+        {"low": collapse, "high": stressed, "phase": ECOLOGY_PHASE_STRESSED},
+        {"low": stressed, "high": 1.0, "phase": ECOLOGY_PHASE_THRIVING},
+    ]
+
 ## The learning/build multiplier this floor buys — the sim's `intensification::learn_multiplier`,
 ## `floor / the food peak`, normalised so the peak is ×1.0. It is what the chart's gradient rail
 ## encodes, and it is a fact about **these people on this ground**, not a faction knowledge meter: a
@@ -1003,6 +1038,24 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
     if body_mass > 0.0:
         return haul_workers(growth, body_mass, carry)
     return maxi(1, ceili(growth / carry))
+
+## The same *hold it after* crew, resolved straight from a SOURCE — the form `forecast_inputs` carries
+## so `max_useful_workers` can floor itself on it. `0` (never `NO_CREW_ANSWER`) when there is no crew
+## to name, because this answer is only ever a FLOOR on a cap: a dead-season patch prices no crew, and
+## a floor of "unpriceable" is a floor of none.
+##
+## **A RUNG-3 MANAGED SOURCE IS EXCLUDED**, on the same grounds its ceiling is: the sim never draws a
+## Field or a built Pen down, so "the crew that takes what grows back" is not a question its wire
+## curve answers — its cap is `production / per_worker`, and flooring that on a wild-drawdown number
+## would staff a source against a projection it does not follow.
+static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
+        improvement: String) -> int:
+    if source_is_managed(src, kind, prefix, improvement):
+        return 0
+    var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
+        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement),
+        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+    return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
 ## regrow by the interpolated curve, then take `min(crew carry, the room above the floor)`. Returns
@@ -1157,9 +1210,12 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "stock_fraction": clampf(biomass / capacity, 0.0, 1.0),
         # **THE PHASE THE SOURCE REPORTS, NOT ONE DERIVED HERE.** The chart tints the standing-stock
         # band with it, so the bar's colour and the floor's position share one y-axis — which is the
-        # merge §7.3 asks for. The phase BOUNDARIES (`collapse_fraction` / `stressed_fraction`) are
-        # not on the wire, so the chart draws no threshold zones; see `FORECAST_ECOLOGY_PHASE_KEY`.
+        # merge §7.3 asks for.
         "phase": String(src.get(prefix + FORECAST_ECOLOGY_PHASE_KEY, "")),
+        # …and the BOUNDARIES that word changes at, as horizontal zones behind everything else. Same
+        # axis, same tier colours, so the player drags the floor against the bands rather than against
+        # a remembered number. Empty for a source whose cuts the wire did not state.
+        "phase_zones": phase_zones(src, prefix),
         "floor": floor_value,
         "samples": samples,
         "peak_fraction": growth_peak_fraction(samples),
@@ -1334,6 +1390,11 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # (`crew_to_clear` / `crew_to_hold` apply the dip themselves, from the same `dip` above).
         "per_worker_biomass": per_worker_biomass(src, prefix),
         "dip": dip,
+        # **THE *HOLD IT AFTER* CREW, CARRIED SO THE WORKER CAP CAN FLOOR ITSELF ON IT** (§7.2). It is
+        # the same number the chart's second crew target offers — the hands that take exactly what
+        # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
+        # count. See there for why the cap, not the target, was the wrong number.
+        "hold_crew": hold_crew(src, kind, prefix, floor, improvement),
         # **A PRESENCE test, not a rate test** (#426). It used to be `per_worker >= ε`, which conflated
         # "the wire carried no forecast" with "the rate is genuinely zero" — and its own docstring said
         # it meant the former. A zero-conversion crop makes the latter real, so the two came apart and
@@ -1440,6 +1501,23 @@ static func improvement_progress(src: Dictionary, prefix: String, improvement: S
 ## ceil(ceiling / per_worker). A tended patch / corralled herd reports every ceiling == per_worker, so
 ## this collapses to 1 (policy irrelevant).
 ##
+## **IT IS FLOORED ON THE *HOLD* CREW, AND THAT IS THE WHOLE POINT OF §7.2.** The division above
+## answers "how many hands clear the room standing THIS turn"; the hold crew answers "how many take
+## the regrowth EVERY turn", and the second is a claim about usefulness that the first cannot bound.
+## Consider the limit: a source sitting exactly at its floor has no room, so the quotient is `0` —
+## *no workers are useful here* — while the hold crew is positive, because next turn it grows and
+## those hands take exactly that growth. Telling the player to drop a crew they need on the very next
+## turn is arithmetically defensible and practically false, which is the failure the verdict line
+## exists to remove. So the cap is the `max()` it always structurally was, with one more term:
+##
+##     max_useful = max(ceil(room / (carry × dip)), hold_crew, <the caller's crew floors>)
+##
+## Folding it in HERE rather than at the call sites is what keeps the two cap twins
+## (`source_worker_cap_state` and `DrawerComposeController._forecast_worker_cap`) unable to disagree:
+## both divide through this one function, so neither can be given the floor without the other. It is
+## also what makes the chart's *hold it after* target reachable by the stepper beside it — a clickable
+## target the `+` refuses to reach is a panel arguing with itself.
+##
 ## **Three outcomes, and telling them apart IS issue #426:**
 ## - `MAX_USEFUL_UNBOUNDED` — the wire describes no forecast, so there is no ceiling to impose.
 ## - `MAX_USEFUL_BARREN` (1) — described, and it pays nothing in the account it is counted on. The cap
@@ -1470,9 +1548,10 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     # `haul_workers`, the ONE mirror of the sim's rounding, in the paid account's units rather than in
     # biomass (an animal count is a ratio, so either set of units gives the same crew).
     var per_animal := float(forecast.get("axis_per_animal", forecast.get("food_per_animal", 0.0)))
+    var hold := maxi(int(forecast.get("hold_crew", 0)), 0)
     if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
-        return haul_workers(ceiling, per_animal, per_worker)
-    return int(ceilf(ceiling / per_worker))
+        return maxi(haul_workers(ceiling, per_animal, per_worker), hold)
+    return maxi(int(ceilf(ceiling / per_worker)), hold)
 
 ## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
 ## read by BOTH cap twins so a worked row and a compose stepper can never gate differently.
@@ -1530,6 +1609,11 @@ static func plant_crew_floor(patch: Dictionary, prefix: String, improvement: Str
 ## improvement on the compose sheet) — and a FORAGE caller passes nothing, a patch owing no crew.
 ## The floor is a RAISE, never a new cap, and an UNBOUNDED forecast stays unbounded; a wild herd
 ## reports 0, so `max(useful, 0)` is a no-op there.
+##
+## **THE *HOLD* CREW IS NOT PASSED HERE, DELIBERATELY.** It is a floor on usefulness for every source
+## on both webs — not a demand one KIND of source makes — so it lives inside `max_useful_workers`,
+## where both twins pick it up without either caller being trusted to remember it. `useful_floor`
+## stays what it always was: the crew this particular caller's rung is asking for.
 static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: int,
         useful_floor: int = 0) -> Dictionary:
     var useful := max_useful_workers(forecast)

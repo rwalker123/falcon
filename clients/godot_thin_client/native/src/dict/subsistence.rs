@@ -63,6 +63,21 @@ pub(crate) fn herds_to_array(
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // **WHERE THE PHASE WORDS CHANGE HANDS** — `classify_ecology_phase`'s own cut points, as
+        // fractions of `carrying_capacity`, i.e. **the units the escapement floor is in**. That is
+        // what lets the harvest-floor chart draw them as horizontal ZONES behind the floor line: a
+        // floor and a phase band are the same kind of object, so the bar's colour and the floor's
+        // position share one y-axis. `ecology_phase` above ships the WORD for the stock the herd is
+        // at; these ship the ladder (`B/K < collapse -> collapsing`, `< stressed -> stressed`, else
+        // thriving).
+        //
+        // They are PER SOURCE, never a global echo: `fauna::herd_ecology` resolves wild / pastoral /
+        // pen and each managed block carries its own cuts, so one pair copied into GDScript would be
+        // right for a wild herd and wrong for a penned one. On this web `collapse_fraction` is ALSO
+        // the Allee threshold — the point `regrowth_samples` below turns negative — so the zone edge
+        // and the curve's sign change describe the same cliff from either side.
+        let _ = dict.insert("collapse_fraction", f64::from(herd.collapseFraction()));
+        let _ = dict.insert("stressed_fraction", f64::from(herd.stressedFraction()));
         // Predators Phase 0 — the four RAW combat components (strength ≠ danger; danger is DERIVED,
         // never stored). `attack` / `defense` are open-ended strength scalars (human-strength anchor
         // 1.0); `ferocity` / `aggression` are native 0..1 (fights-back-vs-flees / initiates-unprovoked).
@@ -375,6 +390,13 @@ pub(crate) fn forage_patches_to_array(
         if let Some(ecology_phase) = patch.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // The plant twin of the herd's phase BANDS above — same contract, same units (fractions of
+        // `carrying_capacity`, which is the floor's own axis), read through `forage::patch_ecology`
+        // so the published word and the published cuts cannot disagree. The one ASYMMETRY is that a
+        // patch has no Allee term: `collapse_fraction` here is a phase boundary only, and every
+        // sample of `regrowth_samples` below stays non-negative through it.
+        let _ = dict.insert("collapse_fraction", f64::from(patch.collapseFraction()));
+        let _ = dict.insert("stressed_fraction", f64::from(patch.stressedFraction()));
         // Pre-commit yield forecast — identical contract to the herd fields above (food/turn at
         // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
         // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.

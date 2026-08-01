@@ -17,8 +17,12 @@ paths:
   snapshot and delta dicts under `forage_patches`; `MapView.display_snapshot` ingests it into
   the tile-keyed `forage_patch_lookup`, and `_tile_info_at` cross-refs it onto `tile_info`
   (`cultivation_progress` / `is_cultivated` / `patch_ecology_phase` / `patch_has_owner` /
-  `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, all in `FOW_DISCOVERED_HIDDEN_KEYS`
-  so a remembered tile redacts them). The
+  `patch_owner` / `patch_biomass` / `patch_carrying_capacity`, plus the harvest-floor instrument's four
+  — `patch_per_worker_biomass` / `patch_regrowth_samples` / `patch_collapse_fraction` /
+  `patch_stressed_fraction` — all in `FOW_DISCOVERED_HIDDEN_KEYS`
+  so a remembered tile redacts them; the cross-ref is an explicit key list, so a decoded field left
+  off it is absent on the plant web alone — see `labor-ui.md` → "THE PATCH'S FORECAST FIELDS REACH THE
+  SHEET THROUGH `tile_info`"). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
   (SIGNAL tint via `_cultivation_value_hex`) once `is_cultivated` — and, beside it, its own
   **Field** row for plant rung 3: "Sowing N%" → "▦ Field" (`patch_field_progress` / `patch_is_field`,

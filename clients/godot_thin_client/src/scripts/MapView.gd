@@ -250,6 +250,11 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	"food_module", "food_module_label", "food_module_weight", "food_kind",
 	"patch_cultivation_progress", "patch_is_cultivated", "patch_has_owner", "patch_owner",
 	"patch_ecology_phase", "patch_biomass", "patch_carrying_capacity",
+	# The phase BANDS and the two growth terms travel with the stock they describe: all four are read
+	# only to compose the harvest-floor instrument, which a hex the player cannot currently see does not
+	# render — one rule for the whole patch payload, as with the dips and the crews below.
+	"patch_collapse_fraction", "patch_stressed_fraction",
+	"patch_per_worker_biomass", "patch_regrowth_samples",
 	"patch_per_worker_yield", "patch_tended_yield",
 	# Plant rung 3 (the Field + Sow) — redacted exactly as their rung-2 twins above are: the two
 	# build meters are live patch state, and the Sow forecast pair is quoted at the patch's CURRENT
@@ -2690,6 +2695,22 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# counterpart to a herd's Biomass row (Hud._tile_terrain_lines renders both).
 		info["patch_biomass"] = float(patch.get("biomass", 0.0))
 		info["patch_carrying_capacity"] = float(patch.get("carrying_capacity", 0.0))
+		# WHERE THE PHASE WORD ABOVE CHANGES HANDS — `classify_ecology_phase`'s own cut points, as
+		# fractions of `patch_carrying_capacity`, i.e. the units the escapement floor is in. The harvest
+		# floor chart draws them as horizontal zones BEHIND the floor line, which is only honest because
+		# the two share an axis (`SourceForecast.phase_zones`).
+		info["patch_collapse_fraction"] = float(patch.get("collapse_fraction", 0.0))
+		info["patch_stressed_fraction"] = float(patch.get("stressed_fraction", 0.0))
+		# THE TWO GROWTH TERMS THE WHOLE FLOOR INSTRUMENT RESTS ON, and they were decoded off the wire
+		# but never carried across to `tile_info` — where every forage compose sheet reads its patch. The
+		# omission was invisible in the preview harnesses (their fixture adapter seeds both), and against
+		# a live sim it silently removed the chart from every patch: `floor_chart_model` answers
+		# `known == false` without a curve, and a missing throughput prices no crew, so both worker
+		# targets vanished too. A patch's `per_worker_biomass` folds the tile's seasonal weight in, so its
+		# `0` in a dead season is a reading; `regrowth_samples` is the sim's own sampled curve, never
+		# re-fitted here.
+		info["patch_per_worker_biomass"] = float(patch.get("per_worker_biomass", 0.0))
+		info["patch_regrowth_samples"] = patch.get("regrowth_samples", PackedFloat32Array())
 		# Pre-commit yield forecast (food/turn at the patch's current biomass, at
 		# output_multiplier 1.0). Read by Hud._build_forage_assign_controls to show the live
 		# "Expected yield" row and to cap the forager stepper at the patch's max-useful workers.

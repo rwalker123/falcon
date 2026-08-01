@@ -381,7 +381,15 @@ const FIXTURE_STOCK_FRACTION := 0.9
 const FIXTURE_REGROWTH_SAMPLES := 11
 const FIXTURE_PLANT_REGROWTH_RATE := 0.25
 const FIXTURE_ANIMAL_REGROWTH_RATE := 0.05
+# **THE PHASE BANDS, WHICH ARE ALSO THE ANIMAL CURVE'S ALLEE POINT.** `collapse_fraction` is one
+# number in the sim doing two jobs on the animal web — the boundary `classify_ecology_phase` calls a
+# herd Collapsing at, and the stock `net_biomass_delta` turns negative below — so the seeded curve and
+# the seeded zone read it from ONE constant here too. Splitting them would let a fixture draw a chart
+# whose red band and whose crash begin at different heights, which is precisely the disagreement
+# `floor_chart_herd_allee` exists to catch. `labor_config.forage.ecology` and `fauna_config.ecology`
+# state the same pair today (0.15 / 0.40); the plant web simply has no Allee term behind its cut.
 const FIXTURE_COLLAPSE_FRACTION := 0.15
+const FIXTURE_STRESSED_FRACTION := 0.40
 const FIXTURE_COLLAPSE_RATE := 0.20
 const FIXTURE_RESEED_FLOOR_FRACTION := 0.02
 # `per_worker_biomass_capacity` for each web, used only where the fixture's own rates cannot state the
@@ -404,8 +412,9 @@ func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 func _fixture_is_herd(src: Dictionary, prefix: String) -> bool:
 	return prefix == "" and src.has("species")
 
-## Seed `per_worker_biomass` + `regrowth_samples` on a fixture that predates them. Both are skipped
-## when the fixture states its own, so a state authored to exercise a particular curve keeps it.
+## Seed `per_worker_biomass` + `regrowth_samples` + the two phase-band cuts on a fixture that predates
+## them. Each is skipped when the fixture states its own, so a state authored to exercise a particular
+## curve — or a particular boundary — keeps it.
 func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
 	var is_herd := _fixture_is_herd(src, prefix)
 	if not src.has(prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY):
@@ -424,6 +433,13 @@ func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
 			var fraction := float(i) / float(FIXTURE_REGROWTH_SAMPLES - 1)
 			samples.push_back(_fixture_regrowth_delta(fraction, capacity, is_herd))
 		src[prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY] = samples
+	# THE PHASE BANDS the chart draws as zones. Seeded on BOTH webs (the cut points are ecology config,
+	# which every source has) and skipped when a fixture states its own, so a state authored to put a
+	# particular boundary under the floor line keeps it.
+	if not src.has(prefix + SourceForecast.FORECAST_COLLAPSE_FRACTION_KEY):
+		src[prefix + SourceForecast.FORECAST_COLLAPSE_FRACTION_KEY] = FIXTURE_COLLAPSE_FRACTION
+	if not src.has(prefix + SourceForecast.FORECAST_STRESSED_FRACTION_KEY):
+		src[prefix + SourceForecast.FORECAST_STRESSED_FRACTION_KEY] = FIXTURE_STRESSED_FRACTION
 	if not is_herd:
 		return
 	# **THE WHOLE-ANIMAL QUANTUM, IN BIOMASS.** `crew_to_hold` rounds up to one body on this web
@@ -1712,8 +1728,11 @@ func _ready() -> void:
 	# Three are here (the two patches and the dead season above); the herd pair rides beside the wolf.
 
 	# State floor_chart_full — A FULL PATCH WITH THE FLOOR ABOVE ITS STOCK. Nothing stands above the
-	# line, so there is nothing to clear (that target reads 0, not a crew) and the max-useful cap
-	# collapses to 0 with it — which is what the verdict then reports. The chart's own subject is the
+	# line, so there is nothing to clear (that target reads 0, not a crew) and the verdict reports
+	# exactly that. **The CAP does not collapse with it, and this frame is the limit case that proves
+	# why** (§7.2): the room is 0, but the patch still grows a little every turn, so the crew that TAKES
+	# that growth is 1 — and `max_useful_workers` floors on it rather than telling the player to drop a
+	# gatherer they need on the very next turn. The chart's own subject is the
 	# GEOMETRY: a nearly-full stock band under a floor line at the very top of the plot, with the
 	# floor's flag FLIPPED BELOW its line, the case that would otherwise draw off the plot's edge.
 	# (The *at-or-below-the-floor* verdict is stated with a real crew by `forage_dead_season` and
@@ -1734,8 +1753,11 @@ func _ready() -> void:
 	# THE HALF A PNG CANNOT SHOW: the chart, the targets and the verdict are read against the SAME
 	# crew the stepper renders. They were composed before the cap clamped it once, so the panel stated
 	# a verdict for a crew it then refused to staff; this is what pins the order that fixed it.
+	var full_hold := _crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+	_assert_hud("a source with no room still admits the crew that HOLDS it — the cap floors on the hold number",
+		full_hold > 0)
 	_assert_hud("the verdict reads the crew the stepper shows, not one the cap is about to clamp away",
-		_stepper_value(_hud._drawercompose._compose_sheet) == 0)
+		_stepper_value(_hud._drawercompose._compose_sheet) == mini(FLOOR_CHART_CREW, full_hold))
 
 	# State floor_chart_drawn_down — THE SAME PATCH ALREADY DRAWN DOWN, worked below the food peak.
 	# The stock band is amber (the patch reports Stressed), the floor sits under it, and the projection
@@ -3097,6 +3119,19 @@ func _ready() -> void:
 	_assert_hud("…and its crew targets are priced off the biomass throughput, not the absent food one",
 		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
 			> CREW_TARGET_ABSENT)
+	# **A CLICKABLE TARGET THE STEPPER BESIDE IT CANNOT REACH IS THE PANEL ARGUING WITH ITSELF** (§7.2),
+	# and the wolf is where that was found: `5 hold it after` sat under `max 4 workers useful here`,
+	# because the cap answered "hands that clear what stands THIS turn" and the target answered "hands
+	# that take the regrowth EVERY turn" — and the cap was the one that was wrong (a source AT its floor
+	# has no room, so it capped at 0 while a positive crew was needed next turn). `max_useful_workers`
+	# now floors on the hold crew, so the press below lands the stepper on exactly the number the button
+	# offered. Driven through the REAL button, since the clamp that used to swallow it lives in the press
+	# handler rather than in the arithmetic.
+	var wolf_hold := _crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+	_assert_hud("the wolf states a hold-it-after crew to click at all", wolf_hold > 0)
+	_find_crew_target(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD).pressed.emit()
+	_assert_hud("…and the stepper reaches that crew instead of clamping it to a smaller cap",
+		_hud._compose.hunt_count() == wolf_hold)
 
 	# State floor_chart_herd_allee — **THE HERD BELOW ITS ALLEE POINT, and the frame the whole sampled
 	# curve exists for.** Under `collapse_fraction` a herd's regrowth samples are NEGATIVE: it declines

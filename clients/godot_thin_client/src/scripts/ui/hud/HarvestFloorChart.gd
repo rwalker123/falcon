@@ -15,6 +15,10 @@ class_name HarvestFloorChart
 ##   • the PROJECTION beneath it, the stock's trajectory under this crew at this floor;
 ##   • the FOOD PEAK, marked where the sampled growth curve actually peaks.
 ##
+## Behind all four, the PHASE ZONES: Collapsing / Stressed / Thriving as horizontal bands at the
+## source's own cut points, so the floor is dragged against the ecology rather than against a number
+## the player has to remember.
+##
 ## Plus the LEARNING RAIL down the right edge, a gradient encoding `floor / the food peak` with a
 ## marker at the current value. **The rail is a fact about THESE PEOPLE ON THIS GROUND** — how fast
 ## this crew learns from this source — not a knowledge meter. A tile knows nothing.
@@ -48,6 +52,15 @@ const PLOT_MARGIN_BOTTOM := 14.0
 
 ## The plot's own backing, so the instrument reads as a box rather than as marks on the card.
 const PLOT_BACKING_ALPHA := 0.35
+## The phase ZONES — Collapsing / Stressed / Thriving as horizontal bands across the whole plot, in
+## the same green/amber/red the standing stock wears. They are the FURTHEST-BACK layer and the faintest
+## thing drawn: they are the ground the floor is dragged against, not a reading of their own, and at
+## the stock band's own 0.10 they would compete with it for the same hue.
+const ZONE_FILL_ALPHA := 0.10
+## A hairline on each boundary, so the eye can find a threshold the fills alone only suggest — a floor
+## is set BY these edges, and a soft gradient of alpha is not a number.
+const ZONE_EDGE_ALPHA := 0.40
+const ZONE_EDGE_WIDTH := 1.0
 ## The standing-stock band — the old stock bar, in the chart's coordinates. Low alpha because the
 ## projection curve is drawn over it and must stay the brighter thing.
 const STOCK_BAND_ALPHA := 0.10
@@ -140,6 +153,7 @@ func _draw() -> void:
 		draw_rect(plot, ring, false, FOCUS_RING_WIDTH)
 	if not bool(_model.get("known", false)):
 		return
+	_draw_phase_zones(plot)
 	_draw_stock_band(plot)
 	_draw_peak(plot)
 	_draw_projection(plot)
@@ -151,6 +165,34 @@ func _draw() -> void:
 			size.y + HORIZON_CAPTION_INSET.y),
 		HORIZON_CAPTION_FORMAT % SourceForecast.PROJECTION_HORIZON_TURNS,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, HORIZON_CAPTION_FONT_SIZE, HudStyle.INK_FAINT)
+
+## **THE PHASE ZONES** (§7.3) — Collapsing / Stressed / Thriving as horizontal bands, drawn FIRST so
+## everything else stands on them. The bands and the floor line are in one coordinate system on
+## purpose: a floor is a fraction of `K` and so is a phase boundary, so the player drags the line
+## against the bands and reads "this crew stops in Stressed" off the picture instead of a number.
+##
+## The zones come from `SourceForecast.phase_zones` — the SOURCE's own cut points, off the wire — and
+## are tinted through the same `DetailFormat.ecology_tier_color` the stock band and the roster dot
+## wear, so no second phase palette exists to drift. A source whose cuts the wire did not state draws
+## no zones at all rather than a guessed ladder.
+func _draw_phase_zones(plot: Rect2) -> void:
+	var zones: Array = _model.get("phase_zones", [])
+	for entry in zones:
+		var zone: Dictionary = entry
+		var top := _y(plot, float(zone.get("high", 0.0)))
+		var bottom := _y(plot, float(zone.get("low", 0.0)))
+		var tier := DetailFormat.ecology_tier_color(String(zone.get("phase", "")))
+		var fill := tier
+		fill.a = ZONE_FILL_ALPHA
+		draw_rect(Rect2(plot.position.x, top, plot.size.x, bottom - top), fill)
+		# ONE hairline per real THRESHOLD: a band's upper edge is where the phase word changes hands,
+		# except on the topmost band, whose `1.0` is the plot's own ceiling and separates nothing.
+		if float(zone.get("high", 0.0)) >= 1.0:
+			continue
+		var edge := tier
+		edge.a = ZONE_EDGE_ALPHA
+		draw_line(Vector2(plot.position.x, top), Vector2(plot.position.x + plot.size.x, top),
+			edge, ZONE_EDGE_WIDTH)
 
 ## THE STANDING STOCK, as a band from the baseline to `B/K` — the stock bar, merged. Its tint is the
 ## source's OWN reported phase (`DetailFormat.ecology_tier_color`), the same green/amber/red the

@@ -450,7 +450,8 @@ func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxCon
 ## THE WORKED-ROW TWIN IS `SourceForecast.source_worker_cap_state`, which takes the SAME `useful_floor`
 ## and applies it the same way — the compose sheet and the Band panel's work board must gate at one
 ## ceiling, and a floor that reached only one of them let the board flag a herd under-herded and then
-## disable the `+` that fixes it.
+## disable the `+` that fixes it. The *hold it after* crew is a third floor and is applied INSIDE
+## `SourceForecast.max_useful_workers`, so it reaches both twins without either being told about it.
 func _forecast_worker_cap(forecast: Dictionary, assignable: int, useful_floor: int = 0) -> Dictionary:
     var useful := SourceForecast.max_useful_workers(forecast)
     # A managed herd's maintenance crew raises the usefulness ceiling above what the take/prepare side

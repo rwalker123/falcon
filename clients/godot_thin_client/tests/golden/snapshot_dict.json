@@ -365,6 +365,7 @@
     {
       "biomass": 69.25,
       "carrying_capacity": 26.76,
+      "collapse_fraction": 36.84,
       "committed_display_name": "forage_patches[0].committed_display_name",
       "committed_species": "forage_patches[0].committed_species",
       "composition": [
@@ -421,6 +422,7 @@
       "sow_build_fraction": 59.139999,
       "sow_crew_needed": 82,
       "sow_site_refusal": "forage_patches[0].sow_site_refusal",
+      "stressed_fraction": 35.610001,
       "tended_fodder": 66.300003,
       "tended_trade": 73.300003,
       "tended_yield": 11.58,
@@ -431,6 +433,7 @@
     {
       "biomass": 74.910004,
       "carrying_capacity": 41.889999,
+      "collapse_fraction": 23.440001,
       "committed_display_name": "forage_patches[1].committed_display_name",
       "committed_species": "forage_patches[1].committed_species",
       "composition": [
@@ -487,6 +490,7 @@
       "sow_build_fraction": 10.17,
       "sow_crew_needed": 173,
       "sow_site_refusal": "forage_patches[1].sow_site_refusal",
+      "stressed_fraction": 11.05,
       "tended_fodder": 52.509998,
       "tended_trade": 68.269997,
       "tended_yield": 86.169998,
@@ -638,6 +642,7 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "carrying_capacity": 59.91,
+      "collapse_fraction": 9.08,
       "corral_build_fraction": 42.07,
       "corral_progress": 82.440002,
       "corral_trade": 67.93,
@@ -705,6 +710,7 @@
       "route_length": 176,
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
+      "stressed_fraction": 81.589996,
       "tame_build_fraction": 71.720001,
       "trade_per_animal": 89.330002,
       "trade_per_biomass": 106.330002,
@@ -717,6 +723,7 @@
       "biomass": 44.529999,
       "body_mass": 55.09,
       "carrying_capacity": 52.919998,
+      "collapse_fraction": 77.970001,
       "corral_build_fraction": 0.28,
       "corral_progress": 69.410004,
       "corral_trade": 7.57,
@@ -784,6 +791,7 @@
       "route_length": 161,
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",
+      "stressed_fraction": 10.21,
       "tame_build_fraction": 59.450001,
       "trade_per_animal": 4.15,
       "trade_per_biomass": 52.099998,
