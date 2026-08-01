@@ -367,6 +367,17 @@ pub struct HerdTelemetryState {
     /// functions — see the schema comment. Appended (append-only).
     #[serde(default)]
     pub regrowth_samples: Vec<f32>,
+    /// **The cut point below which this source reads `collapsing`**, as a fraction of
+    /// [`Self::carrying_capacity`] — the band `fauna::classify_ecology_phase` cuts on, resolved
+    /// through the *same* seam the published `ecology_phase` word is, so the two cannot disagree.
+    /// Read it in the units the **floor** is in: both are fractions of `K`, which is why the phase
+    /// bands are the chart's background for the floor line.
+    #[serde(default)]
+    pub collapse_fraction: f32,
+    /// **The cut point below which this source reads `stressed`** (and at or above which it reads
+    /// `thriving`) — see [`Self::collapse_fraction`].
+    #[serde(default)]
+    pub stressed_fraction: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -426,6 +437,8 @@ impl Default for HerdTelemetryState {
             trade_per_biomass: 0.0,
             per_worker_biomass: 0.0,
             regrowth_samples: Vec::new(),
+            collapse_fraction: 0.0,
+            stressed_fraction: 0.0,
         }
     }
 }
@@ -613,6 +626,17 @@ pub struct ForagePatchState {
     /// [`HerdTelemetryState::regrowth_samples`] carries on the other side. Appended (append-only).
     #[serde(default)]
     pub regrowth_samples: Vec<f32>,
+    /// **The cut point below which this source reads `collapsing`**, as a fraction of
+    /// [`Self::carrying_capacity`] — the band `fauna::classify_ecology_phase` cuts on, resolved
+    /// through the *same* seam the published `ecology_phase` word is, so the two cannot disagree.
+    /// Read it in the units the **floor** is in: both are fractions of `K`, which is why the phase
+    /// bands are the chart's background for the floor line.
+    #[serde(default)]
+    pub collapse_fraction: f32,
+    /// **The cut point below which this source reads `stressed`** (and at or above which it reads
+    /// `thriving`) — see [`Self::collapse_fraction`].
+    #[serde(default)]
+    pub stressed_fraction: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

@@ -274,6 +274,22 @@ projection* is the sustained MSY. Pinned by
   > still the expedition **outfit** lever, quoted before a target is chosen.
 - `ceiling(floor)` = the stock standing above that floor, in food/turn, **already clamped to the
   source's remaining biomass** (belt-and-braces — an escapement ceiling cannot exceed the stock).
+- **`collapseFraction` / `stressedFraction` = the ecology phase BANDS**, as fractions of
+  `carryingCapacity` — the cut points `fauna::classify_ecology_phase` uses, in **the same units the
+  floor is in**. `ecologyPhase` ships which band a source is in; these ship *where the bands are*,
+  which is what turns them into the chart's background for the floor line: a floor and a phase are
+  the same kind of object.
+  > **Per source, not a global echo, because a herd's bands come from the RUNG it stands on.**
+  > `fauna::herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own cut
+  > points, so one global pair would be right for plants and wrong for a tamed or penned herd. Each
+  > is read through the *same* seam the phase **word** is classified with (`forage::patch_ecology`,
+  > `fauna::herd_ecology`), and `core_sim/tests/ecology_bands_on_the_wire.rs` pins the two against
+  > **each other** — the published word must be the one the published cuts imply for the published
+  > stock — rather than each against a literal, so a rung's ecology can be retuned without touching
+  > the test and only a genuine disagreement fails.
+  >
+  > On the animal web `collapseFraction` is also the **Allee threshold**: it is where
+  > `regrowthSamples` turns negative. The two fields describe the same cliff from either side.
 - Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales
   every field by the acting band's `PopulationCohortState.outputMultiplier` — a linear factor, so
   `max_useful_workers` is invariant to it.

@@ -355,4 +355,62 @@ mod tests {
             "…and its first sample is the reseed floor's lift, not zero"
         );
     }
+
+    /// **The ecology phase BANDS cross the wire on both webs, as an ordered pair.**
+    ///
+    /// `ecologyPhase` ships which band a source is in; these ship where the bands are, in the same
+    /// units the harvest floor is in (fractions of `K`), which is what lets the chart draw them as
+    /// the zones the floor line is dragged against. They are **per source** because a herd's cuts
+    /// come from the rung it stands on — `herd_ecology` resolves wild / pastoral / pen — so the two
+    /// tables carry genuinely different numbers rather than echoing one global pair.
+    ///
+    /// This pins the codec. That the published bands actually **bracket the published phase word**
+    /// is pinned against the sim in `core_sim/tests/ecology_bands_on_the_wire.rs`, which is where
+    /// the two halves can drift apart.
+    #[test]
+    fn the_ecology_phase_bands_ride_the_wire_on_both_webs() {
+        /// A wild herd's cuts — the shipped `fauna_config` shape.
+        const HERD_COLLAPSE: f32 = 0.15;
+        const HERD_STRESSED: f32 = 0.40;
+        /// A patch's cuts, deliberately different from the herd's so an encoder that crossed the two
+        /// tables' fields would fail rather than pass by coincidence.
+        const PATCH_COLLAPSE: f32 = 0.10;
+        const PATCH_STRESSED: f32 = 0.35;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_boar".to_string(),
+                collapse_fraction: HERD_COLLAPSE,
+                stressed_fraction: HERD_STRESSED,
+                ..Default::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                collapse_fraction: PATCH_COLLAPSE,
+                stressed_fraction: PATCH_STRESSED,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
+        assert!((herd.collapseFraction() - HERD_COLLAPSE).abs() < 1e-6);
+        assert!((herd.stressedFraction() - HERD_STRESSED).abs() < 1e-6);
+
+        let patch = subsistence.foragePatches().expect("patches present").get(0);
+        assert!((patch.collapseFraction() - PATCH_COLLAPSE).abs() < 1e-6);
+        assert!((patch.stressedFraction() - PATCH_STRESSED).abs() < 1e-6);
+
+        assert!(
+            herd.collapseFraction() != patch.collapseFraction(),
+            "the two tables must carry their OWN cuts — a global echo would make this pass blind"
+        );
+    }
 }

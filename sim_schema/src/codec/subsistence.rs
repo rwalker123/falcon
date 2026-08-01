@@ -217,6 +217,9 @@ fn create_herds<'a>(
                 // The sampled regrowth curve — appended last (append-only wire). Negative below the
                 // Allee threshold, by design; see the schema comment.
                 regrowthSamples: regrowth_samples,
+                // The phase bands this herd's own rung cuts on — appended last (append-only wire).
+                collapseFraction: herd.collapse_fraction,
+                stressedFraction: herd.stressed_fraction,
             },
         );
         entries.push(entry);
@@ -287,6 +290,9 @@ fn create_forage_patches<'a>(
                 // The sampled regrowth curve — appended last (append-only wire). Never negative on
                 // this web; see the schema comment.
                 regrowthSamples: regrowth_samples,
+                // The phase bands this patch's own rung cuts on — appended last (append-only wire).
+                collapseFraction: patch.collapse_fraction,
+                stressedFraction: patch.stressed_fraction,
             },
         );
         entries.push(entry);

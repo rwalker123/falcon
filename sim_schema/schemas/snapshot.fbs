@@ -1383,6 +1383,31 @@ table ForagePatchState {
   // `0` comes back. **No sample is ever negative**: plants have no Allee crash — the herd twin's low
   // samples are, and that asymmetry is the model.
   regrowthSamples:[float];
+  // --- THE ECOLOGY PHASE BANDS (appended) --------------------------------------------------------
+  // **The cut points `classify_ecology_phase` uses**, as fractions of `carryingCapacity`:
+  //
+  //   B/K <  collapseFraction  ->  "collapsing"
+  //   B/K <  stressedFraction  ->  "stressed"
+  //   otherwise                ->  "thriving"
+  //
+  // `ecologyPhase` above ships the WORD; these ship where the words change hands. Without them a
+  // chart can tint the standing stock with the current phase's colour but cannot draw the horizontal
+  // ZONES the floor line is dragged against — and those zones are the reason a floor and a phase are
+  // the same kind of object: **both are fractions of `K`**. Read them in exactly the units the floor
+  // is in, never as absolute biomass.
+  //
+  // **PER SOURCE, not a global echo, because a herd's bands depend on the RUNG it stands on.**
+  // `herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own
+  // `collapse_fraction` / `stressed_fraction`, so one global pair would be right for plants and wrong
+  // for a tamed or penned herd. Each is resolved through the SAME seam the phase word is classified
+  // with (`forage::patch_ecology` for a patch, `fauna::herd_ecology` for a herd), so the bands and
+  // the word can never disagree about the same source.
+  //
+  // `collapseFraction` is also the **Allee threshold** on the animal web — the point below which
+  // `net_biomass_delta` goes negative, which is where `regrowthSamples` above turns down. The two
+  // fields describe the same cliff from either side and must be read together.
+  collapseFraction:float = 0;
+  stressedFraction:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -1997,6 +2022,31 @@ table HerdTelemetryState {
   // `0` ends a herd while it only sets a patch back — the plant twin of this field is non-negative at
   // every sample.
   regrowthSamples:[float];
+  // --- THE ECOLOGY PHASE BANDS (appended) --------------------------------------------------------
+  // **The cut points `classify_ecology_phase` uses**, as fractions of `carryingCapacity`:
+  //
+  //   B/K <  collapseFraction  ->  "collapsing"
+  //   B/K <  stressedFraction  ->  "stressed"
+  //   otherwise                ->  "thriving"
+  //
+  // `ecologyPhase` above ships the WORD; these ship where the words change hands. Without them a
+  // chart can tint the standing stock with the current phase's colour but cannot draw the horizontal
+  // ZONES the floor line is dragged against — and those zones are the reason a floor and a phase are
+  // the same kind of object: **both are fractions of `K`**. Read them in exactly the units the floor
+  // is in, never as absolute biomass.
+  //
+  // **PER SOURCE, not a global echo, because a herd's bands depend on the RUNG it stands on.**
+  // `herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own
+  // `collapse_fraction` / `stressed_fraction`, so one global pair would be right for plants and wrong
+  // for a tamed or penned herd. Each is resolved through the SAME seam the phase word is classified
+  // with (`forage::patch_ecology` for a patch, `fauna::herd_ecology` for a herd), so the bands and
+  // the word can never disagree about the same source.
+  //
+  // `collapseFraction` is also the **Allee threshold** on the animal web — the point below which
+  // `net_biomass_delta` goes negative, which is where `regrowthSamples` above turns down. The two
+  // fields describe the same cliff from either side and must be read together.
+  collapseFraction:float = 0;
+  stressedFraction:float = 0;
 }
 
 table CommandEventState {

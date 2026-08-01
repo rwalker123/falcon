@@ -297,6 +297,11 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
             // counter). A herd the registry cannot resolve has nothing at risk to report.
             let neglect_grace =
                 herd.and_then(|herd| crate::fauna::herd_neglect_grace_remaining(herd, ladder));
+            // **The herd's own ecology — the rung's, not the wild block's.** `herd_ecology` picks
+            // wild / pastoral / pen, and it is the seam `refresh_ecology_phase` classified the
+            // published `ecology_phase` word with, so the bands below cannot describe a different
+            // source than the word does.
+            let ecology = herd.map(|herd| herd_ecology(herd, fauna));
             HerdTelemetryState {
                 id: entry.id.clone(),
                 label: entry.label.clone(),
@@ -366,6 +371,19 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 regrowth_samples: herd
                     .map(|herd| herd_regrowth_samples(herd, fauna))
                     .unwrap_or_default(),
+                // **The phase bands, resolved through the same seam as the phase WORD above** —
+                // `herd_ecology`, which picks wild / pastoral / pen, so a tamed or penned herd
+                // publishes its own rung's bands rather than the wild block's. Fractions of `K`, in
+                // the units the floor is in; that is what lets the chart draw them as the zones the
+                // floor line is dragged against.
+                collapse_fraction: ecology
+                    .as_ref()
+                    .map(|ecology| ecology.collapse_fraction)
+                    .unwrap_or(0.0),
+                stressed_fraction: ecology
+                    .as_ref()
+                    .map(|ecology| ecology.stressed_fraction)
+                    .unwrap_or(0.0),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
@@ -551,6 +569,9 @@ pub(crate) fn snapshot_forage_patches(
             // plants and falls back to the empty-basket defaults.
             let tile_composition = tile_quotes.tile_composition(patch.tile);
             let neglect_grace = patch_neglect_grace_remaining(patch, ladder);
+            // The patch's own ecology — the seam `refresh_ecology_phase` classified the published
+            // `ecology_phase` word with, so the bands and the word describe the same source.
+            let ecology = patch_ecology(patch, forage);
             let forecast = forage_forecast(
                 patch,
                 tile_composition,
@@ -628,6 +649,10 @@ pub(crate) fn snapshot_forage_patches(
                 // **The growth curve, sampled** — the plant twin; non-negative at every sample, and
                 // its `0.0` entry is the reseed floor's lift.
                 regrowth_samples: patch_regrowth_samples(patch, forage),
+                // The phase bands, off the patch's OWN ecology — the same seam
+                // `refresh_ecology_phase` classified the word above with.
+                collapse_fraction: ecology.collapse_fraction,
+                stressed_fraction: ecology.stressed_fraction,
                 // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
                 // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
                 // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
