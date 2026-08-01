@@ -713,8 +713,34 @@ static func format_cancel_order(band: Dictionary, scope: String) -> Dictionary:
         "message": "Clear labor assignments (%s) for band." % scope,
     }
 
-## `assign_labor <faction_id> <band> forage <x> <y> [policy] [species] <workers>`
-##             | `hunt <herd_id> <policy> <workers>` | `scout <workers>` | `warrior <workers>`
+# THE FLOOR'S WIRE SPELLING — two decimals, which is finer than the slider's own `FLOOR_STEP` (5%)
+# and therefore round-trips every value the UI can produce. It is deliberately NOT `str(float)`:
+# GDScript renders a float with up to 14 significant digits, so a dial value that is not exactly
+# representable would put `0.30000000000000004` on the command line.
+const FLOOR_COMMAND_DECIMALS := 2
+
+## The optional floor token, formatted for the command line. Absent/garbage falls back to the sim's
+## own default rather than to `0` — "take everything" is the one value that must never be reached by
+## a missing field.
+static func _format_floor(payload: Dictionary) -> String:
+    return String.num(SourceForecast.clamp_floor(
+        float(payload.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))), FLOOR_COMMAND_DECIMALS)
+
+## The same floor for the command-feed NOTE, in the player's units: `50%`. The feed says what the
+## player chose, not what the wire carries.
+static func _floor_percent_text(payload: Dictionary) -> String:
+    return "%d%%" % SourceForecast.floor_percent(
+        float(payload.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))
+
+## `assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers>`
+##             | `hunt <herd_id> [floor] <workers>` | `scout <workers>` | `warrior <workers>`
+##
+## **THE OPTIONAL TOKEN IS A NUMBER, NOT A STANCE WORD.** The four harvest stances are deleted from
+## the sim and `sim_runtime::command_text` REJECTS them BY NAME
+## (`CommandParseError::RetiredStanceToken`), precisely so a stale emitter fails loudly instead of
+## being silently reinterpreted as a crop key. The two optional forage tokens are disjoint by
+## construction — a floor only ever parses as a float, a species key never does — so the parser
+## tells them apart without the client having to pad the line.
 static func format_assign_labor(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -728,34 +754,32 @@ static func format_assign_labor(payload: Dictionary) -> Dictionary:
             var fy := int(payload.get("y", -1))
             if fx < 0 or fy < 0:
                 return {}
-            var fpolicy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
-            if fpolicy == "":
-                fpolicy = "sustain"
+            var ffloor := _format_floor(payload)
             # The crop selection (Flora Roster S1) is the SECOND optional token and the worker count
-            # is always last: `forage <x> <y> [policy] [species] <workers>`. It can only ride a line
-            # that already carries a policy (policy comes first), which the client always sends; an
+            # is always last: `forage <x> <y> [floor] [species] <workers>`. It can only ride a line
+            # that already carries a floor (the floor comes first), which the client always sends; an
             # empty species is simply omitted, and the sim then commits to the tile's dominant legal
             # plant.
             var fspecies := String(payload.get("species", "")).strip_edges().to_lower()
             var forage_line := ""
             if fspecies == "":
-                forage_line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_id, fx, fy, fpolicy, workers]
+                forage_line = "assign_labor %d %d forage %d %d %s %d" % [faction, band_id, fx, fy, ffloor, workers]
             else:
-                forage_line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_id, fx, fy, fpolicy, fspecies, workers]
+                forage_line = "assign_labor %d %d forage %d %d %s %s %d" % [faction, band_id, fx, fy, ffloor, fspecies, workers]
             return {
                 "line": forage_line,
-                "message": "Assign %d forager%s to (%d, %d) (%s)." % [workers, "" if workers == 1 else "s", fx, fy, fpolicy],
+                "message": "Assign %d forager%s to (%d, %d), leaving %s standing." % [
+                    workers, "" if workers == 1 else "s", fx, fy, _floor_percent_text(payload)],
             }
         "hunt":
             var herd_id := String(payload.get("herd_id", "")).strip_edges()
             if herd_id == "":
                 return {}
-            var policy := String(payload.get("policy", "sustain")).strip_edges().to_lower()
-            if policy == "":
-                policy = "sustain"
             return {
-                "line": "assign_labor %d %d hunt %s %s %d" % [faction, band_id, herd_id, policy, workers],
-                "message": "Assign %d hunter%s to %s (%s)." % [workers, "" if workers == 1 else "s", herd_id, policy],
+                "line": "assign_labor %d %d hunt %s %s %d" % [
+                    faction, band_id, herd_id, _format_floor(payload), workers],
+                "message": "Assign %d hunter%s to %s, leaving %s standing." % [
+                    workers, "" if workers == 1 else "s", herd_id, _floor_percent_text(payload)],
             }
         "scout", "warrior":
             return {
@@ -795,8 +819,9 @@ static func format_send_expedition(payload: Dictionary) -> Dictionary:
         "message": "Send scouting expedition (%d) to (%d, %d)." % [party_workers, x, y],
     }
 
-## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]`
-## The trailing policy is optional; the server defaults Sustain when omitted.
+## `send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]`
+## The trailing floor is optional and is a NUMBER in `0.0..=1.0` — the four stance words are rejected
+## by name at parse. The server defaults the food peak when it is omitted; the client always sends it.
 static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
     if band_id == HudConst.NO_BAND_ID:
@@ -806,10 +831,8 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
     var fauna_id := String(payload.get("fauna_id", "")).strip_edges()
     if party_workers <= 0 or fauna_id == "":
         return {}
-    var policy := String(payload.get("policy", "")).strip_edges()
-    var line := "send_hunt_expedition %d %d %d %s" % [faction, band_id, party_workers, fauna_id]
-    if policy != "":
-        line += " %s" % policy
+    var line := "send_hunt_expedition %d %d %d %s %s" % [
+        faction, band_id, party_workers, fauna_id, _format_floor(payload)]
     # The COMMAND addresses the herd by its id; the FEED NOTE names the species. `game_deer_07` is a
     # database key — meaningless to a player — so it must never reach the feed. Hud sends the display
     # name alongside the key; fall back to the key only if it somehow didn't (better than an empty
@@ -819,8 +842,8 @@ static func format_send_hunt_expedition(payload: Dictionary) -> Dictionary:
         fauna_label = fauna_id
     return {
         "line": line,
-        "message": "Send hunting expedition (%d, %s) after %s." % [
-            party_workers, policy if policy != "" else "sustain", fauna_label],
+        "message": "Send hunting expedition (%d, leaving %s standing) after %s." % [
+            party_workers, _floor_percent_text(payload), fauna_label],
     }
 
 ## `recall_expedition <faction_id> <expedition_band_id>` — a detached party is a band, addressed by

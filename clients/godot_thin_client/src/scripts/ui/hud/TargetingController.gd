@@ -67,7 +67,7 @@ var _pending_move_band: Dictionary = {}
 # resident band being outfitted plus the chosen party size.
 var _pending_send_expedition: Dictionary = {}
 # Quarry-pick targeting: the pending HERD pick for the party compose sheet. {} when inactive. Carries
-# only the band — party size and policy are chosen in the sheet AFTER the quarry.
+# only the band — party size and the escapement floor are chosen in the sheet AFTER the quarry.
 var _pending_pick_quarry: Dictionary = {}
 var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
@@ -335,7 +335,7 @@ func _try_dispatch_pending_send_expedition(tile_info: Dictionary) -> void:
 
 ## Quarry PICK: enter HERD-targeting so the next map click names the herd the compose sheet is aimed
 ## at. It dispatches NOTHING — the sheet stays open behind the targeting and fills its Quarry row in,
-## then asks for policy and party size against that herd.
+## then asks for the floor and the party size against that herd.
 func begin_pick_quarry(band: Dictionary) -> void:
 	# Targeting asks the player to click the map — the tile panel's FLOATING sheet over it is a trap
 	# (§15). The DOCKED party sheet is not floating and deliberately stays open.
@@ -377,10 +377,10 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 			int(band.get("hunt_reach", 0)),
 		])
 		return
-	# NO no-surplus check here: no policy is chosen yet, so that verdict is unknowable. It lives
+	# NO no-surplus check here: no floor is chosen yet, so that verdict is unknowable. It lives
 	# entirely on the sheet's Send button, which has every input.
 	_compose.set_party_quarry(fauna_id)
-	# Fill the party to this herd's max-useful cap for the default policy, same one-shot a policy
+	# Fill the party to this herd's max-useful cap at the default floor, same one-shot a preset
 	# click sets. Party size is meaningless until the quarry is known (the useful count is a property
 	# of the HERD), so picking one is the first moment we CAN default it — "give me everyone this raid
 	# can use". Consumed on the next render before the clamp; a −/+ tick still overrides freely.

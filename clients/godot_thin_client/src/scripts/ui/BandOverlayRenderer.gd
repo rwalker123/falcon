@@ -285,7 +285,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# A DETACHED PARTY BUILDS NOTHING — it follows the herd and hauls food home,
 						# so its improvement axis is structurally empty and its quarry's badge can
 						# only ever show a rung on OFFER, never one under way (issue #442). It carries
-						# a hunt STANCE (`expedition_hunt_policy`), which the rung answers never read.
+						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
 						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
 						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin)
@@ -550,7 +550,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				# The trade component rides along for the one-slot rule in `_draw_yield_label`; a
 				# forage patch normally pays food, so it changes nothing here.
 				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					String(entry.get("policy", "")), _entry_realized_trade(entry))
+					_entry_floor_glyph(entry), _entry_realized_trade(entry))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -580,7 +580,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 					else float(entry.get("sustainable_yield", 0.0))
 				# An INEDIBLE quarry's steady food rate is honestly 0 (issue #337), so the label falls
 				# through to its trade rate rather than announcing the pack is worth nothing.
-				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, String(entry.get("policy", "")),
+				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
 					_entry_realized_trade(entry))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
@@ -842,6 +842,14 @@ func _entry_realized_trade(entry: Dictionary) -> float:
 ## a deer glyph landing squarely on the number). Callers queue here; `flush_yield_labels` renders the
 ## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
 ## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
+## The assignment's harvest MARK — its floor's zone glyph, the same one the Band panel's work row
+## draws, so a worked source reads alike on the map and in the panel. `assign_labor` always carries a
+## floor and the decoder always inserts it, so an absent one means the wire never described this
+## assignment; the sim's own default is then the honest reading.
+func _entry_floor_glyph(entry: Dictionary) -> String:
+	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(
+		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
+
 func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "",
 		trade: float = 0.0) -> void:
 	_deferred_yield_labels.append({
@@ -866,8 +874,9 @@ func flush_yield_labels() -> void:
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
-## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
+## `policy` here is a resolved GLYPH, appended after the rate — the floor-zone mark
+## (`_entry_floor_glyph`), the same one the Hud's floor-picker buttons and the work board's mark column
+## show, so a worked source reads "+0.38 ♻" on the map; "" = no glyph.
 ##
 ## ONE COMPONENT ONLY, and deliberately so (issue #337): a hunt pays food AND trade goods, but a map
 ## label sits on a hex a few pixels wide beside a policy glyph and a ⚠ — there is no room for a second

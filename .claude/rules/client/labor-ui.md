@@ -24,6 +24,194 @@ paths:
 | `ui/hud/RungGates.gd` | **All-`static`, stateless** shared RUNG-GATE layer — the one answer to "may this source climb its next rung, and if not, why not?". Extracted from `DrawerComposeController` (issue #412) when the compose sheet stopped being the only surface asking: the Band panel's WORK board marks a source that can climb, and the MAP marks it on the source's own marker — and a renderer must not depend on the HUD's compose controller. Shared-layers-BEFORE-controllers, the same measurement that produced `SourceForecast` and `HudWidgets`. Holds `forage_gates` / `hunt_gates` / `sow_site_refusal_reason` (moved VERBATIM, so the compose sheet's greying is unchanged), **`forage_gates_from_patch`** (the BARE-keyed twin for a raw wire patch — the RAW wire patch carries its keys BARE while the `tile_info` cross-ref `patch_`-prefixes every one of them, and this adapter is the ONE place that mapping is written down. **The prefixing is UNIFORM now (#442)** — `is_cultivated`/`cultivation_progress` were the last unprefixed strays on the cross-ref and are stamped `patch_`-prefixed like their siblings, so there is no longer a mixed convention to remember; reading a `tile_info` key without the prefix silently answers nothing (`hud_compose_vocab.gd` → `BARE_FORECAST_PREFIX` carries the long form)), and **`next_rung_ready`** — the READY test all three surfaces mark from. **STATELESS IS THE INVARIANT**: the one impurity, faction knowledge, is threaded in as a `knowledge` PARAMETER (`TopBarReadouts.faction_tracks(faction)`, the whole `{track: progress}` row `faction_knowledge` reads one key out of), never reached for. `next_rung_ready` requires all three of OFFERED (husbandry ceiling / `can_cultivate`-`can_sow` + willing ground), UNGATED (the gate functions answer nothing), and NOT-ALREADY-RUNNING (a patch mid-Cultivate is progress, not an opportunity), **highest rung first**. **That ordering is load-bearing on the PLANT web only** and its assertion needed care: `is_cultivated` retires Cultivate, so on a TENDED patch the two rungs are mutually exclusive and an ordering test there passes with the branches swapped (measured). `Sow` needs no prior patch, so a WILD patch on sowable ground is the one shape that clears both gates at once. On the animal web the rungs are always mutually exclusive — Tame retires at a full meter, Corral requires one — so ordering is genuinely not load-bearing there. `TopBarReadouts.faction_knowledge` deliberately does NOT call `RungGates.track`: dependency DIRECTION outranks the one-definition rule for a `float(d.get(k, 0.0))` |
 | `ui/hud/SourceForecast.gd` | **All-`static`, stateless** shared forecast/estimate layer (HUD decomposition, phase 2c-2 precursor) — the pure "what will this source give me?" math THREE consumers ask for: the drawer's compose blocks, the Band panel's WORK zone, and its PARTIES zone. Three families: POST-HOC `source_yield_readout` (what a worked source actually produced, incl. the ⚠ overdraw + overstaff/wasted notes) · PRE-COMMIT `forecast_inputs` / `max_useful_workers` / **`source_worker_cap_state`** (the CONFIRMED-row twin of that cap: `(forecast, workers, idle, useful_floor = 0) → {can_add, note}`, beside the ceiling it reads so a worked row and a compose stepper can never gate differently — the trailing floor is what makes that true rather than merely stated, and `herd_crew_floor` is its one definition) / `expected_yield` / `hunt_policy_ceiling` · THE RAID `hunt_trip_forecast` → `hunt_forecast_line_bbcode` / `hunt_trip_no_surplus` / `hunt_no_surplus_reason` / `expedition_party_cap` / `expedition_useful_cap` / `expedition_policy_takes` / `style_send_hunt_button` (`style_send_hunt_button` styles a Button off the raid verdict, so it lives WITH the verdict). Plus the shared leaves those need — `format_magnitude`/`format_signed`/`format_yield`/`extractive_take`, `band_tile`/`hex_distance_wrapped`, `herd_display_name`, `is_managed_hunt_source`, and the two one-off leaks into the read-only detail layer, `flora_basket_entries` / `husbandry_ceiling`. **WHY ITS OWN FILE:** the next phase lifts a `DrawerComposeController` out of `Hud.gd`, but this layer is called by the work + parties zones too, so it cannot travel with the drawer; pure injection was measured at **54 Callables** and a `_hud` back-ref would weld an already-pure layer to the god object (and the band-panel extraction would then need a SECOND back-ref to the same place). All three consumers depend on THIS instead. **STATELESS IS THE INVARIANT** — no node, no `_hud`, no snapshot cache; if a new function needs HUD state, pass it in. The one non-plain-value is the grid-wrap pair (`grid_width`, `wrap_horizontal`), threaded as EXPLICIT PARAMETERS through `hex_distance_wrapped` → `round_trip_travel_turns` → `hunt_trip_forecast` / `expedition_policy_takes` so a stale grid can never be captured; `HudLayer._hex_distance_wrapped` is a one-line pass-through supplying the pair off `_band_labor`, so there is ONE hex implementation (`DrawerComposeController` calls the module directly with the same pair). The **forecast vocabulary constants moved here with the math** (`LABOR_KIND_*` / `LABOR_HUNT_POLICIES` / `DEFAULT_HUNT_POLICY` / `SOURCE_KIND_*` / `FORECAST_*` / `MAX_USEFUL_*` / `HUNT_FORECAST_*` / `SEND_HUNT_*` / `HUSBANDRY_CEILING_*` …) and `HudLayer` **re-exports the still-used ones as aliases** (`const X = SourceForecast.X`, one commented block) rather than redefining them — ONE definition, and every HudLayer call site reads unchanged |
 
+## THE HARVEST AXIS IS AN ESCAPEMENT FLOOR, NOT A STANCE (`docs/plan_harvest_floor.md`, issue #455)
+
+**This section supersedes every passage below that names a harvest STANCE.** Those passages are kept
+because they still document *why* each behaviour exists; where one says `sustain` / `surplus` /
+`deplete` / `eradicate`, read it against this.
+
+The four stances are **deleted from the sim**, not deprecated in the client. What replaced them is one
+number per assignment — **the escapement floor**, where the crew stops, as a fraction of the source's
+carrying capacity:
+
+| Axis | Question | Wire | Values |
+|---|---|---|---|
+| **Floor** | how much do I leave standing? | `LaborAssignment.floor` / `expeditionFloor` | any `0.0..=1.0` |
+| **Improvement** | what am I building? | `LaborAssignment.improvement` | `""` · `cultivate` · `sow` · `tame` · `corral` |
+
+`FollowPolicy` does not exist. `LaborAssignment.policy`, `PopulationCohortState.huntMode`,
+`expeditionHuntPolicy`, `HuntTripEstimate.policy`, `foragePolicyCeilings` and `huntPolicyCeilings` are
+all retired `(deprecated)` wire slots that **read zero or empty** — a client still reading them shows
+the player nothing and looks like a rendering bug rather than a contract break.
+
+### The client COMPOSES the ceiling, and that permission has a boundary
+
+There is no per-stance ceiling row on either web. What ships instead is the **terms**: `biomass` (B),
+`carryingCapacity` (K) and the source's **per-biomass yield vector** (`provisionsPerBiomass` /
+`tradePerBiomass` / `fodderPerBiomass`, published identically by `HerdTelemetryState` and
+`ForagePatchState`). `SourceForecast.escapement_room` + `forecast_inputs` evaluate
+
+```text
+ceiling(floor, account) = max(0, B − floor·K) × <account>PerBiomass
+expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
+```
+
+**This is a deliberate, narrow exception to "the sim exports the answer".** That rule exists because a
+hunt's TAKE is rounded to whole animals — `floor(ceiling / bodyMass)` is not linear, so no client can
+re-derive it. This expression is different in kind: linear and exact in terms already on the wire. The
+division of labour is **the client draws the curve, the sim states the take**. Do not let the
+composition creep from ceilings into takes; `SourceYield.actual` on a committed assignment is still
+the sim's answer, quantisation and all.
+
+**THE BUILD FRACTION MULTIPLIES THE CREW, NOT THE CEILING** (`plan_harvest_floor.md` §3.1). It rides
+`per_worker*` in `forecast_inputs` — hence `max_useful_workers`' divisor and `expected_yield`'s crew
+term — while every ceiling stays undipped. It moved because dipping the ceiling made a deeper floor
+build for FREE (a fraction of a bigger standing stock still filled the crew's baskets), and it is what
+leaves the ceiling linear in the floor and therefore composable at all. The player-visible
+consequence: a crew big enough to saturate the source's stock pays **no** dip, so the remedy for a
+slow build is HANDS — at a 25% carry, four times as many (`_cultivating_forage_band_fixture`'s
+`workers_needed` went 2 → 12 on exactly that arithmetic). `expected_yield_account` therefore has **no
+`ceiling_scale` parameter**: `improvement_forecast` carries a whole `base_forecast` and a whole
+`build_forecast`, and the deal's two terms are the same call against each. **Any surviving `×
+fraction` on a ceiling is wrong, and it looks plausible.**
+
+**A RUNG-3 MANAGED SOURCE HAS NO FLOOR AXIS** (`SourceForecast.source_is_managed`). A Field and a
+built Pen are yours — you control their reproduction — so `SourceYieldForecast::managed` pays one
+`managed_production` at every floor. The wire still carries their raw `biomass`/`carryingCapacity`/
+rates (facts about the herd or the crop), so composing an escapement ceiling on one is **silently
+wrong**; the ceiling is the rung's own payoff field (`field_yield` / `corral_yield`). Rung 2 — a
+Tended Patch, a pastoral herd — is still a wild stand being drawn down and takes the composition.
+
+### THE CONTROL: three intent presets plus a dial
+
+`HudWidgets.build_floor_picker` + `build_floor_slider` replaced `build_policy_picker`. The picker's
+face, its two-line rung cell, its `POLICY_RUNG_META` handle and its 3-column ceiling are unchanged —
+what changed is that a button is a **shortcut to a value** rather than one of the axis's members.
+
+| preset (`SourceForecast.FLOOR_PRESET_*`) | floor | label (`HudComposeVocab.FLOOR_PRESET_LABELS`) |
+|---|---|---|
+| `strip` | 0.00 | Take everything |
+| `peak` | 0.50 (`FLOOR_FOOD_PEAK`, the sim's `MSY_BIOMASS_FRACTION`) | Best harvest |
+| `learn` | 0.80 | Learn from it |
+
+**A PRESET THE PLAYER IS NOT ON MUST NOT LIGHT UP.** `floor_preset_for` answers `""` for anything
+between two presets — which is most of the dial once the slider is used — and lighting the nearest
+one instead states a floor the crew is not holding. Naming is not settled (plan §10 Q2), which is why
+the labels live in the vocab module.
+
+The slider is **deliberately plain** (`FLOOR_STEP` = 5%): 4b replaces it with the chart's drag. It is
+built on the compose sheets ONLY — the work inspector's strip and the parties zone get the presets
+without it, because a fixed-width dock strip is not where a continuous dial belongs and the source's
+own sheet has the room.
+
+### ONE HINT RULE, NOT TWELVE ROWS
+
+`FORAGE_POLICY_HINTS` / `LOCAL_HUNT_POLICY_HINTS` / `SEND_HUNT_POLICY_HINTS` are **deleted**. A stance
+table had a row per name; a floor has no names, so the only thing sayable about a value is its
+position relative to the **food peak** — which is the whole meaning of the dial.
+`SourceForecast.floor_zone` is that classification and `HudFormat.floor_hint` composes the sentence:
+
+| zone | glyph (`FoodIcons.FLOOR_ZONE_ICONS`) | reads |
+|---|---|---|
+| `strip` (= 0) | 💀 | take everything — **plus the web's own consequence** |
+| `drawdown` (0 < f < peak) | ⇊ | spending the source's future for calories now |
+| `peak` (≈ 0.5) | ♻ | the most food, forever |
+| `learning` (peak < f < 1) | ⬆ | buying ladder progress with calories |
+| `untouched` (= 1) | ⊘ | nothing taken — and a crew with nothing standing above its floor learns and builds nothing |
+
+Only **two** facts are composed in rather than tabulated, and both are real: what STRIPPING costs
+differs by web (`FLOOR_STRIP_CONSEQUENCE` — a patch reseeds from bare ground, a herd is gone for good)
+and a detached party accrues no husbandry, so the learning zone's promise is false for a raid
+(`FLOOR_LEARNING_HINT_EXPEDITION`). Three glyphs are inherited verbatim from the stances they replace
+(⇊ ♻ 💀 already meant their zone's thing and are legibility-proven at 12–13px); ⬆ was Surplus's and now
+reads as RAISING the floor, which is safe because nothing renders both vocabularies.
+
+**The knowledge gate-reasons name the floor too.** `intensification::learn_multiplier` is `floor /
+the food peak`, so "leave more standing" is literally how you learn faster and there is no rung to
+name: `Your people know Herding 45% — ♻ hunt a wild herd to learn it, faster the more you leave
+standing`.
+
+### Where a floor is READ, and where it is MARKED
+
+- The compose sheets: `ComposeState.forage_floor()` / `hunt_floor()` (floats, clamped on the way in),
+  seeded from `HudBandLaborState.floor_for_forage` / `floor_for_hunt`.
+- A worked row / map yield label: the assignment's own `floor`, marked with its ZONE glyph
+  (`FoodIcons.for_floor_zone`). **A continuous number cannot wear one glyph per value**, and the zone
+  is the whole of what one mark can honestly say; the exact percent is in the tooltip and in the work
+  inspector's sentence (`50% left standing`, `HudComposeVocab.FLOOR_VALUE_FORMAT`).
+- A party row: `expedition_floor`, same glyph, gated on the hunt MISSION — a scout reports `1.0`,
+  which is a real zone but not one it chose.
+
+### The commands
+
+`assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` / `… hunt <herd_id> [floor]
+<workers>`; `send_hunt_expedition <f> <b> <party> <fauna_id> [floor]`. **The optional token is a
+NUMBER**, formatted to `Main.FLOOR_COMMAND_DECIMALS` (2) — never `str(float)`, which would put
+`0.30000000000000004` on the line. The four stance words are **rejected by name** at parse
+(`CommandParseError::RetiredStanceToken`), so a stale emitter fails loudly instead of being silently
+reinterpreted as a crop key; the two optional forage tokens stay disjoint because a floor only ever
+parses as a float and a species key never does. `_emit_work_assign`'s `RESTATE_STANDING_FLOOR`
+sentinel is outside `0..1` because every real floor **including 0** is a value a crew edit must not
+overwrite.
+
+### The raid table is the ONE place the sim still exports rows
+
+A raid's trip length is a bounded forward simulation with no closed form, so there is no expression to
+hand over. `huntTripEstimates` **samples** the continuum (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` =
+`0.0, 0.15, 0.30, 0.50, 0.80`) × party size. `SourceForecast.nearest_estimate_floor` /
+`hunt_estimate_row` quote the closest sample; the launch command sends the player's exact floor.
+**The rows are SCANNED, never key-built** — the wire key is `"<floor>:<party>"` with the floor rendered
+by Rust's `f32` Display (`0`, not `0.0`), so a GDScript rebuild would have to reproduce Rust float
+formatting and a near-miss finds nothing *silently*. The decoder therefore also inserts `floor` and
+`party_workers` as FIELDS on each row.
+
+### §7.7: a zero belongs to an account the source actually pays
+
+The render-only-when-non-zero rule always kept ONE zero — a component that exists and paid nothing
+this turn is worth reading — but *which* component was hardcoded to food. On the animal web that is a
+claim the wire contradicts: a wolf's `provisionsPerBiomass` is `0`, it pays pelts and no meat ever, so
+`0.00 food` on one is not an empty reading but a **false** one. `SourceForecast.zero_account_of` reads
+the per-biomass vector (a structural fact, not this turn's ceiling) and `picker_products` /
+`yield_components` / `extractive_take_pair` take it as `zero_account`. A source with no positive rate
+in any account answers `YIELD_ACCOUNT_NONE` and its caller renders **no line at all**. Frame:
+`herd_hunt_pelts_only` — three presets reading `2.03 / 0.90 / 0.22 trade`, no food line, no zeros.
+
+### Per-account divergence is GONE on the plant web, and that is the model
+
+A plant take is one BIOMASS quantity through three fixed rates (`forage::forage_take`: *"both operands
+are the same biomass through the same rates, so the two components agree on which side binds"*), so
+every account overdraws or none does. The `or` in `_local_forage_preview_bbcode`'s verdict is
+therefore inert there — kept because it costs nothing and the animal web's quantised take is not
+obliged to stay that way. `forage_three_accounts_overdraw` used to pin the divergence; it now pins
+that the verdict tracks the FLOOR.
+
+### KNOWN GAP — the patch's per-worker vector is not on the wire
+
+`ForagePatchState` publishes `perWorkerYield` (the FOOD throughput, seasonal weight folded in) and the
+schema states there is deliberately no `perWorkerTrade`/`perWorkerFodder`; the per-policy row that
+carried all three went with the stances. `SourceForecast.forage_per_worker_biomass` recovers the one
+biomass throughput both operands share as `per_worker_yield / provisions_per_biomass` — exact, and
+**undefined on exactly the patches that pay no food** (a sown Field of flax, cotton or hay grass).
+There it answers `PER_WORKER_BIOMASS_UNKNOWN`, `forecast_inputs` raises `crew_unknown`, and
+`expected_yield_account` quotes what the SOURCE offers rather than multiplying a missing throughput by
+the crew (which would print `0.00` of a rung that pays real trade goods). The fix is a per-worker
+biomass term on `ForagePatchState`; the justification for its absence — "a policy-blind scalar cannot
+state a policy-dependent rate" — described the retired `Deplete` trade markup and no longer holds.
+
+### The fixture adapter, in both preview harnesses
+
+Every fixture states its take as the retired per-stance table, so `_floorify` converts one to the
+other in ONE place rather than rewriting ~50 literals. It **pins the old `sustain` row to the food
+peak** (Sustain took the renewable yield; the peak is the floor that pays the most forever), so every
+frame's headline number at the default floor is what the fixture was tuned to show. Two repairs it has
+to make, both because the four-row model let a fixture be internally inconsistent: a source with a
+positive Sustain ceiling standing BELOW `K/2` has no escapement room at all (its stock is raised to
+`FIXTURE_STOCK_FRACTION` of K), and a source with **no capacity** has no floor axis at all — `max(0,
+B − floor·K)` is `B` everywhere when K is 0, so every preset would quote one number and the picker
+would silently claim the dial does nothing.
+
+---
+
 ## An assignment has TWO axes: the STANCE and the IMPROVEMENT (issue #442)
 
 **This section supersedes every passage below that treats a build verb as a value of `policy`.** Those

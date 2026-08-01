@@ -222,10 +222,12 @@ func expedition_summary_lines(unit_data: Dictionary, ctx: DetailFormat.Context =
                 if tx >= 0 and ty >= 0:
                     target_line += " (%d, %d)" % [tx, ty]
             lines.append(target_line)
-        # The launched take policy (Sustain/Surplus/Deplete/Eradicate).
-        var policy := String(unit_data.get("expedition_hunt_policy", "")).strip_edges()
-        if policy != "":
-            lines.append("Policy: %s" % policy.capitalize())
+        # The party's ORDERS — where the raid stops, as a fraction of the herd's capacity. Always on
+        # the wire for a hunt party, and every value is meaningful (including `0`), so it is stated
+        # unconditionally rather than gated on being non-empty as the retired policy string was.
+        lines.append("Leaves standing: %s" % (HudComposeVocab.FLOOR_VALUE_FORMAT
+            % SourceForecast.floor_percent(float(unit_data.get("expedition_floor",
+                SourceForecast.DEFAULT_HARVEST_FLOOR)))))
     var phase := String(unit_data.get("expedition_phase", "")).strip_edges()
     if phase != "":
         lines.append("Phase: %s" % HudFormat.expedition_phase_label(phase))

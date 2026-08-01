@@ -22,12 +22,12 @@ signal changed(reason: StringName)
 const LABOR_KIND_FORAGE := "forage"
 const LABOR_KIND_HUNT := "hunt"
 
-# **THE PER-KIND OPTION LISTS ARE GONE** (issue #442). They existed only because the build verbs were
-# values of `policy`, so a hunt source offered six rungs and a forage source a different six; with the
-# improvement on its own axis both webs offer exactly the four harvest stances, and there is nothing
-# left to differ about. Every former reader now reads `SourceForecast.LABOR_HUNT_POLICIES` — the one
-# stance list — and `DEFAULT_HUNT_POLICY` still aliases SourceForecast's for the same reason.
-const DEFAULT_HUNT_POLICY := SourceForecast.DEFAULT_HUNT_POLICY
+# **THE HARVEST AXIS IS A NUMBER NOW, so there is no option list to be per-kind.** The per-kind lists
+# went with issue #442 (the build verbs left `policy` for their own axis); the four-stance list they
+# collapsed into went with the harvest-floor arc, which replaced the stance with an escapement floor
+# in `0.0..=1.0`. `DEFAULT_HARVEST_FLOOR` aliases SourceForecast's for the reason its predecessor did:
+# the value lives in exactly one place.
+const DEFAULT_HARVEST_FLOOR := SourceForecast.DEFAULT_HARVEST_FLOOR
 
 # The food-module `kind` that marks a HUNTING site rather than a gathering one — the split
 # `FoodIcons.for_site` needs to pick a quarry glyph over a forage sprig. Lives here with
@@ -238,15 +238,15 @@ func pending_assigns_for(entity: int) -> Dictionary:
 ## `assign_labor` deliberately does NOT touch that axis (issue #442), so an optimistic overlay that
 ## dropped it would flash a running build off the board for one turn.
 func record_pending_assign(entity: int, kind: String, workers: int, x: int, y: int, herd_id: String,
-		policy: String, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+		floor: float, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
 	if entity < 0:
 		return
 	var entry: Dictionary = _pending_labor.get(entity, {})
 	entry["turn"] = _current_turn
 	var assigns: Dictionary = entry.get("assign", {})
 	assigns[pending_key(kind, x, y, herd_id)] = {
-		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id, "policy": policy,
-		"improvement": improvement,
+		"kind": kind, "workers": max(0, workers), "x": x, "y": y, "herd_id": herd_id,
+		"floor": SourceForecast.clamp_floor(floor), "improvement": improvement,
 	}
 	entry["assign"] = assigns
 	_pending_labor[entity] = entry
@@ -296,9 +296,14 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		merged[key] = {
 			"kind": kind, "workers": int(a.get("workers", 0)),
 			"x": int(a.get("target_x", -1)), "y": int(a.get("target_y", -1)),
-			"herd_id": String(a.get("fauna_id", "")), "policy": String(a.get("policy", "")),
+			"herd_id": String(a.get("fauna_id", "")),
+			# WHERE THIS CREW STOPS, as a fraction of the source's capacity — the whole of the harvest
+			# axis. The decoder always inserts it, so an absent one means "no such assignment"; the
+			# default is the sim's own.
+			"floor": SourceForecast.clamp_floor(
+				float(a.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))),
 			# THE SECOND AXIS (issue #442) — what this crew is BUILDING, "" when nothing. Carried
-			# beside `policy` everywhere the map is read, so no consumer has to go back to the raw
+			# beside the floor everywhere the map is read, so no consumer has to go back to the raw
 			# assignment for it.
 			"improvement": String(a.get("improvement", "")), "pending": false,
 			# Per-source yields (food/turn) for the row headline/tooltip/overhunt flag. `has_yield`
@@ -329,7 +334,9 @@ func effective_worker_map(band: Dictionary) -> Dictionary:
 		merged[key] = {
 			"kind": String(pd.get("kind", "")), "workers": int(pd.get("workers", 0)),
 			"x": int(pd.get("x", -1)), "y": int(pd.get("y", -1)),
-			"herd_id": String(pd.get("herd_id", "")), "policy": String(pd.get("policy", "")),
+			"herd_id": String(pd.get("herd_id", "")),
+			"floor": SourceForecast.clamp_floor(
+				float(pd.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))),
 			# The improvement the edit LEAVES IN PLACE. `assign_labor` no longer re-asserts (or
 			# clears) an improvement — that is the whole point of the split — so a pending crew edit
 			# on a cultivating patch must keep showing the build, not blank it for one turn.
@@ -515,17 +522,21 @@ func workers_for_forage(band: Dictionary, x: int, y: int) -> int:
 func workers_for_hunt(band: Dictionary, herd_id: String) -> int:
 	return int(hunt_assignment_of(band, herd_id).get("workers", 0))
 
-## The harvest STANCE of the band's existing hunt on `herd_id`, else the default. Validated against the
-## four stances, which is now the whole of the `policy` axis — an assignment can no longer carry a
-## build verb here, so a re-seeded picker can no longer be shown a rung it has no button for.
-func policy_for_hunt(band: Dictionary, herd_id: String) -> String:
-	var policy := String(hunt_assignment_of(band, herd_id).get("policy", "")).strip_edges().to_lower()
-	return policy if policy in SourceForecast.LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+## The ESCAPEMENT FLOOR of the band's existing hunt on `herd_id`, else the default. The wire always
+## carries the field (the decoder inserts it unconditionally), so an ABSENT one means no such
+## assignment — which is exactly when the default is the right answer for a picker being seeded.
+func floor_for_hunt(band: Dictionary, herd_id: String) -> float:
+	var assignment := hunt_assignment_of(band, herd_id)
+	if not assignment.has("floor"):
+		return DEFAULT_HARVEST_FLOOR
+	return SourceForecast.clamp_floor(float(assignment["floor"]))
 
-## The harvest STANCE of the band's existing forage on (x,y), else the default.
-func policy_for_forage(band: Dictionary, x: int, y: int) -> String:
-	var policy := String(forage_assignment_of(band, x, y).get("policy", "")).strip_edges().to_lower()
-	return policy if policy in SourceForecast.LABOR_HUNT_POLICIES else DEFAULT_HUNT_POLICY
+## The plant twin: the floor of the band's existing forage on (x,y), else the default.
+func floor_for_forage(band: Dictionary, x: int, y: int) -> float:
+	var assignment := forage_assignment_of(band, x, y)
+	if not assignment.has("floor"):
+		return DEFAULT_HARVEST_FLOOR
+	return SourceForecast.clamp_floor(float(assignment["floor"]))
 
 ## **THE SECOND AXIS** (issue #442) — what the band's existing hunt on `herd_id` is BUILDING, or
 ## `IMPROVEMENT_NONE` when it builds nothing. Validated against the animal ladder so a mis-spelled or

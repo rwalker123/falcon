@@ -33,7 +33,10 @@ extends RefCounted
 ## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict —
 ## `forage_gates_from_patch` below is the bare-keyed twin.
 static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
+    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
+    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
+    # remedy's "the more you leave standing" is measured against.
+    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
     var gates := {}
     var cultivate_reasons: Array[String] = []
     var cultivation := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION)
@@ -83,7 +86,10 @@ static func sow_site_refusal_reason(tile_info: Dictionary) -> String:
 ## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
 ## ANOTHER faction reads as available here while the sim rejects the assign.
 static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
+    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
+    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
+    # remedy's "the more you leave standing" is measured against.
+    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
     var gates := {}
     var domestication := float(herd.get("domestication", 0.0))
     var tame_reasons: Array[String] = []
@@ -102,7 +108,7 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
         corral_reasons.append(HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
             HudFormat.progress_percent(domestication), FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)])
     if not corral_reasons.is_empty():
-        gates[SourceForecast.LABOR_POLICY_CORRAL] = corral_reasons
+        gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
     return gates
 
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather

@@ -369,7 +369,7 @@ func _party_fixture() -> Dictionary:
 		"expedition_mission": "hunt",
 		"expedition_phase": "hunting",
 		"expedition_target_herd": FAR_HERD_ID,
-		"expedition_hunt_policy": "sustain",
+		"expedition_floor": 0.5,
 		"home_band_entity": BAND_ENTITY,
 	}
 
@@ -383,7 +383,10 @@ func _near_herd_fixture() -> Dictionary:
 		"x": BAND_X + 1, "y": BAND_Y,
 		"population": 90, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.5, "food_per_animal": FOOD_PER_ANIMAL,
-		"hunt_policy_ceilings": {"sustain": 0.5, "surplus": 1.0, "deplete": 1.5, "eradicate": 3.0},
+		# The TERMS the client composes a ceiling from: `max(0, B - floor*K) x rate` at any floor
+		# (`docs/plan_harvest_floor.md` §5). The retired per-stance table this replaced could only
+		# answer four of them.
+		"biomass": 90.0, "carrying_capacity": 100.0, "provisions_per_biomass": 0.0125,
 	}
 
 ## A herd BEYOND `hunt_reach` — so both hunting-expedition compose surfaces take their expedition
@@ -394,20 +397,27 @@ func _far_herd_fixture() -> Dictionary:
 		"x": FAR_HERD_X, "y": FAR_HERD_Y,
 		"population": 140, "ecology_phase": "thriving", "huntable": true,
 		"per_worker_yield": 0.8, "food_per_animal": FOOD_PER_ANIMAL,
-		"hunt_policy_ceilings": {"sustain": 0.3, "surplus": 1.2, "deplete": 0.6, "eradicate": 2.4},
+		"biomass": 90.0, "carrying_capacity": 100.0,
+		"provisions_per_biomass": 0.0075, "trade_per_biomass": 0.00125,
 		"per_worker_trade": 0.12, "trade_per_animal": TRADE_PER_ANIMAL,
-		"hunt_policy_trade_ceilings": {"sustain": 0.05, "surplus": 0.18, "deplete": 0.09, "eradicate": 0.3},
 	}
 	herd["hunt_trip_estimates"] = _raid_table()
 	return herd
 
-## A flat raid table — one cell per policy × party size. Every rung delivers, so the Send button
-## takes its ordinary enabled treatment and the drive is never blocked by a verdict.
+## A flat raid table — one cell per SAMPLED FLOOR × party size, mirroring the sim's own
+## `RAID_FORECAST_FLOOR_SAMPLES`. Every cell delivers, so the Send button takes its ordinary enabled
+## treatment and the drive is never blocked by a verdict.
+##
+## The row carries `floor` and `party_workers` as FIELDS: the client scans the rows rather than
+## rebuilding the `"<floor>:<party>"` key, because the real key renders the floor with Rust's float
+## Display and a GDScript-side near-miss would find nothing at all — silently.
 func _raid_table() -> Dictionary:
 	var table := {}
-	for policy in ["sustain", "surplus", "deplete", "eradicate"]:
+	for floor_value in [0.0, 0.15, 0.30, 0.50, 0.80]:
 		for workers in range(1, RAID_MAX_PARTY + 1):
-			table["%s:%d" % [policy, workers]] = {
+			table["%s:%d" % [str(floor_value), workers]] = {
+				"floor": floor_value,
+				"party_workers": workers,
 				"turns_to_fill": RAID_TURNS,
 				"delivers_food": true,
 				"delivers_trade": true,

@@ -259,14 +259,15 @@ const FOW_DISCOVERED_HIDDEN_KEYS := [
 	# redacting it keeps ONE rule for the whole patch payload rather than a lone exception.
 	"patch_field_progress", "patch_is_field",
 	"patch_field_yield", "patch_sow_site_refusal",
-	# THE TILE'S PER-RUNG YIELD VECTOR (#426) — the six per-policy row dicts plus the two investment
-	# rungs' non-food payoff twins. Redacted for the same reason every forecast field above is: each is
-	# quoted at the patch's CURRENT biomass, which is live state a remembered tile does not know.
-	# **The row dicts carry the `known` signal**, so redacting them is also what keeps a remembered tile
-	# reading "no forecast" rather than a stale one — the presence test answers correctly for free.
-	"patch_forage_policy_ceilings", "patch_forage_policy_trade_ceilings",
-	"patch_forage_policy_fodder_ceilings", "patch_forage_policy_per_worker",
-	"patch_forage_policy_per_worker_trade", "patch_forage_policy_per_worker_fodder",
+	# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what one unit of this
+	# patch's standing crop is worth in each account, plus the two investment rungs' non-food payoff
+	# twins. **It replaced the six per-policy row dicts**, which could only answer four floors; the
+	# client composes `max(0, B − floor·K) × rate` at any floor from these three plus `patch_biomass` /
+	# `patch_carrying_capacity` (both already redacted above). Redacted for the same reason every
+	# forecast field is — each describes live patch state a remembered tile does not know — and
+	# redacting them is also what keeps a remembered tile reading "no forecast" rather than a stale
+	# one: `SourceForecast.forecast_is_known` reads the vector's PRESENCE, so the answer comes for free.
+	"patch_provisions_per_biomass", "patch_trade_per_biomass", "patch_fodder_per_biomass",
 	"patch_tended_trade", "patch_tended_fodder", "patch_field_trade", "patch_field_fodder",
 	# The two build DIPS, as fractions (#442). They are patch CONFIG rather than patch state — the
 	# fraction does not move with biomass — but they are redacted with the rest of the payload for the
@@ -2225,9 +2226,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"settlement_stage_label": String(entry.get("settlement_stage_label", "")),
 			"settlement_stage_icon": String(entry.get("settlement_stage_icon", "")),
 			"activity": String(entry.get("activity", "")),
-			# Fauna-pursuit sub-mode (single/sustain/surplus/deplete/eradicate); flows to the
-			# drawer + roster so "Cancel <Mode> Hunt" can label a live hunting band.
-			"hunt_mode": String(entry.get("hunt_mode", "")),
 			"supply_network_id": int(entry.get("supply_network_id", 0)),
 			# Early-Game Labor (slice 3b): what the band is working + its reach, for the
 			# selected-band map highlights (work-range ring / worked forage tiles / hunted
@@ -2264,8 +2262,11 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 			"home_band_entity": int(entry.get("home_band_entity", 0)),
 			# Hunt expedition (PR 2): the herd (fauna_id) a hunt party follows; "" for scouts.
 			"expedition_target_herd": String(entry.get("expedition_target_herd", "")),
-			# Hunt party take policy (sustain|surplus|deplete|eradicate; "" for scouts) + carry cap.
-			"expedition_hunt_policy": String(entry.get("expedition_hunt_policy", "")),
+			# WHERE THIS RAID STOPS, as a fraction of the herd's capacity — the party's orders. `1.0`
+			# for a scout or a resident band (they harvest no herd, and an absent floor must never
+			# read as "take everything"); the retired `expeditionHuntPolicy` string is a
+			# `(deprecated)` wire slot the sim no longer writes.
+			"expedition_floor": float(entry.get("expedition_floor", 1.0)),
 			"expedition_carry_cap": float(entry.get("expedition_carry_cap", 0.0)),
 			# Next-delivery forecast (the in-flight raid twin): the detail panel's "Next delivery" line
 			# reads these off `_selected_unit` (the marker), so they MUST ride the marker or the panel
@@ -2708,30 +2709,27 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		# WHY this ground will not take seed ("" = it will). The client cannot re-derive this — it has
 		# neither the per-biome capacity table nor the hydrology — so the sim ships the reason itself.
 		info["patch_sow_site_refusal"] = String(patch.get("sow_site_refusal", ""))
-		# THE TILE'S PER-RUNG YIELD VECTOR (#426) — six dicts keyed by policy, carrying BOTH halves of
-		# `min(workers × per_worker, ceiling)` in all three accounts. **They are the patch's ONLY
-		# ceiling representation**: the six flat `patch_ceiling_*` scalars they replaced are gone from
-		# this cross-ref entirely and are retired `(deprecated)` slots on the wire, so nothing can read
-		# one representation while the sim pays the other. Their PRESENCE is what tells
-		# `SourceForecast` "the wire describes this source" apart from "every rung honestly pays zero" —
-		# the distinction issue #426 exists to restore. Held BY REFERENCE, never copied: these are
-		# decoder-owned sub-trees and nothing here writes into them (turn-profiling.md's rule).
-		info["patch_forage_policy_ceilings"] = patch.get("forage_policy_ceilings", {})
-		info["patch_forage_policy_trade_ceilings"] = patch.get("forage_policy_trade_ceilings", {})
-		info["patch_forage_policy_fodder_ceilings"] = patch.get("forage_policy_fodder_ceilings", {})
-		info["patch_forage_policy_per_worker"] = patch.get("forage_policy_per_worker", {})
-		info["patch_forage_policy_per_worker_trade"] = patch.get("forage_policy_per_worker_trade", {})
-		info["patch_forage_policy_per_worker_fodder"] = patch.get("forage_policy_per_worker_fodder", {})
+		# THE TILE'S PER-BIOMASS YIELD VECTOR (docs/plan_harvest_floor.md §5) — what ONE UNIT of this
+		# patch's standing crop is worth in each account, at the patch's own basket-averaged rates.
+		# **This is the patch's whole ceiling representation now**: with `patch_biomass` and
+		# `patch_carrying_capacity` above, the client composes the ceiling at ANY floor
+		# (`SourceForecast.escapement_room`). The six per-policy row dicts it replaced — and the six
+		# flat `patch_ceiling_*` scalars before them — are retired `(deprecated)` wire slots, so nothing
+		# can read one representation while the sim pays the other. The vector's PRESENCE is what tells
+		# `SourceForecast` "the wire describes this source" apart from "the source pays nothing at this
+		# floor" — the #426 distinction, now answered by a rate rather than a row.
+		info["patch_provisions_per_biomass"] = float(patch.get("provisions_per_biomass", 0.0))
+		info["patch_trade_per_biomass"] = float(patch.get("trade_per_biomass", 0.0))
+		info["patch_fodder_per_biomass"] = float(patch.get("fodder_per_biomass", 0.0))
 		# The two investment rungs' non-food payoff twins, each quoted at ITS OWN rung (#433).
 		info["patch_tended_trade"] = float(patch.get("tended_trade", 0.0))
 		info["patch_tended_fodder"] = float(patch.get("tended_fodder", 0.0))
 		info["patch_field_trade"] = float(patch.get("field_trade", 0.0))
 		info["patch_field_fodder"] = float(patch.get("field_fodder", 0.0))
-		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor a crew's take is multiplied by while it
-		# builds that rung. They are NOT rows of `patch_forage_policy_ceilings` any more (that dict is
-		# exactly the four stances): an improvement is its own axis, so the dip multiplies whichever
-		# stance the crew holds, and `SourceForecast.improvement_forecast` is the one place that
-		# multiplication happens.
+		# THE TWO BUILD DIPS, AS FRACTIONS (#442) — the factor applied while a crew builds that rung.
+		# **It multiplies the CREW, not the ceiling** (docs/plan_harvest_floor.md §3.1): dipping the
+		# ceiling let a deeper floor build for free, and moving it onto throughput is what leaves the
+		# ceiling linear in the floor and therefore composable client-side at all.
 		info["patch_cultivate_build_fraction"] = float(patch.get("cultivate_build_fraction", 0.0))
 		info["patch_sow_build_fraction"] = float(patch.get("sow_build_fraction", 0.0))
 		# THE NEGLECT GRACE (#442) — the COUNTDOWN to the ground reverting, with its own presence bool.

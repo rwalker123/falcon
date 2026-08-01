@@ -262,10 +262,14 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .unwrap_or(PEN_FULLY_FED),
                 // **THE PER-BIOMASS YIELD VECTOR** — what one unit of this herd's biomass is worth,
                 // in every account (`docs/plan_harvest_floor.md` §5). It replaces the four stance
-                // ceiling rows: with `biomass`, `carrying_capacity` and the build-dip fractions the
-                // client evaluates `max(0, B − floor·K) × dip × rate` at ANY floor, which no fixed
-                // set of rows can express. The species' own vector, through the one
-                // `FaunaConfig::hunt_yield_for` seam the take path reads.
+                // ceiling rows: with `biomass` and `carrying_capacity` the client evaluates
+                // `max(0, B − floor·K) × rate` at ANY floor, which no fixed set of rows can express.
+                // The species' own vector, through the one `FaunaConfig::hunt_yield_for` seam the
+                // take path reads.
+                //
+                // **No dip term.** Since §3.1 `yield_fraction_while_building` multiplies the CREW's
+                // throughput, not the ceiling, so the build fractions belong to the `expected(..)`
+                // half of the composition and `ceiling_at` takes no `improvement` at all.
                 provisions_per_biomass: herd
                     .map(|herd| fauna.hunt_yield_for(&herd.species).provisions_per_biomass)
                     .unwrap_or(0.0),
@@ -510,8 +514,9 @@ pub(crate) fn snapshot_forage_patches(
                 // with, so a tended patch reads its committed conversion and not the wild one.
                 //
                 // It replaces the four stance ceiling rows because a player drags a **continuous**
-                // floor: with `biomass`, `carrying_capacity` and the build-dip fractions the client
-                // evaluates `max(0, B − floor·K) × dip × rate` anywhere on the dial.
+                // floor: with `biomass` and `carrying_capacity` the client evaluates
+                // `max(0, B − floor·K) × rate` anywhere on the dial. **No dip term** — since §3.1
+                // the build fraction multiplies the crew's throughput, never the ceiling.
                 provisions_per_biomass: patch_provisions_per_biomass(
                     patch,
                     tile_composition,

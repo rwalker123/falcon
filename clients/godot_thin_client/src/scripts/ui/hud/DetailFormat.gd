@@ -1098,20 +1098,26 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
         lines.append("Next waypoint: (%d, %d)" % [next_x, next_y])
     return lines
 
-## An Active-expeditions row's hover text: everything the glyphs encode, in words — the mission, the
-## hunt policy's behaviour hint, the phase + what it means, and the click affordance.
+## An Active-expeditions row's hover text: everything the glyphs encode, in words — the mission, what
+## the party's escapement FLOOR means for the herd, the phase + what it means, and the click
+## affordance.
 ##
 ## `target_herd` is the party's OWN target resolved from the snapshot herd list ({} when it has none
 ## or the herd is gone) — threaded in for the same reason `world_herds` is: this layer holds no
 ## snapshot state. Callers pass `HudBandLaborState.expedition_target_herd(exp)`.
 static func expedition_row_tooltip(exp: Dictionary, phase: String, target_herd: Dictionary) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
-    var policy_hint := ""
+    # THE PARTY'S ORDERS — `expedition_floor`, where this raid stops (the retired
+    # `expeditionHuntPolicy` string is a `(deprecated)` wire slot). `1.0` is the sim's value for a
+    # scout or a resident band, and it is a legal raid floor too, so the hint is gated on the MISSION
+    # rather than on the number.
+    var floor_hint := ""
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
-        var policy := String(exp.get("expedition_hunt_policy", "")).strip_edges().to_lower()
-        policy_hint = String(HudComposeVocab.SEND_HUNT_POLICY_HINTS.get(policy, ""))
+        floor_hint = HudFormat.floor_hint(
+            float(exp.get("expedition_floor", SourceForecast.DEFAULT_HARVEST_FLOOR)),
+            SourceForecast.LABOR_KIND_HUNT, true)
     return HudFormat.join_tooltip_lines([
-        expedition_mission_label(mission), policy_hint,
+        expedition_mission_label(mission), floor_hint,
         HudFormat.status_tooltip_line(phase), _expedition_delivery_tooltip_line(exp, mission, target_herd),
         EXPEDITION_ROW_FOCUS_HINT])
 

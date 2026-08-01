@@ -460,6 +460,11 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
 
+## The floor SLIDER, as `HSlider` meta — the same stable-handle reasoning, and needed because a
+## harness has nothing else to find it by: it carries no text and an `HSlider` is a type the compose
+## sheet may well grow a second of.
+const FLOOR_SLIDER_META := "floor_slider"
+
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
 ## the rung meta above, only more so: this button's face is the raid VERDICT
@@ -627,99 +632,118 @@ static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Labe
         label.add_theme_font_size_override("font_size", font_size)
     return label
 
-## The harvest-STANCE radio; `on_pick` fires with the chosen stance. The highlighted option is
-## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
-## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
-## forage drawer) and owns none of their state.
+## **THE FLOOR CONTROL** — the three intent PRESETS as a radio over `on_pick(floor: float)`, with the
+## dialled value itself highlighted when it sits on one of them and none highlighted when it does not.
+## It replaced the harvest-stance radio: there are no stances, so what a button can offer is a
+## shortcut to a value, and the value is what travels.
 ##
-## `options` is `SourceForecast.LABOR_HUNT_POLICIES` for every caller now (issue #442). The parameter
-## survives because the picker has no business knowing the stance list, but the per-kind six-rung sets
-## it used to be handed are gone: an improvement is its own control, not a fifth and sixth radio.
+## **A PRESET THE PLAYER IS NOT ON MUST NOT LIGHT UP.** `SourceForecast.floor_preset_for` answers `""`
+## for anything between two presets — which is most of the dial once the slider is used — and lighting
+## the nearest one instead would state a floor the crew is not holding.
 ##
-## **NO RUNG HERE IS EVER GATED** (issue #442). A `gates` dict, the greyed-and-explained rendering it
-## drove, and the height-saving `collapse_other_gates` opt-in beside it are all gone: a harvest stance
-## has no prerequisite and never retires, so every one of the four is always live. Unmet prerequisites
-## belong to the IMPROVEMENT axis now, and `HudWidgets.build_improvement_control` renders them in the
-## same shown-unchecked-and-explained shape this used to.
+## `takes` is keyed by PRESET (`SourceForecast.FLOOR_PRESET_*`), each a `{compact, full}` pair, and may
+## carry a THIRD key — **`note`**, a caveat on the metric appended under the tooltip's name + metric
+## line. It exists for the hunt sheet's averaging-window disclaimer
+## (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which qualifies the rate on the very face it hangs off,
+## and which as a standing body line made the hunt sheet read a paragraph longer than the forage sheet
+## beside it. A picker whose takes carry no `note` (forage, expedition) is unchanged.
 ##
-## A rung's `takes` entry may carry a THIRD key beside `compact`/`full` — **`note`**, a caveat on the
-## metric appended under the tooltip's name + metric line. It exists for the hunt sheet's averaging-
-## window disclaimer (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which qualifies the rate on the very
-## face it hangs off, and which as a standing body line made the hunt sheet read a paragraph longer than
-## the forage sheet beside it. It is per RUNG, not per picker, because the span the rate averages over
-## is a property of the rung; a picker whose takes carry no `note` (forage, expedition) is unchanged.
-static func build_policy_picker(
+## **NO PRESET IS EVER GATED** — a floor has no prerequisite and never retires, exactly as a stance
+## did not since #442. Unmet prerequisites belong to the IMPROVEMENT axis, and
+## `build_improvement_control` renders them.
+static func build_floor_picker(
     on_pick: Callable,
-    selected: String,
-    options: Array = SourceForecast.LABOR_HUNT_POLICIES,
+    selected_floor: float,
     takes: Dictionary = {},
     columns: int = 0) -> VBoxContainer:
-    var current := selected
+    var current_preset := SourceForecast.floor_preset_for(selected_floor)
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    # Wrap the rung buttons at most `POLICY_PICKER_COLUMNS` (3) per row (a GridContainer), so a six-rung
-    # picker reads 3 + 3 and the four extractive rungs read 3 + 1 with Eradicate alone on the second row.
-    # THE CEILING IS UNIFORM ON PURPOSE: four abreast made the expedition launch picker a different
-    # creature from the local hunt beside it, and set the widest compose card's width off a row that never
-    # needed to be that wide. The lone rung is not stretched — a GridContainer gives it its COLUMN's
-    # width, so it sits under the first cell above at exactly that cell's width, which reads deliberate.
-    # **THE THREE-ACCOUNT FACE DOES NOT LOWER IT, and that was MEASURED rather than reasoned** (#426):
-    # a wide-face ceiling of 2 was built on the assumption that `0.60 food · 0.01 trade · 0.20 fodder`
-    # three abreast would overrun the sheet, and the rendered frame says otherwise — the picker comes
-    # out 555px against the deer hunt picker's long-standing 546, nothing clips, and 3 + 3 reads
-    # better than the 2 + 2 + 2 the ceiling produced. Do not re-add it without a frame that overruns.
+    # Wrap the preset buttons at most `POLICY_PICKER_COLUMNS` (3) per row (a GridContainer). Three
+    # presets fit one row exactly; the ceiling stays uniform so a zone-hosted picker (which clamps
+    # DOWN via `columns`) reads as the same creature as the compose sheet's.
     var grid := GridContainer.new()
     # `columns > 0` CLAMPS the default DOWN, never up: a zone is a FIXED-width box, and a picker whose
     # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column
     # out past its host (where it is clipped) — taking the section menu beside it off the edge.
-    var wanted := columns if columns > HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS else options.size()
+    var wanted := columns if columns > HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS \
+        else SourceForecast.FLOOR_PRESETS.size()
     grid.columns = clampi(wanted, 1, HudWorkVocab.POLICY_PICKER_COLUMNS)
     grid.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    for policy in options:
-        var policy_key := String(policy)
+    for preset_variant in SourceForecast.FLOOR_PRESETS:
+        var preset := String(preset_variant)
+        var floor_value := SourceForecast.floor_for_preset(preset)
         var btn := Button.new()
-        # TWO-LINE FACE, one line per AXIS — the fix for the axis collision the one-line face had:
-        #   line 1  WHICH RUNG — `HudFormat.policy_face`, the FoodIcons policy glyph welded to the
-        #           rung's NAME (`♻ Sustain`). The same glyph the map's yield labels append, so a
-        #           policy reads identically on the picker and on the worked tile/herd, and the same
-        #           face the gate-reason lines and the work inspector use.
-        #   line 2  WHAT IT PAYS — the per-policy metric with its products NAMED IN WORDS
+        # TWO-LINE FACE, one line per AXIS — the shape the stance picker settled on, kept because the
+        # collision it fixed is unchanged:
+        #   line 1  WHICH INTENT — `HudFormat.floor_preset_face`, the zone glyph welded to the
+        #           preset's label (`♻ Best harvest`). The same glyph the map's yield labels append,
+        #           so a floor reads identically on the picker and on the worked tile/herd.
+        #   line 2  WHAT IT PAYS — the metric with its products NAMED IN WORDS
         #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`), one step SMALLER and
-        #           one step quieter, so the name leads the glance and the numbers answer it.
-        # The old face put the rung glyph and the trade-goods glyph adjacent in ONE line at one weight,
-        # where `♻ ⬆ ⇊ 💀` (which rung) and `⇄` (which product) could not be told apart — and dropping
-        # the rung's name left `⬆` beside `⇊` reading as good-vs-bad rather than as two rungs of one
-        # ladder. Naming the rung is what defuses that, so the glyphs themselves are unchanged.
-        # A rung with no metric (the work inspector's picker, which passes none) is line 1 alone.
-        var take: Variant = takes.get(policy_key, null)
+        #           one step quieter, so the intent leads the glance and the numbers answer it.
+        # A preset with no metric (the work inspector's picker, which passes none) is line 1 alone.
+        var take: Variant = takes.get(preset, null)
         var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        # The optional per-rung tooltip caveat (see the header) — the hunt sheet's averaging window.
         var note := String((take as Dictionary).get("note", "")) if take is Dictionary else ""
-        var is_selected := policy_key == current
+        var is_selected := preset == current_preset
         var variant := "primary" if is_selected else "ghost"
-        # `policy` meta, not the face string: the face is presentation (it grew a name, then a second
-        # line, and its text now lives on a child Label), so a harness that identified a rung by reading
-        # `btn.text` broke each time. The meta is the rung's identity and never moves.
-        btn.set_meta(POLICY_RUNG_META, policy_key)
-        # **THE SELECTED-AND-GATED STATE IS GONE** (issue #442 retiring #420). It existed because a
-        # completed build stranded the picker on a dead rung — the band standing on a Cultivate whose
-        # patch had just finished. A stance is never retired and never gated, so there is no rung left
-        # that is simultaneously the current choice and unavailable, and `HudStyle.apply_button` no
-        # longer carries the flag that rendered one.
+        # The PRESET key as meta, not the face string: the face is presentation (glyph, label, a
+        # second line), so a harness identifying a button by `btn.text` would read an empty string.
+        btn.set_meta(POLICY_RUNG_META, preset)
         HudStyle.apply_button(btn, variant)
-        # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
-        # goods/turn"), led by the rung name.
-        var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
-            if full != "" else policy_key.capitalize()
-        btn.pressed.connect(func() -> void: on_pick.call(policy_key))
+        # Tooltip carries the VERBOSE metric the face compacts, led by the preset's own label and the
+        # NUMBER it stands for — the one place the two spellings of a floor sit together, so a player
+        # can learn that "Best harvest" is 50% left standing without dragging the slider to find out.
+        var preset_name := "%s (%s)" % [
+            HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset),
+            HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor_value)]
+        var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [preset_name, full] \
+            if full != "" else preset_name
+        btn.pressed.connect(func() -> void: on_pick.call(floor_value))
         btn.tooltip_text = HudFormat.join_tooltip_lines([name_line, note])
-        # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
-        # equal width and fill the panel content width.
-        var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric,
+        # EXPAND_FILL on the CELL (which is what the grid lays out now), so the presets sharing a row
+        # are equal width and fill the panel content width.
+        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), metric,
             HudStyle.button_font_color(variant, btn.disabled))
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
     return block
+
+## **THE DIAL BETWEEN THE PRESETS** — a whole-percent slider over the same floor the presets set, so
+## every value in `0..1` is reachable and the three buttons stay shortcuts rather than the whole axis.
+## `on_change` fires with the new floor.
+##
+## It is deliberately PLAIN: 4b replaces it with the chart's draggable floor, and a bespoke control
+## built here would be thrown away. `FLOOR_STEP` is the granularity — fine enough to sit anywhere
+## between two presets, coarse enough that the value is readable and reproducible.
+##
+## The caption states the CURRENT value in the same words the picker's tooltips use
+## (`FLOOR_VALUE_FORMAT`), because a slider with no readout is a control whose state cannot be read
+## back — and the number is the thing the player is choosing.
+static func build_floor_slider(selected_floor: float, on_change: Callable) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var caption := Label.new()
+    caption.text = "%s %s" % [HudComposeVocab.FLOOR_SLIDER_LABEL,
+        HudFormat.floor_face(selected_floor)]
+    caption.add_theme_color_override("font_color", HudStyle.INK)
+    caption.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
+    block.add_child(caption)
+    var slider := HSlider.new()
+    slider.set_meta(FLOOR_SLIDER_META, true)
+    slider.min_value = SourceForecast.FLOOR_MIN
+    slider.max_value = SourceForecast.FLOOR_MAX
+    slider.step = SourceForecast.FLOOR_STEP
+    slider.value = SourceForecast.clamp_floor(selected_floor)
+    slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    # `value_changed` fires per DRAG STEP, and each fire rebuilds the compose controls — which is what
+    # keeps the forecast line live under the dial. The step is coarse enough that this is ~20 rebuilds
+    # across the whole range, the same order as clicking through four stances used to cost.
+    slider.value_changed.connect(func(value: float) -> void: on_change.call(value))
+    block.add_child(slider)
+    return block
+

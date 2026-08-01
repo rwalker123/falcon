@@ -70,9 +70,16 @@ pub(crate) fn herds_to_array(
         // **THE PER-BIOMASS YIELD VECTOR** — what ONE UNIT of this herd's biomass is worth, in each
         // account (`docs/plan_harvest_floor.md` §5). It replaces the retired `huntPolicyCeilings`
         // rows, because four rows cannot answer a **continuous** floor. With `biomass` (B),
-        // `carrying_capacity` (K) and the build-dip fractions already in this dict:
+        // `carrying_capacity` (K) already in this dict:
         //
-        //   ceiling(floor, rung) = max(0, B - floor*K) * <rung>_build_fraction * <account>_per_biomass
+        //   ceiling(floor)      = max(0, B - floor*K) * <account>_per_biomass
+        //   collection(workers) = workers * per_worker_yield * <rung>_build_fraction
+        //
+        // **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1,
+        // sim-side `fauna::forecast_production_and_take`). It moved there because dipping the ceiling
+        // let a deeper floor build for free — a fraction of a bigger standing stock still filled the
+        // crew's baskets — and it is what leaves the ceiling linear in the floor, hence composable
+        // here at all.
         //
         // An INEDIBLE species (a wolf) reads `provisions_per_biomass == 0` with `trade_per_biomass`
         // positive — the only shape that can state that at all. No animal pays fodder, so that
@@ -134,6 +141,15 @@ pub(crate) fn herds_to_array(
                     let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
                     // The trade goods the raid LANDS — the ONLY payload of an inedible quarry's raid.
                     let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
+                    // **THE PARTY SIZE AS A NUMBER, not only as half of the key.** The key is
+                    // `"<floor>:<party>"` where `<floor>` is Rust's `f32` Display — `0`, not `0.0`,
+                    // for the bare floor — so a client rebuilding that key from a float it holds has
+                    // to reproduce Rust's float formatting exactly, and a near-miss finds nothing
+                    // and reports "this herd has no forecast". Since the floor became CONTINUOUS the
+                    // client can no longer enumerate the keys it might need, so it SCANS the rows:
+                    // both halves of the sampled pair have to be readable off the row itself, and
+                    // the key stays what it always was — an opaque unique id.
+                    let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
                     let key = format!("{}:{}", floor, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }
@@ -147,22 +163,25 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("corral_progress", herd.corralProgress());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
-        //   expected(workers, policy) = min(workers * per_worker_yield, hunt_policy_ceilings[policy])
-        //   max_useful_workers(policy) = ceil(hunt_policy_ceilings[policy] / per_worker_yield)
-        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
-        // hunter stepper at what the herd can actually absorb. EVERY herd-side ceiling now comes
-        // from the `hunt_policy_ceilings` Dictionary above — the old per-policy scalars
-        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are deprecated schema slots and are no
-        // longer decoded. (ForagePatchState keeps its scalars: a patch has no such list.)
+        //   expected(workers, floor) = min(workers * per_worker_yield * dip, ceiling(floor))
+        //   max_useful_workers(floor) = ceil(ceiling(floor) / (per_worker_yield * dip))
+        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the hunter
+        // stepper at what the herd can actually absorb. `ceiling(floor)` is composed from the
+        // per-biomass vector above — `hunt_policy_ceilings` and the older per-policy scalars
+        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are ALL retired `(deprecated)` slots the
+        // sim no longer writes, and are no longer decoded.
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
         // The SAME per-worker rate in the other currency (issue #337) — read the two as ONE vector.
         // THIS pair, not the cohort's `hunt_per_worker_provisions`, is what a per-herd band preview
         // clamps with: that cohort field is a species-BLIND global echo (the sim's own doc says so),
         // and quoting it against a wolf's all-zero food ceilings manufactures phantom food.
         let _ = dict.insert("per_worker_trade", herd.perWorkerTrade());
-        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned. Its
-        // DURING-BUILDING dip rides the `hunt_policy_ceilings` list (the "corral" row), so together
-        // they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned; its
+        // during-building dip is `corral_build_fraction` on the CREW, so together they drive the
+        // pre-commit "+X → +Y while building → +Z" deal on %HerdAssignControls.
+        // **On an ALREADY-PENNED herd this same field is the pen's live managed production** — a
+        // corralled herd is never drawn down, so its ceiling is this number at EVERY floor and the
+        // escapement composition above does not apply to it (sim `SourceYieldForecast::managed`).
         // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("corral_yield", herd.corralYield());
         // The trade half of that SAME payoff — read the two as ONE pair, exactly like
@@ -428,11 +447,21 @@ pub(crate) fn forage_patches_to_array(
         // in each account, at the patch's own basket-averaged rates
         // (`docs/plan_harvest_floor.md` §5). It replaces the retired `foragePolicyCeilings` rows,
         // because four rows cannot answer a **continuous** floor. With `biomass` (B),
-        // `carrying_capacity` (K) and the build-dip fractions already in this dict:
+        // `carrying_capacity` (K) already in this dict:
         //
-        //   ceiling(floor, rung) = max(0, B - floor*K) * <rung>_build_fraction * <account>_per_biomass
-        //   collection(workers)  = workers * per_worker_biomass * <account>_per_biomass
-        //   take                 = min(ceiling, collection)
+        //   ceiling(floor)       = max(0, B - floor*K) * <account>_per_biomass
+        //   collection(workers)  = workers * per_worker_biomass * <rung>_build_fraction
+        //                          * <account>_per_biomass
+        //   take                 = min(ceiling, collection)      [per account]
+        //
+        // **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** — see the herd twin above.
+        //
+        // **`per_worker_biomass` IS NOT ON THE WIRE**, and that is a known gap: the patch publishes
+        // `per_worker_yield` (the FOOD throughput, seasonal weight folded in) but no per-worker term
+        // for the other two accounts, and no biomass-space throughput to derive them from. The client
+        // recovers it as `per_worker_yield / provisions_per_biomass` — exact, and undefined on exactly
+        // the patches that pay no food (a sown Field of flax or hay). See
+        // `SourceForecast.forage_per_worker_biomass`.
         //
         // **No account carries a factor of any kind** since the 4x `market.trade_goods_multiplier`
         // was retired (plan §4): a deeper floor earns more trade only because it takes more biomass,
