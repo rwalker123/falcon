@@ -188,7 +188,12 @@ const HUSBANDRY_CEILING_PEN := "pen"
 # 2 decimals with an explicit sign ("+0.31 /turn").
 const YIELD_DECIMALS := 2
 const YIELD_PER_TURN_SUFFIX := " /turn"
-const YIELD_TOOLTIP_RENEWABLE := " · renewable"
+# The take's own qualifier, in two spellings of ONE word: the SUFFIX form for a joined sentence, the
+# bare NOTE for the readout's yields row, which sets it as its own small-print part beside the number
+# and therefore cannot carry the separator that joins a sentence. Written structurally, so the two
+# cannot drift into two different words.
+const YIELD_RENEWABLE_NOTE := "renewable"
+const YIELD_TOOLTIP_RENEWABLE := " · " + YIELD_RENEWABLE_NOTE
 const YIELD_TOOLTIP_OVERDRAW := " — overdrawing"
 # Overstaffing (wasted labor) — DISTINCT from the ⚠ overdraw flag. Every policy caps a source's take at
 # its ceiling (policy ceiling / resource biomass), so past `workers_needed` extra workers produce
@@ -288,13 +293,14 @@ const PICKER_FODDER_PRODUCT_FORMAT := "%s fodder"
 static func picker_products(food: float, trade: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD) -> String:
     var parts: Array[String] = []
-    var empty: bool = not (has_component(food) or has_component(trade) or has_component(fodder))
-    if has_component(food) or (empty and zero_account == YIELD_ACCOUNT_FOOD):
-        parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(food))
-    if has_component(trade) or (empty and zero_account == YIELD_ACCOUNT_TRADE):
-        parts.append(PICKER_TRADE_PRODUCT_FORMAT % format_magnitude(trade))
-    if has_component(fodder) or (empty and zero_account == YIELD_ACCOUNT_FODDER):
-        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
+    for row in yield_rows(food, trade, fodder, zero_account):
+        match String(row[YIELD_ROW_ACCOUNT]):
+            YIELD_ACCOUNT_FOOD:
+                parts.append(PICKER_FOOD_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+            YIELD_ACCOUNT_TRADE:
+                parts.append(PICKER_TRADE_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
+            YIELD_ACCOUNT_FODDER:
+                parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return TRADE_COMPONENT_SEPARATOR.join(parts)
 
 # ---- WHICH ACCOUNTS THIS SOURCE PAYS AT ALL (spec §7.7) -----------------------------------------
@@ -325,6 +331,59 @@ static func zero_account_of(src: Dictionary, prefix: String) -> String:
     if float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0)) > 0.0:
         return YIELD_ACCOUNT_FODDER
     return YIELD_ACCOUNT_NONE
+
+# The two keys of one `yield_rows` entry — which account it is, and what this take pays into it.
+const YIELD_ROW_ACCOUNT := "account"
+const YIELD_ROW_VALUE := "value"
+
+## **WHERE AN ACCOUNT'S YIELD ACTUALLY GOES.** Provisions feed the working band and fodder feeds the
+## pens that band keeps, so both land in the CAMP; trade goods are banked to the faction-wide
+## stockpile (`inventory.add_stockpile(faction, TRADE_GOODS, …)`), which is a different place and a
+## different timescale. It is the vector that routes a take — there is no role branch anywhere — so
+## the destination is a property of the ACCOUNT and is written down exactly once, here.
+const YIELD_ACCOUNT_ROUTE_CAMP := "camp"
+const YIELD_ACCOUNT_ROUTE_STOCKPILE := "stockpile"
+const YIELD_ACCOUNT_ROUTES := {
+    YIELD_ACCOUNT_FOOD: YIELD_ACCOUNT_ROUTE_CAMP,
+    YIELD_ACCOUNT_TRADE: YIELD_ACCOUNT_ROUTE_STOCKPILE,
+    YIELD_ACCOUNT_FODDER: YIELD_ACCOUNT_ROUTE_CAMP,
+}
+
+## The per-turn UNIT each account is read in — the readout's `2.34  FOOD/TURN → CAMP`. One table, so
+## the three accounts are named in the same grammar wherever a rate is stated as a number beside a
+## unit rather than joined into a sentence (`yield_components`' job).
+const YIELD_ACCOUNT_UNITS := {
+    YIELD_ACCOUNT_FOOD: "food/turn",
+    YIELD_ACCOUNT_TRADE: "trade/turn",
+    YIELD_ACCOUNT_FODDER: "fodder/turn",
+}
+
+## **WHICH ACCOUNTS A TAKE PAYS, AS ROWS** — the STRUCTURAL half of the render-only-when-non-zero rule,
+## and the one definition of it. `yield_components` (a joined sentence), `picker_products` (a rung's
+## product line) and `extractive_take_pair` (a rung's tooltip ceiling) all differ only in how they
+## SPELL a component; which components exist at all is this function, so a surface that needs the
+## numbers rather than the sentence — the compose sheet's readout, whose yields row sets a 15px number
+## beside a 10px unit and therefore cannot be given a pre-joined string — asks here.
+##
+## Food leads, then trade, then fodder: the wire's order, not a ranking, so a source paying two of the
+## three reads the same left-to-right whichever two they are.
+##
+## When EVERY component is empty exactly ONE zero survives — `zero_account`'s, the account the source
+## STRUCTURALLY pays (`zero_account_of`) — because a component that exists and paid nothing this turn
+## is worth reading while `0.00 food` on a wolf is not empty but false. A source that pays into no
+## account at all (`YIELD_ACCOUNT_NONE`) answers an EMPTY array, and its caller renders no line.
+static func yield_rows(food: float, trade: float, fodder: float = 0.0,
+        zero_account: String = YIELD_ACCOUNT_FOOD) -> Array[Dictionary]:
+    var rows: Array[Dictionary] = []
+    var empty: bool = not (has_component(food) or has_component(trade) or has_component(fodder))
+    for pair in [
+        [YIELD_ACCOUNT_FOOD, food], [YIELD_ACCOUNT_TRADE, trade], [YIELD_ACCOUNT_FODDER, fodder],
+    ]:
+        var account := String(pair[0])
+        var value := float(pair[1])
+        if has_component(value) or (empty and zero_account == account):
+            rows.append({YIELD_ROW_ACCOUNT: account, YIELD_ROW_VALUE: value})
+    return rows
 
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
 # component with a POSITIVE rate, provisions preferred so every edible species divides exactly as it
@@ -595,7 +654,8 @@ const HUNT_FORECAST_DENIAL_FORMAT := "%s — denial mission: hunts the herd towa
 const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 # When a kill can't be fully carried (a big animal the crew is too small to haul) the surplus meat rots.
 # A WARN-tinted suffix flags the fraction wasted — its OWN concern, rendered amber even on a green line.
-const HUNT_WASTE_SUFFIX_FORMAT := " · ⚠ %d%% wasted"
+const HUNT_WASTE_NOTE_FORMAT := "⚠ %d%% wasted"
+const HUNT_WASTE_SUFFIX_FORMAT := " · " + HUNT_WASTE_NOTE_FORMAT
 
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
@@ -683,13 +743,14 @@ static func has_component(rate: float) -> bool:
 static func yield_components(food: float, trade: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD) -> String:
     var parts: Array[String] = []
-    var empty: bool = not (has_component(food) or has_component(trade) or has_component(fodder))
-    if has_component(food) or (empty and zero_account == YIELD_ACCOUNT_FOOD):
-        parts.append(format_yield(food))
-    if has_component(trade) or (empty and zero_account == YIELD_ACCOUNT_TRADE):
-        parts.append(format_trade(trade))
-    if has_component(fodder) or (empty and zero_account == YIELD_ACCOUNT_FODDER):
-        parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(fodder))
+    for row in yield_rows(food, trade, fodder, zero_account):
+        match String(row[YIELD_ROW_ACCOUNT]):
+            YIELD_ACCOUNT_FOOD:
+                parts.append(format_yield(row[YIELD_ROW_VALUE]))
+            YIELD_ACCOUNT_TRADE:
+                parts.append(format_trade(row[YIELD_ROW_VALUE]))
+            YIELD_ACCOUNT_FODDER:
+                parts.append(PICKER_FODDER_PRODUCT_FORMAT % format_magnitude(row[YIELD_ROW_VALUE]))
     return TRADE_COMPONENT_SEPARATOR.join(parts)
 
 ## THE COMPACT TWIN of `yield_components`, for a surface that supplies its own framing and has no room
@@ -723,15 +784,16 @@ static func magnitude_components(food: float, trade: float) -> String:
 ## wearing one face.
 static func extractive_take_pair(food: float, trade: float, fodder: float = 0.0,
         zero_account: String = YIELD_ACCOUNT_FOOD) -> Dictionary:
-    var empty: bool = not (has_component(food) or has_component(trade) or has_component(fodder))
     var full_parts: Array[String] = []
-    if has_component(food) or (empty and zero_account == YIELD_ACCOUNT_FOOD):
-        full_parts.append(POLICY_CAP_FORMAT % format_signed(food))
-    if has_component(trade) or (empty and zero_account == YIELD_ACCOUNT_TRADE):
-        full_parts.append(POLICY_CAP_TRADE_FORMAT % [
-            FoodIcons.TRADE_GOODS_GLYPH, format_signed(trade)])
-    if has_component(fodder) or (empty and zero_account == YIELD_ACCOUNT_FODDER):
-        full_parts.append(POLICY_CAP_FODDER_FORMAT % format_signed(fodder))
+    for row in yield_rows(food, trade, fodder, zero_account):
+        match String(row[YIELD_ROW_ACCOUNT]):
+            YIELD_ACCOUNT_FOOD:
+                full_parts.append(POLICY_CAP_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
+            YIELD_ACCOUNT_TRADE:
+                full_parts.append(POLICY_CAP_TRADE_FORMAT % [
+                    FoodIcons.TRADE_GOODS_GLYPH, format_signed(row[YIELD_ROW_VALUE])])
+            YIELD_ACCOUNT_FODDER:
+                full_parts.append(POLICY_CAP_FODDER_FORMAT % format_signed(row[YIELD_ROW_VALUE]))
     return {
         "compact": picker_products(food, trade, fodder, zero_account),
         "full": TRADE_COMPONENT_SEPARATOR.join(full_parts),

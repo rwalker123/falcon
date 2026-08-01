@@ -470,6 +470,22 @@ const FLOOR_CHART_META := "floor_chart"
 const CREW_TARGET_META := "crew_target"
 const CREW_TARGET_CLEAR := "clear"
 const CREW_TARGET_HOLD := "hold"
+## …and the COUNT it offers, as a second meta. The pill's face is a two-Label stack over an
+## empty-`text` Button (see `_crew_target_pill`), so the number a harness has to read is not in
+## `btn.text` and a `text.split(" ")[0]` on one finds nothing — silently, which is the failure the
+## meta-as-handle idiom exists to prevent.
+const CREW_TARGET_COUNT_META := "crew_target_count"
+
+## The READOUT's yields row, as `Control` meta — the same stable-handle reasoning as the three above.
+## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
+## match and a needle search would find whichever Label happened to hold it.
+const YIELDS_ROW_META := "yields_row"
+
+## The CREW ROW's own label, as `Control` meta. It names the crew from the composed improvement axis
+## (`Hunters` vs `Herders`), which is a real claim about the sheet — and it renders UPPERCASE, exactly
+## like the sheet's eyebrow two rows above it, so a text search for the crew noun matches the eyebrow
+## and passes without ever reaching the stepper.
+const CREW_ROW_LABEL_META := "crew_row_label"
 
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
@@ -541,6 +557,8 @@ static func build_improvement_control(improvement: String, state: String, face: 
         locked.text = face
         locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         locked.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        locked.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         set_label_tooltip(locked, tooltip)
         block.add_child(locked)
@@ -549,10 +567,14 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # SILENT no-op (Labels default to MOUSE_FILTER_IGNORE).
         var done := Label.new()
         done.text = face
-        # NO font-size override, so the control sits at the sheet's body size — the same size the
-        # STANCE rungs' names wear (`_policy_rung_line`'s `font_size 0`). The two are peer AXES, and
-        # rendering the second one at hint size made the whole decision read as a footnote to the
-        # first. The gate/pause notes below it stay at hint size, where they belong.
+        # **THE SAME SIZE THE STANCE RUNGS' NAMES WEAR** (`POLICY_PICKER_NAME_FONT_SIZE`). The two are
+        # peer AXES, and rendering the second one at hint size made the whole decision read as a
+        # footnote to the first. It used to say this by carrying NO override at all, which was true
+        # only while the rung name carried none either; that stopped being true when the preset face
+        # was stepped down, and the tie is written out now rather than implied. The gate/pause notes
+        # below it stay at hint size, where they belong.
+        done.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         done.add_theme_color_override("font_color", HudStyle.HEALTHY)
         done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         set_label_tooltip(done, tooltip)
@@ -561,6 +583,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
         var box := CheckBox.new()
         box.text = face
         box.tooltip_text = tooltip
+        box.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         # **WITHOUT THIS THE BOX IS NOT THERE.** The stock CheckBox art is drawn for a light surface,
         # so on this console the unchecked indicator reserves its width and paints nothing — an offer
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
@@ -621,7 +644,7 @@ static func _policy_rung_cell(btn: Button, title: String, metric: String,
     var stack := VBoxContainer.new()
     stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stack.add_theme_constant_override("separation", HudWorkVocab.POLICY_PICKER_FACE_SEPARATION)
-    stack.add_child(_policy_rung_line(title, tint, 0))
+    stack.add_child(_policy_rung_line(title, tint, HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE))
     if metric != "":
         stack.add_child(_policy_rung_line(metric,
             Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
@@ -630,16 +653,16 @@ static func _policy_rung_cell(btn: Button, title: String, metric: String,
     cell.add_child(pad)
     return cell
 
-## One line of a rung's face. `font_size` 0 leaves the theme's own size — what line 1 wants, so the
-## rung name renders at exactly the size the button's `text` did before the face became Labels.
+## One line of a rung's face, at the size its row of the type scale carries. Line 1 used to pass 0 —
+## "leave the theme's own size" — which is how a preset came to be rendered at the panel's largest
+## type; both lines are explicit now (`POLICY_PICKER_NAME_FONT_SIZE` / `_METRIC_FONT_SIZE`).
 static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Label:
     var label := Label.new()
     label.text = text
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     label.add_theme_color_override("font_color", tint)
-    if font_size > 0:
-        label.add_theme_font_size_override("font_size", font_size)
+    label.add_theme_font_size_override("font_size", font_size)
     return label
 
 ## **THE FLOOR CONTROL** — the three intent PRESETS as a radio over `on_pick(floor: float)`, with the
@@ -716,8 +739,14 @@ static func build_floor_picker(
         btn.tooltip_text = HudFormat.join_tooltip_lines([name_line, note])
         # EXPAND_FILL on the CELL (which is what the grid lays out now), so the presets sharing a row
         # are equal width and fill the panel content width.
-        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), metric,
-            HudStyle.button_font_color(variant, btn.disabled))
+        # **A PRESET AT REST IS QUIETER THAN A BUTTON AT REST.** `button_font_color` answers `INK` for
+        # a ghost, which is the right weight for an ACTION; a preset is a shortcut to a value sitting
+        # above the chart that is the real control, so an unpicked one reads `INK_DIM`. The selected
+        # and disabled answers are the shared table's, unchanged — this steps only the resting one.
+        var tint := HudStyle.button_font_color(variant, btn.disabled)
+        if not is_selected and not btn.disabled:
+            tint = HudStyle.INK_DIM
+        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), metric, tint)
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
@@ -766,9 +795,15 @@ static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxCon
 ## rule the player has to infer from a stepper going dead. A target the wire cannot price
 ## (`NO_CREW_ANSWER` — a dead-season patch has no throughput to divide by) is not rendered at all,
 ## rather than shown as a zero that would read as "nobody is needed".
+## **THEY ARE PILLS ON THE CREW'S OWN LINE, not full-width boxes on a row of their own.** A target is
+## a VALUE you can jump to, while the stepper beside it is a control you operate, and the two shapes
+## have to say which is which: two boxed buttons spanning the panel read as the primary action of the
+## whole sheet, which is the Assign button's job. `CREW_TARGET_COUNT_META` carries the count, because
+## the face is two Labels over an empty-`text` Button (a count and its label at one size are one
+## undifferentiated phrase) and `btn.text` is therefore empty.
 static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callable) -> HBoxContainer:
     var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
     for spec in [
         [CREW_TARGET_CLEAR, int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
             HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP],
@@ -779,17 +814,55 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         if count == SourceForecast.NO_CREW_ANSWER:
             continue
         var btn := Button.new()
-        btn.text = HudComposeVocab.CREW_TARGET_FACE_FORMAT % [count, String(spec[2])]
         btn.tooltip_text = String(spec[3])
         btn.set_meta(CREW_TARGET_META, String(spec[0]))
-        # The target the crew is ALREADY on wears the selected face, so the two numbers double as a
+        btn.set_meta(CREW_TARGET_COUNT_META, count)
+        # The target the crew is ALREADY on wears the selected fill, so the two numbers double as a
         # readout of where the current staffing sits between them.
-        HudStyle.apply_button(btn, "primary" if workers == count else "ghost")
-        btn.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
-        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        var selected := workers == count
+        HudStyle.apply_pill_button(btn, selected)
         btn.pressed.connect(func() -> void: on_pick.call(count))
-        row.add_child(btn)
+        row.add_child(_crew_target_pill(btn, count, String(spec[2]),
+            HudStyle.button_font_color("primary" if selected else "ghost")))
     return row
+
+## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
+## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
+## `Button.text`. The COUNT leads at the pill's own size in full ink (it is what the player compares
+## against the stepper); the label naming which answer it is follows, one step down and one step
+## quieter. Both tints derive from the ONE colour the caller resolved, so a selected pill moves as a
+## unit; never give the label a colour of its own.
+static func _crew_target_pill(btn: Button, count: int, label_text: String,
+        tint: Color) -> MarginContainer:
+    var cell := MarginContainer.new()
+    cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    cell.add_child(btn)
+    var pad := MarginContainer.new()
+    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    pad.add_theme_constant_override("margin_left", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_right", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_top", HudStyle.PILL_PADDING_V)
+    pad.add_theme_constant_override("margin_bottom", HudStyle.PILL_PADDING_V)
+    var face := HBoxContainer.new()
+    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    face.add_theme_constant_override("separation", HudComposeVocab.CREW_TARGET_FACE_SEPARATION)
+    face.add_child(_pill_face_line(str(count), tint,
+        HudComposeVocab.CREW_TARGET_COUNT_FONT_SIZE))
+    face.add_child(_pill_face_line(label_text,
+        Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
+        HudComposeVocab.CREW_TARGET_LABEL_FONT_SIZE))
+    pad.add_child(face)
+    cell.add_child(pad)
+    return cell
+
+static func _pill_face_line(text: String, tint: Color, font_size: int) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.add_theme_color_override("font_color", tint)
+    label.add_theme_font_size_override("font_size", font_size)
+    return label
 
 ## Severity → the dot and the text tint, in the raid verdict's own ok/slow/blocked vocabulary. Kept
 ## beside the widget rather than on `SourceForecast`, which states the verdict and owns no palette.
@@ -823,7 +896,135 @@ static func build_verdict_line(verdict: Dictionary) -> HBoxContainer:
     text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     text.add_theme_color_override("font_color", tint)
-    text.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
+    text.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_VERDICT_FONT_SIZE)
     row.add_child(text)
     return row
+
+## The READOUT's own well — the bordered box the yields row, the verdict and the aside share. Returns
+## the `PanelContainer`'s inner column, so a caller adds registers to it and never sees the chrome.
+static func build_readout_box(parent: Container) -> VBoxContainer:
+    var box := PanelContainer.new()
+    box.add_theme_stylebox_override("panel", HudStyle.readout_stylebox())
+    box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudComposeVocab.READOUT_SEPARATION)
+    box.add_child(column)
+    parent.add_child(box)
+    return column
+
+## **THE YIELDS ROW** — the readout's first and loudest register, because it is the ANSWER: what this
+## crew, at this floor, brings home per turn. Each entry of `rows` is a
+## `SourceForecast.yield_rows`-shaped `{account, value}`, rendered as a big tabular NUMBER beside a
+## small uppercase UNIT carrying the account's destination (`2.34  FOOD/TURN → CAMP`) — the routing
+## suffix one step quieter still, because it is part of the unit rather than a third fact.
+##
+## **A ROW EXISTS ONLY WHERE THE VECTOR PAYS.** The array is `yield_rows`' answer verbatim, so a cash
+## crop has no food row and a wolf has none either — `provisionsPerBiomass` is genuinely `0` on both,
+## which makes `0.00 food` a FALSE reading rather than an empty one. Never synthesise a row here.
+##
+## `note` is the take's own qualifier (`· renewable`, or the overdraw sentence) and `waste` the
+## whole-animal line where one applies; both sit in the row's own flow at the unit's size in the tint
+## the caller resolved, so a warning never has to compete with the number it is warning about.
+static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
+        waste: String) -> HFlowContainer:
+    var flow := HFlowContainer.new()
+    flow.set_meta(YIELDS_ROW_META, true)
+    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    flow.add_theme_constant_override("h_separation", HudComposeVocab.READOUT_YIELD_H_SEPARATION)
+    flow.add_theme_constant_override("v_separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
+    for row in rows:
+        flow.add_child(_yield_reading(row, number_tint))
+    if note != "":
+        flow.add_child(_readout_unit_label(note, note_tint))
+    if waste != "":
+        flow.add_child(_readout_unit_label(waste, HudStyle.WARN))
+    return flow
+
+## One account's reading: the number, then the unit + its route. `unit` and `route` are the CALLER's
+## none-of-my-business — a hunt states a whole-animal rate in the quarry's own name and routes it
+## nowhere — so a row may carry either as its own override of the account table.
+const YIELD_ROW_UNIT := "unit"
+const YIELD_ROW_ROUTE := "route"
+const YIELD_ROW_NUMBER := "number"
+static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
+    var account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
+    var pair := HBoxContainer.new()
+    pair.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_PART_SEPARATION)
+    var number := Label.new()
+    number.text = String(row.get(YIELD_ROW_NUMBER,
+        SourceForecast.format_magnitude(float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))))
+    number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    number.add_theme_color_override("font_color", number_tint)
+    number.add_theme_font_size_override("font_size",
+        HudComposeVocab.READOUT_YIELD_NUMBER_FONT_SIZE)
+    pair.add_child(number)
+    var unit := String(row.get(YIELD_ROW_UNIT,
+        SourceForecast.YIELD_ACCOUNT_UNITS.get(account, "")))
+    var route := String(row.get(YIELD_ROW_ROUTE,
+        SourceForecast.YIELD_ACCOUNT_ROUTES.get(account, "")))
+    # The route rides the unit Label rather than a third one: at `READOUT_ROUTE_ALPHA` of the same
+    # ink it reads as the unit's tail, which is what it is, and a separate Label would let the two
+    # wrap apart onto different lines.
+    pair.add_child(_readout_unit_label(
+        HudComposeVocab.READOUT_ROUTE_FORMAT % [unit, route] if route != "" else unit,
+        HudStyle.INK_FAINT))
+    return pair
+
+## The readout's small-print Label — the unit, the route, the take's qualifier and the waste line all
+## share one size, because they are all annotations on the number beside them.
+static func _readout_unit_label(text: String, tint: Color) -> Label:
+    var label := Label.new()
+    label.text = text.to_upper()
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.add_theme_color_override("font_color", tint)
+    label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_YIELD_UNIT_FONT_SIZE)
+    return label
+
+## The readout's ASIDE register — the quietest thing on the sheet, cut off from the verdict above it
+## by a DASHED rule. A solid hairline is a division between two blocks of equal standing (that is what
+## `HudStyle.hairline_stylebox` draws); the aside is a footnote to what is above it, and the dashes
+## are what say so. Returns the whole block, so a caller adds one child.
+static func build_readout_aside(lines: Array) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.READOUT_ASIDE_SEPARATION)
+    block.add_child(build_dashed_rule())
+    for line in lines:
+        var label := Label.new()
+        label.text = String(line)
+        label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_ASIDE_FONT_SIZE)
+        block.add_child(label)
+    return block
+
+## A 1px DASHED horizontal rule. Godot has no dashed border on any `StyleBox`, so it is drawn — via
+## the `draw` SIGNAL rather than a `Control` subclass, since this module is all-`static` and a
+## one-rule widget does not earn a script of its own.
+static func build_dashed_rule() -> Control:
+    var rule := Control.new()
+    rule.custom_minimum_size = Vector2(0.0, HudStyle.DASHED_RULE_HEIGHT)
+    rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    # **WITHOUT THIS THE RULE IS INVISIBLE.** A Control draws once on entering the tree, BEFORE its
+    # container has laid it out, so the first (and only) pass runs at `size.x == 0` and the dash loop
+    # never executes a single iteration — a rule that is silently absent rather than wrong.
+    rule.resized.connect(rule.queue_redraw)
+    # **THE THIN-LINE PRIMITIVE, NOT A WIDTH-1 ONE, AND THAT IS NOT A STYLE CHOICE.** `draw_line` with
+    # an explicit width builds a QUAD one unit tall — and this client renders through a `canvas_items`
+    # stretch at a fractional scale (~0.78), so that quad covers 0.78 of a device pixel and whether it
+    # rasterises at all is decided by where the rule happens to land. Measured: it vanished entirely,
+    # and it vanished just as completely painted in `SIGNAL` cyan, which is what ruled out "too faint"
+    # as the explanation. Godot's thin-line primitive (`width <= 0`, the default) is one DEVICE pixel
+    # whatever the scale, which is exactly what a hairline wants. A `draw_rect` of the same height
+    # fails the same way.
+    rule.draw.connect(func() -> void:
+        var y := rule.size.y * 0.5
+        var x := 0.0
+        while x < rule.size.x:
+            var dash := minf(HudStyle.DASHED_RULE_DASH, rule.size.x - x)
+            rule.draw_line(Vector2(x, y), Vector2(x + dash, y), HudStyle.LINE_SOFT)
+            x += HudStyle.DASHED_RULE_DASH + HudStyle.DASHED_RULE_GAP)
+    return rule
 

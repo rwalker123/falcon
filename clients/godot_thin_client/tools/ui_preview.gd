@@ -1787,6 +1787,12 @@ func _ready() -> void:
 	# first pixel of movement. Driving the signal directly is the only way to test it headlessly: the
 	# chart must SURVIVE, and the verdict must have re-read against the new floor.
 	var live_chart := _find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META)
+	# **AND SO MUST THE YIELDS — the reading the drag is AIMED at.** Reported from play: the verdict
+	# followed the drag while the food/trade numbers sat frozen, catching up only on release when the
+	# rebuild lands. Captured BEFORE the emit, because the only assertion that can see that bug is a
+	# CHANGE: the stale row is a perfectly valid, perfectly findable node, so "the yields row is still
+	# there" passes with the defect fully restored.
+	var yields_before := _yields_text(_hud._drawercompose._compose_sheet)
 	live_chart.emit_signal("floor_changed", FLOOR_CHART_ABOVE_STOCK, false)
 	# **THE FRAME IS LOAD-BEARING.** `queue_free` is DEFERRED, so a rebuild leaves the old chart both
 	# valid and findable for the rest of the frame it happened on — every same-frame form of this
@@ -1798,6 +1804,10 @@ func _ready() -> void:
 		is_instance_valid(live_chart))
 	_assert_hud("…and the verdict has re-read against the dragged floor, without that rebuild",
 		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	var yields_after := _yields_text(_hud._drawercompose._compose_sheet)
+	_assert_hud("…and so have the YIELDS, which are what the player is dragging TOWARD (%s → %s)"
+		% [yields_before, yields_after],
+		yields_before != "" and yields_after != "" and yields_after != yields_before)
 	# **THE DRAG'S ONLY AFFORDANCE, which no frame can show either.** The whole plot is the drag
 	# target — grabbing a 1px line would be unusable — so nothing about the chart's SHAPE says it can
 	# be dragged, and a screenshot cannot carry a cursor. Reported from play: the pointer stayed an
@@ -1948,13 +1958,13 @@ func _ready() -> void:
 	# THE GREEN LINE AND THE DEAL'S MIDDLE TERM, both read off the RENDERED sheet. They are two different
 	# producers over one patch and one crew; the fix is only real if they now carry the same figure —
 	# and it is the sim's `min(w × per_worker, ceiling × dip)`, not the undipped labour take.
-	var build_green := _label_text_containing(
-		_hud._drawercompose._compose_sheet, SourceForecast.YIELD_TOOLTIP_RENEWABLE)
+	var build_green := _yields_text(_hud._drawercompose._compose_sheet)
 	var build_deal := _label_text_containing(
 		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
 	print("ui_preview: build crew  green=%s  deal=%s" % [build_green, build_deal])
 	_assert_hud("the green forecast line quotes the DIPPED take the sim pays (%s)"
-		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE))
+		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE)
+		and build_green.contains(SourceForecast.YIELD_RENEWABLE_NOTE.to_upper()))
 	_assert_hud("…and the deal's 'while building' term is the SAME number, not a second answer",
 		build_deal.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % BUILD_CREW_DIPPED_TAKE)
 		and build_deal.contains(IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
@@ -4732,7 +4742,8 @@ func _ready() -> void:
 	# axis back proves the header agrees with the stepper rather than the two being wrong together.
 	_assert_hud("…and the stepper it agrees with is built on THIS herd's own (empty) improvement axis",
 		_hud._compose.hunt_improvement() == SourceForecast.IMPROVEMENT_NONE
-		and _has_label_containing(_hud._drawercompose._compose_sheet, HudComposeVocab.HUNT_CREW_LABEL))
+		and _crew_row_label(_hud._drawercompose._compose_sheet)
+			== HudComposeVocab.HUNT_CREW_LABEL.to_upper())
 	_hud._drawercompose.close_compose_sheet()
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_improvement(SourceForecast.IMPROVEMENT_NONE)
@@ -5736,8 +5747,28 @@ func _crew_target_count(root: Node, key: String) -> int:
 	var button := _find_crew_target(root, key)
 	if button == null:
 		return CREW_TARGET_ABSENT
-	# The face is `<N>  <label>`; the count is what the harness can assert, the label being vocabulary.
-	return int(button.text.split(" ")[0])
+	# **READ OFF THE META, NEVER THE FACE.** The pill's face is a two-Label stack over an
+	# empty-`text` Button (a count and its label at one size are one undifferentiated phrase), so the
+	# old `button.text.split(" ")[0]` finds an empty string here — and `int("")` is 0, which is a REAL
+	# reading of this control ("nothing needs clearing"). It would have passed silently.
+	return int(button.get_meta(HudWidgets.CREW_TARGET_COUNT_META, CREW_TARGET_ABSENT))
+
+## The READOUT's yields row as one string — every Label in it, joined. The row is found by
+## `HudWidgets.YIELDS_ROW_META`, its identity: its face is a flow of Labels at three sizes (the
+## number, the unit + its route, the take's qualifier), so there is no single `text` to match and a
+## needle search across the sheet would find whichever Label happened to hold it. "" when no readout
+## rendered, which fails a `contains` assertion rather than satisfying it.
+func _yields_text(root: Node) -> String:
+	var row := _find_meta_node(root, HudWidgets.YIELDS_ROW_META)
+	return " ".join(_face_lines(row)) if row != null else ""
+
+## The CREW ROW's label — `HUNTERS` / `HERDERS` / `FORAGERS`, the crew noun the sheet resolved off the
+## composed improvement axis. By meta rather than by text, because the sheet's EYEBROW two rows above
+## carries the same noun in the same case (`ASSIGN HUNTERS`), so a search would match it and pass
+## without ever reaching the crew row. "" when there is no crew row.
+func _crew_row_label(root: Node) -> String:
+	var node := _find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
+	return (node as Label).text if node is Label else ""
 
 func _find_crew_target(root: Node, key: String) -> Button:
 	if root == null:

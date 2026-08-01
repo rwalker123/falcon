@@ -167,11 +167,27 @@ to emit a floor for a source that has no floor axis, which the sheet would then 
 rebuilds the compose controls, which `queue_free`s the chart — and Godot routes motion events to the
 node that took the press, so a rebuild mid-drag ends the drag on the first pixel. `floor_changed`
 therefore carries a **`committed` flag**: false while dragging (the sheet refills only the readings
-that follow the floor, through `DrawerComposeController._refresh_floor_live` and the two small
-`FLOOR_LIVE_*` hosts it keeps), true on release, keyboard step or preset. Rebuilding per motion event
-does not merely cost more — it cannot work. Keyboard: arrows step (Shift takes `FLOOR_STEP`), Home
-strips, End leaves untouched; the value is quantised to whole percent, the resolution
-`floor_percent` displays at, so the flag, the preset test and the command cannot disagree.
+that follow the floor, through `DrawerComposeController._refresh_floor_live` and the live hosts it
+keeps), true on release, keyboard step or preset. Rebuilding per motion event does not merely cost
+more — it cannot work. Keyboard: arrows step (Shift takes `FLOOR_STEP`), Home strips, End leaves
+untouched; the value is quantised to whole percent, the resolution `floor_percent` displays at, so the
+flag, the preset test and the command cannot disagree.
+
+**THE LIVE SET IS A REGISTRY, AND WHAT IT LEFT OUT WAS THE POINT OF THE PANEL.** It began as two named
+keys, the crew targets and the verdict — and the **YIELDS ROW was outside it**, so a player dragging
+the floor watched the verdict move while the food and trade numbers *they were dragging toward* sat
+frozen until release. Reported from play. `_register_live(hosts, host, model, workers, fill)` now takes
+any container plus the `fill(host, model, workers)` that refills it, and `_refresh_floor_live` walks
+the list, so the rule is stated once: **anything whose value depends on the floor belongs in the set —
+the yields, both crew targets, the verdict, the idle-crew note and the teaching line — and anything
+that does not must stay out, or the drag pays for work it does not need.** Adding a reading is one
+call, not a new key plus a new type test plus a new branch.
+
+The assertion that can see this is a **CHANGE, never a presence**: a stale yields row is a perfectly
+valid, perfectly findable node, so "the row is still there" passes with the bug fully restored. The
+harness captures `_yields_text` before driving `floor_changed(f, committed = false)` and requires it to
+differ after (sabotage-verified by taking the yields host back out of the set — exactly that one
+assertion fails, the chart-survives and verdict-re-read pair beside it still passing).
 
 **THE CAP IS RESOLVED BEFORE THE CHART ON BOTH SHEETS.** The chart, the crew targets and the verdict
 are all read against a CREW, so composing them ahead of `clamp_*_count` made the panel state a verdict
@@ -230,6 +246,76 @@ weight, so a dead-season patch honestly moves no biomass per gatherer. `can_pric
 guard between it and every quotient; both targets answer `NO_CREW_ANSWER` there and **render not at
 all**, rather than a `0` that would read as "nobody is needed". Frame + sabotage-verified assertion:
 `forage_dead_season`.
+
+### THE SHEET'S LOWER HALF: A ROW-LABELLED CREW LINE OVER A BOUNDED READOUT
+
+The panel's subject is the chart and the numbers under it. It did not read that way: the three intent
+presets rendered at the theme's default size (the largest type on the sheet), the crew was a body-size
+heading with the stepper flung to the far right and two full-width boxed targets on a row of their
+own, and the take / verdict / notes were three unrelated lines at roughly one size with the floor's
+teaching line — the panel's least urgent information — standing between the chart and the stepper as a
+wrapped paragraph. Reported from play, against the prototype the panel was built from.
+
+**The type scale is now explicit at every rung, and the presets are the quietest control on the
+sheet.** `POLICY_PICKER_NAME_FONT_SIZE` (12) / `POLICY_PICKER_METRIC_FONT_SIZE` (11) keep the
+name-leads-numbers-support step they always had, one register lower; a preset the player is not on also
+reads `INK_DIM` rather than the `INK` `button_font_color` gives every ghost BUTTON, because a preset is
+a shortcut to a value rather than an action. **The improvement control moved with it** — its face
+carried NO size override, which said "the same size the stance rungs' names wear" only for as long as
+those carried none either, so the tie is written out (`POLICY_PICKER_NAME_FONT_SIZE` on all three of
+its label/checkbox states) instead of implied. The two are peer AXES and must not drift apart again.
+
+**The crew is ONE line** (`DrawerComposeController._mount_crew_row`): a row-label in the treatment
+every other section label gets (`alloc_section_label`), then the stepper inline at the left and both
+targets as **pills** (`HudStyle.apply_pill_button`) in a wrapping flow beside it. The shape carries the
+distinction — the stepper is a control you operate, a target is a value you jump to — and a pill's face
+is a two-Label stack over an empty-`text` Button for the same reason a rung's is, so **the count a
+harness reads lives on `HudWidgets.CREW_TARGET_COUNT_META`**. A `btn.text.split(" ")[0]` on one now
+yields `int("")` == 0, which is a REAL reading of that control (*nothing needs clearing*) and would
+have passed silently.
+
+**The readout is one bounded well with three registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
+
+| register | what it answers | treatment |
+|---|---|---|
+| **yields** | what this crew brings home at this floor | 15px tabular number + 10px uppercase unit and route (`2.34  FOOD/TURN → CAMP`) |
+| **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
+| **aside** | the idle-crew note and the floor's teaching line | 11px `INK_FAINT` under a dashed rule |
+
+**The route is a property of the ACCOUNT, written down once** (`SourceForecast.YIELD_ACCOUNT_ROUTES`):
+provisions feed the working band and fodder feeds the pens it keeps, so both land in the CAMP, while
+trade goods are banked to the faction-wide stockpile. There is no role branch anywhere — the vector
+does the routing.
+
+**THE RENDER-ONLY-WHERE-THE-VECTOR-PAYS RULE SURVIVED THE RESIZE, because the row set is not composed
+here.** `SourceForecast.yield_rows` is the STRUCTURAL half of that rule and is now its one definition —
+`yield_components`, `picker_products` and `extractive_take_pair` differ only in how they SPELL a
+component and all three iterate it. So a cash crop still shows no food row and a wolf shows none
+either, and the single surviving zero is still `zero_account`'s. A widget that synthesised a row would
+put the false `0.00 food` straight back on the loudest line of the panel.
+
+**The hunt web's row is an ANIMAL RATE, not an account** — `≈0.41 Grey Wolf/turn`, unit-free by
+construction, so it carries its own unit and NO route: a body is not an account and has nowhere to be
+sent. `HUNT_DELIVERED_FORMAT` is now composed from the two halves the readout needs separately
+(`HUNT_ANIMAL_RATE_FACE_FORMAT` + `_UNIT_FORMAT`), so the sentence and the split row cannot name the
+quarry two different ways. Both preview producers were split the same way: a `_*_yield_model` states
+the rows, the joined text, the overdraw flag and the waste note, and `_local_*_preview_bbcode` is a
+thin formatter over it — one derivation, two surfaces.
+
+**THE DASHED RULE IS DRAWN, AND A WIDTH-1 `draw_line` IS INVISIBLE HERE.** Godot has no dashed border
+on any `StyleBox`, so `HudWidgets.build_dashed_rule` draws it — but a `draw_line` with an explicit
+width builds a QUAD one unit tall, and this client renders through a `canvas_items` stretch at a
+fractional scale (~0.78), so that quad covers 0.78 of a device pixel and whether it rasterises at all
+depends on where the rule lands. It vanished entirely, and it vanished just as completely painted in
+`SIGNAL` cyan — which is what ruled out "too faint". Godot's **thin-line primitive** (`width <= 0`, the
+default) is one DEVICE pixel whatever the scale; `draw_rect` of the same height fails the same way. The
+rule also needs `resized.connect(queue_redraw)`: a Control draws once on entering the tree, before its
+container has laid it out, so the only pass runs at `size.x == 0` and the dash loop never iterates.
+
+**The expedition branch keeps the old shape and keeps its teaching line in place**, deliberately: a
+raid's forecast is the sim's forward-simulated trip rather than a per-turn account vector, so it builds
+no readout box and has nowhere to put an aside. It does take the new crew row (the stepper alone — no
+chart model means no floor axis, hence no targets to price), so the shared spine is unchanged.
 
 ### THE VERDICT LINE IS THE POINT OF THE REDESIGN (§7.1)
 
@@ -435,13 +521,14 @@ the readout has no food line and the chart does not care, a floor being a fracti
 IDENTITY (`FLOOR_CHART_META` / `CREW_TARGET_META` / `VERDICT_META`) — the chart carries no text at all
 and the other two wear faces made of live numbers, so a text match would find nothing and pass.
 
-**THE DRAG CONTRACT IS PINNED BY A PNG-LESS PAIR** on `floor_chart_drawn_down`, since no frame can
+**THE DRAG CONTRACT IS PINNED BY A PNG-LESS TRIPLE** on `floor_chart_drawn_down`, since no frame can
 show it: the harness drives `floor_changed(f, committed = false)` on the live chart, then asserts the
-chart node SURVIVES and the verdict has re-read. **The settle between the two halves is load-bearing**
-— `queue_free` is deferred, so a rebuild leaves the old chart both valid and findable for the rest of
-that frame, and every same-frame form of the survival assertion passes with the bug restored
-(measured, twice). Each half is sabotage-verified against a different mutation: forcing the rebuild
-fails the first, no-oping `_refresh_floor_live` fails the second.
+chart node SURVIVES, the verdict has re-read, and the YIELDS text has CHANGED. **The settle before the
+assertions is load-bearing** — `queue_free` is deferred, so a rebuild leaves the old chart both valid
+and findable for the rest of that frame, and every same-frame form of the survival assertion passes
+with the bug restored (measured, twice). Each is sabotage-verified against a different mutation:
+forcing the rebuild fails the first, no-oping `_refresh_floor_live` fails the second, and taking the
+yields host back out of the live set fails the third and only the third.
 
 **`_compose_forage` GOES THROUGH `_floorify` NOW, LIKE ITS HERD TWIN.** Most states pass a FRESH
 fixture to it rather than the object `_show_tile` already converted, so the sheet was built from a

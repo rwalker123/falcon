@@ -74,11 +74,59 @@ const FLOOR_CONTROL_LABEL := "Leave standing:"
 # owes the player both — the rate model had only one and so never had to name either. Both are exact
 # and both are clickable; neither is a hidden rule. The face is `<N> clear it now`, the count leading
 # because it is what the player compares against the stepper beside it.
-const CREW_TARGET_FACE_FORMAT := "%d  %s"
 const CREW_TARGET_CLEAR_LABEL := "clear it now"
 const CREW_TARGET_HOLD_LABEL := "hold it after"
 const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
 const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
+
+# ---- THE CREW ROW: ONE LINE, NOT A HEADING WITH A CONTROL PUSHED OFF THE OTHER EDGE -------------
+# The crew is ONE statement — *this many hands, and here are the two numbers worth matching* — so the
+# stepper and both targets ride a single wrapping line under a quiet row-label. It used to render as a
+# body-size heading with the stepper flung to the far right by a spacer, and the two targets as
+# full-width boxed buttons on a row of their own: three rows and two competing edges for one decision,
+# in the half of the panel that is supposed to be quieter than the chart above it.
+#
+# The label gets the SAME treatment every other section label in this HUD gets
+# (`HudWidgets.alloc_section_label` — small, uppercase, `INK_FAINT`), because that is what it is: a
+# row-label, not a heading.
+const CREW_ROW_LABEL_SEPARATION := 4
+const CREW_ROW_SEPARATION := 6
+
+# A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
+# operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
+# compare against the stepper) over the label naming which of the two answers it is — so, like the
+# preset rung's two-line face, it cannot live in one `Button.text`.
+const CREW_TARGET_COUNT_FONT_SIZE := 13
+const CREW_TARGET_LABEL_FONT_SIZE := 11
+const CREW_TARGET_FACE_SEPARATION := 5
+
+# ---- THE READOUT: ONE BOX, THREE REGISTERS (docs/plan_harvest_floor.md §7.1/§7.2) ---------------
+# The take, the verdict and the asides answer three different questions, and the panel's bottom half
+# read as three unrelated lines at one size until they were bounded and given three deliberately
+# different registers. Loudest first, because the order is the reading order:
+#
+#   a. THE YIELDS ROW — the answer. A big tabular number beside a small uppercase unit and the
+#      account's destination (`2.34  FOOD/TURN → CAMP`). The render-only-where-the-vector-pays rule is
+#      unchanged: a cash crop shows no food line and a wolf shows no food line at all, because
+#      `provisionsPerBiomass` is genuinely 0 there and a `0.00 food` reading would be false, not empty.
+#   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
+#   c. THE ASIDE — the quietest register, cut off by a dashed rule: the idle-crew note and the floor's
+#      own teaching line. It is the panel's least urgent information and must never be its loudest.
+const READOUT_SEPARATION := 7
+const READOUT_YIELD_NUMBER_FONT_SIZE := 15
+const READOUT_YIELD_UNIT_FONT_SIZE := 10
+const READOUT_YIELD_PART_SEPARATION := 6
+# Wide enough that two account readings never read as one four-part phrase; the vertical gap is what
+# a wrapped third account drops by.
+const READOUT_YIELD_H_SEPARATION := 18
+const READOUT_YIELD_V_SEPARATION := 4
+# The routing suffix is part of the UNIT, one step quieter — `→ camp` says where the number lands, not
+# what it is.
+const READOUT_ROUTE_FORMAT := "%s → %s"
+const READOUT_ROUTE_ALPHA := 0.7
+const READOUT_VERDICT_FONT_SIZE := 12
+const READOUT_ASIDE_FONT_SIZE := 11
+const READOUT_ASIDE_SEPARATION := 4
 
 # Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
 # +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its
@@ -548,17 +596,35 @@ const LOCAL_HUNT_YIELD_FORMAT := "≈ %s"
 # with the same ⚠ / WARN amber. This is the COMPOSE preview, which derives the flag from the steady
 # forecast via `_is_overdraw` (there is no assignment yet, so no wire `overdraws` field); the CONFIRMED
 # allocation rows instead read the sim-answered `overdraws` bool off the assignment.
-const LOCAL_HUNT_OVERDRAW_SUFFIX := " — overdraws the herd"
+const LOCAL_HUNT_OVERDRAW_NOTE := "overdraws the herd"
+const LOCAL_HUNT_OVERDRAW_SUFFIX := " — " + LOCAL_HUNT_OVERDRAW_NOTE
 
 # The FORAGE twin of the hunt overdraw suffix: a take above the patch's Sustain ceiling draws its
 # biomass down. Forage is smooth food (no whole-animal rhythm), so the preview shows a bare rate + this.
-const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — overdraws the patch"
+const LOCAL_FORAGE_OVERDRAW_NOTE := "overdraws the patch"
+const LOCAL_FORAGE_OVERDRAW_SUFFIX := " — " + LOCAL_FORAGE_OVERDRAW_NOTE
+
+# The two bare notes by LABOR KIND, for the readout's yields row — which sets the clause as its own
+# small-print part beside the number rather than joining it into the sentence above. Keyed exactly as
+# `FLOOR_STRIP_CONSEQUENCE` is (the `SourceForecast.LABOR_KIND_*` values), so one lookup answers "what
+# does overdrawing this web cost?" wherever it is asked.
+const LOCAL_OVERDRAW_NOTES := {
+	"forage": LOCAL_FORAGE_OVERDRAW_NOTE,
+	"hunt": LOCAL_HUNT_OVERDRAW_NOTE,
+}
 
 # CARRY-AWARE ANIMALS-FIRST preview. A hunt delivers WHOLE animals via a kill-credit bank, so an
 # unquantized food/turn rate credits fractional-animal throughput the crew can never carry home (the sim
 # itself quantizes to whole bodies). The line instead leads with the honest carry-aware delivered rate in
 # ANIMALS: `≈<rate> <animal>/turn`, rate = delivered ÷ food_per_animal (`_hunt_delivered_and_waste`).
-const HUNT_DELIVERED_FORMAT := "≈%s %s/turn"
+# **THE LINE AND THE READOUT'S ROW ARE THE SAME UTTERANCE SPLIT AT THE SPACE.** The sentence form
+# joins them; the readout's yields row sets the rate as a big number beside its unit as small print,
+# so it needs the two halves separately. Written structurally, so the split and the joined line can
+# never name the quarry two different ways. `≈` rides the NUMBER — it qualifies the rate, not the
+# animal.
+const HUNT_ANIMAL_RATE_FACE_FORMAT := "≈%s"
+const HUNT_ANIMAL_RATE_UNIT_FORMAT := "%s/turn"
+const HUNT_DELIVERED_FORMAT := HUNT_ANIMAL_RATE_FACE_FORMAT + " " + HUNT_ANIMAL_RATE_UNIT_FORMAT
 
 # The delivered animals-per-turn rate is a long-run average of lumpy whole-animal delivery — you take
 # WHOLE animals, so per-turn delivery varies. A STABLE, worker-independent disclaimer naming the

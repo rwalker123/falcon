@@ -304,6 +304,17 @@ func _hunt_floor_takes(herd: Dictionary) -> Dictionary:
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
 func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float, workers: int) -> String:
+    return _yield_preview_bbcode(_hunt_yield_model(band, herd, floor, workers),
+        HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX)
+
+## The hunt web's yield model — the animal twin of `_forage_yield_model`, in the same shape.
+##
+## **ITS ROW IS AN ANIMAL RATE, NOT AN ACCOUNT.** A hunt delivers whole bodies, so the honest reading
+## is the quarry's own name per turn (`≈0.41 Grey Wolf/turn`) — a ratio of a take to one animal's
+## worth of the same product, and therefore UNIT-FREE: it reads identically for a deer and a wolf
+## without naming either currency, which is the whole reason it is stated that way. So the row carries
+## its own `unit` and NO route: a body is not an account, and it has nowhere to be sent.
+func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int) -> Dictionary:
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
     # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
     # none of them). It is the floor at which the herd settles on its most productive biomass, so a
@@ -311,49 +322,57 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
     var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.FLOOR_FOOD_PEAK)
     var sustain_ceiling := float(sustain_rates["ceiling"])
     if sustain_ceiling < 0.0:
-        return ""
+        return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var sustainable := sustain_ceiling * output
     var dw := _hunt_delivered_and_waste(band, herd, floor, workers)
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
         # back to the smoothed per-turn line rather than regress the readout. It is stated in whichever
-        # currency the take is actually in: a trade take never reads as food.
+        # currency the take is actually in: a trade take never reads as food, so THIS path's row is a
+        # real account and wears the account table's unit and route.
         var take := _hunt_take_rate(herd, floor, workers)
         if not bool(take.get("available", false)):
-            return ""
+            return {}
         var actual := float(take["rate"]) * output
         var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
-        var text: String = HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
-            SourceForecast.format_trade(actual) if trade_axis else SourceForecast.format_yield(actual))
-        if _is_overdraw(actual, sustainable):
-            return "[color=#%s]%s %s%s[/color]" % [
-                HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, text, HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX]
-        return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
+        var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
+            else SourceForecast.YIELD_ACCOUNT_FOOD
+        return {
+            YIELD_MODEL_ROWS: [{
+                SourceForecast.YIELD_ROW_ACCOUNT: account,
+                SourceForecast.YIELD_ROW_VALUE: actual,
+            }],
+            YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
+                SourceForecast.format_trade(actual) if trade_axis \
+                else SourceForecast.format_yield(actual)),
+            YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable),
+            YIELD_MODEL_WASTE: "",
+        }
     # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
     # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
-    # throughput the crew can't haul home. The animal rate is UNIT-FREE — a ratio of a take to one
-    # animal's worth of the same product — so this line reads identically for a deer and a wolf without
-    # naming either currency.
+    # throughput the crew can't haul home.
     var fpa := float(dw["per_animal"])
     var delivered := float(dw["delivered"])
     var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
-    var primary := HudComposeVocab.HUNT_DELIVERED_FORMAT % [_format_animal_rate(animal_rate), SourceForecast.herd_display_name(herd)]
+    var rate_text := _format_animal_rate(animal_rate)
+    var quarry := SourceForecast.herd_display_name(herd)
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
-    # exceeds the herd's Sustain ceiling (Surplus/Deplete draw it down); waste = a kill the crew couldn't
-    # carry. The Sustain reading stays green + "· renewable".
-    var body := ""
-    if _is_overdraw(delivered, sustainable):
-        body = "[color=#%s]%s %s%s[/color]" % [
-            HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, primary, HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX]
-    else:
-        body = "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, primary, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
+    # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
-    if waste_pct > 0.0:
-        # Waste is its OWN concern — always WARN-tinted, even when the main line is green.
-        body += "[color=#%s]%s[/color]" % [
-            HudStyle.WARN_HEX, SourceForecast.HUNT_WASTE_SUFFIX_FORMAT % int(round(waste_pct * 100.0))]
-    return body
+    return {
+        YIELD_MODEL_ROWS: [{
+            SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
+            SourceForecast.YIELD_ROW_VALUE: animal_rate,
+            HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
+            HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
+            HudWidgets.YIELD_ROW_ROUTE: "",
+        }],
+        YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
+        YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable),
+        YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
+            if waste_pct > 0.0 else "",
+    }
 
 ## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
 ## Forage is SMOOTH (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
@@ -383,34 +402,71 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## take and let a genuinely overdrawing build read green.
 func _local_forage_preview_bbcode(band: Dictionary, tile_info: Dictionary, floor: float,
         workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
+    return _yield_preview_bbcode(_forage_yield_model(band, tile_info, floor, workers, improvement),
+        HudComposeVocab.LOCAL_FORAGE_OVERDRAW_SUFFIX)
+
+## The structured half of the line above — and the SHARED shape both webs answer in, so the readout's
+## yields row is built from the same numbers the sentence quotes rather than from a second derivation.
+## `{}` is the graceful degrade (an unknown forecast, or a source that pays into no account at all);
+## `rows` is `SourceForecast.yield_rows`' answer verbatim, so the render-only-where-the-vector-pays
+## rule is obeyed by construction and no zero can be reintroduced by a caller.
+const YIELD_MODEL_ROWS := "rows"
+const YIELD_MODEL_TEXT := "text"
+const YIELD_MODEL_OVERDRAW := "overdraw"
+const YIELD_MODEL_WASTE := "waste"
+func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
+        workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
     # The FOOD-PEAK ceiling is the patch's sustainable yield (what it will pay forever), so a take
     # above it draws the patch down — the same bar the hunt version uses, for the same reason.
     var sustain := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
         HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
     if not bool(sustain["known"]):
-        return ""
+        return {}
     var forecast := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
         HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, improvement)
     if not bool(forecast["known"]):
-        return ""
+        return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var actual := SourceForecast.expected_yield(forecast, workers, band)
     var actual_trade := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_trade", "ceiling_trade")
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
-    var text := SourceForecast.yield_components(actual, actual_trade, actual_fodder,
-        String(forecast["zero_account"]))
-    if text == "":
+    var zero_account := String(forecast["zero_account"])
+    var rows := SourceForecast.yield_rows(actual, actual_trade, actual_fodder, zero_account)
+    if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
+        return {}
+    return {
+        YIELD_MODEL_ROWS: rows,
+        YIELD_MODEL_TEXT: SourceForecast.yield_components(
+            actual, actual_trade, actual_fodder, zero_account),
+        YIELD_MODEL_OVERDRAW: _is_overdraw(actual, float(sustain["ceiling"]) * output) \
+            or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
+            or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output),
+        YIELD_MODEL_WASTE: "",
+    }
+
+## One yield model → the one-line BBCode preview, for both webs. Green + `· renewable` inside the
+## source's own regrowth, WARN-amber with the shared ⚠ and the web's own overdraw clause outside it;
+## the waste note, where a web has one, is ALWAYS amber even when the line around it is green,
+## because a kill the crew could not carry is its own concern.
+func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String:
+    if model.is_empty():
         return ""
-    var overdraws := _is_overdraw(actual, float(sustain["ceiling"]) * output) \
-        or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
-        or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)
-    if overdraws:
-        return "[color=#%s]%s %s%s[/color]" % [
-            HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, text, HudComposeVocab.LOCAL_FORAGE_OVERDRAW_SUFFIX]
-    return "[color=#%s]%s%s[/color]" % [HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
+    var text := String(model[YIELD_MODEL_TEXT])
+    var body := ""
+    if bool(model[YIELD_MODEL_OVERDRAW]):
+        body = "[color=#%s]%s %s%s[/color]" % [
+            HudStyle.WARN_HEX, HudComposeVocab.OVERHUNT_FLAG, text, overdraw_suffix]
+    else:
+        body = "[color=#%s]%s%s[/color]" % [
+            HudStyle.HEALTHY_HEX, text, SourceForecast.YIELD_TOOLTIP_RENEWABLE]
+    var waste := String(model[YIELD_MODEL_WASTE])
+    if waste != "":
+        body += "[color=#%s]%s%s[/color]" % [
+            HudStyle.WARN_HEX, SourceForecast.TRADE_COMPONENT_SEPARATOR, waste]
+    return body
 
 ## A "Band: [▼]" dropdown row for the assign controls: lists every player band (positional
 ## "Band N" names, matching the roster) and selects `selected_band`; `on_pick` fires with the
@@ -767,61 +823,147 @@ func _emit_extend_pen(x: int, y: int) -> void:
 # whole builder, which `queue_free`s the children — including the control that was clicked. That is
 # harmless for a button and fatal for a DRAG: Godot routes motion to the node that took the press
 # until the button comes up, so freeing the chart mid-drag ends the drag on the first pixel of
-# movement. The chart therefore reports live motion separately from its commit, and the two readings
-# that follow the floor — the crew targets and the verdict — live in their own small hosts that a
-# live change REFILLS in place. On release the ordinary rebuild runs and everything re-reads.
+# movement. The chart therefore reports live motion separately from its commit, and every reading that
+# follows the floor lives in its own small host that a live change REFILLS in place. On release the
+# ordinary rebuild runs and everything re-reads.
 #
-# The hosts are keyed rather than held as members because two sheets build them and each rebuild
-# makes new ones; a member would outlive the nodes it names.
-const FLOOR_LIVE_TARGETS := "crew_targets"
-const FLOOR_LIVE_VERDICT := "verdict"
-const FLOOR_LIVE_ON_PICK := "on_pick"
+# **THE SET IS A REGISTRY, NOT A FIXED PAIR OF KEYS, AND WHAT IT MISSED WAS THE POINT OF THE PANEL.**
+# It held the crew targets and the verdict; the YIELDS ROW — the food and trade numbers the player is
+# dragging TOWARD — was outside it, so the one reading the gesture is aimed at was the one frozen
+# while the gesture ran, catching up only on release. Reported from play. The rule the registry
+# encodes: anything whose value depends on the floor belongs in it (the yields, both crew targets, the
+# verdict, the idle-crew note and the teaching line), and anything that does not must stay out, or the
+# drag pays for work it does not need.
+#
+# Each entry is the HOST to refill plus the `fill(host, model, workers)` that refills it, so adding a
+# reading is one `_register_live` call rather than a new key, a new type test and a new branch in
+# `_refresh_floor_live`. The registry is passed around rather than held as a member because two sheets
+# build one each and every rebuild makes new nodes; a member would outlive the nodes it names.
+const FLOOR_LIVE_NODE := "node"
+const FLOOR_LIVE_FILL := "fill"
 
-## Mount the two crew targets under the stepper, remembering the host + the staffing Callable so a
-## live drag can refill them. Nothing is mounted for a source with no chart model (an expedition, a
-## managed rung, a source the wire published no curve for) — there is no floor axis to target.
-func _mount_crew_targets(parent: VBoxContainer, hosts: Dictionary, model: Dictionary,
-        workers: int, on_pick: Callable) -> void:
+## Register a host that FOLLOWS THE FLOOR, and fill it once. The CALLER owns the node — a crew target
+## sits inline in the crew row, a readout register inside the readout box — so the host is passed in
+## rather than made here.
+func _register_live(hosts: Array, host: Container, model: Dictionary, workers: int,
+        fill: Callable) -> void:
+    hosts.append({FLOOR_LIVE_NODE: host, FLOOR_LIVE_FILL: fill})
+    fill.call(host, model, workers)
+
+## Refill every live host against a model composed at the floor the drag is currently on. Each host is
+## re-checked for validity: a snapshot can rebuild the sheet under a drag, and a stale reference here
+## would be a freed node.
+func _refresh_floor_live(hosts: Array, model: Dictionary, workers: int) -> void:
     if not bool(model.get("known", false)):
         return
-    var host := VBoxContainer.new()
-    host.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    parent.add_child(host)
-    hosts[FLOOR_LIVE_TARGETS] = host
-    hosts[FLOOR_LIVE_ON_PICK] = on_pick
-    host.add_child(HudWidgets.build_crew_targets(model, workers, on_pick))
+    for entry in hosts:
+        var host: Variant = entry.get(FLOOR_LIVE_NODE, null)
+        if not (host is Container and is_instance_valid(host)):
+            continue
+        HudWidgets.clear_children(host as Container)
+        (entry[FLOOR_LIVE_FILL] as Callable).call(host, model, workers)
 
-## Mount the verdict + the idle-crew note in the readout, remembering the host for the same reason.
-func _mount_verdict(parent: VBoxContainer, hosts: Dictionary, model: Dictionary) -> void:
-    if not bool(model.get("known", false)):
+## **THE CREW ROW** (§7.6) — a quiet row-label, then the stepper and BOTH crew targets on one wrapping
+## line beneath it. It used to be three rows: a body-size heading with the stepper flung to the far
+## right by a spacer, and the two targets as full-width boxed buttons of their own. That is three rows
+## and two competing edges for one statement, and it made the panel's second-loudest thing a control
+## the chart above it had already decided most of.
+##
+## A source with NO chart model gets the stepper alone: an expedition, a managed rung-3 source, a
+## source the wire published no curve for — none of them has a floor axis, so there is nothing to
+## target. That is a different answer from `NO_CREW_ANSWER`, which is a source that HAS one and whose
+## crew cannot be priced (a dead-season patch); `build_crew_targets` drops those, one target each.
+func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, count: int,
+        plus_enabled: bool, on_change: Callable, model: Dictionary, on_pick: Callable) -> void:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
+    var row_label := HudWidgets.alloc_section_label(crew_label)
+    row_label.set_meta(HudWidgets.CREW_ROW_LABEL_META, true)
+    block.add_child(row_label)
+    var line := HFlowContainer.new()
+    line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    line.add_theme_constant_override("h_separation", HudComposeVocab.CREW_ROW_SEPARATION)
+    line.add_theme_constant_override("v_separation", HudComposeVocab.CREW_ROW_SEPARATION)
+    var stepper := HBoxContainer.new()
+    stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    HudWidgets.add_stepper_controls(stepper, count, plus_enabled, on_change)
+    line.add_child(stepper)
+    if bool(model.get("known", false)):
+        var targets := HBoxContainer.new()
+        # The pills are shorter than the stepper's boxed buttons, so they centre against it rather
+        # than hanging off the flow row's top edge.
+        targets.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+        line.add_child(targets)
+        _register_live(hosts, targets, model, count,
+            func(host: Container, live: Dictionary, workers: int) -> void:
+                host.add_child(HudWidgets.build_crew_targets(live, workers, on_pick)))
+    block.add_child(line)
+    parent.add_child(block)
+
+## **THE READOUT** (§7.1, §7.2, §7.7) — the sheet's bottom half as ONE bounded box with three
+## deliberately different registers, loudest first because that is the reading order:
+##
+##   a. THE YIELDS — what this crew, at this floor, brings home. The answer, and therefore the largest
+##      type on the sheet. `yields_at(floor, crew)` recomposes it, which is what lets it follow a drag.
+##   b. THE VERDICT — which of the crew and the floor is binding, with its severity dot.
+##   c. THE ASIDE — the idle-crew note and the floor's own teaching line, under a dashed rule at the
+##      quietest size on the sheet. The teaching line used to stand between the chart and the stepper
+##      as a two-line paragraph, which made the panel's least urgent information one of its loudest
+##      elements.
+##
+## No box at all when there is nothing to put in it — a source with no floor axis AND no priceable
+## take has no readout, rather than an empty well.
+func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, workers: int,
+        yields_at: Callable, labor_kind: String) -> void:
+    var known := bool(model.get("known", false))
+    var floor_value := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
+    if not known and (yields_at.call(floor_value, workers) as Dictionary).is_empty():
         return
-    var host := VBoxContainer.new()
-    host.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    parent.add_child(host)
-    hosts[FLOOR_LIVE_VERDICT] = host
-    _fill_verdict_host(host, model)
+    var column := HudWidgets.build_readout_box(parent)
+    var yields_host := VBoxContainer.new()
+    yields_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_child(yields_host)
+    _register_live(hosts, yields_host, model, workers,
+        func(host: Container, live: Dictionary, crew: int) -> void:
+            _fill_yields_host(host, yields_at.call(
+                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), crew), labor_kind))
+    if known:
+        var verdict_host := VBoxContainer.new()
+        verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        column.add_child(verdict_host)
+        _register_live(hosts, verdict_host, model, workers,
+            func(host: Container, live: Dictionary, _crew: int) -> void:
+                host.add_child(HudWidgets.build_verdict_line(live.get("verdict", {}))))
+    var aside_host := VBoxContainer.new()
+    aside_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_child(aside_host)
+    _register_live(hosts, aside_host, model, workers,
+        func(host: Container, live: Dictionary, _crew: int) -> void:
+            var lines: Array[String] = []
+            var idle_note := String(live.get("idle_note", ""))
+            if idle_note != "":
+                lines.append(idle_note)
+            lines.append(HudFormat.floor_hint(
+                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind))
+            host.add_child(HudWidgets.build_readout_aside(lines)))
 
-func _fill_verdict_host(host: VBoxContainer, model: Dictionary) -> void:
-    host.add_child(HudWidgets.build_verdict_line(model.get("verdict", {})))
-    var idle_note := String(model.get("idle_note", ""))
-    if idle_note != "":
-        host.add_child(HudWidgets.alloc_hint_label(idle_note))
-
-## Refill the two live hosts against a model composed at the floor the drag is currently on. Every
-## host is re-checked for validity: a snapshot can rebuild the sheet under a drag, and a stale
-## reference here would be a freed node.
-func _refresh_floor_live(hosts: Dictionary, model: Dictionary, workers: int) -> void:
-    if not bool(model.get("known", false)):
+## One yields model into the readout's first register. **The overdraw state moves the NUMBER, not just
+## a suffix**: the row is the loudest thing in the box, so a take the source cannot pay forever has to
+## read amber where the player is already looking. The waste note is always amber, even under a green
+## take — a kill the crew could not carry is its own concern.
+func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -> void:
+    if model.is_empty():
         return
-    var targets: Variant = hosts.get(FLOOR_LIVE_TARGETS, null)
-    if targets is VBoxContainer and is_instance_valid(targets):
-        HudWidgets.clear_children(targets)
-        (targets as VBoxContainer).add_child(HudWidgets.build_crew_targets(model, workers,
-            hosts.get(FLOOR_LIVE_ON_PICK, Callable())))
-    var verdict: Variant = hosts.get(FLOOR_LIVE_VERDICT, null)
-    if verdict is VBoxContainer and is_instance_valid(verdict):
-        HudWidgets.clear_children(verdict)
-        _fill_verdict_host(verdict as VBoxContainer, model)
+    var overdraws := bool(model[YIELD_MODEL_OVERDRAW])
+    var note := HudComposeVocab.OVERHUNT_FLAG + " " + String(
+        HudComposeVocab.LOCAL_OVERDRAW_NOTES.get(labor_kind, "")) if overdraws         else SourceForecast.YIELD_RENEWABLE_NOTE
+    host.add_child(HudWidgets.build_yields_row(
+        model[YIELD_MODEL_ROWS],
+        HudStyle.WARN if overdraws else HudStyle.INK,
+        note,
+        HudStyle.WARN if overdraws else HudStyle.HEALTHY,
+        String(model[YIELD_MODEL_WASTE])))
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
@@ -953,7 +1095,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # in `huntTripEstimates`, not a per-turn drawdown of the herd by a resident crew, so projecting
     # one here would draw a curve the raid does not follow.
     var chart_model: Dictionary = {}
-    var live_hosts := {}
+    var live_hosts: Array[Dictionary] = []
     if not is_expedition:
         chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
             HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
@@ -984,18 +1126,22 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
-    target.add_child(HudWidgets.alloc_hint_label(HudFormat.floor_hint(
-        _compose.hunt_floor(), SourceForecast.LABOR_KIND_HUNT, is_expedition)))
-    # THE CREW, beneath the stance it staffs — with its cap note, which explains THIS stepper's dead `+`
-    # and therefore travels with it.
-    target.add_child(HudWidgets.build_worker_stepper(
-        "Party" if is_expedition else crew_label, _compose.hunt_count(), _compose.hunt_count() < cap,
+        # **THE EXPEDITION KEEPS ITS TEACHING LINE HERE**, because it has no readout box to put one in:
+        # a raid's forecast is the sim's forward-simulated trip, not a per-turn account vector, so the
+        # branch below states it as a sentence rather than as yields. The local branch's copy travels
+        # into the readout's aside instead — see `_mount_readout`.
+        target.add_child(HudWidgets.alloc_hint_label(HudFormat.floor_hint(
+            _compose.hunt_floor(), SourceForecast.LABOR_KIND_HUNT, true)))
+    # THE CREW, on ONE line with both targets (§7.6) — with its cap note, which explains THIS stepper's
+    # dead `+` and therefore travels with it. Clicking a target staffs it, clamped to the same cap the
+    # `+` obeys: a target is a shortcut to a count, never a way past the ceiling.
+    _mount_crew_row(target, live_hosts,
+        HudComposeVocab.COMPOSE_FIELD_PARTY if is_expedition else crew_label,
+        _compose.hunt_count(), _compose.hunt_count() < cap,
         func(n: int) -> void:
             _compose.set_hunt_count(clampi(n, 0, cap))
-            _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
-    # THE TWO CREW TARGETS, beneath the stepper they set (§7.6). Clicking one staffs it, clamped to
-    # the same cap the `+` obeys — a target is a shortcut to a count, never a way past the ceiling.
-    _mount_crew_targets(target, live_hosts, chart_model, _compose.hunt_count(),
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target),
+        chart_model,
         func(count: int) -> void:
             _compose.set_hunt_count(clampi(count, 0, cap))
             _build_herd_assign_controls(_live_herd(herd_id, herd), target))
@@ -1044,18 +1190,16 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # number, so it now rides the RUNG's tooltip beside the metric it qualifies (`_hunt_floor_takes`
         # fills the take pair's `note`) — the panel is where the hunt sheet could least afford a sentence
         # the forage sheet has no counterpart for. The window computation is unchanged.
-        # LIVE per-turn yield for the FLOOR being composed (no carry cap on a local hunt, so
-        # turns-to-fill is meaningless — food/turn is the number that decides it). The floor states the
-        # take, the improvement control below states the deal.
-        var yield_line := _local_hunt_preview_bbcode(
-            band, herd, _compose.hunt_floor(), _compose.hunt_count())
-        if yield_line != "":
-            target.add_child(HudWidgets.forecast_label(yield_line))
-        # **THE VERDICT** (§7.1) — which of the two independent statements is binding, the crew or the
-        # floor. It sits in the READOUT, under the take it qualifies: the numbers above say what this
-        # crew gets, and this says whether the intent above them is one they can actually carry out.
-        # The idle-crew note rides with it (§7.2) — reported, never acted on.
-        _mount_verdict(target, live_hosts, chart_model)
+        # **THE READOUT** — the LIVE per-turn take for the floor being composed (no carry cap on a
+        # local hunt, so turns-to-fill is meaningless — the delivered rate is the number that decides
+        # it), then the verdict (§7.1: which of the two independent statements is binding, the crew or
+        # the floor), then the idle-crew note (§7.2 — reported, never acted on) and the teaching line.
+        # The take is recomposed from the LIVE floor, so the numbers the player is dragging toward
+        # move while the drag runs.
+        _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
+            func(floor_value: float, crew: int) -> Dictionary:
+                return _hunt_yield_model(band, herd, floor_value, crew),
+            SourceForecast.LABOR_KIND_HUNT)
         # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
         # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated
         # in the rung's own hint ("It must stay staffed or the herd goes wild again"), so a second
@@ -1525,7 +1669,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # a floor means the same thing on both webs. What differs is what the curve DOES: a patch's
     # sampled regrowth never goes negative (it reseeds from bare ground), so its projection at floor 0
     # bottoms out and climbs where a herd's crashes. That asymmetry comes off the wire, not from here.
-    var live_hosts := {}
+    var live_hosts: Array[Dictionary] = []
     var chart_model := SourceForecast.floor_chart_model(tile_info,
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(), composed_improvement,
@@ -1543,15 +1687,16 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                         HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(),
                         composed_improvement, HudComposeVocab.FORAGE_CREW_LABEL.to_lower()),
                         _compose.forage_count())))
-    target.add_child(HudWidgets.alloc_hint_label(
-        HudFormat.floor_hint(_compose.forage_floor(), SourceForecast.LABOR_KIND_FORAGE)))
-    target.add_child(HudWidgets.build_worker_stepper(
-        HudComposeVocab.FORAGE_CREW_LABEL, _compose.forage_count(), _compose.forage_count() < cap,
+    # THE CREW, on ONE line with both targets (§7.6) — each clamped to the same cap the `+` obeys, so
+    # a target is a shortcut to a count and never a way past the ceiling. The floor's TEACHING LINE
+    # used to stand here, between the chart and the stepper; it reads in the readout's aside now,
+    # where the panel's quietest information belongs.
+    _mount_crew_row(target, live_hosts, HudComposeVocab.FORAGE_CREW_LABEL, _compose.forage_count(),
+        _compose.forage_count() < cap,
         func(n: int) -> void:
             _compose.set_forage_count(clampi(n, 0, cap))
-            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)))
-    # THE TWO CREW TARGETS, beneath the stepper they set (§7.6) — clamped to the same cap the `+` obeys.
-    _mount_crew_targets(target, live_hosts, chart_model, _compose.forage_count(),
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target),
+        chart_model,
         func(count: int) -> void:
             _compose.set_forage_count(clampi(count, 0, cap))
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
@@ -1569,16 +1714,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Gating on the raw count instead would fix the no-op and break the unassign the Work zone needs.
     var is_unassign := _compose.forage_count() <= 0 and current > 0
     var is_noop := _compose.forage_count() <= 0 and current <= 0
-    # THE STANCE's live per-turn take + sustainability verdict (`+2.74 /turn · renewable` /
-    # `⚠ … — overdraws the patch`). EVERY stance renders it now: the "one yield row per rung" split
-    # existed because a build verb occupied this same control and a dip→payoff pair cannot share a line
-    # with a bare rate. They no longer share one — the improvement control states the deal below.
-    var yield_line := _local_forage_preview_bbcode(
-        band, tile_info, _compose.forage_floor(), _compose.forage_count(), composed_improvement)
-    if yield_line != "":
-        target.add_child(HudWidgets.forecast_label(yield_line))
-    # THE VERDICT + the idle-crew note (§7.1, §7.2), in the readout under the take they qualify.
-    _mount_verdict(target, live_hosts, chart_model)
+    # **THE READOUT** — the take, the verdict, and the idle-crew note + teaching line, in one bounded
+    # box at three registers (§7.1, §7.2). The take is recomposed from the LIVE floor, which is what
+    # lets the numbers the player is dragging toward move while the drag runs.
+    _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
+        func(floor_value: float, crew: int) -> Dictionary:
+            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement),
+        SourceForecast.LABOR_KIND_FORAGE)
     # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for
     # an UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.
