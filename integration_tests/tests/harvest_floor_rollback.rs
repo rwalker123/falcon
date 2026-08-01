@@ -193,9 +193,14 @@ fn the_default_floor_is_the_food_peak() {
         "a fresh assignment defaults to the biomass at which a source grows fastest"
     );
     assert!(
-        core_sim::floor_teaches(DEFAULT_ESCAPEMENT_FLOOR)
-            && !core_sim::floor_overdraws(DEFAULT_ESCAPEMENT_FLOOR),
-        "…so it neither overdraws nor forfeits the lesson"
+        !core_sim::floor_overdraws(DEFAULT_ESCAPEMENT_FLOOR),
+        "…so it does not overdraw"
+    );
+    assert_eq!(
+        core_sim::learn_multiplier(DEFAULT_ESCAPEMENT_FLOOR),
+        1.0,
+        "…and it is the floor the learning curve is normalised on, so the ladder's stated build and \
+         lesson lengths are the ones a fresh assignment gets"
     );
 }
 

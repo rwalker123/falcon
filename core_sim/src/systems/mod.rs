@@ -38,8 +38,8 @@ use crate::{
     demographics_config::{DemographicsConfig, DemographicsConfigHandle, DemographicsConsumption},
     expedition_config::ExpeditionConfig,
     fauna::{
-        self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield,
-        EcologyPhase, Herd, HerdDensityMap, HerdRegistry, FODDERING_DISCOVERY_ID,
+        self, herd_capacity, herd_ecology, herd_hunt_yield, pen_upkeep, sustainable_yield, Herd,
+        HerdDensityMap, HerdRegistry, FODDERING_DISCOVERY_ID,
     },
     fauna_config::{Diet, FaunaConfig, FaunaConfigHandle, HuntYield},
     flora_config::FloraConfigHandle,
@@ -57,8 +57,8 @@ use crate::{
     hydrology::HydrologyState,
     influencers::{InfluencerCultureResonance, InfluencerImpacts},
     intensification::{
-        knows, source_crew_needed, LadderConfig, LadderConfigHandle, RungDef, RungKey,
-        RUNG_TIMESCALE_UNSCALED,
+        knows, source_crew_needed, LadderConfig, LadderConfigHandle, LadderKnowledge, RungDef,
+        RungKey, MANAGED_SOURCE_FLOOR, RUNG_TIMESCALE_UNSCALED,
     },
     labor_config::{LaborConfig, LaborConfigHandle},
     mapgen::MountainType,

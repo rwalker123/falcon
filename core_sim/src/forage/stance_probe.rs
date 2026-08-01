@@ -240,6 +240,11 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
 
     for turn in 1..=PROBE_TURNS {
         regrow_patch(&mut patch, forage);
+        let biomass_before = patch.biomass;
+        // The escapement room, PRE-take — the work predicate the labor arm's Cultivate gate reads
+        // (`systems::labor::crew_is_working_the_source`).
+        let standing_above_floor =
+            escapement_ceiling(floor, biomass_before, patch.carrying_capacity);
         let provisions = forage_take(
             &mut patch,
             &composition,
@@ -257,17 +262,17 @@ fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
             provisions_over_build += provisions;
             patch.tended_this_turn = true;
             let eligible = match verb {
-                // The Cultivate arm's gate, minus the knowledge check this probe grants.
-                Improvement::Cultivate => {
-                    patch.ecology_phase == EcologyPhase::Thriving && patch.species.is_some()
-                }
+                // The Cultivate arm's gate, minus the knowledge check this probe grants. The health
+                // gate is gone (`docs/plan_harvest_floor.md` §3.2); the escapement room replaced it.
+                Improvement::Cultivate => standing_above_floor > 0.0 && patch.species.is_some(),
                 // `accrue_field`'s gate is the site rule + Seed Selection and NOTHING else — no
-                // health check, deliberately (sown ground starts Collapsing).
+                // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
             let accrual = rung.build_accrual(
                 improvement,
                 eligible,
+                floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(rung),
             );
@@ -477,6 +482,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             let accrual = pen.build_accrual(
                 improvement,
                 eligible,
+                floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(pen),
             );
@@ -518,6 +524,9 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
 
     for turn in 1..=PROBE_TURNS {
         regrow_biomass(&mut herd, &fauna);
+        // The escapement room, PRE-take and PRE-quantisation — the work predicate the labor arm's
+        // Tame gate reads (`systems::labor::crew_is_working_the_source`).
+        let standing_above_floor = escapement_ceiling(floor, herd.biomass, cap);
         let take = hunt_take(
             &mut herd,
             FULLY_STAFFED_HUNTERS,
@@ -533,10 +542,17 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
                 .provisions;
             herd.tamed_this_turn = true;
-            let eligible =
-                herd.can_domesticate() && herd.ecology_phase == FaunaEcologyPhase::Thriving;
-            let accrual =
-                pastoral.build_accrual(improvement, eligible, timescale, full_crew(pastoral));
+            // The Tame arm's gate, minus the knowledge check this probe grants. The health gate is
+            // gone (`docs/plan_harvest_floor.md` §3.2); what replaced it is the **escapement room**,
+            // read pre-take and pre-quantisation, never "an animal died".
+            let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
+            let accrual = pastoral.build_accrual(
+                improvement,
+                eligible,
+                floor,
+                timescale,
+                full_crew(pastoral),
+            );
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual);
                 if herd.is_domesticated() {
@@ -1011,48 +1027,57 @@ fn probe_build_and_teach_axis() {
         ("animal:pen", RungKey::AnimalPen, Some(Improvement::Corral)),
     ];
 
-    println!("\n=== Part 3 — what each rung TEACHES, per stance (RungDef::knowledge_earned) ===");
-    println!("(`eligible` is the caller's health gate — uniformly `phase == Thriving` at both earn sites)");
+    println!("\n=== Part 3 — what each rung TEACHES, per floor (RungDef::knowledge_accrual) ===");
+    println!("(`eligible` is the caller's 'is anything standing above the floor' gate; the AMOUNT is the floor's, normalised so the food peak is x1.0)");
     println!(
-        "{:<16} {:<10} {:>18} {:>18}",
-        "rung", "stance", "eligible=true", "eligible=false"
+        "{:<16} {:<10} {:>24} {:>18}",
+        "rung", "floor", "eligible=true", "eligible=false"
     );
     for (label, key, _) in rungs {
         let rung = ladder.rung(key);
-        for stance in REPORT_FLOORS {
+        for floor in REPORT_FLOORS {
             println!(
-                "{:<16} {:<10} {:>18} {:>18}",
+                "{:<16} {:<10} {:>24} {:>18}",
                 label,
-                format!("{stance:.2}K"),
-                rung.knowledge_earned(stance, true)
-                    .map_or("-".to_string(), |id| id.to_string()),
-                rung.knowledge_earned(stance, false)
-                    .map_or("-".to_string(), |id| id.to_string()),
+                format!("{floor:.2}K"),
+                rung.knowledge_accrual(floor, true, &ladder.knowledge)
+                    .map_or("-".to_string(), |(id, amount)| format!(
+                        "{id} @ {amount:.4}"
+                    )),
+                rung.knowledge_accrual(floor, false, &ladder.knowledge)
+                    .map_or("-".to_string(), |(id, amount)| format!(
+                        "{id} @ {amount:.4}"
+                    )),
             );
         }
     }
 
-    println!("\n=== Part 3 — what each rung BUILDS per turn (RungDef::build_accrual) ===");
     println!(
-        "(the stance is NOT an argument — only the improvement and the caller's `eligible` are)"
+        "\n=== Part 3 — what each rung BUILDS per turn, per floor (RungDef::build_accrual) ==="
     );
     println!(
-        "{:<16} {:>10} {:>16} {:>16} {:>10}",
-        "rung", "dip", "accrual eligible", "accrual !eligible", "decay"
+        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor)"
+    );
+    println!(
+        "{:<16} {:>10} {:<10} {:>16} {:>16} {:>10}",
+        "rung", "dip", "floor", "accrual eligible", "accrual !eligible", "decay"
     );
     for (label, key, verb) in rungs {
         let rung = ladder.rung(key);
-        println!(
-            "{:<16} {:>10} {:>16.4} {:>16.4} {:>10.4}",
-            label,
-            verb.map_or("-".to_string(), |v| format!(
-                "x{}",
-                ladder.build_dip(Some(v))
-            )),
-            rung.build_accrual(verb, true, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
-            rung.build_accrual(verb, false, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
-            rung.build_decay(RUNG_TIMESCALE_UNSCALED),
-        );
+        for floor in REPORT_FLOORS {
+            println!(
+                "{:<16} {:>10} {:<10} {:>16.4} {:>16.4} {:>10.4}",
+                label,
+                verb.map_or("-".to_string(), |v| format!(
+                    "x{}",
+                    ladder.build_dip(Some(v))
+                )),
+                format!("{floor:.2}K"),
+                rung.build_accrual(verb, true, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+                rung.build_accrual(verb, false, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+                rung.build_decay(RUNG_TIMESCALE_UNSCALED),
+            );
+        }
     }
 }
 

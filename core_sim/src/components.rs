@@ -1332,7 +1332,7 @@ pub fn floor_is_valid(floor: f32) -> bool {
 }
 
 /// **Does a take at this floor draw the stock below what it sustains?** — THE ⚠ predicate
-/// ([`SourceYield::overdraws`]), and the exact inverse of [`floor_teaches`].
+/// ([`SourceYield::overdraws`]).
 ///
 /// It is `floor < MSY_BIOMASS_FRACTION`: *"you are drawing this below the food peak"*. The sustained
 /// take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an overdraw and a
@@ -1343,21 +1343,6 @@ pub fn floor_is_valid(floor: f32) -> bool {
 /// comparison mis-fires exactly where the player most needs the ⚠ to be trustworthy.
 pub fn floor_overdraws(floor: f32) -> bool {
     floor < crate::fauna::MSY_BIOMASS_FRACTION
-}
-
-/// **Does working a source at this floor teach the faction anything?**
-/// (`docs/plan_intensification_ladder.md` §4.2 — *"only stewardship teaches"*.) THE single source of
-/// that rule: [`crate::intensification::RungDef::knowledge_earned`] is its only reader.
-///
-/// **Stewardship = restraint, and restraint is where you stop.** You learn husbandry by *managing* a
-/// source, not by running it down, so this is `floor >= MSY_BIOMASS_FRACTION` — the exact inverse of
-/// [`floor_overdraws`].
-///
-/// **It is a step, and the step is what today's behaviour is.** The learning curve
-/// `docs/plan_harvest_floor.md` §3 specifies — `learn_mult = floor / MSY_BIOMASS_FRACTION`,
-/// continuous — is a separate mechanic that changes what a rung *earns*, not merely whether it earns.
-pub fn floor_teaches(floor: f32) -> bool {
-    floor >= crate::fauna::MSY_BIOMASS_FRACTION
 }
 
 /// **Is a raid at this floor a SERIES of trips** — repeated full-cap runs to the band and back until
@@ -1628,36 +1613,34 @@ impl Default for Tile {
 mod tests {
     use super::*;
 
-    /// **The stewardship rule** (`docs/plan_intensification_ladder.md` §4.2), stated over the floor:
-    /// a crew that stops at or above the food peak teaches, and one that draws below it overdraws
-    /// and teaches nothing. [`floor_teaches`] and [`floor_overdraws`] are defined as inverses of one
-    /// another, and this pins that they stay so across the whole legal range rather than only at the
-    /// four floors the current command surface can reach.
+    /// **The ⚠ predicate is the food peak, stated over the whole legal range** rather than at the
+    /// four floors the retired stance axis could reach: a crew that stops at or above the peak
+    /// cannot be overdrawing, and one that draws below it always is.
+    ///
+    /// Its former twin `floor_teaches` was **deleted** with the step it stated: the harvest floor
+    /// made learning a *rate* (`intensification::learn_multiplier`), so "does this teach" is no
+    /// longer a predicate anyone can ask.
     #[test]
-    fn floor_teaching_is_the_inverse_of_overdrawing() {
+    fn overdrawing_is_exactly_drawing_below_the_food_peak() {
+        let peak = crate::fauna::MSY_BIOMASS_FRACTION;
         // The whole legal range at a fine step, plus the boundary itself — the value at which the
-        // two predicates change hands, and therefore the only place an off-by-one can hide.
+        // predicate changes hands, and therefore the only place an off-by-one can hide.
         let mut floors: Vec<f32> = (0..=100).map(|step| step as f32 / 100.0).collect();
         floors.push(DEFAULT_ESCAPEMENT_FLOOR);
         for floor in floors {
             assert_eq!(
-                floor_teaches(floor),
-                !floor_overdraws(floor),
-                "floor {floor}: stewardship is exactly restraint — teaching and overdrawing are \
-                 inverses"
+                floor_overdraws(floor),
+                floor < peak,
+                "floor {floor}: the ⚠ is exactly 'below the food peak'"
             );
         }
         assert!(
-            floor_teaches(DEFAULT_ESCAPEMENT_FLOOR),
-            "the default floor is the food peak, so a fresh assignment teaches"
-        );
-        assert!(
-            !floor_teaches(STRIP_IT_BARE),
-            "stripping a source teaches nothing"
+            !floor_overdraws(DEFAULT_ESCAPEMENT_FLOOR),
+            "the default floor is the food peak, so a fresh assignment carries no ⚠"
         );
         assert!(
             floor_overdraws(STRIP_IT_BARE) && !floor_overdraws(1.0),
-            "…and the ⚠ reads the same way round: stripping overdraws, leaving it all does not"
+            "stripping overdraws, leaving it all does not"
         );
     }
 
@@ -1665,24 +1648,27 @@ mod tests {
     /// reads as an absent value rather than as the deliberate instruction it is.
     const STRIP_IT_BARE: f32 = 0.0;
 
-    /// **The earn rule is a STEP at the food peak**, pinned at the boundary rather than at a handful
-    /// of sample floors: the value the two predicates change hands at is the only place an off-by-one
-    /// can hide, and `>=` versus `>` there is the difference between the default assignment teaching
-    /// and not.
+    /// **The ⚠ boundary is closed above, open below** — pinned at the value itself rather than at a
+    /// handful of sample floors, because `>=` versus `>` there is the difference between the default
+    /// assignment carrying a warning and not.
+    ///
+    /// (`the_earn_step_falls_exactly_on_the_food_peak` was deleted with `floor_teaches`: there is no
+    /// step left to fall anywhere. Learning is now continuous in the floor — see
+    /// `intensification::learn_multiplier`.)
     #[test]
-    fn the_earn_step_falls_exactly_on_the_food_peak() {
+    fn the_overdraw_boundary_falls_exactly_on_the_food_peak() {
         let peak = crate::fauna::MSY_BIOMASS_FRACTION;
         assert!(
-            floor_teaches(peak),
-            "AT the peak teaches — a take there is exactly the regrowth, which is stewardship"
+            !floor_overdraws(peak),
+            "AT the peak is not an overdraw — a take there is exactly the regrowth"
         );
         assert!(
-            !floor_teaches(peak - f32::EPSILON),
-            "a hair below it does not — the step is closed above, open below"
+            floor_overdraws(peak - f32::EPSILON),
+            "a hair below it is — the boundary is closed above, open below"
         );
         assert!(
-            floor_teaches(1.0),
-            "and every floor above the peak teaches: under-harvest is restraint too"
+            !floor_overdraws(1.0),
+            "and no floor above the peak overdraws: under-harvest is restraint too"
         );
     }
 

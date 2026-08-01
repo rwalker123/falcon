@@ -15,11 +15,11 @@ use core_sim::{
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
     ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, WellbeingConfigHandle, NO_IMPROVEMENT_UNDERWAY,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
+    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    WellbeingConfigHandle,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -419,7 +419,6 @@ fn deplete_hunt_does_not_domesticate() {
 /// skim) is exactly the failure mode this guards.
 #[test]
 fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
-    let ladder = LadderConfig::builtin();
     const CAP: f32 = 4000.0;
     // The four *sustaining/extracting* policies in ascending harshness — the ladder the player reads.
     let axis = [0.5, 0.3, 0.15, 0.0];
@@ -436,9 +435,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             // the ordering is now a property of the floor table rather than of a multiplier ladder.
             let takes: Vec<f32> = axis
                 .iter()
-                .map(|p| {
-                    hunt_escapement_ceiling(*p, NO_IMPROVEMENT_UNDERWAY, biomass, CAP, &ladder)
-                })
+                .map(|p| hunt_escapement_ceiling(*p, biomass, CAP))
                 .collect();
             for pair in takes.windows(2) {
                 assert!(

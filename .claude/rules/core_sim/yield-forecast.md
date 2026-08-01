@@ -132,8 +132,16 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > composes
 >
 > ```text
-> ceiling(floor, rung) = max(0, B − floor·K) × <rung>BuildFraction × <account>PerBiomass
+> ceiling(floor)        = max(0, B − floor·K) × <account>PerBiomass
+> expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
 > ```
+>
+> **THE BUILD FRACTION MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1).
+> It moved there because dipping the ceiling made a deeper floor build for free — a fraction of a
+> bigger standing stock still filled the crew's baskets, so every stance completed a 25-turn Cultivate
+> on schedule. On throughput it is floor-independent by construction. The client-visible consequence:
+> a crew big enough to saturate the source's stock pays **no** dip, and the remedy for a slow build is
+> to add hands (at 25% carry, four times as many).
 >
 > **This is a deliberate, narrow exception to *"the sim exports the answer"*, and the exception is
 > sound for a stated reason.** That rule exists because a hunt take is rounded to WHOLE ANIMALS —
@@ -153,31 +161,24 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > `snapshot::RAID_FORECAST_FLOOR_SAMPLES` × party size, and the constant is named to keep those
 > samples from quietly re-becoming a set of stances — the launch command accepts any floor.
 >
-> Sim-side that is **`SourceYieldForecast::ceiling_at(floor, improvement)`** — one computation, which
-> answers *any* floor because the player drags a continuous one. It is backed by the forecast's
-> **terms** (`biomass`, `carrying_capacity`, `per_biomass_yield`, `build_dips`) rather than by stored
-> rows: four `ceiling_*` fields could only answer four questions, and every row added was a second
-> place the ceiling was computed. **The four wire rows are now `ceiling_for(policy)`, which IS
-> `ceiling_at(policy.escapement_floor(), None)`** — a projection of the one computation, so a row
-> cannot disagree with the take.
-> Two rungs keep two numbers for `ceiling_tame`'s original reason: the dials are independently tunable
-> and today's equality (0.25/0.25, 0.50/0.50) is a coincidence.
+> Sim-side that is **`SourceYieldForecast::ceiling_at(floor)`** — one computation, which answers *any*
+> floor because the player drags a continuous one. It is backed by the forecast's **terms**
+> (`biomass`, `carrying_capacity`, `per_biomass_yield`) rather than by stored rows: four `ceiling_*`
+> fields could only answer four questions, and every row added was a second place the ceiling was
+> computed.
 >
-> **THE DIP IS APPLIED INSIDE THE STANDING-STOCK CLAMP — `min(rate × dip, stock)`, never
-> `min(rate, stock) × dip`** — the order both take paths use (each dips inside its own
-> `*_escapement_ceiling` and *then* clamps to the standing stock). The forecast keeps the two terms
-> apart accordingly: the four `ceiling_*` rows are the **pre-clamp** stance ceilings and
-> `SourceYieldForecast::stock_cap` is the bound, which `ceiling_for` applies (so the wire value is
-> unchanged) and `ceiling_at` applies *second*, inside the same call.
+> **It takes no `improvement`, and that is what makes the curve composable at all.** With the build
+> dip on crew throughput a ceiling is purely `max(0, B − floor·K) × rate` — linear and exact in terms
+> already on the wire. The dip still ships (`BuildDips` sim-side, the `*BuildFraction` fields on the
+> wire) and is applied by **`fauna::forecast_expected_take`**, which multiplies the crew term; the
+> take path (`forage_take` / `systems::hunt_take`) reads the same `LadderConfig::build_dip` seam, so
+> forecast == actual holds per component with a build in flight
+> (`hunt_yield_vector::the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor`, swept
+> over the floor × both binding regimes × both build verbs).
 >
-> **The clamp is now INERT on both webs, and that is asserted rather than assumed.** An escapement
-> ceiling is `B − floor·K`, so `room × dip ≤ room ≤ B` for any floor `≥ 0` and any dip `≤ 1` — the two
-> orders agree everywhere, including on the drawn-down sources where the retired rate-based ceilings
-> did not commute (measured then on a pastoral `crag_goat` at `B = 0.20·K` under Deplete + Corral:
-> previewed `0.10·K`, paid `0.1375·K`). The `hunt_forecast_equals_actual_take…` sweep asserts
-> `ceiling_at(floor, improvement) == ceiling_at(floor, None) × dip` on every row at both stock levels,
-> which is the positive form
-> of the same guarantee. `stock_cap` stays populated for wire stability and as belt-and-braces.
+> The standing-stock clamp inside `ceiling_at` is **belt-and-braces and inert** — an escapement
+> ceiling is `B − floor·K ≤ B` for any floor `≥ 0` — and kept because a future ceiling that *could*
+> exceed the stock must not silently over-report. `stock_cap` stays populated for wire stability.
 >
 > A **rung-3 managed** source has `stock_cap: None` (it is never drawn down) and reports both
 > fractions as **`0`** (`BuildDips::NOTHING_LEFT_TO_BUILD` → `NO_BUILD_REMAINING_FRACTION`), which is
@@ -219,15 +220,17 @@ projection* is the sustained MSY. Pinned by
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
-- Each `ceiling*` = that policy's food/turn cap, **already clamped to the source's remaining biomass**.
+- `ceiling(floor)` = the stock standing above that floor, in food/turn, **already clamped to the
+  source's remaining biomass** (belt-and-braces — an escapement ceiling cannot exceed the stock).
 - Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales
   every field by the acting band's `PopulationCohortState.outputMultiplier` — a linear factor, so
   `max_useful_workers` is invariant to it.
-- Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
-  `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
-- **A crew BUILDING something floors that cap**, on both webs, because the take a build is paid is the
-  **dip** and inverting a dip asks for fewer hands than gathering the same source does:
-  `max_useful_workers(stance, rung) = max(ceil(ceiling / perWorker), <crew floor>)`. The herd's floor
+- Client composition: `expected(workers, floor, rung) = min(workers × perWorkerYield ×
+  <rung>BuildFraction, ceiling(floor))`, `max_useful_workers(floor, rung) = ceil(ceiling(floor) /
+  (perWorkerYield × <rung>BuildFraction))`.
+- **A crew BUILDING something floors that cap**, on both webs, because a build's crew is dipped and
+  inverting a dipped throughput could otherwise ask for fewer hands than the rung's own `crew_needed`:
+  `max_useful_workers(floor, rung) = max(ceil(ceiling / (perWorker × dip)), <crew floor>)`. The herd's floor
   is `herdersNeeded` / `herdersNeededIfManaged` (derived from the herd's size) and has shipped for
   slices; the patch's is the appended **`cultivateCrewNeeded` / `sowCrewNeeded`**, the rung's own
   `crew_needed`. **The same number is the build's denominator** — plant accrual is
@@ -246,11 +249,11 @@ projection* is the sustained MSY. Pinned by
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
-- forage (`forage.rs`): `forage_escapement_ceiling` (the stance's floor × the build dip, biomass) · `forage_per_worker_biomass`
+- forage (`forage.rs`): `forage_escapement_ceiling` (the stock standing above the floor, in biomass — **no dip**) · `forage_per_worker_biomass`
   (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
   `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
   `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
-- fauna (`fauna.rs`): `hunt_escapement_ceiling` (the stance's floor × the build dip) · the species'
+- fauna (`fauna.rs`): `hunt_escapement_ceiling` (the stock standing above the floor — **no dip**) · the species'
   `HuntYield::apply` (which retired the global `hunt_provisions`) ·
   **`managed_yield_biomass`** (the husbandry harvest, via `pen_yield_biomass`) · **`herd_ecology` /
   `herd_capacity`** (which ecology/capacity a herd lives under — *no call site may re-derive either*) —
@@ -286,11 +289,12 @@ pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::se
 what the turn then pays under unchanged conditions — **no jump** — and it is the same number the
 client's compose-time "Expected yield" row promises. Shape:
 - **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
-  workers, floor, improvement) = min(workers × per_worker_yield, forecast.ceiling_at(floor,
-  improvement))` — the ceiling at the **assignment's own floor**, dipped by whatever the crew is
-  building (`None` is the identity). Once the improvement *completes* the source is `::managed`,
-  whose ceiling is its `managed_production` at every floor, so this one lookup covers both sides of
-  every investment. The client preview, the seed, and the forecast==actual tests all call it.
+  workers, floor, improvement) = min(workers × per_worker_yield × build_dip(improvement),
+  forecast.ceiling_at(floor))` — the crew's throughput, **dipped by whatever it is building**
+  (`None` is the identity), against the ceiling at the **assignment's own floor**. Once the
+  improvement *completes* the source is `::managed`, whose ceiling is its `managed_production` at
+  every floor, so this one lookup covers both sides of every investment. The client preview, the seed,
+  and the forecast==actual tests all call it.
 - The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
   compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
   `sustainable` = the same MSY value the resolution path records (a *managed* source — **rung 3 only**

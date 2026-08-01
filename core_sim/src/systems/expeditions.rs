@@ -963,17 +963,7 @@ pub fn hunt_take(
     // own biomass climbing back over one `body_mass` above the floor, which pays the same
     // wait-then-one pulse for a slow breeder.
     //
-    // **The dip rides the caller's improvement** (issue #442 §2.2): a resident band gentling or
-    // fencing this herd passes its verb and pays `fraction × its own floor's` ceiling; an expedition
-    // passes [`NO_IMPROVEMENT_UNDERWAY`], because a rung-transition is place-bound work a detached
-    // party cannot do — and since #442 its mission type cannot even name one.
-    let ceiling = fauna::hunt_escapement_ceiling(
-        floor,
-        improvement,
-        herd.biomass,
-        herd_capacity(herd, fauna),
-        ladder,
-    );
+    let ceiling = fauna::hunt_escapement_ceiling(floor, herd.biomass, herd_capacity(herd, fauna));
     // **Whole animals** ([`fauna::quantise_animal_take`], slice 8): the crew kills what the *bank* can
     // afford, bounded by what it can haul but never below one — so a party that cannot carry a whole
     // animal still takes one and wastes the rest, and a bank that cannot yet spare one leaves the herd
@@ -983,8 +973,15 @@ pub fn hunt_take(
     // (`carry_room_biomass`); the band Hunt passes `f32::INFINITY` (no carry limit — it eats/banks the
     // whole take). Folding the carry room into the collection rather than clamping afterwards is what
     // keeps a nearly-full party from slaughtering an animal it has no room for.
-    let collection =
-        (workers as f32 * per_worker_biomass_capacity).min(carry_room_biomass.max(0.0));
+    //
+    // **The build dip rides the CREW, not the ceiling** (`docs/plan_harvest_floor.md` §3.1): a
+    // resident band gentling or fencing this herd carries `yield_fraction_while_building ×` what a
+    // hunting crew carries; an expedition passes [`NO_IMPROVEMENT_UNDERWAY`], because a
+    // rung-transition is place-bound work a detached party cannot do — and since #442 its mission
+    // type cannot even name one. On throughput the dip is floor-independent by construction, which
+    // is what stops a deep floor from building for free (§0.3).
+    let collection = (workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement))
+        .min(carry_room_biomass.max(0.0));
     let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass);
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.

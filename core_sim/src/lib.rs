@@ -96,11 +96,11 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, floor_teaches, raid_is_recurring, BandId,
-    BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement,
-    KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink,
-    MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement,
-    SourceYield, StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
+    ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
+    PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield,
+    StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
     NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
@@ -198,10 +198,11 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    knows, load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    knows, learn_multiplier, load_intensification_ladder_from_env, BuildDips, LadderConfig,
+    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
+    RungFeeding, RungHarvest, RungKey, RungMovement, RungSiteRequirement, SiteRefusal,
+    BUILTIN_INTENSIFICATION_LADDER, MANAGED_SOURCE_FLOOR, NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE,
+    RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

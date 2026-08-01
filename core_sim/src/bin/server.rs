@@ -42,7 +42,7 @@ use core_sim::{
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EcologyPhase, EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
     FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink,
     GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
@@ -1813,23 +1813,13 @@ fn validate_cultivate(
             tile.x, tile.y
         ));
     }
-    // **Thriving is a START gate, not a CONTINUE gate.** It asks whether the land is fit for a crew
-    // to *begin* clearing it — a question a build already underway has answered. The sim's own
-    // mid-build ruling is that a patch dropping out of Thriving **holds its progress and stops
-    // accruing**, neither losing the investment nor switching the verb.
-    //
-    // **The re-staffing trap this used to create is gone** (issue #442): adjusting a paused build's
-    // crew is an `assign_labor`, which no longer re-asserts the improvement and therefore never
-    // reaches this function at all. The exemption survives because *re-checking* the box on a paused
-    // build is still a legitimate no-op the player may issue — and because the rejections below it
-    // (in particular the other-faction owner rule) must still run either way. It remains a condition
-    // on **this** check only, never an early return past the ones below.
-    if !patch.cultivation_underway(faction) && patch.ecology_phase != EcologyPhase::Thriving {
-        return Err(format!(
-            "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
-            tile.x, tile.y
-        ));
-    }
+    // **There is no health gate here** (`docs/plan_harvest_floor.md` §3.2). `Cultivate` used to
+    // demand `EcologyPhase::Thriving`, as a **start** gate with an exemption for a build already
+    // underway (`ForagePatch::cultivation_underway`) — a whole start-vs-continue ruling that existed
+    // to make the mid-build lapse survivable. The harvest floor replaced the cliff with a rate: a
+    // crew pulling hard on the ground they are clearing builds *slowly*
+    // (`intensification::learn_multiplier`), never *not at all*. With nothing left to lapse, the
+    // exemption has nothing to exempt and the gate has nothing to gate.
     if patch.owner.is_some_and(|owner| owner != faction) {
         return Err(format!(
             "Another people are cultivating the patch at ({}, {}).",
@@ -6321,9 +6311,9 @@ mod tests {
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
-        build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-        NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID,
-        SITE_ACCEPTED,
+        build_headless_app, EcologyPhase, ForagePatch, CULTIVATION_DISCOVERY_ID,
+        HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+        SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -6608,9 +6598,14 @@ mod tests {
         );
     }
 
-    /// `cultivate` is rejected on a **non-Thriving** patch (the second gate) even when known.
+    /// **`cultivate` is ACCEPTED on a non-Thriving patch** — the positive pin on the gate
+    /// `docs/plan_harvest_floor.md` §3.2 deleted. It replaced
+    /// `cultivate_rejected_on_a_stressed_patch`, whose subject is gone: the floor turned the health
+    /// cliff into a rate, so pulling hard on ground you are clearing *slows* the meter instead of
+    /// refusing the verb, and there is no lapse state left to be exempt from. Stated as a test
+    /// rather than deleted, because a re-added phase check would be silent otherwise.
     #[test]
-    fn cultivate_rejected_on_a_stressed_patch() {
+    fn cultivate_is_accepted_on_a_stressed_patch() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -6634,10 +6629,14 @@ mod tests {
         handle_cultivate(&mut app, faction, coord);
 
         assert!(
-            cultivate_failure_detail_contains(&app, "not thriving"),
-            "cultivate must reject a stressed patch"
+            !cultivate_failure_detail_contains(&app, "not thriving"),
+            "no health gate survives on the Cultivate verb"
         );
-        assert_eq!(band_improvement(&app, band), None);
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "the crew starts clearing unhealthy ground — the floor prices the pressure, not a gate"
+        );
     }
 
     /// The repurposed `cultivate`: with Cultivation known and a Thriving patch, it **sets the
@@ -6700,19 +6699,20 @@ mod tests {
         ));
     }
 
-    // --- The Thriving gate is a START gate, not a CONTINUE gate (issues #420 + #442) -------------
+    // --- A build is never refused for the state of the ground under it -------------------------
     //
-    // A build already underway is exempt from the phase check, and from **that check only**.
-    //
-    // **Issue #442 removed the trap this exemption was originally added for.** Re-crewing a paused
-    // build used to re-issue the whole `Cultivate` assignment through this gate, so the sole
-    // executable response to a paused build was `workers == 0` — which stops `tended_this_turn` and
-    // starts the feral bleed. Now `assign_labor` carries no verb at all, so a crew change never
-    // reaches this validator. The exemption survives for the *other* path: re-checking the box on a
-    // paused build is a legitimate no-op the player may issue, and it must not be refused.
+    // The `Cultivate` verb used to demand `EcologyPhase::Thriving` as a **start** gate, with an
+    // exemption for a build already underway (`ForagePatch::cultivation_underway`) — a whole
+    // start-vs-continue ruling that existed only to make the mid-build lapse survivable.
+    // `docs/plan_harvest_floor.md` §3.2 deleted the lot: the floor replaced the cliff with a rate
+    // (`intensification::learn_multiplier`), so pulling hard on ground you are clearing slows the
+    // meter instead of stopping it, and nothing lapses. The tests below pin what survives — the
+    // knowledge gate, the owner rule, the species gate, and the re-crew path — plus the *absence* of
+    // the phase check, which would otherwise regress silently.
 
-    /// Seat the source patch as a **paused build**: part-prepared and owned, but no longer Thriving —
-    /// exactly the state a patch reaches when another band overdraws it mid-cultivation.
+    /// Seat the source patch as a **part-built, unhealthy** patch: progress banked and owned, but no
+    /// longer Thriving — exactly the state a patch reaches when another band overdraws it
+    /// mid-cultivation, and the state the retired phase gate used to refuse.
     fn seed_paused_build(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry
@@ -6729,7 +6729,8 @@ mod tests {
 
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
-    /// off* and let the patch regrow, the remedy the client's gated-policy sheet actually prescribes.
+    /// off* and let the patch regrow. Doubly true since `docs/plan_harvest_floor.md` §3.2: easing
+    /// off is now also how you *speed the build up*, because a shallower draw is a faster meter.
     #[test]
     fn a_paused_cultivation_can_still_be_re_crewed() {
         let mut app = build_headless_app();
@@ -6814,53 +6815,18 @@ mod tests {
         );
     }
 
-    /// **The gate that must not weaken.** A *fresh* `Cultivate` on a non-Thriving patch — nothing
-    /// banked, nobody's — is still refused, with the same message. Exempting a build underway is not
-    /// exempting the verb.
-    #[test]
-    fn a_fresh_cultivate_on_a_stressed_patch_is_still_refused() {
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        {
-            let mut registry = app.world.resource_mut::<ForageRegistry>();
-            let patch = registry.patch_mut(coord).unwrap();
-            patch.ecology_phase = EcologyPhase::Stressed;
-        }
-        grant_cultivation(&mut app, faction);
+    // `a_fresh_cultivate_on_a_stressed_patch_is_still_refused` was deleted with its subject: it
+    // existed to prove that exempting a build underway did not weaken the phase gate, and there is
+    // no phase gate left to weaken (`docs/plan_harvest_floor.md` §3.2). The positive replacement is
+    // `cultivate_is_accepted_on_a_stressed_patch`.
 
-        let verdict = validate_improvement(
-            &app,
-            faction,
-            &LaborTarget::Forage {
-                tile: coord,
-                floor: 0.5,
-                species: None,
-            },
-            Improvement::Cultivate,
-        );
-        assert!(
-            verdict
-                .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
-            "an unstarted build on unhealthy ground is still refused: {verdict:?}"
-        );
-    }
-
-    /// The exemption is **this faction's** build, not any build. Asserted from both sides, because
-    /// the two rejections are different rules and only one of them is the point:
-    ///
-    /// - a rival's **paused** build never reaches the exemption (owner mismatch), so the phase check
-    ///   refuses it — the case the fix must not have opened;
-    /// - a rival's build on **Thriving** ground gets *past* the phase check and is refused by the
-    ///   **owner** rule that sits after it, so that rule is confirmed reachable.
-    ///
-    /// The exemption-is-a-condition-not-an-early-return claim is pinned separately by
-    /// [`a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`], which is the only shape
-    /// that can actually distinguish the two.
+    /// **A rival's part-built patch is refused by the OWNER rule.** Retargeted from
+    /// `another_factions_cultivation_is_still_refused_paused_or_not`, whose other half asserted that
+    /// a rival's *paused* build fell through to the phase check — a check that no longer exists
+    /// (`docs/plan_harvest_floor.md` §3.2). The owner rule is what was really load-bearing there,
+    /// and it survives unchanged.
     #[test]
-    fn another_factions_cultivation_is_still_refused_paused_or_not() {
+    fn another_factions_cultivation_is_refused_by_the_owner_rule() {
         let faction = FactionId(0);
         let rival = FactionId(1);
         let coord = UVec2::new(1, 1);
@@ -6869,19 +6835,6 @@ mod tests {
             floor: 0.5,
             species: None,
         };
-
-        let mut paused = build_headless_app();
-        seed_thriving_patch(&mut paused, coord);
-        seed_paused_build(&mut paused, coord, Some(rival));
-        grant_cultivation(&mut paused, faction);
-        let verdict = validate_improvement(&paused, faction, &patch, Improvement::Cultivate);
-        assert!(
-            verdict
-                .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
-            "a rival's paused build is not this faction's build underway, so the phase check still \
-             refuses it: {verdict:?}"
-        );
 
         let mut thriving = build_headless_app();
         seed_thriving_patch(&mut thriving, coord);
@@ -6897,16 +6850,30 @@ mod tests {
             verdict
                 .as_ref()
                 .is_err_and(|reason| reason.contains("Another people")),
-            "the owner rule sits after the phase check and must still fire: {verdict:?}"
+            "another faction's ground is not yours to clear: {verdict:?}"
+        );
+
+        // …and the same rule fires whatever the ground's health, now that health gates nothing.
+        let mut stressed = build_headless_app();
+        seed_thriving_patch(&mut stressed, coord);
+        seed_paused_build(&mut stressed, coord, Some(rival));
+        grant_cultivation(&mut stressed, faction);
+        let verdict = validate_improvement(&stressed, faction, &patch, Improvement::Cultivate);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("Another people")),
+            "the owner rule is the only thing refusing a rival's stressed ground: {verdict:?}"
         );
     }
 
-    /// **The exemption is a condition on ONE check, not an early return past the rest.** The only
-    /// gate that can tell the two apart is the species selection, which runs *after* the phase check
-    /// and is the one successor a build-underway patch can still fail (the owner rule cannot fire on
-    /// a build this faction owns, which is the exemption's own precondition). So this seats a real
-    /// tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge — and
-    /// asks for a plant that does not exist: an early return would accept it.
+    /// **The SPECIES gate runs on unhealthy ground too** — the surviving half of the retired
+    /// `a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`. That test pinned an
+    /// exemption (a build underway skipped the phase check and *only* the phase check); with the
+    /// phase check gone (`docs/plan_harvest_floor.md` §3.2) what is left worth pinning is that the
+    /// gate *below* it still fires, on exactly the patch state that used to be exempted. This seats
+    /// a real tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge —
+    /// and asks for a plant that does not exist.
     ///
     /// **It is driven through `handle_cultivate`, not `validate_improvement` directly** (PR #448
     /// review). It used to hand the validator `species: Some("not_a_plant")` by hand — an input **no
@@ -6915,7 +6882,7 @@ mod tests {
     /// gone entirely. The crop now rides the *band's* assignment, which is where a player's
     /// selection genuinely lives, and the assertion is on the **rejection the feed carries**.
     #[test]
-    fn a_paused_build_is_exempt_from_the_phase_check_and_nothing_else() {
+    fn the_species_gate_runs_on_a_part_built_unhealthy_patch_too() {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
 
@@ -6933,7 +6900,7 @@ mod tests {
         handle_cultivate(&mut named, faction, coord);
         assert!(
             cultivate_failure_detail_contains(&named, "know no plant"),
-            "a build underway skips the PHASE check only — the species gate below it still runs"
+            "the species gate runs on a part-built, unhealthy patch — nothing above it exempts it"
         );
     }
 
@@ -8522,19 +8489,18 @@ mod tests {
         }
     }
 
-    /// **§2.1 — a non-Sustain stance beside a running build is LEGAL, and nothing gates it**
-    /// (issue #442, `docs/plan_investment_rung_toggle.md`). The command layer is where a gate would
-    /// have had to live, so this is where its absence is pinned: a `Deplete` forage assignment is
-    /// accepted, checking `Cultivate` on top of it is accepted, and the two survive together on the
-    /// band's row.
+    /// **A deep floor beside a running build is LEGAL, and nothing gates it** (issue #442,
+    /// `docs/plan_investment_rung_toggle.md`). The command layer is where a gate would have had to
+    /// live, so this is where its absence is pinned: a deep-floor forage assignment is accepted,
+    /// checking `Cultivate` on top of it is accepted, and the two survive together on the band's row.
     ///
-    /// The design refuses the gate deliberately — the ecology is what punishes over-drawing while
-    /// building (the meter accrues only while the source is Thriving), and a gate would re-create in
-    /// the UI the very coupling this arc removes from the model. The self-punishment itself is
-    /// measured on the animal web by
-    /// `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`.
+    /// The design refuses the gate deliberately — the **rate** is what prices over-drawing while
+    /// building (`intensification::learn_multiplier`, `docs/plan_harvest_floor.md` §3), and a gate
+    /// would re-create in the UI the very coupling this arc removes from the model. The price itself
+    /// is measured on the animal web by
+    /// `fauna_husbandry::a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later`.
     #[test]
-    fn a_deplete_stance_accepts_a_cultivate_improvement_beside_it() {
+    fn a_deep_floor_accepts_a_cultivate_improvement_beside_it() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -8584,12 +8550,13 @@ mod tests {
     /// missing half — the one path that passes `None`.
     ///
     /// **Phase 1 pins the "ungated" claim against a state where a gate really would bite**: the box
-    /// is checked on a patch that has since gone Stressed and has banked **nothing**, so
-    /// `validate_cultivate`'s build-underway exemption does *not* apply and the setting verb is
-    /// refused outright. That is the state the player is most stuck in — the build cannot start and,
-    /// without this command, cannot be called off either — and it is the only fixture that can tell
-    /// an ungated abandon from one that copied `cultivate`'s gates (a *paused* build with progress
-    /// would pass those gates via the exemption and prove nothing).
+    /// is checked on a patch whose faction has **not learned Cultivation**, so the setting verb is
+    /// refused outright and any gate copied onto the abandon path would refuse it too.
+    ///
+    /// It used to use the `EcologyPhase::Thriving` gate for that control. That gate is gone
+    /// (`docs/plan_harvest_floor.md` §3.2 — a build now *slows* under pressure rather than stalling),
+    /// so the knowledge gate is the surviving refusal, and it is the better control anyway: it
+    /// cannot lapse under the build the player is trying to call off.
     ///
     /// **Phase 2 pins that abandoning does not forfeit the meter**, which needs a build with progress
     /// banked.
@@ -8600,11 +8567,8 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
-        {
-            let mut registry = app.world.resource_mut::<ForageRegistry>();
-            registry.patch_mut(coord).unwrap().ecology_phase = EcologyPhase::Stressed;
-        }
-        grant_cultivation(&mut app, faction);
+        // Deliberately **not** `grant_cultivation` — the faction cannot set this verb, which is what
+        // makes "abandon is ungated" testable at all.
         let band = spawn_resident_working_band(
             &mut app,
             faction,
@@ -8637,7 +8601,7 @@ mod tests {
         assert!(
             would_be_refused
                 .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
+                .is_err_and(|reason| reason.contains("not learned Cultivation")),
             "fixture: the SETTING verb must be refused here, or 'ungated' is untested: \
              {would_be_refused:?}"
         );
@@ -8653,8 +8617,8 @@ mod tests {
         assert_eq!(
             band_improvement(&app, band),
             None,
-            "abandoning is not a rung transition — it takes no gate, least of all the phase gate \
-             that stalled the build the player is trying to call off"
+            "abandoning is not a rung transition — it takes no gate, least of all the knowledge \
+             gate that refuses to *start* the build the player is trying to call off"
         );
         assert_eq!(
             band_floor(&app, band),

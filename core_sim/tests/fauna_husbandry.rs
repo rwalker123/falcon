@@ -26,6 +26,13 @@ use core_sim::{
 /// never binds, so a Sustain hunt takes exactly the net regrowth (herd stays Thriving → accrues).
 const HUNT_WORKERS: u32 = 5000;
 
+/// **A crew small enough that its CARRY is the binding term.** Since `docs/plan_harvest_floor.md`
+/// §3.1 the build dip multiplies `workers × per_worker_carry` rather than the take ceiling, so it is
+/// invisible at a staffing the herd's own escapement binds — a build costs yield only while hands
+/// are the scarce thing. The dip tests stand a full herd against this crew, which is the regime a
+/// real Tame or Corral build lives in.
+const DIP_VISIBLE_HUNTERS: u32 = 2;
+
 fn spawn_world() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
@@ -135,6 +142,17 @@ fn spawn_crew(
     policy: f32,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
+    spawn_crew_of(app, herd_id, policy, improvement, HUNT_WORKERS)
+}
+
+/// [`spawn_crew`] with an explicit head-count — the dip tests need a crew the carry binds.
+fn spawn_crew_of(
+    app: &mut App,
+    herd_id: &str,
+    policy: f32,
+    improvement: Option<Improvement>,
+    hunters: u32,
+) -> bevy::prelude::Entity {
     let pos = app
         .world
         .resource::<HerdRegistry>()
@@ -153,7 +171,7 @@ fn spawn_crew(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(HUNT_WORKERS as f32),
+                working: scalar_from_f32(hunters as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -182,7 +200,7 @@ fn spawn_crew(
                         fauna_id: herd_id.to_string(),
                         floor: policy,
                     },
-                    workers: HUNT_WORKERS,
+                    workers: hunters,
                     improvement,
                 }],
                 ..Default::default()
@@ -497,9 +515,14 @@ fn sustain_hunt_no_longer_tames_it_only_teaches_herding() {
 }
 
 /// **The Tame take dips to the rung's fraction.** Taming costs yield — the crew is gentling the herd,
-/// not harvesting it — so the take ceiling is the `animal:pastoral` rung's
-/// `yield_fraction_while_building × the herd's Sustain (MSY) ceiling`. Asserted against the *same*
-/// herd state under Sustain, so it is a true ratio and not a pinned magic number.
+/// not harvesting it — so it carries `yield_fraction_while_building ×` what a hunting crew of the
+/// same size carries. Asserted against the *same* herd state under a plain hunt, so it is a true
+/// ratio and not a pinned magic number.
+///
+/// **It is asked at [`DIP_VISIBLE_HUNTERS`], not at the ample crew the other tests use**, because
+/// `docs/plan_harvest_floor.md` §3.1 moved the dip onto crew throughput: a crew the herd's own
+/// escapement binds pays no dip at all, which is the intended (and legible) "hire four times the
+/// people" half of the change.
 #[test]
 fn the_tame_take_dips_to_the_rungs_yield_fraction() {
     let dip = {
@@ -516,8 +539,16 @@ fn the_tame_take_dips_to_the_rungs_yield_fraction() {
     let harvest = |improvement: Option<Improvement>| -> f32 {
         let mut app = spawn_world();
         let id = prime_thriving_herd(&mut app);
+        // Seated at **capacity**, so the escapement standing above the floor is `K/2` rather than
+        // one turn's regrowth. A crew can only be the binding term against a real standing stock,
+        // and the dip is only visible where the crew binds.
+        {
+            let mut registry = app.world.resource_mut::<HerdRegistry>();
+            let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+            herd.biomass = herd.carrying_capacity;
+        }
         grant_herding(&mut app);
-        spawn_crew(&mut app, &id, 0.5, improvement);
+        spawn_crew_of(&mut app, &id, 0.5, improvement, DIP_VISIBLE_HUNTERS);
         let before = provisions_f32(&mut app);
         run_turns_with_hunt(&mut app, 1);
         provisions_f32(&mut app) - before
@@ -533,22 +564,24 @@ fn the_tame_take_dips_to_the_rungs_yield_fraction() {
     );
 }
 
-/// **§2.1 — a non-Sustain stance beside a running build is LEGAL, and it defeats itself through the
-/// ecology rather than through a gate** (issue #442, `docs/plan_investment_rung_toggle.md`).
+/// **A deep floor beside a running build is LEGAL, and it is PRICED rather than gated** (issue #442
+/// as amended by `docs/plan_harvest_floor.md` §3).
 ///
 /// Two facts, one run:
-/// 1. **The sim accepts it.** A `Deplete` stance with a `Tame` build in flight resolves — no arm
-///    refuses the combination — and it takes **strictly more** than a `Sustain` builder would,
-///    because the dip now multiplies Deplete's larger ceiling (§2.2, the generalised dip).
-/// 2. **It stalls its own meter.** Deplete is `deplete_multiplier × MSY`, a constant catch *above*
-///    the sustainable rate, so it has **no equilibrium**: the herd declines out of `Thriving`, and
-///    the build gate (`eligible`) stops accruing. The Sustain control on identical ground tames the
-///    herd in the same span, so the stall is the stance's doing and not the fixture's.
+/// 1. **The sim accepts it.** A floor of `0.15` with a `Tame` build in flight resolves — no arm
+///    refuses the combination — and it takes **strictly more** than a food-peak builder would,
+///    because a deeper floor leaves less standing and hands more over now.
+/// 2. **It does not finish in the span the food peak does.** The build accrues at
+///    `progress_per_turn × learn_multiplier(floor)`, so `0.15` runs at `0.3×` the peak's rate; the
+///    food-peak control on identical ground tames the herd inside the horizon, so the shortfall is
+///    the floor's doing and not the fixture's. The herd also falls out of `Thriving` — a real
+///    ecological consequence of the draw, but **no longer the mechanism**: the meter slows, it does
+///    not stop, which is what removed the lapse state the old gate needed.
 ///
-/// This is why the design refuses to add a gate: the punishment is already in the ecology, and it is
-/// proportionate — ease off and the herd recovers and the meter resumes.
+/// This is why the design refuses to add a gate: the price is in the rate, and it is proportionate —
+/// ease off and the meter speeds back up.
 #[test]
-fn a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter() {
+fn a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later() {
     // Long enough to tame the fixture species outright under Sustain — so a stalled meter is a
     // statement about the stance, not about the horizon.
     const TURNS: u32 = 60;
@@ -572,13 +605,14 @@ fn a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter(
     // (1) It is sayable, and it pays MORE now — the dip rides the stance the player chose.
     assert!(
         deplete_take > sustain_take,
-        "the dip multiplies the SELECTED stance (§2.2), so a Deplete builder takes more now:          deplete {deplete_take} vs sustain {sustain_take}"
+        "a deeper floor leaves less standing, so its builder takes more now: deplete {deplete_take} \
+         vs sustain {sustain_take}"
     );
 
     // The control: the same build under Sustain finishes, so the horizon is not what stalls it.
     assert!(
         sustain_herd.is_domesticated(),
-        "control: a Sustain builder tames the herd within {TURNS} turns (progress {})",
+        "control: a food-peak builder tames the herd within {TURNS} turns (progress {})",
         sustain_herd.domestication_progress
     );
 
@@ -586,11 +620,13 @@ fn a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter(
     assert_ne!(
         deplete_herd.ecology_phase,
         core_sim::EcologyPhase::Thriving,
-        "a constant catch above MSY has no equilibrium — Deplete must drive the herd out of          Thriving, which is the whole self-punishment"
+        "a floor below the food peak has no equilibrium above it — the herd is drawn out of \
+         Thriving. That is a consequence of the draw, not a gate on the build."
     );
     assert!(
         !deplete_herd.is_domesticated(),
-        "the build meter accrues only while the source is Thriving, so a Deplete builder stalls          short of taming it (progress {})",
+        "the build accrues at `learn_multiplier(0.15)` = 0.3x the peak's rate, so a deep-floor \
+         builder is still short of taming it here (progress {})",
         deplete_herd.domestication_progress
     );
     assert!(
@@ -821,6 +857,52 @@ fn a_pastoral_herd_pays_nothing_without_workers() {
     );
 }
 
+/// **A CREW THAT PULLS HARD ON THE HERD IT IS GENTLING TAMES SLOWLY** — the animal twin of
+/// `forage_cultivation::a_low_floor_cultivate_takes_materially_longer_than_a_food_peak_one`, and
+/// §0.3's measurement inverted on this web.
+///
+/// Before `docs/plan_harvest_floor.md` §3 the `Tame` build carried an `EcologyPhase::Thriving` gate:
+/// pulling hard *stalled* the meter outright on a fast breeder and did nothing at all on a full herd
+/// of anything slower, so the discipline was a cliff that fired for some species and not others. The
+/// floor now paces the build for every species alike — pressure buys food today at the price of
+/// turns.
+///
+/// Asserted as a **relation**, not a pair of literals, and both floors must actually finish: the
+/// rate is a slope, not a gate, so there is no lapse state left to strand a build in.
+#[test]
+fn a_low_floor_tame_takes_materially_longer_than_a_food_peak_one() {
+    /// Long enough for even the shallowest swept floor to finish several times over, so a run that
+    /// hits it is a genuine never-completes rather than an impatient harness.
+    const PATIENCE_TURNS: u32 = 600;
+
+    /// How much longer the deep-floor build must take before the trade counts as *material*. The
+    /// arithmetic says `0.5 / 0.15 ≈ 3.3×`; the bound is deliberately loose because what is pinned is
+    /// that the pressure costs turns at all, not the slope (which is `learn_multiplier`'s to change).
+    const MATERIALLY_LONGER: f32 = 2.0;
+
+    let turns_to_tame = |floor: f32| -> u32 {
+        let mut app = spawn_world();
+        let id = prime_thriving_herd(&mut app);
+        grant_herding(&mut app);
+        spawn_crew(&mut app, &id, floor, Some(Improvement::Tame));
+        for turn in 1..=PATIENCE_TURNS {
+            run_turns_with_hunt(&mut app, 1);
+            if herd_of(&app, &id).is_domesticated() {
+                return turn;
+            }
+        }
+        panic!("a Tame at floor {floor} never completed in {PATIENCE_TURNS} turns");
+    };
+
+    let at_the_peak = turns_to_tame(MSY_BIOMASS_FRACTION);
+    let pulling_hard = turns_to_tame(0.15);
+    assert!(
+        pulling_hard as f32 >= at_the_peak as f32 * MATERIALLY_LONGER,
+        "a crew pulling hard on the herd it is gentling must pay for it in turns: {pulling_hard} \
+         vs {at_the_peak} at the food peak"
+    );
+}
+
 /// **The Corral build is a genuine net LOSS while it runs** — the investment the whole intensification
 /// ladder is built on.
 ///
@@ -831,6 +913,11 @@ fn a_pastoral_herd_pays_nothing_without_workers() {
 /// now the *real* alternative use of the same crew: **Sustain-hunting that same tamed herd**. The
 /// guarantee is unchanged and if anything sharper — the pen must cost the builder something against
 /// the best thing those workers could otherwise be doing on this herd, or there is no decision.
+///
+/// **Both crews are [`DIP_VISIBLE_HUNTERS`]**, because `docs/plan_harvest_floor.md` §3.1 moved the
+/// dip onto crew throughput: the cost is what the *builders* fail to carry home, so it only exists
+/// while hands are the scarce thing. Against an ample crew the herd's own escapement binds either
+/// way and the pen is free — legibly so ("hire twice the people"), which is the change's point.
 #[test]
 fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     let mut app = spawn_world();
@@ -840,7 +927,7 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     // (a) The alternative: the same band Sustain-hunts the tamed herd → the full pastoral MSY.
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
-    let hunter = spawn_hunter(&mut app, &id, 0.5);
+    let hunter = spawn_crew_of(&mut app, &id, 0.5, None, DIP_VISIBLE_HUNTERS);
     run_turns_with_hunt(&mut app, 1);
     let hunting = yield_of(&app, hunter);
     assert!(hunting > 0.0, "the alternative use of the crew pays");
@@ -852,7 +939,13 @@ fn building_a_corral_costs_more_than_hunting_the_same_herd() {
     domesticate(&mut app, &id);
     reseat(&mut app, &id, cap, cap);
     grant_penning(&mut app);
-    let builder = spawn_builder(&mut app, &id, Improvement::Corral);
+    let builder = spawn_crew_of(
+        &mut app,
+        &id,
+        0.5,
+        Some(Improvement::Corral),
+        DIP_VISIBLE_HUNTERS,
+    );
     run_turns_with_hunt(&mut app, 1);
     let building = yield_of(&app, builder);
 

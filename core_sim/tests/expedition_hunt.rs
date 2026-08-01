@@ -945,13 +945,8 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     {
         for policy in SWEPT_FLOORS {
             assert!(
-                hunt_escapement_ceiling(
-                    policy,
-                    NO_IMPROVEMENT_UNDERWAY,
-                    depleted_biomass,
-                    depleted_cap,
-                    &LadderConfig::builtin(),
-                ) <= depleted_biomass,
+                hunt_escapement_ceiling(policy, depleted_biomass, depleted_cap)
+                    <= depleted_biomass,
                 "{policy:?}: the escapement ceiling can never exceed the herd's own biomass, at any \
                  regrowth rate"
             );

@@ -1,8 +1,9 @@
 # The Harvest Floor — one dial replaces the four-stance axis
 
-**Status:** slices 1 and 2 landed (#452, #453). The Sustain / Surplus / Deplete / Eradicate axis is
-**deleted on both food webs**; `FollowPolicy` no longer exists. Slice 3 (learning and build accrual
-ride the floor) and slice 4 (the client) are open — see §8.
+**Status:** slices 1, 2 and 3 landed (#452, #453, #454). The Sustain / Surplus / Deplete / Eradicate
+axis is **deleted on both food webs**; `FollowPolicy` no longer exists; learning and build accrual
+ride the floor, the `Thriving` gates are gone, and the build dip multiplies crew throughput rather
+than the take ceiling. Slice 4 (the client) is open — see §8.
 
 **Provenance.** The §0 measurements come from `core_sim/src/forage/stance_probe.rs`, which was an
 `#[ignore]`d harness when they were taken and is now a non-ignored property test. Re-run the
@@ -172,8 +173,9 @@ accrual are multiplied by
 learn_mult = floor / MSY_BIOMASS_FRACTION      // = floor / 0.5
 ```
 
-gated only on `take > 0` (you must actually be working the source). Normalised so the food peak is
-×1.0, meaning today's 25-turn Cultivate stays 25 turns at the floor a player is most likely to pick.
+gated only on **the escapement room being positive** — is anything standing above this assignment's
+floor, i.e. you must actually be working the source (§3.2). Normalised so the food peak is ×1.0,
+meaning today's 25-turn Cultivate stays 25 turns at the floor a player is most likely to pick.
 
 This deletes, without replacement:
 
@@ -195,6 +197,34 @@ people are clearing ground, not gathering. Two consequences:
 - It is **stance-independent by construction** — there is no stance left to dodge it with, which is
   §0.3 fixed rather than patched.
 - It is legible: at 25% carry it takes four times the people to clear the same standing surplus.
+
+**A build is therefore free to a crew the source's own stock already binds.** If the standing room
+runs out before the throughput cap does, dipping the cap costs nothing. That is not §0.3 returning:
+there the *harshest stance* built free and no choice the player could make avoided it; here the cost
+moves from yield into **labour allocation**, and the hands in question had no other use on that
+source. Scarcity of people is the price, which is what §3.1 says it should be.
+
+### 3.2 The work predicate is the escapement ROOM, never the take
+
+*"You must actually be working the source"* is answered by `max(0, B − floor·K) > 0`, read in biomass
+**before** the worker cap and **before** whole-animal quantisation.
+
+The obvious spelling — `take > 0` — is right on plants and wrong on animals, because there the take
+is quantised: a crew on a herd whose room is 60 biomass against an 80-unit body hands over *nothing*
+this turn while tracking and handling that herd exactly as it did last turn. Reading `killed == 0` as
+*not working* would pace the entire knowledge ladder off `body_mass`, so a big-bodied species would
+learn and tame several times slower than a small one — a mechanism doing load-bearing economic work
+by accident, which is the failure class this whole arc exists to remove (§0.1).
+
+The room answers the question the gate is actually asking, identically on both webs, and keeps both
+degenerate ends intact: at `floor = 1.0` the room is empty, so watching earns nothing; at `floor = 0`
+the multiplier is zero, so stripping earns nothing.
+
+**A rung-3 source has no floor at all** — a Field and a pen pay their managed production whatever the
+dial says, because nothing is drawn down. They pass a named neutral floor (the food peak, ×1.0)
+rather than the assignment's, which would otherwise scale learning by a number that changes nothing
+about the take. For the same reason `Sow` and `Corral` carry no work predicate: sowing bare ground
+has a take of zero **by construction**, and requiring one would forbid the case rung 3 exists for.
 
 ---
 
@@ -349,9 +379,27 @@ Each lands on its own PR.
    eradicate}` and `hunt.{surplus_multiplier, deplete_multiplier, surplus_escapement_fraction}`.
    `ecology.collapse_fraction` **stays**: it is the Allee threshold, and only ever moonlighted as one
    stance's floor.
-3. **Learning and build accrual ride the floor.** `RungDef::knowledge_earned` and `build_accrual` take
-   the multiplier; the `Thriving` gate and its exemption machinery come out; the dip moves onto crew
-   throughput.
+3. **Learning and build accrual ride the floor.** **Landed.** `RungDef::knowledge_earned` became
+   `knowledge_accrual` (the lesson **and** the amount) and `build_accrual` gained a `floor`; both
+   multiply by `intensification::learn_multiplier(floor) = floor / MSY_BIOMASS_FRACTION`, normalised
+   so the food peak is ×1.0 and the shipped build lengths are unchanged at the default floor. The
+   `Thriving` gate came out on both webs — the plant `Cultivate` start gate, its build-underway
+   exemption and `ForagePatch::cultivation_underway` with it, and the `Tame` accrual's identical
+   condition — replaced by `systems::labor::crew_is_working_the_source` in each caller's composed
+   `eligible`: the escapement room `max(0, B − floor·K)`, in biomass, read **pre-take and
+   pre-quantisation** so the rule is the same on both webs and cannot depend on `body_mass`.
+   `components::floor_teaches`
+   is deleted with the step it stated. The **dip moved onto crew throughput**:
+   `forage_escapement_ceiling` / `hunt_escapement_ceiling` / `SourceYieldForecast::ceiling_at` no
+   longer take an `improvement` at all, and `forecast_expected_take` is
+   `min(workers × per_worker × dip, ceiling_at(floor))`.
+
+   Two call sites deliberately carry **no** work predicate, because it replaced a `Thriving` gate
+   rung 3 never had: `accrue_field` (bare ground stands below every floor by construction) and the
+   `Corral` arm (a pen goes up around a flock already drawn to its keeper's floor). Two more pass
+   `MANAGED_SOURCE_FLOOR` rather than the assignment's, because a rung-3 managed source's take is its
+   `managed_production` at every floor and there is no pressure the keeper chose: `ExtendPen`, and
+   the Field/pen **earn** sites.
 4. **Client.** The merged chart, presets, single build checkbox, focus row, two crew targets, the
    three-account readout with routing labels.
 

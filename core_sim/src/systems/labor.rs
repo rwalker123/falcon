@@ -8,6 +8,76 @@ use super::*;
 /// an assumption to revisit rather than a silently under-crewed fence.
 const PEN_EXTEND_CREW: u32 = 1;
 
+/// **A rung-3 managed source is TENDED, so a crew standing on it is working it** — the `eligible`
+/// term a Field's and a pen's [`credit_rung_lesson`] pass where the extractive rungs ask
+/// [`crew_is_working_the_source`].
+///
+/// At rung 3 the source is *yours*: the keeper feeds, herds and minds it every turn, and the harvest
+/// is a consequence rather than the work. There is no escapement room to ask about either — a
+/// managed source pays its `managed_production` at every floor and is never drawn down — so the
+/// extractive predicate has nothing to read here. Reaching either branch already requires
+/// `workers > 0`.
+const MANAGED_SOURCE_IS_TENDED: bool = true;
+
+/// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
+/// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2), asked of the
+/// **escapement room**: is there anything standing above this assignment's floor?
+///
+/// # It is the CEILING, deliberately, and not the take
+///
+/// The obvious spelling is `take > 0`, and on the plant web the two coincide — a gather is
+/// continuous, so any positive room yields a positive take. **On the animal web they do not**, and
+/// the difference is a quantisation artifact rather than a fact about work.
+/// [`crate::fauna::quantise_animal_take`] rounds to whole animals, so a herd whose room is 60 biomass
+/// against an 80-unit body hands over **nothing** this turn while the crew tracks, culls and handles
+/// it exactly as they did last turn. Reading `AnimalTake::killed == 0` as *"not working"* would make
+/// the learning and build rates depend on `body_mass`: big-bodied species would tame and teach
+/// several times slower than small ones, for a reason nobody designed and nothing measured.
+///
+/// Asked **in biomass, before quantisation and before the worker cap** — the number
+/// `forage::forage_escapement_ceiling` / `fauna::hunt_escapement_ceiling` returns — so it is the same
+/// question on both webs and the rule stops being web-specific.
+///
+/// It still separates the two cases the gate exists to separate:
+/// - **nothing stands above your floor** → you are watching, not working. No lesson, no build. That
+///   is also what makes `floor = 1.0` degenerate: the room is `0` by construction.
+/// - **there is surplus you have not yet banked into a whole body** → you are working it, and the
+///   pulse the quantiser pays is about *when* the food lands, not whether the crew showed up.
+///
+/// The other degenerate end is [`crate::intensification::learn_multiplier`]'s, not this one's:
+/// `floor = 0` leaves nothing standing, so the *rate* is zero however much room there was.
+fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
+    standing_above_floor > NOTHING_STANDS_ABOVE_THE_FLOOR
+}
+
+/// **An empty escapement room** — the value [`crew_is_working_the_source`] compares against, named
+/// because `0.0` as a bare literal there reads as an arbitrary epsilon rather than as the exact
+/// boundary `max(0, B − floor·K)` is clamped at.
+const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
+
+/// **Credit the lesson the source's rung teaches, at the rate its crew's floor earns.** The caller
+/// side of [`RungDef::knowledge_accrual`]: the rung says *what* is learned and *how much*, this
+/// applies it to the ledger.
+///
+/// It exists as a function rather than as one hoisted call because **`eligible` is not knowable
+/// until the source's own branch is reached** — a Field and a pen answer it differently from a wild
+/// stand (see [`MANAGED_SOURCE_IS_TENDED`]), and the extractive branches need the escapement room
+/// resolved against the pre-take biomass. Each of the four branches (a Field, a wild gather, a pen's
+/// tend, a wild hunt) calls this with its own answer; the *rule* stays in one place so the two webs
+/// cannot drift.
+fn credit_rung_lesson(
+    rung: &RungDef,
+    floor: f32,
+    eligible: bool,
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    discovery: &mut DiscoveryProgressLedger,
+) {
+    if let Some((lesson, amount)) = rung.knowledge_accrual(floor, eligible, knowledge) {
+        discovery.add_progress(faction, lesson, scalar_from_f32(amount));
+    }
+}
+
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
 /// system stays under Bevy's 16-parameter ceiling as new configs join it (Predators Phase 0 added
 /// combat + creatures). Each is resolved to its `Arc` once at the top of the system.
@@ -92,7 +162,10 @@ pub fn advance_labor_allocation(
     // `labor_config.forage.cultivation` and `fauna_config.husbandry`, back when each web had its own
     // hard-coded earn site. The earn path is one rung-driven seam now, so the dials live on the
     // ladder with the build dials — the plant and animal ladders can only be paced together.
-    let knowledge_delta = scalar_from_f32(ladder.knowledge.progress_per_turn);
+    // **`progress_per_turn` is the BASE, not the amount**: since the harvest floor it is scaled per
+    // call by the assignment's own floor (`intensification::learn_multiplier`), so the whole block
+    // travels to `credit_rung_lesson` rather than a pre-multiplied delta.
+    let knowledge_dials = &ladder.knowledge;
     let knowledge_threshold = ladder.knowledge.completion_threshold;
     // The two rungs the build engine drives (`crate::intensification`): the plant's tended patch and
     // the animal's pen. Their build dials — accrual rate, feral decay, and the investment dip — are
@@ -108,9 +181,14 @@ pub fn advance_labor_allocation(
     // animal web sizes a crew off the herd (`herders_needed`), not off the rung — so the value cannot
     // change the rate; it is named rather than a bare literal so a future rung-level animal crew
     // makes this site's assumption visible instead of silently under-crewing every ring.
+    //
+    // **The floor is [`MANAGED_SOURCE_FLOOR`], not the assignment's**: a ring is only ever built
+    // around a herd that is already penned, whose take is its `managed_production` at every floor —
+    // so there is no pressure the keeper chose for the dial to scale.
     let pen_build_rate = pen_rung.build_accrual(
         Some(Improvement::Corral),
         true,
+        MANAGED_SOURCE_FLOOR,
         RUNG_TIMESCALE_UNSCALED,
         PEN_EXTEND_CREW,
     );
@@ -377,23 +455,19 @@ pub fn advance_labor_allocation(
                     if improvement.is_some_and(|verb| forage_rung_already_built(patch, verb)) {
                         completed.push(idx);
                     }
-                    // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung N+1.**
-                    // One call, driven entirely by the rung the patch *currently stands on* — a wild
+                    // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
+                    // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
                     // is a property of the source's rung, not of the verb. The old hard-coded
                     // `Sustain && Thriving → CULTIVATION_DISCOVERY_ID` branch is gone: `earns_knowledge`
                     // was declarative when slice 2 landed it, and this is where it goes live.
                     //
                     // Knowledge is all that is earned here — working a patch never *tames* it:
-                    // cultivation is an explicit `Cultivate` policy with an investment cost (below).
-                    // The seam owns the §4.2 stewardship rule (Surplus/Deplete/Eradicate teach
-                    // nothing); `eligible` carries the health gate — **you learn from a healthy
-                    // source** — which is the shipped `Thriving` requirement, unchanged.
-                    if let Some(knowledge) = patch_rung(patch, &ladder)
-                        .knowledge_earned(*floor, patch.ecology_phase == EcologyPhase::Thriving)
-                    {
-                        discovery.add_progress(faction, knowledge, knowledge_delta);
-                    }
+                    // cultivation is an explicit `Cultivate` improvement with an investment cost
+                    // (below). The rung is resolved *here*, above the branches, because it is a
+                    // property of the pre-take patch; the **credit** is applied inside each branch,
+                    // once its take is known — see `credit_rung_lesson`.
+                    let lesson_rung = patch_rung(patch, &ladder);
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the patch's PRE-take state (before either
                     // branch draws it down), so it equals the assign-time seed exactly. Both the Field
@@ -464,6 +538,20 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
+                        // **THE earn path, rung 3.** A Field's take is its `managed_production` at
+                        // every floor, so the dial the crew set is inert here and
+                        // [`MANAGED_SOURCE_FLOOR`] is what the lesson is paced by. `plant:field`
+                        // teaches nothing today (`irrigation`/`rotation` is rung 4's business), so
+                        // this is the uniformity that stops rung 4 from having to remember: the
+                        // branch that `continue`s still reaches the earn path.
+                        credit_rung_lesson(
+                            lesson_rung,
+                            MANAGED_SOURCE_FLOOR,
+                            MANAGED_SOURCE_IS_TENDED,
+                            knowledge_dials,
+                            faction,
+                            &mut discovery,
+                        );
                         // **The FODDER account (Flora Roster F3, §5.1).** The *same* managed harvest,
                         // routed by the yield vector's fodder component instead of its provisions
                         // component — a grain Field's `field_fodder` is `0` (its crop pays no fodder),
@@ -570,6 +658,14 @@ pub fn advance_labor_allocation(
                         continue;
                     }
                     let biomass_before = patch.biomass;
+                    // **The escapement room, resolved PRE-take** — the stock standing above this
+                    // assignment's floor, in biomass and before any cap. It is the source of two
+                    // different answers below: the work predicate ([`crew_is_working_the_source`],
+                    // which replaced this arm's `EcologyPhase::Thriving` gate) and the `production`
+                    // the telemetry row reports as offered.
+                    let standing_above_floor =
+                        forage_escapement_ceiling(*floor, biomass_before, patch.carrying_capacity);
+                    let working_the_patch = crew_is_working_the_source(standing_above_floor);
                     let provisions = forage_take(
                         patch,
                         &tile_composition,
@@ -583,6 +679,20 @@ pub fn advance_labor_allocation(
                         seasonal,
                     );
                     let take = biomass_before - patch.biomass;
+                    // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
+                    // with nothing standing above its floor is watching the stand, not practising on
+                    // it, whatever it intended; that is what replaced the `EcologyPhase::Thriving`
+                    // term this site used to carry — a cliff where the model now wants a rate — and
+                    // it is what makes `floor = 1.0` (leave it all standing, learn at ×2) honestly
+                    // earn nothing.
+                    credit_rung_lesson(
+                        lesson_rung,
+                        *floor,
+                        working_the_patch,
+                        knowledge_dials,
+                        faction,
+                        &mut discovery,
+                    );
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
@@ -628,13 +738,19 @@ pub fn advance_labor_allocation(
                     }
                     // **Cultivate — the investment.** The crew is clearing and planting, not
                     // gathering: `forage_take` above already paid only the reduced Cultivate ceiling
-                    // (the rung's `yield_fraction_while_building × MSY` — the up-front cost), and here the patch
-                    // accrues toward becoming a tended crop. Gates: the faction must **know
-                    // Cultivation** (earned by Sustain-foraging, above) and the patch must be
-                    // **Thriving**. If a gate lapses mid-run (e.g. another band overdraws the patch to
-                    // Stressed) progress simply **stops accruing that turn** — it is neither lost nor
-                    // silently switched; the patch is still marked worked below, so it doesn't decay
-                    // either, and accrual resumes when the patch recovers.
+                    // (the rung's `yield_fraction_while_building × the crew's throughput` — the
+                    // up-front cost), and here the patch accrues toward becoming a tended crop.
+                    // Gates: the faction must **know Cultivation** (earned above) and the crew must
+                    // have actually drawn something off the patch.
+                    //
+                    // **There is no health gate any more** (`docs/plan_harvest_floor.md` §3.2). The
+                    // patch's `EcologyPhase::Thriving` used to gate this, so a build stalled outright
+                    // the moment a crew — anyone's crew — pulled the stand below Thriving, and the
+                    // "stops accruing but is not lost" lapse state existed to make that survivable.
+                    // The floor replaced it with a **rate**: `learn_multiplier` scales the accrual by
+                    // how much the crew leaves standing, so pulling harder slows the build in
+                    // proportion instead of stopping it at a cliff. Nothing lapses, so there is no
+                    // lapse to hold progress across.
                     //
                     // **Ordering: accrue AFTER the take.** The patch pays this turn per its state at
                     // the *start* of the turn, so the pre-commit forecast the client showed is exactly
@@ -645,10 +761,12 @@ pub fn advance_labor_allocation(
                         // under active preparation neither goes feral nor bleeds its partial progress.
                         patch.tended_this_turn = true;
                         // The rung's own gates, resolved for the engine: the faction must know the
-                        // rung's unlock knowledge (Cultivation) and the patch must be Thriving.
+                        // rung's unlock knowledge (Cultivation), and the crew must actually be
+                        // working the patch ([`crew_is_working_the_source`] — the term that replaced
+                        // the Thriving gate).
                         let eligible = tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
                             knows(&discovery, faction, knowledge, knowledge_threshold)
-                        }) && patch.ecology_phase == EcologyPhase::Thriving
+                        }) && working_the_patch
                             // **Nothing to tend if nothing here climbs.** A patch with no committed
                             // plant is one whose basket the tended rung's `cultivation_ceiling`
                             // refuses outright — the "not every plant climbs" ruling reaching the
@@ -656,10 +774,12 @@ pub fn advance_labor_allocation(
                             && patch.species.is_some();
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
-                        // side-effects of completing it.
+                        // side-effects of completing it. The **floor** is the assignment's own — the
+                        // same dial that paced the lesson above paces the build.
                         let accrual = tended_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             RUNG_TIMESCALE_UNSCALED,
                             workers,
                         );
@@ -701,6 +821,7 @@ pub fn advance_labor_allocation(
                             field_rung,
                             improvement,
                             sow_permitted,
+                            *floor,
                             faction,
                             &mut event_log,
                             tick.0,
@@ -769,14 +890,13 @@ pub fn advance_labor_allocation(
                         ladder.build_crew(improvement),
                         workers_needed_for_take(take, per_worker_biomass, workers),
                     );
-                    let production = forage_escapement_ceiling(
-                        *floor,
-                        improvement,
-                        biomass_before,
-                        patch.carrying_capacity,
-                        &ladder,
-                    )
-                    .clamp(0.0, biomass_before);
+                    // The stock the patch **offered** this turn — the same pre-take escapement room
+                    // the work predicate read. Undipped since the build dip moved onto the crew
+                    // (`docs/plan_harvest_floor.md` §3.1): the ground standing above the floor is
+                    // there whether the crew is gathering it or clearing it, so a building crew's
+                    // shortfall shows up honestly as `wasted` — "this is what more hands would have
+                    // brought home" — rather than being hidden in the ceiling.
+                    let production = standing_above_floor.clamp(0.0, biomass_before);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
                     // turn leaves behind: projecting from the pre-take state would re-promise the
@@ -897,20 +1017,16 @@ pub fn advance_labor_allocation(
                     // tamed ones"). The old hard-coded `Sustain && Thriving → HERDING_DISCOVERY_ID`
                     // branch is retired; `earns_knowledge` drives it now.
                     //
-                    // **Resolved BEFORE the rung branches below** (the corral tend arm `continue`s,
-                    // and the take arm draws biomass), so *every* rung reaches the earn path
-                    // uniformly — including the pen, whose `earns_knowledge` is null today but is
-                    // where rung 4's `selective_breeding` will hang. Moving it ahead of the take is
-                    // behaviour-neutral: `ecology_phase` is written only by `refresh_ecology_phase`
-                    // in Logistics, never by a take, so the gate reads the same value either side.
+                    // **The RUNG is resolved here, above the branches; the CREDIT is applied inside
+                    // each of them** — the corral tend arm `continue`s, and the two branches answer
+                    // `eligible` differently (a pen is *tended*, a wild herd must have stock standing
+                    // above the crew's floor). It used to be one call here, which was behaviour-
+                    // neutral only while the gate read `ecology_phase`, a value no take moves. Both branches call `credit_rung_lesson`, so every rung still reaches the
+                    // earn path — including the pen, whose `earns_knowledge` is Foddering.
                     //
                     // The two webs cannot cross-teach (§4.2) for free: a herd resolves to an `animal`
                     // rung, so only an animal knowledge is reachable from here.
-                    if let Some(knowledge) = fauna::herd_rung(herd, &ladder)
-                        .knowledge_earned(*floor, herd.ecology_phase == EcologyPhase::Thriving)
-                    {
-                        discovery.add_progress(faction, knowledge, knowledge_delta);
-                    }
+                    let lesson_rung = fauna::herd_rung(herd, &ladder);
                     // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
@@ -1090,6 +1206,18 @@ pub fn advance_labor_allocation(
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
+                        // **THE earn path, rung 3** — *you learn to hay a herd by keeping one*
+                        // (`animal:pen` earns Foddering). The pen's take is its managed production at
+                        // every floor, so the keeper's dial is inert and the lesson runs at
+                        // [`MANAGED_SOURCE_FLOOR`]; the work is the tending, not the slaughter.
+                        credit_rung_lesson(
+                            lesson_rung,
+                            MANAGED_SOURCE_FLOOR,
+                            MANAGED_SOURCE_IS_TENDED,
+                            knowledge_dials,
+                            faction,
+                            &mut discovery,
+                        );
                         // Trade goods are a FACTION-level integer commodity, so — unlike FOOD — they
                         // credit `FactionInventory`. Scaled off what was **carried home**, like the
                         // food beside it.
@@ -1177,6 +1305,17 @@ pub fn advance_labor_allocation(
                     // kill in biomass — killed / carried / wasted — and has already drawn every animal
                     // killed off the herd.
                     let biomass_before = herd.biomass;
+                    // **The escapement room, resolved PRE-take** — the stock standing above this
+                    // assignment's floor, in biomass and before the whole-animal quantiser. Two
+                    // readers below: the work predicate ([`crew_is_working_the_source`], which
+                    // replaced this arm's `EcologyPhase::Thriving` gate) and the crew the telemetry
+                    // row sizes off what the herd offered.
+                    let standing_above_floor = fauna::hunt_escapement_ceiling(
+                        *floor,
+                        biomass_before,
+                        herd_capacity(herd, &fauna),
+                    );
+                    let working_the_herd = crew_is_working_the_source(standing_above_floor);
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let take = hunt_take(
@@ -1188,6 +1327,23 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         f32::INFINITY,
+                    );
+                    // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
+                    // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
+                    // **Penning** on a tamed one. The gate is the **escapement room**, never
+                    // `take.killed > 0`: a herd whose room is lighter than one body hands over
+                    // nothing this turn while the crew tracks and handles it exactly as before, and
+                    // reading that as *"not working"* would pace the whole ladder off `body_mass`.
+                    // See [`crew_is_working_the_source`]. It replaced the `EcologyPhase::Thriving`
+                    // gate this site used to carry, and it is what makes `floor = 1.0` (leave the
+                    // whole herd standing, learn at ×2) honestly earn nothing.
+                    credit_rung_lesson(
+                        lesson_rung,
+                        *floor,
+                        working_the_herd,
+                        knowledge_dials,
+                        faction,
+                        &mut discovery,
                     );
                     // **THE take's yield: product × intensity** (`docs/plan_hunt_yield_model.md`).
                     // `hunt_take` above decided HOW MUCH biomass came home (the policy's job); the
@@ -1201,12 +1357,19 @@ pub fn advance_labor_allocation(
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
                     // `yield_fraction_while_building × MSY` — the up-front cost), and here the herd
                     // accrues toward pastoral. Gates: the faction must **know Herding** (earned by
-                    // Sustain-hunting, above), the species' husbandry ceiling must allow taming
+                    // hunting, above), the species' husbandry ceiling must allow taming
                     // (Grazing 2d-δ — a `wild`-ceiling species never tames; `accrue_domestication`
                     // self-guards too, and the command path rejects it, so this is belt and braces),
-                    // and the herd must be **Thriving**. A gate that lapses mid-run just stops
-                    // accrual that turn — progress is neither lost nor silently switched, and the
-                    // herd is marked tamed-this-turn below so it doesn't decay either.
+                    // and the herd must be **standing above the crew's floor**
+                    // ([`crew_is_working_the_source`] — not "an animal died", which is a
+                    // quantisation fact rather than a fact about work).
+                    //
+                    // **There is no health gate any more** (`docs/plan_harvest_floor.md` §3.2), the
+                    // plant side's change applied to the identical `EcologyPhase::Thriving` condition
+                    // here. The floor replaced the cliff with a rate: gentling a herd you are pulling
+                    // hard on is *slow*, not *stopped*, so there is no lapse state left to hold
+                    // progress across. `validate_tame` never had a phase gate, so the command side
+                    // was already consistent with removing it.
                     //
                     // **Ownership is NOT in `eligible`** — `accrue_domestication` owns the
                     // `owner is None || owner == faction` rule (and sets ownership on first accrual),
@@ -1222,15 +1385,19 @@ pub fn advance_labor_allocation(
                             pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }) && herd.can_domesticate()
-                                && herd.ecology_phase == EcologyPhase::Thriving;
+                                && working_the_herd;
                         // THE build seam — the same call the plant side's Cultivate arm makes, at
                         // **this species' own taming timescale** (slice 3c): the rung owns the
                         // mechanic, the species scales it (rabbit ×1.0 → 25 turns, Steppe Runner ×0.2
                         // → 125). The seam applies the multiplier to the decay too, so a herd that is
                         // slow to tame is equally slow to forget — see `RungDef::build_accrual`.
+                        // The **floor** is the assignment's own, the same dial that paced the lesson
+                        // above; it rides *beside* the timescale rather than folding into it, because
+                        // the timescale reaches the decay and the floor must not.
                         let accrual = pastoral_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             fauna.taming_rate_for(&herd.species),
                             workers,
                         );
@@ -1271,10 +1438,17 @@ pub fn advance_labor_allocation(
                             && herd.owner == Some(faction);
                         // THE build seam — the same call the plant side's Cultivate arm makes.
                         // Penning is a flat build for every species — only *taming* varies (slice
-                        // 3c): a fence is a fence.
+                        // 3c): a fence is a fence. The **floor** paces it as it paces every build.
+                        //
+                        // **The work predicate is deliberately NOT in `eligible` here**, for
+                        // `accrue_field`'s reason (see there): it replaced a rung's
+                        // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
+                        // Fencing a herd is ground work — a pen goes up around a flock already drawn
+                        // down to its keeper's own floor.
                         let accrual = pen_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             RUNG_TIMESCALE_UNSCALED,
                             workers,
                         );
@@ -1356,15 +1530,12 @@ pub fn advance_labor_allocation(
                     // sizing off the ceiling keeps the two in agreement and equals the client's
                     // max-useful count. It is re-derived at the **pre-take** biomass, which is what
                     // `hunt_take` read, so the crew describes the take that was just paid.
-                    let ceiling = fauna::hunt_escapement_ceiling(
-                        *floor,
-                        improvement,
-                        biomass_before,
-                        herd_capacity(herd, &fauna),
-                        &ladder,
-                    );
+                    // The same pre-take escapement room the work predicate read. Undipped since the
+                    // build dip moved onto the crew (§3.1): the herd offers what stands above the
+                    // floor whether the hunters are harvesting it or gentling it, and a build crew's
+                    // shortfall shows up honestly in `wasted`.
                     let take_workers = fauna::hunt_haul_workers(
-                        ceiling,
+                        standing_above_floor,
                         herd.body_mass,
                         labor.hunt.per_worker_biomass_capacity,
                     );
@@ -1693,6 +1864,14 @@ fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
 /// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
 /// for the turn: progress is neither lost nor silently switched.
 ///
+/// **It deliberately does NOT carry the work predicate** ([`crew_is_working_the_source`]), which
+/// every other build gate gained with the harvest floor (`docs/plan_harvest_floor.md` §3.2). That
+/// term replaced each rung's `EcologyPhase::Thriving` gate, and rung 3 never had one — for the reason
+/// that also forbids the term: **bare ground stands below every floor**, by construction, so
+/// requiring a positive escapement room would make the create-from-nothing case the rung exists for
+/// impossible. `floor` still paces it, so a crew stripping the ground it is sowing still builds
+/// nothing.
+///
 /// `workers` is the crew this assignment put on the tile: the rung's `crew_needed` scales the accrual
 /// by `min(workers / crew_needed, 1)`, so a Sow the player under-staffed takes proportionally longer.
 ///
@@ -1706,13 +1885,20 @@ fn accrue_field(
     field_rung: &RungDef,
     improvement: Option<Improvement>,
     eligible: bool,
+    floor: f32,
     faction: FactionId,
     event_log: &mut CommandEventLog,
     tick: u64,
     tile: UVec2,
     workers: u32,
 ) -> bool {
-    let accrual = field_rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED, workers);
+    let accrual = field_rung.build_accrual(
+        improvement,
+        eligible,
+        floor,
+        RUNG_TIMESCALE_UNSCALED,
+        workers,
+    );
     if accrual <= 0.0 {
         return false;
     }
@@ -2156,6 +2342,12 @@ mod labor_yield_tests {
     //! is no longer the overdraw question — `SourceYield::overdraws` answers it from the policy's own
     //! escapement floor. See `SourceYield`.
     use super::advance_labor_allocation;
+
+    /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
+    /// Every accrual assertion below that is *not about the floor* passes it, so the call reads the
+    /// rung's stated `progress_per_turn` rather than a floor's fraction of it.
+    const FOOD_PEAK_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+
     use crate::components::{
         Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
         PopulationCohort, SourceYield, Tile,
@@ -2662,15 +2854,12 @@ mod labor_yield_tests {
         let expected_crew = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let labor = world.resource::<LaborConfigHandle>().get();
-            let ladder = LadderConfig::builtin();
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             crate::fauna::hunt_haul_workers(
                 crate::fauna::hunt_escapement_ceiling(
                     0.5,
-                    None,
                     herd.biomass,
                     crate::fauna::herd_capacity(herd, &fauna),
-                    &ladder,
                 ),
                 herd.body_mass,
                 labor.hunt.per_worker_biomass_capacity,
@@ -2907,11 +3096,11 @@ mod labor_yield_tests {
             "the fixture crew must be non-trivial to observe the fix: {crew}"
         );
 
-        // Snapshots to compute the expected haul crews (the value the OLD code collapsed to) + confirm
-        // the ownership gate. **Two of them**, because the haul crew is taken on the ceiling the take
-        // is bounded by and a build dips that ceiling: the Tame row's crew is sized on the dipped
-        // ceiling, the pure-harvest row's on the undipped one.
-        let (tame_haul, harvest_haul, gated) = {
+        // The expected haul crew (the value the OLD code collapsed to) + the ownership gate. **One
+        // number, not two**: the haul crew is taken on the ceiling, and since the build dip moved
+        // onto crew throughput (`docs/plan_harvest_floor.md` §3.1) a build no longer changes the
+        // ceiling at all, so the Tame row and the pure-harvest row are sized on the same one.
+        let (haul, gated) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let ladder = world.resource::<LadderConfigHandle>().get();
             let labor = world.resource::<LaborConfigHandle>().get();
@@ -2924,16 +3113,12 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
             );
-            let haul_for = |improvement| {
+            (
                 crate::fauna::hunt_haul_workers(
-                    forecast.ceiling_at(0.5, improvement).provisions,
+                    forecast.ceiling_at(0.5).provisions,
                     forecast.body_mass_yield.provisions,
                     forecast.per_worker_yield.provisions,
-                )
-            };
-            (
-                haul_for(Some(Improvement::Tame)),
-                haul_for(None),
+                ),
                 crate::fauna::herd_herders_needed(herd, &fauna),
             )
         };
@@ -2942,9 +3127,9 @@ mod labor_yield_tests {
             "an unowned herd's ownership-gated herder count is 0 — the collapse this fix routes around"
         );
         assert!(
-            crew > tame_haul,
-            "the crew must exceed the Tame row's haul count, or the fix is invisible: crew {crew} \
-             vs haul {tame_haul}"
+            crew > haul,
+            "the crew must exceed the haul count, or the fix is invisible: crew {crew} vs haul \
+             {haul}"
         );
 
         // Build the two seeds (a Tame build vs a pure harvest) on the still-WILD herd. Both hold the
@@ -2976,7 +3161,7 @@ mod labor_yield_tests {
         // The extractive contrast: Sustain on the same WILD herd drops the herder term → haul only.
         let sustain_seed = seed(None, &world);
         assert_eq!(
-            sustain_seed.workers_needed, harvest_haul,
+            sustain_seed.workers_needed, haul,
             "a pure harvest on a wild herd stays at the haul count (herder term 0): {sustain_seed:?}"
         );
 
@@ -3404,10 +3589,8 @@ mod labor_yield_tests {
             let herders = crate::fauna::herd_herders_needed(herd, &fauna);
             let ceiling_biomass = crate::fauna::hunt_escapement_ceiling(
                 0.5,
-                None,
                 herd.biomass,
                 crate::fauna::herd_capacity(herd, &fauna),
-                &ladder,
             );
             let steady_haul = crate::fauna::hunt_haul_workers(
                 ceiling_biomass,
@@ -3424,7 +3607,7 @@ mod labor_yield_tests {
                 1.0,
             );
             let ceiling = forecast
-                .ceiling_at(crate::fauna::MSY_BIOMASS_FRACTION, NO_IMPROVEMENT_UNDERWAY)
+                .ceiling_at(crate::fauna::MSY_BIOMASS_FRACTION)
                 .provisions;
             let food_per_animal = forecast.body_mass_yield.provisions;
             let per_worker_yield = forecast.per_worker_yield.provisions;
@@ -3499,11 +3682,7 @@ mod labor_yield_tests {
 
     /// The client's worker-stepper cap.
     fn max_useful_workers(forecast: &SourceYieldForecast, floor: f32) -> u32 {
-        (forecast
-            .ceiling_at(floor, NO_IMPROVEMENT_UNDERWAY)
-            .provisions
-            / forecast.per_worker_yield.provisions)
-            .ceil() as u32
+        (forecast.ceiling_at(floor).provisions / forecast.per_worker_yield.provisions).ceil() as u32
     }
 
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
@@ -3579,7 +3758,7 @@ mod labor_yield_tests {
                     let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
                     let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
-                    let ceiling = forecast.ceiling_at(policy, improvement).provisions;
+                    let ceiling = forecast.ceiling_at(policy).provisions;
                     if labor_term < ceiling {
                         saw_labor_bound = true;
                     } else {
@@ -3665,33 +3844,19 @@ mod labor_yield_tests {
                         let actual =
                             world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
-                        let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
-                        let ceiling = forecast.ceiling_at(policy, improvement).provisions;
+                        // **The build dip is on the LABOR term, not the ceiling**
+                        // (`docs/plan_harvest_floor.md` §3.1) — so which side binds is itself a
+                        // function of the improvement, and both regimes have to be reached with the
+                        // dip in place or the sweep would only ever exercise the undipped half.
+                        let dip = forecast.build_dips.of(improvement);
+                        let labor_term =
+                            workers as f32 * forecast.per_worker_yield.provisions * dip;
+                        let ceiling = forecast.ceiling_at(policy).provisions;
                         if labor_term < ceiling {
                             saw_labor_bound = true;
                         } else {
                             saw_ceiling_bound = true;
                         }
-                        // **The standing-stock clamp is INERT**, which is what retired the
-                        // dip-versus-clamp ordering question: an escapement ceiling is `B − floor·K`,
-                        // so `room × dip ≤ room ≤ B` and the two orders agree everywhere — including
-                        // on the drawn-down rows, where the old rate-based ceilings did not commute.
-                        let dip = forecast.build_dips.of(improvement);
-                        assert!(
-                            (ceiling
-                                - forecast
-                                    .ceiling_at(policy, NO_IMPROVEMENT_UNDERWAY)
-                                    .provisions
-                                    * dip)
-                                .abs()
-                                < FORECAST_EPSILON,
-                            "the stock clamp must never bind an escapement ceiling (B={biomass}, \
-                             floor {policy} + {improvement:?}): {ceiling} vs {}",
-                            forecast
-                                .ceiling_at(policy, NO_IMPROVEMENT_UNDERWAY)
-                                .provisions
-                                * dip
-                        );
                         let expected = expected_yield(&forecast, workers, policy, improvement);
                         assert!(
                             (actual - expected).abs() < FORECAST_EPSILON,
@@ -3790,7 +3955,7 @@ mod labor_yield_tests {
         for policy in SWEPT_FLOORS {
             for improvement in FORAGE_IMPROVEMENTS {
                 assert_eq!(
-                    patch_forecast.ceiling_at(policy, improvement).provisions,
+                    patch_forecast.ceiling_at(policy).provisions,
                     patch_forecast.managed_yield.provisions,
                     "a Field is yours — no floor takes more or less of it, and there is nothing \
                      left to build on it (floor {policy} + {improvement:?})"
@@ -3800,7 +3965,7 @@ mod labor_yield_tests {
         for policy in SWEPT_FLOORS {
             for improvement in HUNT_IMPROVEMENTS {
                 assert_eq!(
-                    herd_forecast.ceiling_at(policy, improvement).provisions,
+                    herd_forecast.ceiling_at(policy).provisions,
                     herd_forecast.managed_yield.provisions,
                     "a pen is yours — no stance takes more or less of it ({policy:?} + \
                      {improvement:?})"
@@ -4228,7 +4393,9 @@ mod labor_yield_tests {
         // (see the note on the Cultivate world below), or the comparison is between two baskets.
         world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
-        let (fraction, progress_per_turn) = {
+        // The dip is read only to assert the rung *is* an investment; its exact composition is
+        // pinned by the forecast==actual sweep (see the note at the end of this test).
+        let (_dip_fraction, progress_per_turn) = {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let tended = ladder.rung(RungKey::PlantTended);
             (
@@ -4238,6 +4405,7 @@ mod labor_yield_tests {
                 tended.build_accrual(
                     Some(Improvement::Cultivate),
                     true,
+                    FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(tended),
                 ),
@@ -4288,10 +4456,15 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        // **The dip prices HANDS, not the floor** (`docs/plan_harvest_floor.md` §3.1). The take is
+        // `min(workers × per_worker × dip, ceiling)`, so this crew — big enough to saturate the
+        // ceiling several times over — pays **nothing** for the build: hands were not the scarce
+        // thing here. That is the legible half of the change ("at 25% carry it takes four times the
+        // people to clear the same surplus"), and it is asserted beside the sparse-crew case below,
+        // because either reading alone looks like a bug.
         assert!(
-            (preparing - fraction * sustain_yield).abs() < FORECAST_EPSILON,
-            "preparing pays fraction × the Sustain yield: {preparing} vs {}",
-            fraction * sustain_yield
+            (preparing - sustain_yield).abs() < FORECAST_EPSILON,
+            "a crew that saturates the ceiling anyway pays no dip: {preparing} vs {sustain_yield}"
         );
         assert!(
             (patch_progress(&world) - progress_per_turn).abs() < 1e-6,
@@ -4347,7 +4520,48 @@ mod labor_yield_tests {
             tended > preparing,
             "the payoff exceeds the preparing dip: {tended} vs {preparing}"
         );
+
+        // **…and a SPARSE crew does pay it.** One forager's throughput is the binding term under
+        // both, so the dip shows up undiluted: `fraction ×` what the same lone forager gathers.
+        // This is the half that makes the build a real cost — the crew clearing ground carries a
+        // fraction of what a gathering crew carries.
+        let sparse_take = |improvement: Option<Improvement>| {
+            let (mut world, tile) = world_with_source(CAP);
+            world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+            grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: SOURCE,
+                        floor: 0.5,
+                        species: None,
+                    },
+                    workers: SOLE_FORAGER,
+                    improvement,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual
+        };
+        let sparse_building = sparse_take(Some(Improvement::Cultivate));
+        let sparse_gathering = sparse_take(None);
+        assert!(
+            sparse_building < sparse_gathering,
+            "a crew that is the binding term really is slowed by the dip: {sparse_building} vs \
+             {sparse_gathering}"
+        );
+        // The exact composition `min(workers × per_worker × dip, ceiling)` is pinned per component
+        // and at both binding regimes by
+        // `forage_forecast_equals_actual_take_for_every_floor_and_staffing`, against a real
+        // `advance_labor_allocation` run — not restated here.
     }
+
+    /// **One forager**, so the crew's throughput is the binding term rather than the patch's
+    /// standing stock — the only regime in which the build dip is visible at all since it moved onto
+    /// crew throughput (`docs/plan_harvest_floor.md` §3.1).
+    const SOLE_FORAGER: u32 = 1;
 
     /// **Corral mirrors Cultivate.** With Herding known and a domesticated herd it owns, a band working
     /// it under `Corral` takes only `corralling_yield_fraction × the Sustain (MSY) yield` while the pen
@@ -4370,6 +4584,7 @@ mod labor_yield_tests {
                 pen.build_accrual(
                     Some(Improvement::Corral),
                     true,
+                    FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(pen),
                 ),
@@ -4446,29 +4661,14 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
-        // **RETARGETED IN SLICE 8: the dip is exact in BIOMASS, and it cannot be exact in ANIMALS.**
-        // The take is `floor(dip × escapement / body_mass)` whole animals, and `floor` does not
-        // distribute over a scale: `floor(0.5 × 9 animals)` is 4, not 4.5. So asserting
-        // `preparing == fraction × sustain_yield` to a float epsilon is asserting that a rounding
-        // artifact doesn't exist. The **contract** the dip actually has is that it is the rung's
-        // fraction of the Sustain take *to within the one animal quantisation can cost*, and that it
-        // is strictly less than Sustain — the investment must visibly cost something.
-        let one_animal = {
-            let fauna = world.resource::<FaunaConfigHandle>().get();
-            let registry = world.resource::<HerdRegistry>();
-            crate::fauna::herd_hunt_yield(&registry.herds[0], &fauna)
-                .apply(TEST_GAME_BODY_MASS, 1.0)
-                .provisions
-        };
+        // **RETARGETED BY THE HARVEST FLOOR: the dip prices HANDS, not the escapement** (§3.1). It
+        // multiplies `workers × per_worker_carry`, so this crew — ample enough that the herd's own
+        // escapement is the binding term either way — pays **nothing** for the pen. That is the
+        // legible half of the move ("at 50% carry it takes twice the people to bring the same
+        // animals home"), and the sparse-crew case below is the other; either alone reads as a bug.
         assert!(
-            (preparing - fraction * sustain_yield).abs() <= one_animal + FORECAST_EPSILON,
-            "building the pen pays fraction × the Sustain yield, to within one whole animal: \
-             {preparing} vs {} (one animal = {one_animal})",
-            fraction * sustain_yield
-        );
-        assert!(
-            preparing < sustain_yield,
-            "the pen build must cost real yield against Sustain: {preparing} vs {sustain_yield}"
+            (preparing - sustain_yield).abs() < FORECAST_EPSILON,
+            "a crew the escapement binds anyway pays no dip: {preparing} vs {sustain_yield}"
         );
 
         let turns_to_build = (1.0 / build_per_turn).ceil() as u32;
@@ -4496,7 +4696,56 @@ mod labor_yield_tests {
             corral_yield > preparing,
             "a penned herd out-pays the build dip: {corral_yield} vs {preparing}"
         );
+
+        // **…and a SPARSE crew pays the dip exactly.** One hunter's carry is the binding term under
+        // both, and the dip halves it, so the whole-animal quantiser divides the same body mass into
+        // both takes and the identity survives rounding: `preparing == fraction × hunting`.
+        let sparse_take = |improvement: Option<Improvement>| {
+            let (mut world, tile) = world_with_source(CAP);
+            reseat_herd(
+                &mut world,
+                BIG_HERD_CAP * DIP_TEST_ESCAPEMENT_FRACTION,
+                BIG_HERD_CAP,
+            );
+            grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
+            {
+                let mut registry = world.resource_mut::<HerdRegistry>();
+                registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+            }
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        floor: 0.5,
+                    },
+                    workers: SOLE_HUNTER,
+                    improvement,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual
+        };
+        let sparse_building = sparse_take(Some(Improvement::Corral));
+        let sparse_hunting = sparse_take(None);
+        assert!(
+            sparse_building < sparse_hunting,
+            "a crew that is the binding term really is slowed by the dip: {sparse_building} vs \
+             {sparse_hunting}"
+        );
+        assert!(
+            (sparse_building - fraction * sparse_hunting).abs() < FORECAST_EPSILON,
+            "…and pays exactly `fraction ×` what the same lone hunter takes: {sparse_building} vs \
+             {}",
+            fraction * sparse_hunting
+        );
     }
+
+    /// **One hunter**, so the crew's carry is the binding term rather than the herd's escapement —
+    /// the only regime in which the build dip is visible at all since it moved onto crew throughput
+    /// (`docs/plan_harvest_floor.md` §3.1).
+    const SOLE_HUNTER: u32 = 1;
 
     // ---------------------------------------------------------------------------------------------
     // **Completion CLEARS the improvement and leaves the stance alone** (issues #420 + #442). All four
@@ -4512,10 +4761,12 @@ mod labor_yield_tests {
     /// left alone" from "the stance was rewritten to the value it already had". Surplus is a real
     /// player choice and is *not* what the retired constant would have written.
     ///
-    /// It is also gentle enough to let a build finish: the dip multiplies it
-    /// (`0.25 × 1.6 × MSY < MSY` on the plant rungs, `0.5 × 1.5 × MSY` on the animal ones), so the
-    /// source stays Thriving and the meter keeps accruing — the §2.1 ecology rule doing its work
-    /// rather than a gate.
+    /// **Every completion test computes its build length AT this floor**, not at the food peak:
+    /// since `docs/plan_harvest_floor.md` §3 the accrual is `progress_per_turn ×
+    /// learn_multiplier(floor)`, so a builder holding `0.3` takes `0.5/0.3` times as many turns. A
+    /// fixture that counted peak-rate turns would stop one short of the completion it is asserting.
+    /// There is no health gate left for the floor to trip — pulling harder now *slows* the meter
+    /// rather than stopping it.
     const BUILDER_FLOOR: f32 = 0.3;
 
     /// The client's pre-turn expected take on the source patch at `floor`, off the patch's
@@ -4616,6 +4867,7 @@ mod labor_yield_tests {
                 tended.build_accrual(
                     Some(Improvement::Cultivate),
                     true,
+                    BUILDER_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(tended),
                 )
@@ -4720,6 +4972,24 @@ mod labor_yield_tests {
         );
     }
 
+    /// One Logistics-stage regrowth for the source herd, through the shipped `fauna::regrow_biomass`
+    /// — the **exact twin of the `advance_forage_regrowth` call the plant completion test above
+    /// already makes**, and the asymmetry it removes.
+    ///
+    /// The completion harnesses otherwise drive the Population stage only, so a herd never regrows.
+    /// A 42-turn build at [`BUILDER_FLOOR`] would then be asserted against a herd its own crew
+    /// emptied to that floor in four turns — after which nothing stands above the floor and
+    /// `crew_is_working_the_source` is correctly false. That is the sim behaving properly, not a
+    /// gate to route around: a Population-only loop is half a turn, and a *completion* test needs the
+    /// order the sim runs. (It was invisible before the harvest floor only because the retired
+    /// `EcologyPhase::Thriving` gate read a phase `refresh_ecology_phase` never updated here, so it
+    /// stayed frozen at the value `reseat_herd` set.)
+    fn regrow_source_herd(world: &mut World) {
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        crate::fauna::regrow_biomass(&mut registry.herds[0], &fauna);
+    }
+
     /// **The animal twin, rung 2.** A herd that finishes taming this turn hands its crew to the harvest
     /// rung with the herd id and the crew intact — so the band starts collecting the pastoral payoff
     /// instead of paying the taming dip on an already-tame herd forever.
@@ -4739,6 +5009,7 @@ mod labor_yield_tests {
                     pastoral.build_accrual(
                         Some(Improvement::Tame),
                         true,
+                        BUILDER_FLOOR,
                         fauna.taming_rate_for(&species),
                         full_crew(pastoral),
                     )
@@ -4765,6 +5036,7 @@ mod labor_yield_tests {
 
         let turns_to_tame = (1.0 / taming_per_turn).ceil() as u32;
         for _ in 0..turns_to_tame - 1 {
+            regrow_source_herd(&mut world);
             world.run_system_once(advance_labor_allocation);
         }
         assert!(
@@ -4781,6 +5053,7 @@ mod labor_yield_tests {
             "an unfinished build keeps its verb"
         );
 
+        regrow_source_herd(&mut world);
         world.run_system_once(advance_labor_allocation);
         assert!(
             world
@@ -4823,6 +5096,7 @@ mod labor_yield_tests {
                 pen.build_accrual(
                     Some(Improvement::Corral),
                     true,
+                    BUILDER_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(pen),
                 )
@@ -5079,91 +5353,115 @@ mod labor_yield_tests {
         );
     }
 
-    /// **§4.2 — only stewardship teaches.** The overdrawing policies earn **nothing, at any rung**:
-    /// you learn husbandry by managing, not by slaughtering. Swept across both webs and both of the
-    /// rungs that teach, so a future rung cannot quietly opt out of the rule.
+    /// **§4.2, RESTATED AS A RATE — a deeper floor learns SLOWER, and stripping learns nothing.**
+    ///
+    /// It replaced `the_overdrawing_policies_teach_nothing_at_any_rung`, whose subject was a **step**
+    /// at the food peak (teach at or above it, nothing below). The harvest floor made restraint a
+    /// rate (`intensification::learn_multiplier`, §3), so "these floors teach nothing" is no longer
+    /// true of anything but `floor = 0` — and asserting the old inequality would now be asserting
+    /// the model the arc removed. Swept across both webs and both of the rungs that teach, so a
+    /// future rung cannot quietly opt out.
     #[test]
-    fn the_overdrawing_policies_teach_nothing_at_any_rung() {
-        for policy in [0.3, 0.15, 0.0] {
-            // Animal rung 1 (wild) and rung 2 (pastoral).
-            for tamed in [false, true] {
-                let (mut world, tile) = world_with_source(CAP);
-                reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
-                if tamed {
-                    world.resource_mut::<HerdRegistry>().herds[0]
-                        .accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
-                }
-                hunt_one_turn(&mut world, tile, policy);
-                assert_eq!(
-                    knowledge(&world, HERDING_DISCOVERY_ID),
-                    0.0,
-                    "{policy:?} must teach no Herding (tamed={tamed})"
-                );
-                assert_eq!(
-                    knowledge(&world, PENNING_DISCOVERY_ID),
-                    0.0,
-                    "{policy:?} must teach no Penning (tamed={tamed})"
-                );
-            }
+    fn a_deeper_floor_learns_slower_and_stripping_learns_nothing() {
+        // Descending, so each entry must teach strictly less than the one before it. It reaches
+        // **above** the food peak — the range the retired four-stance axis could not express.
+        const DESCENDING_FLOORS: [f32; 4] = [0.9, 0.5, 0.3, 0.15];
 
-            // Plant rung 1 (wild) and rung 2 (tended).
-            for cultivated in [false, true] {
-                let (mut world, _) = world_with_source(CAP);
-                let tile = world.resource::<TileRegistry>().tiles[0];
-                if cultivated {
-                    world
-                        .resource_mut::<ForageRegistry>()
-                        .patch_mut(SOURCE)
-                        .expect("seeded patch")
-                        .accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+        /// The floor at which nothing is left standing — the one that must teach exactly nothing
+        /// because the *rate* is zero.
+        const STRIP_IT_BARE: f32 = 0.0;
+
+        /// **Leave it all standing.** The other degenerate end: the rate is its highest (×2), but
+        /// nothing stands above the floor, so `crew_is_working_the_source` is false. Watching teaches
+        /// nothing — the trade the dial offers, taken past its limit.
+        const TOUCH_NOTHING: f32 = 1.0;
+
+        // Animal rung 1 (wild) and rung 2 (pastoral), then plant rung 1 (wild) and rung 2 (tended).
+        let hunt_lesson = |floor: f32, tamed: bool| {
+            let (mut world, tile) = world_with_source(CAP);
+            reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
+            if tamed {
+                world.resource_mut::<HerdRegistry>().herds[0]
+                    .accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+            }
+            hunt_one_turn(&mut world, tile, floor);
+            let lesson = if tamed {
+                PENNING_DISCOVERY_ID
+            } else {
+                HERDING_DISCOVERY_ID
+            };
+            knowledge(&world, lesson)
+        };
+        let forage_lesson = |floor: f32, cultivated: bool| {
+            let (mut world, _) = world_with_source(CAP);
+            let tile = world.resource::<TileRegistry>().tiles[0];
+            // Seated at capacity, so a floor **above** the food peak still leaves stock standing and
+            // the sweep can reach the over-restraint half of the dial at all. The default fixture
+            // sits on `K/2`, where every such floor honestly takes nothing.
+            {
+                let mut registry = world.resource_mut::<ForageRegistry>();
+                let patch = registry.patch_mut(SOURCE).expect("seeded patch");
+                patch.biomass = patch.carrying_capacity;
+            }
+            if cultivated {
+                world
+                    .resource_mut::<ForageRegistry>()
+                    .patch_mut(SOURCE)
+                    .expect("seeded patch")
+                    .accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+            }
+            forage_one_turn(&mut world, tile, floor);
+            let lesson = if cultivated {
+                SEED_SELECTION_DISCOVERY_ID
+            } else {
+                CULTIVATION_DISCOVERY_ID
+            };
+            knowledge(&world, lesson)
+        };
+
+        // **Both webs assert the SAME shape**, which is the point of the predicate the earn path
+        // reads: it is the escapement room, in biomass, before the whole-animal quantiser — so the
+        // *lesson* is `progress_per_turn × learn_multiplier(floor)` on both webs and orders strictly
+        // in the floor. It does not, and must not, depend on `body_mass`.
+        for rung_two in [false, true] {
+            for (web, lesson_at) in [
+                ("plant", &forage_lesson as &dyn Fn(f32, bool) -> f32),
+                ("animal", &hunt_lesson as &dyn Fn(f32, bool) -> f32),
+            ] {
+                // **Liveness first**: a diff-based property improves when the feature breaks, so an
+                // ordering sweep alone would pass on an earn path that credited zero everywhere.
+                assert!(
+                    lesson_at(DESCENDING_FLOORS[0], rung_two) > 0.0,
+                    "{web}: the rung must actually teach at the top floor (rung 2 = {rung_two})"
+                );
+                let mut previous = f32::INFINITY;
+                for floor in DESCENDING_FLOORS {
+                    let learned = lesson_at(floor, rung_two);
+                    assert!(
+                        learned < previous,
+                        "{web} floor {floor} must learn strictly less than the floor above it \
+                         (rung 2 = {rung_two}): {learned} vs {previous}"
+                    );
+                    previous = learned;
                 }
-                forage_one_turn(&mut world, tile, policy);
                 assert_eq!(
-                    knowledge(&world, CULTIVATION_DISCOVERY_ID),
+                    lesson_at(STRIP_IT_BARE, rung_two),
                     0.0,
-                    "{policy:?} must teach no Cultivation (cultivated={cultivated})"
+                    "{web}: stripping the source bare teaches nothing (rung 2 = {rung_two})"
                 );
                 assert_eq!(
-                    knowledge(&world, SEED_SELECTION_DISCOVERY_ID),
+                    lesson_at(TOUCH_NOTHING, rung_two),
                     0.0,
-                    "{policy:?} must teach no Seed Selection (cultivated={cultivated})"
+                    "{web}: …and watching it teaches nothing either (rung 2 = {rung_two})"
                 );
             }
         }
     }
 
-    /// **You learn from a HEALTHY source** — the `Thriving` gate both shipped earn sites had, and the
-    /// refactor preserves. A collapsing herd teaches nothing even under Sustain.
-    #[test]
-    fn a_source_that_is_not_thriving_teaches_nothing() {
-        let (mut world, tile) = world_with_source(CAP);
-        {
-            let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].ecology_phase = EcologyPhase::Collapsing;
-        }
-        hunt_one_turn(&mut world, tile, 0.5);
-        assert_eq!(
-            knowledge(&world, HERDING_DISCOVERY_ID),
-            0.0,
-            "a collapsing herd teaches nothing — you learn from a healthy source"
-        );
-
-        let (mut world, _) = world_with_source(CAP);
-        let tile = world.resource::<TileRegistry>().tiles[0];
-        {
-            let mut registry = world.resource_mut::<ForageRegistry>();
-            registry
-                .patch_mut(SOURCE)
-                .expect("seeded patch")
-                .ecology_phase = EcologyPhase::Collapsing;
-        }
-        forage_one_turn(&mut world, tile, 0.5);
-        assert_eq!(
-            knowledge(&world, CULTIVATION_DISCOVERY_ID),
-            0.0,
-            "a collapsing patch teaches nothing"
-        );
-    }
+    // `a_source_that_is_not_thriving_teaches_nothing` was deleted with its subject: the
+    // `EcologyPhase::Thriving` gate both earn sites carried is gone (`docs/plan_harvest_floor.md`
+    // §3.2), replaced by `crew_is_working_the_source` and a floor-paced rate. A collapsing source
+    // that still stands above the crew's floor is still being practised on.
 
     /// **§4.2 — the two food webs learn separately.** Hunting only ever advances the animal track and
     /// foraging the plant track: a master rancher isn't automatically a farmer. This falls out of the

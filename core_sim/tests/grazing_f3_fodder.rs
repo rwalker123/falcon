@@ -133,6 +133,19 @@ fn learn_foddering(app: &mut App) {
         .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
 }
 
+/// Wipe the faction's **Foddering** progress — the control state for the no-hay-draw case.
+///
+/// It has to be *wiped*, not avoided: `animal:pen` teaches Foddering whenever a keeper works the pen
+/// (*you learn to hay a herd by keeping one*), and since `docs/plan_harvest_floor.md` §3 that earn is
+/// a **rate** rather than a floor-gated predicate — a rung-3 source's floor axis has collapsed, so
+/// there is no dial a keeper can hold that teaches nothing. Settling a pen for a few dozen turns
+/// therefore learns it, whatever the assignment says.
+fn unlearn_foddering(app: &mut App) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, -scalar_one());
+}
+
 /// Seat one **penned, domesticated** herd (fixture name → neutral density gain) at `tile`, radius 0.
 fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -423,8 +436,9 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     // --- BREAD-FED CONTROL: identical pen, hay STILL grown into its store each turn (a hay Field
     // harvests regardless of Foddering), but the faction has NOT learned Foddering — so the K term is
     // gated off (`k_rate = 0`, mirroring the labor arm's gate) and the hay is undrawable. The pen pays
-    // the full lossy provisions bill and the hay just piles up. `Surplus` so tending never teaches it
-    // Foddering. ---
+    // the full lossy provisions bill and the hay just piles up. The ledger is wiped immediately
+    // before every turn (`unlearn_foddering`) because keeping a pen *teaches* Foddering and no floor
+    // prevents it. ---
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
     // (no learn_foddering)
@@ -434,10 +448,12 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     // pre-harvest) — what the bill is actually charged on — and compare exactly, as `grazing_2d_pen`
     // does for the barren-pen case.
     for _ in 0..SETTLE_TURNS - 1 {
+        unlearn_foddering(&mut app);
         run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, 0.0);
     }
     run_fodder_logistics(&mut app, keeper, &id, HAY_FLOW, 0.0);
     let feed_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
+    unlearn_foddering(&mut app);
     app.world.run_system_once(advance_labor_allocation);
     let (bread_bread, bread_draw) = feed_split(&app, keeper, &id);
     let bread_hay_store = app

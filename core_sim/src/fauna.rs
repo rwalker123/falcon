@@ -3940,12 +3940,12 @@ impl SourceYieldForecast {
         }
     }
 
-    /// **THE yield/turn cap this source pays at `floor`, dipped by whatever the crew is building** —
-    /// the one computation every reader of this type goes through, and the exact twin of the take
-    /// path's `hunt_escapement_ceiling` / `forage_escapement_ceiling`:
+    /// **THE yield/turn cap this source pays at `floor`** — the one computation every reader of this
+    /// type goes through, and the exact twin of the take path's `hunt_escapement_ceiling` /
+    /// `forage_escapement_ceiling`:
     ///
     /// ```text
-    /// escapement_ceiling(floor, B, K) × build_dip(improvement) × per_biomass_yield
+    /// max(0, B − floor·K) × per_biomass_yield
     /// ```
     ///
     /// **It answers ANY floor, which is why the four stance rows became a function.** The player
@@ -3959,16 +3959,20 @@ impl SourceYieldForecast {
     /// a fact about the rung, not a special case in the caller — which is why the branch lives here
     /// and no take path repeats it.
     ///
-    /// **THE DIP LANDS BEFORE THE STANDING-STOCK CLAMP** — `min(room × dip, B)`, the order both take
-    /// paths apply. The clamp cannot bind on an escapement ceiling (`room × dip ≤ room ≤ B` for any
-    /// floor `≥ 0`), so it is belt-and-braces; the ordering is kept because it is the take's, and a
-    /// future ceiling that *could* exceed the stock must not silently under-report.
-    pub fn ceiling_at(&self, floor: f32, improvement: Option<Improvement>) -> YieldAccounts {
+    /// **IT TAKES NO `improvement`, and that is what makes the client able to draw the curve**
+    /// (`docs/plan_harvest_floor.md` §3.1). The build dip moved onto crew throughput, so a ceiling is
+    /// now purely the stock above the floor at the source's own per-biomass rates — linear, exact,
+    /// and composable from the terms already on the wire. The dip still ships (`BuildDips`, the
+    /// `*BuildFraction` fields); it multiplies `workers × perWorkerYield` instead, which is where
+    /// [`forecast_expected_take`] applies it.
+    ///
+    /// The standing-stock clamp is belt-and-braces (`B − floor·K ≤ B` for any floor `≥ 0`) and kept
+    /// because a future ceiling that *could* exceed the stock must not silently over-report.
+    pub fn ceiling_at(&self, floor: f32) -> YieldAccounts {
         if let Some(production) = self.managed_production {
             return production;
         }
-        let room = escapement_ceiling(floor, self.biomass, self.carrying_capacity)
-            * self.build_dips.of(improvement);
+        let room = escapement_ceiling(floor, self.biomass, self.carrying_capacity);
         self.per_biomass_yield
             .scale(room)
             .min(self.per_biomass_yield.scale(self.biomass.max(0.0)))
@@ -4010,9 +4014,22 @@ impl SourceYieldForecast {
 ///   whole animals — so the preview shows the same **pulse**, including the honest `0.00` on a turn
 ///   the herd cannot spare one, rather than a smooth average the sim never actually hands over.
 ///
-/// `collection` is `workers × per_worker_yield`. Both branches are in **provisions**-space; the
-/// biomass→provisions conversion is linear and positive, so it factors out of every `min`/`floor` and
-/// the quantised branch counts exactly the animals the biomass-space take kills.
+/// `collection` is **`workers × per_worker_yield × build_dip(improvement)`** — the build fraction
+/// rides the CREW, not the ceiling (`docs/plan_harvest_floor.md` §3.1). So the whole expression is
+///
+/// ```text
+/// min(workers × per_worker_yield × <rung>BuildFraction, ceiling_at(floor))
+/// ```
+///
+/// which is also the composition the client draws its curve from: every term ships. A crew big
+/// enough to saturate the source's standing stock therefore pays **no** dip — a build costs yield
+/// only while hands are the scarce thing, which is both the fix for §0.3 (no floor can dodge a
+/// factor that does not touch the floor's term) and the legible reading of it (at 25% carry it takes
+/// four times the people to clear the same standing surplus).
+///
+/// Both branches are in **provisions**-space; the biomass→provisions conversion is linear and
+/// positive, so it factors out of every `min`/`floor` and the quantised branch counts exactly the
+/// animals the biomass-space take kills.
 pub fn forecast_expected_take(
     forecast: &SourceYieldForecast,
     workers: u32,
@@ -4076,7 +4093,9 @@ pub fn project_realized_hunt(
     // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
     let corralled = quarry.is_corralled();
-    let collection = workers as f32 * per_worker_biomass_capacity;
+    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
+    // `systems::hunt_take` applies, so the projection and the take stay one model.
+    let collection = workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement);
     let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
     // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
@@ -4095,7 +4114,7 @@ pub fn project_realized_hunt(
         let rate = if corralled {
             pen_yield_biomass(&quarry, fauna)
         } else {
-            hunt_escapement_ceiling(floor, improvement, quarry.biomass, capacity, ladder)
+            hunt_escapement_ceiling(floor, quarry.biomass, capacity)
         };
         let take = rate.min(collection).min(quarry.biomass).max(0.0);
         if take <= REALIZED_PROJECTION_TAKE_EPSILON {
@@ -4167,7 +4186,9 @@ pub fn project_arrivals_hunt(
     // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
     let corralled = quarry.is_corralled();
-    let collection = workers as f32 * per_worker_biomass_capacity;
+    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
+    // `systems::hunt_take` applies, so the projection and the take stay one model.
+    let collection = workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement);
     for slot in schedule.iter_mut() {
         // Logistics: regrow first (sets `quarry.biomass_before_regrowth`, then grows `quarry.biomass`).
         regrow_biomass(&mut quarry, fauna);
@@ -4192,8 +4213,7 @@ pub fn project_arrivals_hunt(
         } else {
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
-            let ceiling =
-                hunt_escapement_ceiling(floor, improvement, quarry.biomass, capacity, ladder);
+            let ceiling = hunt_escapement_ceiling(floor, quarry.biomass, capacity);
             let take = quantise_animal_take(ceiling, collection, quarry.body_mass);
             quarry.biomass -= take.killed_biomass();
             take.carried
@@ -4225,9 +4245,16 @@ fn forecast_production_and_take(
     floor: f32,
     improvement: Option<Improvement>,
 ) -> (YieldAccounts, YieldAccounts) {
-    let collection = forecast.per_worker_yield.scale(workers as f32);
-    // The assignment's ceiling at its floor, dipped by whatever the crew is building (issue #442 §2.2).
-    let ceiling = forecast.ceiling_at(floor, improvement);
+    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1): a crew clearing ground or
+    // gentling a herd carries `yield_fraction_while_building ×` what a harvesting crew carries. It is
+    // floor-independent by construction — the dip no longer touches the floor's term at all — which
+    // is what stops a deep floor from building for free.
+    let collection = forecast
+        .per_worker_yield
+        .scale(workers as f32 * forecast.build_dips.of(improvement));
+    // The assignment's ceiling at its floor. Undipped: the source offers what stands above the floor
+    // whether the crew is harvesting it or building on it.
+    let ceiling = forecast.ceiling_at(floor);
     // **The animal count is taken on ONE axis and then valued in both.** `quantise_animal_take`
     // divides by the quantum, so it must run on a component whose per-biomass rate is positive —
     // `Provisions` for every edible species (bit-identical to the pre-#337 arithmetic), `TradeGoods`
@@ -4345,7 +4372,7 @@ pub(crate) fn forecast_source_yield(
             Some(axis) if forecast.quantises() => source_crew_needed(
                 standing_crew,
                 hunt_haul_workers(
-                    forecast.ceiling_at(floor, improvement).component(axis),
+                    forecast.ceiling_at(floor).component(axis),
                     forecast.body_mass_yield.component(axis),
                     forecast.per_worker_yield.component(axis),
                 ),
@@ -4456,12 +4483,12 @@ pub fn hunt_source_yield_preview(
     )
 }
 
-/// **THE biomass a hunt may take from a herd this turn** — **constant escapement**, dipped by
-/// whatever the crew is building. The animal web's half of `docs/plan_harvest_floor.md` §1, and the
-/// exact twin of `forage::forage_escapement_ceiling`:
+/// **THE biomass a hunt may take from a herd this turn** — **constant escapement**. The animal web's
+/// half of `docs/plan_harvest_floor.md` §1, and the exact twin of
+/// `forage::forage_escapement_ceiling`:
 ///
 /// ```text
-/// escapement_ceiling(floor, B, K) × ladder.build_dip(improvement)
+/// max(0, B − floor·K)
 /// ```
 ///
 /// | floor | herd |
@@ -4470,7 +4497,10 @@ pub fn hunt_source_yield_preview(
 /// | `0.30` | drawn down, still above the Allee brink |
 /// | `0.15` = `ecology.collapse_fraction` | drawn to the brink; depensation finishes it |
 /// | `0` | the whole stock — under `extinction_floor`, and gone |
-/// | a build in flight | the same room, × the rung's `yield_fraction_while_building` |
+///
+/// **THE BUILD DIP IS NOT HERE — it multiplies the CREW** (`docs/plan_harvest_floor.md` §3.1). See
+/// `forage::forage_escapement_ceiling` for why: dipping the ceiling made a deep floor build for
+/// free, because a fraction of a bigger stock still filled the crew's baskets.
 ///
 /// # It is a STOCK, not a rate — which is why the kill-credit bank left this path
 ///
@@ -4509,19 +4539,8 @@ pub fn hunt_source_yield_preview(
 /// `floor` is the **assignment's**, a fraction of `K` in `0.0..=1.0`
 /// ([`crate::components::floor_is_valid`], enforced at the command boundary). It is not a stance and
 /// not a lookup: the whole of what the player decides about pressure is this one number.
-pub fn hunt_escapement_ceiling(
-    floor: f32,
-    improvement: Option<Improvement>,
-    biomass: f32,
-    carrying_capacity: f32,
-    ladder: &LadderConfig,
-) -> f32 {
-    // **The build dip is a factor on the chosen stance, not a rung of its own** (issue #442, §2.2):
-    // the same fraction — read through the one `LadderConfig::build_dip` seam the plant web reads —
-    // multiplies whichever stance the player holds, so Taming-while-Depleting takes more now and
-    // stalls its own meter instead of being forbidden. `room × dip ≤ room ≤ B`, so a caller's
-    // standing-stock clamp is belt-and-braces and can never bind.
-    escapement_ceiling(floor, biomass, carrying_capacity) * ladder.build_dip(improvement)
+pub fn hunt_escapement_ceiling(floor: f32, biomass: f32, carrying_capacity: f32) -> f32 {
+    escapement_ceiling(floor, biomass, carrying_capacity)
 }
 
 /// **One turn's whole-animal hunt take** — the result of [`quantise_animal_take`].
@@ -5710,69 +5729,19 @@ mod tests {
         assert_eq!(herd.stabilize_herders_needed(APH, 0.0), 1);
     }
 
-    /// **The build dip lands BEFORE the standing-stock clamp** — `min(room × d, B)`, never
-    /// `min(room, B) × d` (PR #448 review). Asserted on the shared [`SourceYieldForecast`] accessor
-    /// rather than on either web's forecast builder, because `ceiling_at` is the one lookup both
-    /// take paths are mirrored by (each dips inside its own `*_escapement_ceiling` and *then* clamps
-    /// to the standing stock).
-    ///
-    /// **NEITHER WEB CAN REACH THE WINDOW, and that is why the fixture is synthetic**: an escapement
-    /// ceiling is `B − floor·K`, so `room × dip ≤ room ≤ B` on every real source. A **negative
-    /// floor** is the only way to make the room exceed the stock, and it is unreachable through the
-    /// command boundary ([`crate::components::floor_is_valid`]) — which is exactly what makes it the
-    /// right probe here: it exercises the accessor's ordering without asserting anything about a
-    /// state the sim can be in.
-    #[test]
-    fn the_build_dip_is_applied_inside_the_standing_stock_clamp() {
-        // A floor BELOW zero, so the room is larger than the standing stock and the clamp binds
-        // undipped; the dip then brings it back under, so the clamp must not bind dipped.
-        const STOCK: f32 = 40.0;
-        const OVERDRAWN_FLOOR: f32 = -1.5; // room = B − floor·K = 40 + 1.5·40 = 100
-        const CAPACITY: f32 = 40.0;
-        const ROOM: f32 = 100.0;
-        const DIP: f32 = 0.25;
-        let forecast = SourceYieldForecast {
-            biomass: STOCK,
-            carrying_capacity: CAPACITY,
-            per_biomass_yield: plant_food_only(1.0),
-            managed_production: None,
-            build_dips: BuildDips {
-                rung_two: Some(DIP),
-                rung_three: Some(DIP),
-            },
-            ..Default::default()
-        };
-        assert_eq!(
-            forecast
-                .ceiling_at(OVERDRAWN_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
-            STOCK,
-            "the undipped room is stock-bound — the fixture's premise"
-        );
-        assert_eq!(
-            forecast
-                .ceiling_at(OVERDRAWN_FLOOR, Some(Improvement::Cultivate))
-                .provisions,
-            ROOM * DIP,
-            "a builder pays a fraction of the ROOM, clamped to the stock — not a fraction of the \
-             clamped stock, which under-reports by the ratio the clamp cut"
-        );
-        // And the clamp is not skipped: shrink the stock until even the dipped room exceeds it.
-        let starved = SourceYieldForecast {
-            biomass: ROOM * DIP / 2.0,
-            ..forecast
-        };
-        assert!(
-            starved
-                .ceiling_at(OVERDRAWN_FLOOR, Some(Improvement::Cultivate))
-                .provisions
-                <= starved.biomass,
-            "the clamp is applied second, not omitted"
-        );
-    }
+    // `the_build_dip_is_applied_inside_the_standing_stock_clamp` was deleted with its subject: the
+    // dip is no longer a term of `ceiling_at` at all (`docs/plan_harvest_floor.md` §3.1 moved it onto
+    // crew throughput), so there is no ordering left between it and the standing-stock clamp.
 
     /// The food peak, which these forecast-shape tests use wherever the floor is not what varies.
     const PEAK_FLOOR: f32 = MSY_BIOMASS_FRACTION;
+
+    /// **A crew whose CARRY is the binding term.** Since `docs/plan_harvest_floor.md` §3.1 the build
+    /// dip multiplies `workers × per_worker_carry` rather than the ceiling, so it is invisible at a
+    /// staffing the source's standing stock binds — a build only ever costs yield while hands are
+    /// the scarce thing. These fixtures stand a full herd against a handful of hunters, which is the
+    /// regime a real build lives in.
+    const DIP_VISIBLE_CREW: u32 = 5;
 
     /// **Every legal floor's ceiling is the take path's own arithmetic**, on both webs — the
     /// property that replaced four stored rows with one function
@@ -5796,9 +5765,7 @@ mod tests {
             let floor = step as f32 / 100.0;
             assert!(crate::components::floor_is_valid(floor));
             let expected = escapement_ceiling(floor, STOCK, CAPACITY) * RATE;
-            let actual = forecast
-                .ceiling_at(floor, NO_IMPROVEMENT_UNDERWAY)
-                .provisions;
+            let actual = forecast.ceiling_at(floor).provisions;
             assert!(
                 (actual - expected).abs() < 1e-4,
                 "floor {floor}: {actual} vs {expected}"
@@ -5833,7 +5800,7 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    forecast.ceiling_at(floor, improvement).provisions,
+                    forecast.ceiling_at(floor).provisions,
                     PRODUCTION,
                     "a finished source pays its managed yield at floor {floor} + {improvement:?}"
                 );
@@ -5909,18 +5876,27 @@ mod tests {
         herd.body_mass = 50.0;
         let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
 
-        let tame_dip = forecast.ceiling_at(0.5, Some(Improvement::Tame)).provisions;
+        // **The dip is read off the CREW, not the ceiling** (`docs/plan_harvest_floor.md` §3.1), so
+        // it is visible only at a staffing the crew's carry binds — `DIP_VISIBLE_CREW` hunters carry
+        // less than the herd's escapement offers, which is the regime a real Tame build lives in.
+        let tame_dip = forecast_expected_take(
+            &forecast,
+            DIP_VISIBLE_CREW,
+            PEAK_FLOOR,
+            Some(Improvement::Tame),
+        )
+        .provisions;
+        let wild_sustain = forecast_expected_take(
+            &forecast,
+            DIP_VISIBLE_CREW,
+            PEAK_FLOOR,
+            NO_IMPROVEMENT_UNDERWAY,
+        )
+        .provisions;
         assert!(
-            tame_dip
-                < forecast
-                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                    .provisions,
+            tame_dip < wild_sustain,
             "the during-building dip reads below wild Sustain — the defect pastoral_yield fixes: \
-             dip {} vs sustain {}",
-            tame_dip,
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+             dip {tame_dip} vs sustain {wild_sustain}"
         );
         // The ladder, on the axis that can express it: the two rung PAYOFFS, each a sustained MSY on
         // its own ecology (r-dependent). Measured ≈ 0.75 < 1.5.
@@ -5934,16 +5910,12 @@ mod tests {
         // ladder. Pinned so nobody "fixes" the ordering above by putting a growth rate back into a
         // take ceiling.
         assert!(
-            (forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions
+            (forecast.ceiling_at(PEAK_FLOOR).provisions
                 - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
                 .abs()
                 < 1e-4,
             "a full herd's Sustain ceiling is exactly `B - K/2`, whatever its `r`: {}",
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+            forecast.ceiling_at(PEAK_FLOOR).provisions,
         );
     }
 
@@ -5978,61 +5950,54 @@ mod tests {
 
         // Extractive ladder — deeper floor, more stock standing above it, unperturbed by the stale bank.
         assert!(
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions
-                < forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions
-                && forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions
-                    < forecast
-                        .ceiling_at(0.15, NO_IMPROVEMENT_UNDERWAY)
-                        .provisions,
+            forecast.ceiling_at(PEAK_FLOOR).provisions < forecast.ceiling_at(0.3).provisions
+                && forecast.ceiling_at(0.3).provisions < forecast.ceiling_at(0.15).provisions,
             "extractive ceilings must ascend with the floor, and must not read the stale bank: \
              sustain {} surplus {} deplete {}",
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
-            forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions,
-            forecast
-                .ceiling_at(0.15, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+            forecast.ceiling_at(PEAK_FLOOR).provisions,
+            forecast.ceiling_at(0.3).provisions,
+            forecast.ceiling_at(0.15).provisions,
         );
-        // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff". Since #442
-        // a dip is the SELECTED stance's ceiling scaled, so it is asked for against Sustain, the
-        // stance a builder normally holds.
-        let tame_dip = forecast.ceiling_at(0.5, Some(Improvement::Tame)).provisions;
-        let corral_dip = forecast
-            .ceiling_at(0.5, Some(Improvement::Corral))
-            .provisions;
+        // **A CEILING NO LONGER CARRIES A DIP AT ALL** (`docs/plan_harvest_floor.md` §3.1): the
+        // build fraction moved onto crew throughput, which is what makes `ceiling_at` linear in the
+        // terms already on the wire and therefore composable by the client. Pinned positively —
+        // every rung reads the identical ceiling at a given floor — because "the dip is gone from
+        // here" is the property that would silently regress if someone put it back.
+        let expected = |crew, floor, improvement| {
+            forecast_expected_take(&forecast, crew, floor, improvement).provisions
+        };
+        for floor in [PEAK_FLOOR, 0.3, 0.15] {
+            assert!(
+                (forecast.ceiling_at(floor).provisions
+                    - escapement_ceiling(floor, herd.biomass, herd.carrying_capacity)
+                        * fauna.hunt.provisions_per_biomass)
+                    .abs()
+                    < 1e-4,
+                "the ceiling at {floor} is `max(0, B − floor·K) × rate` and nothing else — the \
+                 expression the client composes: {}",
+                forecast.ceiling_at(floor).provisions
+            );
+        }
+        // The dip shows up where it now lives — in what a *crew* brings home. Asked at a staffing
+        // the carry binds, since a crew the escapement binds pays no dip by construction.
+        let tame_dip = expected(DIP_VISIBLE_CREW, PEAK_FLOOR, Some(Improvement::Tame));
+        let corral_dip = expected(DIP_VISIBLE_CREW, PEAK_FLOOR, Some(Improvement::Corral));
+        let undipped = expected(DIP_VISIBLE_CREW, PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY);
         assert!(
-            tame_dip
-                < forecast
-                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                    .provisions,
-            "the Tame dip must read below the stance it rides: dip {} vs sustain {}",
-            tame_dip,
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+            tame_dip < undipped,
+            "the Tame dip must read below the take it rides: dip {tame_dip} vs sustain {undipped}"
         );
         assert!(
-            corral_dip
-                < forecast
-                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                    .provisions,
-            "the Corral dip must read below the stance it rides: dip {} vs sustain {}",
-            corral_dip,
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+            corral_dip < undipped,
+            "the Corral dip must read below the take it rides: dip {corral_dip} vs sustain \
+             {undipped}"
         );
-        // **The dip rides whichever stance is selected** (§2.2) — the constant this arc removed. A
-        // Deplete builder's dip is a fraction of Deplete's larger ceiling, not of Sustain's.
+        // **A deeper floor still takes more now** — the pressure axis is untouched by the build,
+        // which is exactly the separation §3.1 bought: the dip cannot be dodged by choosing a floor,
+        // and choosing a floor is not made cheaper by building.
         assert!(
-            forecast
-                .ceiling_at(0.15, Some(Improvement::Tame))
-                .provisions
-                > tame_dip,
-            "a Deplete-while-taming crew takes MORE now — that is what stalls its own meter"
+            expected(DIP_VISIBLE_CREW, 0.15, Some(Improvement::Tame)) >= tame_dip,
+            "a deeper floor never takes less while taming"
         );
         // The rung PAYOFFS still climb — the axis on which the ladder is expressible at a single turn.
         assert!(
@@ -6043,16 +6008,12 @@ mod tests {
         );
         // The stale bank changed nothing: the ceiling is exactly the escapement stock.
         assert!(
-            (forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions
+            (forecast.ceiling_at(PEAK_FLOOR).provisions
                 - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
                 .abs()
                 < 1e-4,
             "the Sustain ceiling is `B - K/2`, not `B - K/2 + credit`: {}",
-            forecast
-                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
-                .provisions,
+            forecast.ceiling_at(PEAK_FLOOR).provisions,
         );
     }
 
@@ -6462,8 +6423,8 @@ mod tests {
         assert_eq!(herd_capacity(after, &fauna), after.carrying_capacity);
         let forecast_after = hunt_forecast(after, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
         assert_eq!(
-            forecast_before.ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY),
-            forecast_after.ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY),
+            forecast_before.ceiling_at(PEAK_FLOOR),
+            forecast_after.ceiling_at(PEAK_FLOOR),
             "the Sustain hunt ceiling is unchanged by grazing (inert on the hunting economy)"
         );
 

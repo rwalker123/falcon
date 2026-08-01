@@ -22,9 +22,9 @@ use core_sim::{
     DiscoveryProgressLedger, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
     FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, ForageRegistry,
     GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand,
-    SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    Improvement, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     NO_IMPROVEMENT_UNDERWAY,
@@ -195,7 +195,7 @@ fn spawn_hunters(
                         floor,
                     },
                     workers,
-                    improvement: None,
+                    improvement: NO_IMPROVEMENT_UNDERWAY,
                 }],
                 ..Default::default()
             },
@@ -523,6 +523,20 @@ fn spawn_resident_hunters(
     floor: f32,
     workers: u32,
 ) -> bevy::prelude::Entity {
+    spawn_resident_crew(app, pos, fauna_id, floor, workers, NO_IMPROVEMENT_UNDERWAY)
+}
+
+/// [`spawn_resident_hunters`] with a build verb in flight — the axis whose dip rides *crew
+/// throughput* since `docs/plan_harvest_floor.md` §3.1, and therefore the one that can break the
+/// forecast if the two halves apply it to different terms.
+fn spawn_resident_crew(
+    app: &mut App,
+    pos: UVec2,
+    fauna_id: &str,
+    floor: f32,
+    workers: u32,
+    improvement: Option<Improvement>,
+) -> bevy::prelude::Entity {
     let tile = app
         .world
         .resource::<TileRegistry>()
@@ -562,7 +576,7 @@ fn spawn_resident_hunters(
                         floor,
                     },
                     workers,
-                    improvement: None,
+                    improvement,
                 }],
                 ..Default::default()
             },
@@ -574,6 +588,17 @@ fn spawn_resident_hunters(
 /// (`hunt_source_yield_preview`), i.e. the pair the client is shown *before* committing. Read before
 /// the turn resolves.
 fn precommit_pair(app: &App, id: &str, policy: f32, workers: u32) -> (f32, f32) {
+    precommit_pair_building(app, id, policy, workers, NO_IMPROVEMENT_UNDERWAY)
+}
+
+/// [`precommit_pair`] with a build verb in flight.
+fn precommit_pair_building(
+    app: &App,
+    id: &str,
+    policy: f32,
+    workers: u32,
+    improvement: Option<Improvement>,
+) -> (f32, f32) {
     let fauna = app.world.resource::<FaunaConfigHandle>().get();
     let ladder = app.world.resource::<LadderConfigHandle>().get();
     let labor = app.world.resource::<LaborConfigHandle>().get();
@@ -587,7 +612,7 @@ fn precommit_pair(app: &App, id: &str, policy: f32, workers: u32) -> (f32, f32) 
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
         policy,
-        NO_IMPROVEMENT_UNDERWAY,
+        improvement,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
     );
@@ -663,15 +688,12 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
                 {
                     let fauna = app.world.resource::<FaunaConfigHandle>().get();
                     let labor = app.world.resource::<LaborConfigHandle>().get();
-                    let ladder = app.world.resource::<LadderConfigHandle>().get();
                     let registry = app.world.resource::<HerdRegistry>();
                     let herd = registry.find(&id).expect("the herd is on the map");
                     let ceiling = core_sim::hunt_escapement_ceiling(
                         policy,
-                        NO_IMPROVEMENT_UNDERWAY,
                         herd.biomass,
                         core_sim::herd_capacity(herd, &fauna),
-                        &ladder,
                     );
                     let collection = crew as f32 * labor.hunt.per_worker_biomass_capacity;
                     if collection < ceiling {
@@ -714,6 +736,109 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
         "both regimes must be covered: labor-bound={saw_labor_bound} \
          escapement-bound={saw_escapement_bound}"
     );
+}
+
+/// **7b. `forecast == actual` WITH A BUILD IN FLIGHT, swept over the floor** — the sweep that matters
+/// most for `docs/plan_harvest_floor.md` §3.1.
+///
+/// The build dip moved off the take ceiling and onto **crew throughput**. That is exactly the kind of
+/// change that can split the forecast from the take: the two halves compose the same `min` out of two
+/// terms, and moving a factor from one term to the other has to happen in both places at once or the
+/// client is quoted a number the sim will not pay. Asserted on the **exported snapshot**, per
+/// component, on a defaulting species (food) and an inedible one (trade), across every build verb the
+/// animal web offers and both binding regimes.
+///
+/// It also pins the property the move exists to create: **the dip is floor-independent**. At a
+/// crew-bound staffing the ratio between a building crew's take and a harvesting crew's is the rung's
+/// own fraction at *every* floor — there is no floor a builder can pick to dodge it, which is what
+/// §0.3 measured going wrong when the dip multiplied the ceiling instead.
+#[test]
+fn the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor() {
+    let mut saw_labor_bound = false;
+    let mut saw_escapement_bound = false;
+    for species in [DEFAULTING_SPECIES, INEDIBLE_SPECIES] {
+        for floor in EXTRACTIVE {
+            for improvement in [Some(Improvement::Tame), Some(Improvement::Corral)] {
+                for crew in [LABOR_BOUND_CREW, UNBOUNDED_CREW, HAUL_THE_WHOLE_HERD_CREW] {
+                    let (mut app, id, pos) = headless_with_species(species);
+                    {
+                        let fauna = app.world.resource::<FaunaConfigHandle>().get();
+                        let labor = app.world.resource::<LaborConfigHandle>().get();
+                        let ladder = app.world.resource::<LadderConfigHandle>().get();
+                        let registry = app.world.resource::<HerdRegistry>();
+                        let herd = registry.find(&id).expect("the herd is on the map");
+                        let ceiling = core_sim::hunt_escapement_ceiling(
+                            floor,
+                            herd.biomass,
+                            core_sim::herd_capacity(herd, &fauna),
+                        );
+                        // The dipped collection — which term binds is itself a function of the
+                        // improvement now, so the regime has to be judged with the dip in place.
+                        let collection = crew as f32
+                            * labor.hunt.per_worker_biomass_capacity
+                            * ladder.build_dip(improvement);
+                        if collection < ceiling {
+                            saw_labor_bound = true;
+                        } else {
+                            saw_escapement_bound = true;
+                        }
+                    }
+                    let forecast = precommit_pair_building(&app, &id, floor, crew, improvement);
+                    let band = spawn_resident_crew(&mut app, pos, &id, floor, crew, improvement);
+
+                    app.world.run_system_once(advance_labor_allocation);
+                    recapture_snapshot_in_place(&mut app.world);
+                    let paid = exported_pair(&app, band);
+
+                    assert!(
+                        (forecast.0 - paid.0).abs() <= YIELD_EPSILON,
+                        "{species} floor {floor} + {improvement:?} × {crew}: forecast FOOD {} must \
+                         equal the paid {}",
+                        forecast.0,
+                        paid.0
+                    );
+                    assert!(
+                        (forecast.1 - paid.1).abs() <= YIELD_EPSILON,
+                        "{species} floor {floor} + {improvement:?} × {crew}: forecast TRADE {} must \
+                         equal the paid {}",
+                        forecast.1,
+                        paid.1
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        saw_labor_bound && saw_escapement_bound,
+        "both regimes must be covered: labor-bound={saw_labor_bound} \
+         escapement-bound={saw_escapement_bound}"
+    );
+
+    // **The dip is floor-independent by construction.** At a crew-bound staffing the take is
+    // `workers × per_worker × dip`, which knows nothing about the floor — so the ratio a builder pays
+    // against a harvester is the rung's own fraction at every floor. Measured on the exported wire,
+    // not on the forecast, so it is the shipped number.
+    for floor in EXTRACTIVE {
+        let take = |improvement| {
+            let (mut app, id, pos) = headless_with_species(DEFAULTING_SPECIES);
+            let band =
+                spawn_resident_crew(&mut app, pos, &id, floor, LABOR_BOUND_CREW, improvement);
+            app.world.run_system_once(advance_labor_allocation);
+            recapture_snapshot_in_place(&mut app.world);
+            exported_pair(&app, band).0
+        };
+        let harvesting = take(NO_IMPROVEMENT_UNDERWAY);
+        let taming = take(Some(Improvement::Tame));
+        assert!(
+            harvesting > 0.0,
+            "floor {floor}: the harness must actually take something"
+        );
+        assert!(
+            taming < harvesting,
+            "floor {floor}: a crew gentling the herd carries less than one hunting it ({taming} vs \
+             {harvesting})"
+        );
+    }
 }
 
 /// **8. A wolf's exported per-policy ceilings read ZERO food and NON-ZERO trade, on all four rungs.**

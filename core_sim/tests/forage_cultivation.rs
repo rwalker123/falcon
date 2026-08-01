@@ -42,8 +42,20 @@ fn grant_cultivation_knowledge(app: &mut App, faction: FactionId) {
 /// clean fraction of the Sustain ceiling).
 const FORAGE_WORKERS: u32 = 5000;
 
+/// **One forager**, so the crew's throughput is the binding term rather than the patch's standing
+/// stock. Since `docs/plan_harvest_floor.md` §3.1 the build dip multiplies `workers × per_worker`
+/// rather than the take ceiling, so it is invisible at a staffing the stock binds — a build costs
+/// yield only while hands are the scarce thing, which is the legible "hire four times the people"
+/// half of the change.
+const SOLE_FORAGER: u32 = 1;
+
 /// Float slack for provisions comparisons (fixed-point conversion + multiplication order).
 const EPSILON: f32 = 1e-4;
+
+/// **The floor at which `learn_multiplier` is exactly ×1.0** — the food peak, and the floor a fresh
+/// assignment carries. Passed wherever a build rate is read for its *stated* pace rather than for a
+/// floor's fraction of it (`docs/plan_harvest_floor.md` §3).
+const FOOD_PEAK_FLOOR: f32 = core_sim::MSY_BIOMASS_FRACTION;
 
 fn spawn_world() -> App {
     let mut app = App::new();
@@ -199,7 +211,30 @@ fn spawn_forager(
     patch: UVec2,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
-    let policy = 0.5;
+    spawn_forager_of(app, tile, patch, improvement, FORAGE_WORKERS)
+}
+
+/// [`spawn_forager`] with an explicit head-count — the dip test needs a crew the carry binds.
+fn spawn_forager_of(
+    app: &mut App,
+    tile: bevy::prelude::Entity,
+    patch: UVec2,
+    improvement: Option<Improvement>,
+    foragers: u32,
+) -> bevy::prelude::Entity {
+    spawn_forager_at(app, tile, patch, improvement, foragers, FOOD_PEAK_FLOOR)
+}
+
+/// [`spawn_forager_of`] with an explicit **floor** — the pressure dial, which since
+/// `docs/plan_harvest_floor.md` §3 also paces the build.
+fn spawn_forager_at(
+    app: &mut App,
+    tile: bevy::prelude::Entity,
+    patch: UVec2,
+    improvement: Option<Improvement>,
+    foragers: u32,
+    policy: f32,
+) -> bevy::prelude::Entity {
     app.world
         .spawn((
             PopulationCohort {
@@ -207,7 +242,7 @@ fn spawn_forager(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(FORAGE_WORKERS as f32),
+                working: scalar_from_f32(foragers as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -237,7 +272,7 @@ fn spawn_forager(
                         floor: policy,
                         species: None,
                     },
-                    workers: FORAGE_WORKERS,
+                    workers: foragers,
                     improvement,
                 }],
                 ..Default::default()
@@ -308,6 +343,7 @@ fn cultivation_config(app: &App) -> (f32, f32, f32) {
         tended.build_accrual(
             Some(Improvement::Cultivate),
             true,
+            FOOD_PEAK_FLOOR,
             RUNG_TIMESCALE_UNSCALED,
             tended
                 .build_crew_needed()
@@ -386,13 +422,27 @@ fn sustain_forage_teaches_cultivation_but_never_tames_the_patch() {
         .is_cultivated());
 }
 
-/// **The investment cost.** A patch worked under `Cultivate` pays only
-/// `cultivating_yield_fraction × the Sustain (MSY) yield` — the crew is preparing ground, not
-/// gathering — and the reduced take is *sustainable*, so the patch stays Thriving throughout.
+/// **The investment cost.** A crew preparing ground carries `yield_fraction_while_building ×` what
+/// the same crew gathering it carries — it is clearing, not gathering — and the reduced take is
+/// *sustainable*, so the patch stays Thriving throughout.
+///
+/// **It is asked at [`SOLE_FORAGER`], not at the ample crew the rest of this file uses.**
+/// `docs/plan_harvest_floor.md` §3.1 moved the dip off the take ceiling and onto crew throughput, so
+/// a crew big enough to saturate the standing stock anyway pays **nothing** for the build — legibly
+/// so, since the remedy is to hire four times the people. Both regimes are asserted, because either
+/// alone reads as a bug.
 #[test]
 fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() {
-    let sustain_yield = one_turn_yield(None);
-    let cultivating_yield = one_turn_yield(Some(Improvement::Cultivate));
+    let sparse_yield = |improvement| {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        spawn_forager_of(&mut app, tile, coord, improvement, SOLE_FORAGER);
+        run_turns_with_forage(&mut app, 1);
+        provisions_f32(&mut app)
+    };
+    let sustain_yield = sparse_yield(None);
+    let cultivating_yield = sparse_yield(Some(Improvement::Cultivate));
     assert!(
         sustain_yield > 0.0,
         "baseline Sustain yield must be positive"
@@ -402,8 +452,14 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
     let (fraction, _, _) = cultivation_config(&app);
     assert!(
         (cultivating_yield - fraction * sustain_yield).abs() < EPSILON,
-        "preparing pays fraction × the Sustain yield: {cultivating_yield} vs {}",
+        "preparing pays fraction × what the same crew gathers: {cultivating_yield} vs {}",
         fraction * sustain_yield
+    );
+    // …and the other regime: an ample crew clears the same standing surplus for no yield at all,
+    // because the patch's stock — not the crew — is what binds.
+    assert!(
+        (one_turn_yield(Some(Improvement::Cultivate)) - one_turn_yield(None)).abs() < EPSILON,
+        "a crew that saturates the stock anyway pays no dip"
     );
 
     // Over a full preparation the patch never leaves Thriving — the dip is drawn off the MSY ceiling,
@@ -421,6 +477,63 @@ fn cultivate_pays_a_fraction_of_the_sustain_yield_and_keeps_the_patch_healthy() 
             .ecology_phase,
         EcologyPhase::Thriving,
         "the preparing take is sustainable — the patch stays healthy"
+    );
+}
+
+/// **A CREW THAT STRIPS THE GROUND IT IS CLEARING BUILDS SLOWLY** — §0.3's measurement, inverted.
+///
+/// Before `docs/plan_harvest_floor.md` §3 the harshest draw was strictly dominant while building:
+/// dipped ×0.25, *every* stance completed a 25-turn Cultivate on schedule and the deepest one paid
+/// 3.8× the food for it. The floor now paces the build (`intensification::learn_multiplier`), so
+/// pulling harder buys food today at the price of turns — a real trade instead of a free lunch.
+///
+/// Asserted as a **relation**, not a pair of literals: a 0.15 build takes materially longer than a
+/// food-peak one, and it still completes (the rate is a slope, not a gate — there is no lapse state
+/// left to strand a build in).
+#[test]
+fn a_low_floor_cultivate_takes_materially_longer_than_a_food_peak_one() {
+    /// Long enough for even the shallowest swept floor to finish several times over, so a run that
+    /// hits it is a genuine never-completes rather than an impatient harness.
+    const PATIENCE_TURNS: u32 = 400;
+
+    /// How much longer the deep-floor build must take before the trade counts as *material*. The
+    /// arithmetic says `0.5 / 0.15 ≈ 3.3×`; the bound is deliberately loose because what is being
+    /// pinned is that the pressure costs turns at all, not the exact slope (which is
+    /// `learn_multiplier`'s to change).
+    const MATERIALLY_LONGER: f32 = 2.0;
+
+    let turns_to_cultivate = |floor: f32| -> u32 {
+        let mut app = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut app);
+        grant_cultivation_knowledge(&mut app, FactionId(0));
+        spawn_forager_at(
+            &mut app,
+            tile,
+            coord,
+            Some(Improvement::Cultivate),
+            FORAGE_WORKERS,
+            floor,
+        );
+        for turn in 1..=PATIENCE_TURNS {
+            run_turns_with_forage(&mut app, 1);
+            if app
+                .world
+                .resource::<ForageRegistry>()
+                .patch(coord)
+                .is_some_and(|patch| patch.is_cultivated())
+            {
+                return turn;
+            }
+        }
+        panic!("a build at floor {floor} never completed in {PATIENCE_TURNS} turns");
+    };
+
+    let at_the_peak = turns_to_cultivate(FOOD_PEAK_FLOOR);
+    let stripping = turns_to_cultivate(0.15);
+    assert!(
+        stripping as f32 >= at_the_peak as f32 * MATERIALLY_LONGER,
+        "a crew stripping the ground it is clearing must pay for it in turns: {stripping} vs \
+         {at_the_peak} at the food peak"
     );
 }
 

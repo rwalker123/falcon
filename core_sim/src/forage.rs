@@ -279,25 +279,6 @@ impl ForagePatch {
         self.is_field() || self.is_cultivated()
     }
 
-    /// **Is a `Cultivate` build already underway here, by `faction`?** — progress banked but not yet
-    /// complete, with this faction's name on it (ownership is set by the first accrual, so the two
-    /// always travel together).
-    ///
-    /// This is what separates a **start** gate from a **continue** gate. `Thriving` is what the land
-    /// must be for a crew to *begin* clearing it; it is deliberately **not** what the land must stay
-    /// for an existing build to survive — a patch that drops out of Thriving mid-build holds its
-    /// progress and simply stops accruing (see `advance_labor_allocation`'s Cultivate arm). That
-    /// ruling is only livable if the player can still *adjust the crew* while the build is paused,
-    /// which re-issues the very `Cultivate` assignment the start gate refuses. So
-    /// `validate_labor_policy` exempts a build underway from the Thriving check — and from that check
-    /// **only**: the knowledge gate, the already-cultivated rejection and the other-faction owner
-    /// rejection all still run, because none of them is a condition that lapses under a build.
-    pub fn cultivation_underway(&self, faction: FactionId) -> bool {
-        self.cultivation_progress > RUNG_UNSTARTED
-            && !self.is_cultivated()
-            && self.owner == Some(faction)
-    }
-
     /// Accrue cultivation progress for `faction` (the preparing band, working the patch with
     /// [`crate::components::Improvement::Cultivate`] in flight). Sets ownership on the first accrual;
     /// only the owner makes progress.
@@ -1573,15 +1554,16 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
     patch.refresh_ecology_phase(&ecology);
 }
 
-/// The forage counterpart of `fauna::hunt_take`: resolve the stance's **escapement ceiling**, cap it
-/// by the gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal`), clamp to
-/// the patch's remaining biomass, **subtract it from the patch**, and convert the take to provisions
-/// (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
+/// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
+/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal × build_dip`),
+/// clamp to the patch's remaining biomass, **subtract it from the patch**, and convert the take to
+/// provisions (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
 ///
-/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1):
-/// `min(crew throughput, max(0, B − floor·K) × build_dip)`. The **floor** is a fraction of `K` the
-/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it) and the
-/// dip is whatever the crew is building. See [`forage_escapement_ceiling`].
+/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1 + §3.1):
+/// `min(crew throughput × build_dip, max(0, B − floor·K))`. The **floor** is a fraction of `K` the
+/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it); the
+/// **dip** is whatever the crew is building, and it multiplies the *crew* — see
+/// [`forage_escapement_ceiling`] for why it left the ceiling.
 /// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
 /// `plant:field`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
 /// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
@@ -1621,14 +1603,13 @@ pub(crate) fn forage_take(
     // The ceiling is `r`-independent, so unlike the retired MSY skim it does **not** vary with the
     // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
     // stock standing above the floor. One call still serves rungs 1 and 2 alike.
-    let take_ceiling = forage_escapement_ceiling(
-        floor,
-        improvement,
-        patch.biomass,
-        patch.carrying_capacity,
-        ladder,
-    );
-    let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
+    let take_ceiling = forage_escapement_ceiling(floor, patch.biomass, patch.carrying_capacity);
+    // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1): a crew clearing ground
+    // carries a fraction of what a gathering crew carries, whatever floor it holds. Multiplying the
+    // ceiling instead is what let the harshest draw build for free.
+    let worker_cap = workers as f32
+        * forage_per_worker_biomass(forage, seasonal)
+        * ladder.build_dip(improvement);
     let take = worker_cap
         .min(take_ceiling)
         .max(0.0)
@@ -1642,13 +1623,12 @@ pub(crate) fn forage_take(
     scalar_from_f32(forage_provisions(take, rate, output_multiplier))
 }
 
-/// The per-stance **biomass** ceiling on a gather at the patch's current stock, **dipped by whatever
-/// improvement the crew is building** — the single source of the rung ceilings, shared by
-/// `forage_take` (the take path) and `forage_forecast` (the pre-commit forecast), and the exact
-/// plant-web twin of `fauna::hunt_escapement_ceiling`:
+/// The **biomass standing above the assignment's floor** at the patch's current stock — the single
+/// source of the gather ceiling, shared by `forage_take` (the take path) and `forage_forecast` (the
+/// pre-commit forecast), and the exact plant-web twin of `fauna::hunt_escapement_ceiling`:
 ///
 /// ```text
-/// escapement_ceiling(floor, B, K) × ladder.build_dip(improvement)
+/// max(0, B − floor·K)
 /// ```
 ///
 /// **Constant escapement replaced the four per-stance RATES** (`docs/plan_harvest_floor.md` §1): the
@@ -1663,24 +1643,17 @@ pub(crate) fn forage_take(
 /// depending on it again. The rung-2 payoff is unchanged in substance and clearer in mechanism: a
 /// tended patch regrows faster, so *next* turn it has more stock standing above the floor.
 ///
-/// **The dip is a factor on the SELECTED stance, not a fifth rung** (issue #442,
-/// `docs/plan_investment_rung_toggle.md` §2.2). It used to be `Cultivate`/`Sow` arms of the policy
-/// `match`, each hardcoded to `fraction × the Sustain (MSY) ceiling`, because a build verb *was* the
-/// policy and a builder could be in no other stance. Now `improvement` is an independent axis and the
-/// same fraction multiplies whichever stance the player holds. That is what makes a
-/// Deplete-while-building self-punishing without a gate: the dip rides a draw-down, so the builder
-/// takes more now, leaves Thriving sooner, and stalls their own meter. The fraction is read through
-/// the one [`LadderConfig::build_dip`] seam, so the two webs' dips cannot be applied differently. On
-/// BARE ground a `Sow` dip is a fraction of nothing — a freshly sown patch stands below every floor,
-/// so the sow honestly pays ~0 while it builds (a pure investment).
-pub(crate) fn forage_escapement_ceiling(
-    floor: f32,
-    improvement: Option<Improvement>,
-    biomass: f32,
-    carrying_capacity: f32,
-    ladder: &LadderConfig,
-) -> f32 {
-    escapement_ceiling(floor, biomass, carrying_capacity) * ladder.build_dip(improvement)
+/// **THE BUILD DIP IS NO LONGER HERE — it multiplies the CREW, not the ceiling**
+/// (`docs/plan_harvest_floor.md` §3.1). `yield_fraction_while_building` used to scale this ceiling,
+/// which made the harshest draw build for free: a deeper floor offers a bigger stock, so a fraction
+/// of a bigger stock still filled the crew's baskets and every stance completed a 25-turn Cultivate
+/// on schedule (§0.3). On throughput it is **floor-independent by construction** — there is no floor
+/// you can pick that dodges it, because it no longer touches the floor's term — and it is legible:
+/// at 25% carry it takes four times the people to clear the same standing surplus. The factor is
+/// applied by `forage_take`'s worker cap and by `fauna::forecast_expected_take`, both through the one
+/// [`LadderConfig::build_dip`] seam, so the two webs' dips cannot be applied differently.
+pub(crate) fn forage_escapement_ceiling(floor: f32, biomass: f32, carrying_capacity: f32) -> f32 {
+    escapement_ceiling(floor, biomass, carrying_capacity)
 }
 
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
