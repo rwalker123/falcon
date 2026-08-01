@@ -760,6 +760,68 @@ func _emit_extend_pen(x: int, y: int) -> void:
         "y": y,
     })
 
+# ---- THE FLOOR'S LIVE READINGS (docs/plan_harvest_floor.md §7.3, §7.1, §7.6) --------------------
+#
+# **A DRAG CANNOT REBUILD THE SHEET.** Every other control here answers a click by re-running the
+# whole builder, which `queue_free`s the children — including the control that was clicked. That is
+# harmless for a button and fatal for a DRAG: Godot routes motion to the node that took the press
+# until the button comes up, so freeing the chart mid-drag ends the drag on the first pixel of
+# movement. The chart therefore reports live motion separately from its commit, and the two readings
+# that follow the floor — the crew targets and the verdict — live in their own small hosts that a
+# live change REFILLS in place. On release the ordinary rebuild runs and everything re-reads.
+#
+# The hosts are keyed rather than held as members because two sheets build them and each rebuild
+# makes new ones; a member would outlive the nodes it names.
+const FLOOR_LIVE_TARGETS := "crew_targets"
+const FLOOR_LIVE_VERDICT := "verdict"
+const FLOOR_LIVE_ON_PICK := "on_pick"
+
+## Mount the two crew targets under the stepper, remembering the host + the staffing Callable so a
+## live drag can refill them. Nothing is mounted for a source with no chart model (an expedition, a
+## managed rung, a source the wire published no curve for) — there is no floor axis to target.
+func _mount_crew_targets(parent: VBoxContainer, hosts: Dictionary, model: Dictionary,
+        workers: int, on_pick: Callable) -> void:
+    if not bool(model.get("known", false)):
+        return
+    var host := VBoxContainer.new()
+    host.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    parent.add_child(host)
+    hosts[FLOOR_LIVE_TARGETS] = host
+    hosts[FLOOR_LIVE_ON_PICK] = on_pick
+    host.add_child(HudWidgets.build_crew_targets(model, workers, on_pick))
+
+## Mount the verdict + the idle-crew note in the readout, remembering the host for the same reason.
+func _mount_verdict(parent: VBoxContainer, hosts: Dictionary, model: Dictionary) -> void:
+    if not bool(model.get("known", false)):
+        return
+    var host := VBoxContainer.new()
+    host.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    parent.add_child(host)
+    hosts[FLOOR_LIVE_VERDICT] = host
+    _fill_verdict_host(host, model)
+
+func _fill_verdict_host(host: VBoxContainer, model: Dictionary) -> void:
+    host.add_child(HudWidgets.build_verdict_line(model.get("verdict", {})))
+    var idle_note := String(model.get("idle_note", ""))
+    if idle_note != "":
+        host.add_child(HudWidgets.alloc_hint_label(idle_note))
+
+## Refill the two live hosts against a model composed at the floor the drag is currently on. Every
+## host is re-checked for validity: a snapshot can rebuild the sheet under a drag, and a stale
+## reference here would be a freed node.
+func _refresh_floor_live(hosts: Dictionary, model: Dictionary, workers: int) -> void:
+    if not bool(model.get("known", false)):
+        return
+    var targets: Variant = hosts.get(FLOOR_LIVE_TARGETS, null)
+    if targets is VBoxContainer and is_instance_valid(targets):
+        HudWidgets.clear_children(targets)
+        (targets as VBoxContainer).add_child(HudWidgets.build_crew_targets(model, workers,
+            hosts.get(FLOOR_LIVE_ON_PICK, Callable())))
+    var verdict: Variant = hosts.get(FLOOR_LIVE_VERDICT, null)
+    if verdict is VBoxContainer and is_instance_valid(verdict):
+        HudWidgets.clear_children(verdict)
+        _fill_verdict_host(verdict as VBoxContainer, model)
+
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
 func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> void:
@@ -882,9 +944,34 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         _build_herd_assign_controls(_live_herd(herd_id, herd), target)
     target.add_child(HudWidgets.build_floor_picker(
         on_floor_picked, _compose.hunt_floor(), floor_takes))
-    # THE DIAL BETWEEN THE PRESETS. It is the same setter, so a dragged value and a clicked preset are
-    # one state — which is what lets the picker honestly show NO preset selected between two of them.
-    target.add_child(HudWidgets.build_floor_slider(_compose.hunt_floor(), on_floor_picked))
+    # **THE CHART — the stock and the floor in ONE picture, and the floor is the panel's primary
+    # control** (`docs/plan_harvest_floor.md` §7.3). It is the same setter the presets use, so a
+    # dragged value and a clicked preset are one state — which is what lets the picker honestly show
+    # NO preset selected between two of them. It replaced the plain slider slice 4a shipped as a
+    # placeholder. An EXPEDITION gets no chart: a raid's trip is a forward simulation the sim answers
+    # in `huntTripEstimates`, not a per-turn drawdown of the herd by a resident crew, so projecting
+    # one here would draw a curve the raid does not follow.
+    var chart_model: Dictionary = {}
+    var live_hosts := {}
+    if not is_expedition:
+        chart_model = SourceForecast.floor_chart_model(herd, SourceForecast.SOURCE_KIND_HERD,
+            HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), _compose.hunt_count(),
+            composed_improvement, crew_label.to_lower())
+        if bool(chart_model.get("known", false)):
+            target.add_child(HudWidgets.build_floor_chart(chart_model,
+                func(floor: float, committed: bool) -> void:
+                    _compose.set_hunt_floor(floor)
+                    if committed:
+                        _compose.arm_hunt_autofill()
+                        _build_herd_assign_controls(_live_herd(herd_id, herd), target)
+                    else:
+                        # A LIVE drag must not rebuild these controls — the rebuild frees the chart
+                        # and the drag dies with it. Refill only the readings that follow the floor.
+                        _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                            _live_herd(herd_id, herd), SourceForecast.SOURCE_KIND_HERD,
+                            HudComposeVocab.BARE_FORECAST_PREFIX, floor, _compose.hunt_count(),
+                            composed_improvement, crew_label.to_lower()),
+                            _compose.hunt_count())))
     # The expedition branch spends this slot on the distance refusal — it is that branch's answer to
     # "why is this a party rather than a hunt?" — and the local branch on what the floor means for the
     # herd. **ONE hint table serves both webs and both branches now** (`HudFormat.floor_hint`): a
@@ -905,6 +992,12 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         func(n: int) -> void:
             _compose.set_hunt_count(clampi(n, 0, cap))
             _build_herd_assign_controls(_live_herd(herd_id, herd), target)))
+    # THE TWO CREW TARGETS, beneath the stepper they set (§7.6). Clicking one staffs it, clamped to
+    # the same cap the `+` obeys — a target is a shortcut to a count, never a way past the ceiling.
+    _mount_crew_targets(target, live_hosts, chart_model, _compose.hunt_count(),
+        func(count: int) -> void:
+            _compose.set_hunt_count(clampi(count, 0, cap))
+            _build_herd_assign_controls(_live_herd(herd_id, herd), target))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -957,6 +1050,11 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
             band, herd, _compose.hunt_floor(), _compose.hunt_count())
         if yield_line != "":
             target.add_child(HudWidgets.forecast_label(yield_line))
+        # **THE VERDICT** (§7.1) — which of the two independent statements is binding, the crew or the
+        # floor. It sits in the READOUT, under the take it qualifies: the numbers above say what this
+        # crew gets, and this says whether the intent above them is one they can actually carry out.
+        # The idle-crew note rides with it (§7.2) — reported, never acted on.
+        _mount_verdict(target, live_hosts, chart_model)
         # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
         # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated
         # in the rung's own hint ("It must stay staffed or the herd goes wild again"), so a second
@@ -1388,17 +1486,11 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # Per-preset per-turn takes on the buttons, so the forage picker wears the SAME metric the
     # local-hunt picker does. The two build verbs do not ride this picker at all — they wear their
     # payoff on the improvement control below (issue #442).
-    var forage_takes := _forage_floor_takes(tile_info)
-    var on_floor_picked := func(floor: float) -> void:
-        _compose.set_forage_floor(floor)
-        # Picking a floor auto-fills the foragers to its max-useful (consumed next rebuild).
-        _compose.arm_forage_autofill()
-        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
-    target.add_child(HudWidgets.build_floor_picker(on_floor_picked, _compose.forage_floor(),
-        forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
-    target.add_child(HudWidgets.build_floor_slider(_compose.forage_floor(), on_floor_picked))
-    target.add_child(HudWidgets.alloc_hint_label(
-        HudFormat.floor_hint(_compose.forage_floor(), SourceForecast.LABOR_KIND_FORAGE)))
+    # **THE CAP IS RESOLVED BEFORE THE CHART, and the order is load-bearing** — the chart, the two
+    # crew targets and the verdict are all read against a CREW, and reading them against a count the
+    # stepper below is about to clamp away made the panel state a verdict for a crew it then refused
+    # to show (a full patch reading "already at the floor" beside a stepper the same pass had just
+    # zeroed). The hunt sheet has always resolved its cap here; this is the forage twin of that order.
     # Pre-commit forecast: the patch's per-worker yield + the SELECTED stance's ceiling — DIPPED by
     # whatever this crew is building — cap the stepper at max-useful workers, so the player CAN'T
     # over-assign while composing. Both the stepper and the stance picker re-render these controls, so
@@ -1420,11 +1512,48 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     if _compose.consume_forage_autofill():
         _compose.set_forage_count(cap)
     _compose.clamp_forage_count(cap)
+    var forage_takes := _forage_floor_takes(tile_info)
+    var on_floor_picked := func(floor: float) -> void:
+        _compose.set_forage_floor(floor)
+        # Picking a floor auto-fills the foragers to its max-useful (consumed next rebuild).
+        _compose.arm_forage_autofill()
+        _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
+    target.add_child(HudWidgets.build_floor_picker(on_floor_picked, _compose.forage_floor(),
+        forage_takes, HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS))
+    # **THE CHART** — the plant twin of the hunt sheet's, and the same node in the same slot, because
+    # a floor means the same thing on both webs. What differs is what the curve DOES: a patch's
+    # sampled regrowth never goes negative (it reseeds from bare ground), so its projection at floor 0
+    # bottoms out and climbs where a herd's crashes. That asymmetry comes off the wire, not from here.
+    var live_hosts := {}
+    var chart_model := SourceForecast.floor_chart_model(tile_info,
+        SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+        _compose.forage_floor(), _compose.forage_count(), composed_improvement,
+        HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
+    if bool(chart_model.get("known", false)):
+        target.add_child(HudWidgets.build_floor_chart(chart_model,
+            func(floor: float, committed: bool) -> void:
+                _compose.set_forage_floor(floor)
+                if committed:
+                    _compose.arm_forage_autofill()
+                    _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)
+                else:
+                    _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
+                        _live_tile_info(subject_key, tile_info), SourceForecast.SOURCE_KIND_FORAGE,
+                        HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(),
+                        composed_improvement, HudComposeVocab.FORAGE_CREW_LABEL.to_lower()),
+                        _compose.forage_count())))
+    target.add_child(HudWidgets.alloc_hint_label(
+        HudFormat.floor_hint(_compose.forage_floor(), SourceForecast.LABOR_KIND_FORAGE)))
     target.add_child(HudWidgets.build_worker_stepper(
         HudComposeVocab.FORAGE_CREW_LABEL, _compose.forage_count(), _compose.forage_count() < cap,
         func(n: int) -> void:
             _compose.set_forage_count(clampi(n, 0, cap))
             _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target)))
+    # THE TWO CREW TARGETS, beneath the stepper they set (§7.6) — clamped to the same cap the `+` obeys.
+    _mount_crew_targets(target, live_hosts, chart_model, _compose.forage_count(),
+        func(count: int) -> void:
+            _compose.set_forage_count(clampi(count, 0, cap))
+            _build_forage_assign_controls(_live_tile_info(subject_key, tile_info), target))
     var cap_note := String(capped["note"])
     if cap_note != "":
         target.add_child(HudWidgets.alloc_hint_label(cap_note))
@@ -1447,6 +1576,8 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         band, tile_info, _compose.forage_floor(), _compose.forage_count(), composed_improvement)
     if yield_line != "":
         target.add_child(HudWidgets.forecast_label(yield_line))
+    # THE VERDICT + the idle-crew note (§7.1, §7.2), in the readout under the take they qualify.
+    _mount_verdict(target, live_hosts, chart_model)
     # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for
     # an UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay
     # staffed or it goes feral"), so a second warning here would state one fact twice.

@@ -5,6 +5,20 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
+/// The `regrowthSamples` vector both source tables publish, as the packed float array GDScript
+/// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
+/// "published no curve" and "does not grow" are different claims, and only the first may leave the
+/// chart's projection undrawn.
+fn regrowth_samples_packed(samples: Option<flatbuffers::Vector<'_, f32>>) -> PackedFloat32Array {
+    let mut packed = PackedFloat32Array::new();
+    if let Some(samples) = samples {
+        for value in samples {
+            packed.push(value);
+        }
+    }
+    packed
+}
+
 pub(crate) fn sedentarization_to_array(
     states: Vector<'_, ForwardsUOffset<fb::SedentarizationState<'_>>>,
 ) -> VarArray {
@@ -90,6 +104,27 @@ pub(crate) fn herds_to_array(
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(herd.fodderPerBiomass()));
         let _ = dict.insert("trade_per_biomass", f64::from(herd.tradePerBiomass()));
+        // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
+        // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
+        // this). It is NOT derivable from `per_worker_yield / provisions_per_biomass`: on a wolf
+        // both of those are honestly `0`, and `0/0` is exactly the source whose crew the panel
+        // most needs to price. No seasonal factor on this web (the animal side has none).
+        let _ = dict.insert("per_worker_biomass", f64::from(herd.perWorkerBiomass()));
+        // **THE SAMPLED REGROWTH CURVE** — this herd's own per-turn biomass delta at evenly spaced
+        // fractions of `K` (sample `i` of `n` is the delta at `B = i/(n-1) * K`; the x-axis is
+        // implicit). The client INTERPOLATES between samples and never fits a formula to them: the
+        // two webs are different functions (a patch is logistic with a reseed floor, a herd has
+        // critical depensation below `collapse_fraction`), so a GDScript copy would drift and the
+        // drift would be invisible — a wrong curve still looks like a curve.
+        //
+        // **THE LOW SAMPLES ARE NEGATIVE, AND THAT IS THE POINT.** Below the Allee threshold the
+        // herd declines whether or not it is hunted. A reader must render them as DECLINE; clamping
+        // to zero draws a herd crashing to extinction as a herd sitting still, which is the whole
+        // difference between floor 0 on this web and floor 0 on the plant one.
+        let _ = dict.insert(
+            "regrowth_samples",
+            &regrowth_samples_packed(herd.regrowthSamples()),
+        );
         // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
         // per (SAMPLED FLOOR × party size). An expedition's trip length is NOT a rate division: for
         // Surplus/Deplete the per-policy ceiling is a *stock*, so the party strips the headroom in a
@@ -456,12 +491,11 @@ pub(crate) fn forage_patches_to_array(
         //
         // **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** — see the herd twin above.
         //
-        // **`per_worker_biomass` IS NOT ON THE WIRE**, and that is a known gap: the patch publishes
-        // `per_worker_yield` (the FOOD throughput, seasonal weight folded in) but no per-worker term
-        // for the other two accounts, and no biomass-space throughput to derive them from. The client
-        // recovers it as `per_worker_yield / provisions_per_biomass` — exact, and undefined on exactly
-        // the patches that pay no food (a sown Field of flax or hay). See
-        // `SourceForecast.forage_per_worker_biomass`.
+        // **`per_worker_biomass` IS ON THE WIRE NOW**, and it closed a real gap: the patch publishes
+        // `per_worker_yield` (the FOOD throughput) but no per-worker term for the other two accounts,
+        // and the client used to recover the shared biomass throughput as
+        // `per_worker_yield / provisions_per_biomass` — exact, and `0/0` on exactly the patches that
+        // pay no food (a sown Field of flax, cotton or hay). See the field below.
         //
         // **No account carries a factor of any kind** since the 4x `market.trade_goods_multiplier`
         // was retired (plan §4): a deeper floor earns more trade only because it takes more biomass,
@@ -474,6 +508,20 @@ pub(crate) fn forage_patches_to_array(
         );
         let _ = dict.insert("fodder_per_biomass", f64::from(patch.fodderPerBiomass()));
         let _ = dict.insert("trade_per_biomass", f64::from(patch.tradePerBiomass()));
+        // **WHAT ONE GATHERER MOVES, IN BIOMASS** — the plant twin of the herd's field above, with
+        // the tile's SEASONAL WEIGHT folded in exactly as `per_worker_yield` folds it. So it is
+        // honestly **`0` in a dead season**: do not divide by it, and do not read the zero as "no
+        // forecast was sent" (`biomass`/`carrying_capacity`/the rate vector still describe the patch).
+        let _ = dict.insert("per_worker_biomass", f64::from(patch.perWorkerBiomass()));
+        // **THE SAMPLED REGROWTH CURVE** — the plant twin of the herd's, and the ASYMMETRY between
+        // them is the model: a patch is pure logistic with a reseed floor and no Allee term, so every
+        // sample here is **non-negative** and the `0.0` entry is the reseed floor's lift. That is why
+        // floor 0 sets a patch back and ends a herd. Interpolated, never fitted; the peak of the
+        // curve IS the food peak the chart marks, which is why no separate peak field ships.
+        let _ = dict.insert(
+            "regrowth_samples",
+            &regrowth_samples_packed(patch.regrowthSamples()),
+        );
         // The two investment rungs' PAYOFF twins — the non-food halves of `tended_yield`/`field_yield`,
         // as `pastoral_trade`/`corral_trade` are of their food siblings. Each is quoted at **its own**
         // rung (#433), never at the rung the patch happens to stand on.

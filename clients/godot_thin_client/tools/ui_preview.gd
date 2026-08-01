@@ -142,6 +142,26 @@ const PARTY_SIZE_BOUND_CREW := 2
 ## components are read on carries no waste term to argue with; the wolf rides the same crew so the
 ## inedible quarry and the both-products control are compared at ONE party size.
 const PELT_FRAME_HUNTERS := 2
+# ---- THE FLOOR CHART's five cases (docs/plan_harvest_floor.md §7.3) -----------------------------
+# A floor ABOVE a nearly-full patch's stock, so nothing stands above the line and the flag has to flip
+# below it — the two things `floor_chart_full` is judged on.
+const FLOOR_CHART_ABOVE_STOCK := 0.95
+# A stock already drawn well below the food peak but comfortably above a plant's reseed floor: low
+# enough that the projection's descent to the floor is legible, high enough that the curve has room to
+# flatten rather than bottoming out in the first turn.
+const FLOOR_CHART_DRAWN_STOCK_FRACTION := 0.35
+# The floor that patch is worked to — under its stock, clear of the plot's baseline, so the curve's
+# descent and the FLAT it holds afterwards are both legible.
+const FLOOR_CHART_HELD_FLOOR := 0.20
+# **BELOW `ecology.collapse_fraction` (0.15).** The herd is past its Allee threshold, so the sampled
+# curve is NEGATIVE here and the projection must show a decline the crew did not cause.
+const FLOOR_CHART_ALLEE_STOCK_FRACTION := 0.08
+# A crew big enough to bite, small enough that "clear it now" and "hold it after" stay different
+# numbers — a frame where the two targets coincide cannot show that there are two of them.
+const FLOOR_CHART_CREW := 3
+# `_crew_target_count`'s answer when the target is not rendered at all. NOT 0, which is a real reading
+# ("nothing to clear"), and the distinction is the dead-season assertion's whole subject.
+const CREW_TARGET_ABSENT := -1
 ## The two INVESTMENT-rung payoff terms the Wild Boar frame is judged on (issue #397), spelled out as
 ## literal strings rather than rebuilt from `SourceForecast.picker_products` — an assertion that
 ## re-derives the terms through the very formatter under test asserts nothing. Food leads, and each
@@ -346,16 +366,103 @@ var _compose_spines := {}
 const FIXTURE_CAPACITY := 100.0
 const FIXTURE_STOCK_FRACTION := 0.9
 
+# ---- THE GROWTH TERMS THE FIXTURES PREDATE (slice 4b) -------------------------------------------
+# `perWorkerBiomass` and `regrowthSamples` are wire fields no fixture written before them can carry,
+# and the chart needs BOTH — without a curve it renders nothing at all, which would silently drop the
+# instrument out of ~50 frames. So the adapter seeds them, in the SAME one place it converts the
+# stances, and it is careful about which of the two webs it is standing in for.
+#
+# **THE HARNESS IS STANDING IN FOR THE SIM HERE, and that is the one place a growth model may be
+# written in GDScript.** These constants are the shipped config's (`labor_config.forage.ecology` /
+# `fauna_config.ecology`) and the shapes are the two the sim publishes: a patch is logistic lifted to
+# its reseed floor and therefore NEVER negative, a herd declines at `collapse_rate` below its Allee
+# threshold and therefore IS. A fixture that flattened that asymmetry would let the chart clamp a
+# herd's crash to zero and still look right.
+const FIXTURE_REGROWTH_SAMPLES := 11
+const FIXTURE_PLANT_REGROWTH_RATE := 0.25
+const FIXTURE_ANIMAL_REGROWTH_RATE := 0.05
+const FIXTURE_COLLAPSE_FRACTION := 0.15
+const FIXTURE_COLLAPSE_RATE := 0.20
+const FIXTURE_RESEED_FLOOR_FRACTION := 0.02
+# `per_worker_biomass_capacity` for each web, used only where the fixture's own rates cannot state the
+# throughput (a source that pays no food — the exact case the wire field was added for).
+const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
+const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
+
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
 ## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
 func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 	if src.is_empty():
 		return src
+	_floorify_ceilings(src, prefix)
+	_seed_growth_terms(src, prefix)
+	return src
+
+## Is this dict a HERD? A herd carries `species`; a forage patch carries `committed_species` and never
+## a bare one, and the `patch_` prefix settles the tile_info case outright. It decides which growth
+## SHAPE the seeded curve takes, so guessing wrong would hand a patch a herd's crash.
+func _fixture_is_herd(src: Dictionary, prefix: String) -> bool:
+	return prefix == "" and src.has("species")
+
+## Seed `per_worker_biomass` + `regrowth_samples` on a fixture that predates them. Both are skipped
+## when the fixture states its own, so a state authored to exercise a particular curve keeps it.
+func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
+	var is_herd := _fixture_is_herd(src, prefix)
+	if not src.has(prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY):
+		# Recover it from the fixture's own numbers where they can state it — that is EXACT and keeps
+		# every existing frame's expected-yield line unchanged — and fall back to the config's
+		# throughput on a source that pays no food, where the recovery is `0/0`.
+		var rate := float(src.get(prefix + "provisions_per_biomass", 0.0))
+		var per_worker := float(src.get(prefix + "per_worker_yield", 0.0))
+		var carry := (per_worker / rate) if rate > 0.0 and per_worker > 0.0 \
+			else (FIXTURE_ANIMAL_PER_WORKER_BIOMASS if is_herd else FIXTURE_PLANT_PER_WORKER_BIOMASS)
+		src[prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY] = carry
+	var capacity := float(src.get(prefix + "carrying_capacity", 0.0))
+	if capacity > 0.0 and not src.has(prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY):
+		var samples := PackedFloat32Array()
+		for i in range(FIXTURE_REGROWTH_SAMPLES):
+			var fraction := float(i) / float(FIXTURE_REGROWTH_SAMPLES - 1)
+			samples.push_back(_fixture_regrowth_delta(fraction, capacity, is_herd))
+		src[prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY] = samples
+	if not is_herd:
+		return
+	# **THE WHOLE-ANIMAL QUANTUM, IN BIOMASS.** `crew_to_hold` rounds up to one body on this web
+	# (mirroring the sim's `hunt_haul_workers`), and `body_mass` is the term it rounds to — in the same
+	# units as the curve, unlike `food_per_animal`, which is that body already converted to provisions.
+	# Derived from the fixture's own pair on whichever account the species pays, so it cannot disagree
+	# with the rates beside it; a species that pays neither leaves it absent and the rounding is simply
+	# not applied.
+	if src.has(prefix + SourceForecast.FORECAST_BODY_MASS_KEY):
+		return
+	for pair in [["food_per_animal", "provisions_per_biomass"], ["trade_per_animal", "trade_per_biomass"]]:
+		var per_animal := float(src.get(prefix + String(pair[0]), 0.0))
+		var rate := float(src.get(prefix + String(pair[1]), 0.0))
+		if per_animal > 0.0 and rate > 0.0:
+			src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
+			return
+
+## One sample of the seeded curve: the source's one-turn biomass delta at `fraction` of K.
+func _fixture_regrowth_delta(fraction: float, capacity: float, is_herd: bool) -> float:
+	var stock := fraction * capacity
+	if is_herd:
+		# **THE ANIMAL CURVE GOES NEGATIVE BELOW THE ALLEE POINT.** Past that threshold the herd
+		# declines whether or not it is hunted, which is why floor 0 ENDS a herd on this web.
+		if fraction < FIXTURE_COLLAPSE_FRACTION:
+			return -FIXTURE_COLLAPSE_RATE * stock
+		return FIXTURE_ANIMAL_REGROWTH_RATE * stock * (1.0 - fraction)
+	# **THE PLANT CURVE NEVER DOES.** A stripped stand is lifted to its reseed floor before it
+	# regrows, so the delta at 0 is the lift itself — positive, and the reason a patch comes back.
+	var lift := maxf(stock, FIXTURE_RESEED_FLOOR_FRACTION * capacity)
+	var grown := minf(capacity, lift + FIXTURE_PLANT_REGROWTH_RATE * lift * (1.0 - lift / capacity))
+	return grown - stock
+
+func _floorify_ceilings(src: Dictionary, prefix: String) -> void:
 	var legacy := "hunt_policy_ceilings" if prefix == "" and src.has("hunt_policy_ceilings") \
 		else "forage_policy_ceilings"
 	var rows: Variant = src.get(prefix + legacy, null)
 	if not (rows is Dictionary):
-		return _floorify_estimates(src)
+		_floorify_estimates(src)
+		return
 	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
 	var peak_trade := _legacy_peak(src, prefix, legacy + "_trade" if legacy.begins_with("forage") \
 		else "hunt_policy_trade_ceilings")
@@ -390,7 +497,7 @@ func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 			"forage_policy_per_worker", "forage_policy_per_worker_trade",
 			"forage_policy_per_worker_fodder"]:
 		src.erase(prefix + key)
-	return _floorify_estimates(src)
+	_floorify_estimates(src)
 
 func _legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
 	var rows: Variant = src.get(prefix + key, null)
@@ -1587,6 +1694,91 @@ func _ready() -> void:
 			dead_season, SourceForecast.SOURCE_KIND_FORAGE,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK))
 			== SourceForecast.MAX_USEFUL_BARREN)
+
+	# `forage_dead_season` is ALSO the CHART's dead-season case (below), so it carries that pair of
+	# assertions rather than a second identical PNG: `perWorkerBiomass` is honestly 0 in deep winter,
+	# so the two crew targets have no denominator and must be ABSENT rather than rendered as a zero
+	# saying "nobody is needed" — while the chart still draws, the patch's stock, its floor and its
+	# growth curve all being real facts about the ground.
+	_assert_hud("a dead-season patch prices no crew target rather than dividing by a zero throughput",
+		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
+			== CREW_TARGET_ABSENT)
+	_assert_hud("…and still draws its chart, the stock and the curve being facts about the ground",
+		_find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
+
+	# ---- THE CHART, THE TARGETS AND THE VERDICT (docs/plan_harvest_floor.md §7.1/§7.3/§7.6) --------
+	# Five fixtures, each breaking the instrument a DIFFERENT way — a chart is exactly the kind of
+	# thing that compiles, runs, exits 0 and is visibly wrong, so each is rendered AND looked at.
+	# Three are here (the two patches and the dead season above); the herd pair rides beside the wolf.
+
+	# State floor_chart_full — A FULL PATCH WITH THE FLOOR ABOVE ITS STOCK. Nothing stands above the
+	# line, so there is nothing to clear (that target reads 0, not a crew) and the max-useful cap
+	# collapses to 0 with it — which is what the verdict then reports. The chart's own subject is the
+	# GEOMETRY: a nearly-full stock band under a floor line at the very top of the plot, with the
+	# floor's flag FLIPPED BELOW its line, the case that would otherwise draw off the plot's edge.
+	# (The *at-or-below-the-floor* verdict is stated with a real crew by `forage_dead_season` and
+	# `floor_chart_herd_allee`, whose caps leave one; it cannot also be shown here, because a source
+	# with no room admits no useful workers at all.)
+	var full_patch := _floorify(_hay_meadow_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	_show_tile(full_patch)
+	_compose_forage(full_patch)
+	_hud._compose.set_forage_floor(FLOOR_CHART_ABOVE_STOCK)
+	_hud._compose.set_forage_count(FLOOR_CHART_CREW)
+	_compose_forage(full_patch)
+	await _settle()
+	await _save("floor_chart_full")
+	_assert_hud("a floor above the stock is BLOCKED — the source binds, not the crew",
+		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	_assert_hud("…and there is nothing to clear, so that target reads zero rather than a crew",
+		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR) == 0)
+	# THE HALF A PNG CANNOT SHOW: the chart, the targets and the verdict are read against the SAME
+	# crew the stepper renders. They were composed before the cap clamped it once, so the panel stated
+	# a verdict for a crew it then refused to staff; this is what pins the order that fixed it.
+	_assert_hud("the verdict reads the crew the stepper shows, not one the cap is about to clamp away",
+		_stepper_value(_hud._drawercompose._compose_sheet) == 0)
+
+	# State floor_chart_drawn_down — THE SAME PATCH ALREADY DRAWN DOWN, worked below the food peak.
+	# The stock band is amber (the patch reports Stressed), the floor sits under it, and the projection
+	# must fall to the line and then run FLAT along it: a plant curve never goes negative, so a patch
+	# held at a low floor is held, not lost. That is the frame the herd pair below is read against.
+	var drawn_patch := _floorify(_hay_meadow_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	drawn_patch["x"] = 67
+	drawn_patch["patch_ecology_phase"] = "stressed"
+	drawn_patch["patch_biomass"] = FLOOR_CHART_DRAWN_STOCK_FRACTION \
+		* float(drawn_patch["patch_carrying_capacity"])
+	_show_tile(drawn_patch)
+	_compose_forage(drawn_patch)
+	# **A FLOOR BELOW THE STOCK BUT ABOVE THE BASELINE**, deliberately not `strip`: at floor 0 the
+	# projection lands on the plot's own bottom edge and the "descends, then RUNS FLAT along the line"
+	# reading — the whole contrast with the herd frame below — is indistinguishable from the axis.
+	_hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
+	_hud._compose.set_forage_count(FLOOR_CHART_CREW)
+	_compose_forage(drawn_patch)
+	await _settle()
+	await _save("floor_chart_drawn_down")
+	_assert_hud("a patch drawn toward a reachable floor states a HOLD crew, not just a clearing one",
+		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
+			!= CREW_TARGET_ABSENT)
+	# **THE DRAG CONTRACT, which no frame can show.** A LIVE floor change must refill the readings that
+	# follow the floor WITHOUT rebuilding the controls — because the rebuild `queue_free`s the chart,
+	# and Godot routes motion to the node that took the press, so a rebuilt chart ends the drag on the
+	# first pixel of movement. Driving the signal directly is the only way to test it headlessly: the
+	# chart must SURVIVE, and the verdict must have re-read against the new floor.
+	var live_chart := _find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META)
+	live_chart.emit_signal("floor_changed", FLOOR_CHART_ABOVE_STOCK, false)
+	# **THE FRAME IS LOAD-BEARING.** `queue_free` is DEFERRED, so a rebuild leaves the old chart both
+	# valid and findable for the rest of the frame it happened on — every same-frame form of this
+	# assertion passes with the bug restored (measured, twice). Settling first is what makes the free
+	# land, and `is_instance_valid` then answers the question actually being asked: is the node that
+	# took the press still there to receive the motion?
+	await _settle()
+	_assert_hud("a LIVE drag leaves the chart alive — a rebuilt one would end the drag it is serving",
+		is_instance_valid(live_chart))
+	_assert_hud("…and the verdict has re-read against the dragged floor, without that rebuild",
+		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	# Put the sheet back where the frame above left it (a live change deliberately does not re-render).
+	_hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
+	_compose_forage(drawn_patch)
 
 	# Reset so the states after this render their usual staple patch + Sustain rung.
 	_hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
@@ -2895,6 +3087,41 @@ func _ready() -> void:
 	_compose_herd(wolf, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await _settle()
 	await _save("herd_hunt_pelts_only")
+	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
+	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
+	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food
+	# rate and `perWorkerYield` are honestly `0`. That is precisely why the field exists — the old
+	# `perWorkerYield / provisionsPerBiomass` recovery is `0/0` on this animal.
+	_assert_hud("a wolf's chart draws — a floor is biomass, and biomass is what this species has",
+		_find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) != null)
+	_assert_hud("…and its crew targets are priced off the biomass throughput, not the absent food one",
+		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_CLEAR)
+			> CREW_TARGET_ABSENT)
+
+	# State floor_chart_herd_allee — **THE HERD BELOW ITS ALLEE POINT, and the frame the whole sampled
+	# curve exists for.** Under `collapse_fraction` a herd's regrowth samples are NEGATIVE: it declines
+	# every turn whether or not anyone hunts it. The projection must therefore fall AWAY from the floor
+	# toward extinction. Clamping those samples to zero is the instinctive thing to do with a chart and
+	# it would draw this herd sitting still — the exact asymmetry that makes floor 0 end a herd and
+	# only set a patch back (compare `floor_chart_drawn_down`, whose curve flattens onto its floor).
+	var allee_herd := _floorify(_collapsing_herd_fixture())
+	allee_herd["biomass"] = FLOOR_CHART_ALLEE_STOCK_FRACTION * float(allee_herd["carrying_capacity"])
+	# The band is the wolf state's, deliberately — this frame is about the HERD's curve, and swapping
+	# the actor would put a second variable in a comparison the reader is meant to make against it.
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_band(-1)
+	_show_herd(allee_herd)
+	_compose_herd(allee_herd, FLOOR_CHART_CREW, SourceForecast.FLOOR_FOOD_PEAK)
+	await _settle()
+	await _save("floor_chart_herd_allee")
+	# The PNG shows the decline; this is the half it cannot testify to — that the samples themselves
+	# are negative down there, which is what the projection reads and what a clamp would erase.
+	_assert_hud("the herd's curve is NEGATIVE below its Allee point — decline, not stillness",
+		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(allee_herd,
+			HudComposeVocab.BARE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) < 0.0)
+	_assert_hud("…while the plant curve never is, at the same fraction of its own capacity",
+		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(drawn_patch,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
 
 	# 3x — the same wolf as an EXPEDITION target (band 27 tiles off). `delivers_food = false` on every
 	# cell now means THE QUARRY IS INEDIBLE, not "a denial mission", so the raid line must read a real
@@ -4959,8 +5186,15 @@ func _stance_axes_fixture() -> Array:
 ## gate-reasons has to OPEN it — the drawer now shows only the standing summary + `Assign … ▸`.
 ## These two calls replace the direct `_hud._build_*_assign_controls(...)` the states used before;
 ## the builders still run, just against the sheet's content container.
+##
+## **IT GOES THROUGH `_floorify`, LIKE ITS HERD TWIN.** Most states pass a FRESH fixture here rather
+## than the object `_show_tile` already converted, so the sheet was being built from a dict the
+## adapter had never seen. That was invisible while the adapter only rewrote ceilings — the fixture
+## builders seed those themselves — and stopped being invisible the moment the adapter also had to
+## seed the growth terms: every compose sheet opened this way lost its chart.
 func _compose_forage(tile_info: Dictionary) -> void:
-	_hud._drawercompose.open_forage_compose(tile_info)
+	_hud._drawercompose.open_forage_compose(
+		_floorify(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX))
 
 ## Open the herd compose sheet, optionally DIALING IN a count and/or policy.
 ##
@@ -5438,6 +5672,47 @@ func _find_policy_rung(root: Node, policy: String) -> Button:
 		if found != null:
 			return found
 	return null
+
+## The first node under `root` carrying `meta` — the identity finder for the three 4b controls, which
+## carry no text at all (the chart) or a face made of live numbers (the targets, the verdict). A text
+## match on any of them would find nothing and pass, which is the failure this idiom exists to avoid.
+func _find_meta_node(root: Node, meta: String) -> Node:
+	if root == null:
+		return null
+	if root is Control and (root as Control).has_meta(meta):
+		return root
+	for child in root.get_children():
+		var found := _find_meta_node(child, meta)
+		if found != null:
+			return found
+	return null
+
+## The COUNT a crew target is offering, read off the face it renders — or `CREW_TARGET_ABSENT` when
+## that target is not rendered at all. The two answers are different claims: `0` says "nothing needs
+## clearing", absent says "this source's crew cannot be priced".
+func _crew_target_count(root: Node, key: String) -> int:
+	var button := _find_crew_target(root, key)
+	if button == null:
+		return CREW_TARGET_ABSENT
+	# The face is `<N>  <label>`; the count is what the harness can assert, the label being vocabulary.
+	return int(button.text.split(" ")[0])
+
+func _find_crew_target(root: Node, key: String) -> Button:
+	if root == null:
+		return null
+	if root is Button and (root as Button).get_meta(HudWidgets.CREW_TARGET_META, "") == key:
+		return root as Button
+	for child in root.get_children():
+		var found := _find_crew_target(child, key)
+		if found != null:
+			return found
+	return null
+
+## The verdict's SEVERITY (`SourceForecast.VERDICT_*`), which is its assertable half — the sentence
+## carries turn counts and percentages that move with the fixture. "" when no verdict rendered.
+func _verdict_severity(root: Node) -> String:
+	var node := _find_meta_node(root, HudWidgets.VERDICT_META)
+	return String((node as Control).get_meta(HudWidgets.VERDICT_META, "")) if node != null else ""
 
 ## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
 func _face_lines(root: Node) -> Array[String]:
@@ -7427,6 +7702,12 @@ func _dead_season_tile_fixture() -> Dictionary:
 	tile["patch_field_trade"] = 0.0
 	tile["patch_field_fodder"] = 0.0
 	tile["patch_per_worker_yield"] = 0.0
+	# **THE CREW THROUGHPUT IS HONESTLY ZERO, AND IT IS STATED RATHER THAN SEEDED.** The wire's
+	# `perWorkerBiomass` folds in the tile's seasonal weight, so a dead season really does move no
+	# biomass per gatherer — and this is the one fixture that must say so, because it is the case the
+	# panel's crew arithmetic must not divide by. `_seed_growth_terms` would otherwise fall back to the
+	# config's throughput here, since a zero food rate makes its exact recovery unavailable.
+	tile["patch_per_worker_biomass"] = 0.0
 	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
 		tile["patch_ceiling_%s" % policy] = 0.0
 	tile = _seed_forage_rows(tile)

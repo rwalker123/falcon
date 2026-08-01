@@ -63,8 +63,22 @@ const FLOOR_PRESET_LABELS := {
 # turn. One phrasing, so the slider, the picker face and the work row cannot word it three ways.
 const FLOOR_VALUE_FORMAT := "%d%% left standing"
 
-# The slider's own caption, above the three presets' row.
-const FLOOR_SLIDER_LABEL := "Leave standing:"
+# The floor control's own caption, above the chart. The chart states the value on its floor flag too,
+# but a caption is what stays readable after a keyboard step and what names the AXIS for a player
+# meeting the chart for the first time. (It was `FLOOR_SLIDER_LABEL` while the control below it was a
+# plain slider; the name went with the control.)
+const FLOOR_CONTROL_LABEL := "Leave standing:"
+
+# ---- THE TWO CREW TARGETS (docs/plan_harvest_floor.md §7.6) -------------------------------------
+# A floor and a crew are INDEPENDENT statements, so "how many workers" has two answers and the panel
+# owes the player both — the rate model had only one and so never had to name either. Both are exact
+# and both are clickable; neither is a hidden rule. The face is `<N> clear it now`, the count leading
+# because it is what the player compares against the stepper beside it.
+const CREW_TARGET_FACE_FORMAT := "%d  %s"
+const CREW_TARGET_CLEAR_LABEL := "clear it now"
+const CREW_TARGET_HOLD_LABEL := "hold it after"
+const CREW_TARGET_CLEAR_TOOLTIP := "Enough hands to take everything standing above the floor in a single turn."
+const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back once it is sitting at the floor — any more go idle."
 
 # Every policy button's tooltip leads with this — the policy name + its full metric ("Sustain — up to
 # +0.90/turn"), since the compact button face no longer carries the name. A gated button appends its

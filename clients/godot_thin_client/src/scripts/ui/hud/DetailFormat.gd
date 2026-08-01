@@ -518,6 +518,18 @@ static func ecology_value_hex(value: String) -> String:
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
+## The same phase as a green/amber/red TIER COLOR, for a surface that paints rather than tints text:
+## the roster's vitality dot and the harvest-floor chart's standing-stock band. It differs from
+## `ecology_value_hex` in exactly one place and deliberately — a healthy phase reads HEALTHY here
+## (a dot/band says "how is it doing?") where a detail VALUE reads plain ink (nothing is wrong).
+static func ecology_tier_color(phase: String) -> Color:
+    var normalized := phase.strip_edges().to_lower()
+    if normalized.contains("collaps"):
+        return HudStyle.DANGER
+    if normalized.contains("stress"):
+        return HudStyle.WARN
+    return HudStyle.HEALTHY
+
 ## Append the Predators combat-component rows (Attack / Defense / Fights back / Aggressive) plus the
 ## compact derived-danger summary. Attack + Defense are open-ended, so their bars normalize against
 ## the max across the KNOWN herds, Elevation-style — a herd reads relative to the roster, and falls

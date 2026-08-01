@@ -7,8 +7,8 @@ class_name HudWidgets
 ## it composes from, the zone CHROME (the column / block / plain-`Control` wrapper / child-clearing
 ## primitives all three Band-panel zones and the flat fallback host are assembled from), the stacked
 ## composition bar + its key (one primitive, two questions — PEOPLE and WORKFORCE), the zone section
-## head and its `⋯` menu, the take-policy picker, the dim hint/section labels, the inline text link,
-## the BBCode forecast readout — plus the two MUTATORS (`compact`, `set_label_tooltip`) that fix up a
+## head and its `⋯` menu, the take-policy picker, the harvest floor's chart + its two crew targets +
+## its verdict line, the dim hint/section labels, the inline text link, the BBCode forecast readout — plus the two MUTATORS (`compact`, `set_label_tooltip`) that fix up a
 ## Control someone else made.
 ##
 ## WHY IT IS ITS OWN FILE. These are called from FOUR clusters that are being split apart: the drawer's
@@ -460,10 +460,20 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
 
-## The floor SLIDER, as `HSlider` meta — the same stable-handle reasoning, and needed because a
-## harness has nothing else to find it by: it carries no text and an `HSlider` is a type the compose
-## sheet may well grow a second of.
-const FLOOR_SLIDER_META := "floor_slider"
+## The floor CHART, as `HarvestFloorChart` meta — the same stable-handle reasoning, and needed more
+## than most: the chart carries no text at all, so a harness has nothing else to find it by. (It
+## replaced `FLOOR_SLIDER_META`, whose plain `HSlider` the chart's draggable floor line supersedes.)
+const FLOOR_CHART_META := "floor_chart"
+
+## The two CREW TARGETS, as `Button` meta — value `CREW_TARGET_CLEAR` or `CREW_TARGET_HOLD`, so a
+## harness can tell which target it found without matching a face that carries a live number.
+const CREW_TARGET_META := "crew_target"
+const CREW_TARGET_CLEAR := "clear"
+const CREW_TARGET_HOLD := "hold"
+
+## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
+## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
+const VERDICT_META := "verdict"
 
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
@@ -722,28 +732,98 @@ static func build_floor_picker(
 ## between two presets, coarse enough that the value is readable and reproducible.
 ##
 ## The caption states the CURRENT value in the same words the picker's tooltips use
-## (`FLOOR_VALUE_FORMAT`), because a slider with no readout is a control whose state cannot be read
-## back — and the number is the thing the player is choosing.
-static func build_floor_slider(selected_floor: float, on_change: Callable) -> VBoxContainer:
+## (`FLOOR_VALUE_FORMAT`), because a control with no readout is one whose state cannot be read back —
+## and the number is the thing the player is choosing. The chart states it again on its own floor
+## flag; the caption is what a screen-reader-less keyboard user reads after an arrow press.
+static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var caption := Label.new()
-    caption.text = "%s %s" % [HudComposeVocab.FLOOR_SLIDER_LABEL,
-        HudFormat.floor_face(selected_floor)]
+    caption.text = "%s %s" % [HudComposeVocab.FLOOR_CONTROL_LABEL,
+        HudFormat.floor_face(float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))]
     caption.add_theme_color_override("font_color", HudStyle.INK)
     caption.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
     block.add_child(caption)
-    var slider := HSlider.new()
-    slider.set_meta(FLOOR_SLIDER_META, true)
-    slider.min_value = SourceForecast.FLOOR_MIN
-    slider.max_value = SourceForecast.FLOOR_MAX
-    slider.step = SourceForecast.FLOOR_STEP
-    slider.value = SourceForecast.clamp_floor(selected_floor)
-    slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    # `value_changed` fires per DRAG STEP, and each fire rebuilds the compose controls — which is what
-    # keeps the forecast line live under the dial. The step is coarse enough that this is ~20 rebuilds
-    # across the whole range, the same order as clicking through four stances used to cost.
-    slider.value_changed.connect(func(value: float) -> void: on_change.call(value))
-    block.add_child(slider)
+    var chart := HarvestFloorChart.new()
+    chart.set_meta(FLOOR_CHART_META, true)
+    chart.set_model(model)
+    # **TWO ARGUMENTS, AND THE SECOND ONE IS THE WHOLE CONTRACT.** A committed change rebuilds the
+    # compose controls, which frees this node; a live one must not, or the drag in flight dies with
+    # it. The caller decides what "update in place" means for its own sheet.
+    chart.floor_changed.connect(func(value: float, committed: bool) -> void:
+        on_change.call(value, committed))
+    block.add_child(chart)
     return block
+
+## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
+## had. A floor and a crew are independent statements, so there are two different worker numbers and
+## the player is owed both:
+##
+##   • ***clear it now*** — the hands that take everything above the floor in one turn;
+##   • ***hold it after*** — the hands that take exactly what grows back, once it is there.
+##
+## Both are exact, both are stated, and each is a TARGET you can click to staff. Neither is a hidden
+## rule the player has to infer from a stepper going dead. A target the wire cannot price
+## (`NO_CREW_ANSWER` — a dead-season patch has no throughput to divide by) is not rendered at all,
+## rather than shown as a zero that would read as "nobody is needed".
+static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    for spec in [
+        [CREW_TARGET_CLEAR, int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
+            HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP],
+        [CREW_TARGET_HOLD, int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
+            HudComposeVocab.CREW_TARGET_HOLD_LABEL, HudComposeVocab.CREW_TARGET_HOLD_TOOLTIP],
+    ]:
+        var count := int(spec[1])
+        if count == SourceForecast.NO_CREW_ANSWER:
+            continue
+        var btn := Button.new()
+        btn.text = HudComposeVocab.CREW_TARGET_FACE_FORMAT % [count, String(spec[2])]
+        btn.tooltip_text = String(spec[3])
+        btn.set_meta(CREW_TARGET_META, String(spec[0]))
+        # The target the crew is ALREADY on wears the selected face, so the two numbers double as a
+        # readout of where the current staffing sits between them.
+        HudStyle.apply_button(btn, "primary" if workers == count else "ghost")
+        btn.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
+        btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        btn.pressed.connect(func() -> void: on_pick.call(count))
+        row.add_child(btn)
+    return row
+
+## Severity → the dot and the text tint, in the raid verdict's own ok/slow/blocked vocabulary. Kept
+## beside the widget rather than on `SourceForecast`, which states the verdict and owns no palette.
+const VERDICT_SEVERITY_COLORS := {
+    SourceForecast.VERDICT_OK: HudStyle.HEALTHY,
+    SourceForecast.VERDICT_SLOW: HudStyle.WARN,
+    SourceForecast.VERDICT_BLOCKED: HudStyle.DANGER,
+}
+## The dot leading the verdict — the severity as a mark, so the state is readable before the sentence.
+const VERDICT_DOT := "●"
+const VERDICT_DOT_FONT_SIZE := 9
+
+## **THE VERDICT LINE** (§7.1) — which of the two statements is BINDING, the crew or the floor. It is
+## the sentence the whole redesign exists to make sayable: the four-stance picker let a player select
+## Eradicate with one worker and never eradicate anything, because nothing compared the intent with
+## the hands. `verdict` is `SourceForecast.harvest_verdict`'s `{severity, text}`.
+static func build_verdict_line(verdict: Dictionary) -> HBoxContainer:
+    var severity := String(verdict.get("severity", SourceForecast.VERDICT_OK))
+    var tint: Color = VERDICT_SEVERITY_COLORS.get(severity, HudStyle.INK_DIM)
+    var row := HBoxContainer.new()
+    row.set_meta(VERDICT_META, severity)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var dot := Label.new()
+    dot.text = VERDICT_DOT
+    dot.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+    dot.add_theme_color_override("font_color", tint)
+    dot.add_theme_font_size_override("font_size", VERDICT_DOT_FONT_SIZE)
+    row.add_child(dot)
+    var text := Label.new()
+    text.text = String(verdict.get("text", ""))
+    text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    text.add_theme_color_override("font_color", tint)
+    text.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
+    row.add_child(text)
+    return row
 

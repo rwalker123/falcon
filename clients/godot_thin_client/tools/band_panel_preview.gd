@@ -210,16 +210,103 @@ var _current_state := "<pre-render>"
 const FIXTURE_CAPACITY := 100.0
 const FIXTURE_STOCK_FRACTION := 0.9
 
+# ---- THE GROWTH TERMS THE FIXTURES PREDATE (slice 4b) -------------------------------------------
+# `perWorkerBiomass` and `regrowthSamples` are wire fields no fixture written before them can carry,
+# and the chart needs BOTH — without a curve it renders nothing at all, which would silently drop the
+# instrument out of ~50 frames. So the adapter seeds them, in the SAME one place it converts the
+# stances, and it is careful about which of the two webs it is standing in for.
+#
+# **THE HARNESS IS STANDING IN FOR THE SIM HERE, and that is the one place a growth model may be
+# written in GDScript.** These constants are the shipped config's (`labor_config.forage.ecology` /
+# `fauna_config.ecology`) and the shapes are the two the sim publishes: a patch is logistic lifted to
+# its reseed floor and therefore NEVER negative, a herd declines at `collapse_rate` below its Allee
+# threshold and therefore IS. A fixture that flattened that asymmetry would let the chart clamp a
+# herd's crash to zero and still look right.
+const FIXTURE_REGROWTH_SAMPLES := 11
+const FIXTURE_PLANT_REGROWTH_RATE := 0.25
+const FIXTURE_ANIMAL_REGROWTH_RATE := 0.05
+const FIXTURE_COLLAPSE_FRACTION := 0.15
+const FIXTURE_COLLAPSE_RATE := 0.20
+const FIXTURE_RESEED_FLOOR_FRACTION := 0.02
+# `per_worker_biomass_capacity` for each web, used only where the fixture's own rates cannot state the
+# throughput (a source that pays no food — the exact case the wire field was added for).
+const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
+const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
+
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
 ## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
 func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 	if src.is_empty():
 		return src
+	_floorify_ceilings(src, prefix)
+	_seed_growth_terms(src, prefix)
+	return src
+
+## Is this dict a HERD? A herd carries `species`; a forage patch carries `committed_species` and never
+## a bare one, and the `patch_` prefix settles the tile_info case outright. It decides which growth
+## SHAPE the seeded curve takes, so guessing wrong would hand a patch a herd's crash.
+func _fixture_is_herd(src: Dictionary, prefix: String) -> bool:
+	return prefix == "" and src.has("species")
+
+## Seed `per_worker_biomass` + `regrowth_samples` on a fixture that predates them. Both are skipped
+## when the fixture states its own, so a state authored to exercise a particular curve keeps it.
+func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
+	var is_herd := _fixture_is_herd(src, prefix)
+	if not src.has(prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY):
+		# Recover it from the fixture's own numbers where they can state it — that is EXACT and keeps
+		# every existing frame's expected-yield line unchanged — and fall back to the config's
+		# throughput on a source that pays no food, where the recovery is `0/0`.
+		var rate := float(src.get(prefix + "provisions_per_biomass", 0.0))
+		var per_worker := float(src.get(prefix + "per_worker_yield", 0.0))
+		var carry := (per_worker / rate) if rate > 0.0 and per_worker > 0.0 \
+			else (FIXTURE_ANIMAL_PER_WORKER_BIOMASS if is_herd else FIXTURE_PLANT_PER_WORKER_BIOMASS)
+		src[prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY] = carry
+	var capacity := float(src.get(prefix + "carrying_capacity", 0.0))
+	if capacity > 0.0 and not src.has(prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY):
+		var samples := PackedFloat32Array()
+		for i in range(FIXTURE_REGROWTH_SAMPLES):
+			var fraction := float(i) / float(FIXTURE_REGROWTH_SAMPLES - 1)
+			samples.push_back(_fixture_regrowth_delta(fraction, capacity, is_herd))
+		src[prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY] = samples
+	if not is_herd:
+		return
+	# **THE WHOLE-ANIMAL QUANTUM, IN BIOMASS.** `crew_to_hold` rounds up to one body on this web
+	# (mirroring the sim's `hunt_haul_workers`), and `body_mass` is the term it rounds to — in the same
+	# units as the curve, unlike `food_per_animal`, which is that body already converted to provisions.
+	# Derived from the fixture's own pair on whichever account the species pays, so it cannot disagree
+	# with the rates beside it; a species that pays neither leaves it absent and the rounding is simply
+	# not applied.
+	if src.has(prefix + SourceForecast.FORECAST_BODY_MASS_KEY):
+		return
+	for pair in [["food_per_animal", "provisions_per_biomass"], ["trade_per_animal", "trade_per_biomass"]]:
+		var per_animal := float(src.get(prefix + String(pair[0]), 0.0))
+		var rate := float(src.get(prefix + String(pair[1]), 0.0))
+		if per_animal > 0.0 and rate > 0.0:
+			src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
+			return
+
+## One sample of the seeded curve: the source's one-turn biomass delta at `fraction` of K.
+func _fixture_regrowth_delta(fraction: float, capacity: float, is_herd: bool) -> float:
+	var stock := fraction * capacity
+	if is_herd:
+		# **THE ANIMAL CURVE GOES NEGATIVE BELOW THE ALLEE POINT.** Past that threshold the herd
+		# declines whether or not it is hunted, which is why floor 0 ENDS a herd on this web.
+		if fraction < FIXTURE_COLLAPSE_FRACTION:
+			return -FIXTURE_COLLAPSE_RATE * stock
+		return FIXTURE_ANIMAL_REGROWTH_RATE * stock * (1.0 - fraction)
+	# **THE PLANT CURVE NEVER DOES.** A stripped stand is lifted to its reseed floor before it
+	# regrows, so the delta at 0 is the lift itself — positive, and the reason a patch comes back.
+	var lift := maxf(stock, FIXTURE_RESEED_FLOOR_FRACTION * capacity)
+	var grown := minf(capacity, lift + FIXTURE_PLANT_REGROWTH_RATE * lift * (1.0 - lift / capacity))
+	return grown - stock
+
+func _floorify_ceilings(src: Dictionary, prefix: String) -> void:
 	var legacy := "hunt_policy_ceilings" if prefix == "" and src.has("hunt_policy_ceilings") \
 		else "forage_policy_ceilings"
 	var rows: Variant = src.get(prefix + legacy, null)
 	if not (rows is Dictionary):
-		return _floorify_estimates(src)
+		_floorify_estimates(src)
+		return
 	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
 	var peak_trade := _legacy_peak(src, prefix, legacy + "_trade" if legacy.begins_with("forage") \
 		else "hunt_policy_trade_ceilings")
@@ -254,7 +341,7 @@ func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 			"forage_policy_per_worker", "forage_policy_per_worker_trade",
 			"forage_policy_per_worker_fodder"]:
 		src.erase(prefix + key)
-	return _floorify_estimates(src)
+	_floorify_estimates(src)
 
 func _legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
 	var rows: Variant = src.get(prefix + key, null)
