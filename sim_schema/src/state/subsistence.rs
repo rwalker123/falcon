@@ -342,6 +342,17 @@ pub struct HerdTelemetryState {
     /// Appended (append-only).
     #[serde(default)]
     pub trade_per_biomass: f32,
+    /// **What ONE hunter moves this turn, in BIOMASS** — `labor_config.hunt.per_worker_biomass_capacity`,
+    /// the term `systems::hunt_take`'s collection multiplies by the head-count. No seasonal factor
+    /// (the animal web has none), so it is never `0` for a live source.
+    ///
+    /// It is what turns a ceiling into a **crew count**, and it is deliberately not derived from
+    /// [`Self::provisions_per_biomass`] and `per_worker_yield`: that quotient is `0 / 0` on a wolf.
+    /// It **supersedes `PopulationCohortState::hunt_per_worker_provisions` for a per-herd preview** —
+    /// that field is a species-blind cohort echo and stays only as the expedition outfit lever.
+    /// The animal twin of [`ForagePatchState::per_worker_biomass`]. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_biomass: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -399,6 +410,7 @@ impl Default for HerdTelemetryState {
             provisions_per_biomass: 0.0,
             fodder_per_biomass: 0.0,
             trade_per_biomass: 0.0,
+            per_worker_biomass: 0.0,
         }
     }
 }
@@ -565,6 +577,17 @@ pub struct ForagePatchState {
     /// The trade half of the same vector — see [`Self::provisions_per_biomass`].
     #[serde(default)]
     pub trade_per_biomass: f32,
+    /// **What ONE gatherer moves this turn, in BIOMASS** — `per_worker_biomass_capacity ×
+    /// seasonal_weight` (`forage::forage_per_worker_biomass`), the term `forage_take`'s worker cap
+    /// multiplies by the head-count. It folds in the tile's seasonal weight, so it is **`0` in a dead
+    /// season** — do not divide by it.
+    ///
+    /// It is what turns a ceiling into a **crew count**: `ceil(room / (per_worker_biomass × dip))`.
+    /// Deliberately not derived from [`Self::provisions_per_biomass`] and `per_worker_yield` — that
+    /// quotient is `0 / 0` on a Field of cotton, flax or hay, which is exactly where the panel most
+    /// needs a crew number. Appended (append-only).
+    #[serde(default)]
+    pub per_worker_biomass: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

@@ -98,9 +98,11 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > herd, so there is no species to resolve a vector from; left unqualified it quotes a wolf's hunters a
 > positive food rate against all-zero food ceilings — a contradiction on the wire. The species-aware
 > rates are the herd's own `perWorkerYield` / `perWorkerTrade`, straight off its `hunt_forecast`, so
-> `min(workers × perWorkerYield, huntPolicyCeilings[p].provisionsPerTurn)` is honest per component.
-> The cohort field survives as the expedition **outfit** lever (rough carry arithmetic before a target
-> is chosen); for a chosen target the sim exports the answer in `huntTripEstimates`.
+> `min(workers × perWorkerYield, ceiling(floor))` is honest per component — and for the *crew* side
+> of the same question the herd carries **`perWorkerBiomass`**, which is positive on a wolf where
+> both the cohort echo and the food rate mislead. The cohort field survives as the expedition
+> **outfit** lever (rough carry arithmetic before a target is chosen); for a chosen target the sim
+> exports the answer in `huntTripEstimates`.
 
 > **A stance ceiling is now a STOCK, on both webs — `max(0, B − floor·K)`.** Since
 > `docs/plan_harvest_floor.md` slice 1 the four rows on each list are the stock standing above each
@@ -220,6 +222,27 @@ projection* is the sustained MSY. Pinned by
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
+- **`perWorkerBiomass` = the same throughput in BIOMASS**, before any account conversion:
+  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass`,
+  `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
+  factor). It is the term the **crew** half of the panel divides by — *"clear it now"* is
+  `(B − floor·K) ÷ (carry × dip)` and *"hold it after"* is the regrowth at that floor over the same
+  carry, both arithmetic in biomass.
+  > **It is not a duplicate of `perWorkerYield`, and it must not be re-derived from it.** The
+  > quotient `perWorkerYield ÷ provisionsPerBiomass` is exact and **undefined on precisely the
+  > sources that pay no food** — a sown Field of cotton, flax or hay, and a wolf herd — where the
+  > panel would then be unable to state a crew number at all. A rate that exists on every source
+  > cannot come from two that can both be zero.
+  >
+  > It was absent because a per-worker scalar was held unable to state a *policy-dependent* rate,
+  > which the plant web's trade account then had (`Deplete` marked it up). That markup is deleted
+  > (`docs/plan_harvest_floor.md` §4) and no factor rides the depth of the draw anywhere in the
+  > model, so throughput is policy-blind in fact and one scalar states it honestly.
+  >
+  > **It supersedes `PopulationCohortState.huntPerWorkerProvisions` for a per-herd preview** — see
+  > the trap that field carries, below. It is the same species-aware split `perWorkerYield` /
+  > `perWorkerTrade` already made for the accounts, one level down. The cohort field stays: it is
+  > still the expedition **outfit** lever, quoted before a target is chosen.
 - `ceiling(floor)` = the stock standing above that floor, in food/turn, **already clamped to the
   source's remaining biomass** (belt-and-braces — an escapement ceiling cannot exceed the stock).
 - Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales

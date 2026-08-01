@@ -209,4 +209,76 @@ mod tests {
         assert!((patch.provisionsPerBiomass() - PATCH_FOOD_RATE).abs() < 1e-6);
         assert!((patch.fodderPerBiomass() - PATCH_FODDER_RATE).abs() < 1e-6);
     }
+
+    /// **The per-worker BIOMASS throughput crosses the wire, on both food webs — and it survives on
+    /// exactly the sources where the client's old derivation dies.**
+    ///
+    /// The vector above turns a floor into a *ceiling*; this turns that ceiling into a number of
+    /// *people* (`ceil(room / (perWorkerBiomass × dip))`). The client used to recover it as
+    /// `perWorkerYield ÷ provisionsPerBiomass` — exact, and `0 / 0` on the two sources that pay no
+    /// food at all: a **wolf** herd and a sown **fibre/hay Field**. So the fixture makes both of
+    /// those the subject: every food term is zero, and the throughput is still there and positive.
+    #[test]
+    fn the_per_worker_biomass_throughput_rides_the_wire_where_the_food_rate_cannot() {
+        /// One hunter's biomass carry — `labor_config.hunt.per_worker_biomass_capacity`.
+        const HUNTER_CARRY: f32 = 40.0;
+        /// One gatherer's biomass carry at full season — `per_worker_biomass_capacity × 1.0`.
+        const GATHERER_CARRY: f32 = 8.0;
+        /// What a flax Field pays in trade goods per unit of standing crop — non-zero, so the source
+        /// is genuinely productive while paying no food whatever.
+        const FIELD_TRADE_RATE: f32 = 0.03;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_wolf".to_string(),
+                // A wolf: no food rate and no food throughput. `perWorkerYield / provisionsPerBiomass`
+                // is `0 / 0` here, which is the whole reason this field exists.
+                per_worker_yield: 0.0,
+                provisions_per_biomass: 0.0,
+                per_worker_biomass: HUNTER_CARRY,
+                ..Default::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                // A sown flax Field: pays trade goods and nothing else.
+                per_worker_yield: 0.0,
+                provisions_per_biomass: 0.0,
+                trade_per_biomass: FIELD_TRADE_RATE,
+                per_worker_biomass: GATHERER_CARRY,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
+        assert_eq!(
+            herd.perWorkerYield(),
+            0.0,
+            "the fixture's premise: the food throughput a client would divide by is zero"
+        );
+        assert!(
+            (herd.perWorkerBiomass() - HUNTER_CARRY).abs() < 1e-6,
+            "a wolf's hunters still have a biomass throughput: {}",
+            herd.perWorkerBiomass()
+        );
+
+        let patch = subsistence.foragePatches().expect("patches present").get(0);
+        assert_eq!(
+            patch.provisionsPerBiomass(),
+            0.0,
+            "the fixture's premise: a fibre Field pays no food"
+        );
+        assert!(
+            (patch.perWorkerBiomass() - GATHERER_CARRY).abs() < 1e-6,
+            "…and its gatherers still have a biomass throughput: {}",
+            patch.perWorkerBiomass()
+        );
+    }
 }

@@ -1329,6 +1329,32 @@ table ForagePatchState {
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
   tradePerBiomass:float = 0;
+  // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
+  // What ONE gatherer moves this turn, **in biomass**: `per_worker_biomass_capacity × seasonalWeight`
+  // — the exact term `forage::forage_take`'s worker cap multiplies by the head-count. It folds in the
+  // tile's seasonal weight (as `perWorkerYield` does), so it is **0 in a dead season**: do not divide
+  // by it, and do not read a `0` as "no forecast was sent".
+  //
+  // **The crew half of the panel is arithmetic in biomass, and this is the one term that was not on
+  // the wire.** The vector above lets a client evaluate a ceiling at any floor; turning that into
+  // people needs the throughput the ceiling is spent against:
+  //
+  //   clearItNow(floor, rung)  = ceil(max(0, B - floor*K) / (perWorkerBiomass * <rung>BuildFraction))
+  //   holdItAfter(floor, rung) = ceil(regrowthAt(floor)   / (perWorkerBiomass * <rung>BuildFraction))
+  //
+  // **It is NOT a duplicate of `perWorkerYield`, and it is not derivable from it.** The client used to
+  // recover it as `perWorkerYield / provisionsPerBiomass`, which is exact — and **undefined on
+  // precisely the sources that pay no food**: a sown Field of cotton, flax or hay reads `0 / 0`, and
+  // the panel can then state no crew number at all. A rate that exists on every source must not be
+  // derived from two that can both be zero.
+  //
+  // **Why there was no such field before:** a per-worker scalar was held to be unable to state a
+  // POLICY-DEPENDENT rate, which the plant web's trade account then had (`Deplete` marked it up). That
+  // markup is deleted (docs/plan_harvest_floor.md §4) and no factor of any kind now rides the depth of
+  // the draw, so throughput is policy-blind *in fact* and one scalar states it honestly. The
+  // per-policy rows' per-worker vector still exists for the ACCOUNTS; this is the biomass they are all
+  // converted from.
+  perWorkerBiomass:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -1896,6 +1922,24 @@ table HerdTelemetryState {
   provisionsPerBiomass:float = 0;
   fodderPerBiomass:float = 0;
   tradePerBiomass:float = 0;
+  // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
+  // What ONE hunter moves this turn, **in biomass** — `labor_config.hunt.per_worker_biomass_capacity`,
+  // the exact term `systems::hunt_take`'s collection multiplies by the head-count. **No seasonal
+  // factor**: the animal web has none, so unlike the patch twin this is never 0 for a live source.
+  //
+  // The animal twin of `ForagePatchState.perWorkerBiomass`; see there for the full reasoning — the
+  // crew half of the panel is arithmetic in biomass, and this is the term that was missing. On this
+  // web the derivation it replaces fails on a **wolf**, whose `provisionsPerBiomass` and
+  // `perWorkerYield` are both honestly `0`.
+  //
+  // **It SUPERSEDES `PopulationCohortState.huntPerWorkerProvisions` for any PER-HERD preview.** That
+  // field is a species-blind cohort echo of the same global lever, in provisions, so it quotes a
+  // wolf's hunters a positive food rate against all-zero food ceilings — the trap
+  // `.claude/rules/core_sim/yield-forecast.md` already flags. This field plus the herd's own
+  // per-biomass vector is the honest pair, and it is the same species-aware split
+  // `perWorkerYield`/`perWorkerTrade` already made for the accounts. The cohort field stays: it is
+  // still the expedition **outfit** lever, quoted before a target has been chosen.
+  perWorkerBiomass:float = 0;
 }
 
 table CommandEventState {

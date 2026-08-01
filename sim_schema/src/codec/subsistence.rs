@@ -202,6 +202,10 @@ fn create_herds<'a>(
                 // The neglect grace — appended last.
                 hasNeglectGrace: herd.has_neglect_grace,
                 neglectGraceRemaining: herd.neglect_grace_remaining,
+                // One hunter's BIOMASS throughput — appended last (append-only wire). The term the
+                // crew half of the compose sheet divides a ceiling by; see the schema comment for
+                // why it is not derived from `perWorkerYield / provisionsPerBiomass`.
+                perWorkerBiomass: herd.per_worker_biomass,
             },
         );
         entries.push(entry);
@@ -260,6 +264,9 @@ fn create_forage_patches<'a>(
                 neglectGraceRemaining: patch.neglect_grace_remaining,
                 cultivateCrewNeeded: patch.cultivate_crew_needed,
                 sowCrewNeeded: patch.sow_crew_needed,
+                // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last
+                // (append-only wire). The plant twin of the herd field; `0` in a dead season.
+                perWorkerBiomass: patch.per_worker_biomass,
             },
         );
         entries.push(entry);

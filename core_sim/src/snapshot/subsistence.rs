@@ -1,7 +1,8 @@
 use super::*;
 use crate::forage::{
-    field_fodder, field_trade_goods, patch_fodder_per_biomass, patch_neglect_grace_remaining,
-    patch_provisions_per_biomass, patch_trade_per_biomass, tended_fodder, tended_trade_goods,
+    field_fodder, field_trade_goods, forage_per_worker_biomass, patch_fodder_per_biomass,
+    patch_neglect_grace_remaining, patch_provisions_per_biomass, patch_trade_per_biomass,
+    tended_fodder, tended_trade_goods,
 };
 use crate::intensification::NO_BUILD_REMAINING_FRACTION;
 
@@ -278,6 +279,12 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 trade_per_biomass: herd
                     .map(|herd| fauna.hunt_yield_for(&herd.species).trade_goods_per_biomass)
                     .unwrap_or(0.0),
+                // **One hunter's BIOMASS throughput** — the term `systems::hunt_take`'s collection
+                // multiplies by the head-count, with no seasonal factor (the animal web has none).
+                // It is the crew half of the composition: the vector above turns a floor into a
+                // ceiling, and this turns that ceiling into a number of people. Shipped rather than
+                // left to `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a wolf.
+                per_worker_biomass: labor.hunt.per_worker_biomass_capacity,
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
@@ -530,6 +537,13 @@ pub(crate) fn snapshot_forage_patches(
                     forage,
                 ),
                 trade_per_biomass: patch_trade_per_biomass(patch, tile_composition, flora, forage),
+                // **One gatherer's BIOMASS throughput** — `per_worker_biomass_capacity × seasonal`,
+                // the exact term `forage_take`'s worker cap multiplies by the head-count, through the
+                // shared helper so the wire and the take cannot disagree. `0` in a dead season, like
+                // `per_worker_yield` beside it. Shipped rather than left to
+                // `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a Field of cotton,
+                // flax or hay.
+                per_worker_biomass: forage_per_worker_biomass(forage, seasonal),
                 // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
                 // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
                 // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
