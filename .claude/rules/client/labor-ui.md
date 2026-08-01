@@ -247,6 +247,41 @@ guard between it and every quotient; both targets answer `NO_CREW_ANSWER` there 
 all**, rather than a `0` that would read as "nobody is needed". Frame + sabotage-verified assertion:
 `forage_dead_season`.
 
+**A VERB THE SOURCE HAS ALREADY BUILT DIPS NO CREW** (`SourceForecast.live_improvement`, read by
+`build_dip` and by both compose builders). `ComposeState.seed_*` runs only when the SOURCE changes, so
+a composition OUTLIVES the build it named: the turn a Cultivate completes the sim clears the
+assignment's `improvement`, the improvement control drops to its DONE label — and the composed verb
+sat on unread, multiplying every crew term by the rung's 0.25 `yield_fraction_while_building` and
+re-issuing itself on the next commit. Reported from play: a finished Tended Patch reading
+`2 foragers · +0.41 /turn` on the card beside a sheet asking for **6 hold it after**, a crew that is
+only right if a forager carries ~2 biomass where the sim's own rate says ~6.
+
+- **The wire cannot answer this and the source's own done flags can.** `BuildDips::for_branch`
+  publishes `Some(fraction)` for BOTH rungs whatever the source has climbed — only a rung-3 *managed*
+  forecast carries `NOTHING_LEFT_TO_BUILD` — so a positive fraction is not "a build is available
+  here". The sim's `BuildDips::of` already states the rule in prose (*"a crew standing on a finished
+  source is harvesting, not preparing"*); `live_improvement` is that rule, client-side, over the
+  `improvement_is_done` test the improvement control ALREADY makes to render DONE instead of RUNNING.
+  Before it, the panel said the build was over and priced it as running.
+- **THE SEASONAL WEIGHT IS NOT A SUSPECT HERE, and it is worth knowing why.** A 4× on the crew looks
+  like a seasonal term (`perWorkerBiomass` is `per_worker_biomass_capacity × seasonal_weight`), but
+  worldgen sets every food module to `INITIAL_SEASONAL_WEIGHT` **1.0** and no system moves it, and the
+  sim threads the one `FoodModuleTag::seasonal_weight` into `forage_per_worker_biomass`,
+  `forage_take`'s worker cap and the snapshot alike. A live patch publishes **8.0**; any other carry
+  the panel divides by came from the dip.
+- **The assertion is a CROSS-CHECK against the sim's own published take, never a restatement of the
+  crew math.** Both halves of the sheet dipped together, so any test comparing the sheet with itself
+  passes with the bug fully restored. `forage_stale_verb` therefore states the standing assignment's
+  rate FROM THE TILE'S OWN WIRE TERMS (`min(crew × carry, regrowth) × rate`, the way `forage_take`
+  composes it) and requires the *hold* target to price a forager no slower than that rate implies.
+  Sabotage-verified: it comes back with exactly the played numbers, `HOLD 6` and `5.92 vs 1.97
+  biomass/forager`.
+- **The fixture is at the SHIPPED constants on purpose** — K 195, the 8.0 carry, `r` 0.25, a basket
+  converting at 0.03325 food/biomass — because the defect is only visible at a live patch's
+  proportions: `crew_to_hold` divides a regrowth the LAND owns by a carry the CREW owns, and a fixture
+  whose regrowth is small beside its carry rounds the whole 4× away (`forage_cultivate_done`, which
+  stages the same stale verb, reads `1 hold it after` either way).
+
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
 The aside's second line states the **live learning rate**, and it is the only thing in the client that

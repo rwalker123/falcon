@@ -404,6 +404,34 @@ const FIXTURE_RESEED_FLOOR_FRACTION := 0.02
 const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
 const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
 
+# ---- THE STALE-VERB PATCH: the played tile, at the SHIPPED numbers ------------------------------
+# Reported from play, and the reason `SourceForecast.live_improvement` exists. Every constant here is
+# a shipped config value rather than a fixture convenience, because the defect is only visible at the
+# proportions a live patch has: `crew_to_hold` divides a regrowth the LAND owns by a carry the CREW
+# owns, so the 4× a stale build dip puts on the crew shows up as a crew target 3× too large, and a
+# fixture whose regrowth is small next to its carry rounds the whole error away.
+const STALE_VERB_CAPACITY := 195.0
+# Just above the floor it is worked at, so the crew is REGROWTH-bound rather than room-bound — the
+# steady state in which "how many hands hold this patch" is the question the sheet is answering.
+const STALE_VERB_STOCK := 112.0
+const STALE_VERB_FLOOR := 0.57
+const STALE_VERB_CREW := 2
+# `labor_config.forage.per_worker_biomass_capacity` (8.0) × the tile's seasonal weight. Worldgen sets
+# every food module's weight to `INITIAL_SEASONAL_WEIGHT` (1.0) and no system ever moves it, so this
+# IS a live patch's published throughput — the season is not what dips a forager today.
+const STALE_VERB_PER_WORKER_BIOMASS := 8.0
+# The basket's share-weighted food rate: wild tubers 0.35 × 0.065 + wild rice 0.15 × 0.070. Cotton and
+# flax pay no food at all, which is why the patch converts at well under `provisions_per_biomass`.
+const STALE_VERB_FOOD_PER_BIOMASS := 0.03325
+# …and the same basket's trade rate, which the two cash crops carry: 0.35 × 0.005 + 0.30 × 0.200 +
+# 0.20 × 0.150 + 0.15 × 0.005.
+const STALE_VERB_TRADE_PER_BIOMASS := 0.0925
+# The plant rungs' `yield_fraction_while_building` (`intensification_ladder.json`) — the factor that
+# must NOT ride a crew whose build has already landed.
+const STALE_VERB_BUILD_FRACTION := 0.25
+# Two throughputs are "the same" when they agree to within the resolution the panel states a rate at.
+const STALE_VERB_THROUGHPUT_EPSILON := 0.01
+
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
 ## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
 func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
@@ -1672,6 +1700,78 @@ func _ready() -> void:
 	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_done")
+
+	# State forage_stale_verb — **THE TWO PUBLISHED NUMBERS MUST IMPLY ONE THROUGHPUT.** The state above
+	# proved the finished patch stops OFFERING Cultivate; this one proves it stops being PRICED as one.
+	# Reported from play: a tended patch reading `Forage biomass 111 / 195` with `2 foragers · +0.41
+	# /turn` on the card, and a sheet beside it asking for **6 hold it after** — a crew that can only be
+	# right if a forager carries ~2 biomass, while the sim's own rate for the crew already working it
+	# says ~6. Nothing on screen could explain the gap: the improvement control read `🌾 Tended Patch`,
+	# a DONE label, so no build was visibly in flight. The stale `Cultivate` in the compose state was.
+	#
+	# `seed_forage` only runs when the SOURCE changes, so a composition outlives the build it named —
+	# and the sim clears the assignment's `improvement` the turn the rung completes, which is precisely
+	# when the two halves of the panel start dividing by different throughputs. Staged the way play
+	# reaches it: open the sheet (seeding crew + floor off the standing assignment, improvement ""),
+	# then dial in the verb the finished build left behind and re-open.
+	var stale_tile := _floorify(_stale_verb_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var stale_carry := SourceForecast.per_worker_biomass(stale_tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var stale_samples := SourceForecast.regrowth_samples(stale_tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var stale_growth := SourceForecast.regrowth_at(stale_samples, STALE_VERB_FLOOR)
+	# **THE CARD'S NUMBER, COMPOSED THE WAY THE SIM COMPOSES IT** — regrow, then take what stands above
+	# the floor, capped by what the crew can carry (`forage_take`'s `min(worker_cap, ceiling)`). Derived
+	# from the tile's own wire terms rather than written as a literal, so the standing rate and the crew
+	# targets are answering about the SAME patch by construction and this assertion cannot be satisfied
+	# by a fixture that drifted.
+	var stale_standing_rate := minf(float(STALE_VERB_CREW) * stale_carry, stale_growth) \
+		* STALE_VERB_FOOD_PER_BIOMASS
+	# Captured rather than restored to a named fixture: the band in force here is whatever the state
+	# before this one left, and re-seeding it from a guess is how a later state's crew quietly moves.
+	var prior_player_band := _hud._band_labor.player_band()
+	var prior_player_bands := _hud._band_labor._player_bands
+	_hud._band_labor._player_band = _stale_verb_band_fixture(stale_standing_rate)
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_show_tile(stale_tile)
+	_compose_forage(stale_tile)
+	_hud._compose.set_forage_improvement("cultivate")
+	_compose_forage(stale_tile)
+	await _settle()
+	await _save("forage_stale_verb")
+	var stale_sheet := _hud._drawercompose._compose_sheet
+	var stale_hold := _crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_HOLD)
+	# (1) THE CREW TARGETS DIVIDE BY THE THROUGHPUT THE WIRE PUBLISHED. Compared against the crew terms
+	# recomposed here from the source's own fields at NO dip — the answer a patch with nothing left to
+	# build must give. With the stale verb pricing the crew this reads 6 against 2.
+	_assert_hud("a finished rung's verb dips no crew — HOLD divides by the wire's own throughput (%d)"
+		% stale_hold,
+		stale_hold == SourceForecast.crew_to_hold(stale_samples, STALE_VERB_FLOOR, stale_carry, 0.0))
+	_assert_hud("…and so does CLEAR, the other half of the same division",
+		_crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
+			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,
+				HudComposeVocab.FORAGE_FORECAST_PREFIX, STALE_VERB_FLOOR), stale_carry))
+	# (2) **THE INVARIANT THAT BROKE** — the sheet's crew target and the card's rate must imply the SAME
+	# biomass per forager. The card's is a LOWER bound (its take may be bound by the room rather than by
+	# the crew), so a crew target may never price a forager BELOW it: that is exactly the contradiction
+	# played — 12.3 biomass moved by 2 foragers, beside a target saying a forager carries 2.
+	var stale_from_card := (stale_standing_rate / STALE_VERB_FOOD_PER_BIOMASS) / float(STALE_VERB_CREW)
+	var stale_from_hold := stale_growth / float(maxi(stale_hold, 1))
+	_assert_hud("the card's rate and the sheet's crew imply ONE throughput (%.2f vs %.2f biomass/forager)"
+		% [stale_from_card, stale_from_hold],
+		stale_hold > 0 and stale_from_hold >= stale_from_card - STALE_VERB_THROUGHPUT_EPSILON)
+	# (3) …and the frame really is a FINISHED patch rather than a build in flight, which is what makes
+	# the two assertions above claims about a STALE verb rather than about a legitimate dip. A RUNNING
+	# Cultivate is a live CheckBox; this one is the DONE state's static Label, naming the rung the
+	# patch is standing on.
+	var stale_control := _find_improvement_control(stale_sheet, "cultivate")
+	_assert_hud("the finished rung reads as a DONE label, so no build in flight can explain a dip",
+		stale_control is Label and not (stale_control is CheckBox)
+			and _improvement_face(stale_sheet, "cultivate").contains(
+				String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
+	_hud._band_labor._player_band = prior_player_band
+	_hud._band_labor._player_bands = prior_player_bands
+	_hud._compose.reset_forage_source()   # the states after this one open on their own patch
 
 	# State 6b-sow-done — a COMPLETED Field with a standing Sow selection: ▦ Sow greys with "Already a
 	# Field — ♻ Sustain-forage it to harvest", mirroring the finished-patch case one rung up (Cultivate is
@@ -7772,6 +7872,107 @@ func _tended_tile_fixture() -> Dictionary:
 	tile["patch_ceiling_deplete"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_eradicate"] = tile["patch_per_worker_yield"]
 	return _seed_forage_rows(tile)
+
+## **THE PLAYED TILE — a FINISHED Tended Patch whose crew a stale `Cultivate` was still dipping.**
+##
+## Every term is the SHIPPED one, because the whole point is that this is the arithmetic a LIVE patch
+## produces and the preview fixtures could not: `per_worker_biomass_capacity` 8.0 × the tile's seasonal
+## weight, which worldgen fixes at `INITIAL_SEASONAL_WEIGHT` 1.0 and nothing ever moves; the plant
+## rungs' `yield_fraction_while_building` 0.25; and a basket of Wild Tubers 35% · Cotton 30% · Flax 20%
+## · Wild Rice 15%, of which only the two staples pay food — 0.35 × 0.065 + 0.15 × 0.070 — so the patch
+## converts at `STALE_VERB_FOOD_PER_BIOMASS` and the two cash crops carry the trade rate beside it.
+##
+## **It states its own stock and capacity, so it deliberately does NOT go through `_seed_forage_rows`**,
+## which pins every fixture it touches to one `FIXTURE_CAPACITY`/`FIXTURE_STOCK_FRACTION` pair. This
+## frame is about a particular `B / K` — a patch standing just above the floor it is worked at, where
+## the crew is bound by the REGROWTH rather than by the room — and the per-biomass vector states the
+## ceiling directly anyway. `_floorify` still seeds the growth curve and the phase cuts from it.
+func _stale_verb_tile_fixture() -> Dictionary:
+	return {
+		"x": 68, "y": 12,
+		"terrain_label": "Alluvial Plain",
+		"tags_text": "Fertile, Fresh Water",
+		"visibility_state": "active",
+		"habitability": 0.72,
+		"temperature": 18.0,
+		"food_module": "riverine_delta",
+		"food_module_label": "Riverine Delta",
+		"site_name": "",
+		"patch_ecology_phase": "thriving",
+		"patch_biomass": STALE_VERB_STOCK,
+		"patch_carrying_capacity": STALE_VERB_CAPACITY,
+		# THE RUNG THE VERB NAMES IS BUILT. `is_cultivated` is what the improvement control reads to
+		# render its DONE label instead of a running meter — and, since this fix, what tells the crew
+		# terms that the Cultivate still sitting in the compose state is a stale verb.
+		"patch_is_cultivated": true,
+		"patch_cultivation_progress": 1.0,
+		"patch_is_field": false,
+		"patch_field_progress": 0.0,
+		"patch_provisions_per_biomass": STALE_VERB_FOOD_PER_BIOMASS,
+		"patch_trade_per_biomass": STALE_VERB_TRADE_PER_BIOMASS,
+		"patch_fodder_per_biomass": 0.0,
+		"patch_per_worker_biomass": STALE_VERB_PER_WORKER_BIOMASS,
+		"patch_per_worker_yield": STALE_VERB_PER_WORKER_BIOMASS * STALE_VERB_FOOD_PER_BIOMASS,
+		# The two plant dips, as the wire carries them: `BuildDips::for_branch` publishes BOTH rungs'
+		# fractions whatever the patch has already climbed, which is exactly why the fraction alone
+		# cannot say "nothing left to build here" and the done flag above has to.
+		"patch_cultivate_build_fraction": STALE_VERB_BUILD_FRACTION,
+		"patch_sow_build_fraction": STALE_VERB_BUILD_FRACTION,
+		"patch_cultivate_crew_needed": 2,
+		"patch_sow_crew_needed": 3,
+		# The ground is rich but away from fresh water, so the next rung is offered and REFUSED — the
+		# sheet's improvement row is a done label over a site gate, with no running build anywhere on it.
+		"patch_sow_site_refusal": "too_dry",
+		"patch_tended_yield": 1.20,
+		"patch_field_yield": 2.40,
+		"patch_composition": [
+			{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.35,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 2.10, "sow_yield_ratio": 3.60,
+				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
+			{"species": "cotton", "display_name": "Cotton Fields", "share": 0.30,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 1.40, "sow_yield_ratio": 2.60,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+			{"species": "flax", "display_name": "Flax Fields", "share": 0.20,
+				"can_cultivate": true, "can_sow": false,
+				"cultivate_yield_ratio": 1.30, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+			{"species": "wild_rice", "display_name": "Wild Rice", "share": 0.15,
+				"can_cultivate": false, "can_sow": false,
+				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+		],
+	}
+
+## The band working that patch — 2 foragers, NO improvement (the sim cleared the assignment's verb the
+## turn the Cultivate completed), no idle hands, and its rate filled in by the caller from the tile's
+## own wire terms so the drawer's standing summary and the sheet's crew targets cannot state two
+## different throughputs by fixture drift.
+func _stale_verb_band_fixture(rate: float) -> Dictionary:
+	return {
+		"id": "Band 1",
+		"size": 30,
+		"entity": 821,
+		"faction": 0,
+		"pos": [67, 11],
+		"current_x": 67, "current_y": 11,
+		"activity": "forage",
+		"working_age": 16,
+		"idle_workers": 0,
+		"work_range": 3,
+		"turns_of_food": 12.0,
+		"settlement_stage_icon": "⛺",
+		"settlement_stage_label": "Nomadic band",
+		"output_multiplier": 1.0,
+		"labor_assignments": [
+			{"kind": "forage", "workers": STALE_VERB_CREW,
+				"target_x": 68, "target_y": 12, "floor": STALE_VERB_FLOOR,
+				"improvement": "",
+				"actual_yield": rate, "sustainable_yield": rate, "realized_yield": rate,
+				"overdraws": false},
+		],
+	}
 
 ## QUALIFYING GROUND for `Sow` — an alluvial plain beside fresh water, i.e. one of the ~46 tiles of
 ## 4160 (1.1%) on the standard map that will actually take seed. `patch_sow_site_refusal` is "" (the

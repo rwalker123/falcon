@@ -1074,8 +1074,14 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # RESOLVED BEFORE THE FORECAST, because the forecast now takes it: while a build runs the sim's
     # ceiling is `stance × <rung>BuildFraction`, so a stance-only forecast caps the stepper on a
     # ceiling this crew will not be paid.
+    # A verb this herd has already built is RETIRED rather than carried — the animal twin of the
+    # forage sheet's rule, and for the same reason: `seed_hunt` runs only on a source change, so a
+    # composition outlives its build and would keep dipping the crew for a Tame that finished.
     var composed_improvement := SourceForecast.IMPROVEMENT_NONE if is_expedition \
-        else _compose.hunt_improvement()
+        else SourceForecast.live_improvement(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            _compose.hunt_improvement())
+    if not is_expedition and composed_improvement != _compose.hunt_improvement():
+        _compose.set_hunt_improvement(composed_improvement)
     var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
         HudComposeVocab.BARE_FORECAST_PREFIX, _compose.hunt_floor(), composed_improvement)
     # The party stepper caps at the max-useful count on BOTH branches — a raid's haul (`animals_taken`)
@@ -1655,7 +1661,17 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # THE COMPOSED IMPROVEMENT — the second axis. The crop belongs to it, not to the stance, so the
     # rung the crop is resolved against is the one the improvement control will render: the composed
     # verb where one is in flight, else the rung on offer.
-    var composed_improvement := _compose.forage_improvement()
+    # **AND A VERB THIS PATCH HAS ALREADY BUILT IS RETIRED HERE, NOT CARRIED.** `seed_forage` runs
+    # only when the SOURCE changes, so a composition outlives the build it named: the turn a Cultivate
+    # completes the sim clears the assignment's `improvement`, the improvement control below drops to
+    # its DONE label — and the composed verb sat on unread, dipping every crew term to 25% and
+    # re-issuing itself on the next commit. `SourceForecast.live_improvement` is the same
+    # `improvement_is_done` test that control already makes, so the numbers and the label can no
+    # longer say different things about the same rung.
+    var composed_improvement := SourceForecast.live_improvement(tile_info,
+        HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_improvement())
+    if composed_improvement != _compose.forage_improvement():
+        _compose.set_forage_improvement(composed_improvement)
     var crop_rung := composed_improvement if composed_improvement != SourceForecast.IMPROVEMENT_NONE \
         else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             composed_improvement, _player_knowledge(),

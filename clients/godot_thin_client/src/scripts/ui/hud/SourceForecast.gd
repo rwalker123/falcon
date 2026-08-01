@@ -1430,7 +1430,17 @@ static func forecast_is_known(src: Dictionary, kind: String, prefix: String) -> 
 ## (`NO_BUILD_REMAINING_FRACTION`). That is NOT "the build pays zero", so it answers the identity
 ## rather than collapsing every take to nothing; `improvement_forecast` makes the same call the other
 ## way, declining to quote a deal it cannot price.
+##
+## **A RUNG THIS SOURCE HAS ALREADY BUILT DIPS NOTHING** (`live_improvement`), and that is the sim's
+## own rule rather than a client kindness: `intensification::BuildDips::of` says *"[the identity]
+## equally when the rung it names has nothing left to build — a crew standing on a finished source is
+## harvesting, not preparing."* The WIRE cannot say it for rung 2 — `BuildDips::for_branch` publishes
+## `Some(fraction)` for **both** rungs whatever the source has climbed, and only a rung-3 *managed*
+## forecast carries `NOTHING_LEFT_TO_BUILD` — so the fraction alone is not enough and the source's own
+## done flags settle it here.
 static func build_dip(src: Dictionary, prefix: String, improvement: String) -> float:
+    if live_improvement(src, prefix, improvement) == IMPROVEMENT_NONE:
+        return NO_BUILD_DIP
     if not FORECAST_BUILD_FRACTION_KEYS.has(improvement):
         return NO_BUILD_DIP
     var fraction := float(src.get(
@@ -1625,6 +1635,22 @@ static func improvement_forecast(src: Dictionary, kind: String, prefix: String, 
         # Which account's zero is worth printing on any of the three terms (§7.7).
         "zero_account": String(base_forecast["zero_account"]),
     }
+
+## **THE VERB THIS SOURCE IS ACTUALLY BUILDING** — `improvement` when its rung is still to climb,
+## `IMPROVEMENT_NONE` when the source has ALREADY BUILT it. A verb naming a standing rung is a STALE
+## VERB, not a build in flight, and it must price no crew: the sim clears an assignment's
+## `improvement` the turn the rung completes, so the wire and a composition that outlived the build
+## disagree, and only the source's own done flags can tell them apart.
+##
+## **The improvement control already made exactly this test** (`_build_improvement_control` renders
+## DONE rather than RUNNING for one) — so before this existed, a finished Tended Patch showed
+## `🌾 Tended Patch` while its crew targets and its take were still quoted at the Cultivate build's
+## 25% carry: the panel said the build was over and priced it as running. Reported from play, where
+## the sheet asked for 6 foragers to hold a patch the sim's own standing rate showed 2 already
+## holding. Every crew term goes through `build_dip`, so stating it once here is what keeps the two
+## halves of the panel dividing by ONE throughput.
+static func live_improvement(src: Dictionary, prefix: String, improvement: String) -> String:
+    return IMPROVEMENT_NONE if improvement_is_done(src, prefix, improvement) else improvement
 
 ## Is this improvement's rung ALREADY BUILT on this source? The test that turns the improvement
 ## control's Running state into its Done state, and the one definition of it.
