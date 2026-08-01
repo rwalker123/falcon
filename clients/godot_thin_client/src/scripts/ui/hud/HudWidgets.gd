@@ -480,6 +480,15 @@ const CREW_TARGET_COUNT_META := "crew_target_count"
 ## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
 ## match and a needle search would find whichever Label happened to hold it.
 const YIELDS_ROW_META := "yields_row"
+## The readout ASIDE block's identity. Its lines are plain Labels at one size and the teaching one
+## carries live numbers, so a harness matching text would find whichever Label happened to hold the
+## needle — or nothing, and pass.
+const READOUT_ASIDE_META := "readout_aside"
+## The TEACHING line's own identity inside that block. Its siblings (the idle note, the floor hint)
+## also move with the floor, so an assertion that the ASIDE changed is satisfied by either of them
+## and says nothing about this line — measured: blanking the teaching note entirely still passed a
+## whole-aside comparison. A claim about this sentence has to be able to find this sentence.
+const READOUT_TEACHING_META := "readout_teaching"
 
 ## The CREW ROW's own label, as `Control` meta. It names the crew from the composed improvement axis
 ## (`Hunters` vs `Herders`), which is a real claim about the sheet — and it renders UPPERCASE, exactly
@@ -980,21 +989,42 @@ static func _readout_unit_label(text: String, tint: Color) -> Label:
     label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_YIELD_UNIT_FONT_SIZE)
     return label
 
+## ONE line of the aside, as the `{text, color}` pair `build_readout_aside` renders. The ink is a
+## PARAMETER rather than a per-line branch inside the builder because only the CALLER knows whether a
+## line is a standing note or a live state: the aside's own colour is `INK_FAINT`, and the one line
+## that departs from it — the teaching RATE, which exists only while the crew is actually earning it —
+## wears `SIGNAL`, this HUD's word for a live state everywhere else (the Sight chip, the selection
+## accent, the turn orb's calm pulse).
+static func readout_aside_line(text: String, color: Color = HudStyle.INK_FAINT,
+        meta: String = "") -> Dictionary:
+    return {"text": text, "color": color, "meta": meta}
+
 ## The readout's ASIDE register — the quietest thing on the sheet, cut off from the verdict above it
 ## by a DASHED rule. A solid hairline is a division between two blocks of equal standing (that is what
 ## `HudStyle.hairline_stylebox` draws); the aside is a footnote to what is above it, and the dashes
 ## are what say so. Returns the whole block, so a caller adds one child.
+##
+## Every line is a `readout_aside_line` pair; a line with no `text` is dropped rather than rendered as
+## an empty row, since a source with nothing to say in one register still has the others.
 static func build_readout_aside(lines: Array) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_ASIDE_SEPARATION)
+    block.set_meta(READOUT_ASIDE_META, true)
     block.add_child(build_dashed_rule())
     for line in lines:
+        var entry: Dictionary = line
+        var text := String(entry.get("text", ""))
+        if text == "":
+            continue
         var label := Label.new()
-        label.text = String(line)
+        label.text = text
         label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        label.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        label.add_theme_color_override("font_color", entry.get("color", HudStyle.INK_FAINT))
+        var meta := String(entry.get("meta", ""))
+        if meta != "":
+            label.set_meta(meta, true)
         label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_ASIDE_FONT_SIZE)
         block.add_child(label)
     return block

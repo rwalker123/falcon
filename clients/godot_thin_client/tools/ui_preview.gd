@@ -146,6 +146,13 @@ const PELT_FRAME_HUNTERS := 2
 # A floor ABOVE a nearly-full patch's stock, so nothing stands above the line and the flag has to flip
 # below it — the two things `floor_chart_full` is judged on.
 const FLOOR_CHART_ABOVE_STOCK := 0.95
+## A SECOND live-drag floor for the teaching line, and it has to sit BELOW this state's standing
+## stock. The drag before it parks the floor ABOVE the stock, where the aside correctly reads
+## "Teaching nothing: nothing is being taken" — and any other floor still above the stock reads the
+## SAME sentence, so the assertion would compare a string with itself and pass on a line that never
+## re-read. This value crosses the sim's work predicate, so the drag moves the aside from that end of
+## the non-degeneracy rule to a live rate.
+const FLOOR_CHART_TEACHING_DRAG_FLOOR := 0.10
 # A stock already drawn well below the food peak but comfortably above a plant's reseed floor: low
 # enough that the projection's descent to the floor is legible, high enough that the curve has room to
 # flatten rather than bottoming out in the first turn.
@@ -1815,6 +1822,17 @@ func _ready() -> void:
 	# area. Asserted on the control for the same reason as the pair above.
 	_assert_hud("the chart wears the vertical-resize cursor, so the drag has an affordance at all",
 		live_chart.mouse_default_cursor_shape == Control.CURSOR_VSIZE)
+	# **THE TEACHING RATE FOLLOWS THE DRAG TOO.** `learn_multiplier` is `floor / the food peak`, so
+	# the aside's cyan line is a function of the floor exactly as the yields and the crew targets are
+	# — and it is the line that tells the player what the top half of the dial is FOR, so a stale one
+	# is the worst of the three to leave behind. Compared before/after rather than against a literal:
+	# the fixture's floor is free to move without silently retargeting this at a number.
+	var teaching_before := _teaching_line(_hud._drawercompose._compose_sheet)
+	live_chart.emit_signal("floor_changed", FLOOR_CHART_TEACHING_DRAG_FLOOR, false)
+	await _settle()
+	_assert_hud("the teaching rate re-reads on a LIVE drag, like the numbers it sits under",
+		_teaching_line(_hud._drawercompose._compose_sheet) != teaching_before
+			and _teaching_line(_hud._drawercompose._compose_sheet) != "")
 	# Put the sheet back where the frame above left it (a live change deliberately does not re-render).
 	_hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
 	_compose_forage(drawn_patch)
@@ -5766,6 +5784,21 @@ func _yields_text(root: Node) -> String:
 ## composed improvement axis. By meta rather than by text, because the sheet's EYEBROW two rows above
 ## carries the same noun in the same case (`ASSIGN HUNTERS`), so a search would match it and pass
 ## without ever reaching the crew row. "" when there is no crew row.
+## The READOUT's ASIDE as one string — its lines joined. Found by `HudWidgets.READOUT_ASIDE_META`,
+## its identity: every line is a plain Label at one size, so there is no distinguishing face, and the
+## teaching line's own text carries a live multiplier that a needle would have to be re-tuned against
+## every time a fixture's floor moved. "" when no aside rendered.
+func _readout_aside_text(root: Node) -> String:
+	var block := _find_meta_node(root, HudWidgets.READOUT_ASIDE_META)
+	return " ".join(_face_lines(block)) if block != null else ""
+
+## The teaching line ALONE, by its own meta. Its aside siblings move with the floor too, so a
+## whole-aside comparison is satisfied by them and cannot testify about this sentence — proven, by
+## blanking the note and watching the aside-wide form still pass.
+func _teaching_line(root: Node) -> String:
+	var node := _find_meta_node(root, HudWidgets.READOUT_TEACHING_META)
+	return (node as Label).text if node is Label else ""
+
 func _crew_row_label(root: Node) -> String:
 	var node := _find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
 	return (node as Label).text if node is Label else ""

@@ -247,6 +247,42 @@ guard between it and every quotient; both targets answer `NO_CREW_ANSWER` there 
 all**, rather than a `0` that would read as "nobody is needed". Frame + sabotage-verified assertion:
 `forage_dead_season`.
 
+### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
+
+The aside's second line states the **live learning rate**, and it is the only thing in the client that
+makes slice 3 visible to a player: `intensification::learn_multiplier` is `floor / the food peak`, so
+the number moves as the floor is dragged and the chart's gradient rail only gestures at it.
+
+- Working the source at a floor above zero → **`SIGNAL` cyan**, `Teaching cultivation at ×1.44 — a
+  higher floor teaches faster.` With the build box ticked the tail becomes **`and building at the
+  same rate.`** instead, because since slice 3 one multiplier paces the lesson and the build meter
+  alike — a builder is told the two move together rather than told again to raise the floor.
+- Otherwise the aside's own faint ink, naming **which** of the sim's two non-degeneracy ends this is
+  (`docs/plan_harvest_floor.md` §3): `Teaching nothing: nothing is left standing.` at floor `0`,
+  where the multiplier itself is zero, and `Teaching nothing: nothing is being taken.` where the
+  escapement room is empty and the sim's work predicate is false. **Naming the end is the point** —
+  a blank line there would leave the player unable to tell "this dial does nothing here" from "this
+  source teaches nothing at all", which are different facts.
+- A rung that declares no lesson renders **no line**, not an empty one. `SourceForecast.rung_lesson`
+  reads the **standing** rung, highest first, mirroring the sim: the same crew learns Herding on a
+  wild herd and Penning on a tamed one, so a herd mid-Corral still teaches Penning while it builds.
+- It is a function of the floor, so it lives in the `_refresh_floor_live` registry with the yields and
+  the crew targets.
+
+**The gate reasons dropped their tail clause — on this sheet's terms, not everywhere.** They used to
+close with *"faster the more you leave standing"*, which this line now says live and quantified, so
+carrying both stated one fact twice in one panel. What a gate reason must still carry is what is
+missing, how far along it is, **and the action that fixes it** — the rule recorded above, that naming
+a prerequisite alone tells a player a door is locked without saying where the key is. That is why the
+remedy stays and only the redundant tail went: the work board, the map marks and the work inspector
+have no aside to carry it.
+
+**It carries its own meta (`HudWidgets.READOUT_TEACHING_META`), and that is not decoration.** Its
+aside siblings — the idle note and the floor hint — move with the floor too, so an assertion that
+*the aside changed* is satisfied by either of them and says nothing about this sentence. Measured:
+blanking the teaching note entirely still passed a whole-aside comparison. The live-drag assertion
+reaches the line by meta and is sabotage-verified against both a blanked note and a frozen one.
+
 ### THE SHEET'S LOWER HALF: A ROW-LABELLED CREW LINE OVER A BOUNDED READOUT
 
 The panel's subject is the chart and the numbers under it. It did not read that way: the three intent

@@ -25,20 +25,24 @@ class_name HudFloraVocab
 #
 # The KNOWLEDGE reasons. Practice teaches the NEXT rung up (§4), and the rule keys off the rung the
 # source STANDS on, not the verb — so the same Sustain hunt teaches Herding on a wild herd and
-# Penning on a tamed one. **The remedies name the FLOOR, not a stance** — `intensification::
-# learn_multiplier` scales practice by `floor / the food peak`, so leaving more standing is literally
-# how you learn faster, and there is no rung to name. Format args: %d = the live faction progress
-# percent, %s = the food-peak glyph.
-const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Your people know Cultivation %d%% — %s forage a wild patch to learn it, faster the more you leave standing"
+# Penning on a tamed one. **A remedy names the PRACTICE, and stops there** — it used to close with
+# "faster the more you leave standing", which the compose sheet's aside now says live and quantified
+# ("Teaching cultivation at ×1.44 — a higher floor teaches faster"), so carrying it here too stated
+# one fact twice in one panel. What a reason must still carry is what is missing, how far along it
+# is, and the action that fixes it: naming the prerequisite alone tells a player a door is locked
+# without saying where the key is, which is why these are not trimmed further. The surfaces WITHOUT
+# an aside — the work board, the map marks, the work inspector — are exactly why the remedy stays.
+# Format args: %d = the live faction progress percent, %s = the food-peak glyph.
+const GATE_REASON_CULTIVATION_KNOWLEDGE_FORMAT := "Your people know Cultivation %d%% — %s forage a wild patch to learn it"
 
-const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Your people know Herding %d%% — %s hunt a wild herd to learn it, faster the more you leave standing"
+const GATE_REASON_HERDING_KNOWLEDGE_FORMAT := "Your people know Herding %d%% — %s hunt a wild herd to learn it"
 
 # The two knowledges slice 4 added. The §4.3 reshuffle put ONE knowledge on each transition, so these
 # gate the rung-3 verbs and their remedies point at working the rung-2 source — the ladder's
 # "practise this rung to unlock the next" rule, stated in the place the player is blocked.
-const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Selection %d%% — %s forage a Tended Patch to learn it, faster the more you leave standing"
+const GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT := "Your people know Seed Selection %d%% — %s forage a Tended Patch to learn it"
 
-const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s hunt a tamed herd to learn it, faster the more you leave standing"
+const GATE_REASON_PENNING_KNOWLEDGE_FORMAT := "Your people know Penning %d%% — %s hunt a tamed herd to learn it"
 
 # The SOURCE reasons — this one animal/patch's own build meter. `Corral`'s remedy now names the
 # `Tame` VERB (glyph %s), not "Sustain-hunt this Thriving herd": since slice 3a, Sustain tames

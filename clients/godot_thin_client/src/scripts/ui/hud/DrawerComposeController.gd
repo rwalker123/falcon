@@ -940,12 +940,23 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     column.add_child(aside_host)
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, _crew: int) -> void:
-            var lines: Array[String] = []
+            var lines: Array[Dictionary] = []
             var idle_note := String(live.get("idle_note", ""))
             if idle_note != "":
-                lines.append(idle_note)
-            lines.append(HudFormat.floor_hint(
-                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind))
+                lines.append(HudWidgets.readout_aside_line(idle_note))
+            lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
+                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind)))
+            # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what
+            # `learn_multiplier` actually buys — the chart's gradient rail only gestures at it — so
+            # it wears `SIGNAL` while the crew is genuinely earning it, and the aside's own faint ink
+            # when it is naming one of the two ends where nothing is learned. An EMPTY note means
+            # this rung teaches nothing at all, which is a reason to render no line, not a blank one.
+            var teaching: Dictionary = live.get("teaching_note", {})
+            var teaching_text := String(teaching.get("text", ""))
+            if teaching_text != "":
+                lines.append(HudWidgets.readout_aside_line(teaching_text,
+                    HudStyle.SIGNAL if bool(teaching.get("teaching", false))
+                        else HudStyle.INK_FAINT, HudWidgets.READOUT_TEACHING_META))
             host.add_child(HudWidgets.build_readout_aside(lines)))
 
 ## One yields model into the readout's first register. **The overdraw state moves the NUMBER, not just

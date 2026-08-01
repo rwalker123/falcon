@@ -1212,6 +1212,89 @@ const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on
 # are wanted again), and this repo only rewrites an assignment for PERMANENT conditions. So: say how
 # many, and stop. No auto-release, no notification.
 const IDLE_CREW_NOTE_FORMAT := "%d of your %d %s go idle once it is holding — only %d can carry what grows back."
+# THE ASIDE'S SECOND LINE — the teaching RATE, which is what `learn_multiplier` buys and the chart's
+# gradient rail only gestures at. Cyan (a live state) whenever the crew is actually taking something
+# at a floor above zero; otherwise it names WHICH of the sim's two non-degeneracy ends the player is
+# standing on (`core_sim/src/intensification.rs` → "BOTH ENDS ARE NON-DEGENERATE").
+const TEACHING_RATE_FORMAT := "Teaching %s at ×%.2f"
+# The tail is the fact worth stating BESIDE the number, and which fact that is depends on whether a
+# build is in flight: since slice 3 the same multiplier paces the build meter and the lesson, so a
+# builder is told the two move together rather than being told again to raise the floor.
+const TEACHING_RATE_FLOOR_TAIL := " — a higher floor teaches faster."
+const TEACHING_RATE_BUILD_TAIL := " and building at the same rate."
+# `floor = 0` — the multiplier itself is zero: stripping teaches nothing.
+const TEACHING_NOTHING_STRIPPED := "Teaching nothing: nothing is left standing."
+# …and the other end: the escapement room is empty (or nobody is assigned), so the sim's work
+# predicate is false and no practice happens at any multiplier. Watching teaches nothing.
+const TEACHING_NOTHING_UNWORKED := "Teaching nothing: nothing is being taken."
+
+## **WHAT WORKING A SOURCE AT ITS STANDING RUNG TEACHES** — the client half of the sim's per-rung
+## `earns_knowledge` (`core_sim/src/data/intensification_ladder.json`, applied by
+## `systems::labor::credit_rung_lesson`). Keyed by the highest rung the source has BUILT, never by the
+## verb in flight: the same crew learns Herding on a wild herd and Penning on a tamed one, so a herd
+## mid-Corral is still teaching Penning while it builds.
+##
+## **The rung-3 entries are deliberately absent, and not because the sim has none** (a pen earns
+## Foddering): a Field and a built Pen are MANAGED, so the sheet draws no floor axis there at all and
+## has no rate to state — see `floor_chart_model`'s `known`.
+##
+## The value is the lesson's own word in the sentence's lower case; the husbandry ceiling does NOT
+## suppress it, matching the sim, where the credit is read off the rung alone — hunting a wolf that
+## can never be tamed still teaches Herding.
+const RUNG_LESSONS := {
+    SOURCE_KIND_FORAGE: {
+        IMPROVEMENT_NONE: "cultivation",
+        IMPROVEMENT_CULTIVATE: "seed selection",
+    },
+    SOURCE_KIND_HERD: {
+        IMPROVEMENT_NONE: "herding",
+        IMPROVEMENT_TAME: "penning",
+    },
+}
+
+## The lesson this source's STANDING rung teaches, or "" when its rung declares none. The standing
+## rung is the highest one actually BUILT (highest first, for the reason the improvement control's
+## DONE branch tests that way: a Field is also cultivated, a penned herd also fully tamed).
+static func rung_lesson(kind: String, src: Dictionary, prefix: String) -> String:
+    var lessons: Dictionary = RUNG_LESSONS.get(kind, {})
+    if lessons.is_empty():
+        return ""
+    var ladder: Array = FORAGE_IMPROVEMENTS if kind == SOURCE_KIND_FORAGE else HUNT_IMPROVEMENTS
+    for i in range(ladder.size() - 1, -1, -1):
+        var rung := String(ladder[i])
+        if improvement_is_done(src, prefix, rung):
+            return String(lessons.get(rung, ""))
+    return String(lessons.get(IMPROVEMENT_NONE, ""))
+
+## **IS THIS CREW TAKING ANYTHING?** — the client's reading of the sim's work predicate
+## (`systems::labor::crew_is_working_the_source`, `standing_above_floor > 0`), plus the crew term the
+## sim gets for free (an assignment always has workers; a compose sheet dialled to 0 does not).
+## `STOCK_FRACTION_EPSILON` is the same display tolerance the verdict's at-the-floor branch uses, so
+## the two sentences can never disagree about whether the source is being worked.
+static func crew_is_taking(workers: int, biomass: float, capacity: float, floor: float) -> bool:
+    return workers > 0 \
+        and biomass > clamp_floor(floor) * capacity + STOCK_FRACTION_EPSILON * capacity
+
+## The aside's teaching line as `{text, teaching}` — `teaching` is whether the source is actually
+## being taught at a rate, which is what earns the line SIGNAL cyan. `{}` when this rung teaches
+## nothing at all, which is the caller's cue to render no line rather than an empty one.
+static func teaching_note(lesson: String, floor: float, taking: bool,
+        building: bool) -> Dictionary:
+    if lesson == "":
+        return {}
+    # "The floor is at zero" is `floor_zone`'s own STRIP test, not a second spelling of it — the same
+    # answer the 💀 glyph and the strip hint are keyed off, so the aside cannot disagree with them.
+    var stripped := floor_zone(floor) == FLOOR_ZONE_STRIP
+    if stripped or not taking:
+        return {
+            "text": TEACHING_NOTHING_STRIPPED if stripped else TEACHING_NOTHING_UNWORKED,
+            "teaching": false,
+        }
+    return {
+        "text": (TEACHING_RATE_FORMAT % [lesson, learn_multiplier(floor)]) \
+            + (TEACHING_RATE_BUILD_TAIL if building else TEACHING_RATE_FLOOR_TAIL),
+        "teaching": true,
+    }
 
 ## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
 ## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
@@ -1220,7 +1303,7 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
     if workers <= 0:
         return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
     var floor_stock := clamp_floor(floor) * capacity
-    if biomass <= floor_stock + STOCK_FRACTION_EPSILON * capacity:
+    if not crew_is_taking(workers, biomass, capacity, floor):
         return {
             "severity": VERDICT_BLOCKED,
             "text": VERDICT_AT_FLOOR_FORMAT % format_stock(floor_stock),
@@ -1289,6 +1372,13 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "crew_to_hold": hold,
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching, crew_noun),
         "idle_note": idle_note,
+        # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
+        # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
+        # by every live drag, and this model IS what a drag recomposes. `improvement` is the box the
+        # player has ticked, so a builder's sentence follows the checkbox too.
+        "teaching_note": teaching_note(rung_lesson(kind, src, prefix), floor_value,
+            crew_is_taking(workers, biomass, capacity, floor_value),
+            improvement != IMPROVEMENT_NONE),
     }
 
 ## The component this HERD actually pays, from its per-worker vector (the sim's `ratio_axis()` rule:
