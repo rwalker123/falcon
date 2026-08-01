@@ -1168,7 +1168,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: FORAGE,
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
                 species: None,
             },
             2,
@@ -1213,7 +1213,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: "herd-1".to_string(),
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
             },
             2,
             4,
@@ -1236,7 +1236,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: "ghost".to_string(),
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
             },
             2,
             4,

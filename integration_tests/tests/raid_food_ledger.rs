@@ -64,7 +64,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile: patch,
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
                 species: None,
             },
             workers: workers.max(1),

@@ -229,8 +229,11 @@ fn create_populations<'a>(
                                 arrivalSchedule: arrival_schedule,
                                 tradeYield: assignment.trade_yield,
                                 realizedTradeYield: assignment.realized_trade_yield,
-                                // The improvement axis — appended last (append-only wire).
+                                // The improvement axis — appended (append-only wire).
                                 improvement,
+                                // THE HARVEST FLOOR — where this crew stops, as a fraction of `K`.
+                                // The authority `policy` is a label for; appended last.
+                                floor: assignment.floor,
                             },
                         )
                     })

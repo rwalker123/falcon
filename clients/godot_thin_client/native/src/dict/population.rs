@@ -315,11 +315,17 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(policy) = assignment.policy() {
                 let _ = entry.insert("policy", policy);
             }
-            // THE SECOND AXIS (issue #442). `policy` above is now ALWAYS one of the four harvest
-            // STANCES; this is what the crew is BUILDING on the source, independent of how hard it
-            // pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always inserted (as "" when the
-            // string is absent) so the entry shape is stable and no consumer has to distinguish
-            // "not building" from "older snapshot" — the two mean the same thing here.
+            // **WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity** — THE
+            // authority on harvest pressure since `docs/plan_harvest_floor.md`. `policy` above is a
+            // four-value label the sim writes only when the floor is exactly one of the values those
+            // names stand for (0.50 / 0.30 / 0.15 / 0), and is absent otherwise: a floor between them
+            // has no label, so a reader that needs the pressure must read THIS. Always inserted, so
+            // the entry shape is stable.
+            let _ = entry.insert("floor", assignment.floor());
+            // THE SECOND AXIS (issue #442). This is what the crew is BUILDING on the source,
+            // independent of how hard it pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always
+            // inserted (as "" when the string is absent) so the entry shape is stable and no consumer
+            // has to distinguish "not building" from "older snapshot" — the two mean the same thing.
             let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
             array.push(&entry.to_variant());
         }

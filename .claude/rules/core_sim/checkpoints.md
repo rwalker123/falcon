@@ -73,6 +73,15 @@ which is why a restored band resumes its move rather than cancelling it. Two thi
 - **`LaborAllocation`'s manual `PartialEq` still compares assignments only.** That is about intent
   versus telemetry in a comparison, not about persistence, and it is unaffected.
 
+**So the assignment's own state rewinds without a per-field record, and that is why the harvest
+floor needed no checkpoint work.** `LaborTarget::{Forage,Hunt}` carries a `floor: f32` — the whole of
+what the player decides about harvest pressure (`docs/plan_harvest_floor.md`) — and it rides the
+cloned component like the tile, the herd id, the crop selection and the crew. `LaborAssignmentState`
+is **the client wire projection, not this record**: it is what `WorldSnapshot` ships, so its fields
+are append-only, and nothing in the restore path reads it.
+`integration_tests/tests/harvest_floor_rollback.rs` pins the rewind at floors no stance names, so a
+rewind that quietly defaulted would be caught rather than landing on a plausible value.
+
 The one genuinely non-persisted member of this neighbourhood is `SupplyNetworkMembership`, a
 resource keyed by `Entity` that `balance_supply_networks` rebuilds every turn — no `Entity` crosses a
 checkpoint, so it could not be carried even if it wanted to be.

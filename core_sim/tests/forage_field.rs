@@ -315,7 +315,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        policy,
+                        floor: policy.escapement_floor(),
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
@@ -787,16 +787,16 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     );
     let LaborTarget::Forage {
         tile: sown_tile,
-        policy,
+        floor,
         species,
     } = &assignment.target
     else {
         panic!("completion must not change the target's KIND: {assignment:?}");
     };
     assert_eq!(
-        *policy,
-        FollowPolicy::Sustain,
-        "the crew's stance is left exactly as the player set it (issue #442)"
+        *floor,
+        FollowPolicy::Sustain.escapement_floor(),
+        "the crew's floor is left exactly as the player set it (issue #442)"
     );
     assert_eq!(*sown_tile, coord, "the same ground");
     assert_eq!(

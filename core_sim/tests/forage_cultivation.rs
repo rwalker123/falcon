@@ -234,7 +234,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        policy,
+                        floor: policy.escapement_floor(),
                         species: None,
                     },
                     workers: FORAGE_WORKERS,

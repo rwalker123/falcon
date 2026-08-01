@@ -46,7 +46,7 @@ use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
-    components::{FollowPolicy, Improvement},
+    components::Improvement,
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
     forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
@@ -614,10 +614,11 @@ impl RungDef {
     /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung`].
     ///
     /// Returns the discovery to credit, or `None` when:
-    /// - the **stance** is not stewardship ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain
-    ///   teaches; Surplus/Deplete/Eradicate never do, at any rung. Since issue #442 the build verbs
-    ///   are an independent axis and are **not** in this decision: a crew preparing ground under
-    ///   Sustain teaches as it always did, one preparing it under Deplete learns nothing), or
+    /// - the assignment's **floor** is not stewardship ([`crate::components::floor_teaches`] — §4.2:
+    ///   a crew that stops at or above the food peak teaches; one that draws below it never does, at
+    ///   any rung. Since issue #442 the build verbs are an independent axis and are **not** in this
+    ///   decision: a crew preparing ground at the peak teaches as it always did, one preparing it
+    ///   while stripping the ground learns nothing), or
     /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
     ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
     ///   sites already had, or
@@ -631,8 +632,8 @@ impl RungDef {
     ///
     /// The **amount** is the ladder's single `knowledge.progress_per_turn`
     /// ([`LadderKnowledge`]) — the rung names the lesson, the ladder paces every lesson alike.
-    pub fn knowledge_earned(&self, policy: FollowPolicy, eligible: bool) -> Option<u32> {
-        if !eligible || !policy.teaches_knowledge() {
+    pub fn knowledge_earned(&self, floor: f32, eligible: bool) -> Option<u32> {
+        if !eligible || !crate::components::floor_teaches(floor) {
             return None;
         }
         self.earns_discovery_id()
@@ -1891,45 +1892,49 @@ mod tests {
     /// **The earn seam** (§4), asserted at the rung: the lesson is the rung's `earns_knowledge`,
     /// gated on stewardship + health. The sim-level twin (which rung a real hunt/forage resolves to)
     /// lives in the labor tests.
+    /// A floor that is stewardship — at the food peak, where a source grows fastest and a take is
+    /// exactly its regrowth. `crate::components::floor_teaches` is the rule; this is the value these
+    /// ladder tests exercise it at.
+    const STEWARDSHIP_FLOOR: f32 = crate::components::DEFAULT_ESCAPEMENT_FLOOR;
+
     #[test]
     fn knowledge_earned_is_the_rungs_lesson_gated_on_stewardship_and_health() {
         let ladder = LadderConfig::builtin();
 
-        // Rung 1 teaches under the one stewardship stance. Since issue #442 stewardship is a
-        // property of the STANCE alone — a build verb is a separate axis and is not in this
-        // decision, so a crew preparing ground under Sustain teaches exactly as it always did.
+        // Rung 1 teaches at a **stewardship floor** — one at or above the food peak. Since issue
+        // #442 that is a property of the pressure axis alone: a build verb is a separate axis and is
+        // not in this decision, so a crew preparing ground at the peak teaches as it always did.
         let wild = ladder.rung(RungKey::AnimalWild);
-        assert_eq!(
-            wild.knowledge_earned(FollowPolicy::Sustain, true),
-            Some(HERDING_DISCOVERY_ID),
-            "Sustain is stewardship — practising the wild rung must teach Herding"
-        );
-        // ...and under none of the overdrawing ones (§4.2).
-        for policy in [
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ] {
+        for stewardship in [STEWARDSHIP_FLOOR, 0.7, 1.0] {
             assert_eq!(
-                wild.knowledge_earned(policy, true),
+                wild.knowledge_earned(stewardship, true),
+                Some(HERDING_DISCOVERY_ID),
+                "floor {stewardship} leaves the source at or above its food peak — practising the \
+                 wild rung must teach Herding"
+            );
+        }
+        // ...and at none of the overdrawing ones (§4.2).
+        for overdraw in [0.49_f32, 0.3, 0.15, 0.0] {
+            assert_eq!(
+                wild.knowledge_earned(overdraw, true),
                 None,
-                "{policy:?} overdraws — it teaches nothing, at any rung"
+                "floor {overdraw} draws below the food peak — it teaches nothing, at any rung"
             );
         }
         // An unhealthy source teaches nothing: you learn from a healthy source.
-        assert_eq!(wild.knowledge_earned(FollowPolicy::Sustain, false), None);
+        assert_eq!(wild.knowledge_earned(STEWARDSHIP_FLOOR, false), None);
 
         // Rung 2 teaches the rung-3 gate — the arc's whole claim, at the seam.
         assert_eq!(
             ladder
                 .rung(RungKey::AnimalPastoral)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_earned(STEWARDSHIP_FLOOR, true),
             Some(PENNING_DISCOVERY_ID)
         );
         assert_eq!(
             ladder
                 .rung(RungKey::PlantTended)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_earned(STEWARDSHIP_FLOOR, true),
             Some(SEED_SELECTION_DISCOVERY_ID)
         );
         // The `animal:pen` rung now teaches **Foddering** (Flora Roster F3) — running a pen is how you
@@ -1937,7 +1942,7 @@ mod tests {
         assert_eq!(
             ladder
                 .rung(RungKey::AnimalPen)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_earned(STEWARDSHIP_FLOOR, true),
             Some(FODDERING_DISCOVERY_ID)
         );
         // A rung that teaches nothing yields nothing even when everything else holds (`plant:field`'s
@@ -1945,7 +1950,7 @@ mod tests {
         assert_eq!(
             ladder
                 .rung(RungKey::PlantField)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_earned(STEWARDSHIP_FLOOR, true),
             None
         );
     }

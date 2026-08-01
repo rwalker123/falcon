@@ -237,7 +237,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy: FollowPolicy::Sustain,
+                        floor: FollowPolicy::Sustain.escapement_floor(),
                     },
                     workers: KEEPER_WORKERS,
                     improvement: None,

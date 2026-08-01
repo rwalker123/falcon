@@ -197,7 +197,7 @@ fn spawn_hunters(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
-                        policy,
+                        floor: policy.escapement_floor(),
                     },
                     workers,
                     improvement: None,
@@ -572,7 +572,7 @@ fn spawn_resident_hunters(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: fauna_id.to_string(),
-                        policy,
+                        floor: policy.escapement_floor(),
                     },
                     workers,
                     improvement: None,
@@ -599,7 +599,7 @@ fn precommit_pair(app: &App, id: &str, policy: FollowPolicy, workers: u32) -> (f
         labor.hunt.per_worker_biomass_capacity,
         FORECAST_OUTPUT_MULTIPLIER,
         workers,
-        policy,
+        policy.escapement_floor(),
         NO_IMPROVEMENT_UNDERWAY,
         labor.yield_average_horizon_turns,
         labor.arrivals_horizon_turns,
@@ -688,7 +688,7 @@ fn the_forecast_equals_the_paid_take_in_both_products_on_the_wire() {
                     let registry = app.world.resource::<HerdRegistry>();
                     let herd = registry.find(&id).expect("the herd is on the map");
                     let ceiling = core_sim::hunt_escapement_ceiling(
-                        policy,
+                        policy.escapement_floor(),
                         NO_IMPROVEMENT_UNDERWAY,
                         herd.biomass,
                         core_sim::herd_capacity(herd, &fauna),

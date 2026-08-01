@@ -42,21 +42,34 @@ pub(crate) fn labor_assignment_to_state(
     match &assignment.target {
         LaborTarget::Forage {
             tile,
-            policy,
+            floor,
             species,
         } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
-            state.policy = policy.as_str().to_string();
+            state.floor = *floor;
+            state.policy = stance_label(*floor);
             state.species = species.clone().unwrap_or_default();
         }
-        LaborTarget::Hunt { fauna_id, policy } => {
+        LaborTarget::Hunt { fauna_id, floor } => {
             state.fauna_id = fauna_id.clone();
-            state.policy = policy.as_str().to_string();
+            state.floor = *floor;
+            state.policy = stance_label(*floor);
         }
         LaborTarget::Scout | LaborTarget::Warrior => {}
     }
     state
+}
+
+/// **The retained `policy` string for a floor** — the stance that names it exactly, or `""`.
+///
+/// The floor is the authority (`LaborAssignmentState::floor`); this is the four-value enumeration
+/// beside it, kept while the client's floor UI is still to come. `""` for any floor the four stances
+/// do not name is deliberate: a label is either true of the assignment or absent, never rounded.
+fn stance_label(floor: f32) -> String {
+    stance_named_by(floor)
+        .map(|stance| stance.as_str().to_string())
+        .unwrap_or_default()
 }
 
 /// `turns_of_food` sentinel for a cohort that is **not food-limited** — no food demand at all (a
@@ -145,11 +158,11 @@ pub(crate) fn allocation_summary(allocation: Option<&LaborAllocation>) -> (Strin
         .assignments
         .iter()
         .filter_map(|a| match &a.target {
-            LaborTarget::Hunt { policy, .. } if a.workers > 0 => Some((a.workers, policy)),
+            LaborTarget::Hunt { floor, .. } if a.workers > 0 => Some((a.workers, *floor)),
             _ => None,
         })
         .max_by_key(|(workers, _)| *workers)
-        .map(|(_, policy)| policy.as_str().to_string())
+        .map(|(_, floor)| stance_label(floor))
         .unwrap_or_default();
     (activity, hunt_mode)
 }
@@ -681,7 +694,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers: 4,
                 improvement: None,

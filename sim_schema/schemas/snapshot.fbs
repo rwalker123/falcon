@@ -838,6 +838,19 @@ table LaborAssignment {
   // itself through the ecology (the build meter accrues only while the source is Thriving), and its
   // dip rides the larger ceiling. See docs/plan_investment_rung_toggle.md.
   improvement:string;
+  // --- THE HARVEST FLOOR (appended, docs/plan_harvest_floor.md) -----------------------------------
+  // WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity — and since the harvest
+  // floor arc, the WHOLE of what the player decides about pressure. The take is
+  //   min(workers x per-worker throughput, max(0, B - floor*K) x build dip)
+  // so 0.5 holds a source on its most productive biomass, 0.15 strips it to the collapse brink and
+  // 0 takes everything. THIS IS THE AUTHORITY: `policy` above is a four-value label kept beside it
+  // while the client's floor UI lands, and it is EXACTLY "" whenever the floor is not one of the
+  // four values those names stand for (0.50 / 0.30 / 0.15 / 0) — a label is true of the assignment
+  // or absent, never rounded. Read `floor`; do not infer it from `policy`.
+  //
+  // The overhunting warning is `overdraws` above, which is now `floor < 0.5`: you are drawing this
+  // source below the biomass at which it grows fastest. Appended last (append-only).
+  floor:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).

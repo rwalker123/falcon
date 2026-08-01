@@ -1608,7 +1608,7 @@ pub(crate) fn forage_take(
     patch: &mut ForagePatch,
     tile_composition: &[FloraShare],
     workers: u32,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     forage: &ForageLaborConfig,
     flora: &FloraConfig,
@@ -1621,8 +1621,8 @@ pub(crate) fn forage_take(
     // The ceiling is `r`-independent, so unlike the retired MSY skim it does **not** vary with the
     // patch's rung: what a tended patch buys is a faster refill, which shows up next turn as more
     // stock standing above the floor. One call still serves rungs 1 and 2 alike.
-    let policy_ceiling = forage_escapement_ceiling(
-        policy,
+    let take_ceiling = forage_escapement_ceiling(
+        floor,
         improvement,
         patch.biomass,
         patch.carrying_capacity,
@@ -1630,7 +1630,7 @@ pub(crate) fn forage_take(
     );
     let worker_cap = workers as f32 * forage_per_worker_biomass(forage, seasonal);
     let take = worker_cap
-        .min(policy_ceiling)
+        .min(take_ceiling)
         .max(0.0)
         .clamp(0.0, patch.biomass);
     // The **conversion** half of the commit trade: every patch turns its biomass into food at its own
@@ -1648,13 +1648,14 @@ pub(crate) fn forage_take(
 /// plant-web twin of `fauna::hunt_escapement_ceiling`:
 ///
 /// ```text
-/// escapement_ceiling(policy.escapement_floor(), B, K) × ladder.build_dip(improvement)
+/// escapement_ceiling(floor, B, K) × ladder.build_dip(improvement)
 /// ```
 ///
 /// **Constant escapement replaced the four per-stance RATES** (`docs/plan_harvest_floor.md` §1): the
 /// MSY skim, its `surplus_multiplier`, and the two fraction-of-stock draws (`market.take_fraction`,
-/// `eradicate.take_fraction`) are all one expression parameterised by a floor. Not yet clamped to
-/// biomass — callers do that alongside their own throughput cap, and it is belt-and-braces there
+/// `eradicate.take_fraction`) are all one expression parameterised by a floor, which the assignment
+/// now carries directly ([`crate::components::LaborTarget::Forage`]). Not yet clamped to biomass —
+/// callers do that alongside their own throughput cap, and it is belt-and-braces there
 /// (`B − floor·K ≤ B` for any floor `≥ 0`).
 ///
 /// **No `ecology`, no `ForageLaborConfig`, and that removal is the point.** An escapement ceiling is
@@ -1673,14 +1674,13 @@ pub(crate) fn forage_take(
 /// BARE ground a `Sow` dip is a fraction of nothing — a freshly sown patch stands below every floor,
 /// so the sow honestly pays ~0 while it builds (a pure investment).
 pub(crate) fn forage_escapement_ceiling(
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     biomass: f32,
     carrying_capacity: f32,
     ladder: &LadderConfig,
 ) -> f32 {
-    escapement_ceiling(policy.escapement_floor(), biomass, carrying_capacity)
-        * ladder.build_dip(improvement)
+    escapement_ceiling(floor, biomass, carrying_capacity) * ladder.build_dip(improvement)
 }
 
 /// Biomass one forager can gather this turn (`per_worker_biomass_capacity × seasonal_weight`) — the
@@ -2210,13 +2210,20 @@ const NO_DEPLETE_MARKUP: f32 = 1.0;
 /// **`Deplete`'s trade markup, or none** — the ONE place the "sell harder" rule is read for a
 /// *forecast*, mirroring the credit site in `systems::labor`'s Forage arm exactly.
 ///
-/// The markup is a **policy** concept applied to the *final take* (after the worker cap), which is why
-/// it cannot live in the rate seams (`patch_trade_per_biomass` and friends do not know the policy) and
-/// why it must be folded into **both** the ceiling and the per-worker term here: the sim's take is
+/// The markup is applied to the *final take* (after the worker cap), which is why it cannot live in
+/// the rate seams (`patch_trade_per_biomass` and friends do not know the assignment) and why it must
+/// be folded into **both** the ceiling and the per-worker term here: the sim's take is
 /// `markup × min(ceiling_biomass, workers × throughput) × rate`, and a positive constant only factors
 /// out of a `min` if it is present on both sides.
-pub(crate) fn deplete_trade_markup(policy: FollowPolicy, forage: &ForageLaborConfig) -> f32 {
-    if matches!(policy, FollowPolicy::Deplete) {
+///
+/// **It is keyed on the assignment's FLOOR, matched exactly against the stance that names it**
+/// ([`crate::components::stance_named_by`]) — so a gather at `0.15` earns the markup and one at
+/// `0.16` does not. That knife edge is the honest reading of a per-rung bonus on a continuous dial,
+/// and it is the reason the bonus is retired in the arc's next slice: a product that turns on where
+/// you happen to stop re-welds product to intensity, which is exactly what the axis exists to
+/// separate (`docs/plan_hunt_yield_model.md` §2).
+pub(crate) fn deplete_trade_markup(floor: f32, forage: &ForageLaborConfig) -> f32 {
+    if crate::components::stance_named_by(floor) == Some(FollowPolicy::Deplete) {
         forage.market.trade_goods_multiplier
     } else {
         NO_DEPLETE_MARKUP
@@ -2300,14 +2307,16 @@ pub fn plant_policy_forecasts(
     FollowPolicy::ALL
         .iter()
         .map(|&policy| {
-            let markup = deplete_trade_markup(policy, forage);
+            let markup = deplete_trade_markup(policy.escapement_floor(), forage);
             let accounts = |biomass: f32| YieldAccounts {
                 provisions: forage_provisions(biomass, provisions_rate, output_multiplier),
                 trade_goods: forage_provisions(biomass, trade_rate, output_multiplier) * markup,
                 fodder: forage_provisions(biomass, fodder_rate, output_multiplier),
             };
             let ceiling_biomass = forage_escapement_ceiling(
-                policy,
+                // The wire's four rows are the four floors `FollowPolicy` still names — read off
+                // that one table rather than restated, so a row cannot drift from the take.
+                policy.escapement_floor(),
                 // The rows are the pure-harvest ceilings; a build dips whichever row is selected.
                 NO_IMPROVEMENT_UNDERWAY,
                 patch.biomass,
@@ -2377,29 +2386,8 @@ pub(crate) fn forage_forecast(
         );
     }
     // The patch's IN-EFFECT conversion rate — the same one `forage_take` pays with, so every ceiling
-    // below is the number the sim will hand over.
+    // the forecast composes is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
-    // **Stored UNCLAMPED**, with the standing crop carried beside it as `stock_cap` (PR #448
-    // review). `forage_take` dips inside `forage_escapement_ceiling` and *then* clamps to
-    // `patch.biomass`, so the forecast keeps the two terms apart for `ceiling_under` to apply them in
-    // that order — clamping here would make a dipped preview `min(rate, B) × d` against the take's
-    // `min(rate × d, B)`. Under constant escapement the clamp cannot bind on either web, so this is
-    // now belt-and-braces on both sides rather than a live discrepancy.
-    let ceiling = |policy| {
-        plant_food_only(forage_provisions(
-            forage_escapement_ceiling(
-                policy,
-                // The four rows are the pure-harvest ceilings; the dip rides `build_dips` below.
-                NO_IMPROVEMENT_UNDERWAY,
-                patch.biomass,
-                patch.carrying_capacity,
-                ladder,
-            )
-            .max(0.0),
-            rate,
-            output_multiplier,
-        ))
-    };
     SourceYieldForecast {
         per_worker_yield: plant_food_only(forage_provisions(
             forage_per_worker_biomass(forage, seasonal),
@@ -2407,17 +2395,21 @@ pub(crate) fn forage_forecast(
             output_multiplier,
         )),
         body_mass_yield: PLANTS_DO_NOT_QUANTISE,
-        ceiling_sustain: ceiling(FollowPolicy::Sustain),
-        ceiling_surplus: ceiling(FollowPolicy::Surplus),
-        ceiling_deplete: ceiling(FollowPolicy::Deplete),
-        ceiling_eradicate: ceiling(FollowPolicy::Eradicate),
-        // The standing crop `forage_take` clamps its take to, through the same conversion the rows
-        // above use.
-        stock_cap: Some(plant_food_only(forage_provisions(
-            patch.biomass.max(0.0),
+        // **The TERMS of the take** — `ceiling_at(floor, improvement)` composes exactly what
+        // `forage_take` computes, at any floor the player's dial can name.
+        biomass: patch.biomass,
+        carrying_capacity: patch.carrying_capacity,
+        // What one unit of this patch's standing crop is worth, at its own basket rate. Food-only:
+        // the plant web's trade/fodder PROJECTION is a known gap (`plant_food_only`), while the
+        // trade a gather actually earns is reported on the resolved row.
+        per_biomass_yield: plant_food_only(forage_provisions(
+            crate::fauna::ONE_UNIT_OF_BIOMASS,
             rate,
             output_multiplier,
-        ))),
+        )),
+        // A wild or tended patch IS drawn down — it is a wild stand either way, which is what makes
+        // rungs 1 and 2 floor-live and rung 3 (a Field) not.
+        managed_production: None,
         // **The plant web's two build dips, as the FACTORS they are** (issue #442 §2.2). They used
         // to be three more ceiling *rows* — `ceiling_prepare` (Cultivate), `ceiling_sow` and a
         // permanently-zero `ceiling_tame` — each the rung's fraction of the **Sustain** ceiling,
@@ -2505,7 +2497,7 @@ pub fn project_realized_forage(
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     horizon: u32,
 ) -> f32 {
@@ -2542,7 +2534,7 @@ pub fn project_realized_forage(
                 &mut sim,
                 tile_composition,
                 workers,
-                policy,
+                floor,
                 improvement,
                 forage,
                 flora,
@@ -2591,7 +2583,7 @@ pub fn project_arrivals_forage(
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     horizon: u32,
 ) -> Vec<f32> {
@@ -2623,7 +2615,7 @@ pub fn project_arrivals_forage(
                 &mut sim,
                 tile_composition,
                 workers,
-                policy,
+                floor,
                 improvement,
                 forage,
                 flora,
@@ -2654,7 +2646,7 @@ pub fn forage_source_yield_preview(
     seasonal: f32,
     output_multiplier: f32,
     workers: u32,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     realized_horizon: u32,
     arrivals_horizon: u32,
@@ -2691,7 +2683,7 @@ pub fn forage_source_yield_preview(
         seasonal,
         output_multiplier,
         workers,
-        policy,
+        floor,
         improvement,
         realized_horizon,
     );
@@ -2706,7 +2698,7 @@ pub fn forage_source_yield_preview(
         seasonal,
         output_multiplier,
         workers,
-        policy,
+        floor,
         improvement,
         arrivals_horizon,
     );
@@ -2725,7 +2717,7 @@ pub fn forage_source_yield_preview(
         // sheet's own "max 2 workers useful here" — until the next turn resolved and overwrote it.
         ladder.build_crew(improvement),
         workers,
-        policy,
+        floor,
         improvement,
         realized,
         // The plant web's steady TRADE projection is the same gap the forecast carries — see
@@ -2852,7 +2844,7 @@ mod tests {
             &mut patch,
             NO_BASKET,
             20,
-            FollowPolicy::Sustain,
+            FollowPolicy::Sustain.escapement_floor(),
             NO_IMPROVEMENT_UNDERWAY,
             &forage,
             &FloraConfig::builtin(),
@@ -2891,7 +2883,7 @@ mod tests {
                 &mut patch,
                 NO_BASKET,
                 20,
-                FollowPolicy::Sustain,
+                FollowPolicy::Sustain.escapement_floor(),
                 NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
@@ -2945,7 +2937,7 @@ mod tests {
                 &mut patch,
                 NO_BASKET,
                 3,
-                FollowPolicy::Eradicate,
+                FollowPolicy::Eradicate.escapement_floor(),
                 NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
@@ -2987,7 +2979,7 @@ mod tests {
                 &mut patch,
                 NO_BASKET,
                 workers,
-                policy,
+                policy.escapement_floor(),
                 NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),
@@ -3116,7 +3108,7 @@ mod tests {
                 &mut patch,
                 NO_BASKET,
                 50,
-                FollowPolicy::Eradicate,
+                FollowPolicy::Eradicate.escapement_floor(),
                 NO_IMPROVEMENT_UNDERWAY,
                 &forage,
                 &FloraConfig::builtin(),

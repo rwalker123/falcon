@@ -839,7 +839,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         labor.hunt.per_worker_biomass_capacity,
                         output_multiplier,
                         workers,
-                        policy,
+                        policy.escapement_floor(),
                         NO_IMPROVEMENT_UNDERWAY,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
@@ -859,7 +859,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 let take = hunt_take(
                     &mut herd,
                     workers,
-                    policy,
+                    policy.escapement_floor(),
                     NO_IMPROVEMENT_UNDERWAY,
                     labor.hunt.per_worker_biomass_capacity,
                     &fauna,
@@ -948,7 +948,7 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
         for policy in FollowPolicy::ALL {
             assert!(
                 hunt_escapement_ceiling(
-                    policy,
+                    policy.escapement_floor(),
                     NO_IMPROVEMENT_UNDERWAY,
                     depleted_biomass,
                     depleted_cap,

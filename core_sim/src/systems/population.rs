@@ -1061,7 +1061,7 @@ mod food_flow_tests {
         LaborAssignment {
             target: LaborTarget::Forage {
                 tile: UVec2::new(0, 0),
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
                 species: None,
             },
             workers: 4,

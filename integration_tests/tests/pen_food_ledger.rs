@@ -130,7 +130,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         assignments: vec![LaborAssignment {
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
             },
             workers: workers.max(1),
             improvement: None,

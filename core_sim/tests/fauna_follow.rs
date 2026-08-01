@@ -135,7 +135,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::pre
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy,
+                        floor: policy.escapement_floor(),
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,

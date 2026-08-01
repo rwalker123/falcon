@@ -545,7 +545,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   it is deliberately not clamped** (`docs/plan_harvest_floor.md` §7.6): it is what makes *"this crew
 >   cannot draw the herd that low"* expressible instead of silently true.
 >   Both hunt sites (wild/pastoral and pen) and the assign-time forecast seed
->   (`fauna::forecast_source_yield`, off `SourceYieldForecast::ceiling_under`) read this one helper. **Wild
+>   (`fauna::forecast_source_yield`, off `SourceYieldForecast::ceiling_at`) read this one helper. **Wild
 >   hunting** gets the same steady haul crew (`herders_needed == 0`, so `max()` collapses to it) — so a
 >   wild herd's `workers_needed` is the client max-useful too. **Forage is untouched** — a gather is
 >   continuous (`body_mass_yield == 0`, no lumpiness), so it keeps the ordinary `workers_needed_for_take`

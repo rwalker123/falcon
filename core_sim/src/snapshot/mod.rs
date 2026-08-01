@@ -38,7 +38,7 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
+        available_workers, fragments_to_contract, stance_named_by, BandId, BandTravel, Expedition,
         ExpeditionMission, FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget,
         LogisticsLink, PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink,
         FODDER, FOOD,
@@ -934,7 +934,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
-                        policy: crate::components::FollowPolicy::Sustain,
+                        floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
                         species: None,
                     },
                     workers: 10,
@@ -943,7 +943,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
-                        policy: crate::components::FollowPolicy::Sustain,
+                        floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
                     },
                     workers: 5,
                     improvement: None,
@@ -1030,7 +1030,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy: crate::components::FollowPolicy::Sustain,
+                    floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
                     species: None,
                 },
                 workers: 10,
@@ -1063,7 +1063,7 @@ mod tests {
         use crate::components::FollowPolicy;
         let target = LaborTarget::Forage {
             tile: UVec2::new(7, 9),
-            policy: FollowPolicy::Deplete,
+            floor: FollowPolicy::Deplete.escapement_floor(),
             species: None,
         };
         let assignment = LaborAssignment {
@@ -1089,7 +1089,7 @@ mod tests {
         let assignment = LaborAssignment {
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
-                policy: FollowPolicy::Deplete,
+                floor: FollowPolicy::Deplete.escapement_floor(),
                 species: None,
             },
             workers: 6,

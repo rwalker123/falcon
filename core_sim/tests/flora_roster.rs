@@ -482,3 +482,34 @@ fn the_cash_crops_pay_a_positive_trade_yield_and_contest_sowable_ground() {
         );
     }
 }
+
+/// **THE PROOF the forage command grammar's disambiguation rests on** — no shipped
+/// `flora_config.json` species key parses as an `f32`.
+///
+/// `assign_labor ... forage <x> <y> [floor] [species] <workers>` has two optional tokens and reads a
+/// lone one as *the floor if it parses as a number, else the species*
+/// (`sim_runtime::command_text`). That is unambiguous only while the two token languages are
+/// disjoint, and this is the half of that claim which lives in **this** crate: a future crop keyed
+/// `7` or `0.5` would silently become a floor, and would fail here first.
+///
+/// Its companion `command_text::tests::a_species_key_never_parses_as_a_floor` asserts the same
+/// property against inlined key *shapes*, because `sim_runtime` cannot depend on `core_sim`.
+#[test]
+fn every_shipped_species_key_is_covered_by_the_command_grammar() {
+    let flora = FloraConfig::builtin();
+    assert!(
+        !flora.species.is_empty(),
+        "the shipped roster must have species, or this asserts nothing"
+    );
+    for key in flora.species.keys() {
+        assert!(
+            key.parse::<f32>().is_err(),
+            "'{key}' parses as a float, so `assign_labor forage` would read it as a FLOOR rather \
+             than as the crop selection — rename it, or the grammar needs a separator"
+        );
+        assert!(
+            !key.trim().is_empty(),
+            "an empty species key would be indistinguishable from an absent one"
+        );
+    }
+}

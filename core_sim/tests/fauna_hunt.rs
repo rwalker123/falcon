@@ -126,7 +126,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
-                        policy: FollowPolicy::Eradicate,
+                        floor: FollowPolicy::Eradicate.escapement_floor(),
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,

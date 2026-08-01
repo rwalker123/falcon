@@ -351,7 +351,7 @@ fn spawn_forager(
                     // arms and `continue`s. Sustain is the harmless default.
                     target: LaborTarget::Forage {
                         tile: patch,
-                        policy: FollowPolicy::Sustain,
+                        floor: FollowPolicy::Sustain.escapement_floor(),
                         species: None,
                     },
                     workers: FORAGE_WORKERS,

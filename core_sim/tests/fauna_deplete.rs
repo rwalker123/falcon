@@ -171,7 +171,7 @@ fn spawn_hunter(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy,
+                        floor: policy.escapement_floor(),
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,
@@ -430,7 +430,13 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             let takes: Vec<f32> = axis
                 .iter()
                 .map(|p| {
-                    hunt_escapement_ceiling(*p, NO_IMPROVEMENT_UNDERWAY, biomass, CAP, &ladder)
+                    hunt_escapement_ceiling(
+                        p.escapement_floor(),
+                        NO_IMPROVEMENT_UNDERWAY,
+                        biomass,
+                        CAP,
+                        &ladder,
+                    )
                 })
                 .collect();
             for pair in takes.windows(2) {

@@ -122,7 +122,7 @@ fn hunting_band(
     let assignments = vec![LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
-            policy: FollowPolicy::Surplus,
+            floor: FollowPolicy::Surplus.escapement_floor(),
         },
         workers: hunters,
         improvement: None,

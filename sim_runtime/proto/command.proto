@@ -294,10 +294,20 @@ message AssignLaborCommand {
   optional uint32 target_x = 5; // forage tile
   optional uint32 target_y = 6;
   optional string fauna_id = 7; // hunt target herd
-  optional string policy = 8;   // hunt take policy (sustain|surplus|deplete|eradicate)
+  // RETIRED by the harvest floor arc (docs/plan_harvest_floor.md): a labor assignment carries a
+  // `floor` now, not a stance. The field number is NOT reused and NOT renumbered — a shipped number
+  // is immutable — and the server ignores any value sent in it.
+  optional string policy = 8;
   // Which named plant a forage Cultivate/Sow should commit the patch to (a flora_config.json
   // species key). Absent = "pick the tile's dominant legal plant". Appended (append-only).
   optional string species = 9;
+  // WHERE THE CREW STOPS, as a fraction of the source's carrying capacity — the whole of what the
+  // player decides about harvest pressure. The take is
+  //   min(workers x per-worker throughput, max(0, B - floor*K) x build dip)
+  // Absent = the sim's default (0.5, the food peak, the sustainable one). Rejected with a command
+  // failure unless finite and within 0.0..=1.0 — never clamped, because a clamp turns a typo into a
+  // quiet policy change. Appended (append-only).
+  optional float floor = 10;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.

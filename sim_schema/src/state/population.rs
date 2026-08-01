@@ -37,8 +37,19 @@ pub struct LaborAssignmentState {
     pub target_y: u32,
     #[serde(default)]
     pub fauna_id: String,
+    /// **The four-value stance label the wire still carries**, or `""`. It is a *projection* of
+    /// [`Self::floor`] — the stance whose escapement floor is exactly this one — and never an
+    /// independent value: a floor the four stances do not name reads `""` rather than being rounded
+    /// to the nearest label. Read `floor`; this is here while the client's floor UI lands.
     #[serde(default)]
     pub policy: String,
+    /// **WHERE THIS CREW STOPS, as a fraction of the source's `K`** — the whole of what the player
+    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the authority [`Self::policy`]
+    /// is merely a label for. `0.5` holds a source on its most productive biomass; `0` takes
+    /// everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop short
+    /// of. Appended (append-only).
+    #[serde(default)]
+    pub floor: f32,
     /// **Which named plant a Forage assignment asks a `Cultivate`/`Sow` to commit its patch to**
     /// (Flora Roster S1) — a `flora_config.json` species key, or `""` for *"pick the tile's
     /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::policy`]: it rides the

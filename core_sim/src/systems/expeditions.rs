@@ -261,7 +261,10 @@ pub fn advance_expeditions(
                     let take = hunt_take(
                         &mut herds.herds[idx],
                         workers,
-                        FollowPolicy::Sustain,
+                        // A scout's roadside kill is a **restrained** one: it stops at the food peak,
+                        // the same floor a fresh assignment gets, so replenishing on the march can
+                        // never be the thing that ruins a herd.
+                        DEFAULT_ESCAPEMENT_FLOOR,
                         NO_IMPROVEMENT_UNDERWAY,
                         per_worker_biomass,
                         &fauna,
@@ -971,7 +974,7 @@ pub fn expedition_take_provisions(
 pub fn hunt_take(
     herd: &mut Herd,
     workers: u32,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     per_worker_biomass_capacity: f32,
     fauna: &FaunaConfig,
@@ -979,7 +982,7 @@ pub fn hunt_take(
     carry_room_biomass: f32,
 ) -> AnimalTake {
     // **Constant escapement** (`docs/plan_harvest_floor.md` §1): the herd hands over the stock
-    // standing above the stance's floor, at its CURRENT biomass. Resolved against the herd's OWN
+    // standing above the assignment's floor, at its CURRENT biomass. Resolved against the herd's OWN
     // capacity (`herd_capacity` — the single source of the rung → `K` mapping), never the raw wild
     // field. Shared with the pre-commit forecast (`fauna::hunt_forecast`), which reads the same
     // ceiling, so forecast == actual.
@@ -990,11 +993,11 @@ pub fn hunt_take(
     // wait-then-one pulse for a slow breeder.
     //
     // **The dip rides the caller's improvement** (issue #442 §2.2): a resident band gentling or
-    // fencing this herd passes its verb and pays `fraction × its own stance's` ceiling; an expedition
+    // fencing this herd passes its verb and pays `fraction × its own floor's` ceiling; an expedition
     // passes [`NO_IMPROVEMENT_UNDERWAY`], because a rung-transition is place-bound work a detached
     // party cannot do — and since #442 its mission type cannot even name one.
     let ceiling = fauna::hunt_escapement_ceiling(
-        policy,
+        floor,
         improvement,
         herd.biomass,
         herd_capacity(herd, fauna),

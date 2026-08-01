@@ -104,4 +104,70 @@ mod tests {
         assert_eq!(herd.penUpkeep(), 0.0);
         assert_eq!(herd.penFedFraction(), 1.0);
     }
+
+    /// **The harvest FLOOR survives the wire, and the stance label beside it is only ever a label.**
+    ///
+    /// A labor assignment carries a `floor` — a fraction of the source's `K`, and the whole of what
+    /// the player decides about harvest pressure (`docs/plan_harvest_floor.md`). `policy` is the
+    /// four-value string the sim writes only when the floor is exactly one of the values those names
+    /// stand for; a floor between them ships `""`. Encode → decode with the generated reader, so a
+    /// field that silently failed to serialize cannot pass — which is exactly the hazard when the
+    /// authority is appended *behind* the label that used to be it.
+    #[test]
+    fn the_harvest_floor_rides_the_wire_beside_its_optional_stance_label() {
+        /// A floor no stance names, so a reader that fell back to the label would read nothing.
+        const UNLABELLED_FLOOR: f32 = 0.42;
+
+        let snapshot = WorldSnapshot {
+            populations: vec![PopulationCohortState {
+                labor_assignments: vec![
+                    LaborAssignmentState {
+                        kind: "forage".to_string(),
+                        floor: UNLABELLED_FLOOR,
+                        ..Default::default()
+                    },
+                    LaborAssignmentState {
+                        kind: "hunt".to_string(),
+                        floor: 0.5,
+                        policy: "sustain".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let assignments = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .population()
+            .expect("population section present")
+            .populations()
+            .expect("cohorts present")
+            .get(0)
+            .laborAssignments()
+            .expect("labor assignments present");
+
+        let unlabelled = assignments.get(0);
+        assert!(
+            (unlabelled.floor() - UNLABELLED_FLOOR).abs() < 1e-6,
+            "the floor is the authority and must cross verbatim: {}",
+            unlabelled.floor()
+        );
+        assert!(
+            unlabelled.policy().unwrap_or_default().is_empty(),
+            "a floor no stance names carries no label — never one rounded to the nearest"
+        );
+
+        let labelled = assignments.get(1);
+        assert!((labelled.floor() - 0.5).abs() < 1e-6);
+        assert_eq!(
+            labelled.policy(),
+            Some("sustain"),
+            "a floor a stance names exactly still carries that stance's label"
+        );
+    }
 }

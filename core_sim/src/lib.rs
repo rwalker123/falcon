@@ -96,11 +96,12 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, FollowPolicy, Improvement, KnowledgeFragment, LaborAllocation,
-    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
-    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
-    TownCenter, TradeLink, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    available_workers, floor_is_valid, floor_overdraws, floor_teaches, stance_named_by, BandId,
+    BandTravel, ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, FollowPolicy,
+    Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
+    LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode, ResidentBand,
+    Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR,
+    FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{

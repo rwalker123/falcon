@@ -180,7 +180,7 @@ fn spawn_crew(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy,
+                        floor: policy.escapement_floor(),
                     },
                     workers: HUNT_WORKERS,
                     improvement,

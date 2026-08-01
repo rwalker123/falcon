@@ -170,7 +170,7 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   builder could be in no other stance. With the two axes split
   (`FollowPolicy` = the stance, `Improvement` = the build) the same fraction rides whichever stance
   the player holds — the identical formula with the constant removed. `SourceYieldForecast` carries
-  the pair as `build_dips: BuildDips`, and `ceiling_under(policy, improvement)` is the one lookup
+  the pair as `build_dips: BuildDips`, and `ceiling_at(floor, improvement)` is the one lookup
   every take path and every assign-time seed uses; the four `ceiling_*` rows stay the *undipped*
   stance ceilings. **Eradicate needs no special case for it** — since the harvest floor every stance is
   the same expression and Eradicate is simply its `floor = 0` instance, so the dip reaches it like any

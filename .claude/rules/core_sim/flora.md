@@ -88,11 +88,26 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   the two tables must be comparable tile-for-tile and must be able to disagree *within* a module.
   Because every yield is linear in `K` (MSY = `r·K/4`), the cultivation incentive and every policy
   ceiling scale with the tile and need no re-derivation.
-- **Policy plumbing** (§0-iii, the 5-site mirror of Hunt's policy): `LaborTarget::Forage` carries a
-  `policy: FollowPolicy` (a policy change on the same tile is the **same source** in `same_source`,
-  a mutable property); the `assign_labor forage <x> <y> [policy] <workers>` command-text parse takes
-  an optional policy token; `handle_assign_labor` builds it via `parse_follow_policy`; and the
-  policy round-trips through the rollback snapshot (`LaborAssignmentState.policy`, no schema change).
+- **Floor plumbing** (the 5-site mirror of Hunt's, `docs/plan_harvest_floor.md` §4):
+  `LaborTarget::Forage` carries a **`floor: f32`** — a fraction of the patch's `K`, and the whole of
+  what the player decides about pressure. A floor change on the same tile is the **same source** in
+  `same_source` (a mutable property, exactly as the stance it replaced was); the
+  `assign_labor forage <x> <y> [floor] [species] <workers>` command-text parse takes an optional
+  floor token; `handle_assign_labor` **validates it fails-closed** (`floor_is_valid` — finite and in
+  `0.0..=1.0`, rejected with a command failure, never clamped) and defaults an absent one to
+  `DEFAULT_ESCAPEMENT_FLOOR` (0.5, the food peak); and it rides the rollback because `SimState`
+  clones `LaborAllocation` whole (`harvest_floor_rollback.rs`).
+
+  **The forage tail is disambiguated by "does the token parse as `f32`"** — a lone optional token is
+  the floor if it is a number and the **species** otherwise. That is sound rather than heuristic
+  because a `flora_config.json` species key is snake_case and cannot parse as a float, which
+  `flora_roster::every_shipped_species_key_is_covered_by_the_command_grammar` asserts against the
+  shipped roster. With **both** optional tokens present the first is unambiguously the floor.
+
+  On the wire the assignment ships **`floor`** (`LaborAssignment.floor`, appended) beside a
+  four-value **`policy`** label, which the sim writes only when the floor is exactly one of the
+  values those names stand for and leaves `""` otherwise — a label is true of the assignment or
+  absent, never rounded. Read the floor.
 - **Persistence** — `ForageRegistry` survives a rollback exactly like the `HerdRegistry`: the
   **checkpoint carries the registry whole** (`SimState::forage`), including the `progress`/`owner`
   fields that hold **cultivation** (Phase 1a, below), so a mutate-then-restore rewinds it like

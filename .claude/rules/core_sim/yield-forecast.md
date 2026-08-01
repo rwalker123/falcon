@@ -136,9 +136,13 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > preparing(stance, rung) = <list>[stance].provisionsPerTurn × <rung>BuildFraction
 > ```
 >
-> Sim-side that is `SourceYieldForecast::ceiling_under(policy, improvement)`, backed by
-> `build_dips: BuildDips` (two slots — rung 2 and rung 3 of the source's own web, since improvements are
-> kind-exclusive). `ceiling_for(policy)` remains the *undipped* stance lookup the four rows publish.
+> Sim-side that is **`SourceYieldForecast::ceiling_at(floor, improvement)`** — one computation, which
+> answers *any* floor because the player drags a continuous one. It is backed by the forecast's
+> **terms** (`biomass`, `carrying_capacity`, `per_biomass_yield`, `build_dips`) rather than by stored
+> rows: four `ceiling_*` fields could only answer four questions, and every row added was a second
+> place the ceiling was computed. **The four wire rows are now `ceiling_for(policy)`, which IS
+> `ceiling_at(policy.escapement_floor(), None)`** — a projection of the one computation, so a row
+> cannot disagree with the take.
 > Two rungs keep two numbers for `ceiling_tame`'s original reason: the dials are independently tunable
 > and today's equality (0.25/0.25, 0.50/0.50) is a coincidence.
 >
@@ -147,14 +151,15 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > `*_escapement_ceiling` and *then* clamps to the standing stock). The forecast keeps the two terms
 > apart accordingly: the four `ceiling_*` rows are the **pre-clamp** stance ceilings and
 > `SourceYieldForecast::stock_cap` is the bound, which `ceiling_for` applies (so the wire value is
-> unchanged) and `ceiling_under` applies *second*.
+> unchanged) and `ceiling_at` applies *second*, inside the same call.
 >
 > **The clamp is now INERT on both webs, and that is asserted rather than assumed.** An escapement
 > ceiling is `B − floor·K`, so `room × dip ≤ room ≤ B` for any floor `≥ 0` and any dip `≤ 1` — the two
 > orders agree everywhere, including on the drawn-down sources where the retired rate-based ceilings
 > did not commute (measured then on a pastoral `crag_goat` at `B = 0.20·K` under Deplete + Corral:
 > previewed `0.10·K`, paid `0.1375·K`). The `hunt_forecast_equals_actual_take…` sweep asserts
-> `ceiling_under == ceiling_for × dip` on every row at both stock levels, which is the positive form
+> `ceiling_at(floor, improvement) == ceiling_at(floor, None) × dip` on every row at both stock levels,
+> which is the positive form
 > of the same guarantee. `stock_cap` stays populated for wire stability and as belt-and-braces.
 >
 > A **rung-3 managed** source has `stock_cap: None` (it is never drawn down) and reports both
@@ -184,11 +189,12 @@ component renders only when non-zero, the rule `perWorkerTrade` follows. **Both 
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
-escapement (`max(0, B − K/2)`) is `r`-independent, the sustained form is what makes the ladder visible
-at a single turn: **`ceiling_sustain < pastoral_yield < managed_yield`** (wild `r·K/4` < pastoral
-`r×2.0` < pen `r×4.0`, MSY-capped; measured ≈ 0.5 < 1.0 < 2.0 on a full Wild Boar). The old escapement
-projection read `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field
-exists for. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
+escapement (`max(0, B − floor·K)`) is `r`-independent, the sustained form is the axis on which the
+ladder is expressible at all: **`pastoral_yield < managed_yield`** (pastoral `r×2.0` < pen `r×4.0`,
+MSY-capped; measured ≈ 1.0 < 2.0 on a full Wild Boar). The old escapement projection read
+`pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field exists for.
+**A stance/floor ceiling is NOT on that ladder and must not be ordered against it** — it is a stock
+and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
 `hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
 constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
 projection* is the sustained MSY. Pinned by
@@ -262,17 +268,17 @@ pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::se
 what the turn then pays under unchanged conditions — **no jump** — and it is the same number the
 client's compose-time "Expected yield" row promises. Shape:
 - **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
-  workers, policy, improvement) = min(workers × per_worker_yield, forecast.ceiling_under(policy,
-  improvement))` — the stance's ceiling, dipped by whatever the crew is building (`None` is the
-  identity). Once the improvement *completes* the source is `::managed`, whose every ceiling already
-  **is** `managed_yield` and whose dips are the identity, so this one lookup covers both sides of every
-  investment. The client preview, the seed, and the forecast==actual tests all call it.
+  workers, floor, improvement) = min(workers × per_worker_yield, forecast.ceiling_at(floor,
+  improvement))` — the ceiling at the **assignment's own floor**, dipped by whatever the crew is
+  building (`None` is the identity). Once the improvement *completes* the source is `::managed`,
+  whose ceiling is its `managed_production` at every floor, so this one lookup covers both sides of
+  every investment. The client preview, the seed, and the forecast==actual tests all call it.
 - The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
   compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
   `sustainable` = the same MSY value the resolution path records (a *managed* source — **rung 3 only**
   — reads `sustainable == actual`, no ⚠), `workers_needed` = the same overstaffing signal the resolution
-  path writes (the continuous inversion for a forage patch; the **steady peak-drop carry crew**
-  `hunt_haul_workers` off `SourceYieldForecast::ceiling_under` for a whole-animal source, so the seed
+  path writes (the continuous inversion for a forage patch; the **peak-drop carry crew**
+  `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
@@ -280,14 +286,24 @@ client's compose-time "Expected yield" row promises. Shape:
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
   stays reachable, and correct, there. Consequence (intended): a fresh assignment now *previews* its
   contribution to the Food-line net rate + the Gathered/Hunted breakdown, and can pre-trip the
-  overdraw ⚠ if the chosen policy would overdraw — ⚠ is a leading flow signal by design.
+  overdraw ⚠ if the chosen floor draws below the food peak (`components::floor_overdraws`) — ⚠ is a
+  leading flow signal by design.
 - `LaborAllocation` now keeps `last_yields` **index-aligned with `assignments`** across every mutation
   (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
   removed assignment used to be attributed to the *next* source). New rows default to
   `SourceYield::ZERO`.
+- **A FLOOR change re-seeds too**, not just a staffing change: the floor is a mutable property of the
+  same source (`LaborTarget::same_source` ignores it), so `handle_assign_labor` runs the same seed
+  after replacing the assignment. `changing_the_floor_reseeds_the_expected_yield` sweeps the dial
+  rather than two stances, because a re-seed path that only fired at the four values the retired
+  stance axis named would pass a two-point check and fail in play.
+- **The floor itself fails closed**: `floor_is_valid` (finite, `0.0..=1.0`) rejects an out-of-range
+  value with a command failure instead of clamping, and an absent one becomes
+  `DEFAULT_ESCAPEMENT_FLOOR`. A clamp would turn a typo into a quiet policy change on the one number
+  the harvest model turns on.
 - Guarded by `server::tests::{assigning_forage,assigning_hunt}_workers_seeds_the_expected_yield_before_the_turn`,
   `resolved_{forage,hunt}_yield_equals_the_seeded_yield` (the no-jump property),
-  `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
+  `changing_the_floor_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
 
 ### The crew floor is ONE definition, reachable from BOTH halves of the row

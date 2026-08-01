@@ -112,7 +112,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             alloc.set_assignment(
                 LaborTarget::Forage {
                     tile: field_tile,
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                     species: None,
                 },
                 1,
@@ -121,7 +121,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             alloc.set_assignment(
                 LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 1,
                 available,

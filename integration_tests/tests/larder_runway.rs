@@ -94,7 +94,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile: patch,
-                policy: FollowPolicy::Sustain,
+                floor: FollowPolicy::Sustain.escapement_floor(),
                 species: None,
             },
             workers: GATHERERS,

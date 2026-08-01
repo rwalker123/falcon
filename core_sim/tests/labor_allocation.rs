@@ -120,7 +120,7 @@ fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> Labor
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile,
-                policy,
+                floor: policy.escapement_floor(),
                 species: None,
             },
             workers,
@@ -259,7 +259,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers: 1,
                 improvement: None,
@@ -339,7 +339,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers: 2,
                 improvement: None,
@@ -465,7 +465,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers: 4,
                 improvement: None,
@@ -538,7 +538,7 @@ fn hunt_lapses_beyond_leash() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id,
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers: 3,
                 improvement: None,
@@ -633,7 +633,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
-            policy: FollowPolicy::Sustain,
+            floor: FollowPolicy::Sustain.escapement_floor(),
             species: None,
         },
         3,
@@ -650,7 +650,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
-            policy: FollowPolicy::Sustain,
+            floor: FollowPolicy::Sustain.escapement_floor(),
             species: None,
         },
         0,
@@ -877,7 +877,7 @@ fn stage_hunt(
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: FollowPolicy::Sustain.escapement_floor(),
                 },
                 workers,
                 improvement: None,
@@ -1005,7 +1005,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        FollowPolicy::Sustain.escapement_floor(),
         NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
@@ -1016,7 +1016,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        FollowPolicy::Sustain.escapement_floor(),
         NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
@@ -1053,7 +1053,7 @@ fn a_spent_source_schedules_nothing() {
         labor.hunt.per_worker_biomass_capacity,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        FollowPolicy::Sustain.escapement_floor(),
         NO_IMPROVEMENT_UNDERWAY,
         labor.arrivals_horizon_turns,
     );
@@ -1098,7 +1098,7 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
     allocation.assignments.push(LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: herd_id.clone(),
-            policy: FollowPolicy::Sustain,
+            floor: FollowPolicy::Sustain.escapement_floor(),
         },
         workers: 3,
         improvement: Some(core_sim::Improvement::Tame),
