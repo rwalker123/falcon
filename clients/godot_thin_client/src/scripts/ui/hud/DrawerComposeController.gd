@@ -346,7 +346,8 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
                 SourceForecast.format_trade(actual) if trade_axis \
                 else SourceForecast.format_yield(actual)),
-            YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable),
+            YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
+                and _herd_take_draws_down(herd, floor, workers),
             YIELD_MODEL_WASTE: "",
         }
     # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
@@ -369,10 +370,21 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
             HudWidgets.YIELD_ROW_ROUTE: "",
         }],
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
-        YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable),
+        YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
+            and _herd_take_draws_down(herd, floor, workers),
         YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
             if waste_pct > 0.0 else "",
     }
+
+## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd. It is asked
+## at `IMPROVEMENT_NONE` deliberately: every take this model quotes is priced undipped
+## (`herd_axis_rates` composes its forecast at the default improvement), so gating the flag on a
+## DIPPED projection would compare a take against a drawdown the same sheet does not claim. Where a
+## build IS in flight the undipped projection falls faster, which leaves the flag standing — the safe
+## direction for a gate whose only job is to remove a contradiction.
+func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int) -> bool:
+    return SourceForecast.take_draws_down(herd, SourceForecast.SOURCE_KIND_HERD, "", floor, workers,
+        SourceForecast.IMPROVEMENT_NONE)
 
 ## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
 ## Forage is SMOOTH (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
@@ -393,6 +405,13 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
 ## a take can sit inside one while blowing through another, so a single scalar cannot answer this; ANY
 ## rather than ALL, because the warning is about the patch, and one account drawn past its regrowth
 ## draws down the same patch.
+##
+## **AND ALL OF IT IS GATED ON THE PROJECTION ACTUALLY FALLING** (`SourceForecast.take_draws_down`).
+## The per-account test above is a take against the FOOD-PEAK ceiling, which on a source standing at
+## or below that peak is just `take > 0` — a fact about the floor, not about the stock — so the ⚠
+## could sit two lines above a verdict reading *it settles at 53% and holds there*. Nothing is
+## overdrawn while the stock climbs, whatever the floor says. The gate is purely subtractive: a source
+## with no curve to walk keeps the flag it always had.
 ##
 ## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY.** The take
 ## must carry it — while a build runs the sim pays `min(crew × per_worker, ceiling × dip)`, and this
@@ -441,9 +460,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         YIELD_MODEL_ROWS: rows,
         YIELD_MODEL_TEXT: SourceForecast.yield_components(
             actual, actual_trade, actual_fodder, zero_account),
-        YIELD_MODEL_OVERDRAW: _is_overdraw(actual, float(sustain["ceiling"]) * output) \
+        YIELD_MODEL_OVERDRAW: (_is_overdraw(actual, float(sustain["ceiling"]) * output) \
             or _is_overdraw(actual_trade, float(sustain["ceiling_trade"]) * output) \
-            or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output),
+            or _is_overdraw(actual_fodder, float(sustain["ceiling_fodder"]) * output)) \
+            and SourceForecast.take_draws_down(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
+                HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, workers, improvement),
         YIELD_MODEL_WASTE: "",
     }
 
@@ -903,7 +924,18 @@ func _mount_crew_row(parent: VBoxContainer, hosts: Array, crew_label: String, co
     block.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_LABEL_SEPARATION)
     var row_label := HudWidgets.alloc_section_label(crew_label)
     row_label.set_meta(HudWidgets.CREW_ROW_LABEL_META, true)
-    block.add_child(row_label)
+    # THE ROW LABEL AND THE BUILD-DIP NOTE ARE ONE PHRASE — `FORAGERS — while building, each carries
+    # 25% as much` — so they share a line above the stepper, and the note renders only where a build
+    # is actually dipping this crew. It is static for the life of the sheet (a floor drag moves every
+    # number the dip multiplies, never the dip), so it stays OUT of the live-refresh registry below.
+    var label_line := HBoxContainer.new()
+    label_line.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_NOTE_SEPARATION)
+    label_line.add_child(row_label)
+    var dip_note := HudWidgets.build_crew_dip_note(
+        float(model.get("build_dip", SourceForecast.NO_BUILD_DIP)))
+    if dip_note != null:
+        label_line.add_child(dip_note)
+    block.add_child(label_line)
     var line := HFlowContainer.new()
     line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line.add_theme_constant_override("h_separation", HudComposeVocab.CREW_ROW_SEPARATION)

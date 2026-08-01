@@ -496,6 +496,11 @@ const READOUT_TEACHING_META := "readout_teaching"
 ## and passes without ever reaching the stepper.
 const CREW_ROW_LABEL_META := "crew_row_label"
 
+## The crew row's BUILD-DIP note, as `Control` meta — its own, because it must be assertable by
+## ABSENCE as well as by presence ("no build in flight, so no dip is claimed"), and the row label
+## beside it renders either way.
+const CREW_ROW_DIP_META := "crew_row_dip"
+
 ## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
 ## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
 const VERDICT_META := "verdict"
@@ -834,6 +839,24 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         row.add_child(_crew_target_pill(btn, count, String(spec[2]),
             HudStyle.button_font_color("primary" if selected else "ghost")))
     return row
+
+## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
+## that makes the two targets beside it arithmetic rather than magic. `dip` is
+## `SourceForecast.floor_chart_model`'s own `build_dip`, so the note and the targets are divided by
+## one number by construction; `null` (no note at all) at the identity, because a crew that is only
+## gathering carries a full load and saying so would be noise on every non-building sheet.
+##
+## It wears the row label's exact treatment — `INK_FAINT` at the section-label size — but is NOT
+## uppercased: it is a sentence about the row, not a second row-label.
+static func build_crew_dip_note(dip: float) -> Label:
+    if dip >= SourceForecast.NO_BUILD_DIP:
+        return null
+    var note := Label.new()
+    note.text = HudComposeVocab.CREW_BUILD_DIP_NOTE_FORMAT % HudFormat.progress_percent(dip)
+    note.set_meta(CREW_ROW_DIP_META, true)
+    note.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    note.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    return note
 
 ## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
 ## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one

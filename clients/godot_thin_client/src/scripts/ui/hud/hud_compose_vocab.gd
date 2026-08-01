@@ -92,6 +92,25 @@ const CREW_TARGET_HOLD_TOOLTIP := "Enough hands to take exactly what grows back 
 const CREW_ROW_LABEL_SEPARATION := 4
 const CREW_ROW_SEPARATION := 6
 
+# **THE BUILD DIP, STATED WHERE IT IS BEING DIVIDED BY** (`docs/plan_harvest_floor.md` §3.1). A crew
+# preparing a rung carries the rung's `yield_fraction_while_building` — a quarter, on both plant rungs
+# — so six foragers move 12 biomass a turn where the patch's own throughput says 48. Every
+# "impossible" number on a building sheet follows from that one factor: the two targets, the take, the
+# settle point, the verdict's remedy crew. Until this line the only cue was a ticked box further down
+# the sheet, which states that a build is running and never states its price, and the sheet read as
+# though six foragers simply could not out-take one patch.
+#
+# It rides the CREW ROW because the two targets beside it are the numbers it explains, in the row
+# label's own faint register — the dip is context for the decision, never the decision.
+#
+# **IT DELIBERATELY DOES NOT SAY "while building"**, which is `IMPROVEMENT_DEAL_FORMAT`'s own middle
+# term and the phrase the sheet's deal line is IDENTIFIED by — two labels on one sheet carrying one
+# phrase is how a search for either silently finds the other (measured: the first wording of this line
+# took seven of the deal's assertions).
+const CREW_BUILD_DIP_NOTE_FORMAT := "— building this rung, each carries %d%% as much"
+# The row-label and its note are one phrase, so they sit closer than the stepper and the pills do.
+const CREW_ROW_NOTE_SEPARATION := 5
+
 # A crew TARGET is a PILL, and the shape is the point: the stepper beside it is a boxed control you
 # operate, a target is a value you can jump to. Its face carries two registers — the COUNT (what you
 # compare against the stepper) over the label naming which of the two answers it is — so, like the

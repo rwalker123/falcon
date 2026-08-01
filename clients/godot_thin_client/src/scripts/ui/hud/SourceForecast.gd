@@ -1075,12 +1075,22 @@ static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
 ## rounded to whole animals: this is the number of hands, and a crew that over-carries simply finishes
 ## the draw. `0` when nothing stands above the floor; `NO_CREW_ANSWER` when the throughput is zero.
-static func crew_to_clear(room: float, carry: float) -> int:
+##
+## **THE QUOTIENT ALONE IS A CREW THAT CLEARS NOTHING, AND IT IS THE MORE ATTRACTIVE PILL.** The room
+## is the stock standing above the floor *now*; the source regrows before the crew takes anything
+## (`project_stock` regrows, then takes), so wherever the regrowth across the traversed band exceeds
+## the room, the quotient names FEWER hands than `crew_that_reaches` — and a crew that cannot out-take
+## the regrowth does not clear the patch in one turn, or in any number of them. Reported from play: a
+## `5 clear it now` beside a verdict saying 7 foragers would be needed, two lines apart. So the target
+## is FLOORED on the reaching crew. The one-turn drain still wins wherever the room is large, which is
+## the case the label was written for; a `reaching` of `NO_CREW_ANSWER` (no priceable crew, nothing
+## standing above the floor) floors on nothing.
+static func crew_to_clear(room: float, carry: float, reaching: int) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
-    return maxi(1, ceili(room / carry))
+    return maxi(maxi(1, ceili(room / carry)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
 ## there: the interpolated regrowth at the floor over the same carry, **rounded up to one whole body
@@ -1117,6 +1127,30 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
         per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement),
         float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+    return maxi(crew, 0)
+
+## The *reaching* crew — `crew_that_reaches` resolved straight from a SOURCE, in the form
+## `forecast_inputs` carries so the worker cap can floor itself on it too. `0` (never
+## `NO_CREW_ANSWER`) when there is no crew to name, for the reason `hold_crew` gives: this answer is
+## only ever a FLOOR on a cap.
+##
+## **THE CAP HAS TO CARRY IT OR THE *CLEAR* TARGET BECOMES UNREACHABLE.** `crew_to_clear` now floors
+## on this number, and §7.6's standing rule is that neither target may name a crew the stepper beside
+## it refuses to reach — so the same floor has to reach `max_useful_workers`. It is also true on its
+## own terms: hands between the one-turn quotient and the reaching crew do strictly more than the
+## quotient's (they draw the stock further down every turn instead of settling above the floor), so
+## capping there reported them useless while the verdict was naming them as the remedy.
+##
+## A RUNG-3 MANAGED SOURCE IS EXCLUDED, exactly as it is for the hold crew: the sim never draws a
+## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
+static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
+        improvement: String) -> int:
+    if source_is_managed(src, kind, prefix, improvement):
+        return 0
+    var crew := crew_that_reaches(regrowth_samples(src, prefix),
+        float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)),
+        float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)), floor,
+        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement))
     return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
@@ -1178,6 +1212,34 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
             return need
         need += 1
     return NO_CREW_ANSWER
+
+## **IS THIS CREW ACTUALLY DRAWING THE SOURCE DOWN?** — the projection's own answer, and the gate on
+## the ⚠ overdraw flag both compose sheets carry.
+##
+## The flag's own test is a take against the **food-peak** ceiling, which on a source standing at or
+## below that peak is `take > 0` — i.e. a fact about the FLOOR, not about the stock. So a patch whose
+## projection climbs could render `⚠ overdraws the patch` directly above a verdict reading *it settles
+## at 53% and holds there*: the panel saying the stock falls and rises in the same breath. Reported
+## from play. Nothing is being overdrawn while the stock rises, whatever the floor is — and the
+## projection is the one instrument that already knows, so the two sentences are now readings of it.
+##
+## **`true` WHERE THERE IS NOTHING TO CONSULT**, which keeps this purely subtractive: a source with no
+## capacity, no published curve, or a rung-3 managed one has no drawdown projection at all, so the
+## flag is left exactly as it was rather than suppressed on the strength of a walk that was never
+## taken.
+static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
+        workers: int, improvement: String) -> bool:
+    var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
+    var samples := regrowth_samples(src, prefix)
+    if capacity <= 0.0 or not has_growth_curve(samples) \
+            or source_is_managed(src, kind, prefix, improvement):
+        return true
+    var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
+    var carry := per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement)
+    var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
+        float(maxi(workers, 0)) * carry)
+    return float(walk["settled_fraction"]) \
+        < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
 # ---- THE VERDICT (docs/plan_harvest_floor.md §7.1) ----------------------------------------------
 #
@@ -1340,7 +1402,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var floor_value := clamp_floor(floor)
     if not known:
         return {"known": false, "floor": floor_value}
-    var carry := per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement)
+    # The dip is bound on its own rather than folded straight into the carry, because the crew row
+    # STATES it (`build_dip` below) — one resolution, so the note and the numbers it explains cannot
+    # come from two different reads.
+    var dip := build_dip(src, prefix, improvement)
+    var carry := per_worker_biomass(src, prefix) * dip
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry)
     var hold := crew_to_hold(samples, floor_value, carry, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry)
@@ -1368,8 +1434,13 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "reached_turn": int(walk["reached_turn"]),
         "settled_fraction": float(walk["settled_fraction"]),
         "learn_multiplier": learn_multiplier(floor_value),
-        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry),
+        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching),
         "crew_to_hold": hold,
+        # **THE DIP THE TWO TARGETS ABOVE WERE DIVIDED BY** (§3.1), carried so the crew row can SAY
+        # it. Every impossible-looking number on a building sheet follows from it — six foragers move
+        # 12 biomass a turn at the rung's quarter carry, not 48 — and the only other cue is a ticked
+        # box further down the sheet, which states the build without stating its price.
+        "build_dip": dip,
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching, crew_noun),
         "idle_note": idle_note,
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
@@ -1557,6 +1628,10 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
         # count. See there for why the cap, not the target, was the wrong number.
         "hold_crew": hold_crew(src, kind, prefix, floor, improvement),
+        # **AND THE CREW THAT REACHES THE FLOOR**, the cap's second projection-derived floor. See
+        # `reach_crew`: the *clear it now* target is floored on it, and a target the stepper cannot
+        # reach is the panel arguing with itself.
+        "reach_crew": reach_crew(src, kind, prefix, floor, improvement),
         # **A PRESENCE test, not a rate test** (#426). It used to be `per_worker >= ε`, which conflated
         # "the wire carried no forecast" with "the rate is genuinely zero" — and its own docstring said
         # it meant the former. A zero-conversion crop makes the latter real, so the two came apart and
@@ -1688,7 +1763,12 @@ static func improvement_progress(src: Dictionary, prefix: String, improvement: S
 ## turn is arithmetically defensible and practically false, which is the failure the verdict line
 ## exists to remove. So the cap is the `max()` it always structurally was, with one more term:
 ##
-##     max_useful = max(ceil(room / (carry × dip)), hold_crew, <the caller's crew floors>)
+##     max_useful = max(ceil(room / (carry × dip)), hold_crew, reach_crew, <the caller's crew floors>)
+##
+## `reach_crew` is the same argument one step along: where the regrowth across the band beats the
+## room, the crew that DRAWS THE SOURCE DOWN is larger than the one-turn quotient, so the cap said
+## "these hands are useless" about the very crew the verdict was naming as the remedy — and the
+## *clear it now* target, which is floored on that number, would have named a count the `+` refused.
 ##
 ## Folding it in HERE rather than at the call sites is what keeps the two cap twins
 ## (`source_worker_cap_state` and `DrawerComposeController._forecast_worker_cap`) unable to disagree:
@@ -1726,7 +1806,11 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     # `haul_workers`, the ONE mirror of the sim's rounding, in the paid account's units rather than in
     # biomass (an animal count is a ratio, so either set of units gives the same crew).
     var per_animal := float(forecast.get("axis_per_animal", forecast.get("food_per_animal", 0.0)))
-    var hold := maxi(int(forecast.get("hold_crew", 0)), 0)
+    # BOTH PROJECTION-DERIVED FLOORS: the crew that takes the regrowth every turn, and the crew that
+    # draws the stock down to the floor at all (`reach_crew` — the number the *clear it now* target is
+    # floored on, and therefore the number the stepper has to be able to reach).
+    var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
+        maxi(int(forecast.get("reach_crew", 0)), 0))
     if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
         return maxi(haul_workers(ceiling, per_animal, per_worker), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)

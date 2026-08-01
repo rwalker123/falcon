@@ -432,6 +432,41 @@ const STALE_VERB_BUILD_FRACTION := 0.25
 # Two throughputs are "the same" when they agree to within the resolution the panel states a rate at.
 const STALE_VERB_THROUGHPUT_EPSILON := 0.01
 
+# ---- THE BUILDING PATCH: the regime where the REGROWTH beats the ROOM ---------------------------
+# Reported from play, and the frame three separate defects appear in AT ONCE — none of them visible
+# on any other fixture, because all three need the same narrow regime: a crew whose whole-turn carry
+# is a shade UNDER the patch's own regrowth. There the standing room is a puddle, the regrowth is a
+# river, and the sheet's four numbers stop agreeing with one another:
+#
+#   • `clear it now` was `room ÷ carry` = 5 — a crew that provably clears nothing, since the patch
+#     regrows more each turn than those five hands can lift, printed two lines above a verdict saying
+#     seven are needed. It is now floored on the reaching crew.
+#   • `⚠ OVERDRAWS THE PATCH` fired beside a verdict reading *it settles at 54% and holds there*: the
+#     take-vs-food-peak test is `take > 0` on a patch standing at the peak, i.e. a fact about the
+#     FLOOR. Gated on the projection now.
+#   • Nothing said the crew was at QUARTER throughput, which is where every "impossible" number here
+#     comes from. The crew row says it now.
+#
+# **THE ARITHMETIC WAS NEVER WRONG — the numbers only disagreed with each other**, so every constant
+# is the shipped one (the stale-verb patch's basket and carry, `intensification_ladder.json`'s 0.25)
+# and the assertions below are RELATIONS between the rendered numbers, not literals: a fixture that
+# drifts must fail rather than quietly re-baseline.
+const BUILD_DIP_CAPACITY := 195.0
+# Just under the food peak (97.5), so the room above the 45% floor is ~9 biomass while the patch
+# regrows ~12 — the inversion the whole frame rests on. Also makes the food-peak ceiling ZERO, which
+# is what let the overdraw test degenerate into "the floor is below the peak".
+const BUILD_DIP_STOCK := 97.0
+const BUILD_DIP_FLOOR := 0.45
+# Six foragers × (8.0 × 0.25) = 12.0 biomass/turn — a shade under the ~12.19 the patch regrows at its
+# peak, so the stock RISES under this crew and settles above the floor. One more hand reverses it,
+# which is what makes the pair an A/B on the overdraw gate rather than one frame's say-so.
+const BUILD_DIP_CREW := 6
+const BUILD_DIP_DECLINE_CREW := 7
+# The rung's own build crew (`<rung>CrewNeeded`) and the band's hands. The band must be able to REACH
+# the reaching crew, or the cap — not the fix — is what the frame would be measuring.
+const BUILD_DIP_CREW_NEEDED := 2
+const BUILD_DIP_IDLE_WORKERS := 9
+
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
 ## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
 func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
@@ -1750,7 +1785,9 @@ func _ready() -> void:
 	_assert_hud("…and so does CLEAR, the other half of the same division",
 		_crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
 			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,
-				HudComposeVocab.FORAGE_FORECAST_PREFIX, STALE_VERB_FLOOR), stale_carry))
+				HudComposeVocab.FORAGE_FORECAST_PREFIX, STALE_VERB_FLOOR), stale_carry,
+				SourceForecast.crew_that_reaches(stale_samples, STALE_VERB_STOCK,
+					STALE_VERB_CAPACITY, STALE_VERB_FLOOR, stale_carry)))
 	# (2) **THE INVARIANT THAT BROKE** — the sheet's crew target and the card's rate must imply the SAME
 	# biomass per forager. The card's is a LOWER bound (its take may be bound by the room rather than by
 	# the crew), so a crew target may never price a forager BELOW it: that is exactly the contradiction
@@ -1771,6 +1808,121 @@ func _ready() -> void:
 				String(HudComposeVocab.IMPROVEMENT_DONE_LABELS["cultivate"])))
 	_hud._band_labor._player_band = prior_player_band
 	_hud._band_labor._player_bands = prior_player_bands
+	_hud._compose.reset_forage_source()   # the states after this one open on their own patch
+
+	# ---- THE BUILDING PATCH: WHEN THE REGROWTH BEATS THE ROOM ------------------------------------
+	# **THE FRAME THREE DEFECTS SHARE, and no other fixture reaches it.** Reported from play: a patch
+	# at `K 195` with ~9 biomass standing above its floor and ~12 growing back every turn, worked by
+	# six foragers at a live Cultivate's quarter carry. It rendered `5 clear it now` · `6 hold it
+	# after` · `⚠ OVERDRAWS THE PATCH` over a verdict reading *this crew can't draw it that low. It
+	# settles at 54% and holds there — 7 foragers would reach the floor.* Four numbers, no two of which
+	# agree, and every one of them individually correct arithmetic.
+	# THE ARITHMETIC WAS NOT THE DEFECT — the numbers contradicting each other was.
+	var building_tile := _floorify(_building_patch_tile_fixture(),
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	var build_samples := SourceForecast.regrowth_samples(building_tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	# The crew term the sheet divides by, recomposed HERE from the tile's own wire fields — the carry
+	# and the rung's dip, exactly as `floor_chart_model` composes it. Every relation below is stated
+	# against it rather than against a literal, so a fixture that drifts fails instead of re-baselining.
+	var build_carry := SourceForecast.per_worker_biomass(building_tile,
+		HudComposeVocab.FORAGE_FORECAST_PREFIX) \
+		* SourceForecast.build_dip(building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, "cultivate")
+	var build_reaching := SourceForecast.crew_that_reaches(build_samples, BUILD_DIP_STOCK,
+		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, build_carry)
+	# THE CARD'S STANDING RATE, composed the way the sim composes it (`forage_take`'s `min(crew carry,
+	# ceiling)` through the patch's food rate) — derived from the tile's own wire terms rather than
+	# written down, so the card and the sheet cannot drift apart by fixture edit.
+	var build_standing_rate := minf(float(BUILD_DIP_CREW) * build_carry,
+		SourceForecast.escapement_room(building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			BUILD_DIP_FLOOR)) * STALE_VERB_FOOD_PER_BIOMASS
+	var prior_build_band := _hud._band_labor.player_band()
+	var prior_build_bands := _hud._band_labor._player_bands
+	_hud._band_labor._player_band = _building_patch_band_fixture(build_standing_rate)
+	_hud._band_labor._player_bands = [_hud._band_labor.player_band()]
+	_show_tile(building_tile)
+	_compose_forage(building_tile)
+	_hud._compose.set_forage_floor(BUILD_DIP_FLOOR)
+	_hud._compose.set_forage_improvement("cultivate")
+	_hud._compose.set_forage_count(BUILD_DIP_CREW)
+	_compose_forage(building_tile)
+	await _settle()
+	await _save("forage_build_dip")
+	_assert_compose_sheet_fits("forage_build_dip")
+	var build_sheet := _hud._drawercompose._compose_sheet
+	var build_clear := _crew_target_count(build_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	# (0) THE FRAME REALLY IS THE REGIME. Without this every assertion below is about an ordinary
+	# patch: the whole point is a crew that CANNOT out-take the regrowth, so the crew that can must be
+	# strictly larger than the one-turn quotient the target used to state.
+	_assert_hud("the fixture reaches the regime — the reaching crew (%d) exceeds the one-turn quotient (%d)"
+		% [build_reaching, SourceForecast.crew_to_clear(SourceForecast.escapement_room(
+			building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0)],
+		build_reaching > SourceForecast.crew_to_clear(SourceForecast.escapement_room(building_tile,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0))
+	# (1) **THE INVARIANT, stated as a RELATION between the two rendered numbers** rather than as the
+	# pair of literals it happens to produce: a target offering to *clear it now* may never name fewer
+	# hands than the verdict beside it names as merely REACHING the floor. Those five foragers cleared
+	# nothing in any number of turns.
+	_assert_hud("clear-it-now (%d) is never below the crew the verdict names as reaching the floor (%d)"
+		% [build_clear, build_reaching],
+		build_clear >= build_reaching and build_reaching > 0)
+	# (2) …AND THE STEPPER CAN REACH IT (§7.6). Flooring the target without flooring the cap trades one
+	# contradiction for another — a pill naming a crew the `+` refuses. Driven through the REAL button,
+	# because the clamp lives in the press handler and not in the arithmetic.
+	_find_crew_target(build_sheet, HudWidgets.CREW_TARGET_CLEAR).pressed.emit()
+	_assert_hud("…and the stepper reaches that crew rather than clamping it to a smaller cap",
+		_hud._compose.forage_count() == build_clear)
+	_hud._compose.set_forage_count(BUILD_DIP_CREW)
+	_compose_forage(building_tile)
+	# (3) **THE ⚠ AND THE VERDICT NOW READ THE SAME PROJECTION.** The take is well past the food-peak
+	# ceiling (which is zero on a patch standing at the peak), so the per-account test still fires and
+	# the gate is the only thing suppressing it — and what the gate reads is the stock CLIMBING.
+	var build_walk := SourceForecast.project_stock(build_samples, BUILD_DIP_STOCK, BUILD_DIP_CAPACITY,
+		BUILD_DIP_FLOOR, float(BUILD_DIP_CREW) * build_carry)
+	_assert_hud("the projection this crew produces RISES — there is nothing being overdrawn (%.3f → %.3f)"
+		% [BUILD_DIP_STOCK / BUILD_DIP_CAPACITY, float(build_walk["settled_fraction"])],
+		float(build_walk["settled_fraction"]) > BUILD_DIP_STOCK / BUILD_DIP_CAPACITY)
+	_assert_hud("…so no overdraw flag fires beside a verdict saying the patch grows",
+		not _hud._drawercompose._local_forage_preview_bbcode(_hud._band_labor.player_band(),
+			building_tile, BUILD_DIP_FLOOR, BUILD_DIP_CREW, "cultivate").contains(HudStyle.WARN_HEX))
+	# (4) THE DIP, STATED ON THE CREW ROW. Every impossible-looking number above follows from it.
+	_assert_hud("a live build states its quarter carry on the crew row",
+		_crew_row_dip_note(build_sheet).contains(
+			str(HudFormat.progress_percent(STALE_VERB_BUILD_FRACTION))))
+
+	# State forage_build_dip_decline — **THE OTHER HALF OF THE GATE, one hand apart.** Seven foragers
+	# out-carry the patch's fastest regrowth, so the same patch at the same floor now genuinely falls
+	# to the line — and the ⚠ must come back. Without this frame the assertion above passes vacuously
+	# on a gate that suppressed the flag everywhere.
+	_hud._compose.set_forage_count(BUILD_DIP_DECLINE_CREW)
+	_compose_forage(building_tile)
+	await _settle()
+	await _save("forage_build_dip_decline")
+	var decline_walk := SourceForecast.project_stock(build_samples, BUILD_DIP_STOCK,
+		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, float(BUILD_DIP_DECLINE_CREW) * build_carry)
+	_assert_hud("one more hand out-carries the regrowth, and the projection FALLS (%.3f → %.3f)"
+		% [BUILD_DIP_STOCK / BUILD_DIP_CAPACITY, float(decline_walk["settled_fraction"])],
+		float(decline_walk["settled_fraction"]) < BUILD_DIP_STOCK / BUILD_DIP_CAPACITY)
+	_assert_hud("…and the overdraw flag fires there, so the gate subtracts rather than silences",
+		_hud._drawercompose._local_forage_preview_bbcode(_hud._band_labor.player_band(),
+			building_tile, BUILD_DIP_FLOOR, BUILD_DIP_DECLINE_CREW, "cultivate")
+			.contains(HudStyle.WARN_HEX))
+	_assert_hud("…and the verdict agrees with it — this crew reaches the floor",
+		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_OK)
+
+	# State forage_build_dip_none — THE SAME PATCH WITH NO BUILD IN FLIGHT, which is the only way to
+	# read the dip note as a CLAIM: a line that renders on every sheet says nothing. The crew row must
+	# be bare here, and the whole sheet re-prices at the full 8.0 carry (the cap collapses to a pair of
+	# hands, which is itself the dip's absence made visible).
+	_hud._compose.set_forage_improvement(SourceForecast.IMPROVEMENT_NONE)
+	_hud._compose.set_forage_count(BUILD_DIP_CREW)
+	_compose_forage(building_tile)
+	await _settle()
+	await _save("forage_build_dip_none")
+	_assert_hud("no build in flight, no dip claimed on the crew row",
+		_crew_row_dip_note(_hud._drawercompose._compose_sheet) == "")
+	_hud._band_labor._player_band = prior_build_band
+	_hud._band_labor._player_bands = prior_build_bands
 	_hud._compose.reset_forage_source()   # the states after this one open on their own patch
 
 	# State 6b-sow-done — a COMPLETED Field with a standing Sow selection: ▦ Sow greys with "Already a
@@ -6012,6 +6164,13 @@ func _crew_row_label(root: Node) -> String:
 	var node := _find_meta_node(root, HudWidgets.CREW_ROW_LABEL_META)
 	return (node as Label).text if node is Label else ""
 
+## The crew row's BUILD-DIP note, by its own meta — `""` when none rendered, which is a real reading
+## and half of what the note is asserted on: a line that appears on every sheet claims nothing. Not
+## found by text, and not by scanning the row: the row LABEL sits beside it and renders either way.
+func _crew_row_dip_note(root: Node) -> String:
+	var node := _find_meta_node(root, HudWidgets.CREW_ROW_DIP_META)
+	return (node as Label).text if node is Label else ""
+
 func _find_crew_target(root: Node, key: String) -> Button:
 	if root == null:
 		return null
@@ -7970,6 +8129,101 @@ func _stale_verb_band_fixture(rate: float) -> Dictionary:
 				"target_x": 68, "target_y": 12, "floor": STALE_VERB_FLOOR,
 				"improvement": "",
 				"actual_yield": rate, "sustainable_yield": rate, "realized_yield": rate,
+				"overdraws": false},
+		],
+	}
+
+## **THE PATCH BEING CULTIVATED — a WILD stand with the rung's build genuinely in flight.**
+##
+## The stale-verb patch one screen up is its exact opposite and the pair is the point: there the
+## `Cultivate` was a leftover verb that must dip NOTHING, here it is a real build that must dip
+## everything, and the same fields (`is_cultivated` / `cultivation_progress`) decide which. So this
+## one is UNCULTIVATED with a part-filled meter — `_build_improvement_control`'s RUNNING branch, a
+## live 25% carry, and no knowledge gate anywhere near it (the running branch is chosen before the
+## offer is looked up).
+##
+## Its stock and capacity are its own (no `_seed_forage_rows`), for the reason the stale-verb fixture
+## gives: this frame is about a particular `B / K` — a hair under the food peak — and a shared
+## capacity/stock pair would round the whole regime away.
+func _building_patch_tile_fixture() -> Dictionary:
+	return {
+		"x": 68, "y": 12,
+		"terrain_label": "Alluvial Plain",
+		"tags_text": "Fertile, Fresh Water",
+		"visibility_state": "active",
+		"habitability": 0.72,
+		"temperature": 18.0,
+		"food_module": "riverine_delta",
+		"food_module_label": "Riverine Delta",
+		"site_name": "",
+		"patch_ecology_phase": "thriving",
+		"patch_biomass": BUILD_DIP_STOCK,
+		"patch_carrying_capacity": BUILD_DIP_CAPACITY,
+		# WILD ground with the rung under construction — the two fields `improvement_is_done` reads,
+		# stated the opposite way round from the stale-verb patch.
+		"patch_is_cultivated": false,
+		"patch_cultivation_progress": 0.35,
+		"patch_is_field": false,
+		"patch_field_progress": 0.0,
+		# The stale-verb patch's basket, verbatim: only the two staples pay food, so the patch converts
+		# at well under a pure-staple rate and the ⚠ has a real take to fire on.
+		"patch_provisions_per_biomass": STALE_VERB_FOOD_PER_BIOMASS,
+		"patch_trade_per_biomass": STALE_VERB_TRADE_PER_BIOMASS,
+		"patch_fodder_per_biomass": 0.0,
+		"patch_per_worker_biomass": STALE_VERB_PER_WORKER_BIOMASS,
+		"patch_per_worker_yield": STALE_VERB_PER_WORKER_BIOMASS * STALE_VERB_FOOD_PER_BIOMASS,
+		"patch_cultivate_build_fraction": STALE_VERB_BUILD_FRACTION,
+		"patch_sow_build_fraction": STALE_VERB_BUILD_FRACTION,
+		"patch_cultivate_crew_needed": BUILD_DIP_CREW_NEEDED,
+		"patch_sow_crew_needed": 3,
+		"patch_sow_site_refusal": "too_dry",
+		"patch_tended_yield": 1.20,
+		"patch_field_yield": 2.40,
+		"patch_composition": [
+			{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.65,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 2.10, "sow_yield_ratio": 3.60,
+				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
+			{"species": "flax", "display_name": "Flax Fields", "share": 0.35,
+				"can_cultivate": true, "can_sow": false,
+				"cultivate_yield_ratio": 1.30, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
+		],
+	}
+
+## The band cultivating it — enough idle hands that the STEPPER, not the roster, is what bounds the
+## crew. The reaching crew is the number the *clear it now* target now names, and a band that cannot
+## staff it would make every assertion about that target a claim about labor scarcity instead.
+##
+## **IT CARRIES THE STANDING ASSIGNMENT, and that is what makes the build LIVE rather than LAPSED.** A
+## part-filled cultivation meter with nobody on the tile is a patch REVERTING, which is what the tile
+## card would say — a different state from the one this frame is about, rendered beside a sheet
+## composing the opposite. `rate` is filled in by the caller from the tile's own wire terms, the
+## stale-verb band's rule: the card's standing rate and the sheet's crew targets must be answering
+## about one patch by construction.
+func _building_patch_band_fixture(rate: float) -> Dictionary:
+	return {
+		"id": "Band 1",
+		"size": 34,
+		"entity": 823,
+		"faction": 0,
+		"pos": [67, 11],
+		"current_x": 67, "current_y": 11,
+		"activity": "forage",
+		"working_age": 20,
+		"idle_workers": BUILD_DIP_IDLE_WORKERS,
+		"work_range": 3,
+		"turns_of_food": 12.0,
+		"settlement_stage_icon": "⛺",
+		"settlement_stage_label": "Nomadic band",
+		"output_multiplier": 1.0,
+		"labor_assignments": [
+			{"kind": "forage", "workers": BUILD_DIP_CREW,
+				"target_x": 68, "target_y": 12, "floor": BUILD_DIP_FLOOR,
+				"improvement": "cultivate",
+				"actual_yield": rate, "sustainable_yield": rate, "realized_yield": rate,
+				# The stock RISES under this crew, so the sim's own flag is false here — the fact the
+				# sheet's ⚠ was contradicting.
 				"overdraws": false},
 		],
 	}

@@ -227,12 +227,29 @@ stated and clickable:
 
 | target | expression |
 |---|---|
-| ***clear it now*** | `max(0, B − f·K) ÷ (perWorkerBiomass × dip)` — closed form, deliberately not rounded to whole animals: this is a count of hands, and a crew that over-carries simply finishes the draw |
+| ***clear it now*** | `max(max(0, B − f·K) ÷ (perWorkerBiomass × dip), crew_that_reaches)` — closed form, deliberately not rounded to whole animals: this is a count of hands, and a crew that over-carries simply finishes the draw. **The floor on the reaching crew is not a rounding**, see below |
 | ***hold it after*** | the interpolated regrowth AT the floor ÷ the same carry, **rounded up to one body on a whole-animal source** — `SourceForecast.haul_workers`, the ONE mirror of the sim's `fauna::hunt_haul_workers`, which `max_useful_workers` now also calls instead of open-coding the same arithmetic |
 
 **NEITHER TARGET CAN NAME A CREW THE STEPPER REFUSES TO REACH.** Both are clickable, and a click is
-clamped to the same cap the `+` obeys — so the cap floors on the *hold* number (see §7.2). A clickable
-target the control beside it cannot reach is the panel arguing with itself.
+clamped to the same cap the `+` obeys — so the cap floors on the *hold* number **and on the reaching
+crew** (see §7.2). A clickable target the control beside it cannot reach is the panel arguing with
+itself.
+
+**THE QUOTIENT ALONE NAMES A CREW THAT CLEARS NOTHING, WHEREVER THE REGROWTH BEATS THE ROOM.** The
+room is what stands above the floor *today*; `project_stock` regrows before it takes, so a crew that
+cannot out-carry the regrowth across the band it has to cross never empties the room — not this turn,
+not in any number of turns. Where the regrowth is the larger of the two, the bare quotient is
+therefore **smaller** than `crew_that_reaches`, and it is the more attractive of the two pills.
+Reported from play (`forage_build_dip`): `5 clear it now` · `6 hold it after` two lines above *"7
+foragers would reach the floor"* — three numbers, no two of which agree. The honest reading of *clear
+it now* is "the crew that empties the room this turn", and a crew that never empties it does not
+qualify, so the target floors on the reaching crew; the one-turn drain still wins wherever the room is
+large, which is the case the label was written for.
+
+**`hold it after` BEING LESS THAN THE REACHING CREW IS CORRECT AND MUST STAY** (6 against 7 on that
+frame). Descending, a crew has to beat the **peak** regrowth in the band it crosses; at the floor it
+only has to match the regrowth **there**. Two different questions about two different stocks — the
+numbers agreeing would be the bug.
 
 `perWorkerBiomass` is a wire field on both source tables and **closed the KNOWN GAP below**: the crew
 throughput used to be recovered as `perWorkerYield / provisionsPerBiomass`, which is `0/0` on exactly
@@ -391,6 +408,19 @@ harness reads lives on `HudWidgets.CREW_TARGET_COUNT_META`**. A `btn.text.split(
 yields `int("")` == 0, which is a REAL reading of that control (*nothing needs clearing*) and would
 have passed silently.
 
+**THE BUILD DIP IS STATED ON THAT ROW, beside the two numbers it explains** (`build_crew_dip_note`,
+from the chart model's own `build_dip` — one resolution, so the note and the targets cannot come from
+two reads). A crew preparing a rung carries its `yield_fraction_while_building`, a quarter on both
+plant rungs, so six foragers move 12 biomass a turn where the patch's published throughput says 48 —
+and every impossible-looking number on a building sheet follows from that one factor. The only other
+cue was a ticked box further down, which says a build is running and never says its price; without the
+line, *"six foragers cannot out-take one patch"* is inexplicable. It renders **only** where a dip is
+live, because a line on every sheet claims nothing (frames: `forage_build_dip` /
+`forage_build_dip_none`, asserted by presence AND by absence through `HudWidgets.CREW_ROW_DIP_META`).
+Its wording deliberately avoids `while building` — that is `IMPROVEMENT_DEAL_FORMAT`'s middle term and
+the phrase the deal line is IDENTIFIED by; two labels on one sheet carrying one phrase is how a search
+for either finds the other, measured at seven false failures.
+
 **The readout is one bounded well with three registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
 
 | register | what it answers | treatment |
@@ -502,11 +532,12 @@ food-RATE rule and spending them on a stock prints `1075.00`, claiming precision
 
 ### §7.2: THE HOLD NUMBER IS THE CEILING ON USEFULNESS, AND IDLE CREW IS REPORTED, NEVER RELEASED
 
-**`max_useful_workers` FLOORS ON THE HOLD CREW** (`forecast_inputs` carries it as `hold_crew`, from
-the same `crew_to_hold` the chart's second target renders):
+**`max_useful_workers` FLOORS ON BOTH PROJECTION-DERIVED CREWS** (`forecast_inputs` carries them as
+`hold_crew` / `reach_crew`, from the same `crew_to_hold` / `crew_that_reaches` the chart's targets and
+verdict render):
 
 ```text
-max_useful = max(ceil(room / (carry × dip)), hold_crew, <the caller's crew floors>)
+max_useful = max(ceil(room / (carry × dip)), hold_crew, reach_crew, <the caller's crew floors>)
 ```
 
 The two terms answer different questions — the quotient is *"clear the room standing THIS turn"*, the
@@ -523,6 +554,15 @@ Pen down, so its cap stays `production / perWorkerYield`. Frames + assertions: `
 room, cap 1, the stepper renders that 1) and `herd_hunt_pelts_only`, where the wolf read `5 hold it
 after` under `max 4 workers useful here` and the press of the target is now asserted to land the
 stepper on 5.
+
+**`reach_crew` IS THE SAME ARGUMENT ONE STEP ALONG, and it is what makes the *clear* target
+clickable.** Where the regrowth beats the room the crew that draws the source down is LARGER than the
+one-turn quotient, so the cap reported those hands useless while the verdict beside it was naming them
+as the remedy — and *clear it now*, now floored on that number, would have named a count the `+`
+refused. It is a floor for its own sake too: hands between the quotient and the reaching crew draw the
+stock further down every turn instead of settling above the floor, which is strictly more than the
+quotient's crew achieves. Frame + assertion: `forage_build_dip` (`7 clear it now` under `max 7 workers
+useful here`, the press asserted to land the stepper on 7).
 
 Workers above the *hold* number contribute nothing once the source is holding at its floor, so the
 readout says how many and stops (`IDLE_CREW_NOTE_FORMAT`) — the same number the cap floors on, so
@@ -614,6 +654,27 @@ therefore inert there — kept because it costs nothing and the animal web's qua
 obliged to stay that way. `forage_three_accounts_overdraw` used to pin the divergence; it now pins
 that the verdict tracks the FLOOR.
 
+### THE ⚠ IS GATED ON THE PROJECTION, because the ceiling test is a fact about the FLOOR
+
+`_is_overdraw` compares the take against the **food-peak** ceiling — and on a source standing at or
+below that peak the ceiling is `0`, so the test degenerates to "something is being taken at a floor
+below 0.5". That is a statement about where the dial sits, not about what is happening to the stock,
+and the two can disagree outright: reported from play, `⚠ OVERDRAWS THE PATCH` rendered two lines
+above *"It settles at 53% and holds there"* — the panel saying the patch falls and grows in one
+breath. Both sentences now read the ONE projection: the flag survives only if
+`SourceForecast.take_draws_down` says the stock ends the horizon below where it stands today.
+
+- **The gate is subtractive, and answers `true` where there is nothing to consult** — no capacity, no
+  published curve, a rung-3 managed source — so a flag is never suppressed on the strength of a walk
+  that was never taken.
+- **The hunt web asks it at `IMPROVEMENT_NONE`**, matching the takes that model quotes: every hunt
+  preview number is priced undipped (`herd_axis_rates` composes at the default improvement), and
+  gating a dipped drawdown against an undipped take would compare two different sheets. An undipped
+  projection falls faster, which leaves the flag standing — the safe direction for a gate.
+- Frames + sabotage-verified assertions: `forage_build_dip` (rises → no flag) and
+  `forage_build_dip_decline` (one more hand, falls → the flag returns). **Both halves, or the first
+  passes vacuously on a gate that silenced everything.**
+
 ### CLOSED — the patch's per-worker vector, and the derivation that stood in for it
 
 `ForagePatchState` publishes `perWorkerYield` (the FOOD throughput) and deliberately no
@@ -678,6 +739,22 @@ the readout has no food line and the chart does not care, a floor being a fracti
 `_find_meta_node` / `_crew_target_count` / `_verdict_severity` reach the three new controls by
 IDENTITY (`FLOOR_CHART_META` / `CREW_TARGET_META` / `VERDICT_META`) — the chart carries no text at all
 and the other two wear faces made of live numbers, so a text match would find nothing and pass.
+
+**A SIXTH CASE — `forage_build_dip` / `_decline` / `_none`, WHERE THE REGROWTH BEATS THE ROOM.** The
+played frame: `K 195`, ~9 biomass standing above a 45% floor while the patch regrows ~12, worked by
+six foragers at a live Cultivate's quarter carry (`_building_patch_tile_fixture`, every constant the
+shipped one — the stale-verb patch's basket and 8.0 carry, the ladder's 0.25). It is the only fixture
+in the set whose crew carry lands just UNDER the source's own regrowth, and all three defects above
+need exactly that: the *clear* quotient falls below the reaching crew, the food-peak ceiling is zero so
+the ⚠ degenerates, and the dip is what makes the numbers look impossible. **THE DEFECT WAS THAT THE
+NUMBERS CONTRADICTED EACH OTHER, NOT THAT ANY OF THEM WAS MISCOMPUTED** — the settle point, the
+teaching multiplier, the three account rates and the preset ceilings all check out against the shipped
+config, and `6 hold it after` under a reaching crew of 7 is correct (see "THE TWO CREW TARGETS"). So
+every assertion here is a RELATION between rendered numbers rather than a literal: *clear ≥ the crew
+the verdict names*, the press of that pill lands the stepper on it, the projection rises (no ⚠) and
+falls one hand later (⚠ returns), the dip note present with a build and absent without. The fixture
+also carries the STANDING assignment, without which the tile card reads `Cultivation Reverting` beside
+a sheet composing the opposite — a part-built meter with nobody on the tile is a different state.
 
 **THE DRAG CONTRACT IS PINNED BY A PNG-LESS TRIPLE** on `floor_chart_drawn_down`, since no frame can
 show it: the harness drives `floor_changed(f, committed = false)` on the live chart, then asserts the
