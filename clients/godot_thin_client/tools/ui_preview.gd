@@ -1008,9 +1008,6 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("food_tile")
-	# THE FORAGE HALF of the compose-order invariant (see `_compose_spine`): capture this sheet's control
-	# spine, to be compared against the local-hunt sheet's when that renders further down.
-	_record_compose_spine(COMPOSE_SPINE_KEY_FORAGE)
 
 	# State 2-crop — the SAME tile once a band has committed it under Cultivate/Sow, WITH THE BUILD
 	# STILL RUNNING (flora roster S1 + issue #433). A `Crop: Wild Grain` row appears ABOVE the basket
@@ -1173,16 +1170,43 @@ func _ready() -> void:
 	await _save("river_tile_none")
 
 	# ---- Cultivate: the forage INVESTMENT rung (gated, then unlocked) ----------------------------
-	# State 2-cultivate-locked — the faction has NOT finished learning Cultivation (the top-bar meter
-	# reads "Cultivation ▰▰▰… learning"): the 🌱 Cultivate option is still SHOWN in the picker, greyed,
-	# with "🌱 Cultivate — Cultivation knowledge 55% — ♻ Sustain-forage a Thriving patch to learn it"
-	# spelled out under the row. The player learns the rung exists, how far along the track is, AND the
-	# action that finishes it, BEFORE they can use it.
+	# State 2-cultivate-locked — **THE KNOWLEDGE-SUPPRESSION RULE'S OWN FRAME, on the plant web.** The
+	# faction has NOT finished learning Cultivation (the top-bar meter reads "Cultivation ▰▰▰…
+	# learning") and the patch is Thriving and wild, so KNOWLEDGE is the only thing blocking the rung —
+	# and this sheet renders no improvement control at all for that.
+	#
+	# **THE FRAME'S SUBJECT MOVED WITH THE RULE, and it is a progression rather than a hole.** It used
+	# to be the gated control's reason line ("🌱 Your people know Cultivation 55% — ♻ forage a wild
+	# patch to learn it"). That sentence was both redundant and vacuous HERE: the aside two rows up
+	# states the same lesson live and quantified, and its remedy — forage a wild patch — names the very
+	# work this sheet is composing, so it told the player to do what they were in the middle of doing.
+	# What the frame shows now is the pair that has to hold TOGETHER: nothing is offered that the sim
+	# would refuse, and the aside is still naming the lesson being earned. A SOURCE gate is untouched
+	# and still leads a control — `improvement_offered_gated` and `forage_sow_locked` are those frames.
 	_hud._compose.set_forage_count(1)
 	_show_tile(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate_locked")
+	# **ASKED OF THE WHOLE CONTROL FAMILY, not of the Cultivate rung.** `_find_improvement_control`
+	# answers null for a rung merely spelled differently, so a per-rung form of this passes on a sheet
+	# that renders some OTHER rung's control; `IMPROVEMENT_CONTROL_META` rides all four states the
+	# widget can be in, so this says "no improvement control, of any rung, in any state".
+	_assert_hud("a rung blocked ONLY on knowledge renders NO improvement control on this sheet",
+		_find_meta_node(_hud._drawercompose._compose_sheet,
+			HudWidgets.IMPROVEMENT_CONTROL_META) == null)
+	# The visible symptom of getting this wrong, and why it is asserted separately: dropping the reason
+	# WITHOUT suppressing the control leaves an unchecked, live box over a live crop list — the sheet
+	# inviting a commitment the sim rejects, which is strictly worse than the line that was cut.
+	_assert_hud("…and no crop list beneath it, the sheet offering nothing it cannot commit",
+		_find_crop_row(_hud._drawercompose._compose_sheet, GATED_CROP_NEEDLE) == null)
+	# **THIS IS WHAT MAKES THE REMOVAL A PROGRESSION.** The rung is not merely hidden: the aside names
+	# the very craft whose absence suppressed the control, live, in the same frame. Read BY META — the
+	# aside's siblings move with the floor too, so a whole-aside search says nothing about this line.
+	_assert_hud("…while the aside still names the lesson being earned, so the rung is not silent",
+		_teaching_line(_hud._drawercompose._compose_sheet).contains(
+			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_FORAGE][
+				SourceForecast.IMPROVEMENT_NONE])))
 
 	# Learning Cultivation crosses 0.55 → 1.0 between snapshots: the one-shot command-feed nudge fires
 	# ("Cultivation learned — The Cultivate policy is now available on Thriving patches."), visible in
@@ -1197,6 +1221,17 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_cultivate")
+	# THE FORAGE HALF of the compose-order invariant (see `_compose_spine`): capture this sheet's control
+	# spine, to be compared against the local-hunt sheet's when that renders further down.
+	#
+	# **CAPTURED HERE AND NOT ON `food_tile`, WHERE IT USED TO BE — the spine must be taken where the
+	# sheet carries every control it can carry.** `food_tile` renders at Cultivation 55%, i.e. a rung
+	# blocked on KNOWLEDGE ALONE, and this sheet now builds no improvement control for that; comparing
+	# that three-control spine against the local hunt's four would fail an ORDER assertion for a reason
+	# that has nothing to do with order. This state is the same sheet one snapshot later, with the
+	# knowledge complete and the rung composed — so both spines are full, and the equality is a real
+	# claim about sequence again.
+	_record_compose_spine(COMPOSE_SPINE_KEY_FORAGE)
 
 	# State 2-crop-picker — THE CROP PICKER (flora roster S1), on the longest basket the sim produces
 	# (5 named plants). Under 🌱 Cultivate the selection must land on the HIGHEST-SHARE LEGAL row —
@@ -1463,12 +1498,19 @@ func _ready() -> void:
 	await _save("forage_cultivate_stressed")
 
 	# ---- Sow + the Field: plant RUNG 3 (slice 6b) -------------------------------------------------
-	# State 6b-sow-locked — Seed Selection is only 12% learned, so ▦ Sow greys. On this ordinary
-	# prairie the ground ALSO refuses seed, so this is the MULTI-reason layout and — more to the point
-	# — it shows the two reasons a player must tell apart: one is fixed by PRACTICE (work a Tended
-	# Patch), the other only by MOVING somewhere else. No other rung on either ladder has the latter.
+	# State 6b-sow-locked — Seed Selection is only 12% learned AND this ordinary prairie refuses seed,
+	# so BOTH kinds of reason are live at once: one fixed by PRACTICE (work a Tended Patch), one only
+	# by MOVING somewhere else. No other rung on either ladder has the latter.
+	#
+	# **THAT PAIR IS WHY THIS FRAME PINS THE SUPPRESSION RULE, not merely the survival of it.** The
+	# compose sheet renders the SOURCE reason and drops the KNOWLEDGE one (the aside states that lesson
+	# live and quantified two rows up, and its remedy names the very work this sheet is composing), so
+	# a frame carrying only a source gate could not tell "the knowledge reason was suppressed" from
+	# "there was no knowledge gate to begin with". Here there provably was one — it leads the gate
+	# builder's array — and the control still leads with the ground's refusal.
 	_hud.update_intensification([{
-		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.12, "penning": 0.0,
+		"faction": 0, "cultivation": 1.0, "herding": 1.0,
+		"seed_selection": SOW_LOCKED_SEED_SELECTION, "penning": 0.0,
 	}])
 	# **THE TILE HAS TO BE A TENDED ONE NOW** (issue #442). Only ONE improvement is ever offered — the
 	# source's next rung — so on a WILD patch with Cultivation known, Cultivate is what the control
@@ -1482,14 +1524,25 @@ func _ready() -> void:
 	_compose_forage(_tended_tile_fixture())
 	await _settle()
 	await _save("forage_sow_locked")
-	# The gated rung still TEACHES IN FULL — the reason is spelled out beneath the unchecked box, which
-	# is the whole point of showing a gated improvement rather than hiding it, and it survived the move
-	# off the picker unchanged.
+	# A rung blocked on the SOURCE still TEACHES IN FULL — the reason is the control's own text, which
+	# is the whole point of showing a gated improvement rather than hiding it.
 	var sow_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
-	_assert_hud("a gated improvement is SHOWN, never hidden — the rung stays discoverable",
+	_assert_hud("a SOURCE-gated improvement is SHOWN, never hidden — the rung stays discoverable",
 		sow_box != null and not (sow_box is CheckBox))
-	_assert_hud("…with its unmet prerequisite as the control's OWN text, not an offer above it",
-		sow_box is Label and (sow_box as Label).text.contains("Seed Selection"))
+	_assert_hud("…with that unmet prerequisite as the control's OWN text, not an offer above it",
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_SOW)
+			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_SOW),
+				String(HudFloraVocab.SOW_REFUSAL_REASONS[SOW_LOCKED_REFUSAL_KEY])])
+	# THE OTHER HALF OF THE SAME CLAIM, and it is not a restatement: the knowledge reason is FIRST in
+	# the gate builder's array, so the assertion above passing already proves it was not the LEAD — but
+	# it says nothing about the note slot beneath, where a second reason renders. Asked of the whole
+	# sheet, because "suppressed" means it appears NOWHERE, not merely not on the lead line.
+	_assert_hud("…and the KNOWLEDGE reason it would otherwise lead with appears nowhere on the sheet",
+		not _has_label_containing(_hud._drawercompose._compose_sheet,
+			HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
+				HudFormat.progress_percent(SOW_LOCKED_SEED_SELECTION),
+				FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]))
 	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
 	_assert_hud("…above a DONE label for the rung already built",
 		_find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate") is Label)
@@ -2052,16 +2105,25 @@ func _ready() -> void:
 	_assert_hud("…and the NEXT rung's LIVE checkbox sits beneath it",
 		next_rung is CheckBox and not (next_rung as CheckBox).disabled)
 
-	# State 442-offered-gated — the OFFERED state with an unmet prerequisite. A gated improvement is
-	# SHOWN, UNCHECKED and EXPLAINED, exactly as a gated rung always was: discovering the rung exists and
-	# what it costs to unlock must not require already having unlocked it.
+	# State 442-offered-gated — the OFFERED state with an unmet prerequisite. A SOURCE-gated improvement
+	# is SHOWN, UNCHECKED and EXPLAINED: discovering the rung exists and what it costs to unlock must
+	# not require already having unlocked it.
+	#
+	# **THE FIXTURE MOVED FROM THE KNOWLEDGE GATE TO A SOURCE GATE, and that is the rule change rather
+	# than a weakening.** It staged a wild Thriving patch with Cultivation 35% known, i.e. a rung gated
+	# on KNOWLEDGE ALONE — and the compose sheet now renders NO control there at all (the aside two
+	# rows up says the same lesson live and quantified, and the reason's remedy named the very work the
+	# sheet was composing). A Stressed patch with Cultivation fully known keeps this frame's actual
+	# subject — the gated control's SHAPE — on a gate that survives. The suppressed case is not lost
+	# either: `forage_cultivate_locked` already staged exactly this fixture and is now the frame the
+	# suppression rule is judged on.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
 	_hud._compose.reset_forage_source()
 	_hud.update_intensification([{
-		"faction": 0, "cultivation": 0.35, "herding": 1.0, "seed_selection": 0.0, "penning": 0.0,
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": 0.0,
 	}])
-	_show_tile(_food_tile_fixture())
-	_compose_forage(_food_tile_fixture())
+	_show_tile(_stressed_tile_fixture())
+	_compose_forage(_stressed_tile_fixture())
 	await _settle()
 	await _save("improvement_offered_gated")
 	var gated_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
@@ -2073,8 +2135,14 @@ func _ready() -> void:
 		gated_box != null)
 	_assert_hud("…as a LABEL rather than a checkbox, because it is a state and not a choice",
 		not (gated_box is CheckBox))
+	# Matched WHOLE, not by needle: this reason is the one the ecology raises, and a `contains` on a
+	# fragment would still pass if the remedy clause (the half that says what to DO) went missing.
 	_assert_hud("…whose own text is the REASON, so nothing offers what cannot be taken",
-		gated_box is Label and (gated_box as Label).text.contains(CULTIVATION_LOCKED_NEEDLE))
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CULTIVATE),
+				HudFloraVocab.GATE_REASON_PATCH_THRIVING_FORMAT % String(
+					_stressed_tile_fixture()["patch_ecology_phase"]).capitalize()])
 	_assert_hud("…and the offer wording is gone entirely, not merely greyed",
 		not _has_label_containing(_hud._drawercompose._compose_sheet, GATED_OFFER_NEEDLE))
 	# THE CROP LIST IS PART OF COMMITTING, so a refused commitment offers none. Shipped once with the
@@ -2084,6 +2152,7 @@ func _ready() -> void:
 	# CONFIGURATION goes. Found in play, not by the harness, which is why the assertion exists now.
 	_assert_hud("…and offers no crop to commit to, committing being what is refused",
 		_find_crop_row(_hud._drawercompose._compose_sheet, GATED_CROP_NEEDLE) == null)
+
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 1.0,
 	}])
@@ -2409,6 +2478,12 @@ func _ready() -> void:
 	# frames is the faction's Penning. That is the whole claim — Corral is gated on PENNING and on
 	# nothing else — and it is why Herding is fully known in both.
 	#
+	# **WHAT MOVES BETWEEN THE HALVES IS NOW THE CONTROL'S EXISTENCE, not its shape.** A gated Corral
+	# can only ever be gated on KNOWLEDGE here (the SOURCE half is unreachable — see below), and this
+	# sheet renders no control for a knowledge-only gate, so the A/B reads "no control" → "a live box"
+	# rather than "a Label" → "a live box". The claim it exists to make is unchanged and, if anything,
+	# sharper: the ANIMAL is identical across the two, so Penning alone is what produces the offer.
+	#
 	# **THE FIXTURE HAD TO CHANGE, not the description** (issue #442). These two frames used to stage a
 	# 40%-tamed herd and document a gated Corral wearing its "This herd is 40% tamed" SOURCE reason; on
 	# a herd that is not yet tamed the control now offers 🐾 Tame — the next rung — so no Corral gate
@@ -2417,11 +2492,13 @@ func _ready() -> void:
 	# also why the SOURCE half of the gate is no longer reachable in this control at all: the moment it
 	# would apply, Tame is what is offered instead, and the remedy is a checkbox rather than a sentence.
 	#
-	# State 3c-corral-gated — the KNOWLEDGE half, which IS reachable: the herd is ready and the people
-	# are not. 🐄 Corral renders as a Label whose own text is the reason — "Your people know Penning
-	# 35% — ♻ Sustain-hunt a tamed herd to learn it" — beneath the ◎ Pastoral DONE label for the rung
-	# this herd has already climbed. The two meters that reason bridges are the subject of
-	# `two_meter_split` below.
+	# State 3c-corral-gated — **THE SUPPRESSION RULE'S OWN FRAME, on the animal web**, and the herd is
+	# what makes it worth having beside the plant one: the animal is READY and the people are not, so
+	# nothing about the source explains the missing control. 🐄 Corral renders NOT AT ALL — the reason
+	# it would carry ("Your people know Penning 35% — ♻ hunt a tamed herd to learn it") is the lesson
+	# the aside is already stating live, and its remedy names the very hunt this sheet is composing.
+	# What DOES render is the ◎ Pastoral DONE label for the rung this herd has climbed, which is what
+	# keeps the absence specific rather than the whole control family having vanished.
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 0.0, "penning": CORRAL_GATE_PENNING,
 	}])
@@ -2430,20 +2507,29 @@ func _ready() -> void:
 	_compose_herd(_corral_locked_herd_fixture())
 	await _settle()
 	await _save("herd_corral_gated")
-	# ASKED OF THE CONTROL, never of the sheet at large: "Penning" also appears in a hint's craft clause
-	# and in the top-bar strip, so a whole-sheet text search proves nothing about the gate (it is
-	# exactly how the `two_meter_split` assertion below used to pass for the wrong reason).
 	var corral_gated := _find_improvement_control(_hud._drawercompose._compose_sheet,
 		SourceForecast.IMPROVEMENT_CORRAL)
-	_assert_hud("an unaffordable Corral is SHOWN as a state, not offered as a choice",
-		corral_gated is Label and not (corral_gated is CheckBox))
-	_assert_hud("…and the reason on it is PENNING at its live percent, never the fully-known Herding",
-		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
-			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
-				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
-				HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
-					HudFormat.progress_percent(CORRAL_GATE_PENNING),
-					FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]])
+	# **THE FAILURE THIS CATCHES IS AN OFFER, not a hidden Label.** Suppressing the reason without
+	# suppressing the control leaves an unchecked, live `Pen this herd · then 1.50 food` box on a
+	# faction 35% of the way through Penning — a commitment the sim rejects — so the assertion is
+	# ABSENCE, and the DONE label below is what proves the sheet did not simply fail to build.
+	_assert_hud("a Corral blocked ONLY on knowledge renders NO improvement control on this sheet",
+		corral_gated == null)
+	# The whole reason string, so this is safe to ask of the SHEET AT LARGE where the bare word
+	# "Penning" is not (it also appears in the top-bar strip and in a hint's craft clause — exactly how
+	# the `two_meter_split` assertion below once passed for the wrong reason). Suppressed must mean it
+	# appears NOWHERE, including in the note slot beneath a control.
+	_assert_hud("…and the knowledge reason it would have carried appears nowhere on the sheet",
+		not _has_label_containing(_hud._drawercompose._compose_sheet,
+			HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
+				HudFormat.progress_percent(CORRAL_GATE_PENNING),
+				FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]))
+	# …and the removal is a progression rather than a hole, on this web too: the ASIDE is naming the
+	# craft this herd's standing rung teaches — penning — in the same frame, live.
+	_assert_hud("…while the aside still names the lesson being earned, so the rung is not silent",
+		_teaching_line(_hud._drawercompose._compose_sheet).contains(
+			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
+				SourceForecast.IMPROVEMENT_TAME])))
 	# …and the rung it has already climbed reads as the STATE it is, above the one it cannot start.
 	_assert_hud("…beneath the DONE label for the rung this herd has climbed",
 		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME).contains(
@@ -2556,8 +2642,14 @@ func _ready() -> void:
 	#     by practice. It appears NOWHERE else — never in the drawer below.
 	#   • PER-SOURCE PROGRESS — this herd's own "Husbandry: 🐄 Domesticated" row, down in its drawer.
 	#     Local to THIS animal, and it decays if abandoned.
-	# The bridge between them is the gated 🐄 Corral's reason line, which names the knowledge, its live
-	# percent, and the practice that fills it — the one line that teaches the whole ladder.
+	# The bridge between them is the readout's ASIDE — the teaching line, which names the craft this
+	# herd's standing rung is earning, live, on the sheet where the work is composed.
+	#
+	# **THAT BRIDGE USED TO BE THE GATED 🐄 CORRAL'S REASON LINE, and it is gone from this sheet.** A
+	# knowledge-only gate renders no control here at all, so the sheet no longer carries a knowledge
+	# PERCENT anywhere — that number lives in the top-bar strip alone, which is the first assertion
+	# below. The reason string itself is unchanged and still rendered by every other surface that shows
+	# a gate (`RungGates.hunt_gates` is untouched); what is pinned here now is the aside.
 	#
 	# **THE HERD IS FULLY TAMED, and it has to be** (issue #442). The frame staged a 40%-tamed herd
 	# while the bridge line was a rung of the policy picker; the improvement control offers the NEXT
@@ -2589,16 +2681,20 @@ func _ready() -> void:
 	_assert_hud("…and no knowledge percent leaks into the drawer, where it would read as a stat of the animal",
 		not _has_label_containing(_hud.occupant_detail,
 			String(TopBarReadouts.KNOWLEDGE_TRACK_LABELS[HudFloraVocab.KNOWLEDGE_TRACK_PENNING])))
-	# THE BRIDGE — the one line where the two meet, and the ONE place a knowledge percent reaches the
-	# sheet. Read off the Corral control itself, at its live percent, so neither the hint text nor the
-	# top-bar strip can satisfy it.
-	_assert_hud("…and the gated Corral's own text is the bridge: the craft, its live percent, the practice",
-		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
-			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
-				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_CORRAL),
-				HudFloraVocab.GATE_REASON_PENNING_KNOWLEDGE_FORMAT % [
-					HudFormat.progress_percent(TWO_METER_PENNING),
-					FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]])
+	# **THE GATED-CORRAL BRIDGE ASSERTION IS REMOVED, NOT WEAKENED.** It read the gated Corral control's
+	# own face — "Your people know Penning 45% — ♻ hunt a tamed herd to learn it" — and the compose
+	# sheet renders no control at all for a knowledge-only gate, so its subject no longer occurs here.
+	# The suppression itself is pinned on `herd_corral_gated` (absence + the reason nowhere on the
+	# sheet); the reason STRING is still `RungGates.hunt_gates`' and still rendered wherever a gate
+	# reason is shown outside this sheet.
+	#
+	# THE BRIDGE, as it now stands — the aside's teaching line, read BY META so neither the hint text
+	# nor the top-bar strip can satisfy it. It names the CRAFT and not the percent, which is the honest
+	# claim: the sheet is where the lesson is being earned, the strip is where its progress is read.
+	_assert_hud("…and the aside's teaching line is the bridge: the craft this herd's rung teaches",
+		_teaching_line(_hud._drawercompose._compose_sheet).contains(
+			String(SourceForecast.RUNG_LESSONS[SourceForecast.SOURCE_KIND_HERD][
+				SourceForecast.IMPROVEMENT_TAME])))
 
 	# State 6b-tame — the ◎ Tame affordance itself: a 6th option in the LOCAL hunt picker, beside
 	# Sustain/Surplus/Deplete/Eradicate/Corral, ENABLED (Herding is known) and selected on a
@@ -5361,7 +5457,6 @@ const IMPROVEMENT_DEAL_SEPARATORS := 2
 const FORECAST_THEN_NEEDLE := IMPROVEMENT_DEAL_MIDDLE_NEEDLE
 
 const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
-const CULTIVATION_LOCKED_NEEDLE := "know Cultivation"
 ## A crop `_food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
 ## gated offer. Naming a real crop matters: a needle no basket contains would make the assertion pass
 ## whether the list rendered or not.
@@ -5381,6 +5476,12 @@ const RUNG_BUILDING_NOTHING := ""
 ## frame quoting the other one's percent fails rather than passing off a shared constant.
 const CORRAL_GATE_PENNING := 0.35
 const TWO_METER_PENNING := 0.45
+## `forage_sow_locked`'s two gate inputs, named for the same reason: the frame asserts the rendered
+## SOURCE reason against `SOW_REFUSAL_REASONS[…]` and the ABSENCE of the knowledge reason at this
+## exact percent, so the fixture and the expected strings are one value each rather than two that can
+## drift apart. The refusal key is `_food_tile_fixture`'s own (`_tended_tile_fixture` inherits it).
+const SOW_LOCKED_REFUSAL_KEY := "too_dry"
+const SOW_LOCKED_SEED_SELECTION := 0.12
 ## The crew the two zero-crew submits are composed at. Named because 0 is the WHOLE subject of those
 ## frames — it is the sim's unassign on a worked source and a no-op on an unworked one — and a bare 0
 ## beside `COMPOSE_COUNT_UNSET` reads like an omission.

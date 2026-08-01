@@ -275,5 +275,27 @@ static func _ready(policy: String) -> Dictionary:
 ## One faction-knowledge track's 0..1 progress out of the caller's `knowledge` dict, 0.0 when absent.
 ## A missing track is "not learned", never "learned" — an absent key must gate, not open, or a
 ## snapshot that omits a track would silently unlock every rung it guards.
+## **THE KNOWLEDGE TRACK EACH RUNG GATES ON** — one knowledge per transition (`§4.3`), so this is a
+## map and not a search. It is what lets a caller tell a knowledge gate apart from a SOURCE gate
+## without reading the reason's words.
+const RUNG_KNOWLEDGE_TRACKS := {
+    SourceForecast.IMPROVEMENT_CULTIVATE: HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION,
+    SourceForecast.IMPROVEMENT_SOW: HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
+    SourceForecast.IMPROVEMENT_TAME: HudFloraVocab.KNOWLEDGE_TRACK_HERDING,
+    SourceForecast.IMPROVEMENT_CORRAL: HudFloraVocab.KNOWLEDGE_TRACK_PENNING,
+}
+
+## **Is this rung blocked on KNOWLEDGE specifically?** — the same `track < KNOWLEDGE_COMPLETE` test the
+## gate builders above make, asked on its own so a caller can drop the knowledge reason without
+## matching its text. The gate builders append the knowledge reason FIRST, so when this answers `true`
+## the reason to drop is `reasons[0]`.
+##
+## Its one caller is the compose sheet, where that reason is BOTH redundant and vacuous: the aside
+## states the same lesson live and quantified, and the remedy ("forage a wild patch to learn it") names
+## the very work the sheet is composing. Every other surface keeps it — see `labor-ui.md`.
+static func knowledge_gate_unmet(rung: String, knowledge: Dictionary) -> bool:
+    var key := String(RUNG_KNOWLEDGE_TRACKS.get(rung, ""))
+    return key != "" and track(knowledge, key) < HudConst.KNOWLEDGE_COMPLETE
+
 static func track(knowledge: Dictionary, key: String) -> float:
     return float(knowledge.get(key, 0.0))

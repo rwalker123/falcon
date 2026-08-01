@@ -616,6 +616,29 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # axis is still visibly present and still identifiable. What is lost is the payoff terms as
     # motivation ("here is what it would pay"); that is deliberate — a number you cannot act on is
     # noise at the moment you are told you cannot act, and the rung's tooltip still carries its hint.
+    # **A KNOWLEDGE gate renders NOTHING on this sheet, and that is not the same as hiding it.** The
+    # aside two rows up already states the lesson live and quantified ("Teaching cultivation at ×1.38
+    # — a higher floor teaches faster"), and the reason's remedy — *forage a wild patch to learn it* —
+    # names the very work this sheet is composing. So the line told the player to do what they were in
+    # the middle of doing, under a sentence that had already said it better. Discovery of the rung is
+    # not lost: the aside names the lesson while it is being earned, and the checkbox appears the turn
+    # the knowledge completes.
+    #
+    # **Only the knowledge reason goes.** A SOURCE gate is a fact the player cannot learn anywhere
+    # else on this sheet and cannot fix by working — this ground will never take seed, this patch is
+    # Stressed, this animal will never be tamed — so those still render, and still lead the control.
+    # `RungGates.knowledge_gate_unmet` is the same `track < KNOWLEDGE_COMPLETE` test the gate builders
+    # make, asked structurally rather than by matching the reason's words.
+    if not reasons.is_empty() and RungGates.knowledge_gate_unmet(rung, _player_knowledge()):
+        reasons = reasons.slice(1)
+        # **AND WITH NOTHING LEFT, THE CONTROL DOES NOT RENDER AT ALL — falling through here would
+        # OFFER the rung.** Dropping the reason without this return leaves an unchecked, live,
+        # clickable box (with its crop picker beneath it on the plant web) for a build the sim will
+        # reject outright: strictly worse than the sentence that was removed, and invisible to a
+        # reader of the slice above. Suppressing the reason and suppressing the control are ONE
+        # change, not a change plus a consequence.
+        if reasons.is_empty():
+            return
     if not reasons.is_empty():
         target.add_child(HudWidgets.build_improvement_control(rung,
             HudWidgets.IMPROVEMENT_STATE_GATED,
