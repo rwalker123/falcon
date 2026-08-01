@@ -168,8 +168,13 @@ func _emit_improvement(band: Dictionary, kind: String, composed: String, standin
 ## meat, and clamping a per-herd preview with it quotes a positive food rate against a wolf's all-zero
 ## food ceilings. The sim's own doc comments now say exactly this.
 ## Resident-band only: an EXPEDITION's trip is never a rate division (see `SourceForecast.hunt_trip_forecast`).
-func _hunt_take_rate(herd: Dictionary, floor: float, workers: int) -> Dictionary:
-    var rates := SourceForecast.herd_axis_rates(herd, floor)
+##
+## **`improvement` IS THE CREW'S OWN DIP** — while a Tame or a Corral runs the sim pays
+## `workers × per_worker × build_dip`, so a take priced without it quotes ~4× what the herd will hand
+## over. It is the caller's already-live verb (`SourceForecast.live_improvement`), never a raw composed
+## one: a rung this herd has already climbed dips nothing.
+func _hunt_take_rate(herd: Dictionary, floor: float, workers: int, improvement: String) -> Dictionary:
+    var rates := SourceForecast.herd_axis_rates(herd, floor, improvement)
     var per_worker_rate := float(rates["per_worker"])
     var ceiling := float(rates["ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
@@ -188,11 +193,18 @@ func _hunt_take_rate(herd: Dictionary, floor: float, workers: int) -> Dictionary
 ## animals/turn that floor's ceiling buys: slow/big game (`g < 1`) lands one animal every ~`1/g` turns; fast game (`g >= 1`) delivers
 ## the "extra" fractional animal every ~`1/frac` turns. Returns 0 when `food_per_animal` / the ceiling is
 ## unknown (caller then skips the line). NEVER scaled by `output_multiplier` — it's a pure herd property.
-func _hunt_avg_window_turns(herd: Dictionary, floor: float) -> int:
+func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String) -> int:
     # On the component the species pays: an inedible quarry's `food_per_animal` is honestly 0, so a
     # food-only derivation returns 0 and the disclaimer silently disappears from a wolf's picker even
     # though its delivery is every bit as lumpy. The animal COUNT is identical on either component.
-    var rates := SourceForecast.herd_axis_rates(herd, floor)
+    #
+    # **THE VERB TRAVELS FOR THE AXIS, NOT FOR THE SPAN.** The two terms below — the ceiling and the
+    # one-animal quantum — are undipped by construction (the dip rides the crew term alone), so the
+    # window this returns is unchanged by a build, which is correct: it is a property of the FLOOR and
+    # the species, deliberately not of the crew. What the verb buys is that the axis is chosen from the
+    # same dipped vector the take's is, so the span can never end up quoting the rhythm of a product the
+    # take beside it is not measured in.
+    var rates := SourceForecast.herd_axis_rates(herd, floor, improvement)
     var fpa := float(rates["per_animal"])
     var ceiling := float(rates["ceiling"])
     if fpa <= 0.0 or ceiling <= 0.0:
@@ -214,13 +226,23 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float) -> int:
 ## food/turn; `waste_pct` 0..1) or `{available=false}` when a lever/ceiling is absent (caller degrades to
 ## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
 ## are sim exports.
-func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int) -> Dictionary:
+func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+        improvement: String) -> Dictionary:
     # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
     # axis or the arithmetic is nonsense: a wolf's per-animal FOOD quantum is 0 (divide by zero) while
     # its per-animal TRADE quantum is real. `herd_axis_rates` is the single place that choice is made,
     # and it reads the HERD's species-aware per-worker rates — never the cohort's species-blind
     # `hunt_per_worker_provisions`, which is what would re-introduce phantom food here.
-    var rates := SourceForecast.herd_axis_rates(herd, floor)
+    #
+    # **THE DIP MULTIPLIES THE COLLECTION, AND THE QUANTISATION HAPPENS AFTER IT** — the sim's own
+    # order (`hunt_take` composes `workers × per_worker × build_dip`, THEN
+    # `fauna::quantise_animal_take`). It arrives here on `per_worker`, so `collection` below carries it
+    # and the whole-animal branch is taken against the dipped throughput. That is not a scaling of the
+    # answer: below one body the crew falls off the carryable branch entirely, still kills one animal
+    # (the `max(1, …)` this function's else-branch mirrors) and wastes most of it — so a build moves the
+    # WASTE line, not merely the take. Dipping the ceiling, or the delivered figure after quantisation,
+    # produces a number that is wrong in a way that still looks plausible.
+    var rates := SourceForecast.herd_axis_rates(herd, floor, improvement)
     var fpa := float(rates["per_animal"])
     var per_worker := float(rates["per_worker"])
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
@@ -275,8 +297,13 @@ func _format_animal_rate(value: float) -> String:
 ## preset, since the span differs with the floor, and omitted when the window is unknown. The forage
 ## twin fills no note — a patch's take is smooth, and there is nothing to average.
 ##
+## **THE PRESET METRICS THEMSELVES ARE UNDIPPED, AND THAT IS THE RULE RATHER THAN AN OVERSIGHT** — a
+## ceiling is what the herd offers above the floor whether the crew is hunting it or building on it
+## (§3.1). `improvement` is threaded in for the WINDOW alone, which resolves its axis through
+## `herd_axis_rates` and must pick the same component the sheet's take does.
+##
 ## Empty when the wire does not describe this herd (older snapshot / non-huntable).
-func _hunt_floor_takes(herd: Dictionary) -> Dictionary:
+func _hunt_floor_takes(herd: Dictionary, improvement: String) -> Dictionary:
     var takes := {}
     var zero_account := SourceForecast.zero_account_of(herd, HudComposeVocab.BARE_FORECAST_PREFIX)
     for preset_variant in SourceForecast.FLOOR_PRESETS:
@@ -291,7 +318,7 @@ func _hunt_floor_takes(herd: Dictionary) -> Dictionary:
         # reading that said an inedible species was worth nothing at every floor.
         var pair := SourceForecast.extractive_take_pair(
             float(forecast["ceiling"]), float(forecast["ceiling_trade"]), 0.0, zero_account)
-        var window_turns := _hunt_avg_window_turns(herd, floor_value)
+        var window_turns := _hunt_avg_window_turns(herd, floor_value, improvement)
         if window_turns > 0:
             pair["note"] = HudComposeVocab.HUNT_AVG_WINDOW_FORMAT % window_turns
         takes[preset] = pair
@@ -303,8 +330,9 @@ func _hunt_floor_takes(herd: Dictionary) -> Dictionary:
 ## `output_multiplier` (morale/discontent productivity) at payout, so the preview is the take rate
 ## scaled by it. Reads income-green when the take is within the herd's sustainable yield (the Sustain
 ## ceiling), WARN-amber with the shared ⚠ when it overdraws — the same flag the allocation rows carry.
-func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float, workers: int) -> String:
-    return _yield_preview_bbcode(_hunt_yield_model(band, herd, floor, workers),
+func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+        improvement: String = SourceForecast.IMPROVEMENT_NONE) -> String:
+    return _yield_preview_bbcode(_hunt_yield_model(band, herd, floor, workers, improvement),
         HudComposeVocab.LOCAL_HUNT_OVERDRAW_SUFFIX)
 
 ## The hunt web's yield model — the animal twin of `_forage_yield_model`, in the same shape.
@@ -314,24 +342,38 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## worth of the same product, and therefore UNIT-FREE: it reads identically for a deer and a wolf
 ## without naming either currency, which is the whole reason it is stated that way. So the row carries
 ## its own `unit` and NO route: a body is not an account, and it has nowhere to be sent.
-func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int) -> Dictionary:
+##
+## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY** — the plant
+## twin's rule, on the animal web. The TAKE carries it (the sim pays a building crew
+## `workers × per_worker × build_dip`, and it is the crew's collection that is then quantised into whole
+## animals); the SUSTAIN reference below must not.
+func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int,
+        improvement: String) -> Dictionary:
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
     # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
     # none of them). It is the floor at which the herd settles on its most productive biomass, so a
     # take above it is one the herd cannot pay forever — which is exactly what the verdict claims.
-    var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.FLOOR_FOOD_PEAK)
+    #
+    # **AND IT IS RESOLVED AT `IMPROVEMENT_NONE` DELIBERATELY — the one call site where the undipped
+    # rates are the correct ones.** This is the LINE THE TAKE IS JUDGED AGAINST, not a take: it is the
+    # herd's own renewable yield, a fact about the animals rather than about the crew. Dipping it would
+    # move the bar down in step with the take it is compared to, the two dips would cancel, and a
+    # building crew could never trip the flag at all — the ⚠ would become vacuous exactly where a
+    # quarter-throughput crew is least able to explain itself.
+    var sustain_rates := SourceForecast.herd_axis_rates(herd, SourceForecast.FLOOR_FOOD_PEAK,
+        SourceForecast.IMPROVEMENT_NONE)
     var sustain_ceiling := float(sustain_rates["ceiling"])
     if sustain_ceiling < 0.0:
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var sustainable := sustain_ceiling * output
-    var dw := _hunt_delivered_and_waste(band, herd, floor, workers)
+    var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
         # back to the smoothed per-turn line rather than regress the readout. It is stated in whichever
         # currency the take is actually in: a trade take never reads as food, so THIS path's row is a
         # real account and wears the account table's unit and route.
-        var take := _hunt_take_rate(herd, floor, workers)
+        var take := _hunt_take_rate(herd, floor, workers, improvement)
         if not bool(take.get("available", false)):
             return {}
         var actual := float(take["rate"]) * output
@@ -347,7 +389,7 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
                 SourceForecast.format_trade(actual) if trade_axis \
                 else SourceForecast.format_yield(actual)),
             YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
-                and _herd_take_draws_down(herd, floor, workers),
+                and _herd_take_draws_down(herd, floor, workers, improvement),
             YIELD_MODEL_WASTE: "",
         }
     # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
@@ -371,20 +413,25 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
         }],
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
-            and _herd_take_draws_down(herd, floor, workers),
+            and _herd_take_draws_down(herd, floor, workers, improvement),
         YIELD_MODEL_WASTE: SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
             if waste_pct > 0.0 else "",
     }
 
-## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd. It is asked
-## at `IMPROVEMENT_NONE` deliberately: every take this model quotes is priced undipped
-## (`herd_axis_rates` composes its forecast at the default improvement), so gating the flag on a
-## DIPPED projection would compare a take against a drawdown the same sheet does not claim. Where a
-## build IS in flight the undipped projection falls faster, which leaves the flag standing — the safe
-## direction for a gate whose only job is to remove a contradiction.
-func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int) -> bool:
+## The hunt web's half of the overdraw GATE — `SourceForecast.take_draws_down` on a herd, asked at the
+## crew's LIVE improvement.
+##
+## **A GATE MUST WALK THE SAME CREW THE TAKE IT GATES IS PRICED FOR.** It was asked at
+## `IMPROVEMENT_NONE` "to match its undipped takes" — a premise that held only while `herd_axis_rates`
+## silently dropped the verb. Now that the take carries the dip, an undipped projection would walk a
+## crew four times the one being quoted, so it would report a herd falling that this crew is nowhere
+## near able to draw down, and the ⚠ would fire over a take that takes less than the herd regrows. The
+## verb is the caller's already-live one; `take_draws_down` runs it through `build_dip`, so a rung this
+## herd has already climbed still dips nothing.
+func _herd_take_draws_down(herd: Dictionary, floor: float, workers: int,
+        improvement: String) -> bool:
     return SourceForecast.take_draws_down(herd, SourceForecast.SOURCE_KIND_HERD, "", floor, workers,
-        SourceForecast.IMPROVEMENT_NONE)
+        improvement)
 
 ## The LOCAL forage patch's live per-turn yield preview — the plant twin of `_local_hunt_preview_bbcode`.
 ## Forage is SMOOTH (no whole-animal rhythm — no lumpy carry, no waste), so the line is just the
@@ -1147,7 +1194,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # learn from it). Worker-independent on both branches (the expedition's is the max over party sizes
     # of delivered / trip_turns, so it never changes as the Party stepper steps).
     var floor_takes := SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()) if is_expedition \
-        else _hunt_floor_takes(herd)
+        else _hunt_floor_takes(herd, composed_improvement)
     # **THE FLOOR FIRST, THEN THE CREW — the SAME vertical grammar the forage sheet reads in.** You
     # choose how hard to pull, then staff it. The cap is recomputed from the composed floor before the
     # stepper renders (a preset click re-renders and may auto-fill the crew) and the forecast below
@@ -1270,7 +1317,8 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # move while the drag runs.
         _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
             func(floor_value: float, crew: int) -> Dictionary:
-                return _hunt_yield_model(band, herd, floor_value, crew),
+                return _hunt_yield_model(band, herd, floor_value, crew,
+                    composed_improvement),
             SourceForecast.LABOR_KIND_HUNT)
         # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
         # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated

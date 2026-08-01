@@ -1466,8 +1466,18 @@ static func herd_yield_axis(herd: Dictionary) -> String:
 ## The herd's per-worker rate, ceiling AT `floor` and one-animal quantum ON THE AXIS IT PAYS —
 ## everything the carry/cadence arithmetic divides by, resolved once so no caller picks a component by
 ## hand. `{axis, per_worker, ceiling, per_animal}`.
-static func herd_axis_rates(herd: Dictionary, floor: float) -> Dictionary:
-    var forecast := forecast_inputs(herd, SOURCE_KIND_HERD, "", floor)
+##
+## **`improvement` IS REQUIRED, and it is required because the default was the bug.** This used to take
+## `forecast_inputs`' `IMPROVEMENT_NONE` default, so every take composed from these rates was priced
+## UNDIPPED while the sim pays `workers × per_worker × build_dip` — a herd mid-Tame or mid-Corral quoted
+## roughly 4× what it would be paid, and the sheet's own worker cap and chart (which DO carry the verb)
+## disagreed with the take beside them. A caller that genuinely wants the undipped rates — the SUSTAIN
+## reference the take is judged against — must now say `IMPROVEMENT_NONE` out loud rather than get it by
+## omission. The dip rides `per_worker` ALONE (`forecast_inputs` → §3.1): `ceiling` and `per_animal` come
+## back undipped either way, so a build changes what the crew CARRIES, never the room or the body it is
+## quantised against.
+static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String) -> Dictionary:
+    var forecast := forecast_inputs(herd, SOURCE_KIND_HERD, "", floor, improvement)
     return {
         "axis": String(forecast["axis"]),
         "per_worker": float(forecast["axis_per_worker"]),

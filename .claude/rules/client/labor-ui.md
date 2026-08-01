@@ -299,6 +299,43 @@ only right if a forager carries ~2 biomass where the sim's own rate says ~6.
   whose regrowth is small beside its carry rounds the whole 4× away (`forage_cultivate_done`, which
   stages the same stale verb, reads `1 hold it after` either way).
 
+### THE ANIMAL TAKE IS QUANTISED **AFTER** THE DIP, SO A BUILD MOVES THE WASTE LINE
+
+`SourceForecast.herd_axis_rates` is the hunt sheet's one resolution of "which component does this
+species pay, and at what rate" — and it took `forecast_inputs`' `IMPROVEMENT_NONE` default, so every
+take composed from it (`_hunt_take_rate`, `_hunt_delivered_and_waste`, `_hunt_avg_window_turns`) was
+priced **undipped** while the worker cap, the chart, both crew targets and the improvement control's
+own deal line — which all carry the composed verb — were not. A herd mid-Tame or mid-Corral quoted
+~2× (the animal rungs' `yield_fraction_while_building` is **0.5**, not the plant rungs' 0.25) what the
+sim would pay, and the sheet contradicted itself inside one card: the deal's *while building* term and
+the readout's take are the same quantity and disagreed. `improvement` is now a **required** parameter
+there, so no call site can take the identity by omission.
+
+- **THE DIP MULTIPLIES THE COLLECTION, AND `quantise_animal_take` RUNS AFTER IT.** The sim composes
+  `collection = workers × per_worker × build_dip` and *then* takes
+  `killed = min(affordable, max(1, carryable))`. That `max(1, …)` is why a build is not a scaling on
+  this web: a dipped crew that can no longer carry a whole body **still kills one and wastes the
+  rest**, so the take falls by less than the dip while the WASTE percentage appears from nothing. A
+  dip applied to the ceiling, or to the delivered figure after quantisation, produces a number that is
+  wrong in a way that still looks plausible.
+- **The SUSTAIN reference stays at `IMPROVEMENT_NONE`, stated out loud** (`_hunt_yield_model`). It is
+  the line the take is *judged against* — the herd's own renewable yield, a fact about the animals —
+  and a bar that moved with the crew's own dip could not judge that crew. Mechanically the ceiling it
+  reads back is dip-invariant anyway (the dip rides `per_worker` alone), so the argument for writing
+  the argument is legibility: without it the site reads as the one call the pass missed, and the
+  "obvious completion" would quietly move the reference onto the dipped vector's axis.
+- **The overdraw GATE takes the live verb too.** `_herd_take_draws_down` was deliberately asked
+  undipped "to match its undipped takes"; that premise died with them, and a gate walking a crew four
+  times the one being quoted reports a drawdown the sheet does not claim.
+- **The frame is `herd_build_dip` + `herd_build_dip_none`, judged as a pair** — a Steppe Runner
+  mid-Tame (the roster's heaviest **tameable** animal; the heavier mammoth is `wild`-ceilinged and can
+  never be tamed, so a Tame composed on one would stage a build the sim refuses) at the shipped rates,
+  with four hunters carrying one whole body undipped and two thirds of one under the build. It reads
+  `≈1 Steppe Runners/turn · ⚠ OVERDRAWS THE HERD` hunting and `≈0.67 · RENEWABLE · ⚠ 33% WASTED`
+  gentling. The herd's regrowth deliberately sits **between the two carries**, which is what makes the
+  gate's verb load-bearing rather than decorative — and the no-build twin is what proves the fix is
+  not simply every number scaled down.
+
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
 The aside's second line states the **live learning rate**, and it is the only thing in the client that
