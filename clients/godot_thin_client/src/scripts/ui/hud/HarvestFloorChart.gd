@@ -136,9 +136,23 @@ func _init() -> void:
 ## Adopt a `SourceForecast.floor_chart_model`. A model with `known == false` draws nothing but its
 ## backing — a source with no capacity, no published curve, or a rung-3 managed one has no floor axis
 ## for this instrument to show.
+##
+## **The cursor is set from `known`, because it is the only affordance the drag has.** The whole plot
+## is the drag target (grabbing a 1px line would be unusable), so nothing about the chart's shape says
+## it is draggable — the pointer has to. `CURSOR_VSIZE` over the entire control is the prototype's
+## `cursor: ns-resize` on the chart element, and it is deliberately NOT scoped to the floor line: the
+## line is where the value IS, not where you have to press. An unknown model keeps the plain arrow,
+## since there is no floor axis to drag.
 func set_model(model: Dictionary) -> void:
 	_model = model
+	mouse_default_cursor_shape = \
+		Control.CURSOR_VSIZE if _has_floor_axis() else Control.CURSOR_ARROW
 	queue_redraw()
+
+## Whether this chart has a dial at all — the one test the cursor, the drag and the keyboard share, so
+## a chart that draws no floor can never be moved by one of them and not the others.
+func _has_floor_axis() -> bool:
+	return bool(_model.get("known", false))
 
 func _draw() -> void:
 	var plot := _plot_rect()
@@ -323,6 +337,12 @@ func _y(plot: Rect2, fraction: float) -> float:
 	return plot.position.y + (1.0 - clampf(fraction, 0.0, 1.0)) * plot.size.y
 
 func _gui_input(event: InputEvent) -> void:
+	# **A chart with no floor axis accepts nothing.** It draws only its backing, so a press on one
+	# would otherwise emit a floor for a source that has none — and the sheet would commit it. The
+	# guard is the same `_has_floor_axis` the cursor reads, so the pointer cannot promise a drag the
+	# handler then refuses.
+	if not _has_floor_axis():
+		return
 	if event is InputEventMouseButton:
 		var button := event as InputEventMouseButton
 		if button.button_index != MOUSE_BUTTON_LEFT:

@@ -149,6 +149,20 @@ while both preview harnesses passed, because their fixture adapter seeds that pa
 `FOW_DISCOVERED_HIDDEN_KEYS` under the one rule the whole patch payload follows. **Appending a source
 field is TWO wirings on the plant web**, and only the second is visible in the panel.
 
+**THE POINTER IS THE DRAG'S ONLY AFFORDANCE, so the whole plot wears `CURSOR_VSIZE`.** The chart is
+drawn, not assembled from grabbable widgets, and the drag target is the entire plot rather than the
+floor line — grabbing a 1px line would be unusable, and the line is where the value IS, not where you
+have to press. So nothing about the chart's shape says it can be dragged and the cursor has to; it is
+the prototype's `cursor: ns-resize` on the chart element, and scoping it to the line would advertise
+a target narrower than the real one. **Reported from play, after the chart had already shipped** —
+a screenshot cannot carry a cursor, so no frame could show its absence and the harness assertion
+(`floor_chart_drawn_down`, sabotage-verified) is the only thing that can see it regress.
+
+`set_model` sets it from `_has_floor_axis()`, the same test `_gui_input` refuses on, so a chart with
+no dial keeps the plain arrow **and** accepts no press — the pointer can never promise a drag the
+handler then declines. A model with `known == false` draws only its backing, and a press on one used
+to emit a floor for a source that has no floor axis, which the sheet would then commit.
+
 **THE DRAG COMMITS ON RELEASE, and that is a constraint rather than a preference.** Every floor change
 rebuilds the compose controls, which `queue_free`s the chart — and Godot routes motion events to the
 node that took the press, so a rebuild mid-drag ends the drag on the first pixel. `floor_changed`

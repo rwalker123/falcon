@@ -1798,6 +1798,13 @@ func _ready() -> void:
 		is_instance_valid(live_chart))
 	_assert_hud("…and the verdict has re-read against the dragged floor, without that rebuild",
 		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_BLOCKED)
+	# **THE DRAG'S ONLY AFFORDANCE, which no frame can show either.** The whole plot is the drag
+	# target — grabbing a 1px line would be unusable — so nothing about the chart's SHAPE says it can
+	# be dragged, and a screenshot cannot carry a cursor. Reported from play: the pointer stayed an
+	# arrow over the chart where the prototype showed the up/down resize cursor across the whole chart
+	# area. Asserted on the control for the same reason as the pair above.
+	_assert_hud("the chart wears the vertical-resize cursor, so the drag has an affordance at all",
+		live_chart.mouse_default_cursor_shape == Control.CURSOR_VSIZE)
 	# Put the sheet back where the frame above left it (a live change deliberately does not re-render).
 	_hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
 	_compose_forage(drawn_patch)
