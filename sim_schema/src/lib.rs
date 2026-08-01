@@ -281,4 +281,78 @@ mod tests {
             patch.perWorkerBiomass()
         );
     }
+
+    /// **The sampled regrowth curve crosses the wire on both webs, and the two webs are NOT the same
+    /// function.** That asymmetry is the load-bearing part: a patch is pure logistic with a reseed
+    /// floor and no Allee term, so **no sample is negative**; a herd has critical depensation below
+    /// `collapse_fraction`, so its **low samples are negative** and a client must render them as
+    /// decline rather than clamping them.
+    ///
+    /// It is also why the curve is *sampled* instead of published as `r` + thresholds: two different
+    /// functions re-implemented in a language with no tests over them would drift, and both would go
+    /// on drawing a plausible chart. The exception this test guards is the boundary stated in
+    /// `.claude/rules/core_sim/yield-forecast.md` — *terms where a closed form exists, answers where
+    /// one does not*.
+    #[test]
+    fn the_sampled_regrowth_curve_is_non_negative_on_plants_and_negative_below_the_allee_point() {
+        /// A herd's curve: negative in the Allee band, positive above it, peaking at `K/2`. The
+        /// values are a hand-written stand-in for `fauna::net_biomass_delta`'s shape — this test is
+        /// about the WIRE preserving sign and order, not about the model, which `core_sim` owns.
+        const HERD_CURVE: [f32; 5] = [-3.0, -1.5, 6.0, 4.0, 0.0];
+        /// A patch's curve: the `0.0` entry is the reseed floor's lift, so it is positive too.
+        const PATCH_CURVE: [f32; 5] = [0.4, 1.8, 2.4, 1.6, 0.0];
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_aurochs".to_string(),
+                regrowth_samples: HERD_CURVE.to_vec(),
+                ..Default::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                regrowth_samples: PATCH_CURVE.to_vec(),
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
+        let herd_curve: Vec<f32> = herd
+            .regrowthSamples()
+            .expect("the herd publishes a curve")
+            .iter()
+            .collect();
+        assert_eq!(
+            herd_curve,
+            HERD_CURVE.to_vec(),
+            "the herd's curve crosses sample-for-sample, signs intact"
+        );
+        assert!(
+            herd_curve.iter().any(|sample| *sample < 0.0),
+            "the Allee crash must survive the wire — a clamped curve cannot say a herd is dying"
+        );
+
+        let patch = subsistence.foragePatches().expect("patches present").get(0);
+        let patch_curve: Vec<f32> = patch
+            .regrowthSamples()
+            .expect("the patch publishes a curve")
+            .iter()
+            .collect();
+        assert_eq!(patch_curve, PATCH_CURVE.to_vec());
+        assert!(
+            patch_curve.iter().all(|sample| *sample >= 0.0),
+            "plants have no Allee crash, so the plant curve never dips below zero"
+        );
+        assert!(
+            patch_curve[0] > 0.0,
+            "…and its first sample is the reseed floor's lift, not zero"
+        );
+    }
 }

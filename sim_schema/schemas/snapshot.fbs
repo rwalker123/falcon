@@ -1355,6 +1355,34 @@ table ForagePatchState {
   // per-policy rows' per-worker vector still exists for the ACCOUNTS; this is the biomass they are all
   // converted from.
   perWorkerBiomass:float = 0;
+  // --- THE SAMPLED REGROWTH CURVE (appended) -----------------------------------------------------
+  // This source's OWN per-turn regrowth, in BIOMASS, evaluated at evenly spaced fractions of `K`:
+  // sample `i` of `n` is the stock's one-turn delta at `B = i/(n-1) * K`. The x-axis is implicit —
+  // uniform spacing, so it needs no wire field — and a client INTERPOLATES between samples rather
+  // than treating them as the only stocks the source can hold.
+  //
+  // Three things on the panel are all this one curve, which is why it ships once: the *"hold it
+  // after"* crew target (the regrowth at the chosen floor over the crew's carry), the verdict line
+  // ("settles at 62% instead — 11 gatherers would reach the floor"), and the projection under the
+  // floor.
+  //
+  // **THE RULE, AND ITS OTHER HALF.** Where a closed form exists the sim ships the TERMS and the
+  // client evaluates it; where one does not, the sim ships ANSWERS and the client interpolates. The
+  // escapement ceiling above is the first case — `max(0, B - floor*K) * rate` is linear and exact,
+  // which is precisely what let the four stance rows be retired. The growth curve is the second, and
+  // not because it is hard to write down: it is **two different functions**. A patch is pure logistic
+  // with a reseed floor and NO Allee term; a herd has critical depensation below `collapse_fraction`.
+  // Shipping `r` plus the thresholds would put a second copy of both models in a language with no
+  // tests over them, and the drift would be invisible, because either one still draws a plausible
+  // curve. (`RAID_FORECAST_FLOOR_SAMPLES` samples `huntTripEstimates` for the same reason.)
+  //
+  // **THE PEAK OF THIS CURVE IS THE FOOD PEAK** the panel marks at `K/2`. It is deliberately not
+  // published as its own field: one number derived two ways is how the two start disagreeing.
+  // **The `0.0` sample is the RESEED FLOOR's lift, not zero.** A stripped patch is raised to
+  // `reseed_floor_fraction * K` before the logistic step, which is why a plant stand driven to floor
+  // `0` comes back. **No sample is ever negative**: plants have no Allee crash — the herd twin's low
+  // samples are, and that asymmetry is the model.
+  regrowthSamples:[float];
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -1940,6 +1968,35 @@ table HerdTelemetryState {
   // `perWorkerYield`/`perWorkerTrade` already made for the accounts. The cohort field stays: it is
   // still the expedition **outfit** lever, quoted before a target has been chosen.
   perWorkerBiomass:float = 0;
+  // --- THE SAMPLED REGROWTH CURVE (appended) -----------------------------------------------------
+  // This source's OWN per-turn regrowth, in BIOMASS, evaluated at evenly spaced fractions of `K`:
+  // sample `i` of `n` is the stock's one-turn delta at `B = i/(n-1) * K`. The x-axis is implicit —
+  // uniform spacing, so it needs no wire field — and a client INTERPOLATES between samples rather
+  // than treating them as the only stocks the source can hold.
+  //
+  // Three things on the panel are all this one curve, which is why it ships once: the *"hold it
+  // after"* crew target (the regrowth at the chosen floor over the crew's carry), the verdict line
+  // ("settles at 62% instead — 11 gatherers would reach the floor"), and the projection under the
+  // floor.
+  //
+  // **THE RULE, AND ITS OTHER HALF.** Where a closed form exists the sim ships the TERMS and the
+  // client evaluates it; where one does not, the sim ships ANSWERS and the client interpolates. The
+  // escapement ceiling above is the first case — `max(0, B - floor*K) * rate` is linear and exact,
+  // which is precisely what let the four stance rows be retired. The growth curve is the second, and
+  // not because it is hard to write down: it is **two different functions**. A patch is pure logistic
+  // with a reseed floor and NO Allee term; a herd has critical depensation below `collapse_fraction`.
+  // Shipping `r` plus the thresholds would put a second copy of both models in a language with no
+  // tests over them, and the drift would be invisible, because either one still draws a plausible
+  // curve. (`RAID_FORECAST_FLOOR_SAMPLES` samples `huntTripEstimates` for the same reason.)
+  //
+  // **THE PEAK OF THIS CURVE IS THE FOOD PEAK** the panel marks at `K/2`. It is deliberately not
+  // published as its own field: one number derived two ways is how the two start disagreeing.
+  // **THE LOW SAMPLES ARE NEGATIVE, AND THAT IS THE POINT.** Below `collapse_fraction * K` a herd is
+  // past its Allee threshold and declines by `collapse_rate` of its biomass every turn, hunted or
+  // not. **Render them as decline; do NOT clamp them to zero.** The crash is the whole reason floor
+  // `0` ends a herd while it only sets a patch back — the plant twin of this field is non-negative at
+  // every sample.
+  regrowthSamples:[float];
 }
 
 table CommandEventState {

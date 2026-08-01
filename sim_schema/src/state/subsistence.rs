@@ -353,6 +353,20 @@ pub struct HerdTelemetryState {
     /// The animal twin of [`ForagePatchState::per_worker_biomass`]. Appended (append-only).
     #[serde(default)]
     pub per_worker_biomass: f32,
+    /// **This herd's own per-turn regrowth, in biomass, sampled at evenly spaced fractions of `K`** —
+    /// `fauna::net_biomass_delta` on the herd's `herd_ecology`/`herd_capacity`, the same seam
+    /// `regrow_biomass` advances it with. Sample `i` of `n` is the delta at `B = i/(n−1) × K`; the
+    /// x-axis is implicit and a client interpolates between samples.
+    ///
+    /// **The low samples are NEGATIVE** — below `collapse_fraction × K` a herd is past its Allee
+    /// threshold and declines every turn, hunted or not. Render them as decline, never clamped: that
+    /// crash is why floor `0` ends a herd while it only sets a patch back
+    /// ([`ForagePatchState::regrowth_samples`] is non-negative at every sample).
+    ///
+    /// It is sampled rather than published as `r` + thresholds because the two webs are two different
+    /// functions — see the schema comment. Appended (append-only).
+    #[serde(default)]
+    pub regrowth_samples: Vec<f32>,
 }
 
 impl Default for HerdTelemetryState {
@@ -411,6 +425,7 @@ impl Default for HerdTelemetryState {
             fodder_per_biomass: 0.0,
             trade_per_biomass: 0.0,
             per_worker_biomass: 0.0,
+            regrowth_samples: Vec::new(),
         }
     }
 }
@@ -588,6 +603,16 @@ pub struct ForagePatchState {
     /// needs a crew number. Appended (append-only).
     #[serde(default)]
     pub per_worker_biomass: f32,
+    /// **This patch's own per-turn regrowth, in biomass, sampled at evenly spaced fractions of `K`** —
+    /// `fauna::reseeding_logistic_regrowth` on the patch's own `patch_ecology`, the same seam
+    /// `regrow_patch` advances it with, so a tended patch's curve is the one its rung bought. Sample
+    /// `i` of `n` is the delta at `B = i/(n−1) × K`; the x-axis is implicit and a client interpolates.
+    ///
+    /// **The `0.0` sample is the reseed floor's lift, not zero**, and **no sample is ever negative**:
+    /// plants have no Allee crash, which is exactly the asymmetry
+    /// [`HerdTelemetryState::regrowth_samples`] carries on the other side. Appended (append-only).
+    #[serde(default)]
+    pub regrowth_samples: Vec<f32>,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

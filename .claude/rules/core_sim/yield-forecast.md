@@ -157,11 +157,40 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > `sowBuildFraction`** and **`HerdTelemetryState.tameBuildFraction` / `corralBuildFraction`**, each the
 > rung's `yield_fraction_while_building`.
 >
-> **The RAID table is the one place the sim still exports rows**, and for the opposite reason: a
-> raid's trip length is a bounded forward simulation with no closed form, so there is no expression to
-> hand over. `huntTripEstimates` therefore **samples** the continuum at
-> `snapshot::RAID_FORECAST_FLOOR_SAMPLES` × party size, and the constant is named to keep those
-> samples from quietly re-becoming a set of stances — the launch command accepts any floor.
+> ### THE BOUNDARY, stated once — it is the thing a future reader will get wrong
+>
+> **Where a closed form exists the sim ships the TERMS and the client evaluates it; where one does
+> not, the sim ships ANSWERS and the client interpolates between them.** The two halves now sit side
+> by side on the same tables, so the line between them has to be legible:
+>
+> | | shape | why |
+> |---|---|---|
+> | escapement ceiling | **terms** — `biomass`, `carryingCapacity`, `*PerBiomass` | `max(0, B − f·K) × rate` is linear and exact; this is what retired the four stance rows |
+> | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
+> | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
+> | raid trip length | **sampled answers** — `huntTripEstimates` × `RAID_FORECAST_FLOOR_SAMPLES` | a bounded forward simulation; there is no expression to hand over |
+> | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |
+>
+> **`regrowthSamples` is sampled, and NOT because the curve is hard to write down.** It is **two
+> different functions**: a patch is pure logistic with a reseed floor and **no Allee term**, a herd has
+> **critical depensation** below `collapse_fraction`. Publishing `r` plus the thresholds would put a
+> second copy of both models in a language with no tests over them, and the drift would be *invisible*
+> — either implementation still draws a plausible chart. Sampled through the same seams the turn uses
+> (`fauna::reseeding_logistic_regrowth` under `patch_ecology`; `fauna::net_biomass_delta` under
+> `herd_ecology`/`herd_capacity`), so the chart and the turn cannot part company.
+>
+> Three panel readings are all this one curve: the *"hold it after"* crew target (the regrowth at the
+> chosen floor over the crew's carry), the verdict line, and the projection under the floor. Two
+> properties are load-bearing and pinned
+> (`snapshot::subsistence::tests::the_plant_curve_never_declines_and_the_animal_curve_does_below_the_allee_point`):
+> the plant curve is **non-negative at every sample** and its `0.0` entry is the **reseed floor's
+> lift**; the herd curve's low samples are **negative**, and a client must render them as decline
+> rather than clamp them — that crash is why floor `0` ends a herd and only sets a patch back. **The
+> peak of the curve IS the food peak** at `K/2` and is deliberately not published separately: one
+> number derived two ways is how the two start disagreeing. The samples are evenly spaced over
+> `0.0..=1.0` of `K`, so the x-axis is implicit; `REGROWTH_CURVE_SAMPLES` is a display-resolution
+> choice, not a model fact, and — like `RAID_FORECAST_FLOOR_SAMPLES` — is named so a set of readings
+> cannot quietly re-become a set of states.
 >
 > Sim-side that is **`SourceYieldForecast::ceiling_at(floor)`** — one computation, which answers *any*
 > floor because the player drags a continuous one. It is backed by the forecast's **terms**

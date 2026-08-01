@@ -125,6 +125,14 @@ fn create_herds<'a>(
                 .collect();
             Some(builder.create_vector(&entries))
         };
+        // **An EMPTY curve is absent, not a vector of zeros** — the `hunt_trip_estimates` convention
+        // above, and the one that lets a client tell "this source published no curve" from "this
+        // source does not grow", which are different facts.
+        let regrowth_samples = if herd.regrowth_samples.is_empty() {
+            None
+        } else {
+            Some(builder.create_vector(&herd.regrowth_samples))
+        };
         let entry = fb::HerdTelemetryState::create(
             builder,
             &fb::HerdTelemetryStateArgs {
@@ -206,6 +214,9 @@ fn create_herds<'a>(
                 // crew half of the compose sheet divides a ceiling by; see the schema comment for
                 // why it is not derived from `perWorkerYield / provisionsPerBiomass`.
                 perWorkerBiomass: herd.per_worker_biomass,
+                // The sampled regrowth curve — appended last (append-only wire). Negative below the
+                // Allee threshold, by design; see the schema comment.
+                regrowthSamples: regrowth_samples,
             },
         );
         entries.push(entry);
@@ -225,6 +236,12 @@ fn create_forage_patches<'a>(
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
         let committed_display_name = builder.create_string(patch.committed_display_name.as_str());
+        // Absent rather than a vector of zeros — see the herd twin.
+        let regrowth_samples = if patch.regrowth_samples.is_empty() {
+            None
+        } else {
+            Some(builder.create_vector(&patch.regrowth_samples))
+        };
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -267,6 +284,9 @@ fn create_forage_patches<'a>(
                 // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last
                 // (append-only wire). The plant twin of the herd field; `0` in a dead season.
                 perWorkerBiomass: patch.per_worker_biomass,
+                // The sampled regrowth curve — appended last (append-only wire). Never negative on
+                // this web; see the schema comment.
+                regrowthSamples: regrowth_samples,
             },
         );
         entries.push(entry);

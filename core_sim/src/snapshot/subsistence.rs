@@ -1,8 +1,9 @@
 use super::*;
+use crate::fauna::{herd_capacity, herd_ecology, net_biomass_delta, reseeding_logistic_regrowth};
 use crate::forage::{
-    field_fodder, field_trade_goods, forage_per_worker_biomass, patch_fodder_per_biomass,
-    patch_neglect_grace_remaining, patch_provisions_per_biomass, patch_trade_per_biomass,
-    tended_fodder, tended_trade_goods,
+    field_fodder, field_trade_goods, forage_per_worker_biomass, patch_ecology,
+    patch_fodder_per_biomass, patch_neglect_grace_remaining, patch_provisions_per_biomass,
+    patch_trade_per_biomass, tended_fodder, tended_trade_goods,
 };
 use crate::intensification::NO_BUILD_REMAINING_FRACTION;
 
@@ -63,6 +64,79 @@ pub(crate) fn snapshot_sedentarization(
 /// a heavy draw, the food peak, deliberate under-harvest). Adding a sample costs a row per party
 /// size and changes no behaviour; treating a sample as an offered stance would undo the arc.
 pub(crate) const RAID_FORECAST_FLOOR_SAMPLES: [f32; 5] = [0.0, 0.15, 0.30, 0.50, 0.80];
+
+/// **How many points each source's regrowth curve is SAMPLED at** — readings of a continuum, **not**
+/// a set of states, and a **display-resolution choice rather than a model fact**. The growth curve is
+/// continuous; this is how finely the client is handed it.
+///
+/// **Why the curve is sampled at all, when the ceiling is not.** The arc holds one rule with two
+/// halves: *where a closed form exists the sim ships the terms and the client evaluates it; where one
+/// does not, the sim ships answers and the client interpolates between them.* An escapement ceiling
+/// is the first case — `max(0, B − floor·K) × rate` is linear and exact, which is what let the four
+/// stance rows die. A growth curve is the second, and not because it is hard to write down: it is
+/// **two different functions**. A patch is pure logistic with a reseed floor and no Allee term; a
+/// herd has critical depensation below `collapse_fraction`. Publishing `r` and the thresholds would
+/// put a second copy of both models in a language with no tests over them, and the drift would be
+/// invisible because either one still draws a plausible curve.
+///
+/// The samples are **evenly spaced over `0.0..=1.0` of `K`**, so sample `i` sits at
+/// `i / (SAMPLES − 1)` and the x-axis needs no wire field. Changing this number changes the chart's
+/// resolution and nothing else; a client must interpolate between samples rather than treat them as
+/// the only stocks a source can hold.
+pub(crate) const REGROWTH_CURVE_SAMPLES: usize = 11;
+
+/// The fraction of `K` sample `index` is taken at — see [`REGROWTH_CURVE_SAMPLES`] for why the
+/// spacing is uniform and therefore implicit on the wire.
+fn regrowth_sample_fraction(index: usize) -> f32 {
+    index as f32 / (REGROWTH_CURVE_SAMPLES - 1) as f32
+}
+
+/// **The patch's own per-turn regrowth, sampled across its `K`** — through
+/// `fauna::reseeding_logistic_regrowth`, the *same* seam `forage::regrow_patch` advances the stock
+/// with, and on the patch's **own** ecology (`forage::patch_ecology`), so a tended patch's curve is
+/// the one its rung actually bought.
+///
+/// Each entry is a **delta in biomass**: what one Logistics turn adds at that standing stock.
+///
+/// **The `0.0` sample is the reseed floor's lift, not zero.** A stripped patch is raised to
+/// `reseed_floor_fraction × K` before the logistic step, which is exactly why a plant stand driven to
+/// floor `0` comes back while a herd driven there dies — see [`herd_regrowth_samples`], whose low
+/// samples are negative. **No sample is ever negative here**: plants have no Allee crash.
+///
+/// **The peak of this curve IS the food peak** the panel marks at `K/2`. It is not published
+/// separately, deliberately: one number derived two ways is how the two start disagreeing.
+fn patch_regrowth_samples(patch: &ForagePatch, forage: &ForageLaborConfig) -> Vec<f32> {
+    let ecology = patch_ecology(patch, forage);
+    let cap = patch.carrying_capacity;
+    (0..REGROWTH_CURVE_SAMPLES)
+        .map(|index| {
+            let standing = regrowth_sample_fraction(index) * cap;
+            reseeding_logistic_regrowth(
+                standing,
+                cap,
+                ecology.regrowth_rate,
+                forage.reseed_floor_fraction,
+            ) - standing
+        })
+        .collect()
+}
+
+/// **The herd's own per-turn regrowth, sampled across its `K`** — the animal twin of
+/// [`patch_regrowth_samples`], through `fauna::net_biomass_delta` on `herd_ecology` /
+/// `herd_capacity`: the same seam `fauna::regrow_biomass` advances the herd with, so a pastoral or
+/// penned herd's curve is the one its rung bought.
+///
+/// **The low samples are NEGATIVE, and that is the point.** Below `collapse_fraction × K` a herd is
+/// past its Allee threshold and declines by `collapse_rate` of its biomass every turn, hunted or not.
+/// A client must render those as **decline** and must not clamp them to zero: the crash is the whole
+/// reason floor `0` ends a herd while it only sets a patch back.
+fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
+    let ecology = herd_ecology(herd, fauna);
+    let cap = herd_capacity(herd, fauna);
+    (0..REGROWTH_CURVE_SAMPLES)
+        .map(|index| net_biomass_delta(regrowth_sample_fraction(index) * cap, cap, &ecology))
+        .collect()
+}
 
 /// The **pre-launch hunt-trip estimate table** for one herd: [`hunt_trip_forecast`] run for every
 /// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every legal party size
@@ -285,6 +359,13 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 // ceiling, and this turns that ceiling into a number of people. Shipped rather than
                 // left to `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a wolf.
                 per_worker_biomass: labor.hunt.per_worker_biomass_capacity,
+                // **The growth curve, sampled** — the third term the panel needs and the one with no
+                // closed form the client may safely re-derive (see [`REGROWTH_CURVE_SAMPLES`]). A
+                // vanished herd publishes an empty curve rather than a row of zeros, which is a
+                // different claim.
+                regrowth_samples: herd
+                    .map(|herd| herd_regrowth_samples(herd, fauna))
+                    .unwrap_or_default(),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
@@ -544,6 +625,9 @@ pub(crate) fn snapshot_forage_patches(
                 // `per_worker_yield / provisions_per_biomass`, which is `0 / 0` on a Field of cotton,
                 // flax or hay.
                 per_worker_biomass: forage_per_worker_biomass(forage, seasonal),
+                // **The growth curve, sampled** — the plant twin; non-negative at every sample, and
+                // its `0.0` entry is the reseed floor's lift.
+                regrowth_samples: patch_regrowth_samples(patch, forage),
                 // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
                 // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
                 // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.
@@ -741,4 +825,133 @@ pub(crate) fn snapshot_intensification_knowledge(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fauna_config::{FaunaConfig, SizeClass};
+    use crate::labor_config::LaborConfig;
+
+    /// The index of the sample taken **at the food peak** — `K/2`, the middle of an odd-length
+    /// evenly-spaced sweep. Named because "the peak of this curve IS the food peak" is the reason the
+    /// panel needs no separate field for it, and a silent re-spacing of the samples would move it.
+    const FOOD_PEAK_SAMPLE: usize = REGROWTH_CURVE_SAMPLES / 2;
+
+    /// A carrying capacity large enough that every sampled stock is well clear of float noise, and
+    /// arbitrary otherwise — the properties asserted here are scale-free.
+    const PROBE_CAPACITY: f32 = 1_000.0;
+
+    fn probe_patch() -> ForagePatch {
+        let mut patch = ForagePatch::new(UVec2::new(0, 0), PROBE_CAPACITY);
+        patch.biomass = PROBE_CAPACITY;
+        patch
+    }
+
+    /// A wild herd whose `r` is the shipped global — the species is named only so `herd_ecology`
+    /// resolves a real roster entry; every property below is scale- and rate-free.
+    fn probe_herd(fauna: &FaunaConfig) -> Herd {
+        Herd::new(
+            "probe".to_string(),
+            "Wild Aurochs".to_string(),
+            SizeClass::Big,
+            vec![UVec2::new(0, 0)],
+            PROBE_CAPACITY,
+            PROBE_CAPACITY,
+            0.0,
+            fauna.ecology.regrowth_rate,
+            PROBE_BODY_MASS,
+        )
+    }
+
+    /// One animal's mass. It cannot reach any assertion here — the regrowth curve is continuous and
+    /// quantisation lives in the take path — but `Herd::new` requires one.
+    const PROBE_BODY_MASS: f32 = 50.0;
+
+    /// **The two webs are sampled on the same axis but are NOT the same function**, and that
+    /// asymmetry is the whole reason the curve is shipped as answers rather than as `r` + thresholds
+    /// for the client to evaluate (`.claude/rules/core_sim/yield-forecast.md`).
+    ///
+    /// A patch is pure logistic with a reseed floor and **no Allee term**, so it never declines. A
+    /// herd has critical depensation below `collapse_fraction`, so it declines *by itself* down
+    /// there — which is why floor `0` ends a herd and only sets a patch back. A client that clamped
+    /// the herd curve at zero would erase exactly that.
+    #[test]
+    fn the_plant_curve_never_declines_and_the_animal_curve_does_below_the_allee_point() {
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+
+        let patch_curve = patch_regrowth_samples(&probe_patch(), &labor.forage);
+        assert_eq!(patch_curve.len(), REGROWTH_CURVE_SAMPLES);
+        assert!(
+            patch_curve.iter().all(|sample| *sample >= 0.0),
+            "plants have no Allee crash — no sample may decline: {patch_curve:?}"
+        );
+        assert!(
+            patch_curve[0] > 0.0,
+            "…and the `0.0` sample is the RESEED FLOOR's lift, not zero: {}",
+            patch_curve[0]
+        );
+
+        let herd = probe_herd(&fauna);
+        let herd_curve = herd_regrowth_samples(&herd, &fauna);
+        assert_eq!(herd_curve.len(), REGROWTH_CURVE_SAMPLES);
+        // The Allee threshold, read off the herd's own ecology rather than restated, so a retune of
+        // `collapse_fraction` moves the fixture with it.
+        let allee = herd_ecology(&herd, &fauna).collapse_fraction;
+        let mut saw_decline = false;
+        for (index, sample) in herd_curve.iter().enumerate() {
+            let fraction = regrowth_sample_fraction(index);
+            // The `0.0` sample is the one place both webs agree on nothing: an extinct herd has no
+            // biomass to lose, so `net_biomass_delta` returns `0` rather than a negative.
+            if fraction > 0.0 && fraction < allee {
+                assert!(
+                    *sample < 0.0,
+                    "a herd at {fraction} of K is past its Allee threshold ({allee}) and must be \
+                     DECLINING, not growing: {sample}"
+                );
+                saw_decline = true;
+            }
+        }
+        assert!(
+            saw_decline,
+            "the sweep must actually reach the Allee band, or it asserts nothing (threshold {allee} \
+             at a spacing of 1/{})",
+            REGROWTH_CURVE_SAMPLES - 1
+        );
+    }
+
+    /// **The peak of the sampled curve IS the food peak** the panel marks at `K/2` — which is why it
+    /// is not published as its own field. One number derived two ways is how the two start
+    /// disagreeing.
+    #[test]
+    fn the_sampled_curves_peak_at_the_food_peak_on_both_webs() {
+        let labor = LaborConfig::builtin();
+        let fauna = FaunaConfig::builtin();
+        assert!(
+            (regrowth_sample_fraction(FOOD_PEAK_SAMPLE) - crate::fauna::MSY_BIOMASS_FRACTION).abs()
+                < f32::EPSILON,
+            "the sweep must actually land ON the food peak, or the panel's mark has no sample"
+        );
+
+        for (web, curve) in [
+            (
+                "plant",
+                patch_regrowth_samples(&probe_patch(), &labor.forage),
+            ),
+            ("animal", herd_regrowth_samples(&probe_herd(&fauna), &fauna)),
+        ] {
+            let peak = curve[FOOD_PEAK_SAMPLE];
+            assert!(peak > 0.0, "{web}: the peak must be a real rate: {curve:?}");
+            for (index, sample) in curve.iter().enumerate() {
+                if index != FOOD_PEAK_SAMPLE {
+                    assert!(
+                        *sample < peak,
+                        "{web}: sample {index} must sit strictly below the food peak's {peak}: \
+                         {sample}"
+                    );
+                }
+            }
+        }
+    }
 }

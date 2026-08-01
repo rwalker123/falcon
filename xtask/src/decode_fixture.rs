@@ -71,6 +71,12 @@ const GRID_CELLS: usize = (GRID_W * GRID_H) as usize;
 /// builder that returns the first element for every row (or reuses one offset) is visible.
 const ROWS: usize = 2;
 
+/// The length of the seeded `regrowthSamples` curve — the **shipped** sample count
+/// (`core_sim::snapshot::REGROWTH_CURVE_SAMPLES`), restated here rather than imported because
+/// `xtask` does not depend on `core_sim`. It only has to be a plausible non-empty length: saturation
+/// overwrites every value, and the guard is about the field being *present and repeated*.
+const REGROWTH_CURVE_SAMPLES: usize = 11;
+
 /// Where the encoded envelope lands. Committed, so `tools/decode_guard.tscn` runs standalone;
 /// `cargo xtask decode-guard` regenerates it first, so the gate can never run against a stale one.
 pub fn fixture_path() -> PathBuf {
@@ -705,6 +711,10 @@ fn seed_snapshot() -> WorldSnapshot {
     s.herds = rows();
     for herd in &mut s.herds {
         herd.hunt_trip_estimates = rows();
+        // The sampled regrowth curve — a `[float]`, so it needs seeding like every other repeated
+        // field or the decode guard cannot see it. Saturation overwrites the values; only the LENGTH
+        // matters here, and it is the shipped one so the fixture exercises a real-shaped curve.
+        herd.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
     }
     s.food_modules = rows();
     s.sedentarization = rows();
@@ -717,6 +727,7 @@ fn seed_snapshot() -> WorldSnapshot {
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
+        patch.regrowth_samples = vec![0.0; REGROWTH_CURVE_SAMPLES];
     }
     s.intensification_knowledge = rows();
 
