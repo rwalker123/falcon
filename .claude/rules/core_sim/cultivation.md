@@ -24,7 +24,7 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
 > **The free path is gone (design fix).** Cultivation used to accrue **silently and for free** under
 > Sustain: same labor, same tile, no cost ⇒ cultivating was always correct and there was **no
 > decision**. It is now the **`Cultivate` improvement** (`Improvement::Cultivate`, plant-only — a
-> `FollowPolicy` variant until issue #442 split the harvest stance from the build verb) with a real
+> harvest-stance variant until issue #442 split the pressure axis from the build verb) with a real
 > up-front cost, and the **early-claim `claim_threshold` is removed** (it would let the player skip the
 > investment — the whole point). Sustain still *teaches* the faction Cultivation knowledge; it just
 > never tames a patch. The animal twin is the **`Corral` policy** — see "Corral".

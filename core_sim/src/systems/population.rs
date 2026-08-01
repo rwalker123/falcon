@@ -1054,14 +1054,13 @@ mod demographics_tests {
 mod food_flow_tests {
     use super::band_food_flow;
     use crate::components::{LaborAllocation, LaborAssignment, LaborTarget, SourceYield};
-    use crate::FollowPolicy;
     use bevy::math::UVec2;
 
     fn forage_assignment() -> LaborAssignment {
         LaborAssignment {
             target: LaborTarget::Forage {
                 tile: UVec2::new(0, 0),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             workers: 4,

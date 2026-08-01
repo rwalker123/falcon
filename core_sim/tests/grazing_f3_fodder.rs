@@ -26,9 +26,9 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -158,7 +158,7 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
 /// `policy` only decides whether tending **teaches** knowledge (the corral-tend branch feeds + harvests
 /// regardless): `Sustain` earns Foddering by running the pen (the real earn path), `Surplus` teaches
 /// nothing — the honest way to hold a control faction ignorant of Foddering while it keeps a pen.
-fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: FollowPolicy) -> Entity {
+fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entity {
     let tile_entity = app
         .world
         .resource::<TileRegistry>()
@@ -198,7 +198,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: FollowPolicy)
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                     },
                     workers: KEEPER_WORKERS,
                     improvement: None,
@@ -290,7 +290,7 @@ fn run_to_settle(start: f32) -> (f32, f32) {
     let tile = barren_pen_tile(&mut app);
     learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, start);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Sustain);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
 
     let mut series = Vec::with_capacity(TURNS as usize);
     for _ in 0..TURNS {
@@ -387,7 +387,7 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     let tile = barren_pen_tile(&mut app);
     learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, START);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Sustain);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
     let food_before = RESTOCK;
     for _ in 0..SETTLE_TURNS {
         run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, HAY_FLOW);
@@ -429,7 +429,7 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     let tile = barren_pen_tile(&mut app);
     // (no learn_foddering)
     let id = seat_pen(&mut app, tile, 400.0, START);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Surplus);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.3);
     // Settle, then run ONE instrumented final turn: read the FEED-time biomass (post-regrow,
     // pre-harvest) — what the bill is actually charged on — and compare exactly, as `grazing_2d_pen`
     // does for the barren-pen case.
@@ -512,11 +512,7 @@ fn feed_split_terms(
     // `Surplus` when NOT foddering so tending never teaches Foddering (the lossy-bread test's control
     // trick); `Sustain` is fine once we granted it outright. The corral-tend branch FEEDs + HARVESTs
     // under either policy.
-    let policy = if foddering {
-        FollowPolicy::Sustain
-    } else {
-        FollowPolicy::Surplus
-    };
+    let policy = if foddering { 0.5 } else { 0.3 };
     let keeper = spawn_keeper(&mut app, &id, tile, policy);
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();

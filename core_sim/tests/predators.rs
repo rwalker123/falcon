@@ -17,8 +17,8 @@ use core_sim::{
     scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds,
     spawn_initial_world, CombatConfig, CommandEventLog, CreaturesConfig, CultureManager, Diet,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfig, FaunaConfigHandle,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    ForageRegistry, GenerationId, GenerationRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -122,7 +122,7 @@ fn hunting_band(
     let assignments = vec![LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: fauna_id.to_string(),
-            floor: FollowPolicy::Surplus.escapement_floor(),
+            floor: 0.3,
         },
         workers: hunters,
         improvement: None,

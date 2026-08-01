@@ -242,7 +242,10 @@ pub enum CommandPayload {
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        policy: Option<String>,
+        /// **Where the raid stops**, as a fraction of the herd's carrying capacity. `None` = the
+        /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
+        /// server boundary and **rejected**, never clamped.
+        floor: Option<f32>,
     },
     ExportMap {
         path: Option<String>,
@@ -742,13 +745,15 @@ impl CommandEnvelope {
                 band_id,
                 party_workers,
                 fauna_id,
-                policy,
+                floor,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
                 party_workers: *party_workers,
                 fauna_id: fauna_id.clone(),
-                policy: policy.clone(),
+                // Retired by the harvest floor arc; the number is immutable, the value unread.
+                policy: None,
+                floor: *floor,
             }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
@@ -1064,7 +1069,7 @@ impl CommandEnvelope {
                     band_id: cmd.band_id,
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
-                    policy: cmd.policy,
+                    floor: cmd.floor,
                 }
             }
             pb::command_envelope::Command::ExportMap(cmd) => {

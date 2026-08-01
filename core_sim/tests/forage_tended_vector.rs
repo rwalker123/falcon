@@ -21,17 +21,16 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_labor_allocation, commit_fodder_payoff, commit_trade_payoff,
-    patch_provisions_per_biomass, plant_policy_forecasts, scalar_from_f32, scalar_one, scalar_zero,
-    spawn_initial_forage, spawn_initial_world, tended_take_fodder, tended_take_trade_goods,
-    tile_flora_composition, tile_forage_capacity, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
-    FloraShare, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle,
-    BUILTIN_LABOR_CONFIG, FODDER, FOOD,
+    patch_provisions_per_biomass, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_world, tended_take_fodder, tended_take_trade_goods, tile_flora_composition,
+    tile_forage_capacity, CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId,
+    FactionInventory, FaunaConfigHandle, FloraConfig, FloraShare, FoodModuleTag, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
+    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig,
+    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
+    WellbeingConfigHandle, BUILTIN_LABOR_CONFIG, FODDER, FOOD,
 };
 
 /// Whole-worker head-count on the forage — large enough that `forage_take`'s worker cap never binds,
@@ -215,7 +214,7 @@ fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    policy: f32,
 ) -> bevy::prelude::Entity {
     spawn_forager_with_workers(app, tile, patch, policy, FORAGE_WORKERS)
 }
@@ -228,7 +227,7 @@ fn spawn_forager_with_workers(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    floor: f32,
     workers: u32,
 ) -> bevy::prelude::Entity {
     app.world
@@ -265,7 +264,7 @@ fn spawn_forager_with_workers(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: policy.escapement_floor(),
+                        floor,
                         species: None,
                     },
                     workers,
@@ -347,37 +346,28 @@ fn standing_crop(app: &App, coord: UVec2) -> f32 {
         .biomass
 }
 
-/// **#426 — the published per-rung vector is what a real turn CREDITS, and on BOTH binding sides.**
+/// **THE PUBLISHED PER-BIOMASS RATE IS WHAT A REAL TURN CREDITS** — on both binding sides.
 ///
-/// The whole point of the row carrying a per-worker triple beside its ceiling is that the client
-/// composes `min(workers × per_worker, ceiling)`, and on the plant web one account's rate is
-/// **policy-dependent**: `Deplete` multiplies trade by `market.trade_goods_multiplier`. The sim applies
-/// that markup to the **final take** — after the worker cap — so a positive constant only factors out
-/// of the `min` if it is present on *both* terms. A markup folded into the ceiling alone is invisible
-/// while the ceiling binds and understates by the full multiplier the moment labor binds, which on a
-/// forage patch (`Deplete` ceiling = `0.20 × biomass`) is the common case, not the rare one.
+/// The wire no longer carries per-stance ceiling rows: it carries the patch's **per-biomass yield
+/// vector**, and the client composes any floor's ceiling from it
+/// (`docs/plan_harvest_floor.md` §5). That makes the rate the load-bearing export, so this asserts
+/// it against what a real `advance_labor_allocation` turn credits — **ceiling-bound** (5000
+/// foragers) and **labor-bound** (1 forager), at two floors.
 ///
-/// So this runs a real `advance_labor_allocation` turn against a **trade-dominant** crop and asserts
-/// the faction's credited trade goods equal the row's own composition — **ceiling-bound** (5000
-/// foragers) and **labor-bound** (1 forager), under Sustain (no markup) and Deplete (markup). Four
-/// cases; the labor-bound Deplete one is the case the design exists for and the only one that fails
-/// against a ceiling-only markup.
+/// The labor-bound case is the one that matters: it is where a rate that were only correct on the
+/// ceiling term would come apart, which is exactly how the retired markup used to fail.
 #[test]
-fn the_published_forage_rung_row_is_what_a_real_turn_credits_on_both_binding_sides() {
-    // A trade-dominant crop, so the trade account is large enough to clear the stockpile's integer
-    // rounding and a mis-scaled markup cannot hide inside the epsilon.
-    for policy in [FollowPolicy::Sustain, FollowPolicy::Deplete] {
+fn the_published_per_biomass_rate_is_what_a_real_turn_credits_on_both_binding_sides() {
+    // A trade-dominant crop, so the trade account clears the stockpile's integer rounding.
+    for floor in [0.5_f32, 0.15] {
         for workers in [1_u32, FORAGE_WORKERS] {
             let mut app = spawn_world();
             let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
             seat_tended_patch(&mut app, coord, "grapevine");
 
-            // The row exactly as the capture publishes it: same patch, same basket, same neutral
-            // multiplier, same seasonal weight the take will read.
             let composition = tile_composition(&app, coord);
             let labor_config = labor();
             let flora = FloraConfig::builtin();
-            let ladder = app.world.resource::<LadderConfigHandle>().get();
             let seasonal = seasonal_weight(&mut app, coord);
             let patch = app
                 .world
@@ -385,104 +375,102 @@ fn the_published_forage_rung_row_is_what_a_real_turn_credits_on_both_binding_sid
                 .patch(coord)
                 .expect("the seated patch")
                 .clone();
-            let row = plant_policy_forecasts(
+
+            // **The client's own composition**, from exactly the three terms the wire publishes:
+            //   ceiling = max(0, B − floor·K) × rate      collection = workers × throughput × rate
+            let rate = core_sim::patch_trade_per_biomass(
                 &patch,
                 &composition,
-                &labor_config.forage,
                 &flora,
-                &ladder,
-                seasonal,
-                NEUTRAL_MULTIPLIER,
-            )
-            .into_iter()
-            .find(|rung| rung.policy == policy)
-            .expect("every forage rung has a row");
-
-            // THE CLIENT'S OWN COMPOSITION, per component — not a re-derivation of the sim's take.
+                &labor_config.forage,
+            );
+            let room = (patch.biomass - floor * patch.carrying_capacity).max(0.0);
+            let throughput = core_sim::forage_per_worker_biomass(&labor_config.forage, seasonal)
+                * workers as f32;
             let expected_trade =
-                (workers as f32 * row.per_worker.trade_goods).min(row.ceiling.trade_goods);
+                core_sim::forage_provisions(room.min(throughput), rate, NEUTRAL_MULTIPLIER);
 
-            let _band = spawn_forager_with_workers(&mut app, tile, coord, policy, workers);
+            let _band = spawn_forager_with_workers(&mut app, tile, coord, floor, workers);
             app.world.run_system_once(advance_labor_allocation);
             let credited = faction_trade_goods(&app);
 
             assert_eq!(
                 credited,
                 expected_trade.round() as i64,
-                "{policy:?} with {workers} forager(s): the published row composes to \
-                 {expected_trade} trade but the turn credited {credited}. \
-                 (per_worker {}, ceiling {})",
-                row.per_worker.trade_goods,
-                row.ceiling.trade_goods,
+                "floor {floor} with {workers} forager(s): the published rate composes to \
+                 {expected_trade} trade but the turn credited {credited}"
             );
             assert!(
                 expected_trade > 0.0,
-                "{policy:?} with {workers} forager(s) must exercise a real trade credit, \
+                "floor {floor} with {workers} forager(s) must exercise a real trade credit, \
                  or the assertion above is vacuous"
             );
         }
     }
 }
 
-/// **The markup is on the rung, not on the rate** — `Deplete`'s trade row must be exactly
-/// `market.trade_goods_multiplier` × `Sustain`'s *at equal biomass*, in **both** the ceiling and the
-/// per-worker term. Pinned as a RATIO rather than against literals, so a basket retune cannot move it
-/// and the multiplier is named by the config rather than by a magic number.
+/// **NO OPTION CARRIES A FACTOR** (`docs/plan_harvest_floor.md` §4) — the acceptance test for the
+/// slice that deleted `forage.market.trade_goods_multiplier`.
 ///
-/// Per-worker is the load-bearing half: it is invariant across the rows for food and fodder, and the
-/// one component that legitimately varies by policy.
+/// The retired 4× markup paid a `Deplete`-depth draw a trade *bonus*, which re-welded product to
+/// intensity: the exact thing the yield vector exists to separate. Every harvest now credits its
+/// basket's trade component at the basket's own rate, so a deeper floor out-earns a shallower one
+/// **only** by taking more biomass.
+///
+/// Asserted as a **ratio between two floors**, so a basket retune cannot move it: the trade earned
+/// at two floors must be in the same ratio as the biomass taken at them, with no step anywhere —
+/// least of all at `0.15`, the floor the markup used to key on.
 #[test]
-fn the_deplete_rung_marks_trade_up_in_both_the_ceiling_and_the_per_worker_term() {
+fn no_floor_carries_a_trade_factor() {
+    let labor_config = labor();
+    let flora = FloraConfig::builtin();
     let mut app = spawn_world();
     let (_tile, coord) = richest_tile_growing(&mut app, "grapevine");
     seat_tended_patch(&mut app, coord, "grapevine");
     let composition = tile_composition(&app, coord);
-    let labor_config = labor();
-    let flora = FloraConfig::builtin();
-    let ladder = app.world.resource::<LadderConfigHandle>().get();
-    let seasonal = seasonal_weight(&mut app, coord);
     let patch = app
         .world
         .resource::<ForageRegistry>()
         .patch(coord)
         .expect("the seated patch")
         .clone();
-    let rows = plant_policy_forecasts(
-        &patch,
-        &composition,
-        &labor_config.forage,
-        &flora,
-        &ladder,
-        seasonal,
-        NEUTRAL_MULTIPLIER,
+    let rate =
+        core_sim::patch_trade_per_biomass(&patch, &composition, &flora, &labor_config.forage);
+    assert!(
+        rate > 0.0,
+        "a cash crop must pay trade, or this asserts nothing"
     );
-    let row = |policy: FollowPolicy| {
-        rows.iter()
-            .find(|rung| rung.policy == policy)
-            .copied()
-            .expect("every forage rung has a row")
-    };
-    let sustain = row(FollowPolicy::Sustain);
-    let deplete = row(FollowPolicy::Deplete);
-    let markup = labor_config.forage.market.trade_goods_multiplier;
 
+    let capacity = patch.carrying_capacity;
+    let earned = |floor: f32| {
+        let take = (patch.biomass - floor * capacity).max(0.0);
+        (
+            take,
+            core_sim::forage_provisions(take, rate, NEUTRAL_MULTIPLIER),
+        )
+    };
+    // The retired markup's floor, its immediate neighbours, and the ends of the dial.
+    for floor in [0.0_f32, 0.14, 0.15, 0.16, 0.3, 0.5] {
+        let (take, trade) = earned(floor);
+        if take <= 0.0 {
+            continue;
+        }
+        assert!(
+            (trade - take * rate).abs() < EPSILON,
+            "floor {floor}: trade is exactly `take × rate` — a factor anywhere breaks this"
+        );
+    }
+    // No step at `0.15`: it earns what its extra biomass is worth and not a penny more. Under the
+    // retired markup this ratio was ~4.
+    let (take_deep, trade_deep) = earned(0.15);
+    let (take_shallow, trade_shallow) = earned(0.16);
+    assert!(take_shallow > 0.0 && trade_shallow > 0.0);
+    let trade_ratio = trade_deep / trade_shallow;
+    let take_ratio = take_deep / take_shallow;
     assert!(
-        (deplete.per_worker.trade_goods - sustain.per_worker.trade_goods * markup).abs() < EPSILON,
-        "Deplete's per-worker trade must be {markup}x Sustain's: {} vs {}",
-        deplete.per_worker.trade_goods,
-        sustain.per_worker.trade_goods,
-    );
-    // Food and fodder carry NO markup — the multiplier is a trade-account concept, and a per-worker
-    // throughput is otherwise policy-blind.
-    assert!(
-        (deplete.per_worker.provisions - sustain.per_worker.provisions).abs() < EPSILON,
-        "the per-worker FOOD rate must be policy-blind: {} vs {}",
-        deplete.per_worker.provisions,
-        sustain.per_worker.provisions,
-    );
-    assert!(
-        (deplete.per_worker.fodder - sustain.per_worker.fodder).abs() < EPSILON,
-        "the per-worker FODDER rate must be policy-blind"
+        (trade_ratio - take_ratio).abs() < 1e-3,
+        "the trade ratio must equal the BIOMASS ratio ({trade_ratio} vs {take_ratio}) — a bonus \
+         attached to a depth would show up here as the ~4× the markup used to pay"
     );
 }
 
@@ -506,7 +494,7 @@ fn a_tended_cash_crop_under_sustain_credits_trade_goods_and_costs_food() {
     let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
     seat_tended_patch(&mut app, coord, "grapevine");
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, 0.5);
 
     assert_eq!(
         faction_trade_goods(&app),
@@ -566,7 +554,7 @@ fn a_tended_hay_patch_credits_fodder_from_its_take() {
     let (tile, coord) = richest_tile_growing(&mut app, "hay_grass");
     seat_tended_patch(&mut app, coord, "hay_grass");
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, 0.5);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -615,7 +603,7 @@ fn a_tended_staple_still_pays_food_and_now_pays_its_token_trade() {
     let (tile, coord) = richest_tile_growing(&mut app, "wild_emmer");
     seat_tended_patch(&mut app, coord, "wild_emmer");
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, 0.5);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -674,7 +662,7 @@ fn a_wild_deplete_sale_is_the_baskets_own_rate_marked_up() {
     let (tile, coord) = richest_tile_growing(&mut app, "wild_emmer");
     seat_wild_patch(&mut app, coord);
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Deplete);
+    let band = spawn_forager(&mut app, tile, coord, 0.15);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -697,15 +685,17 @@ fn a_wild_deplete_sale_is_the_baskets_own_rate_marked_up() {
         forage,
         NEUTRAL_MULTIPLIER,
     );
-    let expected = rate * forage.market.trade_goods_multiplier;
+    // **NO MARKUP.** The sale is the take at the basket's own rate and nothing else — the retired
+    // `market.trade_goods_multiplier` paid a depth a product bonus, and no option carries a factor
+    // now (`docs/plan_harvest_floor.md` §4).
     assert!(
-        (published_trade(&app, band) - expected).abs() <= EPSILON,
-        "the wild Deplete sale must be the basket rate times the markup: {} vs {expected}",
+        (published_trade(&app, band) - rate).abs() <= EPSILON,
+        "a deep gather's sale is exactly the basket rate on the take: {} vs {rate}",
         published_trade(&app, band)
     );
 
-    // The retirement moved no balance on a staple basket: every staple's token is one number, so
-    // pricing the same take at that token reproduces the published sale exactly.
+    // Pricing the same take directly at the basket's own token reproduces it, which is the same
+    // statement from the other side: there is no per-depth term anywhere in the expression.
     let token = composition
         .iter()
         .map(|entry| flora.species[&entry.species].yield_.trade_goods_per_biomass)
@@ -714,11 +704,10 @@ fn a_wild_deplete_sale_is_the_baskets_own_rate_marked_up() {
         (flora.species[&entry.species].yield_.trade_goods_per_biomass - token).abs() <= f32::EPSILON
     });
     if staple_only {
-        let retired_flat_rate = take * token * forage.market.trade_goods_multiplier;
+        let flat = take * token;
         assert!(
-            (published_trade(&app, band) - retired_flat_rate).abs() <= EPSILON,
-            "a staple-only basket's wild Deplete sale must be numerically what the retired flat \
-             rate paid: {} vs {retired_flat_rate}",
+            (published_trade(&app, band) - flat).abs() <= EPSILON,
+            "a staple-only basket's deep gather is `take × token`, with no factor: {} vs {flat}",
             published_trade(&app, band)
         );
     }
@@ -739,7 +728,7 @@ fn a_tended_patch_under_deplete_takes_the_markup_and_is_credited_once() {
     let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
     seat_tended_patch(&mut app, coord, "grapevine");
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Deplete);
+    let band = spawn_forager(&mut app, tile, coord, 0.15);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -762,22 +751,17 @@ fn a_tended_patch_under_deplete_takes_the_markup_and_is_credited_once() {
         NEUTRAL_MULTIPLIER,
     );
     assert!(bare_rate > 0.0, "the fixture must earn real trade");
-    let markup = forage.market.trade_goods_multiplier;
-    assert!(
-        markup > 1.0,
-        "the markup must be visible for this to prove anything"
-    );
 
+    // **CREDITED ONCE, AT THE BASKET RATE.** The published sale is the take through the basket's own
+    // rate and nothing else: no markup, and no second credit stacked on the first.
     let published = published_trade(&app, band);
-    let expected = bare_rate * markup;
     assert!(
-        (published - expected).abs() <= EPSILON,
-        "a tended Deplete sells at the basket rate times the markup: {published} vs {expected}"
+        (published - bare_rate).abs() <= EPSILON,
+        "a deep tended gather sells at the basket rate on its take: {published} vs {bare_rate}"
     );
     assert!(
-        published < bare_rate + expected - EPSILON,
-        "and it is credited ONCE — {published} would be a double credit against \
-         {bare_rate} + {expected}"
+        published < 2.0 * bare_rate - EPSILON,
+        "and it is credited ONCE — {published} would be a double credit against {bare_rate}"
     );
 }
 
@@ -785,15 +769,15 @@ fn a_tended_patch_under_deplete_takes_the_markup_and_is_credited_once() {
 /// on purpose: an `Eradicate` gather already credits **food** out of its take, so refusing trade from
 /// that same take would be the inconsistent case — the vector routes whatever was actually harvested,
 /// in every currency. The surviving *"Eradicate is denial, not commerce"* ruling is about the flat
-/// `forage.market.*` sale on **wild** ground, which this patch does not take; pinned here so a later
-/// reading of that ruling cannot quietly re-gate a committed harvest on policy.
+/// retired `forage.market.*` sale on **wild** ground; pinned here so a later reading cannot quietly
+/// re-gate a committed harvest on how deep the draw was.
 #[test]
 fn a_committed_cash_crop_under_eradicate_still_credits_its_trade() {
     let mut app = spawn_world();
     let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
     seat_tended_patch(&mut app, coord, "grapevine");
     let before = standing_crop(&app, coord);
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Eradicate);
+    let band = spawn_forager(&mut app, tile, coord, 0.0);
 
     app.world.run_system_once(advance_labor_allocation);
 
@@ -824,29 +808,29 @@ fn a_committed_cash_crop_under_eradicate_still_credits_its_trade() {
     );
 }
 
-/// **`Deplete` out-earns `Sustain` on the same tended cash crop** — the policy axis stays alive at
-/// rung 2, because the credit rides the *take* rather than a managed rate. This is the deliberate
-/// difference from the Field arm, whose harvest collapses the axis.
+/// **A deeper floor out-earns a shallower one on the same tended cash crop** — the pressure axis
+/// stays alive at rung 2, because the credit rides the *take* rather than a managed rate. This is
+/// the deliberate difference from the Field arm, whose harvest collapses the axis.
+///
+/// **And it earns more for one reason only: it takes more biomass.** No factor rides the depth
+/// (`no_floor_carries_a_trade_factor`); the ordering here is the intensity ladder doing the work.
 #[test]
-fn a_tended_cash_crop_earns_more_trade_under_deplete_than_sustain() {
-    let trade_under = |policy: FollowPolicy| {
+fn a_tended_cash_crop_earns_more_trade_at_a_deeper_floor() {
+    let trade_under = |floor: f32| {
         let mut app = spawn_world();
         let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
         seat_tended_patch(&mut app, coord, "grapevine");
-        let band = spawn_forager(&mut app, tile, coord, policy);
+        let band = spawn_forager(&mut app, tile, coord, floor);
         app.world.run_system_once(advance_labor_allocation);
         published_trade(&app, band)
     };
-    let sustain = trade_under(FollowPolicy::Sustain);
-    let deplete = trade_under(FollowPolicy::Deplete);
+    let peak = trade_under(0.5);
+    let deep = trade_under(0.15);
     assert!(
-        deplete > sustain,
-        "drawing the stand down harder must sell more: deplete {deplete} vs sustain {sustain}"
+        deep > peak,
+        "drawing the stand down harder must sell more: deep {deep} vs peak {peak}"
     );
-    assert!(
-        sustain > 0.0,
-        "a Sustain harvest of a cash crop still sells"
-    );
+    assert!(peak > 0.0, "a harvest at the food peak still sells");
 }
 
 /// **THE QUOTE IS THE PAYOUT, at rung 2, in the trade account** (issue #419) — the §4.3 rule applied
@@ -867,7 +851,7 @@ fn the_published_cultivate_trade_quote_is_the_trade_a_tended_patch_actually_cred
     let mut app = spawn_world();
     let (tile, coord) = richest_tile_growing(&mut app, "grapevine");
     seat_tended_patch(&mut app, coord, "grapevine");
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, 0.5);
     let composition = tile_composition(&app, coord);
     let flora = FloraConfig::builtin();
     let forage = &labor().forage;
@@ -932,7 +916,7 @@ fn the_published_cultivate_fodder_quote_is_the_fodder_a_tended_patch_actually_cr
     let mut app = spawn_world();
     let (tile, coord) = richest_tile_growing(&mut app, "hay_grass");
     seat_tended_patch(&mut app, coord, "hay_grass");
-    let band = spawn_forager(&mut app, tile, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile, coord, 0.5);
     let composition = tile_composition(&app, coord);
     let flora = FloraConfig::builtin();
     let forage = &labor().forage;

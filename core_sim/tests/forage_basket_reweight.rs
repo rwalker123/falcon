@@ -24,8 +24,8 @@ use core_sim::{
     patch_provisions_per_biomass, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_world, tile_flora_composition, tile_forage_capacity, CommandEventLog,
     CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle,
-    FloraConfig, FloraShare, FollowPolicy, FoodModuleTag, ForagePatch, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    FloraConfig, FloraShare, FoodModuleTag, ForagePatch, ForageRegistry, GenerationId,
+    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
     LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
     MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -280,7 +280,7 @@ fn a_wild_patch_pays_its_own_baskets_average_in_every_currency() {
     let mut app = spawn_standard_world();
     let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("grapevine"));
     seat_patch(&mut app, coord, None);
-    let band = spawn_forager(&mut app, tile_entity, coord, FollowPolicy::Sustain);
+    let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
     app.world.run_system_once(advance_labor_allocation);
     assert!(
         published_trade(&app, band) > 0.0,
@@ -335,25 +335,23 @@ fn the_conversion_gain_is_on_the_favored_term_only() {
     );
 }
 
-/// **`Deplete`'s markup rides the basket at rung 2 as well as rung 1, and credits exactly once.**
+/// **A deep gather sells at the BASKET RATE at both drawn-down rungs, and credits exactly once.**
 ///
-/// The markup is a *policy* concept — sell harder — not a rung one, so both a wild and a tended
-/// patch under `Deplete` are credited `take × the patch basket's trade rate × trade_goods_multiplier`
-/// and nothing else. With the species-blind flat market sale retired there is only one expression, so
-/// landing on it exactly is also the "no double credit" pin.
+/// There is exactly one expression — `take × the patch basket's trade rate` — at rung 1 and rung 2
+/// alike, and **no factor of any kind** rides the depth of the draw
+/// (`docs/plan_harvest_floor.md` §4; the retired `market.trade_goods_multiplier` used to pay one
+/// depth 4×). Landing on that expression exactly is also the "no double credit" pin.
 #[test]
-fn the_deplete_markup_rides_the_basket_at_both_drawn_down_rungs() {
+fn a_deep_gather_sells_at_the_basket_rate_at_both_drawn_down_rungs() {
     let labor = labor();
     let flora = FloraConfig::builtin();
-    let markup = labor.forage.market.trade_goods_multiplier;
-    assert!(markup > 1.0, "the markup must be visible to prove anything");
 
     for crop in [None, Some("grapevine")] {
         let mut app = spawn_standard_world();
         let (tile_entity, coord) = a_patch_tile_growing(&mut app, Some("grapevine"));
         seat_patch(&mut app, coord, crop);
         let before = standing_crop(&app, coord);
-        let band = spawn_forager(&mut app, tile_entity, coord, FollowPolicy::Deplete);
+        let band = spawn_forager(&mut app, tile_entity, coord, 0.15);
         app.world.run_system_once(advance_labor_allocation);
 
         let take = before - standing_crop(&app, coord);
@@ -374,16 +372,14 @@ fn the_deplete_markup_rides_the_basket_at_both_drawn_down_rungs() {
             NEUTRAL_MULTIPLIER,
         );
         assert!(bare > 0.0, "the fixture's basket must carry a trade rate");
-        let expected = bare * markup;
         let published = published_trade(&app, band);
         assert!(
-            (published - expected).abs() <= EPSILON,
-            "{crop:?}: a Deplete sells at the basket rate x the markup: {published} vs {expected}"
+            (published - bare).abs() <= EPSILON,
+            "{crop:?}: a deep gather sells at the basket rate on its take: {published} vs {bare}"
         );
         assert!(
-            published < bare + expected - EPSILON,
-            "{crop:?}: and is credited ONCE — {published} against a double credit of \
-             {bare} + {expected}"
+            published < 2.0 * bare - EPSILON,
+            "{crop:?}: and is credited ONCE — {published} against a double credit of {bare}"
         );
     }
 }
@@ -405,7 +401,7 @@ fn wild_fodder_is_gated_on_foddering_and_a_committed_hay_patch_is_not() {
                 .resource_mut::<DiscoveryProgressLedger>()
                 .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
         }
-        let band = spawn_forager(&mut app, tile_entity, coord, FollowPolicy::Sustain);
+        let band = spawn_forager(&mut app, tile_entity, coord, 0.5);
         app.world.run_system_once(advance_labor_allocation);
         app.world
             .get::<PopulationCohort>(band)
@@ -1021,7 +1017,7 @@ fn spawn_forager(
     app: &mut App,
     tile: bevy::prelude::Entity,
     patch: UVec2,
-    policy: FollowPolicy,
+    policy: f32,
 ) -> bevy::prelude::Entity {
     app.world
         .spawn((
@@ -1057,7 +1053,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                         species: None,
                     },
                     workers: FORAGE_WORKERS,

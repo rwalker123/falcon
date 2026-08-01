@@ -51,7 +51,7 @@ live in two slots:
   > `cargo test -p core_sim --lib stance_probe -- --ignored --nocapture --test-threads=1`). Every
   > figure below is measured by driving the shipped Logistics → Population → accrual order.
   >
-  > **On plants the discipline is absent outright.** Dipped ×0.25, **all four stances stay Thriving
+  > **On plants the discipline is absent outright.** Dipped ×0.25, **every floor stays Thriving
   > for the entire build and all four complete in exactly 25 turns**; Eradicate pays **16.62 food to
   > Sustain's 4.40 (3.8×)** and leaves the patch at 0.68 K. The harshest stance is strictly dominant
   > and costs nothing. The same holds for `Sow`.
@@ -72,13 +72,13 @@ live in two slots:
   > should take rung 2's Thriving gate.
 - **Kind-exclusivity is exhaustive, not a complement.** `Improvement::valid_for_forage` /
   `valid_for_hunt` are two exhaustive matches, so a new verb fails to compile until someone states its
-  web; the retired `FollowPolicy::valid_for_*` were hand-written `!matches!` complements that would
+  web; the retired `valid_for_*` stance predicates were hand-written `!matches!` complements that would
   have defaulted a new verb to legal on **both**.
-- **`FollowPolicy::EXTRACTIVE` / `is_investment()` are deleted.** A set-membership predicate over one
+- **The stance-set predicates `EXTRACTIVE` / `is_investment()` are deleted.** A set-membership predicate over one
   enum is unnecessary once the sets are different types. Its doc recorded two hand-written lists that
   had rotted (`send_hunt_expedition`'s launch gate silently accepted `tame`, and
   `hunt_expedition_floor`'s `matches!` was missing it too); **both guarantees are now type-level** —
-  `ExpeditionMission::Hunt` carries a `FollowPolicy`, which cannot *name* a build verb, so the launch
+  `ExpeditionMission::Hunt` carries a **floor** (an `f32`), which cannot *name* a build verb, so the launch
   gate rejects one through the ordinary parse and the unreachable-arm `debug_assert!` is gone.
 - **Commands.** `assign_labor … [stance] <workers>` sets the stance and **never touches the
   improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer
@@ -111,7 +111,7 @@ live in two slots:
     reports on the running verb's own feed channel (`improvement_event_kind`), so a rung's whole life
     reads on one line.
 - **On the wire:** `LaborAssignment.improvement:string` (`""` = a pure harvest) beside the
-  now-always-a-stance `policy`; the per-source ceiling lists drop to the four stance rows and the two
+  now-retired `policy`; the per-source ceiling lists have since gone entirely (a continuous floor cannot be enumerated) and the two
   dips ship as fractions — see "Pre-commit Yield Forecast".
 
 ### The build engine — THE seam both tracks call
@@ -168,7 +168,7 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   `docs/plan_investment_rung_toggle.md` §2.2). `yield_fraction_while_building` used to be applied to
   the source's Sustain (MSY) ceiling and nothing else, because a build verb *was* the policy and a
   builder could be in no other stance. With the two axes split
-  (`FollowPolicy` = the stance, `Improvement` = the build) the same fraction rides whichever stance
+  (the **floor** = the pressure, `Improvement` = the build) the same fraction rides whatever floor
   the player holds — the identical formula with the constant removed. `SourceYieldForecast` carries
   the pair as `build_dips: BuildDips`, and `ceiling_at(floor, improvement)` is the one lookup
   every take path and every assign-time seed uses; the four `ceiling_*` rows stay the *undipped*
@@ -207,7 +207,7 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
     left to build here", and a Field that lapses flips the answer back, since the test is re-asked
     every turn.
   > **It used to rewrite `policy` onto a module constant `HARVEST_POLICY_AFTER_BUILD`
-  > (`FollowPolicy::Sustain`)**, because the build verb had occupied the stance slot and completion had
+  > (the food peak)**, because the build verb had occupied the pressure slot and completion had
   > to hand *something* back — so the sim silently replaced the player's stated policy on a turn they
   > could not predict, and each completion event carried a `retired_policy=sustain` detail. The
   > constant, its ten call sites and that detail token are all deleted (issue #442): the stance was
@@ -229,10 +229,10 @@ for **every** rung including the wild ones. Callers resolve the rung via `fauna:
 (**before** the arms branch, so every rung reaches the earn path uniformly).
 
 Three rules ride the seam:
-- **Only stewardship teaches** (§4.2) — `FollowPolicy::teaches_knowledge`, and since issue #442 it is
+- **Only stewardship teaches** (§4.2) — `components::floor_teaches` (`floor >= K/2`), and since issue #442 it is
   a **stance** predicate and nothing else: **Sustain** teaches (the one rung that takes only the
   regrowth); **Surplus/Deplete/Eradicate teach nothing, at any rung** (they overdraw — slaughtering
-  isn't practice). The build verbs used to be `FollowPolicy` variants and taught by construction; an
+  isn't practice). The build verbs used to be stance variants and taught by construction; an
   `Improvement` now rides *beside* a stance, so a crew preparing ground under Sustain teaches exactly
   as it always did while one preparing it under Deplete learns nothing — the same ecology-side
   punishment §2.1 hands the build meter, applied to the lesson.

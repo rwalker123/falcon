@@ -341,7 +341,13 @@ message SendHuntExpeditionCommand {
   optional uint64 band_id = 2;
   uint32 party_workers = 3;
   string fauna_id = 4;
-  optional string policy = 5; // sustain|surplus|deplete|eradicate; default sustain when omitted
+  // RETIRED by the harvest floor arc: a raid names a `floor`, not a stance. The field number is NOT
+  // reused and NOT renumbered — a shipped number is immutable — and the server ignores any value.
+  optional string policy = 5;
+  // WHERE THE RAID STOPS, as a fraction of the herd's carrying capacity. Absent = the sim's default
+  // (0.5, the food peak). Rejected with a command failure unless finite and within 0.0..=1.0 —
+  // never clamped. Appended (append-only).
+  optional float floor = 6;
 }
 
 // Ask the server to republish the world as a FULL snapshot.

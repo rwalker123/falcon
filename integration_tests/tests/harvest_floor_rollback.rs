@@ -13,7 +13,7 @@ use core_sim::{
 const PROBE_BAND: BandId = BandId(9_042);
 
 /// A floor no default and no stance names, so a rewind to it cannot be produced by accident — not by
-/// a defaulted field, not by a `FollowPolicy` mapping, not by a re-pick.
+/// a defaulted field, not by a stance mapping, not by a re-pick.
 const CAPTURED_FLOOR: f32 = 0.42;
 
 /// The floor the assignment is dragged to *after* the checkpoint. Also unnamed by any stance, so
@@ -197,4 +197,115 @@ fn the_default_floor_is_the_food_peak() {
             && !core_sim::floor_overdraws(DEFAULT_ESCAPEMENT_FLOOR),
         "…so it neither overdraws nor forfeits the lesson"
     );
+}
+
+/// **A hunt expedition's floor round-trips through the command, the mission and the rollback.**
+///
+/// The raid's floor is the whole of what its orders say about pressure, so it has to survive the
+/// same three hops the assignment's does. Pinned at a floor **no retired stance named** (`0.42`), so
+/// a value that appears at the far end cannot have come from a default or from a label.
+#[test]
+fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
+    use core_sim::{Expedition, ExpeditionMission, ExpeditionPhase};
+
+    common::ensure_test_config();
+    let mut app = build_headless_app();
+    app.update();
+
+    let tile = *app
+        .world
+        .resource::<TileRegistry>()
+        .tiles
+        .first()
+        .expect("worldgen seeded a map");
+    // **A real home band with its own `BandId`.** A checkpoint names an expedition's home by band id,
+    // and restore DROPS an expedition whose home cannot be resolved — so a party pointed at anything
+    // but a captured band would vanish on the rewind and this test would pass vacuously.
+    let home = spawn_band_with_floors(&mut app, CAPTURED_FLOOR);
+    let party = app
+        .world
+        .spawn((
+            BandId(9_043),
+            PopulationCohort {
+                home: tile,
+                current_tile: tile,
+                size: 4,
+                children: scalar_zero(),
+                working: scalar_from_f32(4.0),
+                elders: scalar_zero(),
+                stores: LocalStore::new(),
+                morale: scalar_one(),
+                last_food_consumption: 0.0,
+                last_morale_delta: scalar_zero(),
+                last_morale_cause: MoraleCause::None,
+                last_morale_contributions: Default::default(),
+                last_fertility_factors: Default::default(),
+                discontent_fraction: scalar_zero(),
+                grievance: scalar_zero(),
+                last_emigrated: 0,
+                last_immigrated: 0,
+                age_turns: 0,
+                generation: 0 as GenerationId,
+                faction: FactionId(0),
+                knowledge: Vec::new(),
+                migration: None,
+            },
+            Expedition {
+                home_band: home,
+                mission: ExpeditionMission::Hunt {
+                    fauna_id: "game_raid_probe".to_string(),
+                    floor: CAPTURED_FLOOR,
+                },
+                phase: ExpeditionPhase::Hunting,
+                announced: false,
+                pending_reveal: Vec::new(),
+                carried_trade: 0.0,
+            },
+        ))
+        .id();
+    assert_eq!(
+        raid_floor_of(&app, party),
+        CAPTURED_FLOOR,
+        "the fixture must start at the floor it claims to"
+    );
+
+    let checkpoint = capture_sim_state(&app.world);
+    {
+        let mut expedition = app
+            .world
+            .get_mut::<Expedition>(party)
+            .expect("the party carries its mission");
+        if let ExpeditionMission::Hunt { floor, .. } = &mut expedition.mission {
+            *floor = DRAGGED_FLOOR;
+        }
+    }
+    assert_eq!(raid_floor_of(&app, party), DRAGGED_FLOOR);
+
+    restore_sim_state(&mut app.world, &checkpoint);
+
+    // A restore renumbers entities, so the floor is read off whichever party carries the mission.
+    let mut query = app.world.query::<&Expedition>();
+    let restored = query
+        .iter(&app.world)
+        .find_map(|expedition| match &expedition.mission {
+            ExpeditionMission::Hunt { floor, .. } => Some(*floor),
+            _ => None,
+        })
+        .expect("the restored world carries the hunt mission");
+    assert_eq!(
+        restored, CAPTURED_FLOOR,
+        "a rollback restores the raid's floor, not a re-picked one"
+    );
+}
+
+fn raid_floor_of(app: &bevy::prelude::App, party: Entity) -> f32 {
+    match &app
+        .world
+        .get::<core_sim::Expedition>(party)
+        .expect("the party carries its mission")
+        .mission
+    {
+        core_sim::ExpeditionMission::Hunt { floor, .. } => *floor,
+        other => panic!("expected a hunt mission, got {other:?}"),
+    }
 }

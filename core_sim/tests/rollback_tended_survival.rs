@@ -23,8 +23,8 @@ use bevy::math::UVec2;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    available_workers, build_headless_app, run_turn, FactionId, FollowPolicy, ForageRegistry,
-    HerdRegistry, LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
+    available_workers, build_headless_app, run_turn, FactionId, ForageRegistry, HerdRegistry,
+    LaborAllocation, LaborTarget, PopulationCohort, ResidentBand, SimulationConfig,
 };
 
 /// Build a headless world (one `update()` runs the whole Startup worldgen chain — including
@@ -112,7 +112,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             alloc.set_assignment(
                 LaborTarget::Forage {
                     tile: field_tile,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 1,
@@ -121,7 +121,7 @@ fn a_snapshot_round_trip_keeps_a_worked_field_and_pen() {
             alloc.set_assignment(
                 LaborTarget::Hunt {
                     fauna_id: herd_id.clone(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 1,
                 available,

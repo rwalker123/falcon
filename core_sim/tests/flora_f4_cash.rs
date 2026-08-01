@@ -17,8 +17,8 @@ use core_sim::{
     generate_hydrology, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
     spawn_initial_world, tile_forage_capacity, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FloraConfig,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -351,7 +351,7 @@ fn spawn_forager(
                     // arms and `continue`s. Sustain is the harmless default.
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: FollowPolicy::Sustain.escapement_floor(),
+                        floor: 0.5,
                         species: None,
                     },
                     workers: FORAGE_WORKERS,

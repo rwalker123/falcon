@@ -99,26 +99,6 @@ fn create_herds<'a>(
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
-        let hunt_policy_ceilings = if herd.hunt_policy_ceilings.is_empty() {
-            None
-        } else {
-            let entries: Vec<_> = herd
-                .hunt_policy_ceilings
-                .iter()
-                .map(|ceiling| {
-                    let policy = builder.create_string(ceiling.policy.as_str());
-                    fb::HuntPolicyCeiling::create(
-                        builder,
-                        &fb::HuntPolicyCeilingArgs {
-                            policy: Some(policy),
-                            provisionsPerTurn: ceiling.provisions_per_turn,
-                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&entries))
-        };
         let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
             None
         } else {
@@ -126,11 +106,11 @@ fn create_herds<'a>(
                 .hunt_trip_estimates
                 .iter()
                 .map(|estimate| {
-                    let policy = builder.create_string(estimate.policy.as_str());
                     fb::HuntTripEstimate::create(
                         builder,
                         &fb::HuntTripEstimateArgs {
-                            policy: Some(policy),
+                            // THE SAMPLED FLOOR — replaces the retired `policy` string.
+                            floor: estimate.floor,
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
@@ -172,7 +152,11 @@ fn create_herds<'a>(
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
-                huntPolicyCeilings: hunt_policy_ceilings,
+                // RETIRED: the four stance rows cannot express a continuous dial. The client
+                // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass`.
+                provisionsPerBiomass: herd.provisions_per_biomass,
+                fodderPerBiomass: herd.fodder_per_biomass,
+                tradePerBiomass: herd.trade_per_biomass,
                 huntTripEstimates: hunt_trip_estimates,
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
@@ -237,35 +221,6 @@ fn create_forage_patches<'a>(
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
         let committed_display_name = builder.create_string(patch.committed_display_name.as_str());
-        // The TILE's per-rung vector (#426) — one row per rung, all three accounts on each. Built the
-        // same way `hunt_policy_ceilings` is, so the two webs' ceiling lists cannot drift in shape.
-        // `None` on an empty list rather than an empty vector: an absent list is how a reader tells
-        // "this snapshot carries no forecast" from "every rung pays zero", which is the whole
-        // distinction #426 exists to restore.
-        let forage_policy_ceilings = if patch.forage_policy_ceilings.is_empty() {
-            None
-        } else {
-            let rows: Vec<_> = patch
-                .forage_policy_ceilings
-                .iter()
-                .map(|ceiling| {
-                    let policy = builder.create_string(ceiling.policy.as_str());
-                    fb::ForagePolicyCeiling::create(
-                        builder,
-                        &fb::ForagePolicyCeilingArgs {
-                            policy: Some(policy),
-                            provisionsPerTurn: ceiling.provisions_per_turn,
-                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
-                            fodderPerTurn: ceiling.fodder_per_turn,
-                            perWorkerProvisions: ceiling.per_worker_provisions,
-                            perWorkerTradeGoods: ceiling.per_worker_trade_goods,
-                            perWorkerFodder: ceiling.per_worker_fodder,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&rows))
-        };
         let entry = fb::ForagePatchState::create(
             builder,
             &fb::ForagePatchStateArgs {
@@ -289,7 +244,10 @@ fn create_forage_patches<'a>(
                 committedSpecies: Some(committed_species),
                 committedDisplayName: Some(committed_display_name),
                 // The TILE's yield vector — appended last (append-only wire, #426).
-                foragePolicyCeilings: forage_policy_ceilings,
+                // RETIRED: see the herd twin above.
+                provisionsPerBiomass: patch.provisions_per_biomass,
+                fodderPerBiomass: patch.fodder_per_biomass,
+                tradePerBiomass: patch.trade_per_biomass,
                 tendedTrade: patch.tended_trade,
                 tendedFodder: patch.tended_fodder,
                 fieldTrade: patch.field_trade,

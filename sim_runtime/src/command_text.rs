@@ -239,7 +239,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]",
+        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -1177,14 +1177,20 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let fauna_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-            // Optional trailing take policy (sustain|surplus|deplete|eradicate); default sustain.
-            let policy = parts.next().map(|s| s.to_string());
+            // Optional trailing FLOOR — where the raid stops, as a fraction of the herd's `K`.
+            // Absent = the sim's default (the food peak). `parse_f32` carries the retired-stance
+            // guard, so a stale client's `sustain` names the grammar that moved rather than failing
+            // as an unparseable number.
+            let floor = parts
+                .next()
+                .map(|token| parse_f32(token, "send_hunt_expedition floor"))
+                .transpose()?;
             Ok(CommandPayload::SendHuntExpedition {
                 faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
                 band_id: Some(parse_u64(band_str, "send_hunt_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
                 fauna_id: fauna_id.to_string(),
-                policy,
+                floor,
             })
         }
         "resync" => Ok(CommandPayload::Resync),
@@ -1273,7 +1279,7 @@ fn parse_f32(value: &str, context: &'static str) -> Result<f32, CommandParseErro
 /// `validate_species_selection`, but reported as a plant that does not exist rather than as a
 /// grammar that moved. One retired-token check makes both paths name the actual mistake.
 ///
-/// The list is spelled out rather than read off `FollowPolicy::ALL` because `sim_runtime` cannot
+/// The list is spelled out rather than read off an enum because `sim_runtime` cannot
 /// depend on `core_sim`, and because it must outlive the type: these strings stay refused after the
 /// enum is deleted, which is precisely when a stale client is most likely to still be sending them.
 fn reject_retired_stance(value: &str) -> Result<(), CommandParseError> {

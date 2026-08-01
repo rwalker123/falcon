@@ -1,11 +1,14 @@
 use super::*;
-use crate::fauna_config::HuntYield;
 use crate::forage::{
-    field_fodder, field_trade_goods, patch_neglect_grace_remaining, plant_policy_forecasts,
-    tended_fodder, tended_trade_goods,
+    field_fodder, field_trade_goods, patch_fodder_per_biomass, patch_neglect_grace_remaining,
+    patch_provisions_per_biomass, patch_trade_per_biomass, tended_fodder, tended_trade_goods,
 };
 use crate::intensification::NO_BUILD_REMAINING_FRACTION;
-use sim_schema::ForagePolicyCeilingState;
+
+/// **No animal pays fodder** — the herd half of the per-biomass yield triple is structurally zero,
+/// and stated rather than defaulted so a reader sees it is a fact about animals and not an
+/// unprojected gap. Both webs publish the same triple so a client needs one code path.
+const NO_ANIMAL_PAYS_FODDER: f32 = 0.0;
 
 /// **The countdown a source with nothing at risk publishes.** Paired with `has_neglect_grace: false`,
 /// which is the field a reader must check — this number is only here because the wire has no optional
@@ -45,75 +48,52 @@ pub(crate) fn snapshot_sedentarization(
         .collect()
 }
 
-/// Every **Hunt** policy's per-turn **BAND / local-hunt** ceiling for one herd's current state, in
-/// provisions — the worker-independent half of the client's local-hunt yield preview. It is a pure
-/// projection of the herd's `SourceYieldForecast` (`fauna::hunt_forecast` — the same ceiling +
-/// biomass→provisions helpers `hunt_take` pays with, so forecast == actual), NOT a second derivation:
-/// the list rows and the scalar `ceiling*` fields below are literally the same numbers, so they cannot
-/// drift.
+/// **The floors the pre-launch raid table is SAMPLED at** — marks on a dial, **not** a set of
+/// options.
 ///
-/// Walks [`crate::fauna::hunt_policies_for`] — normally [`FollowPolicy::HUNT_POLICIES`], the four extractive
-/// rungs **plus the two investment rungs `Tame` and `Corral`** (legitimate Hunt policies whose dipped
-/// yield is exactly what a player must see *before* committing to taming the herd or building the
-/// pen). That helper is the **one seam** this export and the `assign_labor` validator share, so the
-/// picker the client draws and the picker the sim accepts cannot become two lists; today it prunes
-/// only the degenerate `yields_nothing` species (Eradicate alone).
-/// `Cultivate` is Forage-only, so a herd has no cultivate row. Because the rows come from the
-/// forecast, `Corral` is automatically **phase-correct**: the `animal:pen` rung's
-/// `yield_fraction_while_building × MSY` dip
-/// while the pen is being built, and the full corral yield once the herd `is_corralled()` (the
-/// forecast reports a penned herd as `SourceYieldForecast::tended`, every ceiling = the managed yield).
+/// A raid's trip length has no closed form: it is a bounded forward simulation
+/// ([`hunt_trip_forecast`]) of "grab the standing surplus, come home", so unlike a resident band's
+/// ceiling the sim cannot hand the client a formula to evaluate at an arbitrary floor. It must
+/// export answers at chosen points, and the client interpolates between them for the outfit preview.
 ///
-/// The **expedition** has no ceiling field: a hunting party's trip is not `cap / rate` (see
-/// `hunt_trip_forecast`), so the sim exports the *answer* instead — `hunt_trip_estimate_entries`.
-pub(crate) fn hunt_policy_ceiling_entries(
-    forecast: &SourceYieldForecast,
-    hunt_yield: HuntYield,
-) -> Vec<HuntPolicyCeilingState> {
-    crate::fauna::hunt_policies_for(hunt_yield)
-        .iter()
-        .map(|&policy| HuntPolicyCeilingState {
-            policy: policy.as_str().to_string(),
-            provisions_per_turn: forecast.ceiling_for(policy).provisions,
-            // **The row is a PAIR, not a food scalar** (#337): an inedible species reads `0` food
-            // here with a strictly positive trade rate, which a food-only row could not express.
-            trade_goods_per_turn: forecast.ceiling_for(policy).trade_goods,
-        })
-        .collect()
-}
+/// **This is the shape a four-stance axis comes back in, so it is named to make that visible.** The
+/// launch command accepts **any** floor in `0.0..=1.0` (`send_hunt_expedition`), and nothing here
+/// constrains it — these are five readings of a continuum picked to span it (bare, the Allee brink,
+/// a heavy draw, the food peak, deliberate under-harvest). Adding a sample costs a row per party
+/// size and changes no behaviour; treating a sample as an offered stance would undo the arc.
+pub(crate) const RAID_FORECAST_FLOOR_SAMPLES: [f32; 5] = [0.0, 0.15, 0.30, 0.50, 0.80];
 
-/// The **pre-launch hunt-trip estimate table** for one herd: `hunt_trip_forecast` run for every
-/// policy × every legal party size (`1..=expedition.max_party_size`), so the client's outfit UI is a
-/// pure **table lookup** — zero arithmetic, zero ecology model. The forecast is a bounded forward
-/// simulation of the greedy raid (grab the standing surplus, come home), which has no single per-turn
-/// rate to divide by, and each row now carries both `turns_to_fill` (turns until the raid completes)
-/// and `animals_taken` (the payload the client headlines).
+/// The **pre-launch hunt-trip estimate table** for one herd: [`hunt_trip_forecast`] run for every
+/// sampled floor ([`RAID_FORECAST_FLOOR_SAMPLES`]) × every legal party size
+/// (`1..=expedition.max_party_size`), so the client's outfit UI is a **table lookup** — zero
+/// arithmetic, zero ecology model. Each row carries both `turns_to_fill` (turns until the raid
+/// completes) and `animals_taken` (the payload the client headlines).
 ///
-/// Cost is bounded by construction: `policies × max_party_size × hunt.forecast_horizon_turns`
+/// Cost is bounded by construction: `samples × max_party_size × hunt.forecast_horizon_turns`
 /// turn-steps per herd, and only **huntable** herds are estimated. In practice a raid is **short** —
-/// it grabs the surplus and terminates — so a snapshot's worth of raids simulates cheaply (the old
-/// O(1) "cannot fill" short-circuit was retired with the raid: its premise, "won't fill the pack ⇒
-/// doomed", is inverted by a raid, where "won't fill the pack" is the normal successful short trip).
+/// it grabs the surplus and terminates — so a snapshot's worth of raids simulates cheaply.
+///
+/// A species that **pays nothing** ([`crate::fauna::species_requires_denial`]) is estimated at the
+/// one floor it can legally be worked at: there is no point quoting a sustainable raid on a quarry
+/// with no product.
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
 ) -> Vec<HuntTripEstimateState> {
-    let mut entries =
-        Vec::with_capacity(FollowPolicy::ALL.len() * expedition.max_party_size as usize);
-    // The four **stances** only. The improvements (Cultivate/Sow/Tame/Corral) are place-bound
-    // work a resident band does — `send_hunt_expedition` rejects them — so a trip estimate for one
-    // would be a number for a trip that cannot be launched (and would inflate this table for nothing).
-    // Intersected with the species' offered ladder (`crate::fauna::hunt_policies_for`, the shared picker
-    // seam), so a `yields_nothing` quarry estimates its one legal rung and no more.
-    let offered = crate::fauna::hunt_policies_for(fauna.hunt_yield_for(&herd.species));
-    for &policy in FollowPolicy::ALL.iter().filter(|p| offered.contains(p)) {
+    let denial_only = crate::fauna::species_requires_denial(fauna.hunt_yield_for(&herd.species));
+    let sampled: &[f32] = if denial_only {
+        &[crate::components::STRIP_IT_BARE]
+    } else {
+        &RAID_FORECAST_FLOOR_SAMPLES
+    };
+    let mut entries = Vec::with_capacity(sampled.len() * expedition.max_party_size as usize);
+    for &floor in sampled {
         for party_workers in 1..=expedition.max_party_size {
-            let forecast =
-                hunt_trip_forecast(party_workers, herd, policy, fauna, labor, expedition);
+            let forecast = hunt_trip_forecast(party_workers, herd, floor, fauna, labor, expedition);
             entries.push(HuntTripEstimateState {
-                policy: policy.as_str().to_string(),
+                floor,
                 party_workers,
                 // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
@@ -280,13 +260,20 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                 pen_fed_fraction: herd
                     .map(|herd| herd.pen_fed_fraction)
                     .unwrap_or(PEN_FULLY_FED),
-                // The same forecast, projected as the per-STANCE band ceiling table — four rows; the
-                // build dips ride the `*_build_fraction` factors below.
-                hunt_policy_ceilings: herd
-                    .map(|herd| {
-                        hunt_policy_ceiling_entries(&forecast, fauna.hunt_yield_for(&herd.species))
-                    })
-                    .unwrap_or_default(),
+                // **THE PER-BIOMASS YIELD VECTOR** — what one unit of this herd's biomass is worth,
+                // in every account (`docs/plan_harvest_floor.md` §5). It replaces the four stance
+                // ceiling rows: with `biomass`, `carrying_capacity` and the build-dip fractions the
+                // client evaluates `max(0, B − floor·K) × dip × rate` at ANY floor, which no fixed
+                // set of rows can express. The species' own vector, through the one
+                // `FaunaConfig::hunt_yield_for` seam the take path reads.
+                provisions_per_biomass: herd
+                    .map(|herd| fauna.hunt_yield_for(&herd.species).provisions_per_biomass)
+                    .unwrap_or(0.0),
+                // No animal pays fodder; the field is present so both webs publish the same triple.
+                fodder_per_biomass: NO_ANIMAL_PAYS_FODDER,
+                trade_per_biomass: herd
+                    .map(|herd| fauna.hunt_yield_for(&herd.species).trade_goods_per_biomass)
+                    .unwrap_or(0.0),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)
@@ -517,35 +504,27 @@ pub(crate) fn snapshot_forage_patches(
                     .get(&patch.tile)
                     .map_or(SITE_ACCEPTED, |refusal| refusal.as_str())
                     .to_string(),
-                // **THE TILE'S PER-STANCE VECTOR** (#426) — four rows since issue #442 (the two build
-                // dips became the `*_build_fraction` factors below), so a future stance costs no
-                // schema change (the migration `hunt_policy_ceilings` already made).
+                // **THE PER-BIOMASS YIELD VECTOR** — what one unit of this patch's standing crop
+                // is worth, in every account (`docs/plan_harvest_floor.md` §5), at the patch's own
+                // basket-averaged rates: the same `patch_*_per_biomass` seams `forage_take` pays
+                // with, so a tended patch reads its committed conversion and not the wild one.
                 //
-                // **The two non-food accounts are still the `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED`
-                // gap**, because `forage_forecast` does not project them yet — that is the remaining
-                // half of #426 and it needs `YieldAccounts` to carry a third account (see the issue). They
-                // are written explicitly rather than defaulted so the sentinel is visible at the site
-                // a reader will look, exactly as the food-only comment below has been since #337.
-                forage_policy_ceilings: plant_policy_forecasts(
+                // It replaces the four stance ceiling rows because a player drags a **continuous**
+                // floor: with `biomass`, `carrying_capacity` and the build-dip fractions the client
+                // evaluates `max(0, B − floor·K) × dip × rate` anywhere on the dial.
+                provisions_per_biomass: patch_provisions_per_biomass(
                     patch,
                     tile_composition,
-                    forage,
                     flora,
-                    ladder,
-                    seasonal,
-                    FORECAST_OUTPUT_MULTIPLIER,
-                )
-                .into_iter()
-                .map(|rung| ForagePolicyCeilingState {
-                    policy: rung.policy.as_str().to_string(),
-                    provisions_per_turn: rung.ceiling.provisions,
-                    trade_goods_per_turn: rung.ceiling.trade_goods,
-                    fodder_per_turn: rung.ceiling.fodder,
-                    per_worker_provisions: rung.per_worker.provisions,
-                    per_worker_trade_goods: rung.per_worker.trade_goods,
-                    per_worker_fodder: rung.per_worker.fodder,
-                })
-                .collect(),
+                    forage,
+                ),
+                fodder_per_biomass: patch_fodder_per_biomass(
+                    patch,
+                    tile_composition,
+                    flora,
+                    forage,
+                ),
+                trade_per_biomass: patch_trade_per_biomass(patch, tile_composition, flora, forage),
                 // **The two plant build dips, as fractions** (issue #442) — the twins of the herd's
                 // `tame_build_fraction`/`corral_build_fraction`, off the same `build_dips` the take
                 // path prices a build with. `preparing(stance) = ceiling[stance] × fraction`.

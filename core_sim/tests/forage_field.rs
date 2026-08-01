@@ -26,10 +26,10 @@ use core_sim::{
     scalar_zero, spawn_initial_forage, spawn_initial_world, tile_flora_composition,
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
+    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
@@ -280,7 +280,7 @@ fn spawn_forager(
     patch: UVec2,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
-    let policy = FollowPolicy::Sustain;
+    let policy = 0.5;
     app.world
         .spawn((
             PopulationCohort {
@@ -315,7 +315,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                         species: None,
                     },
                     workers: FORAGE_WORKERS,
@@ -794,8 +794,7 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
         panic!("completion must not change the target's KIND: {assignment:?}");
     };
     assert_eq!(
-        *floor,
-        FollowPolicy::Sustain.escapement_floor(),
+        *floor, 0.5,
         "the crew's floor is left exactly as the player set it (issue #442)"
     );
     assert_eq!(*sown_tile, coord, "the same ground");

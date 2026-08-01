@@ -18,7 +18,7 @@ paths:
 | File | Purpose |
 |------|---------|
 | `src/data/sites_config.json` | Wondrous Sites catalog (`catalog`: per-`site_id` `category`/`display_name`/`glyph`/`placement_rule`/`discovery_reward.morale_bonus`) + `placement` rules (per-rule `max_sites`, `min_spacing`, and the union of rule inputs: `min_relief`, `max_habitability_pressure`, `min_food_weight`). Loader `sites_config.rs`, env override `SITES_CONFIG_PATH`. Not wired into the `reload_config` hot-reload path (mirrors `fauna_config.json`) |
-| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the policy's floor (Sustain `K/2`, Surplus `hunt.surplus_escapement_fraction·K`, Deplete `ecology.collapse_fraction·K`, Eradicate 0), *not* the resident band's throttled kill-credit rate. See "Scouting & Hunting Expeditions". The take **policy** is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (default `FollowPolicy::Sustain`). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
+| `src/data/expedition_config.json` | Expedition tuning. Scout: `max_party_size`, `comm_range_tiles` (discovery-report range), `comm_range_tech_factor` (stubbed 1.0 tech hook), `observe_sight_range` (per-turn LOS radius, matches band base sight), `provision_draw_per_worker_per_tile` (launch larder draw = party × distance × this), `provision_upkeep_per_worker` (per-turn drain = party × this, scouts only). Hunt (PR 2) `hunt` block: `per_worker_carry` (carry cap = party × this), `reach_tiles` (how close to the herd to take), `drop_off_within_tiles` (herd-near-band delivery gate), `min_deliver_fraction` (herd-near-band early delivery needs carried ≥ this × cap), `viability_warn_turns` (**20** — a client display threshold on `turnsToFill`; = 4× the throughput-implied trip length `per_worker_carry / (per_worker_biomass_capacity × provisions_per_biomass)` = 5 turns), `forecast_horizon_turns` (**60** — how far `hunt_trip_forecast` simulates the raid before giving up on completion; a raid is short — grab the surplus, come home — so simulating each to completion is cheap). The retired `sustain_floor_fraction` is **gone**: a hunting expedition is a **greedy raid** — it grabs the herd's standing surplus above the mission's **floor**. See "Scouting & Hunting Expeditions". The floor is **not** a config lever — it is chosen at launch via the optional trailing arg of `send_hunt_expedition` (any fraction of `K` in `0.0..=1.0`; default `DEFAULT_ESCAPEMENT_FLOOR`, the food peak). Scout replenish `replenish` block: `low_turns` (top up below party × upkeep × this), `reach_tiles`. Loader `expedition_config.rs`, env override `EXPEDITION_CONFIG_PATH`. Not on the `reload_config` hot-reload path (mirrors `sites_config.json`). **Validated** — `ExpeditionConfig::validate()` runs inside `from_json_str`, so *every* load path (builtin, default file, `EXPEDITION_CONFIG_PATH` override) is covered, following the `crisis_config.rs` convention; a broken invariant is logged at **error** level (`expedition_config.invalid_rejected`) and the config is refused, falling back to the known-good builtin rather than silently disabling a feature. Enforced: `max_party_size ≥ 1`, `comm_range_tech_factor` finite & `> 0`, `observe_sight_range ≥ 1`, `provision_draw_per_worker_per_tile`/`provision_upkeep_per_worker` finite & `≥ 0`, `hunt.per_worker_carry` finite & `> 0`, `hunt.reach_tiles ≥ 1`, `0 < hunt.min_deliver_fraction ≤ 1`, `hunt.viability_warn_turns ≥ 1`, **`hunt.forecast_horizon_turns ≥ max(1, hunt.viability_warn_turns)`** (at `0` the forecast's `1..=horizon` loop runs zero turns and *every* hunting expedition silently reports "won't fill"; below the warn threshold, a trip the player would be told is viable can never be discovered), `replenish.low_turns ≥ 1`, `replenish.reach_tiles ≥ 1`. Deliberately **left free**: `comm_range_tiles` (`0` = "walk back into camp to report"), `hunt.drop_off_within_tiles` (`0` = no early drop-off; a full pack still delivers), and the *upper* end of `max_party_size`/`forecast_horizon_turns` (they only cost snapshot time — the estimate table is `O(policies × max_party_size × horizon)` per herd — an operator's call, not an invariant) |
 ## Wondrous Sites
 
 Data-driven catalog of notable map features tiles can hold, hidden under fog until a faction's
@@ -121,7 +121,7 @@ zero in v1) + opportunistic replenish; **(d) phase transitions** — `Outbound` 
 band + despawn (`ExpeditionReturned`, after the flush so the final findings report); `AwaitingOrders`
 waits.
 
-**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, policy: FollowPolicy }` on the same party;
+**Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32 }` on the same party;
 the take **policy is chosen at launch** (`send_hunt_expedition <faction> <band> <party_workers>
 <fauna_id> [policy]`, default **Sustain** — not a config lever). `advance_expeditions` branches on
 mission:
@@ -142,17 +142,15 @@ mission:
 > in a burst and comes home**, so more hunters take more animals in **fewer-or-equal** turns.
 >
 > **Since `docs/plan_harvest_floor.md` slice 1 the resident band uses the raid's SHAPE** — both are
-> constant escapement to `FollowPolicy::escapement_floor` — so what still separates them is pace, not
+> constant escapement to the **floor its orders name** — so what still separates them is pace, not
 > model: a raid works one herd with its whole party until the surplus is gone, a band works it a turn
 > at a time. **`hunt_expedition_floor` therefore delegates to that one table** and no longer reads
 > config; there is one floor table for both paths, not two that can drift.
 >
-> - **The floor is per-policy** (`hunt_expedition_floor` → `FollowPolicy::escapement_floor`, whose
->   transitional numbers `FaunaConfig::validate` keeps ordered
->   `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`): Sustain `K/2` (0.50·K),
->   Surplus `0.30·K`, Deplete `0.15·K`, Eradicate `0`. A deeper policy leaves a leaner herd —
->   *"Surplus/Deplete raid deeper"*. (Deplete drives no extinction on **either** path now — it strips
->   to 0.15·K and stops. Extinction is the floor-`0` case, i.e. **Eradicate**, on both paths.)
+> - **The floor is the MISSION'S**, a fraction of `K` the launch command names — there is no table
+>   left to look it up in (`hunt_expedition_floor` is deleted; it existed only to map a stance onto a
+>   number). A deeper floor leaves a leaner herd, and **extinction is the floor-`0` case**: any floor
+>   above `0` strips the herd to it and stops, on this path and the resident band's alike.
 > - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
 >   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
 >   `hunt_credit` — **the field's one remaining writer**, since the resident band stopped banking — and
@@ -259,19 +257,15 @@ mission:
 - **The improvements are NOT an expedition concept, and since issue #442 that is a TYPE-LEVEL fact.**
   `Cultivate`/`Sow`/`Tame`/`Corral` are place-bound work a *resident* band does (prepare a patch, build
   a pen, then tend it) — a detached party cannot pen a herd and walk home. They are now an
-  `Improvement`, and `ExpeditionMission::Hunt` carries a **`FollowPolicy`**, which has no such variant:
-  the expedition's whole axis is `FollowPolicy::ALL` (the four stances) *by construction*, and
-  `handle_send_hunt_expedition` rejects a build verb through the ordinary parse rather than a
-  membership test. **`hunt_expedition_floor`'s unreachable investment arm and its `debug_assert!` are
-  deleted with it** — the guarantee they approximated is exact now. Their history is worth keeping:
-  both this launch gate and that `matches!` were hand-written verb lists, and both had rotted (the gate
-  silently accepted `tame`, which then sailed past the assert and took a plausible pastoral-dip
-  ceiling); factoring them onto `FollowPolicy::is_investment` fixed the drift, and typing the two sets
-  apart removed the question. Guarded by
-  `server::tests::send_hunt_expedition_rejects_the_investment_policies`.
-- **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(policy, improvement, biomass, cap,
-  ladder)`** is THE take ceiling on the animal web — `max(0, B − policy.escapement_floor()·K) ×
-  build_dip`, the stock standing above the stance's floor — and `quantise_animal_take` rounds it to
+  `Improvement`, and `ExpeditionMission::Hunt` carries a **`floor: f32`** — a *number*, which cannot
+  name a verb at all, so the launch token is parsed as one and a word of any kind is refused by the
+  ordinary parse rather than by a membership test. Their history is worth keeping: both this launch
+  gate and `hunt_expedition_floor`'s unreachable investment arm were hand-written verb lists, and both
+  had rotted (the gate silently accepted `tame`, which then took a plausible pastoral-dip ceiling).
+  Guarded by `server::tests::send_hunt_expedition_rejects_a_floor_outside_the_dial`.
+- **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(floor, improvement, biomass, cap,
+  ladder)`** is THE take ceiling on the animal web — `max(0, B − floor·K) × build_dip`, the stock
+  standing above the assignment's or mission's floor — and `quantise_animal_take` rounds it to
   whole animals. It takes **no ecology and no `FaunaConfig`**, which is what makes the take
   `r`-independent structurally rather than by convention; see "The hunt policy axis" in `fauna.md`.
   The expedition keeps its own `credit` accumulator for the *party's* processing throughput
@@ -368,7 +362,8 @@ home band's live position) and exported as three **append-only** `PopulationCoho
 unknown/n-a — a scout, a normal band, or a trickle-fill raid with no finite ETA),
 **`expeditionProjectedDelivery:float`** (`carried + still-to-take`, pack-capped — `0` means the herd
 is at/below the policy floor with no surplus to raid), and **`expeditionRecurring:bool`**
-(`FollowPolicy::expedition_recurring()` — the single source, `matches!(self, Deplete)`, since Deplete is
+(`systems::raid_is_recurring(floor)` — the single source, `floor < MSY_BIOMASS_FRACTION`, since a
+floor below the food peak leaves more standing than one pack holds and the party is
 the only policy whose trip is a *series* of trips; Sustain/Surplus/Eradicate make **one raid** and fold
 home. Not the same question as "does it ever pass through `Delivering`": a near-band drop-off is an
 incident inside one raid, so a Sustain party that drops a load off and resumes hunting still reads
@@ -383,10 +378,11 @@ describes the trip), so the sim exports the **answer** it simulated, and the cli
 lookup**:
 - `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
   turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
-  per **huntable** herd, one entry per `FollowPolicy::ALL` × every legal party size
+  per **huntable** herd, one entry per **sampled floor** (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` —
+  marks on a continuum, NOT a set of options: the launch command takes any floor) × every legal party size
   (`1..=expedition_config.max_party_size`, so 4 × 8 = 32 rows/herd; `policy` is a free-form string like
   `species`, so a new stance needs no schema change). **The four stances, and there is nothing else to
-  exclude** — an improvement is not a `FollowPolicy` (issue #442), so a build-verb row is
+  exclude** — an improvement is not a floor (issue #442), so a build-verb row is
   unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
   surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
   (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
@@ -400,14 +396,14 @@ lookup**:
   `deliversFood == false` means the **species** is inedible (a wolf), not that the policy denies — such
   a row still carries a real `turnsToFill` and a `deliveredTrade` payload. **Travel is excluded** — the
   number means "turns spent hunting once you arrive".
-- `HerdTelemetryState.huntPolicyCeilings:[HuntPolicyCeiling{ policy:string, provisionsPerTurn:float }]`
-  — the **BAND / local-hunt** ceiling only, one row per `FollowPolicy::ALL`: the four stances. The
-  `tame`/`corral` dip rows went with issue #442 — a dip multiplies whichever stance the crew holds, so
-  it ships as `tameBuildFraction` / `corralBuildFraction` instead (see "Pre-commit Yield Forecast"). Each is the worker-independent ceiling for the herd's current
-  state, in provisions/turn, **clamped to the herd's remaining biomass** — a tautology now (every floor
-  is `≥ 0`, so `B − floor ≤ B`), kept as belt-and-braces against a hot-reloaded floor above `1`. A herd
-  below a policy's floor exports `0` for it (a herd at the brink spares nothing to Sustain *or* Surplus).
-  **Sourced by projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
+- `HerdTelemetryState.{provisionsPerBiomass, fodderPerBiomass, tradePerBiomass}` — the **BAND /
+  local-hunt** terms, from which the client composes the ceiling at **any** floor:
+  `max(0, B − floor·K) × <rung>BuildFraction × rate`. `huntPolicyCeilings` is a retired
+  `(deprecated)` slot: four rows cannot answer a continuous dial (`yield-forecast.md` → "the sim
+  exports the answer" and its one narrow exception). A herd below a floor composes `0` for it, which
+  is the escapement rule rather than a special case. The dip still ships as
+  `tameBuildFraction` / `corralBuildFraction` (see "Pre-commit Yield Forecast"). **Formerly sourced by
+  projecting the herd's `fauna::hunt_forecast`** (`SourceYieldForecast::ceiling_for`) —
   the **only** wire representation of a herd's per-policy ceilings (the scalar
   `ceilingSustain`/…/`ceilingCorral` twins, which carried literally the same numbers, are now retired
   `(deprecated)` slots), and the take path pays exactly them

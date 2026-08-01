@@ -174,11 +174,6 @@ fn create_populations<'a>(
                 )
             });
             let activity = Some(builder.create_string(&cohort.activity));
-            let hunt_mode = if cohort.hunt_mode.is_empty() {
-                None
-            } else {
-                Some(builder.create_string(&cohort.hunt_mode))
-            };
             let labor_assignments = if cohort.labor_assignments.is_empty() {
                 None
             } else {
@@ -191,11 +186,6 @@ fn create_populations<'a>(
                             None
                         } else {
                             Some(builder.create_string(&assignment.fauna_id))
-                        };
-                        let policy = if assignment.policy.is_empty() {
-                            None
-                        } else {
-                            Some(builder.create_string(&assignment.policy))
                         };
                         // The second axis (issue #442). Absent rather than `""` when the crew is
                         // building nothing, matching how `policy`/`faunaId` treat an empty value.
@@ -219,7 +209,6 @@ fn create_populations<'a>(
                                 targetX: assignment.target_x,
                                 targetY: assignment.target_y,
                                 faunaId: fauna_id,
-                                policy,
                                 actualYield: assignment.actual_yield,
                                 sustainableYield: assignment.sustainable_yield,
                                 workersNeeded: assignment.workers_needed,
@@ -255,11 +244,6 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_target_herd))
             };
-            let expedition_hunt_policy = if cohort.expedition_hunt_policy.is_empty() {
-                None
-            } else {
-                Some(builder.create_string(&cohort.expedition_hunt_policy))
-            };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
             } else {
@@ -291,6 +275,8 @@ fn create_populations<'a>(
                 builder,
                 &fb::PopulationCohortStateArgs {
                     bandId: cohort.band_id,
+                    // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
+                    expeditionFloor: cohort.expedition_floor,
                     entity: cohort.entity,
                     home: cohort.home,
                     currentX: cohort.current_x,
@@ -312,7 +298,6 @@ fn create_populations<'a>(
                     ageTurns: cohort.age_turns,
                     turnsOfFood: cohort.turns_of_food,
                     activity,
-                    huntMode: hunt_mode,
                     laborAssignments: labor_assignments,
                     idleWorkers: cohort.idle_workers,
                     workingAge: cohort.working_age,
@@ -329,7 +314,6 @@ fn create_populations<'a>(
                     expeditionCarryCap: cohort.expedition_carry_cap,
                     // Appended after every earlier-shipped field (append-only wire discipline).
                     expeditionTargetHerd: expedition_target_herd,
-                    expeditionHuntPolicy: expedition_hunt_policy,
                     travelTargetX: cohort.travel_target_x,
                     travelTargetY: cohort.travel_target_y,
                     huntReach: cohort.hunt_reach,

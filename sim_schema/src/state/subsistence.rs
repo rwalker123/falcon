@@ -12,55 +12,6 @@ pub struct SedentarizationState {
     pub stage: String,
 }
 
-/// One take policy's per-turn **band / local-hunt** ceiling for a herd, in **provisions** (the sim
-/// already converted from biomass). Worker-*independent*: the policy's cap on the take at the herd's
-/// **current** state, before any party-throughput cap, and clamped to the herd's remaining biomass —
-/// so it is a **true maximum take**. `0` = no take is possible under this policy (a collapsing
-/// sub-Allee herd yields nothing under Sustain/Surplus). `policy` is a free-form string
-/// (`sustain|surplus|deplete|eradicate|corral`, like `species`), so a new policy needs no schema
-/// change.
-///
-/// **The rows are NOT all the same kind of quantity**, which is precisely why no one may divide by
-/// them: Sustain is a per-turn **flow** (MSY), Surplus that flow × a multiplier, Corral a *fraction*
-/// of it (the pen-building dip), while Deplete/Eradicate are shares of standing **stock** that shrink
-/// as the herd is drawn down.
-///
-/// Consumer: the resident-band local-hunt yield preview —
-/// `min(workers × hunt_per_worker_provisions, provisions_per_turn) × output_multiplier`, which is
-/// arithmetically `core_sim::systems::hunt_take(..)` for a *single* turn against the herd's current
-/// state (pinned by `core_sim/tests/expedition_hunt.rs`). That single-turn arithmetic is legitimate;
-/// projecting it across turns is not.
-///
-/// **A hunting expedition must NOT forecast a trip from this number.** It is the **band / local-hunt**
-/// per-turn ceiling, and even for the expedition's *own* ceilings there is no single rate to divide
-/// by (see the kinds above). So `cap / rate` is wrong either way — the herd's state moves under the
-/// party (the stock exhausts mid-trip) and the forecast horizon bounds the answer. **An expedition's
-/// trip length comes from `HerdTelemetryState.hunt_trip_estimates`**, which the sim forward-simulates.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct HuntPolicyCeilingState {
-    pub policy: String,
-    /// BAND / local-hunt ceiling, in provisions/turn. Produced by projecting the herd's
-    /// `fauna::hunt_forecast` through `SourceYieldForecast::ceiling_for(policy)` — i.e. the
-    /// per-stance biomass ceiling `fauna::hunt_escapement_ceiling` converted by the species' own
-    /// `HuntYield::apply` (which retired the global `fauna::hunt_provisions`),
-    /// the *same* helpers the take path pays with (forecast == actual). Never re-derive it.
-    #[serde(default)]
-    pub provisions_per_turn: f32,
-    /// **The same ceiling in TRADE GOODS/turn** (appended, issue #337). The row states an ACCOUNT
-    /// VECTOR, not a food scalar: every harvesting policy sells the species' trade component, and an
-    /// **inedible** species (a wolf) reads `provisions_per_turn == 0` with this strictly positive —
-    /// a food-only row could not express its yield at all. Render a trade line **only when this is
-    /// `> 0`**, the rule flora's cash-crop line already uses, so a source with no trade shows no line
-    /// rather than a false "0".
-    ///
-    /// **This herd row carries TWO of the three accounts, and the missing one is structural.** The
-    /// plant twin (`ForagePolicyCeiling`) carries a third, fodder, because a crop can be grown as
-    /// feed; `fauna_config::YieldAccounts` fills a zero there for every species, since no animal is
-    /// harvested for fodder. So do not "finish" this row by appending a `fodder_per_turn` — there is
-    /// nothing on the sim side to put in it.
-    pub trade_goods_per_turn: f32,
-}
-
 /// The sim's **pre-launch hunt-trip estimate** for one (policy, party size) against one herd — the
 /// *answer*, so the client's outfit UI is a pure table lookup and does **zero** arithmetic.
 ///
@@ -76,9 +27,12 @@ pub struct HuntPolicyCeilingState {
 /// counted — and assumes the herd stays put.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct HuntTripEstimateState {
-    /// Free-form take policy (`sustain|surplus|deplete|eradicate`), like `species` — a new policy
-    /// needs no schema change.
-    pub policy: String,
+    /// **Where this sampled raid stops**, as a fraction of the herd's carrying capacity. The table
+    /// **samples a continuum** — see `snapshot::RAID_FORECAST_FLOOR_SAMPLES` — because a raid's trip
+    /// length is a forward simulation with no closed form, so the sim must export answers at chosen
+    /// points rather than a formula. Appended (append-only).
+    #[serde(default)]
+    pub floor: f32,
     /// Party size, `1 ..= expedition_config.max_party_size`.
     pub party_workers: u32,
     /// Turns of hunting until the **raid completes** — the party comes home when the pack fills OR the
@@ -179,17 +133,6 @@ pub struct HerdTelemetryState {
     /// never touches this. `0` on a herd that never offers Corral.
     #[serde(default)]
     pub corral_trade: f32,
-    /// Per-**stance** band / local-hunt take ceilings for this herd's current state — one entry per
-    /// [`FollowPolicy`], i.e. the four harvest stances. **Four rows since issue #442**: the `tame`
-    /// and `corral` dips used to ride here and are now the `*_build_fraction` factors, because a dip
-    /// multiplies whichever stance the crew holds. Phase-correct: a penned herd's rows all read its
-    /// corral yield. The **only** wire representation of a herd's per-stance
-    /// ceilings — a free-form `policy` string means a new stance needs no schema change. With the
-    /// cohort's `hunt_per_worker_provisions` and `output_multiplier` this is
-    /// everything the client needs to preview a *resident band's* hunt yield as pure arithmetic — it
-    /// must never re-derive the ecology model. Derived at capture. Appended (append-only wire).
-    #[serde(default)]
-    pub hunt_policy_ceilings: Vec<HuntPolicyCeilingState>,
     /// The sim's **pre-launch trip estimates** for a hunting *expedition* against this herd — one
     /// entry per (stance × party size `1..=max_party_size`), so the outfit UI is a **table lookup**
     /// and the client does no arithmetic at all. The improvements are place-bound band work an
@@ -386,6 +329,19 @@ pub struct HerdTelemetryState {
     /// [`ForagePatchState::neglect_grace_remaining`].
     #[serde(default)]
     pub neglect_grace_remaining: u32,
+    /// **What ONE UNIT of this herd's biomass is worth**, in each account — the species' own
+    /// `HuntYield`. The animal twin of `ForagePatchState::provisions_per_biomass`; an **inedible**
+    /// species reads `0` here with a positive [`Self::trade_per_biomass`]. Appended (append-only).
+    #[serde(default)]
+    pub provisions_per_biomass: f32,
+    /// No animal pays fodder, so this is `0` on every herd — present so both food webs publish the
+    /// same triple and a reader needs one code path. Appended (append-only).
+    #[serde(default)]
+    pub fodder_per_biomass: f32,
+    /// The trade half of the same vector — the only positive account on an inedible species.
+    /// Appended (append-only).
+    #[serde(default)]
+    pub trade_per_biomass: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -411,7 +367,6 @@ impl Default for HerdTelemetryState {
             trade_per_animal: 0.0,
             corral_yield: 0.0,
             corral_trade: 0.0,
-            hunt_policy_ceilings: Vec::new(),
             hunt_trip_estimates: Vec::new(),
             pen_upkeep: 0.0,
             pen_fed_fraction: pen_fully_fed(),
@@ -441,6 +396,9 @@ impl Default for HerdTelemetryState {
             corral_build_fraction: 0.0,
             has_neglect_grace: false,
             neglect_grace_remaining: 0,
+            provisions_per_biomass: 0.0,
+            fodder_per_biomass: 0.0,
+            trade_per_biomass: 0.0,
         }
     }
 }
@@ -544,15 +502,6 @@ pub struct ForagePatchState {
     /// species key. Appended (append-only).
     #[serde(default)]
     pub committed_display_name: String,
-    /// **The per-policy ceilings as rows**, one per rung, each carrying all three accounts — the
-    /// plant twin of [`HerdTelemetryState::hunt_policy_ceilings`] and the replacement for the six
-    /// flat `ceiling_*` scalars above.
-    ///
-    /// A list rather than scalars for the reason the herd's is: the rung set grows (rung 4, Worked
-    /// Land, is planned), and a row costs no schema change where a scalar triple would cost three
-    /// fields per rung forever.
-    #[serde(default)]
-    pub forage_policy_ceilings: Vec<ForagePolicyCeilingState>,
     /// Trade goods/turn a **completed tended patch** would pay — the twin of [`Self::tended_yield`],
     /// as `pastoral_trade` is of `pastoral_yield`. Rung 2 is drawn down, so this rides the take.
     #[serde(default)]
@@ -600,48 +549,22 @@ pub struct ForagePatchState {
     /// [`Self::cultivate_crew_needed`]; two fields because the rungs' dials are independently tunable.
     #[serde(default)]
     pub sow_crew_needed: u32,
-}
-
-/// **One rung's ceiling on one tile, in every account that tile's basket pays** (issue #426) — the
-/// plant twin of [`HuntPolicyCeilingState`], deliberately the same shape.
-///
-/// `policy` names the rung (`sustain`/`surplus`/`deplete`/`eradicate`/`cultivate`/`sow`); each
-/// component is that rung's per-turn ceiling in one account, already biomass-clamped and captured at
-/// `output_multiplier = 1.0`. **Render a component only when it is non-zero** — the rule
-/// [`HuntPolicyCeilingState::trade_goods_per_turn`] already states.
-///
-/// **This is the TILE's vector, not a plant's.** Rungs 1 and 2 are baskets (rung 2 only *weeds*), so
-/// they routinely pay two or three accounts; only a sown Field is a single plant. `FloraShareInfo`'s
-/// `cultivate*`/`sow*` payoffs answer the different question "what would *this plant* pay here".
-///
-/// **The row is SELF-CONTAINED — it carries the per-worker vector too.** The client composes
-/// `min(workers × per_worker, ceiling)`, so both terms must be in the same units; on the plant web the
-/// trade rate is **policy-dependent** (`Deplete` marks it up at the credit site, *after* the worker
-/// cap), so a policy-blind per-worker scalar could not state it and a ceiling-only markup would
-/// understate every labor-bound Deplete take. Hence one row per rung, each stating its own per-worker
-/// contribution with the markup folded in server-side.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct ForagePolicyCeilingState {
-    pub policy: String,
+    /// **What ONE UNIT of this patch's standing crop is worth**, in each account, at the patch's own
+    /// basket-averaged rates (`patch_provisions_per_biomass` and its siblings — the seams
+    /// `forage_take` pays with). With [`Self::biomass`], [`Self::carrying_capacity`] and the build-dip
+    /// fractions the client evaluates `max(0, B − floor·K) × dip × rate` at **any** floor, which is
+    /// what makes the harvest floor draggable (`docs/plan_harvest_floor.md` §5). A deliberate, narrow
+    /// exception to *"the sim exports the answer"*: this expression is linear and exact, unlike the
+    /// whole-animal quantisation that rule protects, and `SourceYield::actual` remains the sim's
+    /// answer for the committed assignment. Appended (append-only).
     #[serde(default)]
-    pub provisions_per_turn: f32,
+    pub provisions_per_biomass: f32,
+    /// The fodder half of the same vector — see [`Self::provisions_per_biomass`].
     #[serde(default)]
-    pub trade_goods_per_turn: f32,
-    /// **No herd counterpart** — the animal web has two accounts, the plant web three.
+    pub fodder_per_biomass: f32,
+    /// The trade half of the same vector — see [`Self::provisions_per_biomass`].
     #[serde(default)]
-    pub fodder_per_turn: f32,
-    /// Provisions/turn ONE forager contributes under this policy. Invariant across the rows (the food
-    /// rate carries no policy markup) and repeated on each deliberately, so the `min` above can be
-    /// taken per component without the client knowing which accounts vary by policy.
-    #[serde(default)]
-    pub per_worker_provisions: f32,
-    /// Trade goods/turn one forager contributes **under this policy** — the one component that really
-    /// does vary, carrying `Deplete`'s markup.
-    #[serde(default)]
-    pub per_worker_trade_goods: f32,
-    /// Fodder/turn one forager contributes under this policy. Invariant like the food rate.
-    #[serde(default)]
-    pub per_worker_fodder: f32,
+    pub trade_per_biomass: f32,
 }
 
 /// One named plant's share of a tile's forage capacity — see [`ForagePatchState::composition`].

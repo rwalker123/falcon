@@ -16,8 +16,8 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    available_workers, build_headless_app, run_turn, scalar_from_f32, FollowPolicy, ForageRegistry,
-    Herd, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
+    available_workers, build_headless_app, run_turn, scalar_from_f32, ForageRegistry, Herd,
+    HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
     SimulationConfig, SizeClass, SnapshotHistory, Tile, FOOD,
 };
 
@@ -64,7 +64,7 @@ fn the_food_ledger_reconciles_with_a_predator_raid() {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile: patch,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             workers: workers.max(1),

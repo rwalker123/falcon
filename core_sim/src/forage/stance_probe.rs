@@ -28,7 +28,7 @@
 //! ```
 
 use super::*;
-use crate::components::{FollowPolicy, Improvement};
+use crate::components::Improvement;
 use crate::fauna::{
     herd_capacity, herd_ecology, regrow_biomass, EcologyPhase as FaunaEcologyPhase, Herd,
 };
@@ -557,12 +557,10 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
 
 // ---- Reports ----------------------------------------------------------------------------------
 
-const STANCES: [FollowPolicy; 4] = [
-    FollowPolicy::Sustain,
-    FollowPolicy::Surplus,
-    FollowPolicy::Deplete,
-    FollowPolicy::Eradicate,
-];
+/// The floors the **ignored report harnesses** print a row for — the four the retired stance axis
+/// named, so the measured tables stay comparable with the ones in the rule files. The property tests
+/// above sweep [`DESCENDING_FLOORS`] instead, which reaches above the food peak as well.
+const REPORT_FLOORS: [f32; 4] = [0.5, 0.3, 0.15, 0.0];
 
 // ---- The properties ---------------------------------------------------------------------------
 
@@ -812,9 +810,9 @@ const PROBE_SPECIES: [&str; 5] = ["rabbit", "deer", "boar", "steppe_runner", "ma
 
 /// The stance ladder printed as what it now is — four escapement floors, in fractions of `K`.
 fn floor_ladder() -> String {
-    STANCES
+    REPORT_FLOORS
         .iter()
-        .map(|stance| format!("{} {}K", stance.as_str(), stance.escapement_floor()))
+        .map(|floor| format!("{floor:.2}K"))
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -852,11 +850,11 @@ fn probe_plant_stances() {
         "{:<10} {:>9} {:>9} {:>11} {:>10} {:>10} {:>8} {:>9}",
         "stance", "settles", "final", "phase", "take/turn", "food/turn", "->!thriv", "->floor"
     );
-    for stance in STANCES {
-        let out = run_patch(stance.escapement_floor(), None);
+    for stance in REPORT_FLOORS {
+        let out = run_patch(stance, None);
         println!(
             "{:<10} {:>8.3}K {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>9}",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             out.settled_fraction,
             out.final_fraction,
             format!("{:?}", out.phase),
@@ -880,12 +878,12 @@ fn probe_plant_stances() {
         "food/build",
         "B at done"
     );
-    for stance in STANCES {
-        let held = run_patch(stance.escapement_floor(), Some(Improvement::Cultivate));
-        let built = run_plant_build(stance.escapement_floor(), Improvement::Cultivate);
+    for stance in REPORT_FLOORS {
+        let held = run_patch(stance, Some(Improvement::Cultivate));
+        let built = run_plant_build(stance, Improvement::Cultivate);
         println!(
             "{:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             held.settled_fraction,
             format!("{:?}", held.phase),
             held.take_biomass,
@@ -931,11 +929,11 @@ fn probe_animal_stances() {
             "{:<10} {:>9} {:>9} {:>11} {:>10} {:>10} {:>8} {:>9}",
             "stance", "settles", "final", "phase", "take/turn", "food/turn", "->!thriv", "->floor"
         );
-        for stance in STANCES {
-            let out = run_herd(key, stance.escapement_floor(), None, FULL_HERD);
+        for stance in REPORT_FLOORS {
+            let out = run_herd(key, stance, None, FULL_HERD);
             println!(
                 "{:<10} {:>8.3}K {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>9}",
-                stance.as_str(),
+                format!("{stance:.2}K"),
                 out.settled_fraction,
                 out.final_fraction,
                 format!("{:?}", out.phase),
@@ -966,17 +964,12 @@ fn probe_animal_stances() {
                 "food/build",
                 "B at done"
             );
-            for stance in STANCES {
-                let held = run_herd(
-                    key,
-                    stance.escapement_floor(),
-                    Some(Improvement::Tame),
-                    start,
-                );
-                let built = run_tame(key, stance.escapement_floor(), start);
+            for stance in REPORT_FLOORS {
+                let held = run_herd(key, stance, Some(Improvement::Tame), start);
+                let built = run_tame(key, stance, start);
                 println!(
                     "  {:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
-                    stance.as_str(),
+                    format!("{stance:.2}K"),
                     held.settled_fraction,
                     format!("{:?}", held.phase),
                     held.take_biomass,
@@ -1026,14 +1019,14 @@ fn probe_build_and_teach_axis() {
     );
     for (label, key, _) in rungs {
         let rung = ladder.rung(key);
-        for stance in STANCES {
+        for stance in REPORT_FLOORS {
             println!(
                 "{:<16} {:<10} {:>18} {:>18}",
                 label,
-                stance.as_str(),
-                rung.knowledge_earned(stance.escapement_floor(), true)
+                format!("{stance:.2}K"),
+                rung.knowledge_earned(stance, true)
                     .map_or("-".to_string(), |id| id.to_string()),
-                rung.knowledge_earned(stance.escapement_floor(), false)
+                rung.knowledge_earned(stance, false)
                     .map_or("-".to_string(), |id| id.to_string()),
             );
         }
@@ -1075,11 +1068,11 @@ fn probe_rung_three_builds() {
         "{:<10} {:>12} {:>12} {:>9}",
         "stance", "buildturns", "food/build", "B at done"
     );
-    for stance in STANCES {
-        let built = run_plant_build(stance.escapement_floor(), Improvement::Sow);
+    for stance in REPORT_FLOORS {
+        let built = run_plant_build(stance, Improvement::Sow);
         println!(
             "{:<10} {:>12} {:>12.2} {:>8.3}K",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             built.turns_to_complete.map_or_else(
                 || format!("never({:.2})", built.progress_at_horizon),
                 |t| t.to_string()
@@ -1102,11 +1095,11 @@ fn probe_rung_three_builds() {
             "{:<10} {:>12} {:>12} {:>9}",
             "stance", "buildturns", "food/build", "B at done"
         );
-        for stance in STANCES {
-            let built = run_corral(key, stance.escapement_floor(), FULL_HERD);
+        for stance in REPORT_FLOORS {
+            let built = run_corral(key, stance, FULL_HERD);
             println!(
                 "{:<10} {:>12} {:>12.2} {:>8.3}K",
-                stance.as_str(),
+                format!("{stance:.2}K"),
                 built.turns_to_complete.map_or_else(
                     || format!("never({:.2})", built.progress_at_horizon),
                     |t| t.to_string()

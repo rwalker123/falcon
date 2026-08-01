@@ -44,8 +44,8 @@ use core_sim::{
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
     EcologyPhase, EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry,
-    FrameSink, GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink,
+    GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
     InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
     QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
@@ -521,7 +521,7 @@ enum Command {
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        policy: Option<String>,
+        floor: Option<f32>,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1388,7 +1388,7 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
 // the harvest model turns on.
 //
 // It is **not** what `send_hunt_expedition` uses — that path has always parsed its own token with
-// `FollowPolicy::from_str` and *rejects* an unusable one, so routing it here would have loosened a
+// its own parse and *rejects* an unusable one, so routing it here would have loosened a
 // gate rather than shared one.
 
 fn handle_found_settlement(
@@ -1694,9 +1694,8 @@ fn validate_labor_policy(
                 .find(fauna_id)
                 .map(|herd| herd.species.clone());
             if let Some(species) = species {
-                let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
-                let denial_only = offered == [FollowPolicy::Eradicate];
-                if denial_only && *floor > FollowPolicy::Eradicate.escapement_floor() {
+                let denial_only = core_sim::species_requires_denial(fauna.hunt_yield_for(&species));
+                if denial_only && *floor > core_sim::STRIP_IT_BARE {
                     return Err(format!(
                         "The {} yields neither food nor trade goods — the only thing to do with \
                          it is eradicate it.",
@@ -2555,39 +2554,27 @@ fn handle_send_hunt_expedition(
     band_id: Option<u64>,
     party_workers: u32,
     fauna_id: String,
-    policy: Option<String>,
+    floor: Option<f32>,
 ) {
-    // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
-    // An explicit but unparseable token is rejected rather than silently defaulting: Sustain and
-    // Deplete are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
-    let policy: FollowPolicy = match policy.as_deref() {
-        None => FollowPolicy::Sustain,
-        // **A build verb is not parseable as a stance at all since issue #442**, so this rejects one
-        // by the same path as any other unknown token — no predicate, no list, nothing to rot. Every
-        // rung-transition is place-bound work a *resident* band does (a detached party cannot tame a
-        // herd, pen it, or sow a field and walk home), and `ExpeditionMission::Hunt` carries a
-        // `FollowPolicy`, which can no longer name one.
-        //
-        // The two guards this replaces were both hand-written lists, and both had rotted: this gate
-        // silently **accepted `tame`**, which then sailed past `hunt_expedition_floor`'s
-        // `debug_assert!` and took a plausible-looking pastoral-dip ceiling. Factoring them onto
-        // `FollowPolicy::is_investment` fixed that; typing the two sets apart removes the question.
-        Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) => parsed,
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::ExpeditionSent,
-                    faction,
-                    format!(
-                        "send_hunt_expedition: unusable take policy '{}' — valid options are \
-                         sustain, surplus, deplete, eradicate.",
-                        token
-                    ),
-                );
-                return;
-            }
-        },
+    // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
+    // (the food peak, the conservative reading), and a value outside `0.0..=1.0` is refused with its
+    // own failure event rather than clamped. Where a party stops is the whole of what its orders say
+    // about pressure, so a typo must not silently flip a herd's fate.
+    let floor = match floor {
+        None => DEFAULT_ESCAPEMENT_FLOOR,
+        Some(value) if floor_is_valid(value) => value,
+        Some(value) => {
+            emit_command_failure(
+                app,
+                CommandEventKind::ExpeditionSent,
+                faction,
+                format!(
+                    "send_hunt_expedition: floor must be a fraction of carrying capacity in \
+                     0.0..=1.0; got {value}."
+                ),
+            );
+            return;
+        }
     };
     let Some(band) = select_starting_band(
         app,
@@ -2663,7 +2650,7 @@ fn handle_send_hunt_expedition(
         let registry = app.world.resource::<HerdRegistry>();
         registry
             .find(&fauna_id)
-            .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
+            .map(|herd| hunt_trip_forecast(party_workers, herd, floor, &fauna, &labor, &cfg))
     };
     // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
     // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
@@ -2723,7 +2710,7 @@ fn handle_send_hunt_expedition(
                 " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
                  return empty",
                 fauna_id,
-                policy.as_str()
+                floor
             ),
             " eta_turns=none viability=no_surplus".to_string(),
         ),
@@ -2800,7 +2787,7 @@ fn handle_send_hunt_expedition(
                 home_band: band.entity,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.clone(),
-                    policy,
+                    floor,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -2818,15 +2805,12 @@ fn handle_send_hunt_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{} hunting expedition ({}) -> herd {}{}",
-            band.label,
-            policy.as_str(),
-            fauna_id,
-            viability_note
+            "{} hunting expedition (floor {:.2}·K) -> herd {}{}",
+            band.label, floor, fauna_id, viability_note
         ),
         Some(format!(
-            "status=applied mission=hunt policy={} workers={} herd={} expedition={}{}",
-            policy.as_str(),
+            "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
+            floor,
             party_workers,
             fauna_id,
             expedition_entity.to_bits(),
@@ -4624,13 +4608,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
@@ -5469,9 +5453,9 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         } => {
-            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, policy);
+            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, floor);
         }
         Command::FoundSettlement {
             faction,
@@ -6601,7 +6585,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6619,7 +6603,7 @@ mod tests {
         );
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             "and it must never touch the band's floor"
         );
     }
@@ -6642,7 +6626,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6671,7 +6655,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6685,7 +6669,7 @@ mod tests {
         );
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             "and leaves the floor exactly as the player set it (issue #442)"
         );
         assert!(
@@ -6761,7 +6745,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             Improvement::Cultivate,
@@ -6780,7 +6764,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6851,7 +6835,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             Improvement::Cultivate,
@@ -6882,7 +6866,7 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let patch = LaborTarget::Forage {
             tile: coord,
-            floor: FollowPolicy::Sustain.escapement_floor(),
+            floor: 0.5,
             species: None,
         };
 
@@ -6971,7 +6955,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: crop.map(str::to_string),
             },
         );
@@ -7068,7 +7052,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7475,7 +7459,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7492,7 +7476,7 @@ mod tests {
         );
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             "a rejected sow must not touch the band's floor"
         );
     }
@@ -7512,7 +7496,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7546,7 +7530,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7589,7 +7573,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7639,7 +7623,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7668,7 +7652,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7711,7 +7695,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7762,7 +7746,7 @@ mod tests {
                 faction,
                 LaborTarget::Forage {
                     tile: coord,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
             );
@@ -7847,16 +7831,17 @@ mod tests {
 
         // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
         // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
-        // **Since issue #442 the dip is the FRACTION times the selected stance's row** — the wire
-        // carries `sow_build_fraction` and the four stance rows, so this composes the two exactly as
-        // the client must.
+        // **The dip is the FRACTION times the ceiling the client composes** — the wire carries
+        // `sow_build_fraction` beside the per-biomass rate, `biomass` and `carryingCapacity`, so
+        // this composes the two exactly as the client must (`docs/plan_harvest_floor.md` §5).
         assert!(patch.tended_yield > 0.0);
-        let sustain_ceiling = patch
-            .forage_policy_ceilings
-            .iter()
-            .find(|row| row.policy == FollowPolicy::Sustain.as_str())
-            .map(|row| row.provisions_per_turn)
-            .expect("the four stance rows are on the wire");
+        let sustain_ceiling =
+            (patch.biomass - core_sim::MSY_BIOMASS_FRACTION * patch.carrying_capacity).max(0.0)
+                * patch.provisions_per_biomass;
+        assert!(
+            sustain_ceiling > 0.0,
+            "the fixture patch must stand above the food peak, or the dip below is a fraction of 0"
+        );
         assert!(
             patch.sow_build_fraction > 0.0 && patch.sow_build_fraction < 1.0,
             "the Sow dip crosses as its fraction: {}",
@@ -8049,7 +8034,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8096,7 +8081,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8108,7 +8093,7 @@ mod tests {
         ));
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             "a refused tame must not switch the band's floor"
         );
     }
@@ -8128,7 +8113,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8162,7 +8147,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8193,7 +8178,7 @@ mod tests {
             intruder,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8327,7 +8312,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8365,7 +8350,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8411,7 +8396,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8456,7 +8441,7 @@ mod tests {
                 faction,
                 LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
             );
 
@@ -8485,7 +8470,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
         );
 
@@ -8501,50 +8486,30 @@ mod tests {
     /// unparseable token. No party may be spawned, and the failure must name the four stances that
     /// ARE valid.
     ///
-    /// **Since issue #442 the guarantee is structural** and this test is its behavioural echo: an
-    /// `ExpeditionMission::Hunt` carries a [`FollowPolicy`], which cannot *name* a build verb, so the
-    /// verb is rejected by the ordinary parse. The two hand-written lists this replaces had both
-    /// rotted (the gate silently accepted `tame`), which is what makes the sweep worth keeping.
+    /// **The guarantee is structural, and this is its behavioural echo**: a raid's orders are a
+    /// **floor**, so a build verb cannot be typed there at all — nor can any other word, since the
+    /// launch token is parsed as a number (`sim_runtime`'s `parse_f32`, which also carries the
+    /// retired-stance guard). The two hand-written verb lists this replaces had both rotted (the gate
+    /// silently accepted `tame`), which is what makes the sweep worth keeping.
     #[test]
-    fn send_hunt_expedition_rejects_the_improvement_verbs() {
-        let improvements: Vec<&str> = [
-            Improvement::Cultivate,
-            Improvement::Sow,
-            Improvement::Tame,
-            Improvement::Corral,
-        ]
-        .iter()
-        .inspect(|improvement| {
-            assert!(
-                improvement.as_str().parse::<FollowPolicy>().is_err(),
-                "{improvement:?} must not parse as a stance — that is the whole guarantee"
-            );
-        })
-        .map(|improvement| improvement.as_str())
-        .collect();
-        for token in improvements {
+    fn send_hunt_expedition_rejects_a_floor_outside_the_dial() {
+        for bad in [-0.5_f32, 1.5, f32::NAN] {
             let mut app = build_headless_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
-            handle_send_hunt_expedition(
-                &mut app,
-                faction,
-                None,
-                1,
-                herd_id,
-                Some(token.to_string()),
-            );
+            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad));
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)
-                    && entry.detail.as_deref().is_some_and(|detail| {
-                        detail.contains("unusable take policy") && detail.contains(token)
-                    })
+                    && entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains("floor must be"))
             });
             assert!(
                 rejected,
-                "{token} is not an expedition policy — the launch must be refused with a clear reason"
+                "a floor of {bad} is not on the dial — the launch must be refused with a reason"
             );
             let parties = app
                 .world
@@ -8553,7 +8518,7 @@ mod tests {
                 .peekable()
                 .peek()
                 .is_some();
-            assert!(!parties, "{token}: no expedition may be spawned");
+            assert!(!parties, "floor {bad}: no expedition may be spawned");
         }
     }
 
@@ -8580,7 +8545,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Deplete.escapement_floor(),
+                floor: 0.15,
                 species: None,
             },
         );
@@ -8589,7 +8554,7 @@ mod tests {
         // gates ask about knowledge, health and ownership — never about the stance beside them.
         let target = LaborTarget::Forage {
             tile: coord,
-            floor: FollowPolicy::Deplete.escapement_floor(),
+            floor: 0.15,
             species: None,
         };
         assert!(validate_labor_policy(&app, faction, &target).is_ok());
@@ -8607,7 +8572,7 @@ mod tests {
         );
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Deplete.escapement_floor(),
+            0.15,
             "and the floor is untouched: the two axes are independent"
         );
     }
@@ -8645,7 +8610,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Surplus.escapement_floor(),
+                floor: 0.3,
                 species: None,
             },
         );
@@ -8664,7 +8629,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Surplus.escapement_floor(),
+                floor: 0.3,
                 species: None,
             },
             Improvement::Cultivate,
@@ -8693,7 +8658,7 @@ mod tests {
         );
         assert_eq!(
             band_floor(&app, band),
-            FollowPolicy::Surplus.escapement_floor(),
+            0.3,
             "the floor the player chose is untouched, as with every improvement-side command"
         );
         assert_eq!(
@@ -8724,7 +8689,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -8779,7 +8744,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
         );
@@ -8836,7 +8801,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             Improvement::Corral,
@@ -8853,7 +8818,7 @@ mod tests {
             faction,
             &LaborTarget::Hunt {
                 fauna_id: id,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
             Improvement::Cultivate,
         );
@@ -9075,7 +9040,7 @@ mod tests {
             1.0,
             1.0,
             BAND_WORKERS,
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -9141,7 +9106,7 @@ mod tests {
             labor.hunt.per_worker_biomass_capacity,
             1.0,
             BAND_WORKERS,
-            FollowPolicy::Sustain.escapement_floor(),
+            0.5,
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -9381,7 +9346,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             CANCEL_FORAGE_WORKERS,
@@ -9390,7 +9355,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: CANCEL_HERD_ID.to_string(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
             CANCEL_HUNT_WORKERS,
             available,
@@ -9542,7 +9507,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: coord,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             CANCEL_FORAGE_WORKERS,

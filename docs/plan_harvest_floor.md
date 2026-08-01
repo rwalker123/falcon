@@ -1,19 +1,24 @@
 # The Harvest Floor — one dial replaces the four-stance axis
 
-**Status:** design, not started. Supersedes the Sustain / Surplus / Deplete / Eradicate policy axis on
-**both** food webs.
+**Status:** slices 1 and 2 landed (#452, #453). The Sustain / Surplus / Deplete / Eradicate axis is
+**deleted on both food webs**; `FollowPolicy` no longer exists. Slice 3 (learning and build accrual
+ride the floor) and slice 4 (the client) are open — see §8.
 
-**Provenance.** Every measurement below comes from `core_sim/src/forage/stance_probe.rs` — the
-`#[ignore]`d harness on branch `worktree-investment-rung-toggle` (PR #448). Re-run with:
+**Provenance.** The §0 measurements come from `core_sim/src/forage/stance_probe.rs`, which was an
+`#[ignore]`d harness when they were taken and is now a non-ignored property test. Re-run the
+surviving measurement harnesses with:
 
 ```
 cargo test -p core_sim --lib stance_probe -- --ignored --nocapture --test-threads=1
 ```
 
-**Depends on two unmerged branches.** PR #448 split stance from improvement (you can hold any stance
-while building), and a second session turned Tame/Cultivate from actions into checkboxes. This arc
-assumes both have landed: it deletes the extractive half of `FollowPolicy` and leaves the verb half
-to whatever those branches settled on. **Confirm the state of both before starting.**
+**§0 describes the model this arc replaced**, so its tables read as history, not as the current sim.
+They are kept because the *reasons* are what the floor is answerable to: if a future change
+reintroduces a resting point nobody chose, §0 is the description of that failure mode.
+
+**The two dependencies are resolved.** PR #448 split the stance from the improvement, and the
+session that turned Tame/Cultivate into checkboxes landed with it; both were on `main` before slice 1
+started.
 
 **Prototype.** An interactive mock of the resulting dialog — real escapement sim, shipped config
 numbers — is the reference for §7:
@@ -329,9 +334,21 @@ Each lands on its own PR.
    ships (`ecology.collapse_fraction`). Reusing it is what lets the resident band's transitional
    table and the raid's floor table collapse into **one** (`FollowPolicy::escapement_floor`), instead
    of shipping two tables a turn apart from each other for the length of a slice.
-2. **The floor on the wire and the assignment.** `LaborTarget::Forage`/`Hunt` carry a floor, the
-   command text and proto carry it, the checkpoint round-trips it. Extractive `FollowPolicy` variants
-   deleted, the mapping from slice 1 removed, dead config keys removed.
+2. **The floor on the wire and the assignment.** Landed in two halves.
+
+   **2a** — `LaborTarget::Forage`/`Hunt` carry a `floor: f32`, end to end through the command text,
+   the proto, the FlatBuffers wire and the checkpoint; the take path and the forecast take a floor
+   directly, and `SourceYieldForecast` answers **any** floor through one `ceiling_at`. `FollowPolicy`
+   stayed alive for the expedition and the wire enumerations.
+
+   **2b** — `FollowPolicy` deleted. The expedition mission carries a floor
+   (`send_hunt_expedition … [floor]`, `raid_is_recurring(floor)`); the per-stance ceiling rows are
+   retired `(deprecated)` wire slots, replaced by the source's **per-biomass yield vector** so the
+   client composes the curve at any floor; the raid table **samples** the continuum at
+   `RAID_FORECAST_FLOOR_SAMPLES`; and the dead config goes — `forage.{surplus_multiplier, market,
+   eradicate}` and `hunt.{surplus_multiplier, deplete_multiplier, surplus_escapement_fraction}`.
+   `ecology.collapse_fraction` **stays**: it is the Allee threshold, and only ever moonlighted as one
+   stance's floor.
 3. **Learning and build accrual ride the floor.** `RungDef::knowledge_earned` and `build_accrual` take
    the multiplier; the `Thriving` gate and its exemption machinery come out; the dip moves onto crew
    throughput.

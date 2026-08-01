@@ -15,6 +15,10 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::math::UVec2;
 use bevy::MinimalPlugins;
 
+/// The floors these sweeps walk — the four the retired stance axis named, plus the ends of the dial
+/// it could not express (`0.8` deliberate under-harvest, `1.0` take nothing).
+const SWEPT_FLOORS: [f32; 6] = [0.0, 0.15, 0.3, 0.5, 0.8, 1.0];
+
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, available_workers,
     build_headless_app, herd_hunt_yield, hunt_escapement_ceiling, hunt_source_yield_preview,
@@ -22,14 +26,14 @@ use core_sim::{
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, BandTravel,
     CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig,
     ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory,
-    FaunaConfig, FaunaConfigHandle, FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry,
-    Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborConfig,
-    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
-    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
-    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
-    WellbeingConfigHandle, FOOD, NO_IMPROVEMENT_UNDERWAY,
+    FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborConfig, LaborConfigHandle,
+    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass,
+    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
+    VisibilityConfig, VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
+    NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -214,7 +218,7 @@ fn spawn_hunt_party(
     home_band: bevy::prelude::Entity,
     pos: UVec2,
     fauna_id: &str,
-    policy: FollowPolicy,
+    policy: f32,
 ) -> bevy::prelude::Entity {
     spawn_hunt_party_of(app, home_band, pos, fauna_id, policy, PARTY_WORKERS)
 }
@@ -226,7 +230,7 @@ fn spawn_hunt_party_of(
     home_band: bevy::prelude::Entity,
     pos: UVec2,
     fauna_id: &str,
-    policy: FollowPolicy,
+    floor: f32,
     workers: u32,
 ) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
@@ -239,7 +243,7 @@ fn spawn_hunt_party_of(
                 home_band,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
-                    policy,
+                    floor,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -318,7 +322,7 @@ fn more_hunters_raid_the_surplus_faster() {
 
     let mut prev_turns = u32::MAX;
     for workers in 1..=4u32 {
-        let f = hunt_trip_forecast(workers, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
         let turns = f
             .turns_to_fill
             .expect("a surplus-bound boar raid completes");
@@ -332,8 +336,8 @@ fn more_hunters_raid_the_surplus_faster() {
         );
         prev_turns = turns;
     }
-    let one = hunt_trip_forecast(1, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
-    let four = hunt_trip_forecast(4, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let one = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
+    let four = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
     assert!(
         four.turns_to_fill.unwrap() < one.turns_to_fill.unwrap(),
         "four hunters must raid the surplus strictly faster than one ({} vs {} turns)",
@@ -353,15 +357,15 @@ fn a_second_hunter_raids_more_animals_no_slower() {
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
 
     for workers in 1..=3u32 {
-        let f = hunt_trip_forecast(workers, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
         println!(
             "[pack=4/worker] Sustain raid, {workers} hunter(s): {} animals over {} turns",
             f.animals_taken,
             f.turns_to_fill.expect("a boar raid completes")
         );
     }
-    let one = hunt_trip_forecast(1, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
-    let two = hunt_trip_forecast(2, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let one = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
+    let two = hunt_trip_forecast(2, &herd, 0.5, &fauna, &labor, &cfg);
     assert!(
         two.animals_taken >= one.animals_taken,
         "a second hunter must never raid FEWER animals ({} vs {})",
@@ -398,7 +402,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
     // workers before the pack seats one whole, so a 1–2 worker party force-partials instead (its own
     // regime). Here the pack seats 1,1,2,2,2,3 whole animals for 3..=8 hunters — scaling, no over-kill.
     for workers in 3..=8u32 {
-        let f = hunt_trip_forecast(workers, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
         let pack_animals =
             (workers as f32 * cfg.hunt.per_worker_carry / food_per_animal).floor() as u32;
         println!(
@@ -424,7 +428,7 @@ fn a_sustain_raid_leaves_about_half_k() {
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let f = hunt_trip_forecast(4, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
     let taken_biomass = f.animals_taken as f32 * BOAR_BODY;
     let floor = BOAR_K * 0.5;
     println!(
@@ -459,9 +463,9 @@ fn deeper_policies_raid_deeper() {
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
     let animals = |p| hunt_trip_forecast(4, &herd, p, &fauna, &labor, &cfg).animals_taken;
-    let sustain = animals(FollowPolicy::Sustain);
-    let surplus = animals(FollowPolicy::Surplus);
-    let deplete = animals(FollowPolicy::Deplete);
+    let sustain = animals(0.5);
+    let surplus = animals(0.3);
+    let deplete = animals(0.15);
     println!(
         "[deeper] full boar: Sustain {sustain} < Surplus {surplus} < Deplete {deplete} animals"
     );
@@ -480,8 +484,8 @@ fn the_standing_surplus_caps_the_raid() {
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let four = hunt_trip_forecast(4, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
-    let eight = hunt_trip_forecast(8, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let four = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
+    let eight = hunt_trip_forecast(8, &herd, 0.5, &fauna, &labor, &cfg);
     assert!(
         four.animals_taken.abs_diff(eight.animals_taken) <= 1,
         "the take is surplus-capped: 8 hunters cannot raid materially more than 4 ({} vs {})",
@@ -500,7 +504,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
     // Exactly at Sustain's K/2 floor → no surplus.
     let herd = wild_herd(BOAR_K * 0.5, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let f = hunt_trip_forecast(4, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
     assert_eq!(
         f.animals_taken, 0,
         "a herd at its floor spares no whole animal to a Sustain raid"
@@ -512,7 +516,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         BOAR_BODY,
         BOAR_R,
     );
-    let g = hunt_trip_forecast(4, &collapsing, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let g = hunt_trip_forecast(4, &collapsing, 0.5, &fauna, &labor, &cfg);
     assert_eq!(
         g.animals_taken, 0,
         "a collapsing herd has no Sustain surplus either"
@@ -539,7 +543,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
 
     // Standing surplus above K/2 ≈ 3213 biomass ≈ 4 whole mammoths — NOT lean.
     let herd = wild_herd(11013.0, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
-    let f = hunt_trip_forecast(1, &herd, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
     println!(
         "[partial] 1-worker mammoth: killed {} animals, delivered {:.2} / wasted {:.2} food over {:?} turns",
         f.animals_taken, f.delivered_food, f.wasted_food, f.turns_to_fill
@@ -569,7 +573,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
 
     // A genuinely at-floor herd (surplus < one body) still delivers NOTHING — the true too-lean case.
     let at_floor = wild_herd(MAMMOTH_K * 0.5, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
-    let lean = hunt_trip_forecast(1, &at_floor, FollowPolicy::Sustain, &fauna, &labor, &cfg);
+    let lean = hunt_trip_forecast(1, &at_floor, 0.5, &fauna, &labor, &cfg);
     assert_eq!(
         lean.animals_taken, 0,
         "a herd at K/2 has no surplus to raid — kills nothing"
@@ -590,7 +594,7 @@ fn walking_party_never_concludes_the_trip() {
     let home = spawn_home_band(&mut app, herd_pos);
     let width = app.world.resource::<TileRegistry>().width;
     let away = UVec2::new((herd_pos.x + width / 4) % width, herd_pos.y);
-    let party = spawn_hunt_party(&mut app, home, away, &id, FollowPolicy::Sustain);
+    let party = spawn_hunt_party(&mut app, home, away, &id, 0.5);
 
     for _ in 0..3 {
         app.world.run_system_once(advance_expeditions);
@@ -616,11 +620,7 @@ fn walking_party_never_concludes_the_trip() {
 #[test]
 fn the_raid_forecast_matches_a_real_party_run() {
     for cap_fraction in [1.0_f32, 0.75, 0.6] {
-        for policy in [
-            FollowPolicy::Sustain,
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-        ] {
+        for policy in [0.5, 0.3, 0.15] {
             let mut app = spawn_world();
             let id = pinned_game_herd(&mut app, "big");
             // Neutralize combat: `hunt_trip_forecast` deliberately does NOT model casualties in
@@ -794,37 +794,35 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
             .find(|h| &h.id == id)
             .unwrap_or_else(|| panic!("{case}: herd {id} is in the snapshot"));
 
-        assert_eq!(
-            exported.hunt_policy_ceilings.len(),
-            FollowPolicy::ALL.len(),
-            "{case}: {id}: the ceiling list is exactly the four STANCE rows (issue #442) — the \
-             Tame/Corral dips are the `tameBuildFraction`/`corralBuildFraction` factors now"
-        );
-        // Every stance a Hunt assignment accepts.
-        for policy in FollowPolicy::ALL {
-            let ceiling = exported
-                .hunt_policy_ceilings
-                .iter()
-                .find(|c| c.policy == policy.as_str())
-                .unwrap_or_else(|| panic!("{case}: {id}: no exported ceiling for {policy:?}"))
-                .provisions_per_turn;
-
-            // A ceiling row must never promise more than the herd is standing there holding.
-            // **Inherent since slice 8** rather than a clamp someone has to remember: every ceiling is
-            // `biomass − floor` with `floor >= 0`.
-            let (live_biomass, live_yield) = {
-                let herd = app
-                    .world
-                    .resource::<HerdRegistry>()
-                    .find(id)
-                    .expect("herd present")
-                    .clone();
-                let hy = herd_hunt_yield(&herd, &fauna);
-                (herd.biomass, hy)
+        // **THE CLIENT COMPOSES THE CEILING FROM THE PER-BIOMASS VECTOR** — the four ceiling rows
+        // are retired, because four rows cannot answer a continuous dial
+        // (`docs/plan_harvest_floor.md` §5). The exported rate must be the species' own, so the
+        // curve the client draws is the sim's arithmetic and not an approximation of it.
+        {
+            let live_yield = {
+                let registry = app.world.resource::<HerdRegistry>();
+                herd_hunt_yield(registry.find(id).expect("herd present"), &fauna)
             };
             assert!(
-                ceiling <= live_yield.apply(live_biomass, 1.0).provisions + TAKE_ABS_EPSILON,
-                "{case}: {id} {policy:?}: exported ceiling {ceiling} exceeds the herd's own biomass"
+                (exported.provisions_per_biomass - live_yield.provisions_per_biomass).abs() < 1e-6
+                    && (exported.trade_per_biomass - live_yield.trade_goods_per_biomass).abs()
+                        < 1e-6,
+                "{case}: {id}: the exported per-biomass vector must be the species' own"
+            );
+        }
+        // Every floor a Hunt assignment accepts.
+        for policy in SWEPT_FLOORS {
+            // A composed ceiling must never promise more than the source is standing there
+            // holding. **Inherent** rather than a clamp someone has to remember: it is `B − floor·K`
+            // with `floor >= 0`. Composed and bounded against the SAME snapshot's numbers — the live
+            // herd moves under the sweep as each staffing takes from it, so mixing the two would
+            // compare two different turns.
+            let ceiling = (exported.biomass - policy * exported.carrying_capacity).max(0.0)
+                * exported.provisions_per_biomass;
+            assert!(
+                ceiling <= exported.biomass * exported.provisions_per_biomass + TAKE_ABS_EPSILON,
+                "{case}: {id} floor {policy}: composed ceiling {ceiling} exceeds the biomass the \
+                 same snapshot published"
             );
 
             for workers in BAND_HUNT_WORKER_COUNTS {
@@ -839,7 +837,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                         labor.hunt.per_worker_biomass_capacity,
                         output_multiplier,
                         workers,
-                        policy.escapement_floor(),
+                        policy,
                         NO_IMPROVEMENT_UNDERWAY,
                         labor.yield_average_horizon_turns,
                         labor.arrivals_horizon_turns,
@@ -859,7 +857,7 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                 let take = hunt_take(
                     &mut herd,
                     workers,
-                    policy.escapement_floor(),
+                    policy,
                     NO_IMPROVEMENT_UNDERWAY,
                     labor.hunt.per_worker_biomass_capacity,
                     &fauna,
@@ -945,10 +943,10 @@ fn exported_snapshot_fields_reproduce_band_hunt_take() {
     // stronger property. `assert_band_preview_matches_hunt_take` asserts the bound on every row.
     set_fauna_regrowth_rate(&mut app, CLAMP_BINDING_REGROWTH_RATE);
     {
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             assert!(
                 hunt_escapement_ceiling(
-                    policy.escapement_floor(),
+                    policy,
                     NO_IMPROVEMENT_UNDERWAY,
                     depleted_biomass,
                     depleted_cap,
@@ -998,7 +996,7 @@ fn a_hunting_expedition_takes_casualties_against_a_mammoth() {
     let (pos, _b, _cap) = seed_herd(&mut app, &id, 1.0);
     let home = spawn_home_band(&mut app, pos);
     // Party ON the herd's tile → in reach, so it engages this turn.
-    let party = spawn_hunt_party(&mut app, home, pos, &id, FollowPolicy::Surplus);
+    let party = spawn_hunt_party(&mut app, home, pos, &id, 0.3);
     let before = party_working(&app, party);
     app.world.run_system_once(advance_expeditions);
     let after = party_working(&app, party);
@@ -1139,7 +1137,7 @@ fn in_flight_delivery_forecast_matches_a_real_party_run() {
     // the trip completes on surplus-spent exactly as the forecast assumes) but on the SAME ROW, so the
     // return travel matches the hex-distance ETA. Its larder starts empty.
     let home = spawn_home_band_same_row(&mut app, herd_pos);
-    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, 0.5);
 
     // Drive until the party is mid-Hunting with a partial pack (carried > 0), a couple turns in.
     let mut prehunt = 0;
@@ -1237,7 +1235,7 @@ fn in_flight_delivery_forecast_matches_a_real_party_run() {
 
 /// The recurring flag on the wire: a **Deplete** party relaunches for repeated trips, so
 /// `expeditionRecurring` must read `true` (Sustain reads `false`, pinned above). Guards the
-/// `FollowPolicy::expedition_recurring` seam end-to-end through the snapshot.
+/// `systems::raid_is_recurring` seam end-to-end through the snapshot.
 #[test]
 fn a_deplete_party_reports_recurring_on_the_wire() {
     let mut app = build_headless_app();
@@ -1245,7 +1243,7 @@ fn a_deplete_party_reports_recurring_on_the_wire() {
 
     let (id, herd_pos) = pin_frozen_full_big_herd(&mut app);
     let home = spawn_home_band(&mut app, herd_pos);
-    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Deplete);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, 0.15);
 
     recapture_snapshot_in_place(&mut app.world);
     let snapshot = app
@@ -1312,7 +1310,7 @@ fn a_far_just_launched_party_projects_the_estimate_delivery() {
         (herd_pos.x + width / 3) % width,
         (herd_pos.y + height / 3) % height,
     );
-    let party = spawn_hunt_party_of(&mut app, home, far, &id, FollowPolicy::Sustain, 1);
+    let party = spawn_hunt_party_of(&mut app, home, far, &id, 0.5, 1);
     app.world
         .entity_mut(party)
         .insert(BandTravel { target: herd_pos });
@@ -1363,7 +1361,7 @@ fn a_far_just_launched_party_projects_the_estimate_delivery() {
     let estimate = herd_state
         .hunt_trip_estimates
         .iter()
-        .find(|e| e.policy == FollowPolicy::Sustain.as_str() && e.party_workers == 1)
+        .find(|e| e.floor == 0.5 && e.party_workers == 1)
         .expect("a (Sustain, 1) huntTripEstimate row")
         .delivered_food;
     assert!(
@@ -1410,7 +1408,7 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
         (healthy_pos.x + width / 3) % width,
         (healthy_pos.y + height / 3) % height,
     );
-    let party = spawn_hunt_party_of(&mut app, home, far, "game_gone", FollowPolicy::Sustain, 1);
+    let party = spawn_hunt_party_of(&mut app, home, far, "game_gone", 0.5, 1);
     app.world
         .entity_mut(party)
         .insert(BandTravel { target: far });
@@ -1448,7 +1446,7 @@ fn a_lost_target_herd_projects_zero_while_a_healthy_boar_still_estimates_positiv
     let healthy_estimate = healthy_state
         .hunt_trip_estimates
         .iter()
-        .find(|e| e.policy == FollowPolicy::Sustain.as_str() && e.party_workers == 1)
+        .find(|e| e.floor == 0.5 && e.party_workers == 1)
         .expect("a (Sustain, 1) estimate for the healthy boar")
         .delivered_food;
     assert!(
@@ -1535,7 +1533,7 @@ fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
         herd.regrowth_rate = BOAR_R;
     }
     let home = spawn_home_band_near_herd(&mut app, herd_pos, NEAR_BAND_TILES);
-    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, FollowPolicy::Sustain);
+    let party = spawn_hunt_party(&mut app, home, herd_pos, &id, 0.5);
 
     // The geometry this test exists for: the herd is inside the drop-off radius, and the party (which
     // spawned at the herd) is inside comm range of the band.

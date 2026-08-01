@@ -338,12 +338,9 @@ provisions/trade (`hunt.*_per_biomass`), drawn from the group and added to
 `FactionInventory`, then removes the component. An elusive herd is abandoned after
 `hunt.max_pursuit_turns`. Config lives in the `hunt` block of `fauna_config.json`.
 
-**Follow (persistent, per policy)** — `follow_herd <faction> <herd_id> [policy]
-[band_id]` attaches a `FaunaPursuit { mode: Follow { policy } }`
-(`FollowPolicy` ∈ Sustain | Surplus | Deplete | Eradicate). The same `advance_fauna_pursuits`
-system keeps the band within `pursuit_radius` of the moving group and, once adjacent,
-**auto-hunts each turn per policy** instead of removing the component. The policy is a
-free string parsed via `FollowPolicy::from_str`, so a new policy needs no schema/proto change. The
+**Follow (`follow_herd`) is a RETIRED command** — the source-centric `assign_labor` replaced it, and
+the server ignores it if a stale client still sends one. Its proto payload survives (a shipped field
+number is immutable) carrying a free-form `policy` string that nothing parses. The
 old one-shot teleport follow (and its `apply_herd_rewards`/`apply_herd_knowledge` helpers) is
 retired, as is the tracking pulse it used to grant: that fed the `FogRevealLedger`, which was
 deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (fog of war is
@@ -351,26 +348,26 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 `follow.reveal_radius` / `reveal_duration_turns` / `morale_gain` keys in `fauna_config.json` are
 **dead levers with no reader** — they predate that deletion and are pending removal.
 
-> #### The hunt policy axis: FOUR ESCAPEMENT FLOORS (`docs/plan_harvest_floor.md` slice 1)
+> #### The hunt axis is ONE NUMBER: the floor (`docs/plan_harvest_floor.md`)
 >
 > `fauna::hunt_escapement_ceiling` is the one source, and it is one expression parameterised by a
-> **floor**: `escapement_ceiling(policy.escapement_floor(), B, K) × build_dip`. The herd hands over the
-> stock standing above the floor; the crew's throughput is the only other term.
+> **floor**: `escapement_ceiling(floor, B, K) × build_dip`. The herd hands over the stock standing
+> above the floor; the crew's throughput is the only other term. **There is no stance axis** —
+> `FollowPolicy` is deleted, and the floor rides `LaborTarget::Hunt` (a resident band) or
+> `ExpeditionMission::Hunt` (a raid) as an `f32` fraction of `K`.
 >
-> | policy | floor | herd |
-> |---|---|---|
-> | **Sustain** | `K/2` (`MSY_BIOMASS_FRACTION`) | settles ON `K/2`, the most productive biomass |
-> | **Surplus** | `0.30·K` | drawn down, still above the Allee brink |
-> | **Deplete** | `0.15·K` (`ecology.collapse_fraction`) | pinned AT the brink, Collapsing |
-> | **Eradicate** | `0` | nothing standing — under `extinction_floor`, and gone |
-> | **Tame / Corral** | the held stance's own floor | the same draw, × `yield_fraction_while_building` |
+> | floor | herd |
+> |---|---|
+> | `1.0` | nothing taken — deliberate under-harvest, which the retired axis could not express |
+> | `0.50` (`MSY_BIOMASS_FRACTION`, the default) | settles ON `K/2`, the most productive biomass |
+> | `0.30` | drawn down, still above the Allee brink |
+> | `0.15` (`ecology.collapse_fraction`) | pinned AT the brink, Collapsing |
+> | `0` | nothing standing — under `extinction_floor`, and gone |
+> | a build in flight | the same room, × the rung's `yield_fraction_while_building` |
 >
-> **The floor table is TRANSITIONAL and lives on `FollowPolicy::escapement_floor`** — slice 2 moves the
-> floor onto the labor assignment as a value the player sets and deletes the extractive stances. Its
-> numbers are exactly the ones `hunt_expedition_floor` has always used, which is why there is now
-> **one** floor table for the resident band and the raid rather than two
-> (`components::tests::follow_policy_escapement_floors_match_the_shipped_config` pins them against the
-> shipped `fauna_config.json`).
+> **Validated `0.0..=1.0` at the command boundary and never clamped** (`components::floor_is_valid`);
+> an absent floor becomes `DEFAULT_ESCAPEMENT_FLOOR`. The four values above are the ones the retired
+> stances named — they are landmarks on a dial, not a menu.
 >
 > **`r`-INDEPENDENT, and structurally so.** `hunt_escapement_ceiling` takes no `EcologyConfig` and no
 > `FaunaConfig`: how fast a herd breeds cannot reach the take at all. That is the property the retired
@@ -381,30 +378,31 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >
 > **Consequences worth stating, because they surprise:**
 > - **The first harvest of an untouched source is its accumulated stock, not a rate**, so `actual`
->   legitimately exceeds `sustainable` under *every* stance including Sustain. The overdraw ⚠ is
->   `FollowPolicy::overdraws` — a fact about the floor — never `actual > sustainable`.
-> - **A single turn cannot see the husbandry ladder.** At `B = K` Sustain's ceiling is `K/2` on every
->   rung, because `r` cancels. See the callout in `husbandry.md`, which has said this about the pen
->   since the pen was constant escapement; it is now true of the wild hunt too.
-> - **Extinction is the floor-`0` case.** Deplete leaves a Collapsing remnant at the brink; only
->   Eradicate ends a herd (`fauna_deplete::deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it`).
+>   legitimately exceeds `sustainable` at *every* floor, the peak included. The overdraw ⚠ is
+>   `components::floor_overdraws` (`floor < K/2`) — a fact about where you stop — never
+>   `actual > sustainable`.
+> - **A single turn cannot see the husbandry ladder.** At `B = K` the ceiling at the peak is `K/2` on
+>   every rung, because `r` cancels. See the callout in `husbandry.md`, which has said this about the
+>   pen since the pen was constant escapement; it is now true of the wild hunt too.
+> - **Extinction is the floor-`0` case, and ONLY that.** A floor at the Allee brink leaves a
+>   Collapsing remnant; only floor `0` ends a herd
+>   (`fauna_deplete::deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it`).
 >
-> **The third rung was `Market`; it is now `Deplete`** (wire key `"deplete"`,
-> `hunt.deplete_multiplier`). *Every* harvesting policy sells the source's trade goods, so naming one
-> rung for the market described nothing that distinguished it — the axis is a **harvest-pressure
-> ladder** (Sustain → Surplus → Deplete → Eradicate) and the rung is named for its pressure, not its
-> product. Behaviour-preserving rename; see `docs/plan_hunt_yield_model.md` §2. `FollowPolicy` is
-> shared with the Forage arm, so the plant web's third rung renamed with it. The `fauna_config.json`
-> `market` block has since been **deleted** (see the intensity note below); `labor_config.json`'s
-> `forage.market` keeps its old key name pending a plant-side pass.
+> **The retired `Market` naming, and its markup, are both gone.** The third extractive rung was once
+> called `Market` because it produced trade goods *instead of* food; #337 made both accounts live on
+> every harvest, the rung was renamed `Deplete` for the pressure it applied, and the harvest floor
+> replaced the stance with the number it stood for. Its last vestige — `forage.market`'s **4×
+> `trade_goods_multiplier`** — went with it: a factor attached to one drawdown depth re-welded product
+> to intensity. **After the harvest floor, no option carries a factor of any kind** (plan §4). A deeper
+> floor still out-earns a shallower one on trade, because it *takes more biomass*.
 >
 > **Monotone in take BY CONSTRUCTION — in the FLOOR.** A deeper floor leaves less standing, so it
-> takes more, at every biomass and for every species. `FaunaConfig::validate` still pins the config
-> ordering the transitional table borrows (`collapse_fraction < surplus_escapement_fraction <
-> MSY_BIOMASS_FRACTION`), `follow_policy_escapement_floors_match_the_shipped_config` pins the table
-> against it, and `fauna_deplete::hunt_policy_takes_are_strictly_ordered_at_every_biomass` sweeps the
-> resulting takes across B × {fast, slow}. **The regression guard against reintroducing a rate** — do
-> not weaken it.
+> takes more, at every biomass and for every species. It needs no config invariant to hold, which is
+> why `hunt.{surplus_multiplier, deplete_multiplier, surplus_escapement_fraction}` and their validator
+> bounds are deleted: they existed to keep a *multiplier ladder* ordered, and there is no ladder.
+> `fauna_deplete::hunt_policy_takes_are_strictly_ordered_at_every_biomass` sweeps the resulting takes
+> across B × {fast, slow}, and `forage::stance_probe`'s property tests sweep the whole dial on both
+> webs. **The regression guard against reintroducing a rate** — do not weaken it.
 >
 > **The kill-credit bank has LEFT the resident take path** (`Herd::hunt_credit`). Under escapement the
 > ceiling is a *stock*, and banking a stock compounds it — the herd would hand over its whole surplus
@@ -436,7 +434,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   rung alone re-welded product to policy. `Deplete` still out-earns `Sustain` on trade *because it
 >   takes 2.5× more biomass* — the ladder doing the work. A deliberate rebalance: a Deplete hunt's
 >   trade/biomass drops 4×, and Sustain/Surplus/Eradicate gain a trade component they never had.
-> - **Eradicate pays a WINDFALL**, and `FollowPolicy::delivers_food` is **retired** (not adjusted).
+> - **A floor-`0` take pays a WINDFALL**, and the retired `delivers_food` predicate is gone (not adjusted).
 >   Its premise — *"denial carries nothing home"* — is what the arc reverses: denial is the END STATE
 >   (the species is gone, for you and everyone else), not a promise the carcasses were thrown away.
 >   Its readers now ask the **species** (`HuntYield::edible`); the two *intensity* facts it smuggled

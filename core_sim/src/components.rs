@@ -651,20 +651,28 @@ pub struct BandId(pub u64);
 
 /// What an expedition was sent to do: `Scout` (explore + report the map, PR 1) or `Hunt` (follow a
 /// migratory herd, harvest food, deliver it, PR 2) — two verbs on one traveling-party system.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `Eq` is deliberately absent: the mission carries an `f32` floor, and float equality is not an
+// equivalence relation. Nothing compares missions for identity — `same_source` keys on the herd id.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpeditionMission {
     /// Explore toward a target and report the map + any Wondrous Sites it uncovers.
     Scout,
     /// Follow the herd `fauna_id`, harvest a **productive** hunt's worth of food each turn into the
-    /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`. The
-    /// `policy` ([`FollowPolicy`], chosen at launch) governs the take floor + trip behaviour: Sustain
-    /// = one conservative harvest to the sustain floor + done; Surplus = one full-cap haul + done;
-    /// Deplete = repeated full-cap trips (grind down); Eradicate = hunt to extinction, banking the
-    /// whole-stock windfall on the way (denial is the end state, not an empty pack — see the
-    /// `delivers_food()` retirement note on [`FollowPolicy`]).
+    /// party's larder, and deliver it back to the band. `fauna_id` keys `HerdRegistry::find`.
     Hunt {
         fauna_id: String,
-        policy: FollowPolicy,
+        /// **WHERE THE RAID STOPS, as a fraction of the herd's `K`** — chosen at launch, and the
+        /// whole of what the party's orders say about pressure (`docs/plan_harvest_floor.md` §1).
+        /// The raid takes the stock standing above it as fast as it can carry it, then comes home;
+        /// the floor therefore governs both the take and the trip's shape
+        /// ([`crate::systems::raid_is_recurring`]).
+        ///
+        /// **Floor `0` is denial** — nothing is left standing, the herd falls under
+        /// `extinction_floor`, and the party banks the whole-stock windfall on the way (an end
+        /// state, not an empty pack). That reading is a *consequence* of the number here rather than
+        /// a mission kind; issue #456 gives denial its own mission, at which point this field goes
+        /// back to meaning only "how deep a harvest".
+        floor: f32,
     },
 }
 
@@ -677,14 +685,13 @@ impl ExpeditionMission {
         }
     }
 
-    /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs `Hunt { fauna_id,
-    /// policy }` from `target_herd` + `policy` (via `FollowPolicy::from_str`, default Sustain);
-    /// anything else is `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, policy: &str) -> Self {
+    /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
+    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; anything else is `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
-                policy: policy.parse().unwrap_or(FollowPolicy::Sustain),
+                floor,
             },
             _ => ExpeditionMission::Scout,
         }
@@ -698,12 +705,12 @@ impl ExpeditionMission {
         }
     }
 
-    /// The take policy string for a `Hunt` mission (empty for `Scout`) — the snapshot
-    /// `expeditionHuntPolicy`.
-    pub fn hunt_policy_str(&self) -> &'static str {
+    /// The raid's escapement floor for a `Hunt` mission — the snapshot `expeditionFloor`. A `Scout`
+    /// party harvests nothing, so it reports the floor that takes nothing.
+    pub fn hunt_floor(&self) -> f32 {
         match self {
-            ExpeditionMission::Hunt { policy, .. } => policy.as_str(),
-            ExpeditionMission::Scout => "",
+            ExpeditionMission::Hunt { floor, .. } => *floor,
+            ExpeditionMission::Scout => NO_RAID_FLOOR,
         }
     }
 }
@@ -1305,50 +1312,6 @@ pub struct BandTravel {
     pub target: UVec2,
 }
 
-/// **The harvest STANCE** for a worked food source — *how hard am I pulling on this?* — shared by
-/// the Forage and Hunt labor arms.
-///
-/// The four rungs size how much biomass the band draws each turn: Sustain ≈ regrowth (source
-/// stable), Surplus > regrowth (slow decline), Deplete = a hard draw-down (fast decline → collapse),
-/// Eradicate = max (drives the source toward local extinction).
-///
-/// **It is ONE of the two axes an assignment carries, and it never moves on its own** (issue #442,
-/// `docs/plan_investment_rung_toggle.md`). *What am I building on this source* is the other axis and
-/// it is [`Improvement`], a separate optional slot on [`LaborAssignment`]. The four build verbs used
-/// to be variants of *this* enum, which forced completion to rewrite the player's stated policy onto
-/// a stance they never chose; with the two axes apart the stance is simply left alone. The
-/// set-membership predicates that existed only to tell the two groups apart (`EXTRACTIVE`,
-/// `is_investment`, `valid_for_forage`/`valid_for_hunt`) went with the overload — a predicate over
-/// one enum is unnecessary once the sets are different types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FollowPolicy {
-    #[default]
-    Sustain,
-    Surplus,
-    /// The third extractive rung — named for the **pressure** it applies, not for a product. Every
-    /// harvesting policy sells the source's trade goods, so the old `Market` name described nothing
-    /// that distinguished it (`docs/plan_hunt_yield_model.md` §2).
-    Deplete,
-    Eradicate,
-}
-
-/// **Surplus's transitional escapement floor** — the herd/patch is drawn down to `0.30·K`.
-///
-/// **Transitional: deleted in slice 2**, when the floor becomes a value carried on the labor
-/// assignment and the stance axis stops naming one. It is the number
-/// `fauna_config.json`'s `hunt.surplus_escapement_fraction` already ships, so mapping the stance onto
-/// it leaves the expedition raid's take bit-identical
-/// (`follow_policy_escapement_floors_match_the_shipped_config` pins that).
-const SURPLUS_ESCAPEMENT_FLOOR: f32 = 0.30;
-
-/// **Deplete's transitional escapement floor** — drawn down to `0.15·K`, the Allee brink, where the
-/// stock's own depensation takes over from the hunt.
-///
-/// **Transitional: deleted in slice 2.** It is `fauna_config.json`'s `ecology.collapse_fraction`,
-/// the value the expedition raid already floors Deplete at — and 0.15 rather than the design doc's
-/// first-draft 0.1 precisely so the resident band and the raid can share one table.
-const DEPLETE_ESCAPEMENT_FLOOR: f32 = 0.15;
-
 /// **THE floor a fresh assignment gets when the player named none** — `0.50`, the food peak, so the
 /// common case is one click and the default is the *sustainable* one.
 ///
@@ -1357,21 +1320,6 @@ const DEPLETE_ESCAPEMENT_FLOOR: f32 = 0.15;
 /// while `r·fK·(1−f)` peaks at `f = 0.5`; promoting it to `labor_config.json` is a one-line change if
 /// playtest wants to move it off the peak.
 pub const DEFAULT_ESCAPEMENT_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
-
-/// **The stance whose transitional floor is EXACTLY this one, if any** — the wire's four-value
-/// `policy` / `huntMode` enumerations, read back off a floor.
-///
-/// The assignment carries a floor now; the wire still carries a stance string, because the client's
-/// floor UI is a later slice and a shipped reader must keep reading something. This is the honest
-/// projection between them: an **exact** match against [`FollowPolicy::escapement_floor`], never a
-/// nearest-neighbour bucket. A floor the four stances do not name — any of the continuous values the
-/// dial will produce — is `None`, and the wire says `""` rather than rounding the player's choice to
-/// a label that would misdescribe it.
-pub fn stance_named_by(floor: f32) -> Option<FollowPolicy> {
-    FollowPolicy::ALL
-        .into_iter()
-        .find(|stance| stance.escapement_floor() == floor)
-}
 
 /// **Is a floor a legal one?** Finite and in `0.0..=1.0` — a floor is a fraction of `K`, so anything
 /// outside that names a stock the source cannot have.
@@ -1386,9 +1334,9 @@ pub fn floor_is_valid(floor: f32) -> bool {
 /// **Does a take at this floor draw the stock below what it sustains?** — THE ⚠ predicate
 /// ([`SourceYield::overdraws`]), and the exact inverse of [`floor_teaches`].
 ///
-/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are drawing this below the food peak"*, which is
-/// exactly what it meant when it meant *"not Sustain"* — the sustained take `r·fK·(1−f)` peaks at
-/// `f = 0.5`, so a floor at or above the peak cannot be an overdraw and a floor below it always is.
+/// It is `floor < MSY_BIOMASS_FRACTION`: *"you are drawing this below the food peak"*. The sustained
+/// take `r·fK·(1−f)` peaks at `f = 0.5`, so a floor at or above the peak cannot be an overdraw and a
+/// floor below it always is.
 ///
 /// **Deliberately NOT `actual > sustainable`.** A first harvest of a stocked source is its
 /// accumulated stock and exceeds one turn's regrowth under *every* floor, the peak included, so the
@@ -1405,120 +1353,29 @@ pub fn floor_overdraws(floor: f32) -> bool {
 /// source, not by running it down, so this is `floor >= MSY_BIOMASS_FRACTION` — the exact inverse of
 /// [`floor_overdraws`].
 ///
-/// **It is a step, and the step is what today's behaviour is**: at the four floors the shipped
-/// command surface can reach, it teaches at `0.50` and nowhere else, which is bit-for-bit the
-/// Sustain-only rule it replaces. The learning curve `docs/plan_harvest_floor.md` §3 specifies —
-/// `learn_mult = floor / MSY_BIOMASS_FRACTION`, continuous — is a separate mechanic that changes
-/// what a rung *earns*, not merely whether it earns.
+/// **It is a step, and the step is what today's behaviour is.** The learning curve
+/// `docs/plan_harvest_floor.md` §3 specifies — `learn_mult = floor / MSY_BIOMASS_FRACTION`,
+/// continuous — is a separate mechanic that changes what a rung *earns*, not merely whether it earns.
 pub fn floor_teaches(floor: f32) -> bool {
     floor >= crate::fauna::MSY_BIOMASS_FRACTION
 }
 
-/// **Eradicate's transitional escapement floor** — none. Every last unit of stock is takeable, which
-/// is what makes denial an end state rather than a deep draw-down.
+/// **Is a raid at this floor a SERIES of trips** — repeated full-cap runs to the band and back until
+/// the herd is drawn to the floor — rather than one raid? See the `relaunch` arm of
+/// `advance_expeditions` (Population). Stated here as the single source so the snapshot's in-flight
+/// delivery forecast cannot drift from the phase machine.
 ///
-/// **Transitional: deleted in slice 2.** Under constant escapement Eradicate needs no special case
-/// at all: it is the floor-`0` instance of the one expression every stance now uses.
-const ERADICATE_ESCAPEMENT_FLOOR: f32 = 0.0;
-
-impl FollowPolicy {
-    /// **The stance's escapement floor, as a fraction of `K`** — the line a take stops at, and since
-    /// the harvest-floor arc's slice 1 the *whole* of what a stance means to a take path
-    /// (`docs/plan_harvest_floor.md` §1): `take = min(crew throughput, max(0, B − floor·K))` on both
-    /// food webs, through [`crate::fauna::escapement_ceiling`].
-    ///
-    /// | stance | floor | leaves |
-    /// |---|---|---|
-    /// | **Sustain** | [`crate::fauna::MSY_BIOMASS_FRACTION`] | `K/2` — the most productive biomass |
-    /// | **Surplus** | [`SURPLUS_ESCAPEMENT_FLOOR`] | `0.30·K` |
-    /// | **Deplete** | [`DEPLETE_ESCAPEMENT_FLOOR`] | `0.15·K` — the Allee brink |
-    /// | **Eradicate** | [`ERADICATE_ESCAPEMENT_FLOOR`] | nothing |
-    ///
-    /// **This table is TRANSITIONAL and comes out in slice 2**, when the floor moves onto the labor
-    /// assignment as a value the player sets and the extractive stances are deleted. It exists so
-    /// slice 1 can change the take path's *shape* without moving the wire, the commands or the
-    /// client.
-    ///
-    /// It is deliberately the table `systems::expeditions::hunt_expedition_floor` has always used —
-    /// a greedy raid was constant escapement from the day it shipped — so the two floor tables
-    /// collapse into this one instead of drifting.
-    pub fn escapement_floor(self) -> f32 {
-        match self {
-            FollowPolicy::Sustain => crate::fauna::MSY_BIOMASS_FRACTION,
-            FollowPolicy::Surplus => SURPLUS_ESCAPEMENT_FLOOR,
-            FollowPolicy::Deplete => DEPLETE_ESCAPEMENT_FLOOR,
-            FollowPolicy::Eradicate => ERADICATE_ESCAPEMENT_FLOOR,
-        }
-    }
-
-    /// Every stance, in player-facing order (gentlest → harshest) — **the whole enum**, and the one
-    /// list every "iterate this source's rungs" site walks: the snapshot's per-patch
-    /// `forage_policy_ceilings`, the per-herd `hunt_policy_ceilings`, and the per-herd
-    /// `hunt_trip_estimates` export.
-    ///
-    /// It replaced `EXTRACTIVE`, whose job was to name the extractive *subset* of a mixed enum. There
-    /// is no subset any more — an [`Improvement`] cannot be typed where a stance is wanted — so the
-    /// list states only the order.
-    pub const ALL: [FollowPolicy; 4] = [
-        FollowPolicy::Sustain,
-        FollowPolicy::Surplus,
-        FollowPolicy::Deplete,
-        FollowPolicy::Eradicate,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            FollowPolicy::Sustain => "sustain",
-            FollowPolicy::Surplus => "surplus",
-            FollowPolicy::Deplete => "deplete",
-            FollowPolicy::Eradicate => "eradicate",
-        }
-    }
-
-    // **RETIRED: `delivers_food()`** — *"does a take under this policy put food in the larder?"*,
-    // which answered `false` for `Eradicate` on the premise that denial carries nothing home.
-    //
-    // That premise is exactly what the hunt-yield model reverses (`docs/plan_hunt_yield_model.md`
-    // §6, issue #337): **denial is the END STATE** — the species is gone, for you and for everyone
-    // else — not a promise that the party threw the carcasses away. An Eradicate hunt now pays the
-    // same `HuntYield::apply` on its whole-stock take as every other rung; the windfall is the
-    // point.
-    //
-    // It is **retired, not adjusted**, because every reader was really asking a question about the
-    // **species**, not the policy: "does this trip bring home food?" is `HuntYield::edible`, and
-    // "does the pack ever fill?" is that same fact. A policy-shaped predicate could only ever
-    // re-weld product to policy. Its readers now resolve the herd's `HuntYield` instead
-    // (`FaunaConfig::hunt_yield_for`); the two remaining *intensity* facts it was smuggling —
-    // Eradicate ignores the carry cap, and Eradicate has no escapement floor to spend — are stated
-    // as `matches!(policy, FollowPolicy::Eradicate)` at their two sites in `systems::expeditions`,
-    // where they read as what they are.
-
-    /// Is an expedition under this stance a **series of trips** — repeated full-cap runs to the band
-    /// and back until the herd is stripped — rather than one raid? Only `Deplete` is; see the
-    /// `relaunch` arm of `advance_expeditions` (Population). Stated here as the single source so the
-    /// snapshot's in-flight delivery forecast can't drift from the phase machine.
-    ///
-    /// **Not the same question as "does it ever pass through `Delivering`"** (issue #441): a Sustain
-    /// or Surplus party whose herd wanders within `hunt.drop_off_within_tiles` of camp drops its load
-    /// off and resumes hunting too. That is an incident *inside* one raid, not a new trip, so this
-    /// still reads `false` for it.
-    pub fn expedition_recurring(&self) -> bool {
-        matches!(self, FollowPolicy::Deplete)
-    }
-}
-
-impl FromStr for FollowPolicy {
-    type Err = ();
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "surplus" => Ok(FollowPolicy::Surplus),
-            "deplete" => Ok(FollowPolicy::Deplete),
-            "eradicate" => Ok(FollowPolicy::Eradicate),
-            "sustain" | "" => Ok(FollowPolicy::Sustain),
-            _ => Err(()),
-        }
-    }
+/// It is `floor < MSY_BIOMASS_FRACTION`: any floor below the food peak leaves more standing stock
+/// than one pack can carry, so the party is running a campaign rather than making a trip. That is a
+/// **widening** of the rule it replaced (which was the `Deplete` stance alone), and it is safe for
+/// one reason worth stating: **`done` is tested BEFORE `relaunch`**, so a party that has drawn the
+/// herd to its floor comes home for good instead of cycling on an empty surplus.
+///
+/// **Not the same question as "does it ever pass through `Delivering`"** (issue #441): a party whose
+/// herd wanders within `hunt.drop_off_within_tiles` of camp drops its load off and resumes hunting
+/// too. That is an incident *inside* one raid, not a new trip, so this still reads `false` for it.
+pub fn raid_is_recurring(floor: f32) -> bool {
+    floor < crate::fauna::MSY_BIOMASS_FRACTION
 }
 
 /// **The IMPROVEMENT a crew is building on a source** — *what am I building here?* — the second,
@@ -1572,13 +1429,24 @@ pub enum Improvement {
     Corral,
 }
 
+/// **A floor of `0` — "leave nothing standing."** Named because a bare `0.0` at a comparison site
+/// reads as an absent value rather than as the deliberate instruction it is, and because the
+/// behaviour that hangs off it (a raid that never delivers and grinds a herd to extinction) is a
+/// consequence of *this exact number* rather than of a mission kind.
+pub const STRIP_IT_BARE: f32 = 0.0;
+
+/// **A party with no herd to stop short of** — a `Scout` expedition's reported raid floor. `1.0`, not
+/// `0`: an absent floor must not read as *"take everything"*, which is the one value that would be a
+/// dangerous default if a reader ever acted on it.
+pub const NO_RAID_FLOOR: f32 = 1.0;
+
 /// **No improvement in flight** — what a pure harvest passes for the improvement axis. Named because
 /// the take/ceiling seams take it positionally in long argument lists, where a bare `None` says
 /// nothing about which of the two axes it is answering.
 pub const NO_IMPROVEMENT_UNDERWAY: Option<Improvement> = None;
 
 impl Improvement {
-    /// Stable wire/config key — the same `as_str` convention [`FollowPolicy`] uses, and the value
+    /// Stable wire/config key — the `as_str` convention every wire enum here uses, and the value
     /// `LaborAssignmentState.improvement` carries (`""` for [`None`]).
     pub fn as_str(self) -> &'static str {
         match self {
@@ -1605,7 +1473,7 @@ impl Improvement {
     ///
     /// Note this is the **band's** axis. An *expedition* has no improvement slot **at all** — every
     /// rung-transition is place-bound work a resident band does — and since issue #442 that is a
-    /// type-level fact (`ExpeditionMission::Hunt` carries a [`FollowPolicy`], which can no longer
+    /// type-level fact (`ExpeditionMission::Hunt` carries a **floor**, a number, which can no longer
     /// name a build verb) rather than a runtime gate that could rot.
     pub fn valid_for_hunt(self) -> bool {
         match self {
@@ -1619,8 +1487,9 @@ impl FromStr for Improvement {
     type Err = ();
 
     /// Parse a verb from its wire/config key. **An empty string is an error, not a default** — unlike
-    /// [`FollowPolicy`], which defaults to `Sustain` because every assignment has *some* stance. An
-    /// absent improvement is `None`, and the caller says so; there is no "default improvement".
+    /// the assignment's floor, which defaults to the food peak because every assignment has *some*
+    /// pressure. An absent improvement is `None`, and the caller says so; there is no "default
+    /// improvement".
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
             "cultivate" => Ok(Improvement::Cultivate),
@@ -1783,40 +1652,38 @@ mod tests {
             "the default floor is the food peak, so a fresh assignment teaches"
         );
         assert!(
-            !floor_teaches(FollowPolicy::Eradicate.escapement_floor()),
+            !floor_teaches(STRIP_IT_BARE),
             "stripping a source teaches nothing"
+        );
+        assert!(
+            floor_overdraws(STRIP_IT_BARE) && !floor_overdraws(1.0),
+            "…and the ⚠ reads the same way round: stripping overdraws, leaving it all does not"
         );
     }
 
-    /// **Today's earn behaviour is preserved exactly**: at the four floors the shipped command
-    /// surface can name, `floor_teaches` is `true` for Sustain's and false for the other three —
-    /// bit-for-bit the Sustain-only rule it replaced.
-    #[test]
-    fn the_floor_step_reproduces_the_sustain_only_earn_rule() {
-        for stance in FollowPolicy::ALL {
-            assert_eq!(
-                floor_teaches(stance.escapement_floor()),
-                stance == FollowPolicy::Sustain,
-                "{stance:?}'s floor must teach exactly when the stance did"
-            );
-        }
-    }
+    /// *"Take everything"* — the floor-`0` end of the dial, named because `0.0` as a bare argument
+    /// reads as an absent value rather than as the deliberate instruction it is.
+    const STRIP_IT_BARE: f32 = 0.0;
 
-    /// **The retained wire label is an EXACT match, never a nearest-neighbour bucket.** Each of the
-    /// four stances names its own floor and nothing else; a floor between them is `None`, which the
-    /// wire ships as `""` rather than misdescribing the player's choice.
+    /// **The earn rule is a STEP at the food peak**, pinned at the boundary rather than at a handful
+    /// of sample floors: the value the two predicates change hands at is the only place an off-by-one
+    /// can hide, and `>=` versus `>` there is the difference between the default assignment teaching
+    /// and not.
     #[test]
-    fn a_stance_label_is_only_produced_for_the_floor_it_names() {
-        for stance in FollowPolicy::ALL {
-            assert_eq!(stance_named_by(stance.escapement_floor()), Some(stance));
-        }
-        for between in [0.05_f32, 0.2, 0.42, 0.55, 0.75, 1.0] {
-            assert_eq!(
-                stance_named_by(between),
-                None,
-                "floor {between} is not one of the four stances' floors, so it has no label"
-            );
-        }
+    fn the_earn_step_falls_exactly_on_the_food_peak() {
+        let peak = crate::fauna::MSY_BIOMASS_FRACTION;
+        assert!(
+            floor_teaches(peak),
+            "AT the peak teaches — a take there is exactly the regrowth, which is stewardship"
+        );
+        assert!(
+            !floor_teaches(peak - f32::EPSILON),
+            "a hair below it does not — the step is closed above, open below"
+        );
+        assert!(
+            floor_teaches(1.0),
+            "and every floor above the peak teaches: under-harvest is restraint too"
+        );
     }
 
     /// **A floor is valid iff it is a finite fraction of `K`.** The command boundary rejects
@@ -1828,49 +1695,6 @@ mod tests {
         }
         for illegal in [-0.01_f32, 1.01, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert!(!floor_is_valid(illegal), "{illegal} must be refused");
-        }
-    }
-
-    /// **The transitional floor table IS the expedition raid's** — asserted against the shipped
-    /// `fauna_config.json`, because that is what makes the two tables collapsible into one
-    /// (`systems::expeditions::hunt_expedition_floor` now delegates here rather than reading config).
-    ///
-    /// If someone retunes `hunt.surplus_escapement_fraction` or `ecology.collapse_fraction`, this
-    /// fails and tells them the resident band's transitional floors moved with the raid's. Slice 2
-    /// deletes both the table and the keys, at which point this test goes with them.
-    #[test]
-    fn follow_policy_escapement_floors_match_the_shipped_config() {
-        let fauna = crate::fauna_config::FaunaConfig::builtin();
-        assert_eq!(
-            FollowPolicy::Sustain.escapement_floor(),
-            crate::fauna::MSY_BIOMASS_FRACTION,
-            "Sustain stops at the most productive biomass — the same constant the pen harvests on"
-        );
-        assert_eq!(
-            FollowPolicy::Surplus.escapement_floor(),
-            fauna.hunt.surplus_escapement_fraction,
-            "Surplus's floor is the raid's `hunt.surplus_escapement_fraction`"
-        );
-        assert_eq!(
-            FollowPolicy::Deplete.escapement_floor(),
-            fauna.ecology.collapse_fraction,
-            "Deplete's floor is the raid's `ecology.collapse_fraction` — the Allee brink, 0.15 and \
-             not the design doc's first-draft 0.1"
-        );
-        assert_eq!(
-            FollowPolicy::Eradicate.escapement_floor(),
-            0.0,
-            "Eradicate leaves nothing standing — the floor-0 case every other stance is a variation of"
-        );
-        // Strictly descending, which is what makes "a deeper stance takes more" true by construction
-        // on both webs (`FaunaConfig::validate` pins the config half of the same ordering).
-        for pair in FollowPolicy::ALL.windows(2) {
-            assert!(
-                pair[0].escapement_floor() > pair[1].escapement_floor(),
-                "{:?} must leave more standing than {:?}",
-                pair[0],
-                pair[1]
-            );
         }
     }
 
@@ -1898,12 +1722,14 @@ mod tests {
                 "{improvement:?}'s wire key must parse back to it"
             );
         }
-        // An absent improvement is `None`, never a defaulted verb — unlike a stance, which defaults
-        // to Sustain, there is no "default improvement".
+        // An absent improvement is `None`, never a defaulted verb: unlike the floor, which has a
+        // default (the food peak), there is no "default improvement".
         assert_eq!("".parse::<Improvement>(), Err(()));
-        // The two enums share no keys: a stance token can never be read as a build verb.
-        for policy in FollowPolicy::ALL {
-            assert_eq!(policy.as_str().parse::<Improvement>(), Err(()));
+        // **A retired stance token is not a build verb either.** The four names the harvest floor
+        // replaced are refused at the command boundary (`sim_runtime`'s `reject_retired_stance`);
+        // this pins that a stale client's token cannot fall through into the OTHER axis instead.
+        for retired in ["sustain", "surplus", "deplete", "eradicate"] {
+            assert_eq!(retired.parse::<Improvement>(), Err(()));
         }
     }
 
@@ -1934,7 +1760,7 @@ mod tests {
         };
         let deplete = LaborTarget::Forage {
             tile,
-            floor: FollowPolicy::Deplete.escapement_floor(),
+            floor: 0.15,
             species: None,
         };
         let other_tile = LaborTarget::Forage {
@@ -1985,7 +1811,7 @@ mod tests {
         // Dragging the floor: likewise. A stripping floor beside a Cultivate build is legal (§2.1).
         let deplete = LaborTarget::Forage {
             tile,
-            floor: FollowPolicy::Deplete.escapement_floor(),
+            floor: 0.15,
             species: None,
         };
         allocation.set_assignment(deplete.clone(), 2, 10);

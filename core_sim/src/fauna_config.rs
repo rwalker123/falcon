@@ -775,9 +775,7 @@ pub struct HuntConfig {
     /// (0.15), Eradicate `0`. Only Surplus's floor is a free dial, and `FaunaConfig::validate` pins it
     /// strictly between Deplete's and Sustain's.
     ///
-    /// **It is no longer expedition-only** — `FollowPolicy::escapement_floor` is the one table both
-    /// paths read, and `follow_policy_escapement_floors_match_the_shipped_config` pins that table
-    /// against this key. Ships 0.30. **Playtest dial.**
+    /// Ships 0.30. **Playtest dial.**
     pub surplus_escapement_fraction: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,

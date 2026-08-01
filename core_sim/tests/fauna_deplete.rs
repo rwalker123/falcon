@@ -1,4 +1,4 @@
-//! Deplete hunting: `FollowPolicy::Deplete` takes `deplete_multiplier × MSY` (2.5×), the
+//! Deplete hunting: `0.15` takes `deplete_multiplier × MSY` (2.5×), the
 //! harshest of the four **ascending multiples of MSY** (Sustain ≤ 1× < Surplus 1.5× < Deplete 2.5× <
 //! Eradicate = everything) — constant catch this far above MSY has no equilibrium, so it drives a herd
 //! extinct. Also home to the axis's ordering invariant
@@ -14,8 +14,8 @@ use core_sim::{
     advance_herds, advance_husbandry, advance_labor_allocation, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FollowPolicy, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
+    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfig,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
@@ -123,7 +123,7 @@ fn prime_two_stationary_herds(app: &mut App) -> (String, String) {
 fn spawn_hunter(
     app: &mut App,
     herd_id: &str,
-    policy: FollowPolicy,
+    policy: f32,
     faction: FactionId,
 ) -> bevy::prelude::Entity {
     let pos = app
@@ -171,7 +171,7 @@ fn spawn_hunter(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,
@@ -217,10 +217,22 @@ fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
         .unwrap_or(false)
 }
 
+/// **The retired stance tokens are refused, not silently reinterpreted.** `FollowPolicy` is gone, so
+/// there is no round-trip left to pin — what matters is that a stale client sending `deplete` where a
+/// floor belongs is told the grammar moved. The guard is `sim_runtime`'s `reject_retired_stance`,
+/// spelled out as literal strings so it outlives the type it names.
 #[test]
-fn deplete_policy_string_round_trips() {
-    assert_eq!("deplete".parse::<FollowPolicy>(), Ok(FollowPolicy::Deplete));
-    assert_eq!(FollowPolicy::Deplete.as_str(), "deplete");
+fn a_retired_stance_token_is_refused_where_a_floor_belongs() {
+    use sim_runtime::command_text::{parse_command_line, CommandParseError};
+    for retired in ["sustain", "surplus", "deplete", "eradicate"] {
+        assert!(
+            matches!(
+                parse_command_line(&format!("assign_labor 0 904 hunt game_deer_07 {retired} 4")),
+                Err(CommandParseError::RetiredStanceToken(_))
+            ),
+            "'{retired}' must name the grammar that moved, not fail as a bad number"
+        );
+    }
 }
 
 /// **Deplete declines a herd faster than Surplus, both decline it while Sustain holds it steady — and
@@ -256,9 +268,9 @@ fn deplete_and_surplus_decline_faster_than_sustain_holds() {
             h.body_mass = COMPARISON_BODY_MASS;
         }
     }
-    spawn_hunter(&mut app, &deplete_herd, FollowPolicy::Deplete, FactionId(0));
-    spawn_hunter(&mut app, &surplus_herd, FollowPolicy::Surplus, FactionId(1));
-    spawn_hunter(&mut app, &sustain_herd, FollowPolicy::Sustain, FactionId(2));
+    spawn_hunter(&mut app, &deplete_herd, 0.15, FactionId(0));
+    spawn_hunter(&mut app, &surplus_herd, 0.3, FactionId(1));
+    spawn_hunter(&mut app, &sustain_herd, 0.5, FactionId(2));
 
     run_turns(&mut app, 10);
 
@@ -317,7 +329,7 @@ fn deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it() {
         h.regrowth_rate = SLOW_BREEDER_R;
         h.carrying_capacity
     };
-    spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
+    spawn_hunter(&mut app, &herd, 0.15, FactionId(0));
     run_turns(&mut app, HORIZON_TURNS);
     let collapse_fraction = app
         .world
@@ -356,7 +368,7 @@ fn deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it() {
         let h = registry.herds.iter_mut().find(|h| h.id == herd).unwrap();
         h.regrowth_rate = SLOW_BREEDER_R;
     }
-    let band = spawn_hunter(&mut app, &herd, FollowPolicy::Eradicate, FactionId(0));
+    let band = spawn_hunter(&mut app, &herd, 0.0, FactionId(0));
     run_turns(&mut app, HORIZON_TURNS);
     assert!(
         app.world.resource::<HerdRegistry>().find(&herd).is_none(),
@@ -374,7 +386,7 @@ fn deplete_pins_a_herd_at_the_brink_while_eradicate_ends_it() {
 fn deplete_hunt_does_not_domesticate() {
     let mut app = spawn_world();
     let (herd, _other) = prime_two_stationary_herds(&mut app);
-    spawn_hunter(&mut app, &herd, FollowPolicy::Deplete, FactionId(0));
+    spawn_hunter(&mut app, &herd, 0.15, FactionId(0));
     run_turns(&mut app, 4);
     let progress = app
         .world
@@ -410,12 +422,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
     let ladder = LadderConfig::builtin();
     const CAP: f32 = 4000.0;
     // The four *sustaining/extracting* policies in ascending harshness — the ladder the player reads.
-    let axis = [
-        FollowPolicy::Sustain,
-        FollowPolicy::Surplus,
-        FollowPolicy::Deplete,
-        FollowPolicy::Eradicate,
-    ];
+    let axis = [0.5, 0.3, 0.15, 0.0];
 
     // Fast AND slow: the ordering must not depend on the breeding rate at all — and since the harvest
     // floor it *cannot*, because the ceiling has no `r` term to depend on. Swept anyway: the sweep is
@@ -430,13 +437,7 @@ fn hunt_policy_takes_are_strictly_ordered_at_every_biomass() {
             let takes: Vec<f32> = axis
                 .iter()
                 .map(|p| {
-                    hunt_escapement_ceiling(
-                        p.escapement_floor(),
-                        NO_IMPROVEMENT_UNDERWAY,
-                        biomass,
-                        CAP,
-                        &ladder,
-                    )
+                    hunt_escapement_ceiling(*p, NO_IMPROVEMENT_UNDERWAY, biomass, CAP, &ladder)
                 })
                 .collect();
             for pair in takes.windows(2) {
@@ -497,7 +498,7 @@ fn a_full_herd_under_sustain_settles_on_half_k_and_then_pays_msy() {
         let mut app = spawn_world();
         let (herd, _o) = prime_two_stationary_herds(&mut app);
         seat_measure_herd(&mut app, &herd, k, k, r, body); // FULL: B = K
-        let band = spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+        let band = spawn_hunter(&mut app, &herd, 0.5, FactionId(0));
         let provisions_per_biomass = {
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             fauna.hunt.provisions_per_biomass
@@ -574,7 +575,7 @@ fn a_below_half_k_herd_under_sustain_recovers_never_declines() {
     const K: f32 = 4000.0;
     let start = 0.30 * K; // well below K/2
     seat_measure_herd(&mut app, &herd, start, K, 0.10, 60.0);
-    spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+    spawn_hunter(&mut app, &herd, 0.5, FactionId(0));
 
     // Run a long time; the herd must never drift meaningfully below where it started.
     let mut min_seen = start;
@@ -607,7 +608,7 @@ fn the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game() {
         let (herd, _o) = prime_two_stationary_herds(&mut app);
         const K: f32 = 4000.0;
         seat_measure_herd(&mut app, &herd, K, K, 0.35, 2.0); // full, fast, tiny body
-        spawn_hunter(&mut app, &herd, FollowPolicy::Sustain, FactionId(0));
+        spawn_hunter(&mut app, &herd, 0.5, FactionId(0));
         let before = biomass_ratio(&app, &herd).unwrap() * K;
         run_turns(&mut app, 1);
         let after = biomass_ratio(&app, &herd).unwrap() * K;
@@ -619,7 +620,7 @@ fn the_kill_credit_pays_multiples_for_fast_game_and_a_pulse_for_big_game() {
         );
     }
     // Big-bodied (MSY < one body): waits, then kills exactly one — more often up the ladder.
-    for (policy, max_wait) in [(FollowPolicy::Sustain, 9u32), (FollowPolicy::Deplete, 5u32)] {
+    for (policy, max_wait) in [(0.5, 9u32), (0.15, 5u32)] {
         let mut app = spawn_world();
         let (herd, _o) = prime_two_stationary_herds(&mut app);
         const K: f32 = 12000.0;

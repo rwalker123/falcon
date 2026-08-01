@@ -710,33 +710,24 @@ pub fn advance_labor_allocation(
                             completed.push(idx);
                         }
                     }
-                    // **The TRADE account — ONE rule at every drawn-down rung** (#433). The take's
-                    // trade credit is the patch basket's own `trade_goods_per_biomass` average, and
-                    // `Deplete` multiplies it by `market.trade_goods_multiplier`. That is all: the
-                    // species-blind flat `market.trade_goods_per_biomass` sale is retired, so the
-                    // committed-vs-wild branch that used to pick between two routes — and could
-                    // therefore have credited both — is gone with it, and a double credit is
-                    // unrepresentable because there is only one expression.
+                    // **Every harvest sells its basket's trade component, at the basket's own
+                    // rate.** No factor of any kind rides the depth of the draw: the retired
+                    // `market.trade_goods_multiplier` (4×) paid one drawdown rate a product bonus,
+                    // which re-welded product to intensity — the exact thing the yield vector
+                    // exists to separate (`docs/plan_hunt_yield_model.md` §2). A deep floor still
+                    // out-earns a shallow one on trade, because it *takes more biomass*: that is
+                    // the intensity ladder doing the work, not a bonus.
                     //
-                    // **The markup is a POLICY concept, not a rung concept** — *sell harder*, a
-                    // markup on goods you were already producing — so it now applies at rung 2 as
-                    // well as rung 1. Every other policy carries the goods home at the basket's
-                    // plain rate, which is why a `Sustain` gather of wild ground that happens to
-                    // realize grapevine returns trade goods: **you gathered them**. Every staple
-                    // carries the same 0.005 token, so a staple-only basket's wild `Deplete` sale is
-                    // numerically what it always was; only baskets holding a cash crop move.
-                    //
-                    // (Rung 3 keeps its own no-markup rule in `field_trade_goods` — a Field is never
-                    // drawn down and has no policy axis to mark up.)
-                    let forage_trade =
-                        tended_take_trade_goods(
-                            take,
-                            patch,
-                            &tile_composition,
-                            &flora,
-                            &labor.forage,
-                            mult_f,
-                        ) * crate::forage::deplete_trade_markup(*floor, &labor.forage);
+                    // (Rung 3 keeps its own rule in `field_trade_goods` — a Field is never drawn
+                    // down at all.)
+                    let forage_trade = tended_take_trade_goods(
+                        take,
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                        mult_f,
+                    );
                     {
                         let trade_goods = forage_trade.round() as i64;
                         if trade_goods > 0 {
@@ -2166,8 +2157,8 @@ mod labor_yield_tests {
     //! escapement floor. See `SourceYield`.
     use super::advance_labor_allocation;
     use crate::components::{
-        FollowPolicy, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        MoraleCause, PopulationCohort, SourceYield, Tile,
+        Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
+        PopulationCohort, SourceYield, Tile,
     };
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
@@ -2372,7 +2363,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
-                        floor: FollowPolicy::Sustain.escapement_floor(),
+                        floor: 0.5,
                         species: None,
                     },
                     workers: WORKERS,
@@ -2381,7 +2372,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
-                        floor: FollowPolicy::Sustain.escapement_floor(),
+                        floor: 0.5,
                     },
                     workers: WORKERS,
                     improvement: None,
@@ -2460,7 +2451,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Eradicate.escapement_floor(),
+                    floor: 0.0,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2500,7 +2491,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2660,7 +2651,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: assigned,
                 improvement: None,
@@ -2675,7 +2666,7 @@ mod labor_yield_tests {
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             crate::fauna::hunt_haul_workers(
                 crate::fauna::hunt_escapement_ceiling(
-                    FollowPolicy::Sustain.escapement_floor(),
+                    0.5,
                     None,
                     herd.biomass,
                     crate::fauna::herd_capacity(herd, &fauna),
@@ -2727,7 +2718,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    floor: FollowPolicy::Eradicate.escapement_floor(),
+                    floor: 0.0,
                     species: None,
                 },
                 workers: assigned,
@@ -2749,9 +2740,9 @@ mod labor_yield_tests {
     /// identical full patches.
     #[test]
     fn deplete_and_eradicate_need_more_workers_than_sustain() {
-        let sustain = forage_workers_needed(FollowPolicy::Sustain.escapement_floor());
-        let deplete = forage_workers_needed(FollowPolicy::Deplete.escapement_floor());
-        let eradicate = forage_workers_needed(FollowPolicy::Eradicate.escapement_floor());
+        let sustain = forage_workers_needed(0.5);
+        let deplete = forage_workers_needed(0.15);
+        let eradicate = forage_workers_needed(0.0);
         assert!(
             deplete > sustain,
             "deplete's larger take needs more workers: {deplete} vs {sustain}"
@@ -2800,7 +2791,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -2813,7 +2804,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2935,9 +2926,7 @@ mod labor_yield_tests {
             );
             let haul_for = |improvement| {
                 crate::fauna::hunt_haul_workers(
-                    forecast
-                        .ceiling_at(FollowPolicy::Sustain.escapement_floor(), improvement)
-                        .provisions,
+                    forecast.ceiling_at(0.5, improvement).provisions,
                     forecast.body_mass_yield.provisions,
                     forecast.per_worker_yield.provisions,
                 )
@@ -2972,7 +2961,7 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
                 crew,
-                FollowPolicy::Sustain.escapement_floor(),
+                0.5,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -2998,7 +2987,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: crew,
                 improvement: Some(Improvement::Tame),
@@ -3071,7 +3060,7 @@ mod labor_yield_tests {
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 crew,
-                FollowPolicy::Sustain.escapement_floor(),
+                0.5,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -3128,7 +3117,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: crew,
@@ -3187,7 +3176,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers,
                 improvement: None,
@@ -3237,9 +3226,9 @@ mod labor_yield_tests {
     /// Eradicate's. That termination rule is what keeps it from being diluted toward zero.
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
-        let sustain = slow_breeder_hunt_at(FollowPolicy::Sustain.escapement_floor());
-        let surplus = slow_breeder_hunt_at(FollowPolicy::Surplus.escapement_floor());
-        let deplete = slow_breeder_hunt_at(FollowPolicy::Deplete.escapement_floor());
+        let sustain = slow_breeder_hunt_at(0.5);
+        let surplus = slow_breeder_hunt_at(0.3);
+        let deplete = slow_breeder_hunt_at(0.15);
 
         // `sustainable` is MSY, the same under every policy (it is the reference, not the take).
         assert!(
@@ -3289,8 +3278,8 @@ mod labor_yield_tests {
     /// *below* Sustain, the exact dilution the divide-by-turns-simulated rule prevents).
     #[test]
     fn eradicate_realized_reads_the_strip_rate_not_a_diluted_average() {
-        let sustain = slow_breeder_hunt_at(FollowPolicy::Sustain.escapement_floor());
-        let eradicate = slow_breeder_hunt_at(FollowPolicy::Eradicate.escapement_floor());
+        let sustain = slow_breeder_hunt_at(0.5);
+        let eradicate = slow_breeder_hunt_at(0.0);
 
         assert!(
             eradicate.realized > sustain.realized,
@@ -3398,7 +3387,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: assigned,
                 improvement: None,
@@ -3414,7 +3403,7 @@ mod labor_yield_tests {
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             let herders = crate::fauna::herd_herders_needed(herd, &fauna);
             let ceiling_biomass = crate::fauna::hunt_escapement_ceiling(
-                FollowPolicy::Sustain.escapement_floor(),
+                0.5,
                 None,
                 herd.biomass,
                 crate::fauna::herd_capacity(herd, &fauna),
@@ -3434,7 +3423,9 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
             );
-            let ceiling = forecast.ceiling_for(FollowPolicy::Sustain).provisions;
+            let ceiling = forecast
+                .ceiling_at(crate::fauna::MSY_BIOMASS_FRACTION, NO_IMPROVEMENT_UNDERWAY)
+                .provisions;
             let food_per_animal = forecast.body_mass_yield.provisions;
             let per_worker_yield = forecast.per_worker_yield.provisions;
             let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
@@ -3794,26 +3785,22 @@ mod labor_yield_tests {
         );
         drop(fauna);
 
-        // **The policy axis is collapsed**: every policy — including the investment rungs, since the
-        // improvement is already built — quotes the one managed yield.
-        for policy in FollowPolicy::ALL {
+        // **The floor axis is collapsed**: every floor — and every improvement, since the build is
+        // already done — quotes the one managed yield.
+        for policy in SWEPT_FLOORS {
             for improvement in FORAGE_IMPROVEMENTS {
                 assert_eq!(
-                    patch_forecast
-                        .ceiling_at(policy.escapement_floor(), improvement)
-                        .provisions,
+                    patch_forecast.ceiling_at(policy, improvement).provisions,
                     patch_forecast.managed_yield.provisions,
-                    "a Field is yours — no stance takes more or less of it, and there is nothing \
-                     left to build on it ({policy:?} + {improvement:?})"
+                    "a Field is yours — no floor takes more or less of it, and there is nothing \
+                     left to build on it (floor {policy} + {improvement:?})"
                 );
             }
         }
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             for improvement in HUNT_IMPROVEMENTS {
                 assert_eq!(
-                    herd_forecast
-                        .ceiling_at(policy.escapement_floor(), improvement)
-                        .provisions,
+                    herd_forecast.ceiling_at(policy, improvement).provisions,
                     herd_forecast.managed_yield.provisions,
                     "a pen is yours — no stance takes more or less of it ({policy:?} + \
                      {improvement:?})"
@@ -3824,15 +3811,14 @@ mod labor_yield_tests {
         // **The worker cap is NOT collapsed.** `per_worker_yield` is the crew's real throughput, so
         // this Field genuinely needs more than one pair of hands — the readout the old hardcoded `1`
         // made permanently false.
-        let field_workers_needed =
-            max_useful_workers(&patch_forecast, FollowPolicy::Sustain.escapement_floor());
+        let field_workers_needed = max_useful_workers(&patch_forecast, 0.5);
         assert!(
             field_workers_needed > 1,
             "a Field at capacity offers more than one worker can carry: {field_workers_needed}"
         );
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             assert_eq!(
-                max_useful_workers(&patch_forecast, policy.escapement_floor()),
+                max_useful_workers(&patch_forecast, policy),
                 field_workers_needed
             );
         }
@@ -3845,7 +3831,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: field_workers_needed,
@@ -3858,7 +3844,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: 1,
                 improvement: None,
@@ -3871,12 +3857,7 @@ mod labor_yield_tests {
             .unwrap()
             .last_yields[0]
             .clone();
-        let field_forecast = expected_yield(
-            &patch_forecast,
-            field_workers_needed,
-            FollowPolicy::Sustain.escapement_floor(),
-            None,
-        );
+        let field_forecast = expected_yield(&patch_forecast, field_workers_needed, 0.5, None);
         assert!(field_forecast > 0.0);
         assert!(
             (field_row.actual - field_forecast).abs() < FORECAST_EPSILON,
@@ -3898,12 +3879,7 @@ mod labor_yield_tests {
             .unwrap()
             .last_yields[0]
             .clone();
-        let pen_forecast = expected_yield(
-            &herd_forecast,
-            1,
-            FollowPolicy::Sustain.escapement_floor(),
-            None,
-        );
+        let pen_forecast = expected_yield(&herd_forecast, 1, 0.5, None);
         assert!(pen_forecast > 0.0);
         assert!(
             (pen_row.actual - pen_forecast).abs() < FORECAST_EPSILON,
@@ -3962,7 +3938,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4020,16 +3996,11 @@ mod labor_yield_tests {
     /// past the flat Deplete skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
-        let extractive = [
-            FollowPolicy::Sustain,
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ];
+        let extractive = [0.5, 0.3, 0.15, 0.0];
         // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
         // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Deplete (see docstring).
         const OPERATING_FRACTION: f32 = 0.8;
-        let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
+        let mut takes: Vec<(f32, f32)> = Vec::new();
         for policy in extractive {
             let (mut world, tile) = world_with_source(CAP);
             let patch_cap = world
@@ -4044,7 +4015,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: SOURCE,
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                         species: None,
                     },
                     workers: WORKERS,
@@ -4058,7 +4029,7 @@ mod labor_yield_tests {
                 patch.biomass < patch_cap,
                 "{policy:?} must draw the tended patch down"
             );
-            if matches!(policy, FollowPolicy::Sustain) {
+            if policy >= crate::fauna::MSY_BIOMASS_FRACTION {
                 // Sustainable **by its floor**, not by sitting under the MSY line: a first harvest of
                 // a patch standing above `K/2` legitimately takes the accumulated surplus, and lands
                 // the patch exactly on its most productive biomass.
@@ -4092,16 +4063,16 @@ mod labor_yield_tests {
         // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
         // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
         // the leanest, then the boosted Surplus, then the flat Deplete skim, Eradicate the deepest.
-        let take_of = |wanted: FollowPolicy| {
+        let take_of = |wanted: f32| {
             takes
                 .iter()
                 .find(|(policy, _)| *policy == wanted)
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Deplete));
-        assert!(take_of(FollowPolicy::Deplete) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(0.5) < take_of(0.3));
+        assert!(take_of(0.3) < take_of(0.15));
+        assert!(take_of(0.15) < take_of(0.0));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -4124,7 +4095,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4140,7 +4111,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4185,7 +4156,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4280,7 +4251,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4308,7 +4279,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4360,7 +4331,7 @@ mod labor_yield_tests {
         // *payoff*, and it must read that number off the harvest rung whatever put the band there.
         // The retire itself is pinned by
         // `a_completed_cultivation_retires_the_build_verb_onto_the_harvest_rung`.
-        set_forage_floor(&mut world, band, FollowPolicy::Sustain.escapement_floor());
+        set_forage_floor(&mut world, band, 0.5);
         // One Logistics turn first: under constant escapement a patch that was just gathered is
         // sitting **on** its floor with nothing above it, so a payoff read without the regrowth would
         // measure an empty turn rather than the rung.
@@ -4435,7 +4406,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -4467,7 +4438,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4925,7 +4896,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4950,7 +4921,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4977,7 +4948,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -5011,14 +4982,14 @@ mod labor_yield_tests {
     }
 
     /// Staff a band on the source herd under `policy` and resolve one turn.
-    fn hunt_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+    fn hunt_one_turn(world: &mut World, tile: Entity, policy: f32) {
         spawn_band(
             world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    floor: policy.escapement_floor(),
+                    floor: policy,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -5028,14 +4999,14 @@ mod labor_yield_tests {
     }
 
     /// Staff a band on the source patch under `policy` and resolve one turn.
-    fn forage_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+    fn forage_one_turn(world: &mut World, tile: Entity, policy: f32) {
         spawn_band(
             world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    floor: policy.escapement_floor(),
+                    floor: policy,
                     species: None,
                 },
                 workers: WORKERS,
@@ -5052,7 +5023,7 @@ mod labor_yield_tests {
     #[test]
     fn sustain_hunting_a_wild_herd_still_earns_herding_only() {
         let (mut world, tile) = world_with_source(CAP);
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, HERDING_DISCOVERY_ID) > 0.0,
@@ -5080,7 +5051,7 @@ mod labor_yield_tests {
                 "the herd stands on rung 2"
             );
         }
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, PENNING_DISCOVERY_ID) > 0.0,
@@ -5100,7 +5071,7 @@ mod labor_yield_tests {
             patch.accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
             assert!(patch.is_cultivated(), "the patch stands on rung 2");
         }
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        forage_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, SEED_SELECTION_DISCOVERY_ID) > 0.0,
@@ -5113,11 +5084,7 @@ mod labor_yield_tests {
     /// rungs that teach, so a future rung cannot quietly opt out of the rule.
     #[test]
     fn the_overdrawing_policies_teach_nothing_at_any_rung() {
-        for policy in [
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ] {
+        for policy in [0.3, 0.15, 0.0] {
             // Animal rung 1 (wild) and rung 2 (pastoral).
             for tamed in [false, true] {
                 let (mut world, tile) = world_with_source(CAP);
@@ -5174,7 +5141,7 @@ mod labor_yield_tests {
             let mut registry = world.resource_mut::<HerdRegistry>();
             registry.herds[0].ecology_phase = EcologyPhase::Collapsing;
         }
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
         assert_eq!(
             knowledge(&world, HERDING_DISCOVERY_ID),
             0.0,
@@ -5190,7 +5157,7 @@ mod labor_yield_tests {
                 .expect("seeded patch")
                 .ecology_phase = EcologyPhase::Collapsing;
         }
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        forage_one_turn(&mut world, tile, 0.5);
         assert_eq!(
             knowledge(&world, CULTIVATION_DISCOVERY_ID),
             0.0,
@@ -5205,7 +5172,7 @@ mod labor_yield_tests {
     fn the_two_food_webs_do_not_cross_teach() {
         // Hunting a wild herd teaches Herding and touches NEITHER plant knowledge.
         let (mut world, tile) = world_with_source(CAP);
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
         assert!(knowledge(&world, HERDING_DISCOVERY_ID) > 0.0);
         assert_eq!(
             knowledge(&world, CULTIVATION_DISCOVERY_ID),
@@ -5221,7 +5188,7 @@ mod labor_yield_tests {
         // Foraging a wild patch teaches Cultivation and touches NEITHER animal knowledge.
         let (mut world, _) = world_with_source(CAP);
         let tile = world.resource::<TileRegistry>().tiles[0];
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        forage_one_turn(&mut world, tile, 0.5);
         assert!(knowledge(&world, CULTIVATION_DISCOVERY_ID) > 0.0);
         assert_eq!(
             knowledge(&world, HERDING_DISCOVERY_ID),

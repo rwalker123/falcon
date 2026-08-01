@@ -20,14 +20,13 @@ use sim_runtime::{
     FactionInventoryState as SchemaFactionInventoryState, FloatRasterState, FloraShareInfo,
     FoodModuleState, ForagePatchState, ForkChoiceState, GenerationState, GlossEntryState,
     GreatDiscoveryDefinitionState, GreatDiscoveryProgressState, GreatDiscoveryState,
-    GreatDiscoveryTelemetryState, HerdTelemetryState, HuntPolicyCeilingState,
-    HuntTripEstimateState, InfluentialIndividualState, IntensificationKnowledgeState,
-    KnowledgeLedgerEntryState, KnowledgeMetricsState, KnowledgeTimelineEventState,
-    LaborAssignmentState, LogisticsLinkState, MountainKind, PendingForkState, PendingForksState,
-    PendingMigrationState, PopulationCohortState,
-    PopulationDemographicsState as SchemaPopulationDemographicsState, PowerIncidentSeverity,
-    PowerIncidentState, PowerNodeState, PowerTelemetryState, ScalarRasterState,
-    SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
+    GreatDiscoveryTelemetryState, HerdTelemetryState, HuntTripEstimateState,
+    InfluentialIndividualState, IntensificationKnowledgeState, KnowledgeLedgerEntryState,
+    KnowledgeMetricsState, KnowledgeTimelineEventState, LaborAssignmentState, LogisticsLinkState,
+    MountainKind, PendingForkState, PendingForksState, PendingMigrationState,
+    PopulationCohortState, PopulationDemographicsState as SchemaPopulationDemographicsState,
+    PowerIncidentSeverity, PowerIncidentState, PowerNodeState, PowerTelemetryState,
+    ScalarRasterState, SedentarizationState as SchemaSedentarizationState, SentimentAxisTelemetry,
     SentimentDriverCategory, SentimentDriverState, SentimentTelemetryState,
     SettlementStageViewState, SnapshotHeader, StanceAxisState, StanceState, StartMarkerState,
     TerrainOverlayState, TerrainSample, TileState, TradeLinkKnowledge, TradeLinkState,
@@ -38,10 +37,10 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, stance_named_by, BandId, BandTravel, Expedition,
-        ExpeditionMission, FollowPolicy, LaborAllocation, LaborAssignment, LaborTarget,
-        LogisticsLink, PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink,
-        FODDER, FOOD,
+        available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
+        ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
+        PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
+        NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
@@ -52,7 +51,7 @@ use crate::{
     expedition_config::ExpeditionConfig,
     fauna::{
         herd_herders_needed, hunt_forecast, pen_upkeep, would_be_herders_needed, EcologyPhase,
-        Herd, HerdRegistry, HerdTelemetry, SourceYieldForecast, FULLY_HERDED, HERDING_DISCOVERY_ID,
+        Herd, HerdRegistry, HerdTelemetry, FULLY_HERDED, HERDING_DISCOVERY_ID,
         PENNING_DISCOVERY_ID, PEN_FULLY_FED,
     },
     fauna_config::FaunaConfig,
@@ -934,7 +933,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
-                        floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
+                        floor: 0.5,
                         species: None,
                     },
                     workers: 10,
@@ -943,7 +942,7 @@ mod tests {
                 LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: "game_1".to_string(),
-                        floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
+                        floor: 0.5,
                     },
                     workers: 5,
                     improvement: None,
@@ -1030,7 +1029,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    floor: crate::components::FollowPolicy::Sustain.escapement_floor(),
+                    floor: 0.5,
                     species: None,
                 },
                 workers: 10,
@@ -1054,16 +1053,19 @@ mod tests {
         assert_eq!(state.labor_assignments[0].workers_needed, 0);
     }
 
-    /// A `LaborTarget::Forage` policy round-trips through the snapshot (§0-iii): `to_state` writes
-    /// the policy string and `from_state` parses it back, so a rollback preserves the gather policy
-    /// (parity with the Hunt arm). A non-Sustain policy is the interesting case (empty string would
-    /// silently default to Sustain).
+    /// A `LaborTarget::Forage` **floor** reaches the wire (`docs/plan_harvest_floor.md`): the whole
+    /// of what the player decides about pressure rides `LaborAssignmentState::floor`, verbatim. A
+    /// floor **no retired stance named** is the interesting case — `0.42` cannot be produced by a
+    /// default or by a label round-trip, so a value that landed there really came from the target.
+    /// A floor none of the retired stances named, so a value that appears on the wire cannot have
+    /// come from a default or a label.
+    const UNNAMED_FLOOR: f32 = 0.42;
+
     #[test]
-    fn forage_policy_roundtrips_through_snapshot() {
-        use crate::components::FollowPolicy;
+    fn forage_floor_reaches_the_snapshot_verbatim() {
         let target = LaborTarget::Forage {
             tile: UVec2::new(7, 9),
-            floor: FollowPolicy::Deplete.escapement_floor(),
+            floor: UNNAMED_FLOOR,
             species: None,
         };
         let assignment = LaborAssignment {
@@ -1072,7 +1074,7 @@ mod tests {
             improvement: None,
         };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
-        assert_eq!(state.policy, "deplete", "policy serialized");
+        assert_eq!(state.floor, UNNAMED_FLOOR, "the floor crosses verbatim");
         // Only the outbound leg is asserted now. `labor_allocation_from_state` was the decoder,
         // and it existed solely for `restore_world_from_snapshot` — the server never reads labor
         // assignments back off the wire, it reads them from the checkpoint. Keeping a decoder alive
@@ -1085,30 +1087,33 @@ mod tests {
     /// re-split one field into "is this a build or a stance?".
     #[test]
     fn the_stance_and_the_improvement_are_separate_wire_fields() {
-        use crate::components::{FollowPolicy, Improvement};
+        use crate::components::Improvement;
         let assignment = LaborAssignment {
             target: LaborTarget::Forage {
                 tile: UVec2::new(7, 9),
-                floor: FollowPolicy::Deplete.escapement_floor(),
+                floor: 0.15,
                 species: None,
             },
             workers: 6,
             improvement: Some(Improvement::Cultivate),
         };
         let state = labor_assignment_to_state(&assignment, &SourceYield::ZERO);
-        assert_eq!(state.policy, "deplete", "the stance rides `policy`");
+        assert_eq!(state.floor, 0.15, "the pressure rides `floor`");
         assert_eq!(
             state.improvement, "cultivate",
-            "the build verb rides its own field — never `policy`"
+            "the build verb rides its own field — the two axes never share one"
         );
 
-        // A pure harvest says so with an empty string, not by omitting a stance.
+        // A pure harvest says so with an empty string, not by omitting anything.
         let harvesting = LaborAssignment {
             improvement: None,
             ..assignment
         };
         let state = labor_assignment_to_state(&harvesting, &SourceYield::ZERO);
-        assert_eq!(state.policy, "deplete");
+        assert_eq!(
+            state.floor, 0.15,
+            "…and the floor is untouched by the build axis"
+        );
         assert_eq!(state.improvement, "", "no build in flight");
     }
 

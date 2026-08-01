@@ -207,10 +207,10 @@ gated, **paid** verb, so both food webs read the same:
 
 - **`Improvement::Tame`** (wire key `"tame"`) — **animal-only** (`Improvement::valid_for_hunt`; a
   Forage assignment carrying it is rejected at its command, exactly as `Corral` is). Since issue #442
-  it is an `Improvement`, not a `FollowPolicy`: it rides `LaborAssignment.improvement` **beside**
+  it is an `Improvement`, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
   whatever stance the crew holds, so a herd being tamed is still being Sustain- (or Surplus-, or
-  Deplete-) hunted. It is not a `huntPolicyCeilings` row (those are the four stances) and emits no
-  `huntTripEstimates` row, because an expedition's mission carries a `FollowPolicy` and therefore
+  deeply-) hunted. It emits no
+  `huntTripEstimates` row, because an expedition's mission carries a **floor** and therefore
   cannot name it at all.
 - **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
   `yield_fraction_while_building × the herd's Sustain escapement ceiling` (`hunt_escapement_ceiling`,
@@ -535,7 +535,7 @@ mechanic (the two are near-mechanical transposes).
 > constructors that read them are **deleted** — with the mirror gone there was no producer left, and a
 > decoder with nothing to decode is a second, drifting definition of a restored herd.
 
-Market hunting shipped as the third extractive rung, now named `FollowPolicy::Deplete`
+Market hunting shipped as the third extractive rung, later renamed `Deplete`
 (`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its
 pressure); `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"

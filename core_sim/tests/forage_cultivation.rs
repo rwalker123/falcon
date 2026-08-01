@@ -3,7 +3,7 @@
 //! Sustain-foraging a Thriving patch **teaches the faction Cultivation** (Rung 1b knowledge, earned by
 //! doing) but no longer tames the patch — the old free auto-accrual is gone, because "same labor, same
 //! tile, no cost" made cultivating unconditionally correct and erased the decision. Cultivating is now
-//! the `FollowPolicy::Cultivate` policy: while preparing, the patch yields only
+//! the `Cultivate` improvement: while preparing, the patch yields only
 //! `cultivating_yield_fraction × its Sustain (MSY) ceiling` (the crew is clearing and planting, not
 //! gathering) and accrues `cultivation_progress` at `progress_per_turn`. At `1.0` it becomes a
 //! **tended patch**: worked, place-local, paying the full managed yield without being drawn down, and
@@ -19,7 +19,7 @@ use core_sim::{
     commit_yield_ratio, default_species_for_rung, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_forage, spawn_initial_world, tile_flora_composition, tile_forage_capacity,
     wild_payoff, CommandEventLog, CultureManager, DiscoveryProgressLedger, EcologyPhase, FactionId,
-    FactionInventory, FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
+    FactionInventory, FaunaConfigHandle, FoodModuleTag, ForageRegistry, GenerationId,
     GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation,
     LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
     MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
@@ -199,7 +199,7 @@ fn spawn_forager(
     patch: UVec2,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
-    let policy = FollowPolicy::Sustain;
+    let policy = 0.5;
     app.world
         .spawn((
             PopulationCohort {
@@ -234,7 +234,7 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        floor: policy.escapement_floor(),
+                        floor: policy,
                         species: None,
                     },
                     workers: FORAGE_WORKERS,

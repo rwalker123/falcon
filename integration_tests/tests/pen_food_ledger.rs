@@ -20,9 +20,8 @@
 use bevy::prelude::Entity;
 use core_sim::{
     build_headless_app, run_turn, scalar_from_f32, scalar_one, DiscoveryProgressLedger, FactionId,
-    FollowPolicy, GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget,
-    PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID,
-    FOOD, RUNG_COMPLETE,
+    GrazeRegistry, HerdRegistry, LaborAllocation, LaborAssignment, LaborTarget, PopulationCohort,
+    SimulationConfig, SnapshotHistory, Tile, FODDER, FODDERING_DISCOVERY_ID, FOOD, RUNG_COMPLETE,
 };
 
 /// The shipped default `map_seed` is `0` ("seed from entropy"), so a test must pin its own or every
@@ -130,7 +129,7 @@ fn run_one_turn_with_a_pen(larder: f32, hay: f32) -> (f32, f32, f32, f32, f32, f
         assignments: vec![LaborAssignment {
             target: LaborTarget::Hunt {
                 fauna_id: herd_id.clone(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
             workers: workers.max(1),
             improvement: None,

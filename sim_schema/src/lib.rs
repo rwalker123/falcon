@@ -105,34 +105,30 @@ mod tests {
         assert_eq!(herd.penFedFraction(), 1.0);
     }
 
-    /// **The harvest FLOOR survives the wire, and the stance label beside it is only ever a label.**
+    /// **The harvest FLOOR survives the wire, on the assignment AND on the raid.**
     ///
-    /// A labor assignment carries a `floor` — a fraction of the source's `K`, and the whole of what
-    /// the player decides about harvest pressure (`docs/plan_harvest_floor.md`). `policy` is the
-    /// four-value string the sim writes only when the floor is exactly one of the values those names
-    /// stand for; a floor between them ships `""`. Encode → decode with the generated reader, so a
-    /// field that silently failed to serialize cannot pass — which is exactly the hazard when the
-    /// authority is appended *behind* the label that used to be it.
+    /// A labor assignment carries a `floor` and a hunt expedition carries an `expeditionFloor` — the
+    /// whole of what the player decides about pressure (`docs/plan_harvest_floor.md`). The four-value
+    /// `policy` label that used to ride beside them is a `(deprecated)` slot the encoder can no
+    /// longer write to at all, which is the append-only discipline enforcing itself.
+    ///
+    /// Encode → decode with the generated reader, so a field that silently failed to serialize cannot
+    /// pass — the hazard when the authority is appended *behind* the label that used to be it.
     #[test]
-    fn the_harvest_floor_rides_the_wire_beside_its_optional_stance_label() {
-        /// A floor no stance names, so a reader that fell back to the label would read nothing.
+    fn the_harvest_floor_rides_the_wire_on_the_assignment_and_the_raid() {
+        /// A floor no retired stance named, so a value that appears cannot be a defaulted label.
         const UNLABELLED_FLOOR: f32 = 0.42;
+        /// The raid's own floor, deliberately different from the assignment's.
+        const RAID_FLOOR: f32 = 0.07;
 
         let snapshot = WorldSnapshot {
             populations: vec![PopulationCohortState {
-                labor_assignments: vec![
-                    LaborAssignmentState {
-                        kind: "forage".to_string(),
-                        floor: UNLABELLED_FLOOR,
-                        ..Default::default()
-                    },
-                    LaborAssignmentState {
-                        kind: "hunt".to_string(),
-                        floor: 0.5,
-                        policy: "sustain".to_string(),
-                        ..Default::default()
-                    },
-                ],
+                expedition_floor: RAID_FLOOR,
+                labor_assignments: vec![LaborAssignmentState {
+                    kind: "forage".to_string(),
+                    floor: UNLABELLED_FLOOR,
+                    ..Default::default()
+                }],
                 ..Default::default()
             }],
             ..WorldSnapshot::default()
@@ -140,34 +136,77 @@ mod tests {
 
         let bytes = encode_snapshot_flatbuffer(&snapshot);
         let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
-        let assignments = envelope
+        let cohort = envelope
             .payload_as_snapshot()
             .expect("snapshot payload")
             .population()
             .expect("population section present")
             .populations()
             .expect("cohorts present")
-            .get(0)
+            .get(0);
+
+        assert!(
+            (cohort.expeditionFloor() - RAID_FLOOR).abs() < 1e-6,
+            "the raid's floor crosses verbatim: {}",
+            cohort.expeditionFloor()
+        );
+        let assignment = cohort
             .laborAssignments()
-            .expect("labor assignments present");
-
-        let unlabelled = assignments.get(0);
+            .expect("labor assignments present")
+            .get(0);
         assert!(
-            (unlabelled.floor() - UNLABELLED_FLOOR).abs() < 1e-6,
-            "the floor is the authority and must cross verbatim: {}",
-            unlabelled.floor()
+            (assignment.floor() - UNLABELLED_FLOOR).abs() < 1e-6,
+            "the assignment's floor is the authority and must cross verbatim: {}",
+            assignment.floor()
         );
-        assert!(
-            unlabelled.policy().unwrap_or_default().is_empty(),
-            "a floor no stance names carries no label — never one rounded to the nearest"
-        );
+    }
 
-        let labelled = assignments.get(1);
-        assert!((labelled.floor() - 0.5).abs() < 1e-6);
+    /// **The per-biomass yield VECTOR crosses the wire, on both food webs.**
+    ///
+    /// It is what makes the floor draggable (`docs/plan_harvest_floor.md` §5): with `biomass`, the
+    /// carrying capacity and a rate, the client evaluates `max(0, B − f·K) × rate` at any floor,
+    /// which the retired four ceiling rows could not express. **An inedible species is the case that
+    /// proves it must be a vector** — a wolf reads `0` food with real trade, which a food scalar
+    /// could not state at all.
+    #[test]
+    fn the_per_biomass_yield_vector_rides_the_wire_on_both_webs() {
+        const WOLF_TRADE_RATE: f32 = 0.02;
+        const PATCH_FOOD_RATE: f32 = 0.058;
+        const PATCH_FODDER_RATE: f32 = 0.004;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![HerdTelemetryState {
+                id: "herd_wolf".to_string(),
+                provisions_per_biomass: 0.0,
+                trade_per_biomass: WOLF_TRADE_RATE,
+                ..Default::default()
+            }],
+            forage_patches: vec![ForagePatchState {
+                provisions_per_biomass: PATCH_FOOD_RATE,
+                fodder_per_biomass: PATCH_FODDER_RATE,
+                ..Default::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let subsistence = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present");
+
+        let herd = subsistence.herds().expect("herds present").get(0);
         assert_eq!(
-            labelled.policy(),
-            Some("sustain"),
-            "a floor a stance names exactly still carries that stance's label"
+            herd.provisionsPerBiomass(),
+            0.0,
+            "a wolf is not food, and the vector is the only shape that can say so"
         );
+        assert!((herd.tradePerBiomass() - WOLF_TRADE_RATE).abs() < 1e-6);
+
+        let patch = subsistence.foragePatches().expect("patches present").get(0);
+        assert!((patch.provisionsPerBiomass() - PATCH_FOOD_RATE).abs() < 1e-6);
+        assert!((patch.fodderPerBiomass() - PATCH_FODDER_RATE).abs() < 1e-6);
     }
 }

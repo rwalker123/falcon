@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn forage_worked_tile_provides_visibility() {
-        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+        use crate::components::{LaborAllocation, LaborTarget};
 
         // A forage tile 7 tiles north of the band — far beyond the band center's base_range (2),
         // so only the forager standing on it can reveal it.
@@ -1168,7 +1168,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: FORAGE,
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
                 species: None,
             },
             2,
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn hunt_worked_herd_tile_provides_visibility() {
-        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+        use crate::components::{LaborAllocation, LaborTarget};
         use crate::fauna::Herd;
         use crate::fauna_config::SizeClass;
 
@@ -1213,7 +1213,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: "herd-1".to_string(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
             2,
             4,
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[test]
     fn hunt_unresolved_herd_adds_no_source_and_does_not_panic() {
-        use crate::components::{FollowPolicy, LaborAllocation, LaborTarget};
+        use crate::components::{LaborAllocation, LaborTarget};
 
         // A Hunt on a herd id absent from the registry (despawned/extinct) must be skipped
         // silently — no source, no panic.
@@ -1236,7 +1236,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: "ghost".to_string(),
-                floor: FollowPolicy::Sustain.escapement_floor(),
+                floor: 0.5,
             },
             2,
             4,

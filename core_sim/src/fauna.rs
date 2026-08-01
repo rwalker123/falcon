@@ -10,10 +10,7 @@ use tracing::info;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    components::{
-        floor_overdraws, FollowPolicy, Improvement, PopulationCohort, ResidentBand, SourceYield,
-        Tile, NO_IMPROVEMENT_UNDERWAY,
-    },
+    components::{floor_overdraws, Improvement, PopulationCohort, ResidentBand, SourceYield, Tile},
     fauna_config::{
         default_loiter_radius, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle, GrazeConfig,
         HuntYield, HusbandryCeiling, SizeClass, SpeciesDef, YieldAccounts, YieldAxis,
@@ -3977,14 +3974,6 @@ impl SourceYieldForecast {
             .min(self.per_biomass_yield.scale(self.biomass.max(0.0)))
     }
 
-    /// The cap this source pays at `policy`'s floor as a **pure harvest** — the four stance rows the
-    /// wire still carries (`ForagePatchState.foragePolicyCeilings` /
-    /// `HerdTelemetryState.huntPolicyCeilings`), expressed through [`SourceYieldForecast::ceiling_at`]
-    /// rather than computed beside it so a wire row cannot disagree with the take.
-    pub fn ceiling_for(&self, policy: FollowPolicy) -> YieldAccounts {
-        self.ceiling_at(policy.escapement_floor(), NO_IMPROVEMENT_UNDERWAY)
-    }
-
     /// **Does this source pay in whole animals?** [`SourceYieldForecast::body_mass_yield`] carries the
     /// quantum; a source that pays it in *neither* currency is continuous (every plant patch/Field).
     pub fn quantises(&self) -> bool {
@@ -4741,29 +4730,26 @@ pub(crate) fn corral_yield(
     herd_hunt_yield(herd, fauna).apply(pen_yield_biomass(herd, fauna), output_multiplier)
 }
 
-/// **The hunt policies a herd of THIS SPECIES offers** — the ONE seam the order validator
-/// (`assign_labor` / the `tame`/`corral` command paths) and the snapshot's exported per-policy
-/// ceiling list both read, so the picker the client draws and the picker the sim accepts cannot
-/// drift into two lists.
+/// **May this species ONLY be worked at floor `0`?** — the ONE seam the order validator
+/// (`assign_labor` / the `tame`/`corral` command paths) and the snapshot's raid-estimate table both
+/// read, so what the client is offered and what the sim accepts cannot drift into two rules.
 ///
-/// **The flags gate the yield COMPONENTS, not the buttons.** A wolf (`edible == false`,
-/// `tradeable == true`) shows the **full** ladder and is paid in pelts, because each rung is a
-/// meaningful *rate* at which to collect pelts — that is the whole product/intensity split
-/// (`docs/plan_hunt_yield_model.md`). So [`FollowPolicy::ALL`] is unchanged, and this is not a
-/// general per-species filter.
+/// **The yield flags gate the PRODUCTS, not the dial.** A wolf (`edible == false`,
+/// `tradeable == true`) may be worked at any floor and is paid in pelts, because every floor is a
+/// meaningful depth at which to collect pelts — that is the whole product/intensity split
+/// (`docs/plan_hunt_yield_model.md`). So this is `false` for a wolf, and it is not a general
+/// per-species filter.
 ///
-/// **The only pruning rule:** a [`HuntYield::yields_nothing`] species — a pure pest, worth neither
-/// meat nor pelt — offers **`Eradicate` alone**. Every other rung would be a rate at which to collect
-/// nothing; the one coherent verb left is *make it stop*. No shipped species hits this branch today
-/// (the wolf trades), so it is pinned by a synthetic-config unit test rather than a roster test.
-pub fn hunt_policies_for(hunt_yield: HuntYield) -> &'static [FollowPolicy] {
-    /// The degenerate roster's whole axis: denial, and nothing else.
-    const DENIAL_ONLY: [FollowPolicy; 1] = [FollowPolicy::Eradicate];
-    if hunt_yield.yields_nothing() {
-        &DENIAL_ONLY
-    } else {
-        &FollowPolicy::ALL
-    }
+/// **The only rule:** a [`HuntYield::yields_nothing`] species — a pure pest, worth neither meat nor
+/// pelt — can only be worked at floor `0`. Every other floor would be a depth at which to collect
+/// nothing; the one coherent instruction left is *make it stop*. No shipped species hits this branch
+/// today (the wolf trades), so it is pinned by a synthetic-config unit test rather than a roster one.
+///
+/// It replaced `hunt_policies_for`, which returned the *list of stances* this predicate was really
+/// expressing — a list that could not survive the stances, and that a continuous floor cannot be
+/// checked against anyway (`0.42` is in no list).
+pub fn species_requires_denial(hunt_yield: HuntYield) -> bool {
+    hunt_yield.yields_nothing()
 }
 
 /// Pre-commit yield forecast for hunting `herd` with `per_worker_biomass_capacity` biomass/hunter
@@ -5395,6 +5381,7 @@ fn is_land_tile(position: UVec2, registry: &TileRegistry, tiles: &Query<&Tile>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::NO_IMPROVEMENT_UNDERWAY;
     use crate::fauna_config::ShoreRequirement;
     use crate::intensification::RUNG_COMPLETE;
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
@@ -5784,6 +5771,9 @@ mod tests {
         );
     }
 
+    /// The food peak, which these forecast-shape tests use wherever the floor is not what varies.
+    const PEAK_FLOOR: f32 = MSY_BIOMASS_FRACTION;
+
     /// **Every legal floor's ceiling is the take path's own arithmetic**, on both webs — the
     /// property that replaced four stored rows with one function
     /// (`docs/plan_harvest_floor.md` §5). A row-per-stance surface could only answer the floors
@@ -5819,14 +5809,6 @@ mod tests {
             saw_room,
             "the sweep must find real room somewhere, or it is ordering zeros"
         );
-        // The four stance rows the wire still carries ARE this function, not a second computation.
-        for stance in FollowPolicy::ALL {
-            assert_eq!(
-                forecast.ceiling_for(stance),
-                forecast.ceiling_at(stance.escapement_floor(), NO_IMPROVEMENT_UNDERWAY),
-                "{stance:?}'s wire row must be `ceiling_at(its floor)`"
-            );
-        }
     }
 
     /// A rung-3 managed source **ignores the floor entirely and has no dips left to offer** — every
@@ -5927,18 +5909,18 @@ mod tests {
         herd.body_mass = 50.0;
         let forecast = hunt_forecast(&herd, &fauna, &ladder, 40.0, 1.0);
 
-        let tame_dip = forecast
-            .ceiling_at(
-                FollowPolicy::Sustain.escapement_floor(),
-                Some(Improvement::Tame),
-            )
-            .provisions;
+        let tame_dip = forecast.ceiling_at(0.5, Some(Improvement::Tame)).provisions;
         assert!(
-            tame_dip < forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            tame_dip
+                < forecast
+                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                    .provisions,
             "the during-building dip reads below wild Sustain — the defect pastoral_yield fixes: \
              dip {} vs sustain {}",
             tame_dip,
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
         // The ladder, on the axis that can express it: the two rung PAYOFFS, each a sustained MSY on
         // its own ecology (r-dependent). Measured ≈ 0.75 < 1.5.
@@ -5952,12 +5934,16 @@ mod tests {
         // ladder. Pinned so nobody "fixes" the ordering above by putting a growth rate back into a
         // take ceiling.
         assert!(
-            (forecast.ceiling_for(FollowPolicy::Sustain).provisions
+            (forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions
                 - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
                 .abs()
                 < 1e-4,
             "a full herd's Sustain ceiling is exactly `B - K/2`, whatever its `r`: {}",
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
     }
 
@@ -5992,51 +5978,58 @@ mod tests {
 
         // Extractive ladder — deeper floor, more stock standing above it, unperturbed by the stale bank.
         assert!(
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions
-                < forecast.ceiling_for(FollowPolicy::Surplus).provisions
-                && forecast.ceiling_for(FollowPolicy::Surplus).provisions
-                    < forecast.ceiling_for(FollowPolicy::Deplete).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions
+                < forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions
+                && forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions
+                    < forecast
+                        .ceiling_at(0.15, NO_IMPROVEMENT_UNDERWAY)
+                        .provisions,
             "extractive ceilings must ascend with the floor, and must not read the stale bank: \
              sustain {} surplus {} deplete {}",
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
-            forecast.ceiling_for(FollowPolicy::Surplus).provisions,
-            forecast.ceiling_for(FollowPolicy::Deplete).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
+            forecast.ceiling_at(0.3, NO_IMPROVEMENT_UNDERWAY).provisions,
+            forecast
+                .ceiling_at(0.15, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
         // The investment dips read BELOW their payoffs — "Preparing +dip → then +payoff". Since #442
         // a dip is the SELECTED stance's ceiling scaled, so it is asked for against Sustain, the
         // stance a builder normally holds.
-        let tame_dip = forecast
-            .ceiling_at(
-                FollowPolicy::Sustain.escapement_floor(),
-                Some(Improvement::Tame),
-            )
-            .provisions;
+        let tame_dip = forecast.ceiling_at(0.5, Some(Improvement::Tame)).provisions;
         let corral_dip = forecast
-            .ceiling_at(
-                FollowPolicy::Sustain.escapement_floor(),
-                Some(Improvement::Corral),
-            )
+            .ceiling_at(0.5, Some(Improvement::Corral))
             .provisions;
         assert!(
-            tame_dip < forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            tame_dip
+                < forecast
+                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                    .provisions,
             "the Tame dip must read below the stance it rides: dip {} vs sustain {}",
             tame_dip,
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
         assert!(
-            corral_dip < forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            corral_dip
+                < forecast
+                    .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                    .provisions,
             "the Corral dip must read below the stance it rides: dip {} vs sustain {}",
             corral_dip,
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
         // **The dip rides whichever stance is selected** (§2.2) — the constant this arc removed. A
         // Deplete builder's dip is a fraction of Deplete's larger ceiling, not of Sustain's.
         assert!(
             forecast
-                .ceiling_at(
-                    FollowPolicy::Deplete.escapement_floor(),
-                    Some(Improvement::Tame)
-                )
+                .ceiling_at(0.15, Some(Improvement::Tame))
                 .provisions
                 > tame_dip,
             "a Deplete-while-taming crew takes MORE now — that is what stalls its own meter"
@@ -6050,12 +6043,16 @@ mod tests {
         );
         // The stale bank changed nothing: the ceiling is exactly the escapement stock.
         assert!(
-            (forecast.ceiling_for(FollowPolicy::Sustain).provisions
+            (forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions
                 - herd.biomass * MSY_BIOMASS_FRACTION * fauna.hunt.provisions_per_biomass)
                 .abs()
                 < 1e-4,
             "the Sustain ceiling is `B - K/2`, not `B - K/2 + credit`: {}",
-            forecast.ceiling_for(FollowPolicy::Sustain).provisions,
+            forecast
+                .ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY)
+                .provisions,
         );
     }
 
@@ -6465,8 +6462,8 @@ mod tests {
         assert_eq!(herd_capacity(after, &fauna), after.carrying_capacity);
         let forecast_after = hunt_forecast(after, &fauna, &LadderConfig::builtin(), 40.0, 1.0);
         assert_eq!(
-            forecast_before.ceiling_for(FollowPolicy::Sustain),
-            forecast_after.ceiling_for(FollowPolicy::Sustain),
+            forecast_before.ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY),
+            forecast_after.ceiling_at(PEAK_FLOOR, NO_IMPROVEMENT_UNDERWAY),
             "the Sustain hunt ceiling is unchanged by grazing (inert on the hunting economy)"
         );
 

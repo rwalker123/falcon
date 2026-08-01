@@ -704,7 +704,6 @@ fn seed_snapshot() -> WorldSnapshot {
     // --- subsistence -----------------------------------------------------
     s.herds = rows();
     for herd in &mut s.herds {
-        herd.hunt_policy_ceilings = rows();
         herd.hunt_trip_estimates = rows();
     }
     s.food_modules = rows();
@@ -718,7 +717,6 @@ fn seed_snapshot() -> WorldSnapshot {
         // The TILE's per-rung vector (#426) — the plant twin of `hunt_policy_ceilings` above, and
         // seeded for the same reason: a repeated field the fixture leaves empty is a field the decode
         // guard cannot exercise, which is how four appended fields reached the client as zeros.
-        patch.forage_policy_ceilings = rows();
     }
     s.intensification_knowledge = rows();
 
