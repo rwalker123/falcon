@@ -139,10 +139,6 @@ const READOUT_YIELD_PART_SEPARATION := 6
 # a wrapped third account drops by.
 const READOUT_YIELD_H_SEPARATION := 18
 const READOUT_YIELD_V_SEPARATION := 4
-# The routing suffix is part of the UNIT, one step quieter — `→ camp` says where the number lands, not
-# what it is.
-const READOUT_ROUTE_FORMAT := "%s → %s"
-const READOUT_ROUTE_ALPHA := 0.7
 const READOUT_VERDICT_FONT_SIZE := 12
 const READOUT_ASIDE_FONT_SIZE := 11
 const READOUT_ASIDE_SEPARATION := 4

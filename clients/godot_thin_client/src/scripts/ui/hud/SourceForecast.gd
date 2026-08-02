@@ -336,28 +336,14 @@ static func zero_account_of(src: Dictionary, prefix: String) -> String:
 const YIELD_ROW_ACCOUNT := "account"
 const YIELD_ROW_VALUE := "value"
 
-## **WHERE AN ACCOUNT'S YIELD ACTUALLY GOES.** Provisions feed the working band and fodder feeds the
-## pens that band keeps, so both land in the CAMP; trade goods are banked to the faction-wide
-## stockpile (`inventory.add_stockpile(faction, TRADE_GOODS, …)`), which is a different place and a
-## different timescale. It is the vector that routes a take — there is no role branch anywhere — so
-## the destination is a property of the ACCOUNT and is written down exactly once, here.
-const YIELD_ACCOUNT_ROUTE_CAMP := "camp"
-const YIELD_ACCOUNT_ROUTE_STOCKPILE := "stockpile"
-const YIELD_ACCOUNT_ROUTES := {
-    YIELD_ACCOUNT_FOOD: YIELD_ACCOUNT_ROUTE_CAMP,
-    # **TRADE LANDS IN THE CAMP TOO since #381 moved it band-local.** It read `-> stockpile` because
-    # it once credited the FACTION's `FactionInventory` while food and fodder credited the band —
-    # that was the whole reason this table had two values. Every take path now writes
-    # `cohort.stores.add(TRADE_GOODS, ..)`, the expedition's fold-back included, so the old suffix
-    # was simply false. The three routes being identical makes the suffix informationally empty; see
-    # the note on `YIELD_ACCOUNT_ROUTES` about whether it should survive at all.
-    YIELD_ACCOUNT_TRADE: YIELD_ACCOUNT_ROUTE_CAMP,
-    YIELD_ACCOUNT_FODDER: YIELD_ACCOUNT_ROUTE_CAMP,
-}
-
-## The per-turn UNIT each account is read in — the readout's `2.34  FOOD/TURN → CAMP`. One table, so
-## the three accounts are named in the same grammar wherever a rate is stated as a number beside a
-## unit rather than joined into a sentence (`yield_components`' job).
+## The per-turn UNIT each account is read in — the readout's `2.34  FOOD/TURN`. One table, so the
+## three accounts are named in the same grammar wherever a rate is stated as a number beside a unit
+## rather than joined into a sentence (`yield_components`' job).
+##
+## **The readout states no DESTINATION**, because since #381 moved trade goods band-local all three
+## accounts land in the same place — the working band's own stores. A `→ camp` tail once earned its
+## width by marking trade as the odd account out, banked to the faction-wide stockpile; with nothing
+## left to contrast against, three identical tails only cost the readout the room it wraps in.
 const YIELD_ACCOUNT_UNITS := {
     YIELD_ACCOUNT_FOOD: "food/turn",
     YIELD_ACCOUNT_TRADE: "trade/turn",

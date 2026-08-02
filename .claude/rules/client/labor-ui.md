@@ -462,15 +462,15 @@ for either finds the other, measured at seven false failures.
 
 | register | what it answers | treatment |
 |---|---|---|
-| **yields** | what this crew brings home at this floor | 15px tabular number + 10px uppercase unit and route (`2.34  FOOD/TURN → CAMP`) |
+| **yields** | what this crew brings home at this floor | 15px tabular number + 10px uppercase unit (`2.34  FOOD/TURN`) |
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
 | **aside** | the idle-crew note and the floor's teaching line | 11px `INK_FAINT` under a dashed rule |
 
-**The route is a property of the ACCOUNT, written down once** (`SourceForecast.YIELD_ACCOUNT_ROUTES`):
-provisions feed the working band and fodder feeds the pens it keeps, so both land in the CAMP, while
-trade goods are banked to the band's own store as well, since #381 moved them band-local. There is
-no role branch anywhere — the vector
-does the routing.
+**A reading states its unit and NO destination.** All three accounts land in the working band's own
+stores — provisions feed the band, fodder feeds the pens it keeps, and #381 moved trade goods
+band-local too. A `→ CAMP` tail earned its width only while trade was the odd account out, banked to
+the faction-wide stockpile; once every account routed alike it was three identical words on the
+readout's widest line, so the suffix is gone rather than made uniformly true.
 
 **THE RENDER-ONLY-WHERE-THE-VECTOR-PAYS RULE SURVIVED THE RESIZE, because the row set is not composed
 here.** `SourceForecast.yield_rows` is the STRUCTURAL half of that rule and is now its one definition —
@@ -480,8 +480,8 @@ either, and the single surviving zero is still `zero_account`'s. A widget that s
 put the false `0.00 food` straight back on the loudest line of the panel.
 
 **The hunt web's row is an ANIMAL RATE, not an account** — `≈0.41 Grey Wolf/turn`, unit-free by
-construction, so it carries its own unit and NO route: a body is not an account and has nowhere to be
-sent. `HUNT_DELIVERED_FORMAT` is now composed from the two halves the readout needs separately
+construction, so it overrides the account table with its own unit: a body is not an account.
+`HUNT_DELIVERED_FORMAT` is now composed from the two halves the readout needs separately
 (`HUNT_ANIMAL_RATE_FACE_FORMAT` + `_UNIT_FORMAT`), so the sentence and the split row cannot name the
 quarry two different ways. Both preview producers were split the same way: a `_*_yield_model` states
 the rows, the joined text, the overdraw flag and the waste note, and `_local_*_preview_bbcode` is a

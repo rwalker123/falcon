@@ -409,7 +409,6 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
             SourceForecast.YIELD_ROW_VALUE: animal_rate,
             HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
             HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
-            HudWidgets.YIELD_ROW_ROUTE: "",
         }],
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \

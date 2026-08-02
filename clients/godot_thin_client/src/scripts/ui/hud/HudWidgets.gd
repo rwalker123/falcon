@@ -972,11 +972,10 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
         flow.add_child(_readout_unit_label(waste, HudStyle.WARN))
     return flow
 
-## One account's reading: the number, then the unit + its route. `unit` and `route` are the CALLER's
-## none-of-my-business — a hunt states a whole-animal rate in the quarry's own name and routes it
-## nowhere — so a row may carry either as its own override of the account table.
+## One account's reading: the number, then its unit. `unit` is the CALLER's none-of-my-business — a
+## hunt states a whole-animal rate in the quarry's own name rather than in an account's — so a row
+## may carry it as its own override of the account table.
 const YIELD_ROW_UNIT := "unit"
-const YIELD_ROW_ROUTE := "route"
 const YIELD_ROW_NUMBER := "number"
 static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
     var account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
@@ -992,14 +991,7 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
     pair.add_child(number)
     var unit := String(row.get(YIELD_ROW_UNIT,
         SourceForecast.YIELD_ACCOUNT_UNITS.get(account, "")))
-    var route := String(row.get(YIELD_ROW_ROUTE,
-        SourceForecast.YIELD_ACCOUNT_ROUTES.get(account, "")))
-    # The route rides the unit Label rather than a third one: at `READOUT_ROUTE_ALPHA` of the same
-    # ink it reads as the unit's tail, which is what it is, and a separate Label would let the two
-    # wrap apart onto different lines.
-    pair.add_child(_readout_unit_label(
-        HudComposeVocab.READOUT_ROUTE_FORMAT % [unit, route] if route != "" else unit,
-        HudStyle.INK_FAINT))
+    pair.add_child(_readout_unit_label(unit, HudStyle.INK_FAINT))
     return pair
 
 ## The readout's small-print Label — the unit, the route, the take's qualifier and the waste line all
