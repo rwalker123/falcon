@@ -569,10 +569,11 @@ table PopulationCohortState {
   moraleTerrain:long = 0;
   moraleClimate:long = 0;
   moraleUnrest:long = 0;
-  // Band's live hunt sub-mode summary: the take policy of the largest Hunt assignment
-  // (sustain|surplus|deplete|eradicate); empty string when not hunting. Appended last (see
-  // append-only schema discipline). Client labels the cancel affordance from it.
-  huntMode:string;
+  // RETIRED by the harvest floor arc: it summarised the largest Hunt assignment's STANCE, and there
+  // are no stances. The floor it would summarise is per-assignment (`LaborAssignment.floor`), and a
+  // band-wide summary of a continuous per-source dial is not a thing a single string can say.
+  // Stopped being written; the slot stays (append-only discipline).
+  huntMode:string (deprecated);
   // Early-Game Labor (slice 3a): the band's per-source labor allocation — one entry per staffed
   // Forage tile / Hunt herd / Scout / Warrior demand. Client renders the allocation panel from it;
   // also the rollback-persisted staffing. Appended last (append-only schema discipline).
@@ -620,10 +621,9 @@ table PopulationCohortState {
   // LaborAssignment.faunaId. Persisted so a rollback reconstructs `Hunt { fauna_id }`. Appended last
   // (append-only schema discipline — must follow every field shipped in earlier PRs).
   expeditionTargetHerd:string;
-  // Hunt mission only: the take policy (sustain|surplus|deplete|eradicate; mirrors huntMode). Empty
-  // for scout/normal bands. Persisted so a rollback reconstructs `Hunt { fauna_id, policy }`; drives
-  // the client's per-policy behaviour label + policy picker default. Appended last.
-  expeditionHuntPolicy:string;
+  // RETIRED by the harvest floor arc: a raid names a FLOOR. Stopped being written; the slot stays
+  // (append-only discipline). Read `expeditionFloor` below.
+  expeditionHuntPolicy:string (deprecated);
   // The `move_band`/`BandTravel` destination tile while traveling (`isTraveling` gates it; `0,0`
   // when not traveling). Lets the client draw a destination hex + line from a selected band or
   // expedition to where it's headed. Appended last (append-only schema discipline).
@@ -744,6 +744,13 @@ table PopulationCohortState {
   // `entity` above is an ECS handle: it changes every time a rollback rebuilds the world, so it
   // names a band only until the next one. `bandId` does not. Commands address bands by this.
   bandId:ulong;
+  // --- THE RAID'S FLOOR (appended, docs/plan_harvest_floor.md) -----------------------------------
+  // Hunt-mission expeditions only: WHERE THE RAID STOPS, as a fraction of the herd's carrying
+  // capacity. The party takes the stock standing above it as fast as it can carry, then comes home;
+  // the floor governs the take AND the trip's shape (a floor below 0.5 leaves more than one pack can
+  // hold, so the party runs repeated trips). 1.0 on a Scout party — it harvests nothing, and an
+  // absent floor must NOT read as "take everything". Replaces the retired `expeditionHuntPolicy`.
+  expeditionFloor:float = 1;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).
@@ -753,7 +760,10 @@ table LaborAssignment {
   targetX:uint = 0;  // Forage tile / Hunt herd position readout
   targetY:uint = 0;
   faunaId:string;    // Hunt target herd id
-  policy:string;     // Hunt take policy (sustain|surplus|deplete|eradicate)
+  // RETIRED by the harvest floor arc: an assignment carries `floor` (below), a fraction of the
+  // source's carrying capacity, and that is the whole of what the player decides about pressure.
+  // Stopped being written; the slot stays (append-only discipline).
+  policy:string (deprecated);
   // Per-source food-income breakdown (derived per-turn at capture, 0 on a rehydrated save before the
   // next tick). actualYield = provisions this source produced this turn; sustainableYield = what it
   // could yield without drawing down its stock (forage: ≡ actual; hunt: herd net regrowth). The
@@ -838,6 +848,19 @@ table LaborAssignment {
   // itself through the ecology (the build meter accrues only while the source is Thriving), and its
   // dip rides the larger ceiling. See docs/plan_investment_rung_toggle.md.
   improvement:string;
+  // --- THE HARVEST FLOOR (appended, docs/plan_harvest_floor.md) -----------------------------------
+  // WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity — and since the harvest
+  // floor arc, the WHOLE of what the player decides about pressure. The take is
+  //   min(workers x per-worker throughput, max(0, B - floor*K) x build dip)
+  // so 0.5 holds a source on its most productive biomass, 0.15 strips it to the collapse brink and
+  // 0 takes everything. THIS IS THE AUTHORITY: `policy` above is a four-value label kept beside it
+  // while the client's floor UI lands, and it is EXACTLY "" whenever the floor is not one of the
+  // four values those names stand for (0.50 / 0.30 / 0.15 / 0) — a label is true of the assignment
+  // or absent, never rounded. Read `floor`; do not infer it from `policy`.
+  //
+  // The overhunting warning is `overdraws` above, which is now `floor < 0.5`: you are drawing this
+  // source below the biomass at which it grows fastest. Appended last (append-only).
+  floor:float = 0;
 }
 
 // One commodity entry in a band's local goods store (fixed-point quantity, `Scalar::SCALE` = 1.0).
@@ -1210,7 +1233,10 @@ table ForagePatchState {
   // the migration `HerdTelemetryState` already made to `huntPolicyCeilings`: a future rung (rung 4,
   // Worked Land) costs no schema change, where the flat shape would have cost three more fields per
   // rung forever.
-  foragePolicyCeilings:[ForagePolicyCeiling];
+  // RETIRED by the harvest floor arc: four rows cannot express a continuous dial. The client
+  // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass` below. Stopped
+  // being written; the slot stays (append-only discipline).
+  foragePolicyCeilings:[ForagePolicyCeiling] (deprecated);
   // The non-food halves of the two investment rungs' PAYOFFS — the twins of `tendedYield` /
   // `fieldYield`, exactly as `pastoralTrade`/`corralTrade` are of `pastoralYield`/`corralYield`. A
   // tended patch is drawn down, so its accounts ride the take; a Field is a managed rate. Two fields
@@ -1279,6 +1305,116 @@ table ForagePatchState {
   // number.
   cultivateCrewNeeded:uint = 0;
   sowCrewNeeded:uint = 0;
+  // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
+  // What ONE UNIT of this source's standing stock is worth, in each account, at the rates the sim
+  // actually pays with. With `biomass` (B) and `carryingCapacity` (K) already on this table, the
+  // client evaluates the ceiling at ANY floor:
+  //
+  //   ceiling(floor) = max(0, B - floor*K) * <account>PerBiomass
+  //
+  // THIS IS WHY THE FLOOR IS DRAGGABLE. A fixed set of ceiling rows can answer the floors someone
+  // thought to store; a player dragging a continuous dial asks a different question every frame.
+  //
+  // **NO BUILD FRACTION IN THIS EXPRESSION.** The dip rides the CREW, never the ceiling
+  // (docs/plan_harvest_floor.md §3.1) — the ground standing above a floor is there whether the crew
+  // is gathering it or clearing it. `<rung>BuildFraction` belongs on the *throughput* side, beside
+  // `perWorkerBiomass`; folding it in here too applies it twice and under-reports the ceiling of any
+  // source with a build in flight by exactly the dip (2x at the shipped 0.50). The sim's own
+  // `SourceYieldForecast::ceiling_at` takes no improvement at all, which is the same statement.
+  //
+  // **A deliberate, narrow exception to "the sim exports the answer."** That rule exists because a
+  // hunt take is rounded to WHOLE ANIMALS — `floor(ceiling / bodyMass)` is not linear, so no client
+  // can re-derive it, and the sim must hand over the result. This expression is different in kind:
+  // it is linear and exact, so a client evaluating it lands on the same number the sim would.
+  // The division of labour is therefore: **the client draws the curve, the sim states the take.**
+  // `SourceYield.actual` for the COMMITTED assignment is still the sim's answer, quantisation and
+  // all, and the chart is a projection rather than a promise.
+  //
+  // These are the patch's OWN basket-averaged rates at the rung it currently stands on
+  // (`patch_provisions_per_biomass` and its two siblings — the same seams `forage_take` pays with),
+  // so a tended patch carrying a committed crop reads its committed conversion, not the wild one.
+  provisionsPerBiomass:float = 0;
+  fodderPerBiomass:float = 0;
+  tradePerBiomass:float = 0;
+  // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
+  // What ONE gatherer moves this turn, **in biomass**: `per_worker_biomass_capacity × seasonalWeight`
+  // — the exact term `forage::forage_take`'s worker cap multiplies by the head-count. It folds in the
+  // tile's seasonal weight (as `perWorkerYield` does), so it is **0 in a dead season**: do not divide
+  // by it, and do not read a `0` as "no forecast was sent".
+  //
+  // **The crew half of the panel is arithmetic in biomass, and this is the one term that was not on
+  // the wire.** The vector above lets a client evaluate a ceiling at any floor; turning that into
+  // people needs the throughput the ceiling is spent against:
+  //
+  //   clearItNow(floor, rung)  = ceil(max(0, B - floor*K) / (perWorkerBiomass * <rung>BuildFraction))
+  //   holdItAfter(floor, rung) = ceil(regrowthAt(floor)   / (perWorkerBiomass * <rung>BuildFraction))
+  //
+  // **It is NOT a duplicate of `perWorkerYield`, and it is not derivable from it.** The client used to
+  // recover it as `perWorkerYield / provisionsPerBiomass`, which is exact — and **undefined on
+  // precisely the sources that pay no food**: a sown Field of cotton, flax or hay reads `0 / 0`, and
+  // the panel can then state no crew number at all. A rate that exists on every source must not be
+  // derived from two that can both be zero.
+  //
+  // **Why there was no such field before:** a per-worker scalar was held to be unable to state a
+  // POLICY-DEPENDENT rate, which the plant web's trade account then had (`Deplete` marked it up). That
+  // markup is deleted (docs/plan_harvest_floor.md §4) and no factor of any kind now rides the depth of
+  // the draw, so throughput is policy-blind *in fact* and one scalar states it honestly. The
+  // per-policy rows' per-worker vector still exists for the ACCOUNTS; this is the biomass they are all
+  // converted from.
+  perWorkerBiomass:float = 0;
+  // --- THE SAMPLED REGROWTH CURVE (appended) -----------------------------------------------------
+  // This source's OWN per-turn regrowth, in BIOMASS, evaluated at evenly spaced fractions of `K`:
+  // sample `i` of `n` is the stock's one-turn delta at `B = i/(n-1) * K`. The x-axis is implicit —
+  // uniform spacing, so it needs no wire field — and a client INTERPOLATES between samples rather
+  // than treating them as the only stocks the source can hold.
+  //
+  // Three things on the panel are all this one curve, which is why it ships once: the *"hold it
+  // after"* crew target (the regrowth at the chosen floor over the crew's carry), the verdict line
+  // ("settles at 62% instead — 11 gatherers would reach the floor"), and the projection under the
+  // floor.
+  //
+  // **THE RULE, AND ITS OTHER HALF.** Where a closed form exists the sim ships the TERMS and the
+  // client evaluates it; where one does not, the sim ships ANSWERS and the client interpolates. The
+  // escapement ceiling above is the first case — `max(0, B - floor*K) * rate` is linear and exact,
+  // which is precisely what let the four stance rows be retired. The growth curve is the second, and
+  // not because it is hard to write down: it is **two different functions**. A patch is pure logistic
+  // with a reseed floor and NO Allee term; a herd has critical depensation below `collapse_fraction`.
+  // Shipping `r` plus the thresholds would put a second copy of both models in a language with no
+  // tests over them, and the drift would be invisible, because either one still draws a plausible
+  // curve. (`RAID_FORECAST_FLOOR_SAMPLES` samples `huntTripEstimates` for the same reason.)
+  //
+  // **THE PEAK OF THIS CURVE IS THE FOOD PEAK** the panel marks at `K/2`. It is deliberately not
+  // published as its own field: one number derived two ways is how the two start disagreeing.
+  // **The `0.0` sample is the RESEED FLOOR's lift, not zero.** A stripped patch is raised to
+  // `reseed_floor_fraction * K` before the logistic step, which is why a plant stand driven to floor
+  // `0` comes back. **No sample is ever negative**: plants have no Allee crash — the herd twin's low
+  // samples are, and that asymmetry is the model.
+  regrowthSamples:[float];
+  // --- THE ECOLOGY PHASE BANDS (appended) --------------------------------------------------------
+  // **The cut points `classify_ecology_phase` uses**, as fractions of `carryingCapacity`:
+  //
+  //   B/K <  collapseFraction  ->  "collapsing"
+  //   B/K <  stressedFraction  ->  "stressed"
+  //   otherwise                ->  "thriving"
+  //
+  // `ecologyPhase` above ships the WORD; these ship where the words change hands. Without them a
+  // chart can tint the standing stock with the current phase's colour but cannot draw the horizontal
+  // ZONES the floor line is dragged against — and those zones are the reason a floor and a phase are
+  // the same kind of object: **both are fractions of `K`**. Read them in exactly the units the floor
+  // is in, never as absolute biomass.
+  //
+  // **PER SOURCE, not a global echo, because a herd's bands depend on the RUNG it stands on.**
+  // `herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own
+  // `collapse_fraction` / `stressed_fraction`, so one global pair would be right for plants and wrong
+  // for a tamed or penned herd. Each is resolved through the SAME seam the phase word is classified
+  // with (`forage::patch_ecology` for a patch, `fauna::herd_ecology` for a herd), so the bands and
+  // the word can never disagree about the same source.
+  //
+  // `collapseFraction` is also the **Allee threshold** on the animal web — the point below which
+  // `net_biomass_delta` goes negative, which is where `regrowthSamples` above turns down. The two
+  // fields describe the same cliff from either side and must be read together.
+  collapseFraction:float = 0;
+  stressedFraction:float = 0;
 }
 
 // One STANCE's ceiling on one tile, in every account the tile's basket pays (issue #426). The plant
@@ -1429,6 +1565,21 @@ table FloraShareInfo {
   // this ground. The same rule `sowTradePayoff` states one rung up.
   cultivateFodderPayoff:float = 0;
   cultivateTradePayoff:float = 0;
+  // --- WHAT THIS PLANT IS FOR (appended, tile-card crop roles) ---
+  // The species' own `role` (flora_config.json -> species): "staple" | "fodder" | "cash". A DISPLAY
+  // TAG — nothing in the sim branches on it, and nothing on a client may either. The yield vector is
+  // the behaviour; this only says which component of it dominates, so a tile card can show one icon
+  // per crop and a player can see at a glance how much of a stand is food, cash or feed.
+  //
+  // `""` means UNSTATED (a species this server's roster no longer knows), NOT "staple" — a client
+  // must not default a missing tag into a real category. Same convention as `displayName`.
+  //
+  // SHIPPED RATHER THAN DERIVED FROM THE PAYOFFS ABOVE, which cannot answer it: those are rung-2 and
+  // rung-3 numbers, so they fold in the weeding and conversion gains rather than stating the plant's
+  // own vector, and they are ALL ZERO for a species that cannot climb on this ground
+  // (`canCultivate`/`canSow` false) — exactly the wild-ceiling case where the role is still a true
+  // and useful fact.
+  role:string;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's
@@ -1528,7 +1679,9 @@ table HuntPolicyCeiling {
 //
 // Counts only turns spent HUNTING, once the party is in reach — travel is NOT included.
 table HuntTripEstimate {
-  policy:string;           // sustain|surplus|deplete|eradicate (free-form, like `species`)
+  // RETIRED by the harvest floor arc (docs/plan_harvest_floor.md): a raid names a FLOOR, not a
+  // stance. Stopped being written; the slot stays (append-only discipline). Read `floor` below.
+  policy:string (deprecated);
   partyWorkers:uint = 0;   // 1 ..= expedition_config.max_party_size
   // Turns of hunting until the RAID COMPLETES — the party comes home when the pack fills OR the
   // standing surplus is spent (herd at the policy's floor) OR the herd is lost. NOT "turns to fill
@@ -1566,6 +1719,16 @@ table HuntTripEstimate {
   // projected through the SAME HuntYield::apply the take path pays with (issue #337). For a wolf raid
   // this is the ONLY payload: deliveredFood is 0 and deliversFood is false.
   deliveredTrade:float = 0;
+  // --- THE SAMPLED FLOOR (appended, docs/plan_harvest_floor.md) ---------------------------------
+  // Where this sampled raid stops, as a fraction of the herd's carrying capacity. Replaces the
+  // retired `policy` string.
+  //
+  // THE TABLE SAMPLES A CONTINUUM — it is not a set of stances. A raid's trip length is a bounded
+  // forward simulation with no closed form, so the sim cannot hand the client a formula and must
+  // export answers at chosen points instead; the points are `snapshot::RAID_FORECAST_FLOOR_SAMPLES`,
+  // and the client interpolates between them for the outfit preview. Read these as marks on a dial,
+  // never as the options on offer: the launch command accepts ANY floor in 0.0..=1.0.
+  floor:float = 0;
 }
 
 table HerdTelemetryState {
@@ -1618,7 +1781,7 @@ table HerdTelemetryState {
   ceilingCorral:float = 0 (deprecated);
   corralYield:float = 0;
   // Per-STANCE band / local-hunt take ceilings for this herd's current state — one entry per
-  // FollowPolicy, i.e. the four harvest stances. **FOUR rows since issue #442**: the `tame` and
+  // the four retired harvest stances. RETIRED WHOLESALE by the harvest floor arc: the `tame` and
   // `corral` dips used to ride here as extra rows, and are now the `tameBuildFraction` /
   // `corralBuildFraction` factors below, because a dip multiplies whichever stance the crew holds.
   // Phase-correct: a penned herd's rows all read its corral yield. This list is the ONLY wire
@@ -1628,7 +1791,10 @@ table HerdTelemetryState {
   // With the cohort's `huntPerWorkerProvisions` + `outputMultiplier` this is everything the client
   // needs to preview a RESIDENT BAND's hunt yield as pure arithmetic — it must NOT re-derive the
   // ecology model. Appended (append-only discipline).
-  huntPolicyCeilings:[HuntPolicyCeiling];
+  // RETIRED by the harvest floor arc: four rows cannot express a continuous dial. The client
+  // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass` below. Stopped
+  // being written; the slot stays (append-only discipline).
+  huntPolicyCeilings:[HuntPolicyCeiling] (deprecated);
   // The sim's pre-launch trip estimates for a hunting EXPEDITION against this herd — one entry per
   // (EXTRACTIVE policy × party size 1..=maxExpeditionPartySize), so the outfit UI is a table lookup
   // and the client does no arithmetic at all. The investment policies (cultivate/corral) are
@@ -1812,6 +1978,99 @@ table HerdTelemetryState {
   // lose nothing.
   hasNeglectGrace:bool = false;
   neglectGraceRemaining:uint = 0;
+  // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
+  // What ONE UNIT of this herd's biomass is worth, in each account — the species' own `HuntYield`
+  // (`FaunaConfig::hunt_yield_for`). The animal twin of `ForagePatchState`'s trio; see there for the
+  // full reasoning, including why NO build fraction appears in this expression — the dip multiplies
+  // the crew's throughput, not the ceiling. With `biomass` (B) and `carryingCapacity` (K) already on
+  // this table:
+  //
+  //   ceiling(floor) = max(0, B - floor*K) * <account>PerBiomass
+  //
+  // which is what lets the compose sheet draw a continuous floor curve instead of reading a fixed
+  // set of stance rows. **An inedible species (a wolf) reads `provisionsPerBiomass = 0` with
+  // `tradePerBiomass` strictly positive** — the vector is the only shape that can state that at all.
+  // No animal pays fodder, so `fodderPerBiomass` is `0` on every herd; it is present so both webs
+  // publish the same triple and a reader needs one code path.
+  //
+  // **The take is still the sim's answer.** A hunt is rounded to whole animals, so the curve this
+  // supports is the CEILING — `SourceYield.actual` is what the herd will actually hand over, and
+  // `bodyMass`/`foodPerAnimal` are what make the pulse visible.
+  provisionsPerBiomass:float = 0;
+  fodderPerBiomass:float = 0;
+  tradePerBiomass:float = 0;
+  // --- THE PER-WORKER BIOMASS THROUGHPUT (appended) ----------------------------------------------
+  // What ONE hunter moves this turn, **in biomass** — `labor_config.hunt.per_worker_biomass_capacity`,
+  // the exact term `systems::hunt_take`'s collection multiplies by the head-count. **No seasonal
+  // factor**: the animal web has none, so unlike the patch twin this is never 0 for a live source.
+  //
+  // The animal twin of `ForagePatchState.perWorkerBiomass`; see there for the full reasoning — the
+  // crew half of the panel is arithmetic in biomass, and this is the term that was missing. On this
+  // web the derivation it replaces fails on a **wolf**, whose `provisionsPerBiomass` and
+  // `perWorkerYield` are both honestly `0`.
+  //
+  // **It SUPERSEDES `PopulationCohortState.huntPerWorkerProvisions` for any PER-HERD preview.** That
+  // field is a species-blind cohort echo of the same global lever, in provisions, so it quotes a
+  // wolf's hunters a positive food rate against all-zero food ceilings — the trap
+  // `.claude/rules/core_sim/yield-forecast.md` already flags. This field plus the herd's own
+  // per-biomass vector is the honest pair, and it is the same species-aware split
+  // `perWorkerYield`/`perWorkerTrade` already made for the accounts. The cohort field stays: it is
+  // still the expedition **outfit** lever, quoted before a target has been chosen.
+  perWorkerBiomass:float = 0;
+  // --- THE SAMPLED REGROWTH CURVE (appended) -----------------------------------------------------
+  // This source's OWN per-turn regrowth, in BIOMASS, evaluated at evenly spaced fractions of `K`:
+  // sample `i` of `n` is the stock's one-turn delta at `B = i/(n-1) * K`. The x-axis is implicit —
+  // uniform spacing, so it needs no wire field — and a client INTERPOLATES between samples rather
+  // than treating them as the only stocks the source can hold.
+  //
+  // Three things on the panel are all this one curve, which is why it ships once: the *"hold it
+  // after"* crew target (the regrowth at the chosen floor over the crew's carry), the verdict line
+  // ("settles at 62% instead — 11 gatherers would reach the floor"), and the projection under the
+  // floor.
+  //
+  // **THE RULE, AND ITS OTHER HALF.** Where a closed form exists the sim ships the TERMS and the
+  // client evaluates it; where one does not, the sim ships ANSWERS and the client interpolates. The
+  // escapement ceiling above is the first case — `max(0, B - floor*K) * rate` is linear and exact,
+  // which is precisely what let the four stance rows be retired. The growth curve is the second, and
+  // not because it is hard to write down: it is **two different functions**. A patch is pure logistic
+  // with a reseed floor and NO Allee term; a herd has critical depensation below `collapse_fraction`.
+  // Shipping `r` plus the thresholds would put a second copy of both models in a language with no
+  // tests over them, and the drift would be invisible, because either one still draws a plausible
+  // curve. (`RAID_FORECAST_FLOOR_SAMPLES` samples `huntTripEstimates` for the same reason.)
+  //
+  // **THE PEAK OF THIS CURVE IS THE FOOD PEAK** the panel marks at `K/2`. It is deliberately not
+  // published as its own field: one number derived two ways is how the two start disagreeing.
+  // **THE LOW SAMPLES ARE NEGATIVE, AND THAT IS THE POINT.** Below `collapse_fraction * K` a herd is
+  // past its Allee threshold and declines by `collapse_rate` of its biomass every turn, hunted or
+  // not. **Render them as decline; do NOT clamp them to zero.** The crash is the whole reason floor
+  // `0` ends a herd while it only sets a patch back — the plant twin of this field is non-negative at
+  // every sample.
+  regrowthSamples:[float];
+  // --- THE ECOLOGY PHASE BANDS (appended) --------------------------------------------------------
+  // **The cut points `classify_ecology_phase` uses**, as fractions of `carryingCapacity`:
+  //
+  //   B/K <  collapseFraction  ->  "collapsing"
+  //   B/K <  stressedFraction  ->  "stressed"
+  //   otherwise                ->  "thriving"
+  //
+  // `ecologyPhase` above ships the WORD; these ship where the words change hands. Without them a
+  // chart can tint the standing stock with the current phase's colour but cannot draw the horizontal
+  // ZONES the floor line is dragged against — and those zones are the reason a floor and a phase are
+  // the same kind of object: **both are fractions of `K`**. Read them in exactly the units the floor
+  // is in, never as absolute biomass.
+  //
+  // **PER SOURCE, not a global echo, because a herd's bands depend on the RUNG it stands on.**
+  // `herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own
+  // `collapse_fraction` / `stressed_fraction`, so one global pair would be right for plants and wrong
+  // for a tamed or penned herd. Each is resolved through the SAME seam the phase word is classified
+  // with (`forage::patch_ecology` for a patch, `fauna::herd_ecology` for a herd), so the bands and
+  // the word can never disagree about the same source.
+  //
+  // `collapseFraction` is also the **Allee threshold** on the animal web — the point below which
+  // `net_biomass_delta` goes negative, which is where `regrowthSamples` above turns down. The two
+  // fields describe the same cliff from either side and must be read together.
+  collapseFraction:float = 0;
+  stressedFraction:float = 0;
 }
 
 table CommandEventState {

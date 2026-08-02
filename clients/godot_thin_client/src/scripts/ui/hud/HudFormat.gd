@@ -127,6 +127,59 @@ static func join_tooltip_lines(lines: Array) -> String:
 static func policy_face(policy: String) -> String:
     return "%s%s" % [source_icon_prefix(FoodIcons.for_policy(policy)), policy.capitalize()]
 
+## **THE PLANT WEB'S CREW NOUN, AND THE ONE PLACE IT IS DECIDED.** A wild stand is drawn down by
+## FORAGERS; a Tended Patch or a Field is kept by TENDERS. The authority is the ladder config itself
+## (`core_sim/src/data/intensification_ladder.json`), where the `wild` rung declares the harvest
+## primitive `worker_take` and both upper rungs declare `worker_tend` — a managed source is never
+## gather-drawn (the sim's `is_managed()` branch), so a crew standing on one is not foraging at all.
+##
+## **ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` carries
+## `SourceForecast.FORECAST_RETIRED_BY_HIGHER_RUNG` — a completed Field retires Cultivate even when
+## `is_cultivated` is honestly false, because `Sow` needs no prior patch — so it is true on a Tended
+## Patch AND on a Field sown straight from wild ground, and a separate `SOW` test would only be a
+## second spelling of the same answer, free to drift. That is the const relied on here.
+##
+## **A BUILD IN FLIGHT KEEPS THE WILD NOUN**, deliberately: this reads the source's DONE FLAGS and
+## never a composed improvement, so people part-way through a Cultivate or a Sow — who really are
+## foraging the stand while they clear ground, which is what the build dip charges them for — stay
+## Foragers until the rung COMPLETES. The animal web's `_herd_crew_noun` does read the composed axis,
+## because a herd being penned owes keepers before the pen exists; a patch owes nobody anything.
+##
+## **DISPLAY ONLY.** The command is still `assign_labor` with kind `forage`
+## (`SourceForecast.LABOR_KIND_FORAGE`); nothing on the wire moves with this word.
+##
+## `prefix` spells the keys, so a `patch_`-prefixed `tile_info` and a bare wire patch both work.
+static func plant_crew_label(src: Dictionary, prefix: String) -> String:
+    return HudComposeVocab.TEND_CREW_LABEL \
+        if SourceForecast.improvement_is_done(src, prefix, SourceForecast.IMPROVEMENT_CULTIVATE) \
+        else HudComposeVocab.FORAGE_CREW_LABEL
+
+# ---- The escapement floor, in words --------------------------------------------------------------
+
+## A FLOOR PRESET's display FACE — its zone glyph welded to its label (`💀 Take everything`). The one
+## floor vocabulary every preset readout shares, so a preset can never read one way on the picker and
+## another in a tooltip.
+static func floor_preset_face(preset: String) -> String:
+    var floor := SourceForecast.floor_for_preset(preset)
+    var glyph := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
+    return "%s%s" % [source_icon_prefix(glyph), HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, "")]
+
+## **THE ONE SENTENCE SAID ABOUT A FLOOR** — the replacement for the three per-stance hint tables, and
+## the whole of what the client says about harvest pressure. It is composed rather than looked up
+## because two facts vary independently of the zone: WHAT STRIPPING COSTS differs by web (a patch
+## reseeds, a herd is gone for good), and a detached party earns no craft, so the learning zone's
+## promise is false for a raid. Everything else is one table of five.
+##
+## `kind` is a `SourceForecast.LABOR_KIND_*`; `expedition` marks a detached party.
+static func floor_hint(floor: float, kind: String, expedition: bool = false) -> String:
+    var zone := SourceForecast.floor_zone(floor)
+    if expedition and zone == SourceForecast.FLOOR_ZONE_LEARNING:
+        return HudComposeVocab.FLOOR_LEARNING_HINT_EXPEDITION
+    var text := String(HudComposeVocab.FLOOR_ZONE_HINTS.get(zone, ""))
+    if zone == SourceForecast.FLOOR_ZONE_STRIP:
+        return text % String(HudComposeVocab.FLOOR_STRIP_CONSEQUENCE.get(kind, ""))
+    return text
+
 ## A 0..1 progress track (knowledge / domestication) as a whole percent. 0 is a MEANINGFUL reading in
 ## a gate reason — it tells the player they haven't started the track at all.
 static func progress_percent(progress: float) -> int:
@@ -195,8 +248,8 @@ static func expedition_phase_suffix(phase: String) -> String:
 ## Compact one-line expedition summary: hunt → `🏹 <herd> · <Policy>  <phase glyph>`;
 ## scout → `⚑ → (x, y)  <phase glyph>`. Policy AND phase read as GLYPHS here exactly as they do on the
 ## Current-actions rows (one concept, one rendering, in both sections of the same panel); the words
-## live in the tooltip. A scout has no policy → `for_policy` returns "" → `row_glyph_suffix` emits
-## nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
+## live in the tooltip. A scout gets no floor glyph at all (it harvests nothing) → `row_glyph_suffix`
+## emits nothing, so the row carries the phase glyph alone with no orphaned separator. Only `awaiting` keeps
 ## its words (`expedition_phase_suffix`). The next-delivery detail is NOT here — it lives on the
 ## parties inspector strip a row click opens (`_build_parties_inspector` → `BandDetailLines.expedition_summary_lines`).
 ##
@@ -207,16 +260,22 @@ static func expedition_phase_suffix(phase: String) -> String:
 static func panel_expedition_summary(exp: Dictionary, herd_label_for_id: Callable) -> String:
     var mission := String(exp.get("expedition_mission", "")).strip_edges().to_lower()
     var phase_suffix := expedition_phase_suffix(expedition_phase_key(exp))
-    var policy_suffix := row_glyph_suffix(
-        FoodIcons.for_policy(String(exp.get("expedition_hunt_policy", ""))))
+    # The party's FLOOR as its zone glyph — the same mark the work board gives a resident crew, so a
+    # raid and a hunt at the same pressure read alike. A SCOUT reports `1.0` (it harvests nothing),
+    # which is a real zone, so the glyph is resolved on the hunt branch alone and a scout row keeps
+    # its phase glyph with no orphaned separator.
+    var floor_suffix := row_glyph_suffix(FoodIcons.for_floor_zone(SourceForecast.floor_zone(
+        float(exp.get("expedition_floor", SourceForecast.FLOOR_MAX))))) \
+        if String(exp.get("expedition_mission", "")).strip_edges().to_lower() \
+            == HudExpeditionVocab.EXPEDITION_MISSION_HUNT else ""
     if mission == HudExpeditionVocab.EXPEDITION_MISSION_HUNT:
         var herd := String(herd_label_for_id.call(String(exp.get("expedition_target_herd", "")).strip_edges()))
         return "%s %s%s%s" % [
-            PANEL_EXPEDITION_HUNT_GLYPH, herd, policy_suffix, phase_suffix]
+            PANEL_EXPEDITION_HUNT_GLYPH, herd, floor_suffix, phase_suffix]
     var x := int(exp.get("current_x", -1))
     var y := int(exp.get("current_y", -1))
     return "%s → (%d, %d)%s%s" % [
-        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, policy_suffix, phase_suffix]
+        PANEL_EXPEDITION_SCOUT_GLYPH, x, y, floor_suffix, phase_suffix]
 
 ## A block-glyph bar for a 0–100 score. `cells` is passed by every caller — the Sedentarization meter
 ## (via TopBarReadouts) at the standard width, the knowledge strip narrower, the herd-drawer danger

@@ -12,7 +12,7 @@ signal cancel_order_requested(band: Dictionary, scope: String)
 ## Early-Game Labor (docs/plan_early_game_labor.md, slice 3b): assign/unassign
 ## working-age workers to a source or band-wide role. Payload keys:
 ## { faction, band, kind ("forage"|"hunt"|"scout"|"warrior"), workers,
-##   x, y (forage/hunt readout), herd_id, policy (hunt) }. Main formats the
+##   x, y (forage/hunt readout), herd_id, floor (the escapement floor, 0..1) }. Main formats the
 ## `assign_labor …` text command. workers==0 removes/zeroes the assignment.
 signal assign_labor_requested(payload: Dictionary)
 ## The Telling (docs/plan_the_telling.md): the player answered a pending narrative fork.
@@ -301,8 +301,9 @@ var _inset_bottom: float = 0.0
 func _ready() -> void:
     _selection = HudSelectionState.new()
     _band_labor = HudBandLaborState.new()
-    # Both compose policies start on the default rung; the policy vocabulary stays here, not in the model.
-    _compose = ComposeState.new(SourceForecast.DEFAULT_HUNT_POLICY)
+    # Both compose floors start on the sim's own default (the food peak); the number stays in
+    # `SourceForecast`, not in the model.
+    _compose = ComposeState.new(SourceForecast.DEFAULT_HARVEST_FLOOR)
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
     _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
     # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
@@ -698,14 +699,14 @@ func _herd_label_for_id(herd_id: String) -> String:
 ## newer-turn snapshot). Main formats the text command from the emitted payload.
 ## `species` is the FORAGE-only crop selection (flora roster S1) — which named plant a Cultivate/Sow
 ## should commit the patch to. Empty (the default, and what every non-forage caller sends) means "pick
-## the tile's dominant legal plant for me", the same absent-means-default convention `policy` has.
+## the tile's dominant legal plant for me", the same absent-means-default convention the floor has.
 ##
 ## `improvement` NEVER reaches the command (issue #442) — `assign_labor` sets the STANCE and the crew
 ## and deliberately does not touch the second axis; that is what makes a crew edit stop re-asserting a
 ## build and re-running its gates. It is recorded on the PENDING overlay alone, so an optimistic edit
 ## keeps showing the build the source is already doing instead of blanking it for a turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
-        policy: String, species: String = "",
+        floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
     # TWO handles, and they are not interchangeable. `band_id` is the DURABLE id the command names —
     # the sim resolves a band by it and by nothing else, because ECS entity bits are renumbered by a
@@ -724,10 +725,14 @@ func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y:
         "x": x,
         "y": y,
         "herd_id": herd_id,
-        "policy": policy,
+        # WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity — the whole of the
+        # harvest axis since the four stances were deleted. `Main` renders it as the optional numeric
+        # token `assign_labor` takes; the sim REJECTS the four stance words by name, so a stale
+        # emitter fails loudly rather than being silently reinterpreted.
+        "floor": SourceForecast.clamp_floor(floor),
         "species": species,
     })
-    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, policy, improvement)
+    _band_labor.record_pending_assign(entity, kind, clamped, x, y, herd_id, floor, improvement)
     _after_pending_change()
 
 # ---- Optimistic pending labor (slice 3b UX) --------------------------------
@@ -779,8 +784,8 @@ func close_compose_sheet() -> void:
 
 
 ## Map double-click convenience (Main forwards `MapView.herd_quick_hunt_requested`): assign
-## ALL of the player band's currently-idle workers to hunt `herd_id` at the default Sustain
-## policy. A no-op (with a command-feed note) when there's no player band or no idle workers,
+## ALL of the player band's currently-idle workers to hunt `herd_id` at the default floor (the food
+## peak). A no-op (with a command-feed note) when there's no player band or no idle workers,
 ## so the shortcut never silently does nothing.
 func quick_assign_hunters(herd_id: String) -> void:
     if herd_id.strip_edges() == "":
@@ -794,12 +799,12 @@ func quick_assign_hunters(herd_id: String) -> void:
         _note_command_feed("Quick-hunt", "No idle workers to assign to %s." % herd_id)
         return
     # The improvement the band is ALREADY building on this herd rides the edit (issue #442): the
-    # shortcut sets a crew and a stance, and letting the pending overlay default to `IMPROVEMENT_NONE`
+    # shortcut sets a crew and a floor, and letting the pending overlay default to `IMPROVEMENT_NONE`
     # would flash a running pen off the work board (and drop the herding-crew floor) for a turn.
     # Double-clicking a herd nobody hunts yet answers "" here, which is the honest value.
     _emit_assign_labor(band, SourceForecast.LABOR_KIND_HUNT, idle,
         int(band.get("current_x", -1)), int(band.get("current_y", -1)), herd_id,
-        SourceForecast.DEFAULT_HUNT_POLICY, "",
+        SourceForecast.DEFAULT_HARVEST_FLOOR, "",
         _band_labor.improvement_for_hunt(band, herd_id))
 
 func update_overlay_legend(legend: Dictionary) -> void:

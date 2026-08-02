@@ -46,7 +46,7 @@ use thiserror::Error;
 
 use crate::config_load::{load_config_from_env, ConfigLoadError};
 use crate::{
-    components::{FollowPolicy, Improvement},
+    components::Improvement,
     fauna::{FODDERING_DISCOVERY_ID, HERDING_DISCOVERY_ID, PENNING_DISCOVERY_ID},
     fauna_config::HusbandryCeiling,
     forage::{CULTIVATION_DISCOVERY_ID, SEED_SELECTION_DISCOVERY_ID},
@@ -65,8 +65,8 @@ pub const RUNG_COMPLETE: f32 = 1.0;
 
 /// **An untouched build meter** — the other end of the same `[0.0, 1.0]` span [`RUNG_COMPLETE`]
 /// closes. Named because the distinction *"has any progress been banked here at all"* is a real
-/// question with real consequences (ownership is set on the first accrual, and a started build is
-/// exempt from the **start**-only gates — see `ForagePatch::cultivation_underway`), so the threshold
+/// question with real consequences (ownership is set on the first accrual, and the plant web unwinds
+/// *newest rung first*, so `forage::patch_unwinding_rung` asks it of both meters), so the threshold
 /// deserves the same one-home treatment as the completion point rather than a bare literal at each
 /// site that asks.
 pub const RUNG_UNSTARTED: f32 = 0.0;
@@ -145,6 +145,60 @@ pub fn neglect_grace_remaining(neglect_turns: u16, grace_turns: u32) -> u32 {
 /// `Herd::neglect_turns`, written every turn the source's upkeep requirement is met (a crew worked
 /// the patch; the herd's keepers can hold its animals).
 pub const NEGLECT_NONE: u16 = 0;
+
+/// **HOW FAST A CREW WORKING A SOURCE AT `floor` LEARNS AND BUILDS** — `floor / MSY_BIOMASS_FRACTION`,
+/// normalised so the **food peak is ×1.0** (`docs/plan_harvest_floor.md` §3).
+///
+/// One rate replaced three gates that were each wrong differently. Restraint is no longer a
+/// *predicate* — "does this teach?" — but a *rate*: a crew that leaves more standing learns and builds
+/// faster, in proportion. The normalisation is what makes that free of a balance reset: `0.5` is the
+/// floor a fresh assignment gets and the one a player is most likely to hold, so today's 25-turn
+/// Cultivate is still 25 turns there.
+///
+/// # THE SHAPE IS A SEAM, and that is why it is a function
+///
+/// Linear is what the plan specifies and the standing answer to its §10 Q1. The alternative — a
+/// **knee**, so knowledge reads as a *commitment* rather than a dividend: little below the food peak,
+/// steep above — is a change to **this function and nothing else**. Neither call site knows the shape.
+///
+/// # IT IS NOT A TIMESCALE — it scales ACCRUAL ONLY
+///
+/// [`RungDef::build_accrual`] and [`RungDef::build_decay`] deliberately share a `timescale` factor, so
+/// the reflex here is to scale both. **Do not.** Decay happens on turns *nobody works the source* —
+/// there is no assignment in that state, so there is no floor. Multiplying decay by
+/// `learn_multiplier` would be scaling by a number that does not exist where the decay is applied,
+/// and the caller would have to invent one (whose? the last crew's? the default?). The floor scales
+/// what a working crew earns; neglect is not a rate the crew set.
+///
+/// # BOTH ENDS ARE NON-DEGENERATE, and the top end is deliberate
+///
+/// - `floor = 0` strips the source and returns `0`: **stripping teaches nothing.**
+/// - `floor = 1.0` leaves the whole source standing, so nothing is above the floor and the caller's
+///   `eligible` (`systems::labor::crew_is_working_the_source`) is false: **watching teaches
+///   nothing.**
+///
+/// A floor just *under* `1.0` on a full source therefore learns at nearly **×2 while taking almost
+/// nothing** — every calorie given up for maximum learning. That is the trade this dial exists to
+/// offer, taken to its limit, and it **self-limits**: the source has to actually stand above the
+/// floor for a take to exist at all, so the herd or patch must already be near capacity. It is not a
+/// defect and must not be "fixed" into a clamp.
+pub fn learn_multiplier(floor: f32) -> f32 {
+    (floor / crate::fauna::MSY_BIOMASS_FRACTION).max(0.0)
+}
+
+/// **The floor a build on a RUNG-3 MANAGED source passes** — the food peak, so [`learn_multiplier`]
+/// is exactly `×1.0`.
+///
+/// A Field and a penned herd are *yours*: their take is `managed_production` at **every** floor
+/// (`SourceYieldForecast::managed`), so the assignment's floor is inert there and there is no
+/// pressure the crew actually chose. Reading the dial anyway would scale a keeper's learning by a
+/// number that changed nothing about what they took. Two builds are in that state — `ExtendPen`
+/// (which rides a corralled herd's tend branch) and a Field's own harvest — and both climb at the
+/// rung's stated pace instead.
+///
+/// Named rather than spelled `MSY_BIOMASS_FRACTION` at the call sites so the *reason* travels with
+/// the value: this is "the floor axis has collapsed here", not "the food peak happens to be right".
+pub const MANAGED_SOURCE_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
 
 /// **The build timescale of a rung whose sources all build at the rung's own pace.** Passed by every
 /// caller that has no per-source multiplier to apply (the plant `tended` patch, the animal `pen` and
@@ -604,45 +658,75 @@ impl RungDef {
     }
 
     /// **THE earn seam — "practice rung N unlocks rung N+1"** (`docs/plan_intensification_ladder.md`
-    /// §4), the exact twin of [`RungDef::build_accrual`]: the rung says *what* is learned, the caller
-    /// applies it to the ledger it owns.
+    /// §4), the exact twin of [`RungDef::build_accrual`]: the rung says *what* is learned and *how
+    /// much*, the caller applies it to the ledger it owns.
     ///
     /// `self` is **the rung the source currently stands on** — *not* the rung whose verb is being
     /// used. That distinction is the whole model: you learn **herding** by managing **wild** herds and
-    /// **penning** by managing **tamed** ones, so a Sustain hunt teaches Herding on a wild herd and
-    /// **Penning** on a pastoral one — same policy, different rung, different lesson. Callers resolve
+    /// **penning** by managing **tamed** ones, so a hunt teaches Herding on a wild herd and
+    /// **Penning** on a pastoral one — same crew, different rung, different lesson. Callers resolve
     /// the rung with [`crate::fauna::herd_rung`] / [`crate::forage::patch_rung`].
     ///
-    /// Returns the discovery to credit, or `None` when:
-    /// - the **stance** is not stewardship ([`FollowPolicy::teaches_knowledge`] — §4.2: Sustain
-    ///   teaches; Surplus/Deplete/Eradicate never do, at any rung. Since issue #442 the build verbs
-    ///   are an independent axis and are **not** in this decision: a crew preparing ground under
-    ///   Sustain teaches as it always did, one preparing it under Deplete learns nothing), or
-    /// - `eligible` is false — the caller's health gate. Today that is uniformly *"the source is
-    ///   `EcologyPhase::Thriving`"*: **you learn from a healthy source**, the gate both shipped earn
-    ///   sites already had, or
+    /// # It answers "how much of what", not "is this earned"
+    ///
+    /// It was `knowledge_earned(floor, eligible) -> Option<u32>` while restraint was a **predicate**
+    /// (`floor_teaches` — teach at or above the food peak, nothing below). The harvest floor made
+    /// restraint a **rate**, so the amount is now part of the answer and the rename says so:
+    /// `knowledge.progress_per_turn × learn_multiplier(floor)`. A crew that leaves more standing
+    /// learns faster, in proportion, with the food peak at ×1.0.
+    ///
+    /// Returns `(discovery, amount)`, or `None` when:
+    /// - `eligible` is false — the caller's composed gate. It carries the rung's own terms **and the
+    ///   work predicate** (`systems::labor::crew_is_working_the_source`: is anything standing above
+    ///   this assignment's floor?). That replaced the `EcologyPhase::Thriving` term both earn sites
+    ///   used to carry, which was a gate where the model now wants a rate. It is deliberately the
+    ///   escapement **room** and not the take — see the predicate for why `killed == 0` is a
+    ///   quantisation fact rather than a fact about work.
     /// - the rung simply teaches nothing (`earns_knowledge: null` — today the `plant:field` rung, whose
     ///   `irrigation`/`rotation` is a future rung's business; the `animal:pen` rung teaches Foddering).
+    ///
+    /// A zero amount is returned as `None` rather than as `Some(id, 0.0)`: at `floor = 0` there is no
+    /// lesson, and a caller crediting `0` to a ledger is a write that says nothing.
     ///
     /// **The two webs cannot cross-teach** (§4.2) and it costs no code to guarantee: the lesson is
     /// read off the *source's own rung*, and a rung belongs to exactly one [`RungBranch`], so a hunt
     /// can only ever reach an `animal` rung's `earns_knowledge` and a forage a `plant` one's. A master
     /// rancher isn't automatically a farmer.
     ///
-    /// The **amount** is the ladder's single `knowledge.progress_per_turn`
-    /// ([`LadderKnowledge`]) — the rung names the lesson, the ladder paces every lesson alike.
-    pub fn knowledge_earned(&self, policy: FollowPolicy, eligible: bool) -> Option<u32> {
-        if !eligible || !policy.teaches_knowledge() {
+    /// The **base** amount is the ladder's single `knowledge.progress_per_turn` ([`LadderKnowledge`])
+    /// — the rung names the lesson, the ladder paces every lesson alike, and the floor scales it.
+    pub fn knowledge_accrual(
+        &self,
+        floor: f32,
+        eligible: bool,
+        knowledge: &LadderKnowledge,
+    ) -> Option<(u32, f32)> {
+        if !eligible {
             return None;
         }
-        self.earns_discovery_id()
+        let amount = knowledge.progress_per_turn * learn_multiplier(floor);
+        if amount <= 0.0 {
+            return None;
+        }
+        self.earns_discovery_id().map(|lesson| (lesson, amount))
     }
 
     /// **The build seam — the accrual side.** How much this rung's per-source meter advances this
-    /// turn: `progress_per_turn × timescale × crew_scale(workers)` when `improvement` **is** the
-    /// rung's verb *and* the caller's rung-specific gates hold (`eligible` — knows the unlock
-    /// knowledge, the source is healthy, the species' ceiling allows it, the faction owns it),
-    /// otherwise `0`.
+    /// turn: `progress_per_turn × learn_multiplier(floor) × timescale × crew_scale(workers)` when
+    /// `improvement` **is** the rung's verb *and* the caller's rung-specific gates hold (`eligible` —
+    /// knows the unlock knowledge, the crew is actually working the source, the species' ceiling
+    /// allows it, the faction owns it), otherwise `0`.
+    ///
+    /// # `floor` — building rides the same rate learning does
+    ///
+    /// [`learn_multiplier`] scales this by `floor / MSY_BIOMASS_FRACTION`, so a crew that leaves more
+    /// standing builds faster and one stripping the ground barely builds at all. **That is what
+    /// replaced the `Thriving` gate** on both webs: a build no longer *stops* when the source gets
+    /// thin, it *slows* in proportion to how hard the crew is pulling — a rate where there was a
+    /// cliff, with no lapse state to hold progress across.
+    ///
+    /// It is applied here and **not** to [`RungDef::build_decay`], which shares this function's
+    /// `timescale` but must not share its floor — see [`learn_multiplier`].
     ///
     /// # `workers` — the crew, on a rung that declares one
     ///
@@ -677,6 +761,7 @@ impl RungDef {
         &self,
         improvement: Option<Improvement>,
         eligible: bool,
+        floor: f32,
         timescale: f32,
         workers: u32,
     ) -> f32 {
@@ -687,7 +772,7 @@ impl RungDef {
             return 0.0;
         }
         let timescale = timescale * self.build_crew_scale(workers);
-        build.progress_per_turn * timescale
+        build.progress_per_turn * learn_multiplier(floor) * timescale
     }
 
     /// **The build seam — the decay side.** How much this rung's per-source meter bleeds on a turn
@@ -695,6 +780,10 @@ impl RungDef {
     /// [`RungDef::build_accrual`] takes (see there — the multiplier dilates the whole build
     /// timescale, so the rung's build:decay ratio is invariant). `0` for a rung with no build
     /// (nothing to lose).
+    ///
+    /// **It takes no `floor`, and that asymmetry with the accrual is deliberate.** Decay is what
+    /// happens on a turn nobody works the source: there is no assignment, so there is no floor to
+    /// read. See [`learn_multiplier`].
     pub fn build_decay(&self, timescale: f32) -> f32 {
         self.build
             .as_ref()
@@ -768,10 +857,11 @@ impl RungDef {
 /// the same numbers, and the ladder is where a number that describes *both* webs belongs.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct LadderKnowledge {
-    /// Faction knowledge accrued per turn a crew works a source under a **stewardship** policy at a
-    /// rung that teaches (§4.2). `completion_threshold / progress_per_turn` is the lesson's length in
-    /// turns (`1.0 / 0.05` → ~20). Validated `> 0` — a zero would make every knowledge unlearnable,
-    /// silently freezing the whole ladder at rung 1.
+    /// **The BASE** faction knowledge accrued per turn a crew works a source at a rung that teaches
+    /// (§4.2), scaled by the assignment's floor ([`learn_multiplier`], food peak = ×1.0). So
+    /// `completion_threshold / progress_per_turn` is the lesson's length in turns **at the food
+    /// peak** (`1.0 / 0.05` → ~20), and a crew leaving more standing learns it faster. Validated
+    /// `> 0` — a zero would make every knowledge unlearnable, silently freezing the ladder at rung 1.
     pub progress_per_turn: f32,
     /// Ledger progress at which a faction **knows** a discovery and may select the verb it gates
     /// ([`knows`]). Validated `0 < t <= 1`: at `0` every knowledge would be known before it was
@@ -1292,6 +1382,12 @@ mod tests {
     /// the test picked a staffing level.
     const UNSCALED_CREW: u32 = 1;
 
+    /// **The floor at which [`learn_multiplier`] is exactly ×1.0** — the food peak. Every accrual
+    /// assertion that is *not about the floor* passes it, so the call reads the rung's stated
+    /// `progress_per_turn` rather than a floor's fraction of it. That is the normalisation's whole
+    /// point: the 25-turn Cultivate is still 25 turns here.
+    const FOOD_PEAK_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+
     /// Every accrual assertion below staffs the build to the rung's **full** crew, so it measures the
     /// rung's stated `progress_per_turn` rather than a staffing shortfall's fraction of it.
     fn full_crew(rung: &RungDef) -> u32 {
@@ -1425,6 +1521,7 @@ mod tests {
             tended.build_accrual(
                 Some(Improvement::Cultivate),
                 true,
+                FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 crew
             ),
@@ -1432,13 +1529,19 @@ mod tests {
         );
         // Wrong verb → nothing, even though the crew is working the patch.
         assert_eq!(
-            tended.build_accrual(Some(Improvement::Sow), true, RUNG_TIMESCALE_UNSCALED, crew),
+            tended.build_accrual(
+                Some(Improvement::Sow),
+                true,
+                FOOD_PEAK_FLOOR,
+                RUNG_TIMESCALE_UNSCALED,
+                crew
+            ),
             0.0
         );
         // No improvement at all → nothing. A crew that is only harvesting builds nothing, whatever
         // its stance.
         assert_eq!(
-            tended.build_accrual(None, true, RUNG_TIMESCALE_UNSCALED, crew),
+            tended.build_accrual(None, true, FOOD_PEAK_FLOOR, RUNG_TIMESCALE_UNSCALED, crew),
             0.0
         );
         // Right verb, gate lapsed → nothing accrues (progress is neither lost nor advanced).
@@ -1446,6 +1549,7 @@ mod tests {
             tended.build_accrual(
                 Some(Improvement::Cultivate),
                 false,
+                FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 crew
             ),
@@ -1478,7 +1582,13 @@ mod tests {
                 Some(Improvement::Corral),
             ] {
                 assert_eq!(
-                    wild.build_accrual(improvement, true, RUNG_TIMESCALE_UNSCALED, full_crew(wild)),
+                    wild.build_accrual(
+                        improvement,
+                        true,
+                        FOOD_PEAK_FLOOR,
+                        RUNG_TIMESCALE_UNSCALED,
+                        full_crew(wild)
+                    ),
                     0.0
                 );
             }
@@ -1514,6 +1624,7 @@ mod tests {
             pastoral.build_accrual(
                 Some(Improvement::Tame),
                 true,
+                FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(pastoral)
             ),
@@ -1529,6 +1640,7 @@ mod tests {
                 pastoral.build_accrual(
                     improvement,
                     true,
+                    FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(pastoral)
                 ),
@@ -1541,6 +1653,7 @@ mod tests {
             pastoral.build_accrual(
                 Some(Improvement::Tame),
                 false,
+                FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(pastoral)
             ),
@@ -1642,6 +1755,7 @@ mod tests {
             tended.build_accrual(
                 Some(Improvement::Cultivate),
                 true,
+                FOOD_PEAK_FLOOR,
                 RUNG_TIMESCALE_UNSCALED,
                 workers,
             )
@@ -1888,66 +2002,260 @@ mod tests {
         );
     }
 
-    /// **The earn seam** (§4), asserted at the rung: the lesson is the rung's `earns_knowledge`,
-    /// gated on stewardship + health. The sim-level twin (which rung a real hunt/forage resolves to)
-    /// lives in the labor tests.
+    /// **The earn seam** (§4), asserted at the rung: the lesson is the rung's `earns_knowledge` and
+    /// the **amount** is the floor's, normalised so the food peak is ×1.0
+    /// (`docs/plan_harvest_floor.md` §3). The sim-level twin (which rung a real hunt/forage resolves
+    /// to) lives in the labor tests.
+    ///
+    /// It replaced `knowledge_earned_is_the_rungs_lesson_gated_on_stewardship_and_health`, whose
+    /// subject — a **step** at the food peak, teach above / nothing below — is gone: restraint is a
+    /// rate now, so the question "does this floor teach" has no answer and the assertions are about
+    /// *how much* instead.
     #[test]
-    fn knowledge_earned_is_the_rungs_lesson_gated_on_stewardship_and_health() {
+    fn knowledge_accrual_is_the_rungs_lesson_paced_by_the_floor() {
         let ladder = LadderConfig::builtin();
-
-        // Rung 1 teaches under the one stewardship stance. Since issue #442 stewardship is a
-        // property of the STANCE alone — a build verb is a separate axis and is not in this
-        // decision, so a crew preparing ground under Sustain teaches exactly as it always did.
+        let base = ladder.knowledge.progress_per_turn;
         let wild = ladder.rung(RungKey::AnimalWild);
+
+        // The normalisation, which is the whole reason the multiplier is divided by the peak: a crew
+        // holding the default floor learns at exactly the ladder's stated pace.
         assert_eq!(
-            wild.knowledge_earned(FollowPolicy::Sustain, true),
-            Some(HERDING_DISCOVERY_ID),
-            "Sustain is stewardship — practising the wild rung must teach Herding"
+            wild.knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge),
+            Some((HERDING_DISCOVERY_ID, base)),
+            "the food peak is ×1.0 — today's ~20-turn lesson is still ~20 turns there"
         );
-        // ...and under none of the overdrawing ones (§4.2).
-        for policy in [
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ] {
-            assert_eq!(
-                wild.knowledge_earned(policy, true),
-                None,
-                "{policy:?} overdraws — it teaches nothing, at any rung"
+
+        // Strictly increasing in the floor, with a liveness bound beside it: an ordering assertion
+        // alone would pass on an accrual that returned the same number everywhere.
+        let mut previous = 0.0_f32;
+        for floor in [0.1_f32, 0.25, FOOD_PEAK_FLOOR, 0.75, 1.0] {
+            let (lesson, amount) = wild
+                .knowledge_accrual(floor, true, &ladder.knowledge)
+                .expect("a positive floor on a teaching rung earns its lesson");
+            assert_eq!(lesson, HERDING_DISCOVERY_ID);
+            assert!(
+                amount > previous,
+                "floor {floor} must learn faster than the one below it ({amount} vs {previous})"
             );
+            previous = amount;
         }
-        // An unhealthy source teaches nothing: you learn from a healthy source.
-        assert_eq!(wild.knowledge_earned(FollowPolicy::Sustain, false), None);
+        assert!(
+            previous > base,
+            "and a floor above the peak out-learns it: {previous} vs {base}"
+        );
+
+        // **Both degenerate ends.** Stripping teaches nothing because the rate is zero; watching
+        // teaches nothing because the caller's `eligible` asks whether anything stands above the
+        // floor, and at `1.0` nothing does.
+        assert_eq!(
+            wild.knowledge_accrual(STRIP_IT_BARE, true, &ladder.knowledge),
+            None,
+            "stripping the source teaches nothing"
+        );
+        assert_eq!(
+            wild.knowledge_accrual(1.0, false, &ladder.knowledge),
+            None,
+            "watching teaches nothing — `eligible` is the caller's work predicate"
+        );
 
         // Rung 2 teaches the rung-3 gate — the arc's whole claim, at the seam.
         assert_eq!(
             ladder
                 .rung(RungKey::AnimalPastoral)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(lesson, _)| lesson),
             Some(PENNING_DISCOVERY_ID)
         );
         assert_eq!(
             ladder
                 .rung(RungKey::PlantTended)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(lesson, _)| lesson),
             Some(SEED_SELECTION_DISCOVERY_ID)
         );
-        // The `animal:pen` rung now teaches **Foddering** (Flora Roster F3) — running a pen is how you
+        // The `animal:pen` rung teaches **Foddering** (Flora Roster F3) — running a pen is how you
         // learn to hay one.
         assert_eq!(
             ladder
                 .rung(RungKey::AnimalPen)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+                .knowledge_accrual(FOOD_PEAK_FLOOR, true, &ladder.knowledge)
+                .map(|(lesson, _)| lesson),
             Some(FODDERING_DISCOVERY_ID)
         );
         // A rung that teaches nothing yields nothing even when everything else holds (`plant:field`'s
         // `irrigation`/`rotation` is a parked rung-4 lesson).
         assert_eq!(
-            ladder
-                .rung(RungKey::PlantField)
-                .knowledge_earned(FollowPolicy::Sustain, true),
+            ladder.rung(RungKey::PlantField).knowledge_accrual(
+                FOOD_PEAK_FLOOR,
+                true,
+                &ladder.knowledge
+            ),
             None
         );
+    }
+
+    /// *"Take everything"* — the floor-`0` end of the dial, named because `0.0` as a bare argument
+    /// reads as an absent value rather than as the deliberate instruction it is.
+    const STRIP_IT_BARE: f32 = 0.0;
+
+    /// **THE NORMALISATION, PINNED BY NAME: a Cultivate at the food peak still takes 25 turns.**
+    ///
+    /// This is why [`learn_multiplier`] divides by [`crate::fauna::MSY_BIOMASS_FRACTION`] rather than
+    /// being a bare `floor`. The floor a fresh assignment carries
+    /// ([`crate::components::DEFAULT_ESCAPEMENT_FLOOR`]) is the peak, so the ladder's shipped build
+    /// lengths are the ones a player who touches nothing gets — the whole arc costs no rebalance at
+    /// the default. Asserted for **every** rung with a build, so a new one cannot opt out.
+    #[test]
+    fn the_food_peak_preserves_every_rungs_stated_build_length() {
+        let ladder = LadderConfig::builtin();
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
+            let stated = rung
+                .build
+                .as_ref()
+                .expect("every rung in this list builds")
+                .progress_per_turn;
+            assert_eq!(
+                rung.build_accrual(
+                    rung.verb_improvement(),
+                    true,
+                    FOOD_PEAK_FLOOR,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(rung),
+                ),
+                stated,
+                "{key:?}: a full crew at the food peak builds at the rung's stated rate — the \
+                 normalisation's whole point"
+            );
+        }
+        // …and the shipped plant rung-2 dial really is the 25-turn Cultivate the docs quote, so the
+        // claim above is anchored to a number a reader can check rather than to itself.
+        let tended = ladder.rung(RungKey::PlantTended);
+        let per_turn = tended.build_accrual(
+            Some(Improvement::Cultivate),
+            true,
+            FOOD_PEAK_FLOOR,
+            RUNG_TIMESCALE_UNSCALED,
+            full_crew(tended),
+        );
+        assert_eq!(
+            (RUNG_COMPLETE / per_turn).ceil() as u32,
+            25,
+            "the food peak preserves the 25-turn Cultivate"
+        );
+    }
+
+    /// **A build rides the same rate the lesson does** — increasing in the floor, with a liveness
+    /// bound beside the ordering, and degenerate at both ends. The build twin of
+    /// `knowledge_accrual_is_the_rungs_lesson_paced_by_the_floor`, and what replaced the
+    /// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2): a crew pulling
+    /// hard on the source it is improving builds *slowly*, not *not at all*.
+    #[test]
+    fn a_deeper_floor_builds_slower_and_stripping_builds_nothing() {
+        let ladder = LadderConfig::builtin();
+        for key in [
+            RungKey::PlantTended,
+            RungKey::PlantField,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
+            let rung = ladder.rung(key);
+            let accrual = |floor| {
+                rung.build_accrual(
+                    rung.verb_improvement(),
+                    true,
+                    floor,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(rung),
+                )
+            };
+            // Liveness first: an ordering sweep alone would pass on an accrual that returned zero
+            // everywhere, which is exactly what a broken gate looks like.
+            assert!(
+                accrual(FOOD_PEAK_FLOOR) > 0.0,
+                "{key:?} must actually build at the food peak"
+            );
+            let mut previous = 0.0_f32;
+            for floor in [0.1_f32, 0.25, FOOD_PEAK_FLOOR, 0.75, 1.0] {
+                let built = accrual(floor);
+                assert!(
+                    built > previous,
+                    "{key:?}: floor {floor} must build faster than the floor below it ({built} vs \
+                     {previous})"
+                );
+                previous = built;
+            }
+            assert_eq!(
+                accrual(STRIP_IT_BARE),
+                0.0,
+                "{key:?}: a crew stripping the source it is improving builds nothing"
+            );
+            // The **other** degenerate end is the caller's, not this seam's: at `floor = 1.0` the
+            // rate is its highest but nothing stands above the floor, so the caller's `eligible` is
+            // false and nothing is built. Asserted here as the seam's half of it — `eligible = false`
+            // is always zero, whatever the floor.
+            assert_eq!(
+                rung.build_accrual(
+                    rung.verb_improvement(),
+                    false,
+                    1.0,
+                    RUNG_TIMESCALE_UNSCALED,
+                    full_crew(rung),
+                ),
+                0.0,
+                "{key:?}: watching a source builds nothing, however restrained the watching"
+            );
+        }
+    }
+
+    /// **`learn_multiplier` scales the ACCRUAL and not the decay** — the asymmetry with `timescale`,
+    /// which both take. Decay happens on turns nobody works the source, so there is no assignment and
+    /// no floor to read; scaling it would multiply by a number that does not exist in that state.
+    #[test]
+    fn the_floor_scales_the_build_but_never_the_decay() {
+        let ladder = LadderConfig::builtin();
+        let tended = ladder.rung(RungKey::PlantTended);
+        let stated_decay = tended
+            .build
+            .as_ref()
+            .expect("the tended rung builds")
+            .decay_per_turn
+            .expect("the tended rung bleeds");
+        assert_eq!(
+            tended.build_decay(RUNG_TIMESCALE_UNSCALED),
+            stated_decay,
+            "the decay is the rung's own rate — no floor is folded into it"
+        );
+        // The timescale, by contrast, reaches both: that is what keeps a rung's build:decay ratio
+        // invariant per species (`slow to tame, slow to forget`).
+        const HALF_SPEED: f32 = 0.5;
+        assert_eq!(
+            tended.build_decay(HALF_SPEED),
+            stated_decay * HALF_SPEED,
+            "the timescale still dilates the decay — it is the floor that must not"
+        );
+    }
+
+    /// **[`learn_multiplier`] is the one shape, and it is a seam.** Pinned at the three points that
+    /// carry the model — both ends and the normalising middle — rather than at a table of literals,
+    /// so swapping the linear curve for a knee changes this test's *values* and nothing else's.
+    #[test]
+    fn the_learn_multiplier_is_normalised_on_the_food_peak() {
+        assert_eq!(learn_multiplier(FOOD_PEAK_FLOOR), 1.0);
+        assert_eq!(learn_multiplier(STRIP_IT_BARE), 0.0);
+        assert!(
+            (learn_multiplier(1.0) - 2.0).abs() < f32::EPSILON,
+            "leaving the whole source standing learns at ×2 — the trade the dial exists to offer, \
+             at its limit, and it self-limits because nothing above the floor means no take"
+        );
+        // A negative floor cannot reach here (`components::floor_is_valid` fails closed at the
+        // command boundary), but the multiplier must not hand back a *negative rate* if one ever did.
+        assert_eq!(learn_multiplier(-1.0), 0.0);
     }
 
     // --- The `plant:field` rung's SITE requirement (the twin of `ceiling_required`, keyed on the

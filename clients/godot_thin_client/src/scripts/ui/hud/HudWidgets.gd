@@ -7,8 +7,8 @@ class_name HudWidgets
 ## it composes from, the zone CHROME (the column / block / plain-`Control` wrapper / child-clearing
 ## primitives all three Band-panel zones and the flat fallback host are assembled from), the stacked
 ## composition bar + its key (one primitive, two questions — PEOPLE and WORKFORCE), the zone section
-## head and its `⋯` menu, the take-policy picker, the dim hint/section labels, the inline text link,
-## the BBCode forecast readout — plus the two MUTATORS (`compact`, `set_label_tooltip`) that fix up a
+## head and its `⋯` menu, the take-policy picker, the harvest floor's chart + its two crew targets +
+## its verdict line, the dim hint/section labels, the inline text link, the BBCode forecast readout — plus the two MUTATORS (`compact`, `set_label_tooltip`) that fix up a
 ## Control someone else made.
 ##
 ## WHY IT IS ITS OWN FILE. These are called from FOUR clusters that are being split apart: the drawer's
@@ -460,6 +460,51 @@ static func build_party_stepper_row(count: int, party_max: int, on_change: Calla
 ## visual pass. `band_panel_preview._picker_rung_buttons` reads this.
 const POLICY_RUNG_META := "policy"
 
+## The floor CHART, as `HarvestFloorChart` meta — the same stable-handle reasoning, and needed more
+## than most: the chart carries no text at all, so a harness has nothing else to find it by. (It
+## replaced `FLOOR_SLIDER_META`, whose plain `HSlider` the chart's draggable floor line supersedes.)
+const FLOOR_CHART_META := "floor_chart"
+
+## The two CREW TARGETS, as `Button` meta — value `CREW_TARGET_CLEAR` or `CREW_TARGET_HOLD`, so a
+## harness can tell which target it found without matching a face that carries a live number.
+const CREW_TARGET_META := "crew_target"
+const CREW_TARGET_CLEAR := "clear"
+const CREW_TARGET_HOLD := "hold"
+## …and the COUNT it offers, as a second meta. The pill's face is a two-Label stack over an
+## empty-`text` Button (see `_crew_target_pill`), so the number a harness has to read is not in
+## `btn.text` and a `text.split(" ")[0]` on one finds nothing — silently, which is the failure the
+## meta-as-handle idiom exists to prevent.
+const CREW_TARGET_COUNT_META := "crew_target_count"
+
+## The READOUT's yields row, as `Control` meta — the same stable-handle reasoning as the three above.
+## Its face is a flow of Labels at three sizes carrying live numbers, so there is no single `text` to
+## match and a needle search would find whichever Label happened to hold it.
+const YIELDS_ROW_META := "yields_row"
+## The readout ASIDE block's identity. Its lines are plain Labels at one size and the teaching one
+## carries live numbers, so a harness matching text would find whichever Label happened to hold the
+## needle — or nothing, and pass.
+const READOUT_ASIDE_META := "readout_aside"
+## The TEACHING line's own identity inside that block. Its siblings (the idle note, the floor hint)
+## also move with the floor, so an assertion that the ASIDE changed is satisfied by either of them
+## and says nothing about this line — measured: blanking the teaching note entirely still passed a
+## whole-aside comparison. A claim about this sentence has to be able to find this sentence.
+const READOUT_TEACHING_META := "readout_teaching"
+
+## The CREW ROW's own label, as `Control` meta. It names the crew from the composed improvement axis
+## (`Hunters` vs `Herders`), which is a real claim about the sheet — and it renders UPPERCASE, exactly
+## like the sheet's eyebrow two rows above it, so a text search for the crew noun matches the eyebrow
+## and passes without ever reaching the stepper.
+const CREW_ROW_LABEL_META := "crew_row_label"
+
+## The crew row's BUILD-DIP note, as `Control` meta — its own, because it must be assertable by
+## ABSENCE as well as by presence ("no build in flight, so no dip is claimed"), and the row label
+## beside it renders either way.
+const CREW_ROW_DIP_META := "crew_row_dip"
+
+## The VERDICT line, as `Control` meta — value is the severity (`SourceForecast.VERDICT_*`), which is
+## the assertable half: the sentence carries turn counts and percentages that move with the fixture.
+const VERDICT_META := "verdict"
+
 ## The "send a hunting expedition" CONFIRM button, as `Button` meta — set by BOTH hosts that build
 ## one (the herd drawer's compose control and the Band panel's parties compose sheet). Same reason as
 ## the rung meta above, only more so: this button's face is the raid VERDICT
@@ -468,6 +513,12 @@ const POLICY_RUNG_META := "policy"
 ## harness cannot match on. `tools/command_guard.gd` presses it through this meta — it is the ONLY
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
+
+## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
+## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,
+## `Hunt Here` / the raid verdict on the animal one), so a harness that found it BY text could only
+## ever confirm the string it already assumed. Identity is the only stable handle.
+const COMPOSE_COMMIT_META := "compose_commit"
 
 ## The improvement CONTROL's checkbox, as `Control` meta — the stable handle on the second axis, for
 ## the same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
@@ -526,6 +577,8 @@ static func build_improvement_control(improvement: String, state: String, face: 
         locked.text = face
         locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         locked.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+        locked.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         locked.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         set_label_tooltip(locked, tooltip)
         block.add_child(locked)
@@ -534,10 +587,14 @@ static func build_improvement_control(improvement: String, state: String, face: 
         # SILENT no-op (Labels default to MOUSE_FILTER_IGNORE).
         var done := Label.new()
         done.text = face
-        # NO font-size override, so the control sits at the sheet's body size — the same size the
-        # STANCE rungs' names wear (`_policy_rung_line`'s `font_size 0`). The two are peer AXES, and
-        # rendering the second one at hint size made the whole decision read as a footnote to the
-        # first. The gate/pause notes below it stay at hint size, where they belong.
+        # **THE SAME SIZE THE STANCE RUNGS' NAMES WEAR** (`POLICY_PICKER_NAME_FONT_SIZE`). The two are
+        # peer AXES, and rendering the second one at hint size made the whole decision read as a
+        # footnote to the first. It used to say this by carrying NO override at all, which was true
+        # only while the rung name carried none either; that stopped being true when the preset face
+        # was stepped down, and the tie is written out now rather than implied. The gate/pause notes
+        # below it stay at hint size, where they belong.
+        done.add_theme_font_size_override("font_size",
+            HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         done.add_theme_color_override("font_color", HudStyle.HEALTHY)
         done.set_meta(IMPROVEMENT_CONTROL_META, improvement)
         set_label_tooltip(done, tooltip)
@@ -546,6 +603,7 @@ static func build_improvement_control(improvement: String, state: String, face: 
         var box := CheckBox.new()
         box.text = face
         box.tooltip_text = tooltip
+        box.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE)
         # **WITHOUT THIS THE BOX IS NOT THERE.** The stock CheckBox art is drawn for a light surface,
         # so on this console the unchecked indicator reserves its width and paints nothing — an offer
         # with no control on it. `HudStyle.apply_checkbox` has the whole autopsy.
@@ -606,7 +664,7 @@ static func _policy_rung_cell(btn: Button, title: String, metric: String,
     var stack := VBoxContainer.new()
     stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stack.add_theme_constant_override("separation", HudWorkVocab.POLICY_PICKER_FACE_SEPARATION)
-    stack.add_child(_policy_rung_line(title, tint, 0))
+    stack.add_child(_policy_rung_line(title, tint, HudWorkVocab.POLICY_PICKER_NAME_FONT_SIZE))
     if metric != "":
         stack.add_child(_policy_rung_line(metric,
             Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
@@ -615,111 +673,448 @@ static func _policy_rung_cell(btn: Button, title: String, metric: String,
     cell.add_child(pad)
     return cell
 
-## One line of a rung's face. `font_size` 0 leaves the theme's own size — what line 1 wants, so the
-## rung name renders at exactly the size the button's `text` did before the face became Labels.
+## One line of a rung's face, at the size its row of the type scale carries. Line 1 used to pass 0 —
+## "leave the theme's own size" — which is how a preset came to be rendered at the panel's largest
+## type; both lines are explicit now (`POLICY_PICKER_NAME_FONT_SIZE` / `_METRIC_FONT_SIZE`).
 static func _policy_rung_line(text: String, tint: Color, font_size: int) -> Label:
     var label := Label.new()
     label.text = text
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     label.add_theme_color_override("font_color", tint)
-    if font_size > 0:
-        label.add_theme_font_size_override("font_size", font_size)
+    label.add_theme_font_size_override("font_size", font_size)
     return label
 
-## The harvest-STANCE radio; `on_pick` fires with the chosen stance. The highlighted option is
-## `selected` — REQUIRED, and always the caller's own composed/standing rung: this builder is shared
-## by four unrelated surfaces (the work inspector, the party compose sheet, the herd drawer, the
-## forage drawer) and owns none of their state.
+## **THE FLOOR CONTROL** — the three intent PRESETS as a radio over `on_pick(floor: float)`, with the
+## dialled value itself highlighted when it sits on one of them and none highlighted when it does not.
+## It replaced the harvest-stance radio: there are no stances, so what a button can offer is a
+## shortcut to a value, and the value is what travels.
 ##
-## `options` is `SourceForecast.LABOR_HUNT_POLICIES` for every caller now (issue #442). The parameter
-## survives because the picker has no business knowing the stance list, but the per-kind six-rung sets
-## it used to be handed are gone: an improvement is its own control, not a fifth and sixth radio.
+## **A PRESET THE PLAYER IS NOT ON MUST NOT LIGHT UP.** `SourceForecast.floor_preset_for` answers `""`
+## for anything between two presets — which is most of the dial once the slider is used — and lighting
+## the nearest one instead would state a floor the crew is not holding.
 ##
-## **NO RUNG HERE IS EVER GATED** (issue #442). A `gates` dict, the greyed-and-explained rendering it
-## drove, and the height-saving `collapse_other_gates` opt-in beside it are all gone: a harvest stance
-## has no prerequisite and never retires, so every one of the four is always live. Unmet prerequisites
-## belong to the IMPROVEMENT axis now, and `HudWidgets.build_improvement_control` renders them in the
-## same shown-unchecked-and-explained shape this used to.
+## `takes` is keyed by PRESET (`SourceForecast.FLOOR_PRESET_*`), each a `{compact, full}` pair, and may
+## carry a THIRD key — **`note`**, a caveat on the metric appended under the tooltip's name + metric
+## line. It exists for the hunt sheet's averaging-window disclaimer
+## (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which qualifies the rate on the very face it hangs off,
+## and which as a standing body line made the hunt sheet read a paragraph longer than the forage sheet
+## beside it. A picker whose takes carry no `note` (forage, expedition) is unchanged.
 ##
-## A rung's `takes` entry may carry a THIRD key beside `compact`/`full` — **`note`**, a caveat on the
-## metric appended under the tooltip's name + metric line. It exists for the hunt sheet's averaging-
-## window disclaimer (`HudComposeVocab.HUNT_AVG_WINDOW_FORMAT`), which qualifies the rate on the very
-## face it hangs off, and which as a standing body line made the hunt sheet read a paragraph longer than
-## the forage sheet beside it. It is per RUNG, not per picker, because the span the rate averages over
-## is a property of the rung; a picker whose takes carry no `note` (forage, expedition) is unchanged.
-static func build_policy_picker(
+## **NO PRESET IS EVER GATED** — a floor has no prerequisite and never retires, exactly as a stance
+## did not since #442. Unmet prerequisites belong to the IMPROVEMENT axis, and
+## `build_improvement_control` renders them.
+static func build_floor_picker(
     on_pick: Callable,
-    selected: String,
-    options: Array = SourceForecast.LABOR_HUNT_POLICIES,
+    selected_floor: float,
     takes: Dictionary = {},
     columns: int = 0) -> VBoxContainer:
-    var current := selected
+    var current_preset := SourceForecast.floor_preset_for(selected_floor)
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    # Wrap the rung buttons at most `POLICY_PICKER_COLUMNS` (3) per row (a GridContainer), so a six-rung
-    # picker reads 3 + 3 and the four extractive rungs read 3 + 1 with Eradicate alone on the second row.
-    # THE CEILING IS UNIFORM ON PURPOSE: four abreast made the expedition launch picker a different
-    # creature from the local hunt beside it, and set the widest compose card's width off a row that never
-    # needed to be that wide. The lone rung is not stretched — a GridContainer gives it its COLUMN's
-    # width, so it sits under the first cell above at exactly that cell's width, which reads deliberate.
-    # **THE THREE-ACCOUNT FACE DOES NOT LOWER IT, and that was MEASURED rather than reasoned** (#426):
-    # a wide-face ceiling of 2 was built on the assumption that `0.60 food · 0.01 trade · 0.20 fodder`
-    # three abreast would overrun the sheet, and the rendered frame says otherwise — the picker comes
-    # out 555px against the deer hunt picker's long-standing 546, nothing clips, and 3 + 3 reads
-    # better than the 2 + 2 + 2 the ceiling produced. Do not re-add it without a frame that overruns.
+    # Wrap the preset buttons at most `POLICY_PICKER_COLUMNS` (3) per row (a GridContainer). Three
+    # presets fit one row exactly; the ceiling stays uniform so a zone-hosted picker (which clamps
+    # DOWN via `columns`) reads as the same creature as the compose sheet's.
     var grid := GridContainer.new()
     # `columns > 0` CLAMPS the default DOWN, never up: a zone is a FIXED-width box, and a picker whose
     # buttons sum past it raises the zone content's minimum width, which pushes the whole zone column
     # out past its host (where it is clipped) — taking the section menu beside it off the edge.
-    var wanted := columns if columns > HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS else options.size()
+    var wanted := columns if columns > HudWorkVocab.POLICY_PICKER_AUTO_COLUMNS \
+        else SourceForecast.FLOOR_PRESETS.size()
     grid.columns = clampi(wanted, 1, HudWorkVocab.POLICY_PICKER_COLUMNS)
     grid.add_theme_constant_override("h_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     grid.add_theme_constant_override("v_separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    for policy in options:
-        var policy_key := String(policy)
+    for preset_variant in SourceForecast.FLOOR_PRESETS:
+        var preset := String(preset_variant)
+        var floor_value := SourceForecast.floor_for_preset(preset)
         var btn := Button.new()
-        # TWO-LINE FACE, one line per AXIS — the fix for the axis collision the one-line face had:
-        #   line 1  WHICH RUNG — `HudFormat.policy_face`, the FoodIcons policy glyph welded to the
-        #           rung's NAME (`♻ Sustain`). The same glyph the map's yield labels append, so a
-        #           policy reads identically on the picker and on the worked tile/herd, and the same
-        #           face the gate-reason lines and the work inspector use.
-        #   line 2  WHAT IT PAYS — the per-policy metric with its products NAMED IN WORDS
-        #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`), one step SMALLER and
-        #           one step quieter, so the name leads the glance and the numbers answer it.
-        # The old face put the rung glyph and the trade-goods glyph adjacent in ONE line at one weight,
-        # where `♻ ⬆ ⇊ 💀` (which rung) and `⇄` (which product) could not be told apart — and dropping
-        # the rung's name left `⬆` beside `⇊` reading as good-vs-bad rather than as two rungs of one
-        # ladder. Naming the rung is what defuses that, so the glyphs themselves are unchanged.
-        # A rung with no metric (the work inspector's picker, which passes none) is line 1 alone.
-        var take: Variant = takes.get(policy_key, null)
-        var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
+        # **A ONE-LINE FACE: WHICH INTENT, AND NO NUMBER** — `HudFormat.floor_preset_face`, the zone
+        # glyph welded to the preset's label (`♻ Best harvest`). The same glyph the map's yield labels
+        # append, so a floor reads identically on the picker and on the worked tile/herd.
+        #
+        # **THE METRIC CAME OFF THE FACE AND KEPT ITS TOOLTIP.** Nine numbers stood across the top of
+        # the sheet and every one of them misled:
+        #   • they are the ROOM above that floor — takeable ONCE — while every number below them is a
+        #     per-turn rate, and nothing on the face said which kind it was;
+        #   • they rank the presets BACKWARDS from the decision they annotate. `Take everything` reads
+        #     twice `Best harvest` because it frees twice the standing stock, while in the long run it
+        #     pays ~nothing and `Best harvest` pays the peak forever;
+        #   • they are in FOOD/TRADE/FODDER units directly above a chart whose axis is BIOMASS, with
+        #     nothing relating the two;
+        #   • and they are worker-independent, so they alone sit still while the whole sheet under
+        #     them moves with the stepper.
+        # The readout below answers all of it — crew-aware, per-turn, and now stating the burst and
+        # the steady rate both — so the face is left saying what the button is FOR. `full` still rides
+        # the tooltip for anyone who wants the magnitude without clicking through.
+        var take: Variant = takes.get(preset, null)
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
-        # The optional per-rung tooltip caveat (see the header) — the hunt sheet's averaging window.
         var note := String((take as Dictionary).get("note", "")) if take is Dictionary else ""
-        var is_selected := policy_key == current
+        var is_selected := preset == current_preset
         var variant := "primary" if is_selected else "ghost"
-        # `policy` meta, not the face string: the face is presentation (it grew a name, then a second
-        # line, and its text now lives on a child Label), so a harness that identified a rung by reading
-        # `btn.text` broke each time. The meta is the rung's identity and never moves.
-        btn.set_meta(POLICY_RUNG_META, policy_key)
-        # **THE SELECTED-AND-GATED STATE IS GONE** (issue #442 retiring #420). It existed because a
-        # completed build stranded the picker on a dead rung — the band standing on a Cultivate whose
-        # patch had just finished. A stance is never retired and never gated, so there is no rung left
-        # that is simultaneously the current choice and unavailable, and `HudStyle.apply_button` no
-        # longer carries the flag that rendered one.
+        # The PRESET key as meta, not the face string: the face is presentation (glyph, label, a
+        # second line), so a harness identifying a button by `btn.text` would read an empty string.
+        btn.set_meta(POLICY_RUNG_META, preset)
         HudStyle.apply_button(btn, variant)
-        # Tooltip carries the VERBOSE metric the face compacts ("up to +2.33/turn · ⇄ +0.34 trade
-        # goods/turn"), led by the rung name.
-        var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [policy_key.capitalize(), full] \
-            if full != "" else policy_key.capitalize()
-        btn.pressed.connect(func() -> void: on_pick.call(policy_key))
+        # Tooltip carries the VERBOSE metric the face compacts, led by the preset's own label and the
+        # NUMBER it stands for — the one place the two spellings of a floor sit together, so a player
+        # can learn that "Best harvest" is 50% left standing without dragging the slider to find out.
+        var preset_name := "%s (%s)" % [
+            HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, preset),
+            HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor_value)]
+        var name_line := HudComposeVocab.POLICY_TOOLTIP_NAME_FORMAT % [preset_name, full] \
+            if full != "" else preset_name
+        btn.pressed.connect(func() -> void: on_pick.call(floor_value))
         btn.tooltip_text = HudFormat.join_tooltip_lines([name_line, note])
-        # EXPAND_FILL on the CELL (which is what the grid lays out now), so the rungs sharing a row are
-        # equal width and fill the panel content width.
-        var cell := _policy_rung_cell(btn, HudFormat.policy_face(policy_key), metric,
-            HudStyle.button_font_color(variant, btn.disabled))
+        # EXPAND_FILL on the CELL (which is what the grid lays out now), so the presets sharing a row
+        # are equal width and fill the panel content width.
+        # **A PRESET AT REST IS QUIETER THAN A BUTTON AT REST.** `button_font_color` answers `INK` for
+        # a ghost, which is the right weight for an ACTION; a preset is a shortcut to a value sitting
+        # above the chart that is the real control, so an unpicked one reads `INK_DIM`. The selected
+        # and disabled answers are the shared table's, unchanged — this steps only the resting one.
+        var tint := HudStyle.button_font_color(variant, btn.disabled)
+        if not is_selected and not btn.disabled:
+            tint = HudStyle.INK_DIM
+        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), "", tint)
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
     return block
+
+## **THE DIAL BETWEEN THE PRESETS** — a whole-percent slider over the same floor the presets set, so
+## every value in `0..1` is reachable and the three buttons stay shortcuts rather than the whole axis.
+## `on_change` fires with the new floor.
+##
+## It is deliberately PLAIN: 4b replaces it with the chart's draggable floor, and a bespoke control
+## built here would be thrown away. `FLOOR_STEP` is the granularity — fine enough to sit anywhere
+## between two presets, coarse enough that the value is readable and reproducible.
+##
+## **THE HEADER NAMES THE AXIS AND STATES NO VALUE**, so it never has to be refreshed on a drag. The
+## chart owns the readback: it is `FOCUS_ALL`, handles its own arrow keys, and redraws its floor flag
+## from the model, which puts the number on the control being moved instead of a line above it. A
+## header that repeated the flag was the same fact twice — the caption did that while the control was
+## a plain slider with no readout of its own, and outlived it. It stays a header rather than nothing
+## because every other block in the sheet has one and the chart's vertical axis is otherwise unnamed.
+static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    block.add_child(alloc_section_label(HudComposeVocab.FLOOR_CONTROL_LABEL))
+    var chart := HarvestFloorChart.new()
+    chart.set_meta(FLOOR_CHART_META, true)
+    chart.set_model(model)
+    # **TWO ARGUMENTS, AND THE SECOND ONE IS THE WHOLE CONTRACT.** A committed change rebuilds the
+    # compose controls, which frees this node; a live one must not, or the drag in flight dies with
+    # it. The caller decides what "update in place" means for its own sheet.
+    chart.floor_changed.connect(func(value: float, committed: bool) -> void:
+        on_change.call(value, committed))
+    block.add_child(chart)
+    return block
+
+## **THE TWO CREW TARGETS** (`docs/plan_harvest_floor.md` §7.6) — the distinction the rate model never
+## had. A floor and a crew are independent statements, so there are two different worker numbers and
+## the player is owed both:
+##
+##   • ***clear it now*** — the hands that take everything above the floor in one turn;
+##   • ***hold it after*** — the hands that take exactly what grows back, once it is there.
+##
+## Both are exact, both are stated, and each is a TARGET you can click to staff. Neither is a hidden
+## rule the player has to infer from a stepper going dead. A target the wire cannot price
+## (`NO_CREW_ANSWER` — a dead-season patch has no throughput to divide by) is not rendered at all,
+## rather than shown as a zero that would read as "nobody is needed".
+## **THEY ARE PILLS ON THE CREW'S OWN LINE, not full-width boxes on a row of their own.** A target is
+## a VALUE you can jump to, while the stepper beside it is a control you operate, and the two shapes
+## have to say which is which: two boxed buttons spanning the panel read as the primary action of the
+## whole sheet, which is the Assign button's job. `CREW_TARGET_COUNT_META` carries the count, because
+## the face is two Labels over an empty-`text` Button (a count and its label at one size are one
+## undifferentiated phrase) and `btn.text` is therefore empty.
+static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callable) -> HBoxContainer:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", HudComposeVocab.CREW_ROW_SEPARATION)
+    for spec in [
+        [CREW_TARGET_CLEAR, int(model.get("crew_to_clear", SourceForecast.NO_CREW_ANSWER)),
+            HudComposeVocab.CREW_TARGET_CLEAR_LABEL, HudComposeVocab.CREW_TARGET_CLEAR_TOOLTIP],
+        [CREW_TARGET_HOLD, int(model.get("crew_to_hold", SourceForecast.NO_CREW_ANSWER)),
+            HudComposeVocab.CREW_TARGET_HOLD_LABEL, HudComposeVocab.CREW_TARGET_HOLD_TOOLTIP],
+    ]:
+        var count := int(spec[1])
+        if count == SourceForecast.NO_CREW_ANSWER:
+            continue
+        var btn := Button.new()
+        btn.tooltip_text = String(spec[3])
+        btn.set_meta(CREW_TARGET_META, String(spec[0]))
+        btn.set_meta(CREW_TARGET_COUNT_META, count)
+        # The target the crew is ALREADY on wears the selected fill, so the two numbers double as a
+        # readout of where the current staffing sits between them.
+        var selected := workers == count
+        HudStyle.apply_pill_button(btn, selected)
+        btn.pressed.connect(func() -> void: on_pick.call(count))
+        row.add_child(_crew_target_pill(btn, count, String(spec[2]),
+            HudStyle.button_font_color("primary" if selected else "ghost")))
+    return row
+
+## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
+## that makes the two targets beside it arithmetic rather than magic. `dip` is
+## `SourceForecast.floor_chart_model`'s own `build_dip`, so the note and the targets are divided by
+## one number by construction; `null` (no note at all) at the identity, because a crew that is only
+## gathering carries a full load and saying so would be noise on every non-building sheet.
+##
+## It wears the row label's exact treatment — `INK_FAINT` at the section-label size — but is NOT
+## uppercased: it is a sentence about the row, not a second row-label.
+static func build_crew_dip_note(dip: float) -> Label:
+    if dip >= SourceForecast.NO_BUILD_DIP:
+        return null
+    var note := Label.new()
+    note.text = HudComposeVocab.CREW_BUILD_DIP_NOTE_FORMAT % HudFormat.progress_percent(dip)
+    note.set_meta(CREW_ROW_DIP_META, true)
+    note.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+    note.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
+    return note
+
+## ONE crew-target pill: an empty-`text` Button under a two-Label face, the horizontal twin of
+## `_policy_rung_cell` and for the same structural reason — two font sizes cannot live in one
+## `Button.text`. The COUNT leads at the pill's own size in full ink (it is what the player compares
+## against the stepper); the label naming which answer it is follows, one step down and one step
+## quieter. Both tints derive from the ONE colour the caller resolved, so a selected pill moves as a
+## unit; never give the label a colour of its own.
+static func _crew_target_pill(btn: Button, count: int, label_text: String,
+        tint: Color) -> MarginContainer:
+    var cell := MarginContainer.new()
+    cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+    cell.add_child(btn)
+    var pad := MarginContainer.new()
+    pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    pad.add_theme_constant_override("margin_left", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_right", HudStyle.PILL_PADDING_H)
+    pad.add_theme_constant_override("margin_top", HudStyle.PILL_PADDING_V)
+    pad.add_theme_constant_override("margin_bottom", HudStyle.PILL_PADDING_V)
+    var face := HBoxContainer.new()
+    face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    face.add_theme_constant_override("separation", HudComposeVocab.CREW_TARGET_FACE_SEPARATION)
+    face.add_child(_pill_face_line(str(count), tint,
+        HudComposeVocab.CREW_TARGET_COUNT_FONT_SIZE))
+    face.add_child(_pill_face_line(label_text,
+        Color(tint, tint.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA),
+        HudComposeVocab.CREW_TARGET_LABEL_FONT_SIZE))
+    pad.add_child(face)
+    cell.add_child(pad)
+    return cell
+
+static func _pill_face_line(text: String, tint: Color, font_size: int) -> Label:
+    var label := Label.new()
+    label.text = text
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.add_theme_color_override("font_color", tint)
+    label.add_theme_font_size_override("font_size", font_size)
+    return label
+
+## Severity → the dot and the text tint, in the raid verdict's own ok/slow/blocked vocabulary. Kept
+## beside the widget rather than on `SourceForecast`, which states the verdict and owns no palette.
+const VERDICT_SEVERITY_COLORS := {
+    SourceForecast.VERDICT_OK: HudStyle.HEALTHY,
+    SourceForecast.VERDICT_SLOW: HudStyle.WARN,
+    SourceForecast.VERDICT_BLOCKED: HudStyle.DANGER,
+}
+## The dot leading the verdict — the severity as a mark, so the state is readable before the sentence.
+const VERDICT_DOT := "●"
+const VERDICT_DOT_FONT_SIZE := 9
+
+## **THE VERDICT LINE** (§7.1) — which of the two statements is BINDING, the crew or the floor. It is
+## the sentence the whole redesign exists to make sayable: the four-stance picker let a player select
+## Eradicate with one worker and never eradicate anything, because nothing compared the intent with
+## the hands. `verdict` is `SourceForecast.harvest_verdict`'s `{severity, text}`.
+static func build_verdict_line(verdict: Dictionary) -> HBoxContainer:
+    var severity := String(verdict.get("severity", SourceForecast.VERDICT_OK))
+    var tint: Color = VERDICT_SEVERITY_COLORS.get(severity, HudStyle.INK_DIM)
+    var row := HBoxContainer.new()
+    row.set_meta(VERDICT_META, severity)
+    row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+    var dot := Label.new()
+    dot.text = VERDICT_DOT
+    dot.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+    dot.add_theme_color_override("font_color", tint)
+    dot.add_theme_font_size_override("font_size", VERDICT_DOT_FONT_SIZE)
+    row.add_child(dot)
+    var text := Label.new()
+    text.text = String(verdict.get("text", ""))
+    text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    text.add_theme_color_override("font_color", tint)
+    text.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_VERDICT_FONT_SIZE)
+    row.add_child(text)
+    return row
+
+## The READOUT's own well — the bordered box the yields row, the verdict and the aside share. Returns
+## the `PanelContainer`'s inner column, so a caller adds registers to it and never sees the chrome.
+static func build_readout_box(parent: Container) -> VBoxContainer:
+    var box := PanelContainer.new()
+    box.add_theme_stylebox_override("panel", HudStyle.readout_stylebox())
+    box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", HudComposeVocab.READOUT_SEPARATION)
+    box.add_child(column)
+    parent.add_child(box)
+    return column
+
+## **THE YIELDS ROW** — the readout's first and loudest register, because it is the ANSWER: what this
+## crew, at this floor, brings home per turn. Each entry of `rows` is a
+## `SourceForecast.yield_rows`-shaped `{account, value}`, rendered as a big tabular NUMBER beside a
+## small uppercase UNIT carrying the account's destination (`2.34  FOOD/TURN → CAMP`) — the routing
+## suffix one step quieter still, because it is part of the unit rather than a third fact.
+##
+## **A ROW EXISTS ONLY WHERE THE VECTOR PAYS.** The array is `yield_rows`' answer verbatim, so a cash
+## crop has no food row and a wolf has none either — `provisionsPerBiomass` is genuinely `0` on both,
+## which makes `0.00 food` a FALSE reading rather than an empty one. Never synthesise a row here.
+##
+## `note` is the take's own qualifier (`· renewable`, or the overdraw sentence) and `waste` the
+## whole-animal line where one applies; both sit in the row's own flow at the unit's size in the tint
+## the caller resolved, so a warning never has to compete with the number it is warning about.
+##
+## **THE HEADER CARRIES THE UNIT AND THE ARROW'S KEY, so neither is repeated per account.** It is a
+## `VBoxContainer` now rather than the bare flow — the flow keeps `YIELDS_ROW_META`, so everything
+## that reaches for the row by identity still finds the readings and not the caption over them.
+##
+## `header` OVERRIDES that caption for a caller whose readings are not a per-turn rate at all — the
+## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward. Left empty,
+## the per-turn pair is derived from the rows as before, so no rate-stating caller can drift.
+static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
+        waste: String, header: String = "") -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
+    var has_after := rows.any(func(row: Dictionary) -> bool:
+        return row.has(SourceForecast.YIELD_ROW_AFTER))
+    var caption := header if header != "" \
+        else (SourceForecast.YIELD_ROW_HEADER_WITH_AFTER if has_after \
+            else SourceForecast.YIELD_ROW_HEADER)
+    block.add_child(alloc_section_label(caption))
+    var flow := HFlowContainer.new()
+    flow.set_meta(YIELDS_ROW_META, true)
+    flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    flow.add_theme_constant_override("h_separation", HudComposeVocab.READOUT_YIELD_H_SEPARATION)
+    flow.add_theme_constant_override("v_separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
+    for row in rows:
+        flow.add_child(_yield_reading(row, number_tint))
+    if note != "":
+        flow.add_child(_readout_unit_label(note, note_tint))
+    if waste != "":
+        flow.add_child(_readout_unit_label(waste, HudStyle.WARN))
+    block.add_child(flow)
+    return block
+
+## One account's reading: the number, then its unit. `unit` is the CALLER's none-of-my-business — a
+## hunt states a whole-animal rate in the quarry's own name rather than in an account's — so a row
+## may carry it as its own override of the account table.
+const YIELD_ROW_UNIT := "unit"
+const YIELD_ROW_NUMBER := "number"
+static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
+    var account := String(row.get(SourceForecast.YIELD_ROW_ACCOUNT, ""))
+    var pair := HBoxContainer.new()
+    pair.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_PART_SEPARATION)
+    var number := Label.new()
+    # **THE TRANSITION RIDES THE NUMBER LABEL, at the number's own size.** The `after` rate is the one
+    # a long-run decision turns on, so it is not demoted to the unit's small print; and a separate
+    # Label would let an account's two halves wrap apart onto different lines, which is the one thing
+    # this reading cannot survive.
+    #
+    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the hunt's animal
+    # rate is a composed `≈0.41`, not a magnitude this widget formats, so composing its arrow here
+    # would set a raw float beside an `≈`-prefixed one AND append a second arrow to a face that
+    # already has one. Such a row still declares `YIELD_ROW_AFTER`, so the header knows to key it.
+    if row.has(YIELD_ROW_NUMBER):
+        number.text = String(row[YIELD_ROW_NUMBER])
+    elif row.has(SourceForecast.YIELD_ROW_AFTER):
+        number.text = SourceForecast.YIELD_AFTER_FORMAT % [
+            SourceForecast.format_magnitude(float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0))),
+            SourceForecast.format_magnitude(float(row[SourceForecast.YIELD_ROW_AFTER]))]
+    else:
+        number.text = SourceForecast.format_magnitude(
+            float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))
+    number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    number.add_theme_color_override("font_color", number_tint)
+    number.add_theme_font_size_override("font_size",
+        HudComposeVocab.READOUT_YIELD_NUMBER_FONT_SIZE)
+    pair.add_child(number)
+    var unit := String(row.get(YIELD_ROW_UNIT,
+        SourceForecast.YIELD_ACCOUNT_UNITS.get(account, "")))
+    pair.add_child(_readout_unit_label(unit, HudStyle.INK_FAINT))
+    return pair
+
+## The readout's small-print Label — the unit, the route, the take's qualifier and the waste line all
+## share one size, because they are all annotations on the number beside them.
+static func _readout_unit_label(text: String, tint: Color) -> Label:
+    var label := Label.new()
+    label.text = text.to_upper()
+    label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    label.add_theme_color_override("font_color", tint)
+    label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_YIELD_UNIT_FONT_SIZE)
+    return label
+
+## ONE line of the aside, as the `{text, color}` pair `build_readout_aside` renders. The ink is a
+## PARAMETER rather than a per-line branch inside the builder because only the CALLER knows whether a
+## line is a standing note or a live state: the aside's own colour is `INK_FAINT`, and the one line
+## that departs from it — the teaching RATE, which exists only while the crew is actually earning it —
+## wears `SIGNAL`, this HUD's word for a live state everywhere else (the Sight chip, the selection
+## accent, the turn orb's calm pulse).
+static func readout_aside_line(text: String, color: Color = HudStyle.INK_FAINT,
+        meta: String = "") -> Dictionary:
+    return {"text": text, "color": color, "meta": meta}
+
+## The readout's ASIDE register — the quietest thing on the sheet, cut off from the verdict above it
+## by a DASHED rule. A solid hairline is a division between two blocks of equal standing (that is what
+## `HudStyle.hairline_stylebox` draws); the aside is a footnote to what is above it, and the dashes
+## are what say so. Returns the whole block, so a caller adds one child.
+##
+## Every line is a `readout_aside_line` pair; a line with no `text` is dropped rather than rendered as
+## an empty row, since a source with nothing to say in one register still has the others.
+static func build_readout_aside(lines: Array) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.READOUT_ASIDE_SEPARATION)
+    block.set_meta(READOUT_ASIDE_META, true)
+    block.add_child(build_dashed_rule())
+    for line in lines:
+        var entry: Dictionary = line
+        var text := String(entry.get("text", ""))
+        if text == "":
+            continue
+        var label := Label.new()
+        label.text = text
+        label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label.add_theme_color_override("font_color", entry.get("color", HudStyle.INK_FAINT))
+        var meta := String(entry.get("meta", ""))
+        if meta != "":
+            label.set_meta(meta, true)
+        label.add_theme_font_size_override("font_size", HudComposeVocab.READOUT_ASIDE_FONT_SIZE)
+        block.add_child(label)
+    return block
+
+## A 1px DASHED horizontal rule. Godot has no dashed border on any `StyleBox`, so it is drawn — via
+## the `draw` SIGNAL rather than a `Control` subclass, since this module is all-`static` and a
+## one-rule widget does not earn a script of its own.
+static func build_dashed_rule() -> Control:
+    var rule := Control.new()
+    rule.custom_minimum_size = Vector2(0.0, HudStyle.DASHED_RULE_HEIGHT)
+    rule.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    # **WITHOUT THIS THE RULE IS INVISIBLE.** A Control draws once on entering the tree, BEFORE its
+    # container has laid it out, so the first (and only) pass runs at `size.x == 0` and the dash loop
+    # never executes a single iteration — a rule that is silently absent rather than wrong.
+    rule.resized.connect(rule.queue_redraw)
+    # **THE THIN-LINE PRIMITIVE, NOT A WIDTH-1 ONE, AND THAT IS NOT A STYLE CHOICE.** `draw_line` with
+    # an explicit width builds a QUAD one unit tall — and this client renders through a `canvas_items`
+    # stretch at a fractional scale (~0.78), so that quad covers 0.78 of a device pixel and whether it
+    # rasterises at all is decided by where the rule happens to land. Measured: it vanished entirely,
+    # and it vanished just as completely painted in `SIGNAL` cyan, which is what ruled out "too faint"
+    # as the explanation. Godot's thin-line primitive (`width <= 0`, the default) is one DEVICE pixel
+    # whatever the scale, which is exactly what a hairline wants. A `draw_rect` of the same height
+    # fails the same way.
+    rule.draw.connect(func() -> void:
+        var y := rule.size.y * 0.5
+        var x := 0.0
+        while x < rule.size.x:
+            var dash := minf(HudStyle.DASHED_RULE_DASH, rule.size.x - x)
+            rule.draw_line(Vector2(x, y), Vector2(x + dash, y), HudStyle.LINE_SOFT)
+            x += HudStyle.DASHED_RULE_DASH + HudStyle.DASHED_RULE_GAP)
+    return rule
+

@@ -88,10 +88,10 @@ var _panel: BandCityPanel = null
 var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
 var _work_sort: StringName = HudWorkVocab.WORK_SORT_YIELD
 var _work_page: int = 0
-## The source key open in the work inspector strip ("" = none), and whether its policy picker is out.
+## The source key open in the work inspector strip ("" = none), and whether its floor picker is out.
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
 var _work_open_key: String = ""
-var _work_policy_open: bool = false
+var _work_floor_open: bool = false
 ## The party (expedition entity, as a string) whose parties-zone inspector strip is open ("" = none),
 ## the parties twin of `_work_open_key`. One at a time — clicking a row body toggles it.
 var _party_open_key: String = ""
@@ -104,14 +104,14 @@ var _work_zone_band: Dictionary = {}
 ## ends in this controller.
 var _band_zone_tier: int = HudWorkVocab.BAND_ZONE_TIER_TALL
 ## The parties compose sheet: open, and which mission has been picked ("" = none yet, which is what
-## keeps the party size / policy / forecast fields hidden until the mission decides them).
+## keeps the party size / floor / forecast fields hidden until the mission decides them).
 var _party_compose_open: bool = false
 var _party_compose_mission: String = ""
 # Compose state for the send-expedition party stepper (workers to detach), preserved across the
 # resident band's per-snapshot allocation-panel re-renders.
 var _send_expedition_count: int = HudConst.WORKER_STEP
-# Compose state for the hunt-expedition launch policy (Sustain/Surplus/Deplete/Eradicate).
-var _send_hunt_policy: String = SourceForecast.DEFAULT_HUNT_POLICY
+# Compose state for the hunt-expedition launch FLOOR — where the raid stops, `0.0..=1.0`.
+var _send_hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
         selectioncard: SelectionCardController, disclosures: DisclosureController,
@@ -148,9 +148,9 @@ func _player_knowledge() -> Dictionary:
 ## omitting the argument writes "building nothing" over whatever the source is actually building, and
 ## `effective_worker_map` then reads that "" back for the rest of the turn.
 func _emit_assign_labor(band: Dictionary, kind: String, workers: int, x: int, y: int, herd_id: String,
-        policy: String, species: String = "",
+        floor: float, species: String = "",
         improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
-    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, policy, species, improvement)
+    _emit_assign_labor_fn.call(band, kind, workers, x, y, herd_id, floor, species, improvement)
 
 ## A friendlier label for a herd id. Retained on HudLayer, which also feeds the targeting banner and
 ## the command feed from it.
@@ -460,7 +460,10 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     HudWidgets.add_stepper_controls(stepper, workers, idle > 0,
-        func(n: int) -> void: _emit_assign_labor(band, kind, n, -1, -1, "", ""))
+        # A BAND-WIDE ROLE (scout / warrior) works no source, so it has no escapement floor to set.
+        # The sim ignores the token on those branches; the default is the honest thing to send.
+        func(n: int) -> void: _emit_assign_labor(
+            band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR))
     col.add_child(stepper)
     return card
 
@@ -516,7 +519,7 @@ func _fill_work_zone(col: VBoxContainer, band: Dictionary) -> void:
     var inspected := _find_work_model(filtered, _work_open_key)
     if inspected.is_empty():
         _work_open_key = ""
-        _work_policy_open = false
+        _work_floor_open = false
     if filtered.is_empty():
         var hint := HudWidgets.alloc_hint_label(HudWorkVocab.WORK_EMPTY_HINT)
         hint.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -886,35 +889,34 @@ func _build_work_inspector(band: Dictionary, model: Dictionary) -> PanelContaine
     links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_JUMP, HudStyle.INK, func() -> void:
         _focus_work_source(model)))
     links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_POLICY, HudStyle.INK, func() -> void:
-        _work_policy_open = not _work_policy_open
+        _work_floor_open = not _work_floor_open
         _repage_work_zone()))
     links.add_child(HudWidgets.build_inline_link(HudWorkVocab.WORK_INSPECT_UNASSIGN, HudStyle.DANGER, func() -> void:
         _work_open_key = ""
-        _work_policy_open = false
+        _work_floor_open = false
         _emit_work_assign(band, model, 0)))
     col.add_child(links)
-    if _work_policy_open:
-        # THE FOUR STANCES, and nothing else to say about them. The "you are standing on an investment
-        # rung the picker cannot show" line and the discard-confirm that went with it are gone (issue
-        # #442): a stance re-pick no longer touches the improvement axis at all, so there is no build
-        # to warn about discarding. An improvement is still committed at the source's own compose
-        # control, where its gates and payoff forecast live.
-        col.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
-            _commit_work_policy(band, model, policy),
-            String(model.get("policy", "")), SourceForecast.LABOR_HUNT_POLICIES, {},
+    if _work_floor_open:
+        # THE THREE FLOOR PRESETS, and nothing else to say about them. **DELIBERATELY NO SLIDER HERE**:
+        # this zone is a fixed-width box the compose sheet is not, and re-pointing a standing crew from
+        # the board is a coarse decision — the fine dial lives on the source's own compose sheet, where
+        # the forecast that would justify a 5% move renders beside it.
+        col.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
+            _commit_work_floor(band, model, floor),
+            float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), {},
             HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
     return strip
 
-func _commit_work_policy(band: Dictionary, model: Dictionary, policy: String) -> void:
-    _work_policy_open = false
-    _emit_work_assign(band, model, int(model.get("workers", 0)), policy)
+func _commit_work_floor(band: Dictionary, model: Dictionary, floor: float) -> void:
+    _work_floor_open = false
+    _emit_work_assign(band, model, int(model.get("workers", 0)), floor)
 
 ## The height the open inspector reserves — BOTH what `_work_board_capacity` subtracts from the board
 ## and what the strip actually draws at, so the page can never overflow its zone (the work-board rule).
 func _work_inspector_height(_model: Dictionary) -> float:
     # ONE open height now: the standing-investment line the taller variant reserved room for is gone
     # with the axis split (see `_build_work_inspector`), so every open picker is the same four rungs.
-    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT if _work_policy_open \
+    return HudWorkVocab.WORK_INSPECTOR_POLICY_HEIGHT if _work_floor_open \
         else HudWorkVocab.WORK_INSPECTOR_HEIGHT
 
 ## The board row's single-slot rate string — food when the source pays food, else its trade rate with
@@ -929,7 +931,7 @@ func _work_row_rate_text(model: Dictionary) -> String:
         return FoodIcons.TRADE_GOODS_GLYPH + SourceForecast.format_signed(trade)
     return SourceForecast.format_signed(food)
 
-## The inspector's one-sentence readout: rate · policy in WORDS · status · assigned workers.
+## The inspector's one-sentence readout: rate · the floor in WORDS · status · assigned workers.
 func _work_inspector_sentence(model: Dictionary) -> String:
     var parts: Array[String] = []
     if bool(model.get("has_yield", false)):
@@ -937,9 +939,10 @@ func _work_inspector_sentence(model: Dictionary) -> String:
         # its trade rate instead of asserting "+0.00 /turn".
         parts.append(SourceForecast.yield_components(
             float(model.get("rate", 0.0)), float(model.get("trade_rate", 0.0))))
-    var policy := String(model.get("policy", ""))
-    if policy != "":
-        parts.append(policy.capitalize())
+    # The floor as the player set it — `50% left standing`, the same phrasing the picker's tooltips
+    # and the slider caption use, so one number is never worded two ways.
+    parts.append(HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(
+        float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
     parts.append(HudFormat.status_label(FoodIcons.STATUS_PENDING if bool(model.get("pending", false)) \
         else FoodIcons.STATUS_WORKING))
     parts.append(HudWorkVocab.WORK_INSPECT_ASSIGNED_FORMAT % int(model.get("workers", 0)))
@@ -966,9 +969,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var x := int(m.get("x", -1))
         var y := int(m.get("y", -1))
         var herd_id := String(m.get("herd_id", ""))
-        var policy := String(m.get("policy", "")).strip_edges().to_lower()
+        var floor := SourceForecast.clamp_floor(
+            float(m.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))
         # THE SECOND AXIS (issue #442) — what this crew is BUILDING here, "" for nothing. It is what
-        # the rung marks and the herding-crew floor key on now; `policy` is purely the harvest stance.
+        # the rung marks and the herding-crew floor key on; the escapement floor is purely how hard
+        # this crew pulls.
         var improvement := String(m.get("improvement", "")).strip_edges().to_lower()
         var icon := ""
         var label := ""
@@ -976,16 +981,19 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var live_herd := {}
         var patch := {}
         if kind == SourceForecast.LABOR_KIND_FORAGE:
-            if not (policy in SourceForecast.LABOR_HUNT_POLICIES):
-                policy = SourceForecast.DEFAULT_HUNT_POLICY
             # The board draws the glyph in its OWN fixed column, so it takes the RAW icon — not
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
-            label = HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [x, y]
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+            # THE ROW'S VERB FOLLOWS THE STANDING RUNG, through the same `HudFormat.plant_crew_label`
+            # the compose sheet's noun does: a crew on a Tended Patch or a Field is TENDING, not
+            # foraging, so `Forage (27, 26)` would name an activity the sim does not run there. The
+            # rung MARK beside it answers a different question (what the source IS) and both stay.
+            label = String(HudWorkVocab.WORK_ROW_PLANT_FORMATS.get(
+                HudFormat.plant_crew_label(patch, HudComposeVocab.BARE_FORECAST_PREFIX), "")) % [x, y]
             # THE ROW'S OWN IMPROVEMENT DIPS ITS CEILING, and its rung's build crew floors the count —
             # the plant twins of the herd branch below, and the same reason: while a build runs the sim
             # caps the take at `stance ceiling × buildFraction` and asks for `max(build crew, take
@@ -993,12 +1001,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # reported idle on the same row.
             cap = SourceForecast.source_worker_cap_state(SourceForecast.forecast_inputs(
                 patch, SourceForecast.SOURCE_KIND_FORAGE,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement), workers, idle,
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement), workers, idle,
                 SourceForecast.plant_crew_floor(
                     patch, HudComposeVocab.BARE_FORECAST_PREFIX, improvement))
         else:
-            if not (policy in SourceForecast.LABOR_HUNT_POLICIES):
-                policy = _band_labor.policy_for_hunt(band, herd_id)
             var herd_label := _herd_label_for_id(herd_id)
             icon = FoodIcons.for_herd(herd_label)
             label = HudWorkVocab.WORK_ROW_HUNT_FORMAT % herd_label
@@ -1010,7 +1016,7 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # what the sim will pay it.
             var hunt_forecast := SourceForecast.forecast_inputs(
                 live_herd, SourceForecast.SOURCE_KIND_HERD,
-                HudComposeVocab.BARE_FORECAST_PREFIX, policy, improvement)
+                HudComposeVocab.BARE_FORECAST_PREFIX, floor, improvement)
             # A MANAGED herd's crew requirement floors this row's ceiling, exactly as it floors the
             # compose stepper's — otherwise the row renders the under-herded ⚠ below and disables the
             # `+` that would clear it. `SourceForecast.herd_crew_floor` is the one definition of the
@@ -1029,7 +1035,10 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
         var building := RungGates.rung_in_progress(kind, rung_source, improvement)
         var ready := {} if not building.is_empty() \
             else RungGates.next_rung_ready(kind, rung_source, improvement, _player_knowledge())
-        var marks := FoodIcons.for_policy(policy)
+        # The row's HARVEST mark is the floor's ZONE glyph — where this crew's floor sits relative to
+        # the food peak. A continuous number cannot wear one glyph per value, and the zone is the whole
+        # of what one mark can honestly say about it; the exact percent is in the row tooltip.
+        var marks := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
         if bool(yld.get("warn", false)):
             marks += " " + HudComposeVocab.OVERHUNT_FLAG
         # UNDER-CONTAINED managed herd (fauna neglect-escape arc): fewer herders staffed than the herd
@@ -1062,11 +1071,11 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             "building_policy": String(building.get("policy", "")),
             "building_glyph": String(building.get("glyph", "")),
             "building_progress": float(building.get("progress", 0.0)),
-            "policy": policy, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
+            "floor": floor, "improvement": improvement, "x": x, "y": y, "herd_id": herd_id,
             "can_add": bool(cap.get("can_add", idle > 0)),
             "schedule": HudBandLaborState.as_schedule(m.get("arrival_schedule", null)),
             "tooltip": HudFormat.join_tooltip_lines([String(yld.get("tooltip", "")),
-                _policy_hint(kind, policy), String(cap.get("note", "")),
+                HudFormat.floor_hint(floor, kind), String(cap.get("note", "")),
                 "" if ready.is_empty() else HudWorkVocab.WORK_ROW_READY_TOOLTIP_FORMAT % HudFormat.policy_face(String(ready.get("policy", ""))),
                 "" if building.is_empty() else HudWorkVocab.WORK_ROW_BUILDING_TOOLTIP_FORMAT % [
                     HudFormat.policy_face(String(building.get("policy", ""))),
@@ -1185,11 +1194,18 @@ func _find_work_model(models: Array, key: String) -> Dictionary:
 ## the value `effective_worker_map` resolved (confirmed assignment overlaid with any pending edit), so
 ## it is restated from there rather than re-derived — re-deriving could disagree with the board the
 ## player is clicking on.
-func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int, policy: String = "") -> void:
+## `floor` defaults to `RESTATE_STANDING_FLOOR` — a sentinel outside the legal `0..1` range, so
+## "leave the floor alone" is expressible on an axis where every real value including `0` is a
+## meaningful choice. A crew-size edit must not silently re-point the crew.
+const RESTATE_STANDING_FLOOR := -1.0
+
+func _emit_work_assign(band: Dictionary, model: Dictionary, workers: int,
+        floor: float = RESTATE_STANDING_FLOOR) -> void:
     var kind := String(model.get("kind", ""))
+    var standing := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
     _emit_assign_labor(band, kind, workers, int(model.get("x", -1)), int(model.get("y", -1)),
         String(model.get("herd_id", "")),
-        policy if policy != "" else String(model.get("policy", "")),
+        standing if floor == RESTATE_STANDING_FLOOR else floor,
         "", String(model.get("improvement", "")))
 
 ## Jump the map to a worked source — a fixed forage tile, or a herd at its LIVE (migrated) tile.
@@ -1203,7 +1219,7 @@ func _focus_work_source(model: Dictionary) -> void:
 ## rows, which is why `_work_board_capacity` subtracts the strip's height).
 func _toggle_work_inspector(key: String) -> void:
     _work_open_key = "" if _work_open_key == key else key
-    _work_policy_open = false
+    _work_floor_open = false
     _repage_work_zone()
 
 func _set_work_filter(filter: StringName) -> void:
@@ -1238,17 +1254,6 @@ func _emit_cancel_order(band: Dictionary, scope: String) -> void:
     if band.is_empty():
         return
     emit_signal("cancel_order_requested", band, scope)
-
-## The behaviour hint for a source's take policy, so the row's policy GLYPH is spelled out on hover.
-## Reuses the picker's existing hint strings (kind-specific: gathering a patch vs culling a herd) —
-## the same sentence the player read when they chose the policy. A worked source row is ALWAYS a
-## resident band's standing assignment, so the hunt side reads the LOCAL hints (never the expedition
-## set, whose payoffs differ). Only `_work_source_models` asks, so it travelled with the board.
-func _policy_hint(kind: String, policy: String) -> String:
-    var key := policy.strip_edges().to_lower()
-    if kind == SourceForecast.LABOR_KIND_FORAGE:
-        return String(HudComposeVocab.FORAGE_POLICY_HINTS.get(key, ""))
-    return String(HudComposeVocab.LOCAL_HUNT_POLICY_HINTS.get(key, ""))
 
 # ---- zone `parties` ---------------------------------------------------------
 
@@ -1512,23 +1517,24 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
         HudStyle.apply_button(blocked, "ghost")
         sheet.add_child(blocked)
         return
-    if not (_send_hunt_policy in SourceForecast.LABOR_HUNT_POLICIES):
-        _send_hunt_policy = SourceForecast.DEFAULT_HUNT_POLICY
     sheet.add_child(HudWidgets.alloc_section_label(HudComposeVocab.COMPOSE_FIELD_POLICY))
-    # With a herd in hand the four rungs finally carry their ascending per-policy metric — the same
-    # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker.
-    sheet.add_child(HudWidgets.build_policy_picker(func(policy: String) -> void:
-        _send_hunt_policy = policy
-        # Auto-max on policy select, exactly as the herd drawer does: "give me everything this herd
-        # sustains" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
+    # With a herd in hand the presets finally carry their metric — the same
+    # `SourceForecast.expedition_policy_takes` the herd drawer feeds its picker. **NO SLIDER in this
+    # zone**, for the reason the work inspector has none: a fixed-width dock strip is not where a
+    # continuous dial belongs, and the herd drawer's own sheet has the room.
+    sheet.add_child(HudWidgets.build_floor_picker(func(floor: float) -> void:
+        _send_hunt_floor = floor
+        # Auto-max on a floor click, exactly as the herd drawer does: "give me everything this herd
+        # can spare" — zero waste, full rate. Consumed on the next rebuild, never set by a −/+ tick.
         _compose.arm_party_autofill()
-        rerender(), _send_hunt_policy, SourceForecast.LABOR_HUNT_POLICIES,
+        rerender(), _send_hunt_floor,
         SourceForecast.expedition_policy_takes(band, herd, _band_labor.grid_width(), _band_labor.wrap_horizontal()), HudWorkVocab.ZONE_POLICY_PICKER_COLUMNS))
-    sheet.add_child(HudWidgets.alloc_hint_label(String(HudComposeVocab.SEND_HUNT_POLICY_HINTS.get(_send_hunt_policy, ""))))
-    # Party size, capped at the raid's max-useful plateau for THIS herd + policy (the herd drawer's
+    sheet.add_child(HudWidgets.alloc_hint_label(
+        HudFormat.floor_hint(_send_hunt_floor, SourceForecast.LABOR_KIND_HUNT, true)))
+    # Party size, capped at the raid's max-useful plateau for THIS herd + floor (the herd drawer's
     # own cap), so extra hunters can no longer be sent to stand idle at the kill.
     var assignable := _scout_party_max(band, idle)
-    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_policy, assignable)
+    var capped := SourceForecast.expedition_useful_cap(band, herd, _send_hunt_floor, assignable)
     var cap: int = maxi(int(capped["cap"]), HudConst.WORKER_STEP)
     if _compose.consume_party_autofill():
         _send_expedition_count = cap
@@ -1541,9 +1547,9 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
     var cap_note := String(capped["note"])
     if cap_note != "":
         sheet.add_child(HudWidgets.alloc_hint_label(cap_note))
-    # LIVE raid forecast for the quarry + policy + party now dialed — the same trip lookup and the
+    # LIVE raid forecast for the quarry + floor + party now dialed — the same trip lookup and the
     # same one-line renderer the herd drawer uses.
-    var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_policy, _send_expedition_count,
+    var trip := SourceForecast.hunt_trip_forecast(band, herd, _send_hunt_floor, _send_expedition_count,
         _band_labor.grid_width(), _band_labor.wrap_horizontal())
     var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, SourceForecast.herd_display_name(herd))
     if forecast_line != "":
@@ -1566,7 +1572,7 @@ func _fill_hunt_compose_sheet(sheet: VBoxContainer, band: Dictionary, idle: int)
             "party_workers": _send_expedition_count,
             "fauna_id": quarry_id,
             "fauna_label": SourceForecast.herd_display_name(herd),
-            "policy": _send_hunt_policy,
+            "floor": _send_hunt_floor,
         })
         _close_party_compose())
     sheet.add_child(confirm)

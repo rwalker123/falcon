@@ -215,7 +215,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "assign_labor",
         aliases: &[],
         summary: "Set the worker count for one labor target on a band (0 unassigns; clamps to idle).",
-        usage: "assign_labor <faction_id> <band> forage <x> <y> [policy] <workers> | hunt <herd_id> <policy> <workers> | scout <workers> | warrior <workers>",
+        usage: "assign_labor <faction_id> <band> forage <x> <y> [floor] [species] <workers> | hunt <herd_id> [floor] <workers> | scout <workers> | warrior <workers>",
     },
     CommandVerbHelp {
         verb: "move_band",
@@ -239,7 +239,7 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [sustain|surplus|deplete|eradicate]",
+        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -285,6 +285,12 @@ pub enum CommandParseError {
         value: String,
         context: &'static str,
     },
+    #[error(
+        "'{0}' is a retired harvest stance — assign_labor takes an escapement floor now, a \
+         fraction of carrying capacity in 0.0..=1.0 (0.5 is the sustainable peak, 0.0 takes \
+         everything)"
+    )]
+    RetiredStanceToken(String),
     #[error("invalid support channel '{0}'")]
     InvalidSupportChannel(String),
     #[error("invalid influence scope '{0}'")]
@@ -991,7 +997,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .to_ascii_lowercase();
             let faction_id = parse_u32(faction_str, "assign_labor faction")?;
             let band = parse_u64(band_str, "assign_labor band_id")?;
-            let (workers, target_x, target_y, fauna_id, policy, species) = match role.as_str() {
+            let (workers, target_x, target_y, fauna_id, floor, species) = match role.as_str() {
                 "forage" => {
                     let x = parts
                         .next()
@@ -1000,15 +1006,36 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         .next()
                         .ok_or(CommandParseError::MissingArgument("target_y"))?;
                     // Two optional tokens, positionally:
-                    // `forage <x> <y> [policy] [species] <workers>`. The worker count is always
+                    // `forage <x> <y> [floor] [species] <workers>`. The worker count is always
                     // **last**, so the tail is read whole and the leading 0/1/2 tokens are the
-                    // policy and then the species (Flora Roster S1 — which crop a Cultivate/Sow
+                    // floor and then the species (Flora Roster S1 — which crop a Cultivate/Sow
                     // commits this ground to). Anything longer is a typo, not a longer form.
+                    //
+                    // **The one-optional-token case is disambiguated by "does it parse as `f32`".**
+                    // That is sound, not a heuristic: a `flora_config.json` species key is
+                    // snake_case (`wild_emmer`, `river_reed`) and cannot parse as a float, while a
+                    // floor is only ever a number — the two token languages are disjoint, and
+                    // `a_species_key_never_parses_as_a_floor` pins that against the shipped roster
+                    // rather than trusting the claim.
                     let tail: Vec<&str> = parts.collect();
-                    let (workers_tok, policy_tok, species_tok) = match tail.as_slice() {
+                    let (workers_tok, floor_tok, species_tok) = match tail.as_slice() {
                         [w] => (*w, None, None),
-                        [p, w] => (*w, Some(p.to_string()), None),
-                        [p, sp, w] => (*w, Some(p.to_string()), Some(sp.to_string())),
+                        [t, w] => {
+                            // A retired stance name is refused rather than falling through to the
+                            // species reading, which is the one place the two token languages are
+                            // not disjoint for a *stale* client: `sustain` is not a float, so
+                            // without this it would be read as a crop selection.
+                            reject_retired_stance(t)?;
+                            match t.parse::<f32>() {
+                                Ok(floor) => (*w, Some(floor), None),
+                                Err(_) => (*w, None, Some(t.to_string())),
+                            }
+                        }
+                        [t, sp, w] => (
+                            *w,
+                            Some(parse_f32(t, "assign_labor floor")?),
+                            Some(sp.to_string()),
+                        ),
                         [] => return Err(CommandParseError::MissingArgument("workers")),
                         [_, _, _, extra, ..] => {
                             return Err(CommandParseError::UnexpectedToken(extra.to_string()))
@@ -1019,7 +1046,7 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                         Some(parse_u32(x, "assign_labor target_x")?),
                         Some(parse_u32(y, "assign_labor target_y")?),
                         None,
-                        policy_tok,
+                        floor_tok,
                         species_tok,
                     )
                 }
@@ -1027,18 +1054,25 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                     let herd = parts
                         .next()
                         .ok_or(CommandParseError::MissingArgument("herd_id"))?;
-                    let pol = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("policy"))?;
-                    let w = parts
-                        .next()
-                        .ok_or(CommandParseError::MissingArgument("workers"))?;
+                    // `hunt <herd_id> [floor] <workers>` — the floor is **optional**, where the
+                    // stance it replaced was required. Symmetric with forage, and it is what makes
+                    // the default floor reachable from the command line at all. Disambiguated by
+                    // tail length rather than by parsing, because both tokens are numbers here.
+                    let tail: Vec<&str> = parts.collect();
+                    let (workers_tok, floor_tok) = match tail.as_slice() {
+                        [w] => (*w, None),
+                        [t, w] => (*w, Some(parse_f32(t, "assign_labor floor")?)),
+                        [] => return Err(CommandParseError::MissingArgument("workers")),
+                        [_, _, extra, ..] => {
+                            return Err(CommandParseError::UnexpectedToken(extra.to_string()))
+                        }
+                    };
                     (
-                        parse_u32(w, "assign_labor workers")?,
+                        parse_u32(workers_tok, "assign_labor workers")?,
                         None,
                         None,
                         Some(herd.to_string()),
-                        Some(pol.to_string()),
+                        floor_tok,
                         None,
                     )
                 }
@@ -1065,8 +1099,10 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 target_x,
                 target_y,
                 fauna_id,
-                policy,
+                // Retired by the harvest floor arc; the text grammar has no stance token any more.
+                policy: None,
                 species,
+                floor,
             })
         }
         "move_band" => {
@@ -1141,14 +1177,20 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             let fauna_id = parts
                 .next()
                 .ok_or(CommandParseError::MissingArgument("fauna_id"))?;
-            // Optional trailing take policy (sustain|surplus|deplete|eradicate); default sustain.
-            let policy = parts.next().map(|s| s.to_string());
+            // Optional trailing FLOOR — where the raid stops, as a fraction of the herd's `K`.
+            // Absent = the sim's default (the food peak). `parse_f32` carries the retired-stance
+            // guard, so a stale client's `sustain` names the grammar that moved rather than failing
+            // as an unparseable number.
+            let floor = parts
+                .next()
+                .map(|token| parse_f32(token, "send_hunt_expedition floor"))
+                .transpose()?;
             Ok(CommandPayload::SendHuntExpedition {
                 faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
                 band_id: Some(parse_u64(band_str, "send_hunt_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
                 fauna_id: fauna_id.to_string(),
-                policy,
+                floor,
             })
         }
         "resync" => Ok(CommandPayload::Resync),
@@ -1218,6 +1260,7 @@ fn parse_i64(value: &str, context: &'static str) -> Result<i64, CommandParseErro
 }
 
 fn parse_f32(value: &str, context: &'static str) -> Result<f32, CommandParseError> {
+    reject_retired_stance(value)?;
     value
         .parse::<f32>()
         .map_err(|source| CommandParseError::InvalidFloat {
@@ -1225,6 +1268,26 @@ fn parse_f32(value: &str, context: &'static str) -> Result<f32, CommandParseErro
             context,
             source,
         })
+}
+
+/// The four harvest stances the escapement floor replaced, refused **by name** wherever a floor is
+/// read (`docs/plan_harvest_floor.md` §8.2).
+///
+/// A stale client is the reason this exists rather than letting the token fall through. On a hunt it
+/// would fail anyway as a bad float, but on a forage assignment `sustain` sits in a position where a
+/// **species key** is also legal, so it would be read as a crop selection — rejected downstream by
+/// `validate_species_selection`, but reported as a plant that does not exist rather than as a
+/// grammar that moved. One retired-token check makes both paths name the actual mistake.
+///
+/// The list is spelled out rather than read off an enum because `sim_runtime` cannot
+/// depend on `core_sim`, and because it must outlive the type: these strings stay refused after the
+/// enum is deleted, which is precisely when a stale client is most likely to still be sending them.
+fn reject_retired_stance(value: &str) -> Result<(), CommandParseError> {
+    const RETIRED_STANCES: [&str; 4] = ["sustain", "surplus", "deplete", "eradicate"];
+    if RETIRED_STANCES.contains(&value.to_ascii_lowercase().as_str()) {
+        return Err(CommandParseError::RetiredStanceToken(value.to_string()));
+    }
+    Ok(())
 }
 
 fn parse_bool(value: &str, context: &'static str) -> Result<bool, CommandParseError> {
@@ -1493,16 +1556,123 @@ mod tests {
                 fauna_id: None,
                 policy: None,
                 species: None,
+                floor: None,
             }
         );
     }
 
-    /// The **species selection** (Flora Roster S1) is the second optional token, and the worker count
-    /// is always last: `forage <x> <y> [policy] [species] <workers>`.
+    /// **The forage tail is disambiguated by "does the token parse as `f32`", and both readings
+    /// round-trip.** `forage <x> <y> [floor] [species] <workers>` has two optional tokens with the
+    /// worker count always last, so a single optional token has to be read as one or the other.
     #[test]
-    fn parse_assign_labor_forage_with_policy_and_species() {
+    fn parse_assign_labor_forage_one_optional_token_reads_as_floor_or_species() {
         assert_eq!(
-            parse_command_line("assign_labor 0 904 forage 3 5 cultivate wild_emmer 6").unwrap(),
+            parse_command_line("assign_labor 0 904 forage 3 4 0.5 12").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "forage".to_string(),
+                workers: 12,
+                target_x: Some(3),
+                target_y: Some(4),
+                fauna_id: None,
+                policy: None,
+                species: None,
+                floor: Some(0.5),
+            },
+            "a numeric optional token is the FLOOR"
+        );
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 forage 3 4 wild_emmer 12").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "forage".to_string(),
+                workers: 12,
+                target_x: Some(3),
+                target_y: Some(4),
+                fauna_id: None,
+                policy: None,
+                species: Some("wild_emmer".to_string()),
+                floor: None,
+            },
+            "a non-numeric optional token is the SPECIES"
+        );
+    }
+
+    /// **THE PROOF the disambiguation above rests on**: no `flora_config.json` species key parses as
+    /// a float, so the two token languages are disjoint and a single optional token is never
+    /// ambiguous. Asserted against the **shipped roster** rather than against the claim — a future
+    /// crop named `7` would fail here rather than silently become a floor.
+    ///
+    /// The roster is inlined because `sim_runtime` does not depend on `core_sim`; the companion test
+    /// `core_sim/tests/flora_roster.rs::every_shipped_species_key_is_covered_by_the_command_grammar`
+    /// pins this list against the real config.
+    #[test]
+    fn a_species_key_never_parses_as_a_floor() {
+        for key in SPECIES_KEY_SHAPES {
+            assert!(
+                key.parse::<f32>().is_err(),
+                "'{key}' parses as a float, so the forage tail would read it as a floor"
+            );
+        }
+    }
+
+    /// **A stale client's stance token is refused by NAME, on both webs.** The hunt form would fail
+    /// anyway as a bad float, but the forage form would not: `sustain` sits where a species key is
+    /// also legal, so without `reject_retired_stance` it parses as a crop selection and is reported
+    /// three layers later as a plant that does not exist. Both must name the grammar that moved.
+    #[test]
+    fn a_retired_stance_token_is_refused_by_name_not_read_as_a_species() {
+        for stance in ["sustain", "surplus", "deplete", "eradicate", "Sustain"] {
+            for line in [
+                format!("assign_labor 0 904 forage 3 5 {stance} 6"),
+                format!("assign_labor 0 904 forage 3 5 {stance} wild_emmer 6"),
+                format!("assign_labor 0 904 hunt herd-7 {stance} 6"),
+            ] {
+                assert!(
+                    matches!(
+                        parse_command_line(&line),
+                        Err(CommandParseError::RetiredStanceToken(_))
+                    ),
+                    "'{line}' should name the retired stance, not fail some other way"
+                );
+            }
+        }
+    }
+
+    /// The guard is **exactly** the four retired names — a crop, a floor and a herd id that merely
+    /// resemble them still parse, so the check cannot quietly widen into the species language.
+    #[test]
+    fn the_retired_stance_guard_does_not_swallow_neighbouring_tokens() {
+        for line in [
+            "assign_labor 0 904 forage 3 5 sustainable_yam 6",
+            "assign_labor 0 904 forage 3 5 0.5 6",
+            "assign_labor 0 904 hunt deplete-ridge-herd 0.3 6",
+        ] {
+            assert!(
+                parse_command_line(line).is_ok(),
+                "'{line}' is legal and must not trip the retired-stance guard"
+            );
+        }
+    }
+
+    /// Species-key shapes the forage grammar must never mistake for a floor. snake_case identifiers,
+    /// which is what every `flora_config.json` key is.
+    const SPECIES_KEY_SHAPES: [&str; 6] = [
+        "wild_emmer",
+        "wild_tubers",
+        "grapevine",
+        "river_reed",
+        "tobacco",
+        "wild_rice",
+    ];
+
+    /// The floor round-trips at both ends of its range and beside a species selection.
+    #[test]
+    fn parse_assign_labor_forage_with_floor_and_species() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 forage 3 5 0.15 wild_emmer 6").unwrap(),
             CommandPayload::AssignLabor {
                 faction_id: 0,
                 band_id: Some(904),
@@ -1511,44 +1681,53 @@ mod tests {
                 target_x: Some(3),
                 target_y: Some(5),
                 fauna_id: None,
-                policy: Some("cultivate".to_string()),
+                policy: None,
                 species: Some("wild_emmer".to_string()),
+                floor: Some(0.15),
             }
         );
         // A fourth token is a typo, not a longer form — fail closed rather than silently drop it.
         assert!(matches!(
-            parse_command_line("assign_labor 0 904 forage 3 5 cultivate wild_emmer 6 7"),
+            parse_command_line("assign_labor 0 904 forage 3 5 0.15 wild_emmer 6 7"),
             Err(CommandParseError::UnexpectedToken(_))
+        ));
+        // With BOTH optional tokens present the first is unambiguously the floor, so a non-numeric
+        // one there is a parse error rather than a second species — and a *retired stance* there
+        // names itself rather than reporting as a bad float.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 forage 3 5 wheat wild_emmer 6"),
+            Err(CommandParseError::InvalidFloat { .. })
+        ));
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 forage 3 5 sustain wild_emmer 6"),
+            Err(CommandParseError::RetiredStanceToken(_))
         ));
     }
 
+    /// **Hunt's floor is OPTIONAL**, where the stance it replaced was required — symmetric with
+    /// forage, and what makes the default floor reachable. Both tokens are numbers, so the tail is
+    /// disambiguated by length.
     #[test]
-    fn parse_assign_labor_forage_with_policy() {
-        // The optional policy token (§0-iii, parity with hunt): `forage <x> <y> <policy> <workers>`.
-        for policy in ["sustain", "surplus", "deplete", "eradicate"] {
+    fn parse_assign_labor_hunt_floor_is_optional() {
+        assert_eq!(
+            parse_command_line("assign_labor 0 904 hunt game_deer_07 4").unwrap(),
+            CommandPayload::AssignLabor {
+                faction_id: 0,
+                band_id: Some(904),
+                role: "hunt".to_string(),
+                workers: 4,
+                target_x: None,
+                target_y: None,
+                fauna_id: Some("game_deer_07".to_string()),
+                policy: None,
+                species: None,
+                floor: None,
+            },
+            "one tail token is the worker count; the floor defaults"
+        );
+        for floor in [0.0_f32, 0.15, 0.3, 0.5, 1.0] {
             assert_eq!(
-                parse_command_line(&format!("assign_labor 0 904 forage 3 5 {policy} 6")).unwrap(),
-                CommandPayload::AssignLabor {
-                    faction_id: 0,
-                    band_id: Some(904),
-                    role: "forage".to_string(),
-                    workers: 6,
-                    target_x: Some(3),
-                    target_y: Some(5),
-                    fauna_id: None,
-                    policy: Some(policy.to_string()),
-                    species: None,
-                },
-                "forage policy {policy} should round-trip"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_assign_labor_hunt_each_policy() {
-        for policy in ["sustain", "surplus", "deplete", "eradicate"] {
-            assert_eq!(
-                parse_command_line(&format!("assign_labor 0 904 hunt game_deer_07 {policy} 4"))
+                parse_command_line(&format!("assign_labor 0 904 hunt game_deer_07 {floor} 4"))
                     .unwrap(),
                 CommandPayload::AssignLabor {
                     faction_id: 0,
@@ -1558,12 +1737,24 @@ mod tests {
                     target_x: None,
                     target_y: None,
                     fauna_id: Some("game_deer_07".to_string()),
-                    policy: Some(policy.to_string()),
+                    policy: None,
                     species: None,
+                    floor: Some(floor),
                 },
-                "policy {policy} should round-trip"
+                "hunt floor {floor} should round-trip"
             );
         }
+        // The retired stance tokens are no longer a grammar, and they say so by name rather than
+        // reporting as a bad float — see `reject_retired_stance`.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 hunt game_deer_07 sustain 4"),
+            Err(CommandParseError::RetiredStanceToken(_))
+        ));
+        // A third tail token is a typo, not a longer form.
+        assert!(matches!(
+            parse_command_line("assign_labor 0 904 hunt game_deer_07 0.5 4 9"),
+            Err(CommandParseError::UnexpectedToken(_))
+        ));
     }
 
     #[test]
@@ -1580,6 +1771,7 @@ mod tests {
                 fauna_id: None,
                 policy: None,
                 species: None,
+                floor: None,
             }
         );
         assert_eq!(
@@ -1594,6 +1786,7 @@ mod tests {
                 fauna_id: None,
                 policy: None,
                 species: None,
+                floor: None,
             }
         );
     }
@@ -1618,10 +1811,11 @@ mod tests {
             parse_command_line("assign_labor 0 904 forage 3 5"),
             Err(CommandParseError::MissingArgument("workers"))
         ));
-        // Missing the hunt policy token (herd present, nothing after).
+        // Missing the trailing worker count on a hunt assignment (herd present, nothing after) —
+        // the floor is optional, so the only required tail token is the crew.
         assert!(matches!(
             parse_command_line("assign_labor 0 904 hunt game_deer_07"),
-            Err(CommandParseError::MissingArgument("policy"))
+            Err(CommandParseError::MissingArgument("workers"))
         ));
         // Unknown role → rejected, not a silent wrong payload.
         assert!(matches!(

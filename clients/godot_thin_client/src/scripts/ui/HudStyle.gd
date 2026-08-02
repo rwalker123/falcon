@@ -145,6 +145,82 @@ static func chip_stylebox(border: Color) -> StyleBoxFlat:
 	sb.content_margin_bottom = CHIP_PADDING_Y
 	return sb
 
+# ---- the compose sheet's readout box + its crew-target pills ---------------
+# A READOUT is a bounded well sunk into the panel: the take, the verdict and the asides are the
+# ANSWER to everything composed above them, and until they were boxed they read as three unrelated
+# lines floating in the panel's bottom half. Hence a recessed fill (darker than the panel it sits on,
+# so the box reads as sunk rather than raised — the opposite of the role card's `GROUND_2`) inside a
+# `LINE_SOFT` hairline, at the small radius a well wants.
+const READOUT_BG := Color(0.0, 0.0, 0.0, 0.22)
+const READOUT_CORNER_RADIUS := 3
+const READOUT_PADDING_H := 11
+const READOUT_PADDING_V := 9
+
+## The compose sheet's readout well — see `READOUT_BG`.
+static func readout_stylebox() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = READOUT_BG
+	sb.set_corner_radius_all(READOUT_CORNER_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = LINE_SOFT
+	sb.content_margin_left = READOUT_PADDING_H
+	sb.content_margin_right = READOUT_PADDING_H
+	sb.content_margin_top = READOUT_PADDING_V
+	sb.content_margin_bottom = READOUT_PADDING_V
+	return sb
+
+# The DASHED rule that cuts the readout's quietest register off from the two above it. Dashed rather
+# than solid on purpose: a solid hairline is a DIVISION between two blocks of equal standing (what
+# `hairline_stylebox` draws), and the aside is not that — it is a footnote to what is above it. Godot
+# has no dashed border on any StyleBox, so it is drawn; the geometry lives here beside the palette it
+# draws in, like the chip and nav-backing blocks above.
+const DASHED_RULE_DASH := 3.0
+const DASHED_RULE_GAP := 3.0
+# The rule CONTROL's height — the row the dashes are drawn down the middle of. The dashes themselves
+# are Godot's thin-line primitive, i.e. one DEVICE pixel whatever this HUD's canvas stretch is doing;
+# see `HudWidgets.build_dashed_rule` for why a width-1 line here is invisible.
+const DASHED_RULE_HEIGHT := 1.0
+
+# The crew TARGET pill: the chip's geometry (a radius far past the control's height, so the ends are
+# true semicircles) on a control that is PRESSED rather than read, hence more room for the pointer
+# than a chip's 7/2 and a border that lifts on hover. The `primary` variant's fill marks the target
+# the crew is already standing on, exactly as it marks the selected preset.
+const PILL_CORNER_RADIUS := 999
+const PILL_PADDING_H := 9
+const PILL_PADDING_V := 4
+## How far a disabled pill's fill is pulled back — the same fraction `apply_button` fades a disabled
+## button's fill by, so the two treatments read as one "unavailable".
+const PILL_DISABLED_FILL_ALPHA := 0.4
+
+static func _pill_stylebox(bg: Color, border: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(PILL_CORNER_RADIUS)
+	sb.set_border_width_all(1)
+	sb.border_color = border
+	sb.content_margin_left = PILL_PADDING_H
+	sb.content_margin_right = PILL_PADDING_H
+	sb.content_margin_top = PILL_PADDING_V
+	sb.content_margin_bottom = PILL_PADDING_V
+	return sb
+
+## Pill chrome for a crew target. `selected` is "the crew is already on this number", which wears the
+## same `BUTTON_PRIMARY_BG` fill every other chosen control in this HUD does — so "which one am I on?"
+## is one question with one answer whether the control is a rung, a preset or a target.
+static func apply_pill_button(button: Button, selected: bool = false) -> void:
+	if button == null:
+		return
+	var bg := BUTTON_PRIMARY_BG if selected else CHIP_BG
+	var border := SIGNAL_DEEP if selected else LINE_SOFT
+	button.add_theme_stylebox_override("normal", _pill_stylebox(bg, border))
+	button.add_theme_stylebox_override("hover", _pill_stylebox(bg, SIGNAL_DEEP))
+	button.add_theme_stylebox_override("pressed", _pill_stylebox(bg, SIGNAL_DEEP))
+	button.add_theme_stylebox_override("disabled",
+		_pill_stylebox(Color(bg.r, bg.g, bg.b, bg.a * PILL_DISABLED_FILL_ALPHA), LINE_SOFT))
+	var focus := _pill_stylebox(bg, SIGNAL)
+	focus.draw_center = false
+	button.add_theme_stylebox_override("focus", focus)
+
 ## Header treatment: transparent fill with a hairline divider under the title,
 ## giving each card its "title bar" separation from the body.
 static func header_stylebox() -> StyleBoxFlat:

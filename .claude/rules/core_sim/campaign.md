@@ -259,13 +259,15 @@ signal — and it has **two shapes, because the two webs' products differ**:
   `0`, via the shared `workers_needed_for_take` helper (capacity = `forage.per_worker_biomass_capacity ×
   seasonal_weight`, matching `forage_take`'s worker cap so a low-season labor-bound patch isn't falsely
   flagged).
-- **Hunt (whole animals)** — the **STEADY carry crew for the peak per-turn animal drop**
-  (`fauna::hunt_haul_workers`, `ceil((floor(rate/body)+1)·body / hunt.per_worker_biomass_capacity)`, off
-  the policy's steady `hunt_policy_rate`), **NOT** the lumpy `workers_needed_for_take(take.carried, …)`.
-  A slow breeder whose MSY < `body_mass` drops **0** animals on a wait turn, so inverting `carried` would
-  collapse `workers_needed` (to `0`, or the herder count for a managed herd) and **contradict the same
-  row's `wasted_yield`** on that turn. The steady crew is stable across wait/kill turns and equals the
-  client compose panel's `_max_useful_workers` cap by construction. A managed herd wraps it in
+- **Hunt (whole animals)** — the **carry crew for the peak animal drop the ceiling allows**
+  (`fauna::hunt_haul_workers`,
+  `ceil((floor(ceiling/body)+1)·body / hunt.per_worker_biomass_capacity)`, off the stance's
+  `hunt_escapement_ceiling`), **NOT** the lumpy `workers_needed_for_take(take.carried, …)`.
+  A slow breeder whose room above its floor is lighter than one body drops **0** animals on a wait
+  turn, so inverting `carried` would collapse `workers_needed` (to `0`, or the herder count for a
+  managed herd) and **contradict the same row's `wasted_yield`** on that turn. Taking the crew on the
+  same ceiling the take is bounded by makes the two agree by construction, and it equals the client
+  compose panel's `_max_useful_workers` cap. A managed herd wraps it in
   `max(herders_needed, hunt_haul_workers)`; a wild herd (`herders_needed == 0`) reports it directly. See
   "Herding is standing labor" for the full note.
 **Every rung derives it** (slice 7 — a managed source used to be fixed at `1`, which asserted that one
@@ -296,20 +298,23 @@ mirroring the real turn order Logistics-regrow → Population-take, exactly as
 `systems::expeditions::hunt_trip_forecast` does). It is a **pure function of state** — no history, no
 persistence — so the assign-time seed and the resolved row compute the identical number (exact
 forecast == actual, the true no-jump: `resolved_hunt_realized_equals_the_seeded_realized`). **Simulated
-rate-based, WITHOUT the kill-credit bank:** the bank only quantises *when* whole animals arrive, never
-the N-turn total, so projecting the smooth `hunt_policy_rate` gives the smooth average directly. **Why
+UNQUANTISED:** whole-animal rounding decides *when* the food arrives, never the N-turn total, so
+projecting the smooth `hunt_escapement_ceiling` gives the smooth average directly. **Why
 not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
 `sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
 (drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
-N-turn average does not. It **uses the assignment's actual policy**, so switching Sustain↔Deplete
-re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Deplete herd
-declines within the window and the average honestly reflects it). A **self-terminating** policy
-(Eradicate strips the herd in ~1 turn, Deplete drives it extinct) **breaks the loop early and divides by
+N-turn average does not. **A food-peak projection sits ABOVE `sustainable` on a source standing over its
+floor**, because the first projected turn draws the accumulated surplus down to `K/2` and the rest of
+the horizon pays the regrowth; that is honest, not an overdraw. It **uses the assignment's actual
+floor**, so dragging the floor re-projects (a herd settled at the food peak reads flat ≈ MSY over the
+full horizon; one held below it declines within the window and the average honestly reflects it). A
+**self-terminating** floor — `0`, which strips the herd and is the ONLY extinction case
+(`fauna.md`: any floor above `0` strips to it and stops) — **breaks the loop early and divides by
 the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
 the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
 negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,
-`hunt_policy_rate`, `pen_yield_biomass`, `HuntYield::apply`, `forage_take`, `herd_ecology`/`herd_capacity`)
-— no second copy of the ecology or take math. On the wire, `LaborAssignment.realizedYield` is appended
+`hunt_escapement_ceiling`, `pen_yield_biomass`, `HuntYield::apply`, `forage_take`,
+`herd_ecology`/`herd_capacity`) — no second copy of the ecology or take math. On the wire, `LaborAssignment.realizedYield` is appended
 (append-only). **The `actual` value and the ledger identity are unchanged — `realized` is a parallel
 steady value, never a replacement.** `PopulationCohortState.foodIncome` = Σ `actual` stays exactly as
 it is: it is the real arrivals and is load-bearing for the
@@ -354,8 +359,8 @@ construction: `Σ arrivals ≈ realized × horizon`, to within the partial body 
 - **Pinned to real behaviour, not to another forecast** (the ~34-vs-~6-turn lesson): that test reads
   the schedule published on turn 0, then drives the **real** systems forward `horizon` turns and
   asserts the sim delivered on exactly the named turns in exactly the named amounts.
-- Reuses the shared take helpers verbatim (`regrow_biomass`, `hunt_policy_rate`,
-  `hunt_credit_ceiling`, `quantise_animal_take`, `pen_yield_biomass`, `HuntYield::apply`,
+- Reuses the shared take helpers verbatim (`regrow_biomass`, `hunt_escapement_ceiling`,
+  `quantise_animal_take`, `pen_yield_biomass`, `HuntYield::apply`,
   `forage_take`, `herd_ecology`/`herd_capacity`) — **no second copy of the take math** — and simulates
   on a clone, never the live source. Unlike the `realized` projection it does **not** break on a
   zero take: there a zero means *spent* and would dilute an average; here it is a **wait** turn, which

@@ -5,11 +5,11 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_herds, advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
-    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
 };
 
@@ -126,7 +126,7 @@ fn hunt_assignment_takes_biomass_and_yields() {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.clone(),
-                        policy: FollowPolicy::Eradicate,
+                        floor: 0.0,
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,

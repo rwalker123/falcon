@@ -26,11 +26,36 @@ panel IS:
 Writing height math by hand means you picked the wrong helper, or found a third case worth
 extracting — extract it rather than open-coding it.
 
+### `AutoSizingPanel` IS A PLAIN `Control`, so BOTH axes need an explicit fit
+
+Only a `Container` aggregates its children's minimum sizes. This node is a bare `Control`, so
+**nothing a child demands ever reaches it**: it is whatever size the caller sets, and the
+children lay out around that number whether or not they fit. That is exactly why the height
+is fitted — and it makes `target_width` a **nominal width, not a cap and not a measurement**.
+
+A card whose content can outgrow the nominal must say so with **`fit_width(content_width,
+extra_width)`**, the width twin of `fit_to_content`, bounded by a **`max_width` declared per
+fit from the live viewport** (a fixed pixel cap can only ever bite before the real bound —
+the same argument the height ceiling already rests on). It is deliberately **opt-in**: a
+caller that has never measured its content width keeps its fixed-width behaviour rather than
+collapsing onto its widest child. `NarrativeForkPanel` is that caller — 660px of card around
+a 169px content minimum, because its prose wraps — while `ComposeSheet` is the one that
+needed it (see `labor-ui.md` → "THE CARD IS AS WIDE AS ITS WIDEST ROW").
+
+`_fitted_width` is why the two fits cannot disagree: `fit_to_content` re-asserts the card's
+width every pass, and re-asserting `target_width` there would silently undo `fit_width` on
+the next height fit.
+
+**A card pinned narrower than its content does not fail; it lies.** The inner
+`PanelContainer` — a real Container — grows out of the card and draws the background at the
+content's width, so the card *looks* right while its own rect, and every placement decision
+made from it, is the nominal number.
+
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
-| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content |
+| `ui/AutoSizingPanel.gd` | Shared helper for panels that expand to fit content — `fit_to_content` (height, ceiling `max_height`) and `fit_width` (width, ceiling `max_width`), both against the viewport |
 ## HUD Panel Framework (Docked PanelCards)
 
 The HUD (`HudLayer.tscn`) owns the screen regions with one layout authority — a

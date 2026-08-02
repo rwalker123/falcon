@@ -12,11 +12,11 @@ use core_sim::{
     advance_herds, advance_labor_allocation, available_workers, scalar_from_f32, scalar_one,
     scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world, CommandEventKind,
     CommandEventLog, CultureManager, DiscoveryProgressLedger, FactionId, FactionInventory,
-    FaunaConfigHandle, FollowPolicy, FoodModuleTag, ForageRegistry, GenerationId,
-    GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
-    LaborAssignment, LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore,
-    MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    FaunaConfigHandle, FoodModuleTag, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfig,
+    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
     NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
@@ -112,15 +112,15 @@ fn spawn_band(
 }
 
 fn forage_alloc(tile: UVec2, workers: u32) -> LaborAllocation {
-    forage_alloc_policy(tile, workers, FollowPolicy::Sustain)
+    forage_alloc_policy(tile, workers, 0.5)
 }
 
-fn forage_alloc_policy(tile: UVec2, workers: u32, policy: FollowPolicy) -> LaborAllocation {
+fn forage_alloc_policy(tile: UVec2, workers: u32, policy: f32) -> LaborAllocation {
     LaborAllocation {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile,
-                policy,
+                floor: policy,
                 species: None,
             },
             workers,
@@ -179,12 +179,13 @@ fn larder(app: &App, band: bevy::prelude::Entity) -> f32 {
 fn forage_draws_down_depletable_patch() {
     let mut app = spawn_world();
     let (pos, tile) = food_tile(&mut app);
-    // Seed the patch below its cap so a Sustain gather skims positive regrowth (a full patch's
-    // net regrowth is 0 → no yield, by design).
+    // Seed the patch above Sustain's escapement floor so the gather has standing stock to take.
     let (cap, before) = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(pos).expect("patch on the food tile");
-        patch.biomass = patch.carrying_capacity * 0.5;
+        // **Above Sustain's escapement floor** (`K/2`): at the floor exactly there is nothing
+        // standing above it and the gather is honestly `0` (`docs/plan_harvest_floor.md` §1).
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         (patch.carrying_capacity, patch.biomass)
     };
     let band = spawn_band(&mut app, tile, 10, forage_alloc(pos, 5));
@@ -258,7 +259,7 @@ fn sustain_hunt_below_regrowth_lets_herd_grow() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 1,
                 improvement: None,
@@ -338,7 +339,7 @@ fn a_hunt_actual_pulses_while_realized_holds_the_steady_average() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 2,
                 improvement: None,
@@ -464,7 +465,7 @@ fn a_drawn_down_hunt_realized_drifts_smoothly_never_sawtooths() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 4,
                 improvement: None,
@@ -537,7 +538,7 @@ fn hunt_lapses_beyond_leash() {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 3,
                 improvement: None,
@@ -632,7 +633,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
-            policy: FollowPolicy::Sustain,
+            floor: 0.5,
             species: None,
         },
         3,
@@ -649,7 +650,7 @@ fn assignment_sum_clamps_to_working_age() {
     let applied = alloc.set_assignment(
         LaborTarget::Forage {
             tile: UVec2::new(1, 1),
-            policy: FollowPolicy::Sustain,
+            floor: 0.5,
             species: None,
         },
         0,
@@ -675,15 +676,19 @@ fn assignment_sum_clamps_to_working_age() {
     assert_eq!(available_workers(scalar_from_f32(5.9)), 5);
 }
 
+/// The standing crop these fixtures seat a patch at — Thriving, and **above** Sustain's escapement
+/// floor (`K/2`), so a gather has stock standing above it to take.
+const STOCKED_STANDING_CROP: f32 = 0.8;
+
 /// Run one turn of forage under `policy` on a Thriving (0.8×cap) patch with ample workers, returning
-/// the assignment's `(actual, sustainable)` food yield and the biomass drawn down this turn.
-fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
+/// the assignment's yield row and the biomass drawn down this turn.
+fn run_forage_yield(policy: f32) -> (core_sim::SourceYield, f32) {
     let mut app = spawn_world();
     let (pos, tile) = food_tile(&mut app);
     let before = {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(pos).expect("patch on the food tile");
-        patch.biomass = patch.carrying_capacity * 0.8; // Thriving, positive net regrowth.
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         patch.biomass
     };
     let band = spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
@@ -694,63 +699,89 @@ fn run_forage_yield(policy: FollowPolicy) -> (f32, f32, f32) {
         .expect("band allocation")
         .last_yields
         .clone();
-    let y = &yields[0];
+    let y = yields[0].clone();
     let after = app
         .world
         .resource::<ForageRegistry>()
         .patch(pos)
         .expect("patch present")
         .biomass;
-    (y.actual, y.sustainable, before - after)
+    (y, before - after)
 }
 
-/// (§0-iii over-forage): a non-Sustain gather makes `actual > sustainable` (the client overdraw ⚠
-/// trips) while a Sustain gather keeps `actual ≈ sustainable` (the regrowth skim, no overdraw).
+/// **The over-forage ⚠ is a fact about the stance's FLOOR, not about this turn's number.** A gather
+/// is an overdraw when it stops below the patch's most productive biomass — which is exactly what
+/// `components::floor_overdraws` reads — so a strip trips it and a peak-floor gather never can.
+///
+/// It is deliberately **not** `actual > sustainable`. Since the harvest floor a take is constant
+/// escapement, so the first harvest of a stocked patch is its accumulated stock and legitimately
+/// exceeds one turn's regrowth under *every* stance, Sustain included. `sustainable` stays on the
+/// row as the MSY reference the player reads beside it, and the draw-down ordering below is what
+/// makes the two stances differ in the way the ⚠ claims.
 #[test]
 fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
-    let (sustain_actual, sustain_sustainable, _) = run_forage_yield(FollowPolicy::Sustain);
-    assert!(
-        (sustain_actual - sustain_sustainable).abs() < 1e-4,
-        "Sustain reads actual ≈ sustainable: {sustain_actual} vs {sustain_sustainable}"
-    );
+    let (sustain, sustain_drawdown) = run_forage_yield(0.5);
+    let (erad, erad_drawdown) = run_forage_yield(0.0);
 
-    let (erad_actual, erad_sustainable, _) = run_forage_yield(FollowPolicy::Eradicate);
     assert!(
-        erad_actual > erad_sustainable + 1e-4,
-        "Eradicate overdraws (actual > sustainable): {erad_actual} vs {erad_sustainable}"
+        !sustain.overdraws,
+        "a Sustain gather stops at the MSY point — no ⚠: {sustain:?}"
+    );
+    assert!(
+        erad.overdraws,
+        "an Eradicate gather strips past it — the ⚠: {erad:?}"
+    );
+    assert!(
+        sustain.actual > 0.0 && erad.actual > sustain.actual,
+        "and the ⚠ is earned: Eradicate really takes more this turn ({} vs {})",
+        erad.actual,
+        sustain.actual
+    );
+    assert!(
+        erad_drawdown > sustain_drawdown,
+        "…and draws the patch down harder: {erad_drawdown} vs {sustain_drawdown}"
     );
 }
 
-/// (§0-iii Deplete): a Deplete gather **sells harder** — it credits the same basket trade rate every
-/// policy does, marked up by `market.trade_goods_multiplier`, and strips the patch faster than the
-/// Sustain skim.
+/// **A DEEPER FLOOR SELLS MORE — because it takes more biomass, and for no other reason.**
 ///
-/// **Reframed by #433.** The species-blind flat `market.trade_goods_per_biomass` is retired, so
-/// "only Deplete sells" is no longer the rule: every harvest carries its basket's trade component,
-/// because you gathered the goods. What is left for Deplete alone is the *markup*, which is what
-/// this test pins. It reads the **band's own `TRADE_GOODS` store** — the account every ongoing
-/// harvest credits — so the numbers compared are the unrounded ones the sim really banks.
+/// The retired `market.trade_goods_multiplier` paid a `Deplete`-depth draw a 4× trade *bonus*; §4 of
+/// `docs/plan_harvest_floor.md` deleted it, so **no option carries a factor of any kind**. What is
+/// left is the intensity ladder doing the work: a deeper floor leaves less standing, so it takes more
+/// stock, so it sells more.
+///
+/// Asserted as an **ordering that tracks the drawdown**, not a ratio against a lever: the trade
+/// ordering must match the biomass ordering exactly, which is a statement a bonus would break. It
+/// reads the **band's own `TRADE_GOODS` store** — the fixed-point account every ongoing harvest
+/// credits — so the compared numbers are the unrounded ones the sim really banks.
 #[test]
-fn deplete_forage_sells_harder_than_every_other_policy() {
-    // Bump the Deplete markup so its smaller marked-up take unambiguously out-earns Eradicate's
-    // bigger unmarked-up one — the *markup* is the lever now that the flat rate is gone.
-    // (`forage.market.*` keeps the old config name — see `ForageMarketConfig`.)
-    let run = |policy: FollowPolicy| -> (f32, f32) {
+fn a_deeper_floor_sells_more_because_it_takes_more() {
+    /// A crew large enough that the escapement ceiling is always the binding term. With a small
+    /// crew every floor takes the same amount — the worker cap — and the ordering under test would
+    /// be about labour rather than about the floor.
+    const CEILING_BOUND_CREW: u32 = 5_000;
+
+    let run = |floor: f32| -> (f32, f32) {
         let mut app = spawn_world();
-        app.world
-            .insert_resource(LaborConfigHandle::new(tuned_labor_config(|config| {
-                config.forage.market.trade_goods_multiplier = DEPLETE_MARKUP_OUT_EARNING_ERADICATE;
-                config.hunt.per_worker_biomass_capacity = 40.0;
-            })));
         let (pos, tile) = food_tile(&mut app);
         let before = {
             let mut registry = app.world.resource_mut::<ForageRegistry>();
             let patch = registry.patch_mut(pos).expect("patch on the food tile");
-            patch.biomass = patch.carrying_capacity * 0.8;
+            patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
             patch.biomass
         };
-        let band = spawn_band(&mut app, tile, 10, forage_alloc_policy(pos, 10, policy));
+        // **Staffed past any worker cap**, so the FLOOR is the binding term at every depth — the
+        // ordering below is about the floor, and a labour-bound gather takes the same amount at
+        // every floor by construction.
+        let band = spawn_band(
+            &mut app,
+            tile,
+            CEILING_BOUND_CREW,
+            forage_alloc_policy(pos, CEILING_BOUND_CREW, floor),
+        );
         app.world.run_system_once(advance_labor_allocation);
+        // Read the band's own fixed-point store: the point is the proportionality, and the retired
+        // integer faction stockpile would have rounded it away on a staple basket.
         let trade = app
             .world
             .get::<PopulationCohort>(band)
@@ -767,34 +798,32 @@ fn deplete_forage_sells_harder_than_every_other_policy() {
         (trade, before - after)
     };
 
-    let (deplete_trade, deplete_take) = run(FollowPolicy::Deplete);
-    let (sustain_trade, sustain_take) = run(FollowPolicy::Sustain);
-    let (erad_trade, _) = run(FollowPolicy::Eradicate);
+    let (deep_trade, deep_take) = run(0.15);
+    let (peak_trade, peak_take) = run(0.5);
+    let (strip_trade, strip_take) = run(0.0);
 
     assert!(
-        deplete_trade > 0.0,
-        "Deplete forage sells gathered goods as trade goods: {deplete_trade}"
+        peak_trade > 0.0,
+        "every harvest sells its basket's trade component: {peak_trade}"
     );
     assert!(
-        deplete_trade > sustain_trade,
-        "the Deplete markup must beat the same basket carried home under Sustain: \
-         {deplete_trade} vs {sustain_trade}"
+        strip_trade > deep_trade && deep_trade > peak_trade,
+        "a deeper floor sells more: strip {strip_trade} > deep {deep_trade} > peak {peak_trade}"
+    );
+    // **And in exactly the proportion of the biomass taken.** A per-depth bonus would show up here
+    // as a trade ratio that outran the take ratio — which is precisely what the retired 4× markup did.
+    let trade_ratio = deep_trade / peak_trade;
+    let take_ratio = deep_take / peak_take;
+    assert!(
+        (trade_ratio - take_ratio).abs() < 1e-3,
+        "the trade ordering must track the DRAWDOWN, with no factor of its own: trade ×{trade_ratio} \
+         against take ×{take_ratio}"
     );
     assert!(
-        deplete_trade > erad_trade,
-        "and beat an Eradicate's bigger but unmarked-up take: {deplete_trade} vs {erad_trade}"
-    );
-    assert!(
-        deplete_take > sustain_take,
-        "Deplete depletes the patch faster than the Sustain skim: {deplete_take} vs {sustain_take}"
+        strip_take > deep_take && deep_take > peak_take,
+        "…and the drawdown itself is ordered: {strip_take} > {deep_take} > {peak_take}"
     );
 }
-
-/// **The `Deplete` markup this fixture runs at.** Every staple's `trade_goods_per_biomass` is the
-/// same flat 0.005 token, so trade income is proportional to the take — and Eradicate takes strictly
-/// more biomass than Deplete. Only the markup can put Deplete's *smaller* take above it, so the
-/// fixture sets it high enough that the policy ordering the test asserts is unambiguous.
-const DEPLETE_MARKUP_OUT_EARNING_ERADICATE: f32 = 800.0;
 
 // ---------------------------------------------------------------------------------------------
 // The arrival schedule (`SourceYield::arrivals`) — WHEN the food lands, not how much on average.
@@ -854,7 +883,7 @@ fn stage_hunt(
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers,
                 improvement: None,
@@ -982,7 +1011,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        0.5,
         NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
@@ -993,7 +1022,7 @@ fn the_schedule_total_matches_the_realized_average_over_the_horizon() {
         per_worker,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        0.5,
         NO_IMPROVEMENT_UNDERWAY,
         horizon,
     );
@@ -1030,7 +1059,7 @@ fn a_spent_source_schedules_nothing() {
         labor.hunt.per_worker_biomass_capacity,
         1.0,
         4,
-        FollowPolicy::Sustain,
+        0.5,
         NO_IMPROVEMENT_UNDERWAY,
         labor.arrivals_horizon_turns,
     );
@@ -1075,7 +1104,7 @@ fn a_trimmed_assignment_is_announced_and_names_the_lost_build() {
     allocation.assignments.push(LaborAssignment {
         target: LaborTarget::Hunt {
             fauna_id: herd_id.clone(),
-            policy: FollowPolicy::Sustain,
+            floor: 0.5,
         },
         workers: 3,
         improvement: Some(core_sim::Improvement::Tame),

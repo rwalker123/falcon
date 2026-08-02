@@ -5,13 +5,12 @@ use bevy::MinimalPlugins;
 use core_sim::{
     advance_herds, advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry,
-    LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle,
-    LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
-    SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig, SimulationTick,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle,
 };
 
 /// Whole-worker head-count assigned to the hunt in these ecology tests. Large enough that the
@@ -88,7 +87,7 @@ fn prime_stationary_herd(app: &mut App) -> (String, f32) {
 }
 
 /// Spawn a band standing on the herd's tile with a Hunt labor assignment under `policy`.
-fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::prelude::Entity {
+fn spawn_hunter(app: &mut App, herd_id: &str, policy: f32) -> bevy::prelude::Entity {
     let pos = app
         .world
         .resource::<HerdRegistry>()
@@ -135,7 +134,7 @@ fn spawn_hunter(app: &mut App, herd_id: &str, policy: FollowPolicy) -> bevy::pre
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy,
+                        floor: policy,
                     },
                     workers: HUNT_WORKERS,
                     improvement: None,
@@ -175,7 +174,7 @@ fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
 fn sustain_hunt_keeps_biomass_stable() {
     let mut app = spawn_world();
     let (id, start) = prime_stationary_herd(&mut app);
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Sustain);
+    let band = spawn_hunter(&mut app, &id, 0.5);
     run_turns(&mut app, 10);
 
     let after = biomass_of(&app, &id).expect("sustained herd should survive");
@@ -221,7 +220,7 @@ fn surplus_hunt_declines() {
         let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
         herd.regrowth_rate = SLOW_BREEDER_R;
     }
-    spawn_hunter(&mut app, &id, FollowPolicy::Surplus);
+    spawn_hunter(&mut app, &id, 0.3);
     run_turns(&mut app, 10);
 
     let after = biomass_of(&app, &id).expect("surplus herd should still exist after 10 turns");
@@ -235,7 +234,7 @@ fn surplus_hunt_declines() {
 fn eradicate_hunt_drives_extinction() {
     let mut app = spawn_world();
     let (id, _start) = prime_stationary_herd(&mut app);
-    let band = spawn_hunter(&mut app, &id, FollowPolicy::Eradicate);
+    let band = spawn_hunter(&mut app, &id, 0.0);
     run_turns(&mut app, 40);
 
     assert!(

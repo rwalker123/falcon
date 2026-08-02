@@ -26,9 +26,9 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, GrazeRegistry, Herd, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
     LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
     SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
@@ -133,6 +133,19 @@ fn learn_foddering(app: &mut App) {
         .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, scalar_one());
 }
 
+/// Wipe the faction's **Foddering** progress — the control state for the no-hay-draw case.
+///
+/// It has to be *wiped*, not avoided: `animal:pen` teaches Foddering whenever a keeper works the pen
+/// (*you learn to hay a herd by keeping one*), and since `docs/plan_harvest_floor.md` §3 that earn is
+/// a **rate** rather than a floor-gated predicate — a rung-3 source's floor axis has collapsed, so
+/// there is no dial a keeper can hold that teaches nothing. Settling a pen for a few dozen turns
+/// therefore learns it, whatever the assignment says.
+fn unlearn_foddering(app: &mut App) {
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(FactionId(0), FODDERING_DISCOVERY_ID, -scalar_one());
+}
+
 /// Seat one **penned, domesticated** herd (fixture name → neutral density gain) at `tile`, radius 0.
 fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
     let mut registry = app.world.resource_mut::<HerdRegistry>();
@@ -158,7 +171,7 @@ fn seat_pen(app: &mut App, tile: UVec2, cap: f32, biomass: f32) -> String {
 /// `policy` only decides whether tending **teaches** knowledge (the corral-tend branch feeds + harvests
 /// regardless): `Sustain` earns Foddering by running the pen (the real earn path), `Surplus` teaches
 /// nothing — the honest way to hold a control faction ignorant of Foddering while it keeps a pen.
-fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: FollowPolicy) -> Entity {
+fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: f32) -> Entity {
     let tile_entity = app
         .world
         .resource::<TileRegistry>()
@@ -198,7 +211,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2, policy: FollowPolicy)
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy,
+                        floor: policy,
                     },
                     workers: KEEPER_WORKERS,
                     improvement: None,
@@ -290,7 +303,7 @@ fn run_to_settle(start: f32) -> (f32, f32) {
     let tile = barren_pen_tile(&mut app);
     learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, start);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Sustain);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
 
     let mut series = Vec::with_capacity(TURNS as usize);
     for _ in 0..TURNS {
@@ -387,7 +400,7 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     let tile = barren_pen_tile(&mut app);
     learn_foddering(&mut app);
     let id = seat_pen(&mut app, tile, 400.0, START);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Sustain);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.5);
     let food_before = RESTOCK;
     for _ in 0..SETTLE_TURNS {
         run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, HAY_FLOW);
@@ -423,21 +436,24 @@ fn a_hay_fed_pen_draws_no_bread_while_a_bread_fed_pen_pays_the_full_lossy_bill()
     // --- BREAD-FED CONTROL: identical pen, hay STILL grown into its store each turn (a hay Field
     // harvests regardless of Foddering), but the faction has NOT learned Foddering — so the K term is
     // gated off (`k_rate = 0`, mirroring the labor arm's gate) and the hay is undrawable. The pen pays
-    // the full lossy provisions bill and the hay just piles up. `Surplus` so tending never teaches it
-    // Foddering. ---
+    // the full lossy provisions bill and the hay just piles up. The ledger is wiped immediately
+    // before every turn (`unlearn_foddering`) because keeping a pen *teaches* Foddering and no floor
+    // prevents it. ---
     let mut app = base_world();
     let tile = barren_pen_tile(&mut app);
     // (no learn_foddering)
     let id = seat_pen(&mut app, tile, 400.0, START);
-    let keeper = spawn_keeper(&mut app, &id, tile, FollowPolicy::Surplus);
+    let keeper = spawn_keeper(&mut app, &id, tile, 0.3);
     // Settle, then run ONE instrumented final turn: read the FEED-time biomass (post-regrow,
     // pre-harvest) — what the bill is actually charged on — and compare exactly, as `grazing_2d_pen`
     // does for the barren-pen case.
     for _ in 0..SETTLE_TURNS - 1 {
+        unlearn_foddering(&mut app);
         run_fodder_turn(&mut app, keeper, &id, HAY_FLOW, 0.0);
     }
     run_fodder_logistics(&mut app, keeper, &id, HAY_FLOW, 0.0);
     let feed_biomass = biomass_of(&app, &id); // post-regrow, pre-harvest = what FEED charges on
+    unlearn_foddering(&mut app);
     app.world.run_system_once(advance_labor_allocation);
     let (bread_bread, bread_draw) = feed_split(&app, keeper, &id);
     let bread_hay_store = app
@@ -512,11 +528,7 @@ fn feed_split_terms(
     // `Surplus` when NOT foddering so tending never teaches Foddering (the lossy-bread test's control
     // trick); `Sustain` is fine once we granted it outright. The corral-tend branch FEEDs + HARVESTs
     // under either policy.
-    let policy = if foddering {
-        FollowPolicy::Sustain
-    } else {
-        FollowPolicy::Surplus
-    };
+    let policy = if foddering { 0.5 } else { 0.3 };
     let keeper = spawn_keeper(&mut app, &id, tile, policy);
     {
         let mut cohort = app.world.get_mut::<PopulationCohort>(keeper).unwrap();

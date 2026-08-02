@@ -5,6 +5,20 @@ use flatbuffers::{ForwardsUOffset, Vector};
 use godot::prelude::*;
 use shadow_scale_flatbuffers::shadow_scale::sim as fb;
 
+/// The `regrowthSamples` vector both source tables publish, as the packed float array GDScript
+/// interpolates over. **An ABSENT vector stays EMPTY** rather than becoming a run of zeros:
+/// "published no curve" and "does not grow" are different claims, and only the first may leave the
+/// chart's projection undrawn.
+fn regrowth_samples_packed(samples: Option<flatbuffers::Vector<'_, f32>>) -> PackedFloat32Array {
+    let mut packed = PackedFloat32Array::new();
+    if let Some(samples) = samples {
+        for value in samples {
+            packed.push(value);
+        }
+    }
+    packed
+}
+
 pub(crate) fn sedentarization_to_array(
     states: Vector<'_, ForwardsUOffset<fb::SedentarizationState<'_>>>,
 ) -> VarArray {
@@ -49,6 +63,21 @@ pub(crate) fn herds_to_array(
         if let Some(ecology_phase) = herd.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // **WHERE THE PHASE WORDS CHANGE HANDS** — `classify_ecology_phase`'s own cut points, as
+        // fractions of `carrying_capacity`, i.e. **the units the escapement floor is in**. That is
+        // what lets the harvest-floor chart draw them as horizontal ZONES behind the floor line: a
+        // floor and a phase band are the same kind of object, so the bar's colour and the floor's
+        // position share one y-axis. `ecology_phase` above ships the WORD for the stock the herd is
+        // at; these ship the ladder (`B/K < collapse -> collapsing`, `< stressed -> stressed`, else
+        // thriving).
+        //
+        // They are PER SOURCE, never a global echo: `fauna::herd_ecology` resolves wild / pastoral /
+        // pen and each managed block carries its own cuts, so one pair copied into GDScript would be
+        // right for a wild herd and wrong for a penned one. On this web `collapse_fraction` is ALSO
+        // the Allee threshold — the point `regrowth_samples` below turns negative — so the zone edge
+        // and the curve's sign change describe the same cliff from either side.
+        let _ = dict.insert("collapse_fraction", f64::from(herd.collapseFraction()));
+        let _ = dict.insert("stressed_fraction", f64::from(herd.stressedFraction()));
         // Predators Phase 0 — the four RAW combat components (strength ≠ danger; danger is DERIVED,
         // never stored). `attack` / `defense` are open-ended strength scalars (human-strength anchor
         // 1.0); `ferocity` / `aggression` are native 0..1 (fights-back-vs-flees / initiates-unprovoked).
@@ -67,37 +96,61 @@ pub(crate) fn herds_to_array(
             let _ = dict.insert("husbandry_ceiling", husbandry_ceiling);
         }
         let _ = dict.insert("domestication", herd.domestication());
-        // Per-policy BAND / local-hunt take ceilings for this herd's CURRENT state, in BOTH of the
-        // hunt's products (issue #337 — a hunt pays a `YieldAccounts`, not a food scalar). Surfaced as TWO
-        // Dictionaries keyed by the SAME policy strings, filled in ONE pass so they cannot drift:
-        //   `hunt_policy_ceilings`       -> provisionsPerTurn (food/turn)
-        //   `hunt_policy_trade_ceilings` -> tradeGoodsPerTurn (trade goods/turn)
-        // An INEDIBLE species (a wolf) reads every provisions row `0` with the trade rows positive, so
-        // the food dict alone cannot express its yield at all. With the herd's `per_worker_yield` /
-        // `per_worker_trade` and `output_multiplier` this is everything the RESIDENT-BAND hunt preview
-        // needs as pure arithmetic — the client never re-derives the ecology model.
-        if let Some(ceilings) = herd.huntPolicyCeilings() {
-            let mut ceiling_dict = VarDictionary::new();
-            let mut trade_ceiling_dict = VarDictionary::new();
-            for ceiling in ceilings {
-                if let Some(policy) = ceiling.policy() {
-                    let _ = ceiling_dict.insert(policy, f64::from(ceiling.provisionsPerTurn()));
-                    let _ =
-                        trade_ceiling_dict.insert(policy, f64::from(ceiling.tradeGoodsPerTurn()));
-                }
-            }
-            let _ = dict.insert("hunt_policy_ceilings", &ceiling_dict);
-            let _ = dict.insert("hunt_policy_trade_ceilings", &trade_ceiling_dict);
-        }
+        // **THE PER-BIOMASS YIELD VECTOR** — what ONE UNIT of this herd's biomass is worth, in each
+        // account (`docs/plan_harvest_floor.md` §5). It replaces the retired `huntPolicyCeilings`
+        // rows, because four rows cannot answer a **continuous** floor. With `biomass` (B),
+        // `carrying_capacity` (K) already in this dict:
+        //
+        //   ceiling(floor)      = max(0, B - floor*K) * <account>_per_biomass
+        //   collection(workers) = workers * per_worker_yield * <rung>_build_fraction
+        //
+        // **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1,
+        // sim-side `fauna::forecast_production_and_take`). It moved there because dipping the ceiling
+        // let a deeper floor build for free — a fraction of a bigger standing stock still filled the
+        // crew's baskets — and it is what leaves the ceiling linear in the floor, hence composable
+        // here at all.
+        //
+        // An INEDIBLE species (a wolf) reads `provisions_per_biomass == 0` with `trade_per_biomass`
+        // positive — the only shape that can state that at all. No animal pays fodder, so that
+        // component is `0` on every herd; it is surfaced anyway so both webs read the same triple.
+        let _ = dict.insert(
+            "provisions_per_biomass",
+            f64::from(herd.provisionsPerBiomass()),
+        );
+        let _ = dict.insert("fodder_per_biomass", f64::from(herd.fodderPerBiomass()));
+        let _ = dict.insert("trade_per_biomass", f64::from(herd.tradePerBiomass()));
+        // **WHAT ONE HUNTER MOVES, IN BIOMASS** — the crew term the panel's two worker targets
+        // divide by (`clear it now` = room / this, `hold it after` = the regrowth at the floor /
+        // this). It is NOT derivable from `per_worker_yield / provisions_per_biomass`: on a wolf
+        // both of those are honestly `0`, and `0/0` is exactly the source whose crew the panel
+        // most needs to price. No seasonal factor on this web (the animal side has none).
+        let _ = dict.insert("per_worker_biomass", f64::from(herd.perWorkerBiomass()));
+        // **THE SAMPLED REGROWTH CURVE** — this herd's own per-turn biomass delta at evenly spaced
+        // fractions of `K` (sample `i` of `n` is the delta at `B = i/(n-1) * K`; the x-axis is
+        // implicit). The client INTERPOLATES between samples and never fits a formula to them: the
+        // two webs are different functions (a patch is logistic with a reseed floor, a herd has
+        // critical depensation below `collapse_fraction`), so a GDScript copy would drift and the
+        // drift would be invisible — a wrong curve still looks like a curve.
+        //
+        // **THE LOW SAMPLES ARE NEGATIVE, AND THAT IS THE POINT.** Below the Allee threshold the
+        // herd declines whether or not it is hunted. A reader must render them as DECLINE; clamping
+        // to zero draws a herd crashing to extinction as a herd sitting still, which is the whole
+        // difference between floor 0 on this web and floor 0 on the plant one.
+        let _ = dict.insert(
+            "regrowth_samples",
+            &regrowth_samples_packed(herd.regrowthSamples()),
+        );
         // The sim's PRE-LAUNCH TRIP ESTIMATES for a hunting EXPEDITION against this herd — one entry
-        // per (policy × party size). An expedition's trip length is NOT a rate division: for
+        // per (SAMPLED FLOOR × party size). An expedition's trip length is NOT a rate division: for
         // Surplus/Deplete the per-policy ceiling is a *stock*, so the party strips the headroom in a
         // turn or two and then crawls at the herd's regrowth trickle (on a full Rabbit Warren under
         // Surplus only a LONE hunter fills at all — 23 turns; a party of 4 never fills within the
         // horizon, and under Sustain no party size fills at any size). The sim therefore
         // forward-simulates the trip and exports the ANSWER; the client does ZERO arithmetic — a pure
         // table lookup keyed
-        // `"<policy>:<party_workers>"` →
+        // `"<floor>:<party_workers>"` → (the floors are the sim's `RAID_FORECAST_FLOOR_SAMPLES` —
+        // marks on a continuum for the outfit preview, NOT a set of options; the launch command
+        // accepts any floor in 0.0..=1.0)
         // `{turns_to_fill, delivers_food, delivers_trade, animals_taken, delivered_food,
         //   delivered_trade, wasted_food}`:
         //   turns_to_fill == 0   → the raid ran the whole horizon still delivering (a long raid)
@@ -115,8 +168,10 @@ pub(crate) fn herds_to_array(
         if let Some(estimates) = herd.huntTripEstimates() {
             let mut estimate_dict = VarDictionary::new();
             for estimate in estimates {
-                if let Some(policy) = estimate.policy() {
+                {
+                    let floor = estimate.floor();
                     let mut entry = VarDictionary::new();
+                    let _ = entry.insert("floor", f64::from(floor));
                     let _ = entry.insert("turns_to_fill", i64::from(estimate.turnsToFill()));
                     let _ = entry.insert("delivers_food", estimate.deliversFood());
                     // The sibling flag + payload in the OTHER currency. Both are appended fields, and
@@ -136,7 +191,16 @@ pub(crate) fn herds_to_array(
                     let _ = entry.insert("wasted_food", f64::from(estimate.wastedFood()));
                     // The trade goods the raid LANDS — the ONLY payload of an inedible quarry's raid.
                     let _ = entry.insert("delivered_trade", f64::from(estimate.deliveredTrade()));
-                    let key = format!("{}:{}", policy, estimate.partyWorkers());
+                    // **THE PARTY SIZE AS A NUMBER, not only as half of the key.** The key is
+                    // `"<floor>:<party>"` where `<floor>` is Rust's `f32` Display — `0`, not `0.0`,
+                    // for the bare floor — so a client rebuilding that key from a float it holds has
+                    // to reproduce Rust's float formatting exactly, and a near-miss finds nothing
+                    // and reports "this herd has no forecast". Since the floor became CONTINUOUS the
+                    // client can no longer enumerate the keys it might need, so it SCANS the rows:
+                    // both halves of the sampled pair have to be readable off the row itself, and
+                    // the key stays what it always was — an opaque unique id.
+                    let _ = entry.insert("party_workers", i64::from(estimate.partyWorkers()));
+                    let key = format!("{}:{}", floor, estimate.partyWorkers());
                     let _ = estimate_dict.insert(key, &entry);
                 }
             }
@@ -149,22 +213,25 @@ pub(crate) fn herds_to_array(
         let _ = dict.insert("corral_progress", herd.corralProgress());
         // Pre-commit yield forecast (food/turn at the herd's CURRENT biomass, exported at
         // output_multiplier 1.0 — the client scales by the acting band's multiplier):
-        //   expected(workers, policy) = min(workers * per_worker_yield, hunt_policy_ceilings[policy])
-        //   max_useful_workers(policy) = ceil(hunt_policy_ceilings[policy] / per_worker_yield)
-        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the
-        // hunter stepper at what the herd can actually absorb. EVERY herd-side ceiling now comes
-        // from the `hunt_policy_ceilings` Dictionary above — the old per-policy scalars
-        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are deprecated schema slots and are no
-        // longer decoded. (ForagePatchState keeps its scalars: a patch has no such list.)
+        //   expected(workers, floor) = min(workers * per_worker_yield * dip, ceiling(floor))
+        //   max_useful_workers(floor) = ceil(ceiling(floor) / (per_worker_yield * dip))
+        // Read by Hud's %HerdAssignControls to show the expected yield live and to cap the hunter
+        // stepper at what the herd can actually absorb. `ceiling(floor)` is composed from the
+        // per-biomass vector above — `hunt_policy_ceilings` and the older per-policy scalars
+        // (ceilingSustain/Surplus/Deplete/Eradicate/Corral) are ALL retired `(deprecated)` slots the
+        // sim no longer writes, and are no longer decoded.
         let _ = dict.insert("per_worker_yield", herd.perWorkerYield());
         // The SAME per-worker rate in the other currency (issue #337) — read the two as ONE vector.
         // THIS pair, not the cohort's `hunt_per_worker_provisions`, is what a per-herd band preview
         // clamps with: that cohort field is a species-BLIND global echo (the sim's own doc says so),
         // and quoting it against a wolf's all-zero food ceilings manufactures phantom food.
         let _ = dict.insert("per_worker_trade", herd.perWorkerTrade());
-        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned. Its
-        // DURING-BUILDING dip rides the `hunt_policy_ceilings` list (the "corral" row), so together
-        // they drive the pre-commit "Preparing: +X → then +Y" forecast on %HerdAssignControls.
+        // `corral_yield` is the Corral rung's PAYOFF — what the herd pays once penned; its
+        // during-building dip is `corral_build_fraction` on the CREW, so together they drive the
+        // pre-commit "+X → +Y while building → +Z" deal on %HerdAssignControls.
+        // **On an ALREADY-PENNED herd this same field is the pen's live managed production** — a
+        // corralled herd is never drawn down, so its ceiling is this number at EVERY floor and the
+        // escapement composition above does not apply to it (sim `SourceYieldForecast::managed`).
         // `corral_yield` is GROSS — the pen's feed below is a separate debit on the keeper's larder.
         let _ = dict.insert("corral_yield", herd.corralYield());
         // The trade half of that SAME payoff — read the two as ONE pair, exactly like
@@ -323,6 +390,13 @@ pub(crate) fn forage_patches_to_array(
         if let Some(ecology_phase) = patch.ecologyPhase() {
             let _ = dict.insert("ecology_phase", ecology_phase);
         }
+        // The plant twin of the herd's phase BANDS above — same contract, same units (fractions of
+        // `carrying_capacity`, which is the floor's own axis), read through `forage::patch_ecology`
+        // so the published word and the published cuts cannot disagree. The one ASYMMETRY is that a
+        // patch has no Allee term: `collapse_fraction` here is a phase boundary only, and every
+        // sample of `regrowth_samples` below stays non-negative through it.
+        let _ = dict.insert("collapse_fraction", f64::from(patch.collapseFraction()));
+        let _ = dict.insert("stressed_fraction", f64::from(patch.stressedFraction()));
         // Pre-commit yield forecast — identical contract to the herd fields above (food/turn at
         // the patch's CURRENT biomass, at output_multiplier 1.0). MapView cross-refs these onto
         // `tile_info` (as `patch_*`) so %ForageAssignControls can forecast + cap the stepper.
@@ -411,6 +485,21 @@ pub(crate) fn forage_patches_to_array(
                 // POLICY's question, so both ride the entry and the picker picks by rung.
                 let _ = share_dict.insert("cultivate_fodder_payoff", share.cultivateFodderPayoff());
                 let _ = share_dict.insert("cultivate_trade_payoff", share.cultivateTradePayoff());
+                // WHAT THIS PLANT IS FOR — "staple" | "fodder" | "cash", the species' own display
+                // tag. The tile card leads each basket row with one icon per role, so a player sees
+                // at a glance how much of a stand is food, feed or cash.
+                //
+                // **ABSENT MEANS UNSTATED, NOT "staple"** — the key is only inserted when the wire
+                // carries one, exactly as `species`/`display_name` are, so GDScript reads `""` and
+                // renders NO icon rather than defaulting a missing tag into a real category.
+                //
+                // NEVER RE-DERIVE IT FROM THE PAYOFFS ABOVE: those are rung-2/rung-3 numbers that
+                // fold in the weeding and conversion gains, and they are all zero for a species
+                // that cannot climb on this ground — which is exactly the case where the role is
+                // still a true fact about the plant.
+                if let Some(role) = share.role() {
+                    let _ = share_dict.insert("role", role);
+                }
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);
@@ -426,43 +515,50 @@ pub(crate) fn forage_patches_to_array(
         if let Some(committed_display_name) = patch.committedDisplayName() {
             let _ = dict.insert("committed_display_name", committed_display_name);
         }
-        // **THE TILE'S PER-RUNG YIELD VECTOR** (#426) — the plant twin of `hunt_policy_ceilings`
-        // above, and surfaced the same way: **SIX Dictionaries keyed by the SAME policy strings,
-        // filled in ONE pass**, so no two accounts can drift apart. A harvest pays three accounts, and
-        // every staple carries the flat trade token, so essentially no tile is single-account — a
-        // food-only view under-reported almost every patch, not merely the cash crops.
+        // **THE PER-BIOMASS YIELD VECTOR** — what ONE UNIT of this patch's standing crop is worth,
+        // in each account, at the patch's own basket-averaged rates
+        // (`docs/plan_harvest_floor.md` §5). It replaces the retired `foragePolicyCeilings` rows,
+        // because four rows cannot answer a **continuous** floor. With `biomass` (B),
+        // `carrying_capacity` (K) already in this dict:
         //
-        // **Both halves of the client's `min(workers × per_worker, ceiling)` are per-POLICY here, and
-        // that is the point.** On the plant web `Deplete` marks trade up, and the sim applies that
-        // markup to the FINAL take — after the worker cap — so the markup has to be present on the
-        // per-worker term too or a labor-bound Deplete take reads low by the full multiplier. The
-        // server folded it in; the client just takes the `min` per component and never sees a markup.
+        //   ceiling(floor)       = max(0, B - floor*K) * <account>_per_biomass
+        //   collection(workers)  = workers * per_worker_biomass * <rung>_build_fraction
+        //                          * <account>_per_biomass
+        //   take                 = min(ceiling, collection)      [per account]
+        //
+        // **THE BUILD DIP MULTIPLIES THE CREW, NOT THE CEILING** — see the herd twin above.
+        //
+        // **`per_worker_biomass` IS ON THE WIRE NOW**, and it closed a real gap: the patch publishes
+        // `per_worker_yield` (the FOOD throughput) but no per-worker term for the other two accounts,
+        // and the client used to recover the shared biomass throughput as
+        // `per_worker_yield / provisions_per_biomass` — exact, and `0/0` on exactly the patches that
+        // pay no food (a sown Field of flax, cotton or hay). See the field below.
+        //
+        // **No account carries a factor of any kind** since the 4x `market.trade_goods_multiplier`
+        // was retired (plan §4): a deeper floor earns more trade only because it takes more biomass,
+        // which is what removed the per-policy per-worker terms this used to need.
         //
         // `trade > 0` does **NOT** mean "cash crop": every staple pays the token (flora.md).
-        if let Some(rungs) = patch.foragePolicyCeilings() {
-            let mut ceiling = VarDictionary::new();
-            let mut ceiling_trade = VarDictionary::new();
-            let mut ceiling_fodder = VarDictionary::new();
-            let mut per_worker = VarDictionary::new();
-            let mut per_worker_trade = VarDictionary::new();
-            let mut per_worker_fodder = VarDictionary::new();
-            for rung in rungs {
-                if let Some(policy) = rung.policy() {
-                    let _ = ceiling.insert(policy, f64::from(rung.provisionsPerTurn()));
-                    let _ = ceiling_trade.insert(policy, f64::from(rung.tradeGoodsPerTurn()));
-                    let _ = ceiling_fodder.insert(policy, f64::from(rung.fodderPerTurn()));
-                    let _ = per_worker.insert(policy, f64::from(rung.perWorkerProvisions()));
-                    let _ = per_worker_trade.insert(policy, f64::from(rung.perWorkerTradeGoods()));
-                    let _ = per_worker_fodder.insert(policy, f64::from(rung.perWorkerFodder()));
-                }
-            }
-            let _ = dict.insert("forage_policy_ceilings", &ceiling);
-            let _ = dict.insert("forage_policy_trade_ceilings", &ceiling_trade);
-            let _ = dict.insert("forage_policy_fodder_ceilings", &ceiling_fodder);
-            let _ = dict.insert("forage_policy_per_worker", &per_worker);
-            let _ = dict.insert("forage_policy_per_worker_trade", &per_worker_trade);
-            let _ = dict.insert("forage_policy_per_worker_fodder", &per_worker_fodder);
-        }
+        let _ = dict.insert(
+            "provisions_per_biomass",
+            f64::from(patch.provisionsPerBiomass()),
+        );
+        let _ = dict.insert("fodder_per_biomass", f64::from(patch.fodderPerBiomass()));
+        let _ = dict.insert("trade_per_biomass", f64::from(patch.tradePerBiomass()));
+        // **WHAT ONE GATHERER MOVES, IN BIOMASS** — the plant twin of the herd's field above, with
+        // the tile's SEASONAL WEIGHT folded in exactly as `per_worker_yield` folds it. So it is
+        // honestly **`0` in a dead season**: do not divide by it, and do not read the zero as "no
+        // forecast was sent" (`biomass`/`carrying_capacity`/the rate vector still describe the patch).
+        let _ = dict.insert("per_worker_biomass", f64::from(patch.perWorkerBiomass()));
+        // **THE SAMPLED REGROWTH CURVE** — the plant twin of the herd's, and the ASYMMETRY between
+        // them is the model: a patch is pure logistic with a reseed floor and no Allee term, so every
+        // sample here is **non-negative** and the `0.0` entry is the reseed floor's lift. That is why
+        // floor 0 sets a patch back and ends a herd. Interpolated, never fitted; the peak of the
+        // curve IS the food peak the chart marks, which is why no separate peak field ships.
+        let _ = dict.insert(
+            "regrowth_samples",
+            &regrowth_samples_packed(patch.regrowthSamples()),
+        );
         // The two investment rungs' PAYOFF twins — the non-food halves of `tended_yield`/`field_yield`,
         // as `pastoral_trade`/`corral_trade` are of their food siblings. Each is quoted at **its own**
         // rung (#433), never at the rung the patch happens to stand on.

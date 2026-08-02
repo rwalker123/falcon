@@ -55,18 +55,6 @@ const DEFAULT_FORAGE_RESEED_FLOOR_FRACTION: f32 = 0.02;
 /// **additive** on top of that biome, so it starts conservative.
 const DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS: f32 = 80.0;
 
-/// Named-const defaults for the forage **policy axis** (Intensification §0-iii — "forage parity
-/// with hunting"). These mirror the fauna `follow`/`market`/`hunt` levers so a gather policy
-/// behaves like the matching hunt policy: **Surplus** overdraws the Sustain regrowth skim by
-/// `surplus_multiplier` (fauna `follow.surplus_multiplier`), **Deplete** takes a hard share
-/// `market.take_fraction` of the patch and sells it at `trade_goods_multiplier`× **the basket's own
-/// trade rate** (the species-blind flat `market.trade_goods_per_biomass` is retired — #433), and
-/// **Eradicate** strips the patch by `eradicate.take_fraction` (fauna `hunt.take_fraction`).
-const DEFAULT_FORAGE_SURPLUS_MULTIPLIER: f32 = 1.6;
-const DEFAULT_FORAGE_MARKET_TAKE_FRACTION: f32 = 0.20;
-const DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER: f32 = 4.0;
-const DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION: f32 = 0.30;
-
 /// **The tended rung's growth multiplier** — folded into a committed patch's `r` by
 /// [`crate::forage::patch_ecology`], the plant mirror of `fauna::herd_ecology` and the one seam any
 /// consumer resolves a patch's ecology through.
@@ -199,57 +187,6 @@ impl Default for CultivationConfig {
     }
 }
 
-/// Forage **Deplete** policy tuning (Intensification §0-iii): a commercial gather that takes
-/// `take_fraction` of the patch's biomass each turn and sells it harder — the take yields
-/// `take × the patch basket's trade rate × trade_goods_multiplier` trade goods.
-///
-/// **The rate itself is no longer here** (#433). A harvest's trade credit is the yield vector's
-/// business at *every* drawn-down rung (`forage::patch_trade_per_biomass`), so the species-blind flat
-/// `trade_goods_per_biomass` is **retired** and what survives in this block is the *policy* half:
-/// how much `Deplete` takes, and the markup it sells at. That markup now applies at rungs 1 **and**
-/// 2 alike, because "sell harder" is a property of the policy, not of the rung.
-///
-/// **The struct and its `forage.market` key keep the old name.** The policy was renamed
-/// `Market` → `Deplete` (`docs/plan_hunt_yield_model.md` §2); this plant-web block is renamed in a
-/// later plant-side pass, not with the policy.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct ForageMarketConfig {
-    /// Fraction of the patch's remaining biomass a Deplete gather targets each turn (the ceiling
-    /// before the throughput/biomass clamps).
-    pub take_fraction: f32,
-    /// **The `Deplete` markup** on the basket's own trade rate — what selling commercially is worth
-    /// over carrying the same goods home under any other policy.
-    pub trade_goods_multiplier: f32,
-}
-
-impl Default for ForageMarketConfig {
-    fn default() -> Self {
-        Self {
-            take_fraction: DEFAULT_FORAGE_MARKET_TAKE_FRACTION,
-            trade_goods_multiplier: DEFAULT_FORAGE_MARKET_TRADE_GOODS_MULTIPLIER,
-        }
-    }
-}
-
-/// Forage **Eradicate** policy tuning (Intensification §0-iii): an aggressive strip that takes
-/// `take_fraction` of the patch's biomass with no floor (the plant mirror of fauna's
-/// `hunt.take_fraction`).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct ForageEradicateConfig {
-    /// Fraction of the patch's remaining biomass an Eradicate gather targets each turn.
-    pub take_fraction: f32,
-}
-
-impl Default for ForageEradicateConfig {
-    fn default() -> Self {
-        Self {
-            take_fraction: DEFAULT_FORAGE_ERADICATE_TAKE_FRACTION,
-        }
-    }
-}
-
 /// A biome on which **nothing human-edible grows** (open water outside the shelf, glacier, lava,
 /// salt flat). Named rather than bare so a `0.0` in the table reads as *"deliberately barren"* and a
 /// `0.0` in code reads as *"the same thing"*, not as a fallback that lost its lookup. A
@@ -300,14 +237,6 @@ pub struct ForageLaborConfig {
     /// Only affects patches below the floor (a healthy patch is untouched); kept small (below
     /// `collapse_fraction`) so Eradicate still crashes a patch hard, just never permanently to 0.
     pub reseed_floor_fraction: f32,
-    /// **Surplus** policy multiplier on the Sustain (net-regrowth) ceiling (§0-iii). `> 1.0` so a
-    /// Surplus gather overdraws a healthy patch — the plant mirror of `follow.surplus_multiplier`.
-    pub surplus_multiplier: f32,
-    /// **Deplete** policy tuning (§0-iii): a commercial gather share + the gathered-goods trade-goods
-    /// conversion.
-    pub market: ForageMarketConfig,
-    /// **Eradicate** policy tuning (§0-iii): the aggressive strip-the-patch share.
-    pub eradicate: ForageEradicateConfig,
     /// **Cultivation** tuning (Phase 1a): the plant analog of fauna husbandry — Sustain-forage
     /// accrual, decay, early-claim gate, and the steady tended-yield rate.
     pub cultivation: CultivationConfig,
@@ -360,9 +289,6 @@ impl Default for ForageLaborConfig {
                 extinction_floor: DEFAULT_FORAGE_EXTINCTION_FLOOR,
             },
             reseed_floor_fraction: DEFAULT_FORAGE_RESEED_FLOOR_FRACTION,
-            surplus_multiplier: DEFAULT_FORAGE_SURPLUS_MULTIPLIER,
-            market: ForageMarketConfig::default(),
-            eradicate: ForageEradicateConfig::default(),
             cultivation: CultivationConfig::default(),
             navigable_river_forage_bonus: DEFAULT_NAVIGABLE_RIVER_FORAGE_BONUS,
         }
@@ -787,12 +713,6 @@ mod tests {
         // Forage policy axis (§0-iii): Surplus overdraws the Sustain skim, Deplete/Eradicate take a
         // fractional commercial/strip share, and Deplete marks the basket's own trade rate up (the
         // species-blind flat `trade_goods_per_biomass` is retired — #433).
-        assert!(config.forage.surplus_multiplier > 1.0);
-        assert!(config.forage.market.take_fraction > 0.0);
-        assert!(config.forage.market.take_fraction < 1.0);
-        assert!(config.forage.market.trade_goods_multiplier > 1.0);
-        assert!(config.forage.eradicate.take_fraction > 0.0);
-        assert!(config.forage.eradicate.take_fraction <= 1.0);
         // Cultivation (Phase 1a): the plant ladder's two payoffs are sane and monotone. (The plant
         // rungs' *build* dials — progress vs decay, and the preparing dip — moved to the ladder,
         // where `LadderConfig::validate` bounds them on every load path; the payoffs' own

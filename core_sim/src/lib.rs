@@ -96,11 +96,12 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, BandId, BandTravel, ElementKind, Expedition, ExpeditionMission,
-    ExpeditionPhase, FollowPolicy, Improvement, KnowledgeFragment, LaborAllocation,
-    LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause, PendingMigration,
-    PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield, StartingUnit, Tile,
-    TownCenter, TradeLink, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
+    ElementKind, Expedition, ExpeditionMission, ExpeditionPhase, Improvement, KnowledgeFragment,
+    LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
+    PendingMigration, PopulationCohort, PowerNode, ResidentBand, Settlement, SourceYield,
+    StartingUnit, Tile, TownCenter, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD,
+    NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use creatures_config::{
@@ -148,13 +149,13 @@ pub use expedition_config::{
 };
 pub use fauna::{
     advance_herd_grazing, advance_herds, advance_husbandry, advance_predation, build_prey_index,
-    carnivore_k_at, forecast_expected_take, herd_capacity, herd_ecology, herd_herders_needed,
-    herd_hunt_yield, herded_fraction, herders_needed, hunt_credit_ceiling, hunt_policies_for,
-    hunt_policy_rate, hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt,
-    project_realized_hunt, quantise_animal_take, repopulate_fauna, spawn_initial_herds, AnimalTake,
-    EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry, HerdTelemetryEntry, PreyDatum,
-    RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID, FULLY_HERDED, HERDING_DISCOVERY_ID,
-    MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
+    carnivore_k_at, escapement_ceiling, forecast_expected_take, herd_capacity, herd_ecology,
+    herd_herders_needed, herd_hunt_yield, herded_fraction, herders_needed, hunt_escapement_ceiling,
+    hunt_source_yield_preview, pen_upkeep, project_arrivals_hunt, project_realized_hunt,
+    quantise_animal_take, repopulate_fauna, spawn_initial_herds, species_requires_denial,
+    AnimalTake, EcologyPhase, Herd, HerdDensityMap, HerdRegistry, HerdTelemetry,
+    HerdTelemetryEntry, PreyDatum, RoamState, SourceYieldForecast, FODDERING_DISCOVERY_ID,
+    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, PENNING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,
@@ -173,12 +174,12 @@ pub use food::{
 pub use forage::{
     advance_cultivation, advance_forage_regrowth, commit_fodder_payoff, commit_payoff,
     commit_trade_payoff, commit_yield_ratio, composition_for_rung, default_species_for_rung,
-    forage_source_yield_preview, patch_composition, patch_provisions_per_biomass,
-    patch_species_quality, plant_policy_forecasts, project_arrivals_forage,
-    project_realized_forage, resolve_committed_species, rung_payoff, rung_site_refusal,
-    spawn_initial_forage, species_is_legal_here, tended_take_fodder, tended_take_trade_goods,
-    tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered, wild_payoff, ForagePatch,
-    ForageRegistry, PlantPolicyForecast, SpeciesRefusal, CANNOT_CLIMB_RATIO,
+    forage_per_worker_biomass, forage_provisions, forage_source_yield_preview, patch_composition,
+    patch_provisions_per_biomass, patch_species_quality, patch_trade_per_biomass,
+    project_arrivals_forage, project_realized_forage, resolve_committed_species, rung_payoff,
+    rung_site_refusal, spawn_initial_forage, species_is_legal_here, tended_take_fodder,
+    tended_take_trade_goods, tile_flora_composition, tile_forage_capacity, tile_is_fresh_watered,
+    wild_payoff, ForagePatch, ForageRegistry, SpeciesRefusal, CANNOT_CLIMB_RATIO,
     CULTIVATION_DISCOVERY_ID, NO_FORAGE_SEASON, SEED_SELECTION_DISCOVERY_ID, WHOLE_BASKET,
 };
 pub use generations::{GenerationBias, GenerationId, GenerationProfile, GenerationRegistry};
@@ -197,10 +198,11 @@ pub use influencers::{
     InfluencerImpacts, InfluentialId, InfluentialRoster, SupportChannel, BUILTIN_INFLUENCER_CONFIG,
 };
 pub use intensification::{
-    knows, load_intensification_ladder_from_env, BuildDips, LadderConfig, LadderConfigHandle,
-    LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef, RungFeeding, RungHarvest,
-    RungKey, RungMovement, RungSiteRequirement, SiteRefusal, BUILTIN_INTENSIFICATION_LADDER,
-    NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE, RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
+    knows, learn_multiplier, load_intensification_ladder_from_env, BuildDips, LadderConfig,
+    LadderConfigHandle, LadderConfigMetadata, RungBehavior, RungBranch, RungBuild, RungDef,
+    RungFeeding, RungHarvest, RungKey, RungMovement, RungSiteRequirement, SiteRefusal,
+    BUILTIN_INTENSIFICATION_LADDER, MANAGED_SOURCE_FLOOR, NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE,
+    RUNG_TIMESCALE_UNSCALED, RUNG_UNSTARTED, SITE_ACCEPTED,
 };
 pub use knowledge_ledger::{
     CounterIntelSweepEvent, EspionageProbeEvent, KnowledgeCountermeasure, KnowledgeLedger,

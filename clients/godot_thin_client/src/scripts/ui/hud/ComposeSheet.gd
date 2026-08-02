@@ -40,6 +40,9 @@ class_name ComposeSheet
 ## can never disagree about whether a sheet is open.
 signal closed
 
+## The card's NOMINAL width — what it reads at when the content fits inside it, and the floor it can
+## never go below. It is deliberately NOT a cap: see `refit`, where the width is fitted to the content
+## exactly as the height is.
 const CARD_WIDTH := 340.0
 const CARD_MIN_HEIGHT := 120.0
 ## THERE IS DELIBERATELY NO `CARD_MAX_HEIGHT` — see `refit`, which declares the ceiling per fit.
@@ -64,6 +67,9 @@ const DISMISS_BUTTONS: Array[int] = [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUS
 
 var _card: AutoSizingPanel = null
 var _header: RichTextLabel = null
+## The header ROW (title + ✕), kept because it sits OUTSIDE the scrolled body and therefore has to be
+## measured beside it: a long subject name is content the card must be wide enough for too.
+var _header_row: HBoxContainer = null
 var _body: VBoxContainer = null
 var _scroll: ScrollContainer = null
 ## The global rect of the card that summoned this sheet; the sheet opens BESIDE it (see `_place_card`).
@@ -101,7 +107,8 @@ func _ready() -> void:
 	column.add_theme_constant_override("separation", HEADER_SEPARATION)
 	panel.add_child(column)
 
-	column.add_child(_build_header_row())
+	_header_row = _build_header_row()
+	column.add_child(_header_row)
 
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -193,6 +200,7 @@ func refit() -> void:
 	var chrome := card_style.content_margin_top + card_style.content_margin_bottom \
 		+ _header.get_combined_minimum_size().y + HEADER_SEPARATION + CARD_EXTRA_PADDING
 	_sync_to_viewport()
+	_fit_width(card_style)
 	_place_card()
 	# THE CARD'S ONLY CEILING IS THE VIEWPORT. `fit_to_content` already clamps to `min(max_height,
 	# viewport height - global_position.y - bottom_margin)`, so a FIXED pixel `max_height` can only ever
@@ -210,6 +218,34 @@ func refit() -> void:
 	_place_card()
 
 # ---- geometry --------------------------------------------------------------
+
+## **THE CARD IS AS WIDE AS ITS WIDEST ROW, and `CARD_WIDTH` is only where that starts.** The card is
+## an `AutoSizingPanel`, i.e. a plain `Control`, so no child minimum ever reaches it: pinning its rect
+## to a constant does not make the content fit that constant, it just stops the CARD from admitting
+## how wide the content is. What was left was a card whose own rect said 340 while the rows inside it
+## demanded 384 on a local hunt (three intent presets carrying two accounts each) and 529 on a
+## three-account forage patch — the `PanelContainer` that draws the card's background silently grew
+## OUT of the card, and every geometry decision below (`_place_card`'s right-edge clamp and its
+## off-screen fallback) was still being made against 340. The two widest rows are exactly the ones
+## reported cut off in play: the 3-up preset grid and the full-width commit button.
+##
+## So the width is fitted from the content, like the height — the ceiling being the VIEWPORT for the
+## same reason it is there (`refit` above): this card floats, and a fixed pixel cap can only ever bite
+## before the real bound. **Both edges of the card are measured**: the body's rows, and the header row
+## beside them, which is outside the scroll and carries the subject's name.
+##
+## **THE SCROLL GUTTER IS RESERVED UNCONDITIONALLY.** The sheet's ceiling is the viewport, so a taller
+## window or a shorter one turns the internal scrollbar on and off — and the bar is laid over the
+## body's right edge rather than narrowing it, so a gutter reserved only while scrolling would clip
+## the widest rows on the frame it appears and jump the card's width on every fit. Its width is asked
+## of the bar rather than named as a constant.
+func _fit_width(card_style: StyleBoxFlat) -> void:
+	var chrome := card_style.content_margin_left + card_style.content_margin_right
+	var gutter := _scroll.get_v_scroll_bar().get_combined_minimum_size().x if _scroll != null else 0.0
+	var content := maxf(_body.get_combined_minimum_size().x,
+		_header_row.get_combined_minimum_size().x if _header_row != null else 0.0)
+	_card.max_width = maxf(size.x - 2.0 * VIEWPORT_MARGIN, CARD_WIDTH)
+	_card.fit_width(content, chrome + gutter)
 
 ## Pin the catcher to the viewport EXPLICITLY rather than trusting the full-rect anchor preset: the
 ## node is hidden until a compose opens, and a hidden Control's layout does not settle — leaving a
@@ -233,12 +269,16 @@ func _place_card() -> void:
 	var viewport := get_viewport()
 	if viewport != null:
 		bounds = viewport.get_visible_rect().size
+	# The card's FITTED width, never the nominal `CARD_WIDTH` — the sheet is as wide as its content
+	# (see `_fit_width`), so placing it as if it were 340 would hang the widest rows off whichever
+	# edge it was clamped against, which is the same lie in a different place.
+	var card_width := maxf(_card.size.x, CARD_WIDTH)
 	var x := _anchor_rect.end.x + ANCHOR_GAP
-	if _anchor_rect.size == Vector2.ZERO or x + CARD_WIDTH > bounds.x - VIEWPORT_MARGIN:
+	if _anchor_rect.size == Vector2.ZERO or x + card_width > bounds.x - VIEWPORT_MARGIN:
 		x = VIEWPORT_MARGIN
 	var y := _anchor_rect.position.y if _anchor_rect.size != Vector2.ZERO else VIEWPORT_MARGIN
 	y = clampf(y, VIEWPORT_MARGIN, maxf(bounds.y - _card.size.y - VIEWPORT_MARGIN, VIEWPORT_MARGIN))
-	_card.position = Vector2(clampf(x, VIEWPORT_MARGIN, maxf(bounds.x - CARD_WIDTH - VIEWPORT_MARGIN, VIEWPORT_MARGIN)), y)
+	_card.position = Vector2(clampf(x, VIEWPORT_MARGIN, maxf(bounds.x - card_width - VIEWPORT_MARGIN, VIEWPORT_MARGIN)), y)
 
 # ---- input -----------------------------------------------------------------
 

@@ -5,7 +5,7 @@ extends Node
 ## The band drawer + labor-allocation panel read their data from `Hud._selected_unit`, which
 ## is a copy of the MapView unit MARKER built in `MapView._rebuild_unit_markers` (the marker
 ## copies fields explicitly out of the decoded population entry via `entry.get(...)`). Twice
-## now a field the panel reads (`hunt_mode`, then `working_age`/`idle_workers`) was simply
+## now a field the panel reads (`working_age`/`idle_workers`) was simply
 ## never copied into the marker, so the live panel silently read the default (0 / "") even
 ## though the server emitted a real value. Neither ui_preview (sets `_selected_unit` directly)
 ## nor map_preview (map-only) exercises the population-entry → marker path, so it had no
@@ -65,13 +65,12 @@ const PANEL_CONSUMED_KEYS := [
 	"travel_target_x",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"travel_target_y",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"activity",            # roster activity glyph
-	"hunt_mode",           # roster / cancel-hunt label
 	"is_expedition",       # expedition panel gating + distinct marker
 	"expedition_mission",  # expedition panel mission line
 	"expedition_phase",    # expedition marker awaiting state + panel phase line
 	"max_expedition_party_size", # outfit stepper max clamp
 	"expedition_target_herd", # hunt expedition target herd (panel + marker)
-	"expedition_hunt_policy", # hunt expedition policy (panel readout)
+	"expedition_floor", # where a hunt raid stops, as a fraction of K (panel readout)
 	"expedition_carry_cap",   # hunt expedition carry ceiling (panel Carried X / cap)
 	"expedition_eta_turns",           # hunt expedition next-delivery ETA (detail panel Next-delivery line)
 	"expedition_projected_delivery",  # hunt expedition next-delivery forecast (detail panel Next-delivery line)
@@ -159,7 +158,6 @@ const FIXTURE_ENTRY := {
 	"label": "River Band",
 	"morale_cause": 1,
 	"activity": "forage",
-	"hunt_mode": "sustain",
 	"work_range": 2,
 	"hunt_reach": 7,
 	"scout_reveal_radius": 3,
@@ -180,7 +178,7 @@ const FIXTURE_ENTRY := {
 	"expedition_phase": "awaiting",
 	"max_expedition_party_size": 8,
 	"expedition_target_herd": "game_deer_07",
-	"expedition_hunt_policy": "surplus",
+	"expedition_floor": 0.3,
 	"expedition_eta_turns": 6,       # int count → presence + _expect_int
 	"expedition_recurring": true,    # bool → presence + explicit check
 	"home_band_entity": 7777,
@@ -227,12 +225,11 @@ func _ready() -> void:
 	_expect_int(marker, "faction", 0)
 	_expect_int(marker, "morale_cause", 1)
 	_expect_str(marker, "activity", "forage")
-	_expect_str(marker, "hunt_mode", "sustain")
 	_expect_str(marker, "expedition_mission", "scout")
 	_expect_str(marker, "expedition_phase", "awaiting")
 	_expect_int(marker, "max_expedition_party_size", 8)
 	_expect_str(marker, "expedition_target_herd", "game_deer_07")
-	_expect_str(marker, "expedition_hunt_policy", "surplus")
+	_expect_float(marker, "expedition_floor", 0.3)
 	_expect_int(marker, "home_band_entity", 7777)
 	_expect_int(marker, "expedition_viability_warn_turns", 20)
 	_expect_int(marker, "expedition_eta_turns", 6)

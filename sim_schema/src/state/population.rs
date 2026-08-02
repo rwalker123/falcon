@@ -37,8 +37,13 @@ pub struct LaborAssignmentState {
     pub target_y: u32,
     #[serde(default)]
     pub fauna_id: String,
+    /// **WHERE THIS CREW STOPS, as a fraction of the source's `K`** — the whole of what the player
+    /// decides about pressure (`docs/plan_harvest_floor.md` §1), and the authority [`Self::policy`]
+    /// is merely a label for. `0.5` holds a source on its most productive biomass; `0` takes
+    /// everything. `0.0` on a band-wide role (Scout/Warrior), which carries no source to stop short
+    /// of. Appended (append-only).
     #[serde(default)]
-    pub policy: String,
+    pub floor: f32,
     /// **Which named plant a Forage assignment asks a `Cultivate`/`Sow` to commit its patch to**
     /// (Flora Roster S1) — a `flora_config.json` species key, or `""` for *"pick the tile's
     /// dominant legal plant for me"*. Persisted intent, exactly like [`Self::policy`]: it rides the
@@ -181,11 +186,6 @@ pub struct PopulationCohortState {
     /// The command the band is running: one of `idle | harvest | hunt | follow | scout`.
     #[serde(default)]
     pub activity: String,
-    /// The band's hunt/follow mode when pursuing fauna: `single` (one-shot hunt) or the follow
-    /// policy (`sustain | surplus | deplete | eradicate`). Empty string when the band isn't
-    /// pursuing fauna. Lets the client label a cancel button with the specific mode.
-    #[serde(default)]
-    pub hunt_mode: String,
     /// The band's per-source labor allocation (Early-Game Labor, slice 3a): one entry per staffed
     /// Forage tile / Hunt herd / Scout / Warrior demand. Doubles as the client readout and the
     /// rollback-persisted staffing.
@@ -226,11 +226,6 @@ pub struct PopulationCohortState {
     /// `Hunt { fauna_id }`; also shown in the client hunt panel.
     #[serde(default)]
     pub expedition_target_herd: String,
-    /// Hunt mission only: take policy string (`sustain|surplus|deplete|eradicate`; mirrors
-    /// `hunt_mode`). Empty for scout/normal bands. Persisted so a rollback reconstructs
-    /// `Hunt { fauna_id, policy }`; drives the client's per-policy label + policy-picker default.
-    #[serde(default)]
-    pub expedition_hunt_policy: String,
     /// The `BandTravel` destination tile while traveling (`is_traveling` gates it; `0,0` otherwise).
     /// Lets the client draw a destination hex + line from a selected band/expedition. Appended last
     /// in the FlatBuffers table (append-only wire discipline).
@@ -462,6 +457,17 @@ pub struct PopulationCohortState {
     /// Derived per-turn by `advance_predator_raids`. Appended.
     #[serde(default)]
     pub raid_forfeit: f32,
+    /// **Where a hunt expedition's raid stops**, as a fraction of the herd's carrying capacity —
+    /// the raid's whole statement of pressure (`docs/plan_harvest_floor.md`). It governs the take
+    /// *and* the trip's shape: a floor below the food peak leaves more standing than one pack holds,
+    /// so the party runs repeated trips (`systems::raid_is_recurring`).
+    ///
+    /// **`1.0` on a Scout party and on a resident band** — they harvest no herd, and an absent floor
+    /// must not read as *"take everything"*, which is the one value that would be dangerous if a
+    /// reader acted on it. Replaces the retired [`Self::expedition_hunt_policy`]. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub expedition_floor: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

@@ -1,21 +1,34 @@
-//! **A TEMPORARY MEASUREMENT HARNESS — no assertions on gameplay, no shipped behaviour.**
+//! **The harvest-floor property tests, plus the measurement harness they grew out of.**
 //!
-//! It answers one design question with numbers instead of algebra: *where does a fully-staffed
-//! source end up under each of the four harvest stances, on each food web, with and without a build
-//! running* — and it answers it by driving the **shipped** functions turn by turn in the shipped
-//! stage order (Logistics regrowth → Population take → Population build accrual), never by
-//! re-deriving a formula.
+//! It drives a source turn by turn through the **shipped** functions in the shipped stage order
+//! (Logistics regrowth → Population take → Population build accrual), never by re-deriving a formula,
+//! and asserts the two properties the retired four-stance axis violated
+//! (`docs/plan_harvest_floor.md` §9):
+//!
+//! - **turn one is monotone in the floor** — a deeper floor never takes less *now*;
+//! - **the 600-turn total is monotone the other way** — a deeper floor yields less *over time*, for
+//!   every floor at or below `K/2` (`§2`: the sustained take `r·fK·(1−f)` peaks at `f = 0.5`).
+//!
+//! Together those are the trade the arc exists to make real, in both directions. **Every
+//! monotonicity assertion is paired with a liveness one** — a diff-based property improves when the
+//! feature breaks, so ordering alone would pass on a take path that returned zero everywhere.
+//!
+//! The floors are swept as the numbers they are — a labor assignment carries a floor
+//! ([`crate::components::LaborTarget`]), so these tests drive the take path's own argument rather
+//! than a stance that stands for one. [`DESCENDING_FLOORS`] is the ladder they walk, and it reaches
+//! **above** the food peak as well as below it, which the four-stance axis could not express.
 //!
 //! It lives as a submodule of `forage` because the plant half needs `regrow_patch`, which is private
 //! to that module; the animal half needs nothing private and is here only to keep one probe in one
-//! file. Both tests are `#[ignore]`d — run them with:
+//! file. The four **report** functions below are still `#[ignore]`d measurement harnesses — run them
+//! with:
 //!
 //! ```text
 //! cargo test -p core_sim --lib stance_probe -- --ignored --nocapture
 //! ```
 
 use super::*;
-use crate::components::{FollowPolicy, Improvement};
+use crate::components::Improvement;
 use crate::fauna::{
     herd_capacity, herd_ecology, regrow_biomass, EcologyPhase as FaunaEcologyPhase, Herd,
 };
@@ -44,6 +57,10 @@ const SOLE_WORKER: u32 = 1;
 /// Turns each run is driven for. Long enough for every stance on both webs to reach its fixed point
 /// (or its floor) with room to spare — the slowest mover is a mammoth at `r = 0.04`.
 const PROBE_TURNS: u32 = 600;
+
+/// The first simulated turn — the one a "how much do I get NOW" reading is taken on. A named
+/// constant because the loops below are 1-indexed and `1` on its own reads as a magic offset.
+const FIRST_TURN: u32 = 1;
 
 /// The trailing window a run's "settled at" figure is read over: the mean of the last `N` turns, so
 /// a stance that *chatters* around a boundary (plant Surplus at the Allee line) reports its centre
@@ -86,12 +103,27 @@ struct PlantOutcome {
     provisions: f32,
     turns_to_floor: Option<u32>,
     turns_to_leave_thriving: Option<u32>,
+    /// Biomass taken on turn **one**, from a full (`B = K`) stand — the "how much now" half of the
+    /// trade the floor makes.
+    first_turn_take: f32,
+    /// Biomass taken over the whole `PROBE_TURNS` run — the "how much over time" half.
+    total_take: f32,
 }
 
 /// Drive one forage patch forward under one `(stance, improvement)` pair, fully staffed, **without**
 /// ever accruing or completing a build — so the equilibrium reported is the one the ceiling holds
 /// the patch at for as long as that pair is in force.
-fn run_patch(policy: FollowPolicy, improvement: Option<Improvement>) -> PlantOutcome {
+fn run_patch(floor: f32, improvement: Option<Improvement>) -> PlantOutcome {
+    run_patch_with_crew(floor, improvement, FULLY_STAFFED_FORAGERS)
+}
+
+/// [`run_patch`] at a chosen crew size, so the properties can be swept over the labor-bound regime
+/// as well as the ceiling-bound one.
+fn run_patch_with_crew(
+    floor: f32,
+    improvement: Option<Improvement>,
+    foragers: u32,
+) -> PlantOutcome {
     let labor = LaborConfig::builtin();
     let forage = &labor.forage;
     let flora = FloraConfig::builtin();
@@ -108,6 +140,8 @@ fn run_patch(policy: FollowPolicy, improvement: Option<Improvement>) -> PlantOut
     let mut tail_provisions = 0.0;
     let mut turns_to_floor = None;
     let mut turns_to_leave_thriving = None;
+    let mut first_turn_take = 0.0;
+    let mut total_take = 0.0;
 
     for turn in 1..=PROBE_TURNS {
         // Logistics.
@@ -120,8 +154,8 @@ fn run_patch(policy: FollowPolicy, improvement: Option<Improvement>) -> PlantOut
         let provisions = forage_take(
             &mut patch,
             &composition,
-            FULLY_STAFFED_FORAGERS,
-            policy,
+            foragers,
+            floor,
             improvement,
             forage,
             &flora,
@@ -131,6 +165,10 @@ fn run_patch(policy: FollowPolicy, improvement: Option<Improvement>) -> PlantOut
         )
         .to_f32();
         let take = before - patch.biomass;
+        if turn == FIRST_TURN {
+            first_turn_take = take;
+        }
+        total_take += take;
 
         if turns_to_floor.is_none() && patch.biomass <= forage.reseed_floor_fraction * cap {
             turns_to_floor = Some(turn);
@@ -151,6 +189,8 @@ fn run_patch(policy: FollowPolicy, improvement: Option<Improvement>) -> PlantOut
         provisions: tail_provisions / window,
         turns_to_floor,
         turns_to_leave_thriving,
+        first_turn_take,
+        total_take,
     }
 }
 
@@ -166,7 +206,7 @@ struct PlantBuildOutcome {
 /// is the point of parameterising this:** rung 2 (`Cultivate`) requires the patch to be `Thriving`
 /// and to carry a committed crop; rung 3 (`Sow`) requires only the site rule + Seed Selection, so its
 /// `eligible` is unconditional here.
-fn run_plant_build(policy: FollowPolicy, verb: Improvement) -> PlantBuildOutcome {
+fn run_plant_build(floor: f32, verb: Improvement) -> PlantBuildOutcome {
     let labor = LaborConfig::builtin();
     let forage = &labor.forage;
     let flora = FloraConfig::builtin();
@@ -200,11 +240,16 @@ fn run_plant_build(policy: FollowPolicy, verb: Improvement) -> PlantBuildOutcome
 
     for turn in 1..=PROBE_TURNS {
         regrow_patch(&mut patch, forage);
+        let biomass_before = patch.biomass;
+        // The escapement room, PRE-take — the work predicate the labor arm's Cultivate gate reads
+        // (`systems::labor::crew_is_working_the_source`).
+        let standing_above_floor =
+            escapement_ceiling(floor, biomass_before, patch.carrying_capacity);
         let provisions = forage_take(
             &mut patch,
             &composition,
             FULLY_STAFFED_FORAGERS,
-            policy,
+            floor,
             improvement,
             forage,
             &flora,
@@ -217,17 +262,17 @@ fn run_plant_build(policy: FollowPolicy, verb: Improvement) -> PlantBuildOutcome
             provisions_over_build += provisions;
             patch.tended_this_turn = true;
             let eligible = match verb {
-                // The Cultivate arm's gate, minus the knowledge check this probe grants.
-                Improvement::Cultivate => {
-                    patch.ecology_phase == EcologyPhase::Thriving && patch.species.is_some()
-                }
+                // The Cultivate arm's gate, minus the knowledge check this probe grants. The health
+                // gate is gone (`docs/plan_harvest_floor.md` §3.2); the escapement room replaced it.
+                Improvement::Cultivate => standing_above_floor > 0.0 && patch.species.is_some(),
                 // `accrue_field`'s gate is the site rule + Seed Selection and NOTHING else — no
-                // health check, deliberately (sown ground starts Collapsing).
+                // health check and no work predicate, deliberately: sown ground draws nothing.
                 _ => true,
             };
             let accrual = rung.build_accrual(
                 improvement,
                 eligible,
+                floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(rung),
             );
@@ -268,6 +313,10 @@ struct HerdOutcome {
     provisions: f32,
     turns_to_extinction_floor: Option<u32>,
     turns_to_leave_thriving: Option<u32>,
+    /// Biomass killed on turn **one** — the "how much now" half of the trade the floor makes.
+    first_turn_take: f32,
+    /// Biomass killed over the whole `PROBE_TURNS` run — the "how much over time" half.
+    total_take: f32,
 }
 
 /// The biomass a probed herd starts at, as a fraction of `K`. `FULL_HERD` is the honest "healthy
@@ -300,9 +349,27 @@ fn probe_herd(fauna: &FaunaConfig, species_key: &str, start_fraction: f32) -> He
 
 fn run_herd(
     species_key: &str,
-    policy: FollowPolicy,
+    floor: f32,
     improvement: Option<Improvement>,
     start_fraction: f32,
+) -> HerdOutcome {
+    run_herd_with_crew(
+        species_key,
+        floor,
+        improvement,
+        start_fraction,
+        FULLY_STAFFED_HUNTERS,
+    )
+}
+
+/// [`run_herd`] at a chosen crew size, so the properties can be swept over the labor-bound regime as
+/// well as the ceiling-bound one.
+fn run_herd_with_crew(
+    species_key: &str,
+    floor: f32,
+    improvement: Option<Improvement>,
+    start_fraction: f32,
+    hunters: u32,
 ) -> HerdOutcome {
     let fauna = FaunaConfig::builtin();
     let labor = LaborConfig::builtin();
@@ -317,6 +384,8 @@ fn run_herd(
     let mut tail_provisions = 0.0;
     let mut turns_to_extinction_floor = None;
     let mut turns_to_leave_thriving = None;
+    let mut first_turn_take = 0.0;
+    let mut total_take = 0.0;
 
     for turn in 1..=PROBE_TURNS {
         // Logistics.
@@ -327,8 +396,8 @@ fn run_herd(
         // Population.
         let take = hunt_take(
             &mut herd,
-            FULLY_STAFFED_HUNTERS,
-            policy,
+            hunters,
+            floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
             &fauna,
@@ -338,6 +407,10 @@ fn run_herd(
         let provisions = hunt_yield
             .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
             .provisions;
+        if turn == FIRST_TURN {
+            first_turn_take = take.killed_biomass();
+        }
+        total_take += take.killed_biomass();
 
         if turns_to_extinction_floor.is_none() && herd.biomass <= extinction_floor {
             turns_to_extinction_floor = Some(turn);
@@ -358,6 +431,8 @@ fn run_herd(
         provisions: tail_provisions / window,
         turns_to_extinction_floor,
         turns_to_leave_thriving,
+        first_turn_take,
+        total_take,
     }
 }
 
@@ -371,7 +446,7 @@ struct HerdBuildOutcome {
 /// Drive an already-**tamed** herd under `(stance, Corral)` and accrue the rung-3 meter exactly as
 /// `advance_labor_allocation` does. `accrue_corral`'s gate is Penning + the species ceiling +
 /// ownership — **no health check**, so this measures whether a stance can stop a pen being built.
-fn run_corral(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> HerdBuildOutcome {
+fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
     let fauna = FaunaConfig::builtin();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
@@ -391,7 +466,7 @@ fn run_corral(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> H
         let take = hunt_take(
             &mut herd,
             FULLY_STAFFED_HUNTERS,
-            policy,
+            floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
             &fauna,
@@ -407,6 +482,7 @@ fn run_corral(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> H
             let accrual = pen.build_accrual(
                 improvement,
                 eligible,
+                floor,
                 RUNG_TIMESCALE_UNSCALED,
                 full_crew(pen),
             );
@@ -431,7 +507,7 @@ fn run_corral(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> H
 /// Drive a herd under `(stance, Tame)` and accrue the rung-2 meter exactly as
 /// `advance_labor_allocation` does — after the take, gated on the herd being `Thriving` and its
 /// species' husbandry ceiling allowing domestication, at the species' own `taming_rate` timescale.
-fn run_tame(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> HerdBuildOutcome {
+fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutcome {
     let fauna = FaunaConfig::builtin();
     let labor = LaborConfig::builtin();
     let ladder = LadderConfig::builtin();
@@ -448,10 +524,13 @@ fn run_tame(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> Her
 
     for turn in 1..=PROBE_TURNS {
         regrow_biomass(&mut herd, &fauna);
+        // The escapement room, PRE-take and PRE-quantisation — the work predicate the labor arm's
+        // Tame gate reads (`systems::labor::crew_is_working_the_source`).
+        let standing_above_floor = escapement_ceiling(floor, herd.biomass, cap);
         let take = hunt_take(
             &mut herd,
             FULLY_STAFFED_HUNTERS,
-            policy,
+            floor,
             improvement,
             labor.hunt.per_worker_biomass_capacity,
             &fauna,
@@ -463,10 +542,17 @@ fn run_tame(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> Her
                 .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
                 .provisions;
             herd.tamed_this_turn = true;
-            let eligible =
-                herd.can_domesticate() && herd.ecology_phase == FaunaEcologyPhase::Thriving;
-            let accrual =
-                pastoral.build_accrual(improvement, eligible, timescale, full_crew(pastoral));
+            // The Tame arm's gate, minus the knowledge check this probe grants. The health gate is
+            // gone (`docs/plan_harvest_floor.md` §3.2); what replaced it is the **escapement room**,
+            // read pre-take and pre-quantisation, never "an animal died".
+            let eligible = herd.can_domesticate() && standing_above_floor > 0.0;
+            let accrual = pastoral.build_accrual(
+                improvement,
+                eligible,
+                floor,
+                timescale,
+                full_crew(pastoral),
+            );
             if accrual > 0.0 {
                 herd.accrue_domestication(PROBE_FACTION, accrual);
                 if herd.is_domesticated() {
@@ -487,16 +573,265 @@ fn run_tame(species_key: &str, policy: FollowPolicy, start_fraction: f32) -> Her
 
 // ---- Reports ----------------------------------------------------------------------------------
 
-const STANCES: [FollowPolicy; 4] = [
-    FollowPolicy::Sustain,
-    FollowPolicy::Surplus,
-    FollowPolicy::Deplete,
-    FollowPolicy::Eradicate,
-];
+/// The floors the **ignored report harnesses** print a row for — the four the retired stance axis
+/// named, so the measured tables stay comparable with the ones in the rule files. The property tests
+/// above sweep [`DESCENDING_FLOORS`] instead, which reaches above the food peak as well.
+const REPORT_FLOORS: [f32; 4] = [0.5, 0.3, 0.15, 0.0];
+
+// ---- The properties ---------------------------------------------------------------------------
+
+/// **The floor ladder, deepening** — swept as the numbers they are, now that a labor assignment
+/// carries a floor rather than a stance. `1.0` and `0.8` are included because they are reachable and
+/// were not before: a dial can be dragged *above* the food peak, into deliberate under-harvest.
+const DESCENDING_FLOORS: [f32; 6] = [1.0, 0.8, 0.5, 0.3, 0.15, 0.0];
+
+/// *"Take everything"* — the floor-`0` end of the dial, named because `0.0` as a bare argument reads
+/// as an absent value rather than as the deliberate instruction it is.
+const STRIP_IT_BARE: f32 = 0.0;
+
+/// Crew sizes the turn-one property is swept over: **one** worker (labor-bound on any real source),
+/// a small band, and a crew so large the ceiling is the only thing that can bind. The property must
+/// hold in every regime — a take that were monotone only when the ceiling binds would be monotone in
+/// the *crew*, not in the floor.
+const PROBE_CREW_SIZES: [u32; 3] = [1, 8, FULLY_STAFFED_HUNTERS];
+
+/// Nothing may be taken from a source and reported as zero: the paired **liveness** bound every
+/// monotonicity assertion below carries, so an ordering cannot pass by everything collapsing to `0`.
+const SOME_TAKE: f32 = 0.0;
+
+/// **A floor of `1.0` leaves the whole stock standing** — `B − 1.0·K` is `0` at capacity, so the
+/// crew takes nothing. Deliberate under-harvest is a legal instruction the dial can give and the
+/// retired stance axis could not express, so it is swept beside the rest and asserted as the zero it
+/// honestly is rather than being excused from the liveness bound.
+const TAKE_NOTHING_FLOOR: f32 = 1.0;
+
+#[test]
+fn a_deeper_floor_never_takes_less_on_turn_one_on_either_web() {
+    for &crew in &PROBE_CREW_SIZES {
+        // --- The plant web. A full stand, so every floor below `K` has room above it.
+        let plant: Vec<f32> = DESCENDING_FLOORS
+            .iter()
+            .map(|&floor| {
+                run_patch_with_crew(floor, None, crew.min(FULLY_STAFFED_FORAGERS)).first_turn_take
+            })
+            .collect();
+        for (deeper, shallower) in plant.iter().skip(1).zip(plant.iter()) {
+            assert!(
+                *deeper >= *shallower - PROBE_TAKE_EPSILON,
+                "plant, {crew} foragers: a deeper floor must never take LESS on turn one: {plant:?}"
+            );
+        }
+        assert_live_below_capacity(&plant, &format!("plant, {crew} foragers"));
+
+        // --- The animal web, over the whole probe roster (fast breeders to megafauna): the
+        // whole-animal quantiser is where a monotone ceiling could still produce a non-monotone take.
+        for key in PROBE_SPECIES {
+            let animal: Vec<f32> = DESCENDING_FLOORS
+                .iter()
+                .map(|&floor| run_herd_with_crew(key, floor, None, FULL_HERD, crew).first_turn_take)
+                .collect();
+            for (deeper, shallower) in animal.iter().skip(1).zip(animal.iter()) {
+                assert!(
+                    *deeper >= *shallower - PROBE_TAKE_EPSILON,
+                    "{key}, {crew} hunters: a deeper floor must never take LESS on turn one: \
+                     {animal:?}"
+                );
+            }
+            assert_live_below_capacity(&animal, &format!("{key}, {crew} hunters"));
+        }
+    }
+}
+
+/// **The liveness bound that pairs with every turn-one monotonicity assertion** — a full source has
+/// room above every floor *below* `K`, so each of those must take something; the `1.0` end must take
+/// exactly nothing, because that is what "leave it all standing" means.
+///
+/// Stated as one helper because an ordering assertion is satisfied by a list of zeros, and the
+/// interesting failure — a take path that quietly returns `0` everywhere — orders perfectly.
+fn assert_live_below_capacity(takes: &[f32], label: &str) {
+    for (floor, take) in DESCENDING_FLOORS.iter().zip(takes.iter()) {
+        if *floor >= TAKE_NOTHING_FLOOR {
+            assert_eq!(
+                *take, 0.0,
+                "{label}, floor {floor}: leaving the whole stock standing takes nothing: {takes:?}"
+            );
+        } else {
+            assert!(
+                *take > SOME_TAKE,
+                "{label}, floor {floor}: a full source has room above every floor below `K`, so it \
+                 must take something on turn one: {takes:?}"
+            );
+        }
+    }
+}
+
+/// **The other half of the trade, and the PIVOT AT `K/2`** (`docs/plan_harvest_floor.md` §2).
+///
+/// The sustained take at floor `f` is the regrowth there, `r·fK·(1−f)`, which **peaks at `f = 0.5`**.
+/// So the 600-turn total is not monotone across the dial's whole range — it is monotone on each side
+/// of the food peak, and the peak is the answer:
+///
+/// - **below `K/2`** a deeper floor yields LESS over time (the trade against taking more *now*, which
+///   the turn-one test pins);
+/// - **above `K/2`** a shallower floor also yields less — deliberate under-harvest, which the retired
+///   four-stance axis could not express at all and the dial can.
+///
+/// Asserting the peak rather than a one-sided ordering is what makes this test see the model instead
+/// of the four values the old axis happened to name, all of which sat at or below `0.5`.
+///
+/// Read at the fully-staffed crew: the question is what the FLOOR costs over time, so labour must not
+/// be the binding term.
+#[test]
+fn the_six_hundred_turn_total_peaks_at_the_food_peak_on_either_web() {
+    let plant: Vec<f32> = DESCENDING_FLOORS
+        .iter()
+        .map(|&floor| run_patch(floor, None).total_take)
+        .collect();
+    assert_peaks_at_the_food_peak(&plant, "plant");
+    for (floor, total) in DESCENDING_FLOORS.iter().zip(plant.iter()) {
+        if *floor >= TAKE_NOTHING_FLOOR {
+            continue;
+        }
+        assert!(
+            *total > SOME_TAKE,
+            "plant, floor {floor}: a patch reseeds, so every floor below `K` keeps paying \
+             something over {PROBE_TURNS} turns: {plant:?}"
+        );
+    }
+
+    for key in PROBE_SPECIES {
+        let animal: Vec<f32> = DESCENDING_FLOORS
+            .iter()
+            .map(|&floor| run_herd(key, floor, None, FULL_HERD).total_take)
+            .collect();
+        assert_peaks_at_the_food_peak(&animal, key);
+        for (floor, total) in DESCENDING_FLOORS.iter().zip(animal.iter()) {
+            if *floor >= TAKE_NOTHING_FLOOR {
+                continue;
+            }
+            assert!(
+                *total > SOME_TAKE,
+                "{key}, floor {floor}: every floor below `K` delivers SOMETHING over \
+                 {PROBE_TURNS} turns — the deepest one at least strips the source once: {animal:?}"
+            );
+        }
+    }
+}
+
+/// The 600-turn totals rise to the food peak and fall away from it on both sides, and the peak is a
+/// **strict** maximum — a tie would mean the pivot the whole model turns on is not actually there.
+///
+/// `DESCENDING_FLOORS` runs shallow → deep, so the peak's index splits it into a rising tail and a
+/// falling one when read in that order.
+fn assert_peaks_at_the_food_peak(totals: &[f32], label: &str) {
+    let peak = DESCENDING_FLOORS
+        .iter()
+        .position(|floor| *floor == crate::fauna::MSY_BIOMASS_FRACTION)
+        .expect("the swept ladder must contain the food peak, or this asserts nothing");
+    for window in totals[..=peak].windows(2) {
+        assert!(
+            window[1] >= window[0] - PROBE_TAKE_EPSILON,
+            "{label}: above the food peak, a LOWER floor must not yield less over {PROBE_TURNS} \
+             turns — under-harvest is the trade on that side: {totals:?}"
+        );
+    }
+    for window in totals[peak..].windows(2) {
+        assert!(
+            window[1] <= window[0] + PROBE_TAKE_EPSILON,
+            "{label}: below the food peak, a deeper floor must not out-yield a shallower one over \
+             {PROBE_TURNS} turns: {totals:?}"
+        );
+    }
+    let best = totals.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (totals[peak] - best).abs() < PROBE_TAKE_EPSILON,
+        "{label}: the 600-turn total must be MAXIMISED at the food peak `K/2`: {totals:?}"
+    );
+    assert!(
+        totals[peak] > totals[totals.len() - 1] + PROBE_TAKE_EPSILON
+            && totals[peak] > totals[0] + PROBE_TAKE_EPSILON,
+        "{label}: the peak must be strict on both sides, or the trade is not real: {totals:?}"
+    );
+}
+
+/// **Same constant, opposite outcome, both pinned** (`docs/plan_harvest_floor.md` §1.1). `floor = 0`
+/// means *harvest maximally*, and the two food webs answer it differently **by config that already
+/// exists**: a stripped patch is lifted by `reseed_floor_fraction` every turn and comes back; a herd
+/// falls under `extinction_floor` and is gone.
+///
+/// This is the pair that makes "take everything" a web-specific decision rather than one verb with
+/// one meaning — and it is asserted here rather than assumed, because both halves ride the same
+/// `0.02` and a reader would reasonably expect them to behave the same.
+#[test]
+fn floor_zero_strips_a_patch_that_recovers_and_a_herd_that_does_not() {
+    let labor = LaborConfig::builtin();
+    let forage = &labor.forage;
+    let cap = forage.capacity_for(REFERENCE_BIOME);
+
+    // --- The plant web: stripped bare, and still alive there.
+    let stripped = run_patch(STRIP_IT_BARE, None);
+    assert!(
+        stripped.turns_to_floor.is_some(),
+        "a floor-0 gather must actually strip the stand — otherwise the recovery below is vacuous"
+    );
+    assert!(
+        stripped.take_biomass > SOME_TAKE,
+        "…and it keeps paying at the floor rather than dying there — the reseed lift refills it \
+         every Logistics turn, which is the whole reason `floor = 0` is survivable on the plant \
+         web: {} biomass/turn over the trailing window",
+        stripped.take_biomass
+    );
+
+    // Left alone, the same stand climbs back out — no despawn, no permanent dead ground.
+    let mut recovering = ForagePatch::new(UVec2::new(0, 0), cap);
+    recovering.biomass = cap * forage.reseed_floor_fraction;
+    recovering.refresh_ecology_phase(&patch_ecology(&recovering, forage));
+    for _ in 0..PROBE_TURNS {
+        regrow_patch(&mut recovering, forage);
+    }
+    assert_eq!(
+        recovering.ecology_phase,
+        EcologyPhase::Thriving,
+        "a patch driven to floor 0 recovers once the gathering stops: {} of K",
+        recovering.biomass / cap
+    );
+
+    // --- The animal web: the same 0.02, and the herd crosses it. `advance_herds` despawns there
+    // (pinned live in `core_sim/tests/fauna_deplete.rs`); this pins that the take path takes it
+    // under.
+    let fauna = FaunaConfig::builtin();
+    for key in PROBE_SPECIES {
+        let wiped = run_herd(key, STRIP_IT_BARE, None, FULL_HERD);
+        assert!(
+            wiped.turns_to_extinction_floor.is_some(),
+            "{key}: a floor-0 hunt takes the herd under `extinction_floor` ({}), where it disperses",
+            fauna.ecology.extinction_floor
+        );
+        assert!(
+            wiped.total_take > SOME_TAKE,
+            "{key}: …and it is a HARVEST that does it, not an accounting hole: {}",
+            wiped.total_take
+        );
+    }
+}
+
+/// Float slack for a take comparison — a chain of a few multiplications through the conversion rates,
+/// on biomass values in the thousands. Ties are legitimate (two floors both labor-bound take the same
+/// amount), so the comparisons are non-strict and this only covers the rounding.
+const PROBE_TAKE_EPSILON: f32 = 1e-3;
 
 /// The species the animal report covers: a fast breeder, two mid ones, and two slow ones — chosen so
 /// both `husbandry_ceiling: wild` (never tameable) and both tameable ceilings are represented.
 const PROBE_SPECIES: [&str; 5] = ["rabbit", "deer", "boar", "steppe_runner", "mammoth"];
+
+/// The stance ladder printed as what it now is — four escapement floors, in fractions of `K`.
+fn floor_ladder() -> String {
+    REPORT_FLOORS
+        .iter()
+        .map(|floor| format!("{floor:.2}K"))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
 
 fn opt(turn: Option<u32>) -> String {
     turn.map_or_else(|| "-".to_string(), |t| t.to_string())
@@ -517,15 +852,12 @@ fn probe_plant_stances() {
         print!(" {} {:.3}", share.species, share.share);
     }
     println!(
-        "\nr {}  collapse<{}K  stressed<{}K  reseed floor {}K  surplus x{}  deplete {}B  \
-         eradicate {}B  cultivate dip x{}",
+        "\nr {}  collapse<{}K  stressed<{}K  reseed floor {}K  floors {}  cultivate dip x{}",
         labor.forage.ecology.regrowth_rate,
         labor.forage.ecology.collapse_fraction,
         labor.forage.ecology.stressed_fraction,
         labor.forage.reseed_floor_fraction,
-        labor.forage.surplus_multiplier,
-        labor.forage.market.take_fraction,
-        labor.forage.eradicate.take_fraction,
+        floor_ladder(),
         ladder.build_dip(Some(Improvement::Cultivate)),
     );
 
@@ -534,11 +866,11 @@ fn probe_plant_stances() {
         "{:<10} {:>9} {:>9} {:>11} {:>10} {:>10} {:>8} {:>9}",
         "stance", "settles", "final", "phase", "take/turn", "food/turn", "->!thriv", "->floor"
     );
-    for stance in STANCES {
+    for stance in REPORT_FLOORS {
         let out = run_patch(stance, None);
         println!(
             "{:<10} {:>8.3}K {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>9}",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             out.settled_fraction,
             out.final_fraction,
             format!("{:?}", out.phase),
@@ -562,12 +894,12 @@ fn probe_plant_stances() {
         "food/build",
         "B at done"
     );
-    for stance in STANCES {
+    for stance in REPORT_FLOORS {
         let held = run_patch(stance, Some(Improvement::Cultivate));
         let built = run_plant_build(stance, Improvement::Cultivate);
         println!(
             "{:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             held.settled_fraction,
             format!("{:?}", held.phase),
             held.take_biomass,
@@ -590,13 +922,11 @@ fn probe_animal_stances() {
     let ladder = LadderConfig::builtin();
     println!("\n=== ANIMAL WEB — wild herds ({PROBE_TURNS} turns) ===");
     println!(
-        "collapse<{}K  stressed<{}K  extinction floor {}K  surplus x{} MSY  deplete x{} MSY  \
-         tame dip x{}",
+        "collapse<{}K  stressed<{}K  extinction floor {}K  floors {}  tame dip x{}",
         fauna.ecology.collapse_fraction,
         fauna.ecology.stressed_fraction,
         fauna.ecology.extinction_floor,
-        fauna.hunt.surplus_multiplier,
-        fauna.hunt.deplete_multiplier,
+        floor_ladder(),
         ladder.build_dip(Some(Improvement::Tame)),
     );
 
@@ -615,11 +945,11 @@ fn probe_animal_stances() {
             "{:<10} {:>9} {:>9} {:>11} {:>10} {:>10} {:>8} {:>9}",
             "stance", "settles", "final", "phase", "take/turn", "food/turn", "->!thriv", "->floor"
         );
-        for stance in STANCES {
+        for stance in REPORT_FLOORS {
             let out = run_herd(key, stance, None, FULL_HERD);
             println!(
                 "{:<10} {:>8.3}K {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>9}",
-                stance.as_str(),
+                format!("{stance:.2}K"),
                 out.settled_fraction,
                 out.final_fraction,
                 format!("{:?}", out.phase),
@@ -650,12 +980,12 @@ fn probe_animal_stances() {
                 "food/build",
                 "B at done"
             );
-            for stance in STANCES {
+            for stance in REPORT_FLOORS {
                 let held = run_herd(key, stance, Some(Improvement::Tame), start);
                 let built = run_tame(key, stance, start);
                 println!(
                     "  {:<10} {:>8.3}K {:>11} {:>10.3} {:>10.3} {:>8} {:>11} {:>11.2} {:>8.3}K",
-                    stance.as_str(),
+                    format!("{stance:.2}K"),
                     held.settled_fraction,
                     format!("{:?}", held.phase),
                     held.take_biomass,
@@ -697,48 +1027,57 @@ fn probe_build_and_teach_axis() {
         ("animal:pen", RungKey::AnimalPen, Some(Improvement::Corral)),
     ];
 
-    println!("\n=== Part 3 — what each rung TEACHES, per stance (RungDef::knowledge_earned) ===");
-    println!("(`eligible` is the caller's health gate — uniformly `phase == Thriving` at both earn sites)");
+    println!("\n=== Part 3 — what each rung TEACHES, per floor (RungDef::knowledge_accrual) ===");
+    println!("(`eligible` is the caller's 'is anything standing above the floor' gate; the AMOUNT is the floor's, normalised so the food peak is x1.0)");
     println!(
-        "{:<16} {:<10} {:>18} {:>18}",
-        "rung", "stance", "eligible=true", "eligible=false"
+        "{:<16} {:<10} {:>24} {:>18}",
+        "rung", "floor", "eligible=true", "eligible=false"
     );
     for (label, key, _) in rungs {
         let rung = ladder.rung(key);
-        for stance in STANCES {
+        for floor in REPORT_FLOORS {
             println!(
-                "{:<16} {:<10} {:>18} {:>18}",
+                "{:<16} {:<10} {:>24} {:>18}",
                 label,
-                stance.as_str(),
-                rung.knowledge_earned(stance, true)
-                    .map_or("-".to_string(), |id| id.to_string()),
-                rung.knowledge_earned(stance, false)
-                    .map_or("-".to_string(), |id| id.to_string()),
+                format!("{floor:.2}K"),
+                rung.knowledge_accrual(floor, true, &ladder.knowledge)
+                    .map_or("-".to_string(), |(id, amount)| format!(
+                        "{id} @ {amount:.4}"
+                    )),
+                rung.knowledge_accrual(floor, false, &ladder.knowledge)
+                    .map_or("-".to_string(), |(id, amount)| format!(
+                        "{id} @ {amount:.4}"
+                    )),
             );
         }
     }
 
-    println!("\n=== Part 3 — what each rung BUILDS per turn (RungDef::build_accrual) ===");
     println!(
-        "(the stance is NOT an argument — only the improvement and the caller's `eligible` are)"
+        "\n=== Part 3 — what each rung BUILDS per turn, per floor (RungDef::build_accrual) ==="
     );
     println!(
-        "{:<16} {:>10} {:>16} {:>16} {:>10}",
-        "rung", "dip", "accrual eligible", "accrual !eligible", "decay"
+        "(the floor IS an argument now — it paces the build exactly as it paces the lesson; decay takes no floor)"
+    );
+    println!(
+        "{:<16} {:>10} {:<10} {:>16} {:>16} {:>10}",
+        "rung", "dip", "floor", "accrual eligible", "accrual !eligible", "decay"
     );
     for (label, key, verb) in rungs {
         let rung = ladder.rung(key);
-        println!(
-            "{:<16} {:>10} {:>16.4} {:>16.4} {:>10.4}",
-            label,
-            verb.map_or("-".to_string(), |v| format!(
-                "x{}",
-                ladder.build_dip(Some(v))
-            )),
-            rung.build_accrual(verb, true, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
-            rung.build_accrual(verb, false, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
-            rung.build_decay(RUNG_TIMESCALE_UNSCALED),
-        );
+        for floor in REPORT_FLOORS {
+            println!(
+                "{:<16} {:>10} {:<10} {:>16.4} {:>16.4} {:>10.4}",
+                label,
+                verb.map_or("-".to_string(), |v| format!(
+                    "x{}",
+                    ladder.build_dip(Some(v))
+                )),
+                format!("{floor:.2}K"),
+                rung.build_accrual(verb, true, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+                rung.build_accrual(verb, false, floor, RUNG_TIMESCALE_UNSCALED, full_crew(rung)),
+                rung.build_decay(RUNG_TIMESCALE_UNSCALED),
+            );
+        }
     }
 }
 
@@ -754,11 +1093,11 @@ fn probe_rung_three_builds() {
         "{:<10} {:>12} {:>12} {:>9}",
         "stance", "buildturns", "food/build", "B at done"
     );
-    for stance in STANCES {
+    for stance in REPORT_FLOORS {
         let built = run_plant_build(stance, Improvement::Sow);
         println!(
             "{:<10} {:>12} {:>12.2} {:>8.3}K",
-            stance.as_str(),
+            format!("{stance:.2}K"),
             built.turns_to_complete.map_or_else(
                 || format!("never({:.2})", built.progress_at_horizon),
                 |t| t.to_string()
@@ -781,11 +1120,11 @@ fn probe_rung_three_builds() {
             "{:<10} {:>12} {:>12} {:>9}",
             "stance", "buildturns", "food/build", "B at done"
         );
-        for stance in STANCES {
+        for stance in REPORT_FLOORS {
             let built = run_corral(key, stance, FULL_HERD);
             println!(
                 "{:<10} {:>12} {:>12.2} {:>8.3}K",
-                stance.as_str(),
+                format!("{stance:.2}K"),
                 built.turns_to_complete.map_or_else(
                     || format!("never({:.2})", built.progress_at_horizon),
                     |t| t.to_string()

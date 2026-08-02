@@ -33,7 +33,10 @@ extends RefCounted
 ## `tile_info` is the `patch_`-PREFIXED tile cross-ref, not the bare wire patch dict —
 ## `forage_gates_from_patch` below is the bare-keyed twin.
 static func forage_gates(tile_info: Dictionary, knowledge: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
+    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
+    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
+    # remedy's "the more you leave standing" is measured against.
+    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
     var gates := {}
     var cultivate_reasons: Array[String] = []
     var cultivation := track(knowledge, HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION)
@@ -83,7 +86,10 @@ static func sow_site_refusal_reason(tile_info: Dictionary) -> String:
 ## Known gap (pre-existing): no ownership check — the sim's tracks are per-faction, so a herd tamed by
 ## ANOTHER faction reads as available here while the sim rejects the assign.
 static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
-    var sustain_icon := FoodIcons.for_policy(SourceForecast.LABOR_POLICY_SUSTAIN)
+    # The FOOD-PEAK glyph leads every knowledge remedy: practice scales with the floor
+    # (`intensification::learn_multiplier` = floor / the food peak), so the peak is the reference the
+    # remedy's "the more you leave standing" is measured against.
+    var sustain_icon := FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)
     var gates := {}
     var domestication := float(herd.get("domestication", 0.0))
     var tame_reasons: Array[String] = []
@@ -102,7 +108,7 @@ static func hunt_gates(herd: Dictionary, knowledge: Dictionary) -> Dictionary:
         corral_reasons.append(HudFloraVocab.GATE_REASON_HERD_DOMESTICATED_FORMAT % [
             HudFormat.progress_percent(domestication), FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME)])
     if not corral_reasons.is_empty():
-        gates[SourceForecast.LABOR_POLICY_CORRAL] = corral_reasons
+        gates[SourceForecast.IMPROVEMENT_CORRAL] = corral_reasons
     return gates
 
 ## The BARE-KEYED twin of `forage_gates`, for the raw wire patch dict (`forage_patch_lookup`) rather
@@ -269,5 +275,27 @@ static func _ready(policy: String) -> Dictionary:
 ## One faction-knowledge track's 0..1 progress out of the caller's `knowledge` dict, 0.0 when absent.
 ## A missing track is "not learned", never "learned" — an absent key must gate, not open, or a
 ## snapshot that omits a track would silently unlock every rung it guards.
+## **THE KNOWLEDGE TRACK EACH RUNG GATES ON** — one knowledge per transition (`§4.3`), so this is a
+## map and not a search. It is what lets a caller tell a knowledge gate apart from a SOURCE gate
+## without reading the reason's words.
+const RUNG_KNOWLEDGE_TRACKS := {
+    SourceForecast.IMPROVEMENT_CULTIVATE: HudFloraVocab.KNOWLEDGE_TRACK_CULTIVATION,
+    SourceForecast.IMPROVEMENT_SOW: HudFloraVocab.KNOWLEDGE_TRACK_SEED_SELECTION,
+    SourceForecast.IMPROVEMENT_TAME: HudFloraVocab.KNOWLEDGE_TRACK_HERDING,
+    SourceForecast.IMPROVEMENT_CORRAL: HudFloraVocab.KNOWLEDGE_TRACK_PENNING,
+}
+
+## **Is this rung blocked on KNOWLEDGE specifically?** — the same `track < KNOWLEDGE_COMPLETE` test the
+## gate builders above make, asked on its own so a caller can drop the knowledge reason without
+## matching its text. The gate builders append the knowledge reason FIRST, so when this answers `true`
+## the reason to drop is `reasons[0]`.
+##
+## Its one caller is the compose sheet, where that reason is BOTH redundant and vacuous: the aside
+## states the same lesson live and quantified, and the remedy ("forage a wild patch to learn it") names
+## the very work the sheet is composing. Every other surface keeps it — see `labor-ui.md`.
+static func knowledge_gate_unmet(rung: String, knowledge: Dictionary) -> bool:
+    var key := String(RUNG_KNOWLEDGE_TRACKS.get(rung, ""))
+    return key != "" and track(knowledge, key) < HudConst.KNOWLEDGE_COMPLETE
+
 static func track(knowledge: Dictionary, key: String) -> float:
     return float(knowledge.get(key, 0.0))

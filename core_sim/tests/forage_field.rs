@@ -26,10 +26,10 @@ use core_sim::{
     scalar_zero, spawn_initial_forage, spawn_initial_world, tile_flora_composition,
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    FollowPolicy, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
+    ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
+    HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
+    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
+    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
     SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
@@ -47,8 +47,19 @@ fn grant_seed_selection(app: &mut App, faction: FactionId) {
 /// is **ceiling-bound**. (A managed harvest ignores head-count entirely, which is half the point.)
 const FORAGE_WORKERS: u32 = 5000;
 
+/// **One forager**, so the crew's throughput is the binding term rather than the patch's standing
+/// crop. Since `docs/plan_harvest_floor.md` §3.1 the build dip multiplies `workers × per_worker`
+/// rather than the take ceiling, so it is invisible at a staffing the stock binds — a build costs
+/// yield only while hands are the scarce thing.
+const SOLE_FORAGER: u32 = 1;
+
 /// Float slack for provisions comparisons (fixed-point conversion + multiplication order).
 const EPSILON: f32 = 1e-4;
+
+/// **The floor at which `learn_multiplier` is exactly ×1.0** — the food peak, and the floor a fresh
+/// assignment carries. Passed wherever a build rate is read for its *stated* pace rather than for a
+/// floor's fraction of it (`docs/plan_harvest_floor.md` §3).
+const FOOD_PEAK_FLOOR: f32 = core_sim::MSY_BIOMASS_FRACTION;
 
 /// What "pays nothing" means in provisions: freshly sown ground's take is a *fraction of the MSY of a
 /// seed stock below its Allee threshold*, i.e. exactly zero — this is slack for the fixed-point grid,
@@ -225,11 +236,18 @@ fn prime_thriving_patch(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry.patch_mut(coord).unwrap();
-        patch.biomass = patch.carrying_capacity * 0.5;
+        // **Above Sustain's escapement floor** (`K/2`): at the floor exactly a Sustain gather has
+        // nothing standing above it and every rung reads `+0.00`
+        // (`docs/plan_harvest_floor.md` §1), which would make this ladder a comparison of zeros.
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
         patch.ecology_phase = EcologyPhase::Thriving;
     }
     (entity, coord)
 }
+
+/// **The patch's standing crop as a fraction of its capacity** — above Sustain's escapement floor
+/// (`fauna::MSY_BIOMASS_FRACTION`, `K/2`), so a Sustain gather has stock standing above it.
+const STOCKED_STANDING_CROP: f32 = 0.8;
 
 /// The plant a `Sow` on this tile would commit to — the same `default_species_for_rung` answer the
 /// labor arm reaches, so a fixture can put a baseline patch on the *same* crop.
@@ -273,7 +291,18 @@ fn spawn_forager(
     patch: UVec2,
     improvement: Option<Improvement>,
 ) -> bevy::prelude::Entity {
-    let policy = FollowPolicy::Sustain;
+    spawn_forager_of(app, tile, patch, improvement, FORAGE_WORKERS)
+}
+
+/// [`spawn_forager`] with an explicit head-count — the dip test needs a crew the carry binds.
+fn spawn_forager_of(
+    app: &mut App,
+    tile: bevy::prelude::Entity,
+    patch: UVec2,
+    improvement: Option<Improvement>,
+    foragers: u32,
+) -> bevy::prelude::Entity {
+    let policy = 0.5;
     app.world
         .spawn((
             PopulationCohort {
@@ -281,7 +310,7 @@ fn spawn_forager(
                 current_tile: tile,
                 size: 30,
                 children: scalar_zero(),
-                working: scalar_from_f32(FORAGE_WORKERS as f32),
+                working: scalar_from_f32(foragers as f32),
                 elders: scalar_zero(),
                 stores: LocalStore::new(),
                 morale: scalar_one(),
@@ -308,10 +337,10 @@ fn spawn_forager(
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: patch,
-                        policy,
+                        floor: policy,
                         species: None,
                     },
-                    workers: FORAGE_WORKERS,
+                    workers: foragers,
                     improvement,
                 }],
                 ..Default::default()
@@ -377,6 +406,7 @@ fn field_build(app: &App) -> (f32, f32) {
         field.build_accrual(
             Some(Improvement::Sow),
             true,
+            FOOD_PEAK_FLOOR,
             RUNG_TIMESCALE_UNSCALED,
             field
                 .build_crew_needed()
@@ -624,9 +654,13 @@ fn the_plant_ladder_climbs_wild_then_tended_then_field() {
 }
 
 /// **Sowing a patch that is already tended still costs the rung's dip.** Upgrading rung 2 → rung 3 is
-/// a Cultivate-shaped verb like every other rung-transition: the source pays only a fraction of what
-/// it would otherwise hand you while the crew works. (On bare ground that fraction is a fraction of
+/// a Cultivate-shaped verb like every other rung-transition: the crew carries only a fraction of
+/// what it would otherwise bring home while it works. (On bare ground that fraction is a fraction of
 /// nothing — see above; here it bites a real harvest.)
+///
+/// **Both crews are [`SOLE_FORAGER`]**, because `docs/plan_harvest_floor.md` §3.1 put the dip on
+/// crew throughput: a crew the standing crop binds pays nothing for the build, so the cost is only
+/// observable where hands are the scarce thing.
 #[test]
 fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     let mut app = spawn_world();
@@ -650,7 +684,11 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     // crop**: a Sow commits the ground to one named plant (Flora Roster S1), which changes its
     // conversion rate, so an uncommitted baseline would be measuring the commitment rather than the
     // rung's dip.
-    let tended_yield = {
+    // `turns == 0` measures the FIRST harvest of an untouched patch — the accumulated stock above the
+    // escapement floor, which is the number the dip is a fraction of on the very same turn. A
+    // positive `turns` runs it that many turns first and measures the last one: the STEADY rate, the
+    // only fair comparison against a Field that has itself been worked for a while.
+    let tended_baseline = |turns: u32, foragers: u32| {
         let mut baseline = spawn_world();
         let (tile, coord) = prime_thriving_patch(&mut baseline);
         let crop = default_sowable_species(&baseline, coord);
@@ -661,21 +699,52 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
             patch.owner = Some(FactionId(0));
             patch.species = crop;
         }
-        spawn_forager(&mut baseline, tile, coord, None);
-        baseline.world.run_system_once(advance_labor_allocation);
-        provisions_f32(&mut baseline)
+        spawn_forager_of(&mut baseline, tile, coord, None, foragers);
+        if turns == 0 {
+            baseline.world.run_system_once(advance_labor_allocation);
+            return provisions_f32(&mut baseline);
+        }
+        run_turns_with_forage(&mut baseline, turns);
+        let before = provisions_f32(&mut baseline);
+        run_turns_with_forage(&mut baseline, 1);
+        provisions_f32(&mut baseline) - before
     };
+    // Measured at the SAME crew the dip is measured at, or the ratio would be between two staffings
+    // rather than between building and gathering.
+    let tended_yield = tended_baseline(0, SOLE_FORAGER);
 
-    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
-    app.world.run_system_once(advance_labor_allocation);
-    let while_sowing = provisions_f32(&mut app);
-    assert!(
-        (while_sowing - dip * tended_yield).abs() < EPSILON,
-        "upgrading pays the rung's dip on the tended harvest: {while_sowing} vs {}",
-        dip * tended_yield
-    );
+    // **The dip, measured in its own world at [`SOLE_FORAGER`].** It has to be a separate run: the
+    // rung's `crew_needed` is 3, so a lone forager builds at a third of the rate and the completion
+    // half of this test would need three times the turns for reasons that have nothing to do with
+    // the dip.
+    {
+        let mut sparse = spawn_world();
+        let (tile, coord) = prime_thriving_patch(&mut sparse);
+        {
+            let mut registry = sparse.world.resource_mut::<ForageRegistry>();
+            let patch = registry.patch_mut(coord).unwrap();
+            patch.cultivation_progress = 1.0;
+            patch.owner = Some(FactionId(0));
+        }
+        grant_seed_selection(&mut sparse, FactionId(0));
+        spawn_forager_of(
+            &mut sparse,
+            tile,
+            coord,
+            Some(Improvement::Sow),
+            SOLE_FORAGER,
+        );
+        sparse.world.run_system_once(advance_labor_allocation);
+        let while_sowing = provisions_f32(&mut sparse);
+        assert!(
+            (while_sowing - dip * tended_yield).abs() < EPSILON,
+            "upgrading pays the rung's dip on what the same crew would gather: {while_sowing} vs {}",
+            dip * tended_yield
+        );
+    }
 
     // Worked to completion the patch stands on rung 3 — and stops paying the dip.
+    spawn_forager(&mut app, tile, coord, Some(Improvement::Sow));
     let (progress_per_turn, _) = field_build(&app);
     run_turns_with_forage(&mut app, (1.0 / progress_per_turn).ceil() as u32);
     let patch_is_field = app
@@ -688,10 +757,14 @@ fn sowing_a_tended_patch_pays_the_dip_then_upgrades_it() {
     let before = provisions_f32(&mut app);
     run_turns_with_forage(&mut app, 1);
     let after_completion = provisions_f32(&mut app) - before;
+    // Against a tended patch of the SAME age: both have been gathered down to their operating point,
+    // so this compares the two rungs rather than one rung's opening stock against the other's steady
+    // rate (`docs/plan_harvest_floor.md` §1).
+    let tended_steady = tended_baseline((1.0 / progress_per_turn).ceil() as u32, FORAGE_WORKERS);
     assert!(
-        after_completion > tended_yield,
+        after_completion > tended_steady,
         "once the Field stands the dip stops and it out-pays the patch it replaced: \
-         {after_completion} vs {tended_yield}"
+         {after_completion} vs {tended_steady}"
     );
 }
 
@@ -765,16 +838,15 @@ fn a_completed_field_retires_the_sow_verb_onto_the_harvest_rung() {
     );
     let LaborTarget::Forage {
         tile: sown_tile,
-        policy,
+        floor,
         species,
     } = &assignment.target
     else {
         panic!("completion must not change the target's KIND: {assignment:?}");
     };
     assert_eq!(
-        *policy,
-        FollowPolicy::Sustain,
-        "the crew's stance is left exactly as the player set it (issue #442)"
+        *floor, 0.5,
+        "the crew's floor is left exactly as the player set it (issue #442)"
     );
     assert_eq!(*sown_tile, coord, "the same ground");
     assert_eq!(

@@ -48,12 +48,18 @@ const POLICY_PICKER_PADDING_H := 6
 # what it pays"), so they must read as a stacked pair rather than as two rows of a list.
 const POLICY_PICKER_FACE_SEPARATION := 1
 
+# **A PRESET IS A SHORTCUT TO A VALUE, NOT THE SUBJECT OF THE PANEL.** The rung name used to carry no
+# size override at all, so it rendered at Godot's default control size (this project ships no
+# replacement theme) — which made three buttons the LOUDEST thing on a sheet whose subject is the
+# chart below them and the numbers below that. Reported from play. Both lines are stepped down
+# together, keeping the one-step gap between them: the name still LEADS and the numbers still SUPPORT,
+# but the pair now sits under the readout's answer rather than over it.
+const POLICY_PICKER_NAME_FONT_SIZE := 12
+
 # The metric line's type, ONE STEP under the rung name's. The name LEADS and the numbers SUPPORT: at a
 # single size `0.32 food · 0.08 trade` competed with `♻ Sustain` for the same glance instead of
-# answering it. The name line carries no size override at all, so it stays exactly the size the
-# button's own `text` rendered at before the face became child Labels (Godot's default control font
-# size, this project shipping no replacement theme) — one less number to keep in step.
-const POLICY_PICKER_METRIC_FONT_SIZE := 13
+# answering it.
+const POLICY_PICKER_METRIC_FONT_SIZE := 11
 
 # …and one step QUIETER, as an alpha on whatever colour the rung's state gives line 1
 # (`HudStyle.button_font_color`), never a colour of its own. Deriving it is what keeps the two lines
@@ -379,6 +385,17 @@ const WORK_UNASSIGN_CONFIRM_FORMAT := "Return all %d sources' workers to idle? S
 const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
 
 const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
+
+# The MANAGED plant row's twin. A Tended Patch or a Field is never gather-drawn, so its crew tends it;
+# the board says so in the same two nouns the compose sheet uses. Keyed by the crew label
+# `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot disagree about
+# what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still `forage`.
+const WORK_ROW_TEND_FORMAT := "Tend (%d, %d)"
+
+const WORK_ROW_PLANT_FORMATS := {
+    HudComposeVocab.FORAGE_CREW_LABEL: WORK_ROW_FORAGE_FORMAT,
+    HudComposeVocab.TEND_CREW_LABEL: WORK_ROW_TEND_FORMAT,
+}
 
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 

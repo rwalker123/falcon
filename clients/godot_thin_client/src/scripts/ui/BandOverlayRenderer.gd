@@ -285,7 +285,7 @@ func draw_worked_source_marks(radius: float, origin: Vector2) -> void:
 						# A DETACHED PARTY BUILDS NOTHING — it follows the herd and hauls food home,
 						# so its improvement axis is structurally empty and its quarry's badge can
 						# only ever show a rung on OFFER, never one under way (issue #442). It carries
-						# a hunt STANCE (`expedition_hunt_policy`), which the rung answers never read.
+						# an escapement FLOOR (`expedition_floor`), which the rung answers never read.
 						_draw_worked_mark(qcol, qrow, qkey, HUNT_WORKED_COLOR, selected, radius, origin)
 						_queue_source_badge(qcol, qrow, qkey, LABOR_KIND_HUNT, qherd,
 							SourceForecast.IMPROVEMENT_NONE, int(crew[qkey]), radius, origin)
@@ -541,7 +541,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				continue
 			# (The worked ring itself is drawn by `draw_worked_source_marks`, for EVERY player band.)
 			# Forage patch: label the take. The ⚠ overhunt flag is the sim-answered `overdraws` bool
-			# (policy-driven, false for Sustain), NOT the client-derived `actual > sustainable` — mirrors
+			# (it answers the crew's own floor), NOT the client-derived `actual > sustainable` — mirrors
 			# `SourceForecast.source_yield_readout`. Sustain reads plain green; a Surplus/Deplete/Eradicate patch
 			# trips ⚠.
 			if show_yields and (entry.has("realized_yield") or entry.has("actual_yield")):
@@ -550,7 +550,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 				# The trade component rides along for the one-slot rule in `_draw_yield_label`; a
 				# forage patch normally pays food, so it changes nothing here.
 				_queue_yield_label(fcenter, _entry_realized_yield(entry), forage_overdraw, radius,
-					String(entry.get("policy", "")), _entry_realized_trade(entry))
+					_entry_floor_glyph(entry), _entry_realized_trade(entry))
 		elif kind == LABOR_KIND_HUNT:
 			var herd := _view._herd_by_id(String(entry.get("fauna_id", "")))
 			var herd_col := int(entry.get("target_x", -1))
@@ -570,7 +570,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 			# the Band panel's hunt-headline rule in `SourceForecast.source_yield_readout` (which now reads
 			# `realized_yield` for both hunt and forage), so the map label and the Band panel can never
 			# disagree. Falls back to the old `sustainable_yield` if `realized_yield` is absent. The
-			# overhunt ⚠ flag is the sim-answered `overdraws` bool (policy-driven, false for Sustain) —
+			# overhunt ⚠ flag is the sim-answered `overdraws` bool (it answers the crew's own floor) —
 			# NOT `actual > sustainable`, which false-positives on a kill turn when a banked animal spikes.
 			if show_yields and (entry.has("realized_yield") or entry.has("sustainable_yield")):
 				var hlabel := _label_anchor(eff_col + _view._wrapped_col_delta(band_col, herd_col), herd_row,
@@ -580,7 +580,7 @@ func draw_band_work_highlights(radius: float, origin: Vector2) -> void:
 					else float(entry.get("sustainable_yield", 0.0))
 				# An INEDIBLE quarry's steady food rate is honestly 0 (issue #337), so the label falls
 				# through to its trade rate rather than announcing the pack is worth nothing.
-				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, String(entry.get("policy", "")),
+				_queue_yield_label(hlabel, hunt_rate, overhunt, radius, _entry_floor_glyph(entry),
 					_entry_realized_trade(entry))
 
 	# 5. Optimistic PENDING actions for this band (dashed amber): a just-issued assign/move that
@@ -842,14 +842,22 @@ func _entry_realized_trade(entry: Dictionary) -> float:
 ## a deer glyph landing squarely on the number). Callers queue here; `flush_yield_labels` renders the
 ## batch at the very END of `_draw`, on top of everything. The far-zoom LOD gate stays at the CALL
 ## SITE (`show_yields`), so a suppressed label is never queued and deferral can't bypass it.
-func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "",
+## The assignment's harvest MARK — its floor's zone glyph, the same one the Band panel's work row
+## draws, so a worked source reads alike on the map and in the panel. `assign_labor` always carries a
+## floor and the decoder always inserts it, so an absent one means the wire never described this
+## assignment; the sim's own default is then the honest reading.
+func _entry_floor_glyph(entry: Dictionary) -> String:
+	return FoodIcons.for_floor_zone(SourceForecast.floor_zone(
+		float(entry.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))))
+
+func _queue_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
 		trade: float = 0.0) -> void:
 	_deferred_yield_labels.append({
 		"tile_center": tile_center,
 		"value": value,
 		"overhunt": overhunt,
 		"radius": radius,
-		"policy": policy,
+		"floor_glyph": floor_glyph,
 		"trade": trade,
 	})
 
@@ -861,21 +869,28 @@ func flush_yield_labels() -> void:
 	_deferred_source_badges.clear()
 	for label in _deferred_yield_labels:
 		_draw_yield_label(label["tile_center"], label["value"], label["overhunt"], label["radius"],
-			label["policy"], float(label.get("trade", 0.0)))
+			label["floor_glyph"], float(label.get("trade", 0.0)))
 	_deferred_yield_labels.clear()
 
 ## A small drop-shadow per-source yield label above a worked tile's center (reuses `_draw_marker_glyph`
 ## for legibility over terrain). Food-income green normally; WARN amber + a `⚠` suffix when `overhunt`.
-## `policy` (the assignment's take policy) appends the shared `FoodIcons` policy glyph — the SAME icon
-## the Hud policy-picker buttons show — so the worked source reads "+0.38 ♻" on the map; "" = no glyph.
+## `floor_glyph` is a RESOLVED GLYPH, appended verbatim after the rate — the floor-zone mark
+## (`_entry_floor_glyph`), the same one the Hud's floor-picker buttons and the work board's mark column
+## show, so a worked source reads "+0.38 ♻" on the map; "" = no glyph.
+##
+## **IT IS APPENDED, NEVER LOOKED UP AGAIN.** This parameter was named `policy` and ran back through
+## `FoodIcons.for_policy` — a table keyed on the four IMPROVEMENT verbs since #442, which a floor-zone
+## glyph is never a key of — so the lookup answered `""` and **the map drew no harvest mark at all**.
+## A glyph resolved once and re-resolved is a mark that silently disappears the next time either table
+## is re-keyed; the argument arrives resolved and is spent as-is.
 ##
 ## ONE COMPONENT ONLY, and deliberately so (issue #337): a hunt pays food AND trade goods, but a map
-## label sits on a hex a few pixels wide beside a policy glyph and a ⚠ — there is no room for a second
+## label sits on a hex a few pixels wide beside a floor mark and a ⚠ — there is no room for a second
 ## rate. It shows the one the species PAYS: food when there is food (every edible quarry and every
 ## forage patch, so this is unchanged for them), else the trade rate marked with
 ## `FoodIcons.TRADE_GOODS_GLYPH` so it can never be misread as food. A hunted wolf pack therefore reads
 ## `⇄+0.12 ⇊` rather than the `+0.00` that said the pack was worth nothing.
-func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, policy: String = "",
+func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radius: float, floor_glyph: String = "",
 		trade: float = 0.0) -> void:
 	var text := _format_yield_signed(value)
 	if absf(value) < YIELD_LABEL_COMPONENT_MIN and trade >= YIELD_LABEL_COMPONENT_MIN:
@@ -884,9 +899,8 @@ func _draw_yield_label(tile_center: Vector2, value: float, overhunt: bool, radiu
 	if overhunt:
 		text += " " + YIELD_OVERHUNT_FLAG
 		color = HudStyle.WARN
-	var policy_icon := FoodIcons.for_policy(policy)
-	if policy_icon != "":
-		text += " " + policy_icon
+	if floor_glyph != "":
+		text += " " + floor_glyph
 	var font_size := clampi(int(radius * YIELD_LABEL_SIZE_FACTOR), YIELD_LABEL_MIN_FONT, YIELD_LABEL_MAX_FONT)
 	var label_center := tile_center + Vector2(0.0, -radius * YIELD_LABEL_OFFSET_FACTOR)
 	# Dark rounded plate behind the text so the label pops on ANY terrain (bare text washed out on the

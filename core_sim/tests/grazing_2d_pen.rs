@@ -24,12 +24,12 @@ use core_sim::{
     advance_graze_regrowth, advance_herd_grazing, advance_herds, advance_husbandry,
     advance_labor_allocation, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_graze,
     spawn_initial_herds, spawn_initial_world, CommandEventLog, CultureManager,
-    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, FollowPolicy,
-    ForageRegistry, GenerationId, GenerationRegistry, GrazePatch, GrazeRegistry, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment,
-    LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
-    MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SizeClass,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    DiscoveryProgressLedger, FactionId, FactionInventory, FaunaConfigHandle, ForageRegistry,
+    GenerationId, GenerationRegistry, GrazePatch, GrazeRegistry, Herd, HerdDensityMap,
+    HerdRegistry, HerdTelemetry, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
+    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
+    SimulationConfig, SimulationTick, SizeClass, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
     RUNG_COMPLETE,
 };
@@ -237,7 +237,7 @@ fn spawn_keeper(app: &mut App, herd_id: &str, tile: UVec2) -> Entity {
                 assignments: vec![LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: herd_id.to_string(),
-                        policy: FollowPolicy::Sustain,
+                        floor: 0.5,
                     },
                     workers: KEEPER_WORKERS,
                     improvement: None,

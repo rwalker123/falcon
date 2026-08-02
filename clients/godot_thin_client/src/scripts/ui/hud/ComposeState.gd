@@ -10,7 +10,7 @@ extends RefCounted
 ## THREE GROUPS, deliberately kept apart:
 ##   • `forage_*` — the tile card's "assign foragers" block. Read/written inside ONE builder.
 ##   • `hunt_*`   — the herd drawer's "assign hunters/herders" block. Two reads leak out of its
-##                  builder (`_herd_crew_noun`, the improvement control's deal) — see `hunt_policy()`.
+##                  builder (`_herd_crew_noun`, the improvement control's deal) — see `hunt_floor()`.
 ##   • `party_*`  — the Band panel's PARTIES-zone compose sheet (quarry + autofill). It is NOT drawer
 ##                  state, so it sits in its own section and can travel to a band-panel extraction
 ##                  without unpicking the drawer's.
@@ -32,11 +32,11 @@ const KIND_HERD := "herd"
 # but a NEW tile re-seeds it from that tile's standing staffing.
 var _forage_key: String = ""
 var _forage_count: int = 0
-# One-shot: set when the player CLICKS a forage policy so the next rebuild auto-fills the worker count
-# to the policy's max-useful cap ("give me everything this patch sustains"). Cleared as soon as it is
+# One-shot: set when the player CLICKS a forage FLOOR PRESET so the next rebuild auto-fills the worker
+# count to that floor's max-useful cap ("give me everything this patch sustains"). Cleared as soon as it is
 # consumed, never set by a −/+ tick, so manual counts survive the rebuild.
 var _forage_autofill := false
-var _forage_policy: String = ""
+var _forage_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 # **THE SECOND AXIS** (issue #442) — the improvement this compose will COMMIT TO on the patch, or
 # `IMPROVEMENT_NONE` for "build nothing". Seeded from the standing assignment's own `improvement` when
 # the source changes, then toggled by the improvement checkbox; committing sends its own verb beside
@@ -52,7 +52,7 @@ var _forage_band: int = -1
 # ---- Hunt compose (the herd drawer's "assign hunters/herders" block) -----------------------------
 var _hunt_key: String = ""
 var _hunt_count: int = 0
-var _hunt_policy: String = ""
+var _hunt_floor: float = SourceForecast.DEFAULT_HARVEST_FLOOR
 # The hunt twin of `_forage_improvement` — same contract, the animal ladder's verbs.
 var _hunt_improvement: String = ""
 # The hunt twin of `_forage_autofill` — same one-shot contract.
@@ -61,22 +61,23 @@ var _hunt_band: int = -1
 
 # ---- Party compose (the Band panel's PARTIES zone — NOT drawer state) ----------------------------
 # The quarry the party compose sheet is aimed at (a world herd id), "" until one is picked. It is the
-# FIRST question the hunt form asks, because the herd sets the useful party size, the per-policy take
+# FIRST question the hunt form asks, because the herd sets the useful party size, the per-floor take
 # and the trip length — everything below it in the form.
 var _party_quarry_id: String = ""
 # The sheet's OWN autofill one-shot. Deliberately NOT `_hunt_autofill`: sharing it would let one
-# surface's policy click refill the other surface's stepper.
+# surface's floor click refill the other surface's stepper.
 var _party_autofill := false
 
 # ---- The open sheet's subject identity -----------------------------------------------------------
 var _kind: String = KIND_NONE
 var _subject: String = ""
 
-## Both policy fields start on the caller's default rung (`SourceForecast.DEFAULT_HUNT_POLICY`), passed in
-## rather than mirrored here so the policy vocabulary lives in exactly one place.
-func _init(default_policy: String) -> void:
-	_forage_policy = default_policy
-	_hunt_policy = default_policy
+## Both floors start on the caller's default (`SourceForecast.DEFAULT_HARVEST_FLOOR` — the food peak,
+## which is also what the sim assumes for a command carrying no floor token), passed in rather than
+## mirrored here so the number lives in exactly one place.
+func _init(default_floor: float) -> void:
+	_forage_floor = SourceForecast.clamp_floor(default_floor)
+	_hunt_floor = SourceForecast.clamp_floor(default_floor)
 
 # ---- Forage read accessors -----------------------------------------------------------------------
 
@@ -86,8 +87,8 @@ func forage_key() -> String:
 func forage_count() -> int:
 	return _forage_count
 
-func forage_policy() -> String:
-	return _forage_policy
+func forage_floor() -> float:
+	return _forage_floor
 
 func forage_species() -> String:
 	return _forage_species
@@ -102,25 +103,25 @@ func forage_band() -> int:
 # ---- Forage mutators -----------------------------------------------------------------------------
 
 ## A DIFFERENT tile is being composed: adopt its key and default the actor band. Re-seeding the
-## count/policy/crop is a SECOND step (`seed_forage`) because the caller has to resolve the actual
+## count/floor/crop is a SECOND step (`seed_forage`) because the caller has to resolve the actual
 ## band dict — possibly falling back — before it can read that band's standing staffing.
 func begin_forage_source(key: String, band_entity: int) -> void:
 	_forage_key = key
 	_forage_band = band_entity
 
-## Re-seed the composed count + policy from the newly-resolved band's staffing on the new tile. The
+## Re-seed the composed count + floor from the newly-resolved band's staffing on the new tile. The
 ## crop selection is cleared with them: a crop pick belongs to the PATCH it was made on, and a new
 ## tile has a different basket.
 ## `improvement` re-seeds from the standing assignment's OWN second-axis field, so a patch already
 ## being cultivated opens with its box checked rather than looking untouched.
-func seed_forage(count: int, policy: String, improvement: String) -> void:
+func seed_forage(count: int, floor: float, improvement: String) -> void:
 	_forage_count = count
-	_forage_policy = policy
+	_forage_floor = SourceForecast.clamp_floor(floor)
 	_forage_improvement = improvement
 	_forage_species = ""
 
 ## Forget which tile the forage compose belongs to, so the NEXT render takes the source-changed path
-## and re-seeds count/policy/crop from the band's standing staffing. (`""` matches no real "x,y" key.)
+## and re-seeds count/floor/crop from the band's standing staffing. (`""` matches no real "x,y" key.)
 ## The preview harnesses' way of staging a fresh compose without faking a selection change.
 func reset_forage_source() -> void:
 	_forage_key = ""
@@ -128,8 +129,8 @@ func reset_forage_source() -> void:
 func set_forage_band(entity: int) -> void:
 	_forage_band = entity
 
-func set_forage_policy(policy: String) -> void:
-	_forage_policy = policy
+func set_forage_floor(floor: float) -> void:
+	_forage_floor = SourceForecast.clamp_floor(floor)
 
 func set_forage_count(count: int) -> void:
 	_forage_count = count
@@ -140,7 +141,7 @@ func set_forage_species(species: String) -> void:
 func set_forage_improvement(improvement: String) -> void:
 	_forage_improvement = improvement
 
-## Arm the auto-fill one-shot (a policy CLICK, never a stepper tick).
+## Arm the auto-fill one-shot (a floor CLICK, never a stepper tick).
 func arm_forage_autofill() -> void:
 	_forage_autofill = true
 
@@ -156,7 +157,7 @@ func clamp_forage_count(cap: int) -> void:
 	_forage_count = clampi(_forage_count, 0, cap)
 
 ## Re-resolve the composed crop through `resolver`, which takes the CURRENT selection and answers the
-## still-legal one (a policy switch changes which plants this rung can take). The read-modify-write is
+## still-legal one (a rung switch changes which plants it can take). The read-modify-write is
 ## the model's; the crop RULES stay with the caller, so this holds no flora knowledge.
 func resolve_forage_species(resolver: Callable) -> void:
 	_forage_species = String(resolver.call(_forage_species))
@@ -171,13 +172,13 @@ func hunt_count() -> int:
 
 ## PUBLIC beyond the herd drawer: `_herd_crew_noun` and the improvement control's deal (which prices
 ## its dip against the held STANCE — issue #442) read it from outside the
-## builder. (An earlier note here also claimed `build_policy_picker` fell back to THIS policy when
+## builder. (An earlier note here also claimed the picker fell back to THIS value when
 ## given no explicit selection, letting a work-inspector or party-compose render inherit the drawer's
 ## rung. That branch was DEAD CODE and is gone — `selected` is a required param and the picker reads
 ## no compose state at all. The claim was never true in practice; it was asserted from the branch's
 ## presence without checking any caller could reach it.)
-func hunt_policy() -> String:
-	return _hunt_policy
+func hunt_floor() -> float:
+	return _hunt_floor
 
 func hunt_band() -> int:
 	return _hunt_band
@@ -195,9 +196,9 @@ func begin_hunt_source(key: String, band_entity: int) -> void:
 
 ## Re-seed the composed count + stance + improvement from the newly-resolved band's staffing on the
 ## new herd — the hunt twin of `seed_forage`.
-func seed_hunt(count: int, policy: String, improvement: String) -> void:
+func seed_hunt(count: int, floor: float, improvement: String) -> void:
 	_hunt_count = count
-	_hunt_policy = policy
+	_hunt_floor = SourceForecast.clamp_floor(floor)
 	_hunt_improvement = improvement
 
 ## The hunt twin of `reset_forage_source` — forget the herd so the next render re-seeds.
@@ -207,8 +208,8 @@ func reset_hunt_source() -> void:
 func set_hunt_band(entity: int) -> void:
 	_hunt_band = entity
 
-func set_hunt_policy(policy: String) -> void:
-	_hunt_policy = policy
+func set_hunt_floor(floor: float) -> void:
+	_hunt_floor = SourceForecast.clamp_floor(floor)
 
 func set_hunt_improvement(improvement: String) -> void:
 	_hunt_improvement = improvement

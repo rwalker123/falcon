@@ -18,7 +18,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` (**no longer the wild biomass→food rate** — since #433 every patch converts at the share-weighted average of its own basket, and this survives as the **empty-basket fallback** plus the rung-3 quality normalization baseline), and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield` — **plus the §0-iii policy axis** `surplus_multiplier` / `market.{take_fraction,trade_goods_multiplier}` / `eradicate.take_fraction`, mirroring fauna's follow/market/hunt levers (**`market.trade_goods_per_biomass` is RETIRED at #433** — the basket's own trade vector is the rate, and `trade_goods_multiplier` became a `Deplete`-*policy* markup on it, applied at rungs 1 and 2 alike) so forage has Sustain/Surplus/Deplete/Eradicate parity with hunting — **plus the Phase 1a `cultivation` block** — the plant ladder's **two rung payoffs (slice 7)**: **`tended_regrowth_gain` (1.0, rung 2 — NEUTRAL since Flora Roster S2, `docs/plan_flora_roster.md` §4.3: a tended stand regrows exactly as fast as wild. It began as the plant twin of `husbandry.pastoral_gain`, but once S1 made competitor-removal explicit a growth boost DOUBLE-COUNTS it, so tending pays through composition + conversion and the rung-2 "wild < tended" guarantee moved to the roster's own bar, `core_sim/tests/flora_roster.rs`; kept as a playtest dial in case a small boost is wanted back)** and **`field_provisions_per_biomass` (0.02, rung 3 — a managed rate on the standing crop, no drawdown, policy axis collapsed, because at rung 3 the source is YOURS)**; both PLAYTEST DIALS. `validate()` still enforces `tended < field`, now `field_provisions_per_biomass > tended_regrowth_gain × regrowth_rate/4 × provisions_per_biomass × tended_conversion_gain`, evaluated at tending's saturated best case so the crop's own rate cancels and the check stays scale-free; the `tended_regrowth_gain` check forbids only the INCOHERENT `< 1.0` (tending grows a stand slower than wild), not `<= 1.0`. **Plus the #433 pair `tended_weeding_gain` (1.5) / `tended_conversion_gain` (2.0)**, both validated finite and `>= 1.0`: the first is how far rung 2 **weeds** the favored species' share (`min(1.0, share × gain)`, the increase taken from the least abundant remaining species first), the second the conversion multiplier on that species' **whole yield vector**. Neither touches `K` — **the land owns `K` and no rung below 4 raises OR lowers it**. The retired `tended_concentration_gain` / `field_concentration_gain` pair multiplied the tile's `K` by `min(1, share × gain)` and **discarded the remainder**, which is the bug #433 fixed. See "Committing a patch to one plant". The retired `tended_provisions_per_biomass` (0.01) made rung 2 a *managed* rate a full rung earlier than the animal side's, so a tended patch could not be over-farmed and every policy paid the identical number (**the plant rung-2 BUILD dials — the old `progress_per_turn`/`decay_per_turn`/`cultivating_yield_fraction` — moved to `intensification_ladder.json`'s `plant:tended` rung**, and in slice 4 **the earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` moved to that file's ladder-level `knowledge` block** too, so both food webs climb *and learn* on the same numbers) (Rung 1a: cultivation is the explicit **`Cultivate` improvement** — while preparing, the patch yields only the `plant:tended` rung's `yield_fraction_while_building ×` the assignment's own stance ceiling (the investment cost; it rode Sustain's unconditionally until issue #442) and accrues that rung's `progress_per_turn`; at 1.0 the completed tended patch is worked place-local, Sustain-gathered at its MSY on the (now neutral, = wild) tended ecology — so a *bare* patch pays exactly wild, and its yield advantage over wild comes from a **committed crop** (weeding + conversion, #433), not a regrowth boost — and goes feral if abandoned. Rung 1b: working a **wild** patch under a stewardship policy earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate verb — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**; the accrual is the ladder's, driven off the rung — see "The knowledge pattern"); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
+| `src/data/labor_config.json` | Early-Game Labor allocation: `band_work_range` (true odd-r **hex-distance** radius of in-range sources — `grid_utils::hex_distance_wrapped`, wrap-aware), `worked_source_sight_range` (fog reveal range around each worked Forage tile / Hunt herd tile in `calculate_visibility`), `hunt_leash_tiles` (extra leashed-follow reach for Hunt), `band_move_tiles_per_turn` (`move_band` speed), `forage` (**depletable-forage** ecology, §0-ii: **`capacity_by_biome`** — the **human food web's** per-biome capacity table, a **total** table (one row per `TerrainType`) mirroring `fauna_config.json`'s `graze.capacity_by_biome` (the *animal* web) row-for-row and meant to **disagree** with it (see "The two food webs"); it replaces the retired flat `carrying_capacity` of 120 — `per_worker_biomass_capacity` gather throughput, `provisions_per_biomass` (**no longer the wild biomass→food rate** — since #433 every patch converts at the share-weighted average of its own basket, and this survives as the **empty-basket fallback** plus the rung-3 quality normalization baseline), and an `ecology` block reusing fauna's `EcologyConfig` — `regrowth_rate` tuned higher than fauna's 0.05, plus `collapse_fraction`/`stressed_fraction` phase bands; supersedes the retired flat `per_worker_yield`; **the whole per-stance lever set — `surplus_multiplier`, `market` (entirely, including its 4× `trade_goods_multiplier`) and `eradicate.take_fraction` — is DELETED by the harvest floor arc**, which replaced four fixed rates with one floor the player carries, after which *no option carries a factor of any kind* (`docs/plan_harvest_floor.md` §4) — **plus the Phase 1a `cultivation` block** — the plant ladder's **two rung payoffs (slice 7)**: **`tended_regrowth_gain` (1.0, rung 2 — NEUTRAL since Flora Roster S2, `docs/plan_flora_roster.md` §4.3: a tended stand regrows exactly as fast as wild. It began as the plant twin of `husbandry.pastoral_gain`, but once S1 made competitor-removal explicit a growth boost DOUBLE-COUNTS it, so tending pays through composition + conversion and the rung-2 "wild < tended" guarantee moved to the roster's own bar, `core_sim/tests/flora_roster.rs`; kept as a playtest dial in case a small boost is wanted back)** and **`field_provisions_per_biomass` (0.02, rung 3 — a managed rate on the standing crop, no drawdown, floor axis collapsed, because at rung 3 the source is YOURS)**; both PLAYTEST DIALS. `validate()` still enforces `tended < field`, now `field_provisions_per_biomass > tended_regrowth_gain × regrowth_rate/4 × provisions_per_biomass × tended_conversion_gain`, evaluated at tending's saturated best case so the crop's own rate cancels and the check stays scale-free; the `tended_regrowth_gain` check forbids only the INCOHERENT `< 1.0` (tending grows a stand slower than wild), not `<= 1.0`. **Plus the #433 pair `tended_weeding_gain` (1.5) / `tended_conversion_gain` (2.0)**, both validated finite and `>= 1.0`: the first is how far rung 2 **weeds** the favored species' share (`min(1.0, share × gain)`, the increase taken from the least abundant remaining species first), the second the conversion multiplier on that species' **whole yield vector**. Neither touches `K` — **the land owns `K` and no rung below 4 raises OR lowers it**. The retired `tended_concentration_gain` / `field_concentration_gain` pair multiplied the tile's `K` by `min(1, share × gain)` and **discarded the remainder**, which is the bug #433 fixed. See "Committing a patch to one plant". The retired `tended_provisions_per_biomass` (0.01) made rung 2 a *managed* rate a full rung earlier than the animal side's, so a tended patch could not be over-farmed and every policy paid the identical number (**the plant rung-2 BUILD dials — the old `progress_per_turn`/`decay_per_turn`/`cultivating_yield_fraction` — moved to `intensification_ladder.json`'s `plant:tended` rung**, and in slice 4 **the earned-knowledge levers `knowledge_progress_per_turn`/`knowledge_completion_threshold` moved to that file's ladder-level `knowledge` block** too, so both food webs climb *and learn* on the same numbers) (Rung 1a: cultivation is the explicit **`Cultivate` improvement** — while preparing, the CREW carries the `plant:tended` rung's `yield_fraction_while_building ×` what a gathering crew of the same size carries — the dip multiplies **crew throughput, never the take ceiling** (`docs/plan_harvest_floor.md` §3.1), so it is floor-independent by construction and a crew big enough to saturate the standing stock pays nothing for it and accrues that rung's `progress_per_turn`; at 1.0 the completed tended patch is worked place-local, gathered to its floor on the (now neutral, = wild) tended ecology — so a *bare* patch pays exactly wild, and its yield advantage over wild comes from a **committed crop** (weeding + conversion, #433), not a regrowth boost — and goes feral if abandoned. Rung 1b: working a **wild** patch under a stewardship policy earns faction **Cultivation** knowledge in the `DiscoveryProgressLedger`, the gate on the Cultivate verb — Sustain itself never tames a patch, and the old `claim_threshold` early-claim is **removed**; the accrual is the ladder's, driven off the rung — see "The knowledge pattern"); see "Cultivation"), `hunt.per_worker_biomass_capacity` (per-hunter take cap; biomass→provisions/trade reuses `fauna_config.hunt.*_per_biomass`), `scout.vantage_distance_base`/`vantage_distance_per_scout`/`vantage_distance_max`/`vantage_range` (staffed scouts post forward-observer vantages in all 6 hex directions and reveal LOS from each in `calculate_visibility`, so they see *around* obstacles). **Validated** — `LaborConfig::validate()` runs inside `from_json_str` (every load path, the `fauna_config.rs` convention), rejecting a **partial / all-zero / negative `forage.capacity_by_biome`** (a missing biome would silently read as an invisible zero-forage dead zone — **zero must be stated, never defaulted**); a broken invariant is logged at **error** level (`labor_config.invalid_rejected`) and the builtin is used |
 ## Pre-commit Yield Forecast (per-source, on the wire)
 
 The **retained yield telemetry** (`SourceYield.actual/sustainable/workers_needed`, above) is
@@ -35,11 +35,10 @@ while a **herd carries them only as the `huntPolicyCeilings` list** (its scalar 
 `(deprecated)` slots — a free-form `policy` string means a new policy needs no schema change, and the
 list and the scalars were provably the same numbers). **Plus the investment rung**:
 
-**`ceilingMarket` → `ceilingDeplete`** (sim-side `SourceYieldForecast::ceiling_deplete`) with the
-policy rename `Market` → `Deplete` — a name change on the *same* FlatBuffers slot, so the wire layout
-is unchanged. The herd's per-policy rows re-key themselves off `FollowPolicy::as_str`, which now
-returns `"deplete"`. The rung is named for its harvest **pressure** rather than a product, because
-every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md` §2.
+**`ceilingMarket` → `ceilingDeplete`** was a name change on the *same* FlatBuffers slot; **every one
+of those scalars, and the per-policy row lists that replaced them, are now retired
+`(deprecated)` slots.** A stance ceiling cannot be enumerated once the player drags a continuous
+floor — see "THE CEILING LISTS ARE RETIRED" below.
 
 > ### THE FORECAST IS A PAIR, not a food scalar (issue #337)
 >
@@ -80,7 +79,8 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 >
 > **THE PLANT SIDE'S TRADE COMPONENT IS `0.0` — a known gap, not a claim.** `forage_forecast` fills
 > `forage::PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` throughout, and `realized_trade` is `0` on every
-> forage source: the `Deplete` gather really does sell (`labor_config`'s `forage.market.*`), the sim
+> forage source: a gather really does sell (the basket's own `patch_trade_per_biomass` — the
+> `forage.market.*` block this line used to cite is **deleted** with the stance axis), the sim
 > simply has not *projected* it — #337 vectorised the animal web, and the plant web's trade forecast is
 > its own arc. The trade a gather **actually earns** is reported (`SourceYield::trade` /
 > `LaborAssignmentState::trade_yield`). It is safe to ship because of the rendering rule below.
@@ -99,62 +99,118 @@ every policy sells the source's trade goods; see `docs/plan_hunt_yield_model.md`
 > herd, so there is no species to resolve a vector from; left unqualified it quotes a wolf's hunters a
 > positive food rate against all-zero food ceilings — a contradiction on the wire. The species-aware
 > rates are the herd's own `perWorkerYield` / `perWorkerTrade`, straight off its `hunt_forecast`, so
-> `min(workers × perWorkerYield, huntPolicyCeilings[p].provisionsPerTurn)` is honest per component.
-> The cohort field survives as the expedition **outfit** lever (rough carry arithmetic before a target
-> is chosen); for a chosen target the sim exports the answer in `huntTripEstimates`.
+> `min(workers × perWorkerYield, ceiling(floor))` is honest per component — and for the *crew* side
+> of the same question the herd carries **`perWorkerBiomass`**, which is positive on a wolf where
+> both the cohort echo and the food rate mislead. The cohort field survives as the expedition
+> **outfit** lever (rough carry arithmetic before a target is chosen); for a chosen target the sim
+> exports the answer in `huntTripEstimates`.
 
-> **The hunt ceilings are the STEADY sustainable per-turn rate — the credit bank drives the lumpy
-> TAKE, not the displayed readout.** `hunt_forecast`'s `ceiling` closure passes `credit = 0.0` to
-> `hunt_credit_ceiling`, so each extractive/investment ceiling is `min(hunt_policy_rate, biomass)` —
-> the sustainable rate the confirmed-allocation row already headlines (`sustainable_yield`) — **not**
-> the credit-inclusive `min(credit + rate, biomass)` this-turn burst the take path cashes. For a slow
-> breeder whose MSY < `body_mass` (e.g. Wild Aurochs, `r ≈ 0.09`) the bank accumulates ~a whole animal,
-> and quoting `credit + rate` inflated every extractive ceiling by that banked amount — reading the Tame
-> dip *above* its own payoff and Sustain *above* Tame, inverting the ladder. Steady, the compose
-> forecast agrees with the resolved headline (no jump between them) and the aurochs ladder reads in
-> order: `Sustain 0.72 < Surplus 1.08 < Deplete 1.80`, Tame dip `+0.36 → payoff +1.44`, Corral payoff
-> `2.88`. **Eradicate is unchanged** (its rate is the whole stock `B`; it bypasses the bank). The take
-> path (`hunt_take` / `hunt_credit_ceiling`) keeps the bank untouched — only the readout is steady.
-> Pinned by `fauna::tests::the_forecast_ceilings_are_the_steady_rate_not_the_banked_burst` (a full-bank
-> herd) and the empty-bank `forecast == actual` tests. **Forage has no credit bank** (foraging is
-> continuous), so `forage_forecast`'s ceilings were already steady `sustainable_yield` — unchanged.
+> **A stance ceiling is now a STOCK, on both webs — `max(0, B − floor·K)`.** Since
+> `docs/plan_harvest_floor.md` slice 1 the four rows on each list are the stock standing above each
+> stance's escapement floor (`fauna::hunt_escapement_ceiling` / `forage::forage_escapement_ceiling`),
+> which is **exactly** what the take path pays: the readout and the take are one call, not two numbers
+> kept in step. The retired steady-rate-vs-banked-burst distinction went with the kill-credit bank the
+> resident take path no longer reads (`Herd::hunt_credit`), and `hunt_forecast`'s
+> `the_forecast_ceilings_are_the_escapement_stock_and_stay_ordered` pins the replacement.
+>
+> **Two readings therefore changed shape, and consumers must not order them against each other:**
+> - **A ceiling row can exceed `sustainable`.** The first harvest of an untouched source is its
+>   accumulated stock, so `actual > sustainable` under *every* stance including Sustain. `sustainable`
+>   stays on the row as the long-run MSY reference; the ⚠ is `components::floor_overdraws`.
+> - **A ceiling row cannot be compared with a rung PAYOFF** (`tendedYield`, `fieldYield`,
+>   `pastoralYield`, `corralYield`). Those are long-run rates and carry `r`; a stance ceiling is
+>   `r`-free (`B − floor·K` is `K/2` on every rung at `B = K`). "Preparing +X → then +Y" is therefore
+>   a stock beside a rate today, which the client's ladder redesign (`docs/plan_harvest_floor.md` §7,
+>   slice 4) resolves.
 
-> ### THE CEILING LISTS ARE FOUR STANCE ROWS; A BUILD DIP IS A FRACTION (issue #442)
+> ### THE CEILING LISTS ARE RETIRED; THE CLIENT COMPOSES THE CURVE (`docs/plan_harvest_floor.md` §5)
 >
-> `foragePolicyCeilings` and `huntPolicyCeilings` carry **one row per `FollowPolicy`, i.e. four**. The
-> `cultivate`/`sow`/`tame`/`corral` rows are gone, and so are the sim-side `ceiling_prepare` /
-> `ceiling_tame` / `ceiling_sow` fields they came from: each of those stated the rung's fraction of the
-> **Sustain** ceiling and nothing else, which was only expressible while a build verb *was* the policy.
+> `foragePolicyCeilings` and `huntPolicyCeilings` are `(deprecated)` slots the sim no longer writes,
+> and so are the scalar `ceiling*` fields before them. **Four rows can answer four questions; a player
+> dragging a continuous floor asks a different one every frame.**
 >
-> The dip now ships as the factor it is — **`ForagePatchState.cultivateBuildFraction` /
-> `sowBuildFraction`** and **`HerdTelemetryState.tameBuildFraction` / `corralBuildFraction`**, each the
-> rung's `yield_fraction_while_building` — and the client composes
+> What ships instead is the **terms**: `biomass`, `carryingCapacity`, the build-dip fractions, and the
+> source's **per-biomass yield vector** (`provisionsPerBiomass` / `fodderPerBiomass` /
+> `tradePerBiomass` — the patch's basket-averaged rates, or the herd's own `HuntYield`). The client
+> composes
 >
 > ```text
-> preparing(stance, rung) = <list>[stance].provisionsPerTurn × <rung>BuildFraction
+> ceiling(floor)        = max(0, B − floor·K) × <account>PerBiomass
+> expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
 > ```
 >
-> Sim-side that is `SourceYieldForecast::ceiling_under(policy, improvement)`, backed by
-> `build_dips: BuildDips` (two slots — rung 2 and rung 3 of the source's own web, since improvements are
-> kind-exclusive). `ceiling_for(policy)` remains the *undipped* stance lookup the four rows publish.
-> Two rungs keep two numbers for `ceiling_tame`'s original reason: the dials are independently tunable
-> and today's equality (0.25/0.25, 0.50/0.50) is a coincidence.
+> **THE BUILD FRACTION MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1).
+> It moved there because dipping the ceiling made a deeper floor build for free — a fraction of a
+> bigger standing stock still filled the crew's baskets, so every stance completed a 25-turn Cultivate
+> on schedule. On throughput it is floor-independent by construction. The client-visible consequence:
+> a crew big enough to saturate the source's stock pays **no** dip, and the remedy for a slow build is
+> to add hands (at the shipped 50% carry, twice as many).
 >
-> **THE DIP IS APPLIED INSIDE THE STANDING-STOCK CLAMP — `min(rate × dip, stock)`, never
-> `min(rate, stock) × dip`.** That is the order both take paths use (`hunt_take` folds the dip into
-> `hunt_policy_rate` and *then* runs `hunt_credit_ceiling`'s biomass clamp; `forage_take` dips inside
-> `forage_policy_ceiling` and *then* clamps to `patch.biomass`), so the forecast has to store the two
-> terms apart: the four `ceiling_*` rows are the **pre-clamp** stance rates and
-> `SourceYieldForecast::stock_cap` is the bound, which `ceiling_for` applies (so the wire value is
-> unchanged) and `ceiling_under` applies *second*. Dipping an already-clamped row under-reports by
-> exactly the ratio the clamp cut, and it is reachable on any drawn-down source under a stance whose
-> rate is biomass-independent — measured on a pastoral `crag_goat` at `B = 0.20·K` under Deplete +
-> Corral: previewed `0.10·K`, paid `0.1375·K`. Pinned web-agnostically by
-> `fauna::tests::the_build_dip_is_applied_inside_the_standing_stock_clamp` and, end to end, by the
-> `hunt_forecast_equals_actual_take…` sweep's **drawn-down** stock level (at `B = K` the clamp never
-> binds, so the sweep could not see the ordering at all). The plant dials cannot reach the window
-> today — Deplete/Eradicate are fractions *of* biomass and Sustain/Surplus are bounded by `r·B` at
-> `r = 0.25` — so that half is latent, not absent.
+> **This is a deliberate, narrow exception to *"the sim exports the answer"*, and the exception is
+> sound for a stated reason.** That rule exists because a hunt take is rounded to WHOLE ANIMALS —
+> `floor(ceiling / bodyMass)` is not linear, so no client can re-derive it and the sim must hand over
+> the result. This expression is different in kind: **linear and exact**, so a client evaluating it
+> lands on the number the sim would. The division of labour is therefore **the client draws the curve,
+> the sim states the take**: `SourceYield.actual` for the *committed* assignment is still the sim's
+> answer, quantisation and all, and the chart is a projection rather than a promise.
+>
+> The dip still ships as the factor it is — **`ForagePatchState.cultivateBuildFraction` /
+> `sowBuildFraction`** and **`HerdTelemetryState.tameBuildFraction` / `corralBuildFraction`**, each the
+> rung's `yield_fraction_while_building`.
+>
+> ### THE BOUNDARY, stated once — it is the thing a future reader will get wrong
+>
+> **Where a closed form exists the sim ships the TERMS and the client evaluates it; where one does
+> not, the sim ships ANSWERS and the client interpolates between them.** The two halves now sit side
+> by side on the same tables, so the line between them has to be legible:
+>
+> | | shape | why |
+> |---|---|---|
+> | escapement ceiling | **terms** — `biomass`, `carryingCapacity`, `*PerBiomass` | `max(0, B − f·K) × rate` is linear and exact; this is what retired the four stance rows |
+> | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
+> | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
+> | raid trip length | **sampled answers** — `huntTripEstimates` × `RAID_FORECAST_FLOOR_SAMPLES` | a bounded forward simulation; there is no expression to hand over |
+> | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |
+>
+> **`regrowthSamples` is sampled, and NOT because the curve is hard to write down.** It is **two
+> different functions**: a patch is pure logistic with a reseed floor and **no Allee term**, a herd has
+> **critical depensation** below `collapse_fraction`. Publishing `r` plus the thresholds would put a
+> second copy of both models in a language with no tests over them, and the drift would be *invisible*
+> — either implementation still draws a plausible chart. Sampled through the same seams the turn uses
+> (`fauna::reseeding_logistic_regrowth` under `patch_ecology`; `fauna::net_biomass_delta` under
+> `herd_ecology`/`herd_capacity`), so the chart and the turn cannot part company.
+>
+> Three panel readings are all this one curve: the *"hold it after"* crew target (the regrowth at the
+> chosen floor over the crew's carry), the verdict line, and the projection under the floor. Two
+> properties are load-bearing and pinned
+> (`snapshot::subsistence::tests::the_plant_curve_never_declines_and_the_animal_curve_does_below_the_allee_point`):
+> the plant curve is **non-negative at every sample** and its `0.0` entry is the **reseed floor's
+> lift**; the herd curve's low samples are **negative**, and a client must render them as decline
+> rather than clamp them — that crash is why floor `0` ends a herd and only sets a patch back. **The
+> peak of the curve IS the food peak** at `K/2` and is deliberately not published separately: one
+> number derived two ways is how the two start disagreeing. The samples are evenly spaced over
+> `0.0..=1.0` of `K`, so the x-axis is implicit; `REGROWTH_CURVE_SAMPLES` is a display-resolution
+> choice, not a model fact, and — like `RAID_FORECAST_FLOOR_SAMPLES` — is named so a set of readings
+> cannot quietly re-become a set of states.
+>
+> Sim-side that is **`SourceYieldForecast::ceiling_at(floor)`** — one computation, which answers *any*
+> floor because the player drags a continuous one. It is backed by the forecast's **terms**
+> (`biomass`, `carrying_capacity`, `per_biomass_yield`) rather than by stored rows: four `ceiling_*`
+> fields could only answer four questions, and every row added was a second place the ceiling was
+> computed.
+>
+> **It takes no `improvement`, and that is what makes the curve composable at all.** With the build
+> dip on crew throughput a ceiling is purely `max(0, B − floor·K) × rate` — linear and exact in terms
+> already on the wire. The dip still ships (`BuildDips` sim-side, the `*BuildFraction` fields on the
+> wire) and is applied by **`fauna::forecast_expected_take`**, which multiplies the crew term; the
+> take path (`forage_take` / `systems::hunt_take`) reads the same `LadderConfig::build_dip` seam, so
+> forecast == actual holds per component with a build in flight
+> (`hunt_yield_vector::the_forecast_equals_the_paid_take_with_a_build_in_flight_at_every_floor`, swept
+> over the floor × both binding regimes × both build verbs).
+>
+> The standing-stock clamp inside `ceiling_at` is **belt-and-braces and inert** — an escapement
+> ceiling is `B − floor·K ≤ B` for any floor `≥ 0` — and kept because a future ceiling that *could*
+> exceed the stock must not silently over-report. `stock_cap` stays populated for wire stability.
 >
 > A **rung-3 managed** source has `stock_cap: None` (it is never drawn down) and reports both
 > fractions as **`0`** (`BuildDips::NOTHING_LEFT_TO_BUILD` → `NO_BUILD_REMAINING_FRACTION`), which is
@@ -183,11 +239,12 @@ component renders only when non-zero, the rule `perWorkerTrade` follows. **Both 
 un-penned `corralYield` projection (`managed_yield`) are the SUSTAINED MSY on the improved ecology** —
 `HuntYield::apply(sustainable_yield(biomass_before_regrowth, carrying_capacity, &{pastoral,pen}_ecology_for(..)))`,
 the long-run rate — **NOT** the one-turn constant-escapement take. Because MSY is `r`-dependent while
-escapement (`max(0, B − K/2)`) is `r`-independent, the sustained form is what makes the ladder visible
-at a single turn: **`ceiling_sustain < pastoral_yield < managed_yield`** (wild `r·K/4` < pastoral
-`r×2.0` < pen `r×4.0`, MSY-capped; measured ≈ 0.5 < 1.0 < 2.0 on a full Wild Boar). The old escapement
-projection read `pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field
-exists for. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
+escapement (`max(0, B − floor·K)`) is `r`-independent, the sustained form is the axis on which the
+ladder is expressible at all: **`pastoral_yield < managed_yield`** (pastoral `r×2.0` < pen `r×4.0`,
+MSY-capped; measured ≈ 1.0 < 2.0 on a full Wild Boar). The old escapement projection read
+`pastoral_yield == managed_yield` (≈ 10 = 10) and could not show the ladder the field exists for.
+**A stance/floor ceiling is NOT on that ladder and must not be ordered against it** — it is a stock
+and these are rates; `B − floor·K` is `K/2` on every rung at `B = K`. **The penned-herd `managed_yield` stays the escapement take** — a live corralled herd hits
 `hunt_forecast`'s `is_corralled()` early-return, which returns `corral_provisions` (the actual
 constant-escapement corral yield), so forecast == actual for a real pen; only the *un-penned
 projection* is the sustained MSY. Pinned by
@@ -195,15 +252,54 @@ projection* is the sustained MSY. Pinned by
 - `perWorkerYield` = food/turn one worker contributes (throughput → provisions; **forage folds in the
   tile's `seasonal_weight`**, as `forage_take` does — it can be `0` in a dead season, so consumers must
   not divide by it; hunt has no seasonal factor).
-- Each `ceiling*` = that policy's food/turn cap, **already clamped to the source's remaining biomass**.
+- **`perWorkerBiomass` = the same throughput in BIOMASS**, before any account conversion:
+  `per_worker_biomass_capacity × seasonal_weight` on a patch (`forage::forage_per_worker_biomass`,
+  `0` in a dead season) and `labor_config.hunt.per_worker_biomass_capacity` on a herd (no seasonal
+  factor). It is the term the **crew** half of the panel divides by — *"clear it now"* is
+  `(B − floor·K) ÷ (carry × dip)` and *"hold it after"* is the regrowth at that floor over the same
+  carry, both arithmetic in biomass.
+  > **It is not a duplicate of `perWorkerYield`, and it must not be re-derived from it.** The
+  > quotient `perWorkerYield ÷ provisionsPerBiomass` is exact and **undefined on precisely the
+  > sources that pay no food** — a sown Field of cotton, flax or hay, and a wolf herd — where the
+  > panel would then be unable to state a crew number at all. A rate that exists on every source
+  > cannot come from two that can both be zero.
+  >
+  > It was absent because a per-worker scalar was held unable to state a *policy-dependent* rate,
+  > which the plant web's trade account then had (`Deplete` marked it up). That markup is deleted
+  > (`docs/plan_harvest_floor.md` §4) and no factor rides the depth of the draw anywhere in the
+  > model, so throughput is policy-blind in fact and one scalar states it honestly.
+  >
+  > **It supersedes `PopulationCohortState.huntPerWorkerProvisions` for a per-herd preview** — see
+  > the trap that field carries, below. It is the same species-aware split `perWorkerYield` /
+  > `perWorkerTrade` already made for the accounts, one level down. The cohort field stays: it is
+  > still the expedition **outfit** lever, quoted before a target is chosen.
+- `ceiling(floor)` = the stock standing above that floor, in food/turn, **already clamped to the
+  source's remaining biomass** (belt-and-braces — an escapement ceiling cannot exceed the stock).
+- **`collapseFraction` / `stressedFraction` = the ecology phase BANDS**, as fractions of
+  `carryingCapacity` — the cut points `fauna::classify_ecology_phase` uses, in **the same units the
+  floor is in**. `ecologyPhase` ships which band a source is in; these ship *where the bands are*,
+  which is what turns them into the chart's background for the floor line: a floor and a phase are
+  the same kind of object.
+  > **Per source, not a global echo, because a herd's bands come from the RUNG it stands on.**
+  > `fauna::herd_ecology` resolves wild / pastoral / pen and the managed blocks carry their own cut
+  > points, so one global pair would be right for plants and wrong for a tamed or penned herd. Each
+  > is read through the *same* seam the phase **word** is classified with (`forage::patch_ecology`,
+  > `fauna::herd_ecology`), and `core_sim/tests/ecology_bands_on_the_wire.rs` pins the two against
+  > **each other** — the published word must be the one the published cuts imply for the published
+  > stock — rather than each against a literal, so a rung's ecology can be retuned without touching
+  > the test and only a genuine disagreement fails.
+  >
+  > On the animal web `collapseFraction` is also the **Allee threshold**: it is where
+  > `regrowthSamples` turns negative. The two fields describe the same cliff from either side.
 - Captured at `output_multiplier = 1.0` (the productivity multiplier is per-band): the client scales
   every field by the acting band's `PopulationCohortState.outputMultiplier` — a linear factor, so
   `max_useful_workers` is invariant to it.
-- Client composition: `expected(workers, policy) = min(workers × perWorkerYield, ceiling[policy])`,
-  `max_useful_workers(policy) = ceil(ceiling[policy] / perWorkerYield)`.
-- **A crew BUILDING something floors that cap**, on both webs, because the take a build is paid is the
-  **dip** and inverting a dip asks for fewer hands than gathering the same source does:
-  `max_useful_workers(stance, rung) = max(ceil(ceiling / perWorker), <crew floor>)`. The herd's floor
+- Client composition: `expected(workers, floor, rung) = min(workers × perWorkerYield ×
+  <rung>BuildFraction, ceiling(floor))`, `max_useful_workers(floor, rung) = ceil(ceiling(floor) /
+  (perWorkerYield × <rung>BuildFraction))`.
+- **A crew BUILDING something floors that cap**, on both webs, because a build's crew is dipped and
+  inverting a dipped throughput could otherwise ask for fewer hands than the rung's own `crew_needed`:
+  `max_useful_workers(floor, rung) = max(ceil(ceiling / (perWorker × dip)), <crew floor>)`. The herd's floor
   is `herdersNeeded` / `herdersNeededIfManaged` (derived from the herd's size) and has shipped for
   slices; the patch's is the appended **`cultivateCrewNeeded` / `sowCrewNeeded`**, the rung's own
   `crew_needed`. **The same number is the build's denominator** — plant accrual is
@@ -211,21 +307,22 @@ projection* is the sustained MSY. Pinned by
   buys the rung's stated build length, and under-staffing costs turns rather than nothing. Sim-side
   the floor is `intensification::source_crew_needed`, one `max()` for both webs **and for both halves
   of the row** — see "The crew floor is ONE definition" below.
-- A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the policy axis
-  collapses**: every ceiling is its managed yield (`SourceYieldForecast::managed`). **The worker cap does
+- A **rung-3 managed source** (a sown **Field** / a **corralled herd**) is *yours*, so **the floor axis
+  collapses**: `ceiling_at` returns its `managed_production` at every floor
+  (`SourceYieldForecast::managed`). **The worker cap does
   not collapse** — `perWorkerYield` is the crew's real throughput, so `max_useful_workers =
   ceil(production / perWorkerYield)` is an honest count that grows with the source (slice 7; it used to
   be a hardcoded `1`, which claimed one worker could carry home whatever the land offered). A **tended
-  patch is NOT this shape** — it is rung 2, a wild stand on a boosted curve, and forecasts policy-live
-  like a wild patch.
+  patch is NOT this shape** — it is rung 2, a wild stand either way, and forecasts floor-live like a
+  wild patch.
 
 **Invariant: forecast == actual — no duplicated yield math.** The forecast and the take path read the
 *same* pure helpers, so the UI can never promise a number the sim won't pay:
-- forage (`forage.rs`): `forage_policy_ceiling` (the 4 stances × the build dip, biomass) · `forage_per_worker_biomass`
+- forage (`forage.rs`): `forage_escapement_ceiling` (the stock standing above the floor, in biomass — **no dip**) · `forage_per_worker_biomass`
   (`per_worker_biomass_capacity × seasonal`) · `forage_provisions` (biomass→provisions ×
   `output_multiplier`) · `tended_provisions` (the tended-patch managed harvest) — all called by both
   `forage_take` / the tended-patch arm of `advance_labor_allocation` **and** `forage_forecast`.
-- fauna (`fauna.rs`): `hunt_policy_rate` (the 4 stances × the build dip) · the species'
+- fauna (`fauna.rs`): `hunt_escapement_ceiling` (the stock standing above the floor — **no dip**) · the species'
   `HuntYield::apply` (which retired the global `hunt_provisions`) ·
   **`managed_yield_biomass`** (the husbandry harvest, via `pen_yield_biomass`) · **`herd_ecology` /
   `herd_capacity`** (which ecology/capacity a herd lives under — *no call site may re-derive either*) —
@@ -235,9 +332,9 @@ projection* is the sustained MSY. Pinned by
 - Guarded across **both products, on the exported snapshot**, by
   `core_sim/tests/hunt_yield_vector.rs` (`the_forecast_equals_the_paid_take_in_both_products_on_the_wire`,
   `a_wolves_exported_ceilings_read_no_food_and_real_trade_on_every_rung`,
-  `the_eradicate_ceiling_carries_the_windfall_for_an_edible_species`), and on the food component by
-  `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_policy_and_staffing`
-  (every policy × labor-bound/ceiling-bound staffing, comparing against the payout of a real
+  `a_composed_ceiling_carries_the_windfall_at_floor_zero`), and on the food component by
+  `systems::labor_yield_tests::{forage,hunt}_forecast_equals_actual_take_for_every_floor_and_staffing`
+  (every sampled floor × labor-bound/ceiling-bound staffing, comparing against the payout of a real
   `advance_labor_allocation` run) and `tended_patch_and_corral_forecast_full_yield_with_one_worker`.
   **Any change to the take math must go through these helpers** — never re-derive a ceiling or a
   biomass→provisions conversion at a call site.
@@ -261,17 +358,18 @@ pre-commit forecast** right after mutating the `LaborAllocation` (`server.rs::se
 what the turn then pays under unchanged conditions — **no jump** — and it is the same number the
 client's compose-time "Expected yield" row promises. Shape:
 - **The expected take** is the one shared helper `fauna::forecast_expected_take(&SourceYieldForecast,
-  workers, policy, improvement) = min(workers × per_worker_yield, forecast.ceiling_under(policy,
-  improvement))` — the stance's ceiling, dipped by whatever the crew is building (`None` is the
-  identity). Once the improvement *completes* the source is `::managed`, whose every ceiling already
-  **is** `managed_yield` and whose dips are the identity, so this one lookup covers both sides of every
-  investment. The client preview, the seed, and the forecast==actual tests all call it.
+  workers, floor, improvement) = min(workers × per_worker_yield × build_dip(improvement),
+  forecast.ceiling_at(floor))` — the crew's throughput, **dipped by whatever it is building**
+  (`None` is the identity), against the ceiling at the **assignment's own floor**. Once the
+  improvement *completes* the source is `::managed`, whose ceiling is its `managed_production` at
+  every floor, so this one lookup covers both sides of every investment. The client preview, the seed,
+  and the forecast==actual tests all call it.
 - The kind-specific seeds `forage::forage_source_yield_preview` / `fauna::hunt_source_yield_preview`
   compose the full row through the shared `forecast_source_yield`: `actual` = the expected take,
   `sustainable` = the same MSY value the resolution path records (a *managed* source — **rung 3 only**
   — reads `sustainable == actual`, no ⚠), `workers_needed` = the same overstaffing signal the resolution
-  path writes (the continuous inversion for a forage patch; the **steady peak-drop carry crew**
-  `hunt_haul_workers` off `SourceYieldForecast::ceiling_under` for a whole-animal source, so the seed
+  path writes (the continuous inversion for a forage patch; the **peak-drop carry crew**
+  `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
@@ -279,14 +377,24 @@ client's compose-time "Expected yield" row promises. Shape:
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`
   stays reachable, and correct, there. Consequence (intended): a fresh assignment now *previews* its
   contribution to the Food-line net rate + the Gathered/Hunted breakdown, and can pre-trip the
-  overdraw ⚠ if the chosen policy would overdraw — ⚠ is a leading flow signal by design.
+  overdraw ⚠ if the chosen floor draws below the food peak (`components::floor_overdraws`) — ⚠ is a
+  leading flow signal by design.
 - `LaborAllocation` now keeps `last_yields` **index-aligned with `assignments`** across every mutation
   (`set_assignment`/`normalize`/`clear` — the snapshot zips the two by index, so a row left behind by a
   removed assignment used to be attributed to the *next* source). New rows default to
   `SourceYield::ZERO`.
+- **A FLOOR change re-seeds too**, not just a staffing change: the floor is a mutable property of the
+  same source (`LaborTarget::same_source` ignores it), so `handle_assign_labor` runs the same seed
+  after replacing the assignment. `changing_the_floor_reseeds_the_expected_yield` sweeps the dial
+  rather than two stances, because a re-seed path that only fired at the four values the retired
+  stance axis named would pass a two-point check and fail in play.
+- **The floor itself fails closed**: `floor_is_valid` (finite, `0.0..=1.0`) rejects an out-of-range
+  value with a command failure instead of clamping, and an absent one becomes
+  `DEFAULT_ESCAPEMENT_FLOOR`. A clamp would turn a typo into a quiet policy change on the one number
+  the harvest model turns on.
 - Guarded by `server::tests::{assigning_forage,assigning_hunt}_workers_seeds_the_expected_yield_before_the_turn`,
   `resolved_{forage,hunt}_yield_equals_the_seeded_yield` (the no-jump property),
-  `changing_the_policy_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
+  `changing_the_floor_reseeds_the_expected_yield`, `a_barren_source_seeds_zero`,
   `unassigning_a_source_drops_its_yield_row`.
 
 ### The crew floor is ONE definition, reachable from BOTH halves of the row

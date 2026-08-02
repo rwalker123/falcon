@@ -76,16 +76,18 @@ const BAND_FIXTURE_DISCLOSURE_TRADE := "trade:904"
 ## and the picker behaves identically on each. What the pair now proves is the other half of that
 ## split — a row that IS building something (`improvement: "corral"`) still lights its STANCE and a
 ## pick still commits immediately, because a stance re-pick no longer touches the build at all.
-const INVESTMENT_ROW_STANCE := "sustain"
+const INVESTMENT_ROW_FLOOR := SourceForecast.FLOOR_FOOD_PEAK
+const INVESTMENT_ROW_PRESET := SourceForecast.FLOOR_PRESET_PEAK
 const INVESTMENT_ROW_IMPROVEMENT := "corral"
 const INVESTMENT_ROW_HERD_ID := "game_aurochs_11"
 ## The crew that mid-build pen owes. Set through `_set_managed_herders`, so BOTH herder counts carry it.
 const INVESTMENT_ROW_HERDERS_NEEDED := 3
-const EXTRACTIVE_ROW_POLICY := "sustain"
+const EXTRACTIVE_ROW_FLOOR := SourceForecast.FLOOR_FOOD_PEAK
+const EXTRACTIVE_ROW_PRESET := SourceForecast.FLOOR_PRESET_PEAK
 const EXTRACTIVE_ROW_HERD_ID := "game_deer_07"
 ## The rung both assertions PRESS. Extractive, so on the investment row it is a genuine "discard the
 ## pen and take at Surplus instead", and on the control row an ordinary change of take.
-const PICKED_RUNG_POLICY := "surplus"
+const PICKED_RUNG_PRESET := SourceForecast.FLOOR_PRESET_STRIP
 
 ## The under-contained managed herd (fauna neglect-escape arc): a Corralled herd that needs 4 herders
 ## but is staffed with only 2, so it sheds animals — the work-board ⚠ / drifting-off note case.
@@ -191,6 +193,214 @@ var _panel: BandCityPanel
 ## The last state `_save`d, so an assertion failure names the frame it fired on.
 var _current_state := "<pre-render>"
 
+
+# ---- LEGACY FIXTURE ADAPTER: the four stances -> the escapement floor ---------------------------
+# Every fixture in this file states a source's take as the retired per-STANCE ceiling table, because
+# that is what the wire carried when they were written. The wire carries the per-biomass yield VECTOR
+# now (`docs/plan_harvest_floor.md` §5) and the client composes `max(0, B - floor*K) x rate` at any
+# floor, so the tables are converted HERE, in one place, rather than by rewriting ~50 literals.
+#
+# **THE CONVERSION PINS THE OLD `sustain` ROW TO THE FOOD PEAK**, which is the honest mapping: Sustain
+# took the herd's renewable yield and the food peak is the floor that pays the most forever. So every
+# frame's headline number at the DEFAULT floor is the number these fixtures were tuned to show, and
+# what changes is that the other two presets now read off one curve instead of four authored rows.
+#
+# `B` and `K` come from the fixture when it carries a usable pair; otherwise they are seeded, because
+# a fixture written before the floor existed had no reason to state a stock the client would divide
+# by. The seeded pair leaves a real spread across the presets (strip 2.25x the peak, learn 0.25x).
+const FIXTURE_CAPACITY := 100.0
+const FIXTURE_STOCK_FRACTION := 0.9
+
+# ---- THE GROWTH TERMS THE FIXTURES PREDATE (slice 4b) -------------------------------------------
+# `perWorkerBiomass` and `regrowthSamples` are wire fields no fixture written before them can carry,
+# and the chart needs BOTH — without a curve it renders nothing at all, which would silently drop the
+# instrument out of ~50 frames. So the adapter seeds them, in the SAME one place it converts the
+# stances, and it is careful about which of the two webs it is standing in for.
+#
+# **THE HARNESS IS STANDING IN FOR THE SIM HERE, and that is the one place a growth model may be
+# written in GDScript.** These constants are the shipped config's (`labor_config.forage.ecology` /
+# `fauna_config.ecology`) and the shapes are the two the sim publishes: a patch is logistic lifted to
+# its reseed floor and therefore NEVER negative, a herd declines at `collapse_rate` below its Allee
+# threshold and therefore IS. A fixture that flattened that asymmetry would let the chart clamp a
+# herd's crash to zero and still look right.
+const FIXTURE_REGROWTH_SAMPLES := 11
+const FIXTURE_PLANT_REGROWTH_RATE := 0.25
+const FIXTURE_ANIMAL_REGROWTH_RATE := 0.05
+const FIXTURE_COLLAPSE_FRACTION := 0.15
+const FIXTURE_COLLAPSE_RATE := 0.20
+const FIXTURE_RESEED_FLOOR_FRACTION := 0.02
+# `per_worker_biomass_capacity` for each web, used only where the fixture's own rates cannot state the
+# throughput (a source that pays no food — the exact case the wire field was added for).
+const FIXTURE_PLANT_PER_WORKER_BIOMASS := 8.0
+const FIXTURE_ANIMAL_PER_WORKER_BIOMASS := 40.0
+
+## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
+## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
+func _floorify(src: Dictionary, prefix: String = "") -> Dictionary:
+	if src.is_empty():
+		return src
+	_floorify_ceilings(src, prefix)
+	_seed_growth_terms(src, prefix)
+	return src
+
+## Is this dict a HERD? A herd carries `species`; a forage patch carries `committed_species` and never
+## a bare one, and the `patch_` prefix settles the tile_info case outright. It decides which growth
+## SHAPE the seeded curve takes, so guessing wrong would hand a patch a herd's crash.
+func _fixture_is_herd(src: Dictionary, prefix: String) -> bool:
+	return prefix == "" and src.has("species")
+
+## Seed `per_worker_biomass` + `regrowth_samples` on a fixture that predates them. Both are skipped
+## when the fixture states its own, so a state authored to exercise a particular curve keeps it.
+func _seed_growth_terms(src: Dictionary, prefix: String) -> void:
+	var is_herd := _fixture_is_herd(src, prefix)
+	if not src.has(prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY):
+		# Recover it from the fixture's own numbers where they can state it — that is EXACT and keeps
+		# every existing frame's expected-yield line unchanged — and fall back to the config's
+		# throughput on a source that pays no food, where the recovery is `0/0`.
+		var rate := float(src.get(prefix + "provisions_per_biomass", 0.0))
+		var per_worker := float(src.get(prefix + "per_worker_yield", 0.0))
+		var carry := (per_worker / rate) if rate > 0.0 and per_worker > 0.0 \
+			else (FIXTURE_ANIMAL_PER_WORKER_BIOMASS if is_herd else FIXTURE_PLANT_PER_WORKER_BIOMASS)
+		src[prefix + SourceForecast.FORECAST_PER_WORKER_BIOMASS_KEY] = carry
+	var capacity := float(src.get(prefix + "carrying_capacity", 0.0))
+	if capacity > 0.0 and not src.has(prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY):
+		var samples := PackedFloat32Array()
+		for i in range(FIXTURE_REGROWTH_SAMPLES):
+			var fraction := float(i) / float(FIXTURE_REGROWTH_SAMPLES - 1)
+			samples.push_back(_fixture_regrowth_delta(fraction, capacity, is_herd))
+		src[prefix + SourceForecast.FORECAST_REGROWTH_SAMPLES_KEY] = samples
+	if not is_herd:
+		return
+	# **THE WHOLE-ANIMAL QUANTUM, IN BIOMASS.** `crew_to_hold` rounds up to one body on this web
+	# (mirroring the sim's `hunt_haul_workers`), and `body_mass` is the term it rounds to — in the same
+	# units as the curve, unlike `food_per_animal`, which is that body already converted to provisions.
+	# Derived from the fixture's own pair on whichever account the species pays, so it cannot disagree
+	# with the rates beside it; a species that pays neither leaves it absent and the rounding is simply
+	# not applied.
+	if src.has(prefix + SourceForecast.FORECAST_BODY_MASS_KEY):
+		return
+	for pair in [["food_per_animal", "provisions_per_biomass"], ["trade_per_animal", "trade_per_biomass"]]:
+		var per_animal := float(src.get(prefix + String(pair[0]), 0.0))
+		var rate := float(src.get(prefix + String(pair[1]), 0.0))
+		if per_animal > 0.0 and rate > 0.0:
+			src[prefix + SourceForecast.FORECAST_BODY_MASS_KEY] = per_animal / rate
+			return
+
+## One sample of the seeded curve: the source's one-turn biomass delta at `fraction` of K.
+func _fixture_regrowth_delta(fraction: float, capacity: float, is_herd: bool) -> float:
+	var stock := fraction * capacity
+	if is_herd:
+		# **THE ANIMAL CURVE GOES NEGATIVE BELOW THE ALLEE POINT.** Past that threshold the herd
+		# declines whether or not it is hunted, which is why floor 0 ENDS a herd on this web.
+		if fraction < FIXTURE_COLLAPSE_FRACTION:
+			return -FIXTURE_COLLAPSE_RATE * stock
+		return FIXTURE_ANIMAL_REGROWTH_RATE * stock * (1.0 - fraction)
+	# **THE PLANT CURVE NEVER DOES.** A stripped stand is lifted to its reseed floor before it
+	# regrows, so the delta at 0 is the lift itself — positive, and the reason a patch comes back.
+	var lift := maxf(stock, FIXTURE_RESEED_FLOOR_FRACTION * capacity)
+	var grown := minf(capacity, lift + FIXTURE_PLANT_REGROWTH_RATE * lift * (1.0 - lift / capacity))
+	return grown - stock
+
+func _floorify_ceilings(src: Dictionary, prefix: String) -> void:
+	var legacy := "hunt_policy_ceilings" if prefix == "" and src.has("hunt_policy_ceilings") \
+		else "forage_policy_ceilings"
+	var rows: Variant = src.get(prefix + legacy, null)
+	if not (rows is Dictionary):
+		_floorify_estimates(src)
+		return
+	var peak_food := float((rows as Dictionary).get("sustain", 0.0))
+	var peak_trade := _legacy_peak(src, prefix, legacy + "_trade" if legacy.begins_with("forage") \
+		else "hunt_policy_trade_ceilings")
+	var peak_fodder := _legacy_peak(src, prefix, "forage_policy_fodder_ceilings")
+	# The stock the ceiling is composed from. Reuse the fixture's own pair when it leaves real room
+	# above the peak; otherwise seed one, since dividing by a zero room would fabricate an infinity.
+	# **A SOURCE WITH A POSITIVE FOOD-PEAK CEILING IS BY DEFINITION ABOVE THE PEAK**, and several
+	# fixtures predate that being expressible: they author a healthy Sustain take on a herd standing
+	# BELOW `K/2`, which the four-row model let them get away with and the one-curve model cannot. The
+	# capacity is kept (the drawer's "Biomass: B / K" pair is a readout of its own) and the stock is
+	# raised to `FIXTURE_STOCK_FRACTION` of it, which is what the authored ceiling was always claiming.
+	var capacity := float(src.get(prefix + "carrying_capacity", 0.0))
+	var biomass := float(src.get(prefix + "biomass", 0.0))
+	# **A SOURCE WITH NO CAPACITY HAS NO FLOOR AXIS AT ALL** — `max(0, B - floor*K)` is `B` at every
+	# floor when `K` is 0, so every preset would quote one number and the picker would silently claim
+	# the dial does nothing. Several fixtures state a stock without one (nothing read it before), so a
+	# capacity is derived from the stock rather than the other way round, which leaves the drawer's
+	# "Biomass" reading untouched.
+	if capacity <= 0.0:
+		capacity = (biomass / FIXTURE_STOCK_FRACTION) if biomass > 0.0 else FIXTURE_CAPACITY
+		src[prefix + "carrying_capacity"] = capacity
+	var room := biomass - SourceForecast.FLOOR_FOOD_PEAK * capacity
+	if room <= 0.0:
+		biomass = FIXTURE_STOCK_FRACTION * capacity
+		room = biomass - SourceForecast.FLOOR_FOOD_PEAK * capacity
+		src[prefix + "biomass"] = biomass
+	src[prefix + "provisions_per_biomass"] = peak_food / room
+	src[prefix + "trade_per_biomass"] = peak_trade / room
+	src[prefix + "fodder_per_biomass"] = peak_fodder / room
+	for key in ["hunt_policy_ceilings", "hunt_policy_trade_ceilings", "forage_policy_ceilings",
+			"forage_policy_trade_ceilings", "forage_policy_fodder_ceilings",
+			"forage_policy_per_worker", "forage_policy_per_worker_trade",
+			"forage_policy_per_worker_fodder"]:
+		src.erase(prefix + key)
+	_floorify_estimates(src)
+
+func _legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
+	var rows: Variant = src.get(prefix + key, null)
+	return float((rows as Dictionary).get("sustain", 0.0)) if rows is Dictionary else 0.0
+
+## The FLOOR each retired stance stood for, so a converted raid table lands on the sim's own sampled
+## floors (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` = 0.0, 0.15, 0.30, 0.50, 0.80). Sustain is the food
+## peak; the other three are the successively deeper draws they named.
+const LEGACY_STANCE_FLOORS := {
+	"sustain": 0.5, "surplus": 0.3, "deplete": 0.15, "eradicate": 0.0,
+}
+
+## Re-key a legacy `"<stance>:<party>"` raid table onto `"<floor>:<party>"`, and put the two fields
+## the client SCANS on each row (`floor` / `party_workers`) — it no longer rebuilds the key, since the
+## real key renders the floor with Rust's float Display.
+func _floorify_estimates(src: Dictionary) -> Dictionary:
+	var estimates: Variant = src.get("hunt_trip_estimates", null)
+	if not (estimates is Dictionary):
+		return src
+	var rekeyed := {}
+	for key in (estimates as Dictionary):
+		var parts := String(key).split(":")
+		if parts.size() != 2:
+			continue
+		var stance := String(parts[0])
+		if not LEGACY_STANCE_FLOORS.has(stance):
+			continue
+		var floor_value := float(LEGACY_STANCE_FLOORS[stance])
+		var party := int(parts[1])
+		var row: Dictionary = (estimates as Dictionary)[key].duplicate()
+		row["floor"] = floor_value
+		row["party_workers"] = party
+		rekeyed["%s:%d" % [str(floor_value), party]] = row
+	src["hunt_trip_estimates"] = rekeyed
+	return src
+
+
+## The harness's ONE gate into the HUD for a source fixture: everything goes through `_floorify`
+## first, so no state can accidentally hand the panel a retired per-stance table (which would render
+## as a silent zero rather than as a failure).
+func _set_world_herds(herds: Array) -> void:
+	for h in herds:
+		if h is Dictionary:
+			_floorify(h)
+	_hud.update_herds(herds)
+
+func _set_forage_patches(patches: Array) -> void:
+	for p in patches:
+		if p is Dictionary:
+			_floorify(p)
+	_hud.update_forage_patches(patches)
+
+
+# A floor BELOW the food peak, for the frames that need "this crew is drawing the source down" — the
+# `deplete`/`surplus` stances these fixtures were written against. It is one of the sim's own raid
+# samples, so a converted raid table lands on a real row rather than an interpolated one.
+const DEEP_DRAW_FLOOR := 0.15
+
 func _ready() -> void:
 	# FREEZE ANIMATION TIME — the treatment `ui_preview`, `map_preview` and `blend_probe` all carry, and
 	# taken for the same reason: a frame that varies run-to-run cannot be pixel-diffed to prove a panel
@@ -281,7 +491,7 @@ func _ready() -> void:
 	# The world's herds (Main pushes snapshot["herds"]): the Current-actions Hunt row names the herd
 	# from here and, on click, jumps to its LIVE tile — the herd has MIGRATED away from the
 	# assignment's launch target (70, 17) to (68, 15), which is exactly what the row must resolve.
-	_hud.update_herds(_herd_fixtures())
+	_set_world_herds(_herd_fixtures())
 	# The world's food modules (Main pushes snapshot["food_modules"]): the Forage row leads with the
 	# module's map glyph (savanna grassland → 🌾 on (71, 18)).
 	_hud.update_food_modules([
@@ -329,7 +539,8 @@ func _ready() -> void:
 	# stay populated (never blank) and show the optimistic "· pending".
 	_hud.show_tile_selection({"x": 5, "y": 5, "terrain_label": "Prairie Steppe", "visibility_state": "active"})
 	print("band_panel_preview: bug2 — _panel_band empty after foreign select? ", _hud._band_labor._panel_band.is_empty())
-	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 6, 71, 18, "", "")
+	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 6, 71, 18, "",
+		SourceForecast.DEFAULT_HARVEST_FLOOR)
 	await _settle()
 	await _save("band_panel_stepper_foreign")
 
@@ -431,7 +642,7 @@ func _ready() -> void:
 	# would mask it) so this frame shows a CONFIRMED row and a PENDING row side by side.
 	_hud._band_labor._pending_labor.clear()
 	_push_bands([_band_fixture()] + _phase_expedition_fixtures())
-	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 4, 72, 19, "", "surplus")
+	_hud._emit_assign_labor(_hud._band_labor._panel_band, "forage", 4, 72, 19, "", DEEP_DRAW_FLOOR)
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
 	await _save("band_panel_status_glyphs")
@@ -458,8 +669,8 @@ func _ready() -> void:
 	# ENABLED, and Scout's `+` still tracks idle. The forecast fields ride the pushed herds/patches.
 	_hud.show_tile_selection({})
 	_hud._band_labor._pending_labor.clear()
-	_hud.update_herds(_cap_demo_herd_fixtures())
-	_hud.update_forage_patches(_cap_demo_patch_fixtures())
+	_set_world_herds(_cap_demo_herd_fixtures())
+	_set_forage_patches(_cap_demo_patch_fixtures())
 	_push_bands([_cap_demo_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	await _settle()
@@ -545,7 +756,7 @@ func _ready() -> void:
 	# board is also where the marks are judged at real density — and, because the shell-threshold
 	# probes below re-render this same band, where they are judged at the narrowest legal column.
 	_hud.update_food_modules(_many_forage_modules())
-	_hud.update_forage_patches(_many_source_patch_fixtures())
+	_set_forage_patches(_many_source_patch_fixtures())
 	_push_bands([_many_sources_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -618,13 +829,13 @@ func _ready() -> void:
 	_assert_zone_content_fits()
 
 	# THE WORK INSPECTOR'S POLICY PICKER — the one control on the board with no frame coverage at all
-	# until it got these (`_work_policy_open` is otherwise never true in either harness). Two rows: one
+	# until it got these (`_work_floor_open` is otherwise never true in either harness). Two rows: one
 	# BUILDING a pen beside one that is not, and the claim is that the picker cannot tell them apart.
 	# The standing-investment WARN line and the discard confirm that used to ride the first row are
 	# gone with issue #442 — a stance re-pick leaves the improvement alone, so there is nothing to warn
 	# about discarding, and both rows take the immediate-emit path the extractive one always did.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
-	_hud.update_herds(_investment_policy_herd_fixtures())
+	_set_world_herds(_investment_policy_herd_fixtures())
 	_push_bands([_investment_policy_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -635,7 +846,7 @@ func _ready() -> void:
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
 	# A BUILDING row lights its STANCE like any other — the state that used to light nothing.
-	_assert_lit_rung(INVESTMENT_ROW_STANCE)
+	_assert_lit_rung(INVESTMENT_ROW_PRESET)
 	_assert_policy_pick_confirms(INVESTMENT_ROW_HERD_ID, false)
 	# THE OTHER HALF OF "a stance re-pick leaves the improvement alone": the pick must also not DROP it.
 	# The frame above judges what is DRAWN; this judges what the edit WRITES, which no PNG can show — a
@@ -649,9 +860,9 @@ func _ready() -> void:
 	await _save("band_panel_work_policy_extractive")
 	_assert_zones_within_bounds()
 	_assert_zone_content_fits()
-	_assert_lit_rung(EXTRACTIVE_ROW_POLICY)
+	_assert_lit_rung(EXTRACTIVE_ROW_PRESET)
 	_assert_policy_pick_confirms(EXTRACTIVE_ROW_HERD_ID, false)
-	_hud._bandpanel._work_policy_open = false
+	_hud._bandpanel._work_floor_open = false
 	_hud._bandpanel._toggle_work_inspector(_hud._bandpanel._work_open_key)
 
 	# UNDER-CONTAINED managed herd in the WORK board (fauna neglect-escape arc): a Corralled herd that
@@ -659,7 +870,7 @@ func _ready() -> void:
 	# WHEREVER it is listed — here, on its work row — with the established overhunt ⚠ (amber marks +
 	# amber severity stripe) and the "Too few herders — animals are drifting off." note in the
 	# inspector, not only in its own drawer.
-	_hud.update_herds(_under_herded_work_herd_fixtures())
+	_set_world_herds(_under_herded_work_herd_fixtures())
 	_push_bands([_under_herded_work_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -681,8 +892,8 @@ func _ready() -> void:
 	_hud.update_intensification([{"faction": 0,
 		"cultivation": 1.0, "seed_selection": 1.0, "herding": 1.0, "penning": 1.0}])
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
-	_hud.update_forage_patches(_ready_patch_fixtures())
-	_hud.update_herds(_ready_herd_fixtures())
+	_set_forage_patches(_ready_patch_fixtures())
+	_set_world_herds(_ready_herd_fixtures())
 	_push_bands([_ready_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -718,7 +929,7 @@ func _ready() -> void:
 	# under the ⚠ that says a 3rd herder is needed (the playtest report). Both cap twins now floor on
 	# `SourceForecast.herd_crew_floor`, so the row's `+` reaches the crew the sim is asking for — and the
 	# assertion states that as the twin invariant, which a PNG structurally cannot carry.
-	_hud.update_herds(_herder_floor_herd_fixtures())
+	_set_world_herds(_herder_floor_herd_fixtures())
 	_push_bands([_herder_floor_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -737,8 +948,8 @@ func _ready() -> void:
 	# (L) shell puts all five in one column at `WORK_COLUMN_MIN_WIDTH`, which is also where the label's
 	# remaining width is judged.
 	_hud.update_food_modules(_rung_forage_modules())
-	_hud.update_forage_patches(_rung_patch_fixtures())
-	_hud.update_herds(_rung_herd_fixtures())
+	_set_forage_patches(_rung_patch_fixtures())
+	_set_world_herds(_rung_herd_fixtures())
 	_push_bands([_rung_band_fixture()])
 	_panel.set_dock(SIDE_LEFT)
 	_panel.set_active_tab(&"work")
@@ -769,15 +980,15 @@ func _ready() -> void:
 	# and shell-threshold states below re-render `_many_sources_band_fixture`, so leaving the five rung
 	# patches installed would strip the marks back off exactly the frames that judge them at the
 	# narrowest legal column.
-	_hud.update_herds(_herd_fixtures())
-	_hud.update_forage_patches(_many_source_patch_fixtures())
+	_set_world_herds(_herd_fixtures())
+	_set_forage_patches(_many_source_patch_fixtures())
 	_push_bands([_band_fixture()])
 
 	# The parties COMPOSE sheet, QUARRY-FIRST. With a quarry picked the whole hunt form resolves: the
 	# policy rungs carry their ascending per-policy metric, the party stepper caps at the raid's
 	# max-useful plateau, the trip forecast reads, and the Send button takes its verdict.
 	_hud.update_food_modules([{"x": 71, "y": 18, "module": "savanna_grassland", "kind": "gather"}])
-	_hud.update_herds(_quarry_herd_fixtures())
+	_set_world_herds(_quarry_herd_fixtures())
 	_push_bands([_scout_expedition_fixture(), _band_fixture(), _hunt_expedition_fixture()])
 	_assert_quarry_eligibility()
 	_panel.set_active_tab(&"parties")
@@ -798,14 +1009,14 @@ func _ready() -> void:
 	# launch picker is the ONE surface that renders `SEND_HUNT_POLICY_HINTS` verbatim, and Eradicate's
 	# line must describe the whole-stock haul, the currency the SPECIES pays (meat, ⇄ trade goods, or
 	# both — the raid banks its trade half too now) and the permanent end state, never "delivers no food".
-	_hud._bandpanel._send_hunt_policy = "eradicate"
+	_hud._bandpanel._send_hunt_floor = SourceForecast.FLOOR_MIN
 	_hud._bandpanel.rerender()
 	await _settle()
 	await _save("band_panel_compose_hunt_eradicate")
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
-	_hud._bandpanel._send_hunt_policy = SourceForecast.DEFAULT_HUNT_POLICY
+	_hud._bandpanel._send_hunt_floor = SourceForecast.DEFAULT_HARVEST_FLOOR
 
 	# The same sheet with NO quarry yet: the "Choose…" row, the hint, a disabled Send — and nothing
 	# below it, since policy/party/forecast are all unanswerable without a herd.
@@ -844,7 +1055,7 @@ func _ready() -> void:
 	# Next-delivery detail, mirroring the work board's row → inspector.
 	_hud.show_tile_selection({})
 	_hud._band_labor._pending_labor.clear()
-	_hud.update_herds(_herd_fixtures())
+	_set_world_herds(_herd_fixtures())
 
 	# (a) WIDE shell (bottom dock): the strip renders in the height-capped T/B shell too → the
 	# DELIVERING party's "Next delivery: ~14 food in 6 turns". Reuses the work-heavy band fixture (the
@@ -884,7 +1095,7 @@ func _ready() -> void:
 	# home). The Target row also carries the target's live position so the player can SEE which herd the
 	# party is bound to. Render all three parties + assert every line. `_world_herds` = _herd_fixtures():
 	# game_deer_07 (@68,15) + game_deer_79 (@64,11); the LOST party targets an absent id.
-	_hud.update_herds(_herd_fixtures())
+	_set_world_herds(_herd_fixtures())
 	_push_bands([
 		_band_fixture(), _hunt_expedition_fixture(), _lean_hunt_expedition_fixture(),
 		_lost_hunt_expedition_fixture(),
@@ -1579,12 +1790,12 @@ func _ready_band_fixture() -> Dictionary:
 	band["entity"] = 940
 	band["id"] = "Band 12"
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 3, "workers_needed": 3, "policy": "sustain",
+		{"kind": "forage", "workers": 3, "workers_needed": 3, "floor": 0.5,
 			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
-		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": "ready_tamed", "target_x": 70, "target_y": 17,
 			"actual_yield": 0.30, "sustainable_yield": 0.30},
-		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": "ready_never", "target_x": 69, "target_y": 19,
 			"actual_yield": 0.20, "sustainable_yield": 0.20},
 	]
@@ -1643,11 +1854,11 @@ func _investment_policy_band_fixture() -> Dictionary:
 	band["entity"] = 912
 	band["id"] = "Band 9"
 	band["labor_assignments"] = [
-		{"kind": "hunt", "workers": 3, "workers_needed": 3, "policy": INVESTMENT_ROW_STANCE,
+		{"kind": "hunt", "workers": 3, "workers_needed": 3, "floor": INVESTMENT_ROW_FLOOR,
 			"improvement": INVESTMENT_ROW_IMPROVEMENT,
 			"fauna_id": INVESTMENT_ROW_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 0.75, "sustainable_yield": 0.75},
-		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": EXTRACTIVE_ROW_POLICY,
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": EXTRACTIVE_ROW_FLOOR,
 			"fauna_id": EXTRACTIVE_ROW_HERD_ID, "target_x": 69, "target_y": 19,
 			"actual_yield": 0.20, "sustainable_yield": 0.20},
 		{"kind": "scout", "workers": 1},
@@ -1690,7 +1901,7 @@ func _under_herded_work_band_fixture() -> Dictionary:
 	band["id"] = "Band 18"
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": 2, "workers_needed": UNDER_HERDED_WORK_HERDERS_NEEDED,
-			"policy": "sustain",
+			"floor": 0.5,
 			"improvement": "corral",
 			"fauna_id": UNDER_HERDED_WORK_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": 5.40, "sustainable_yield": 5.40, "overdraws": false},
@@ -1723,7 +1934,7 @@ func _herder_floor_band_fixture() -> Dictionary:
 	band["id"] = "Band 19"
 	band["labor_assignments"] = [
 		{"kind": "hunt", "workers": HERDER_FLOOR_STAFFED,
-			"workers_needed": HERDER_FLOOR_HERDERS_NEEDED, "policy": "sustain",
+			"workers_needed": HERDER_FLOOR_HERDERS_NEEDED, "floor": 0.5,
 			"fauna_id": HERDER_FLOOR_HERD_ID, "target_x": 70, "target_y": 17,
 			"actual_yield": HERDER_FLOOR_SUSTAIN_CEILING,
 			"sustainable_yield": HERDER_FLOOR_SUSTAIN_CEILING, "overdraws": false},
@@ -1785,7 +1996,7 @@ func _assert_herder_floor_row(herd_id: String) -> void:
 	# labor bound; `source_worker_cap_state` is probed on either side of that ceiling.
 	var herd := _hud._band_labor.find_world_herd(herd_id)
 	var forecast := SourceForecast.forecast_inputs(herd, SourceForecast.SOURCE_KIND_HERD,
-		HudComposeVocab.BARE_FORECAST_PREFIX, "sustain")
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK)
 	# `herd_crew_floor` keys on the IMPROVEMENT axis since #442 (it picks the ownership-gated
 	# `herders_needed` or the would-be `herders_needed_if_managed`), so the probe reads the ROW's own
 	# improvement rather than asserting one — that is what keeps the twin comparison honest.
@@ -1844,20 +2055,20 @@ func _rung_band_fixture() -> Dictionary:
 	band["id"] = "Band 22"
 	band["idle_workers"] = 6
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"target_x": RUNG_WILD_TILE.x, "target_y": RUNG_WILD_TILE.y,
 			"actual_yield": 0.61, "sustainable_yield": 0.61},
-		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"target_x": RUNG_TENDED_TILE.x, "target_y": RUNG_TENDED_TILE.y,
 			"actual_yield": 0.97, "sustainable_yield": 0.97},
-		{"kind": "forage", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "forage", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"target_x": RUNG_FIELD_TILE.x, "target_y": RUNG_FIELD_TILE.y,
 			"actual_yield": 1.94, "sustainable_yield": 1.94},
-		{"kind": "hunt", "workers": 2, "workers_needed": 2, "policy": "sustain",
+		{"kind": "hunt", "workers": 2, "workers_needed": 2, "floor": 0.5,
 			"fauna_id": RUNG_PASTORAL_HERD_ID, "target_x": 70, "target_y": 19,
 			"actual_yield": 1.20, "sustainable_yield": 1.20},
 		{"kind": "hunt", "workers": RUNG_PENNED_HERDERS, "workers_needed": RUNG_PENNED_HERDERS,
-			"policy": "sustain",
+			"floor": 0.5,
 			"fauna_id": RUNG_PENNED_HERD_ID, "target_x": 69, "target_y": 20,
 			"actual_yield": 5.40, "sustainable_yield": 5.40},
 	]
@@ -1935,6 +2146,20 @@ func _assert_work_row_rungs() -> void:
 		"hunt:%s" % RUNG_PASTORAL_HERD_ID: DetailFormat.pastoral_glyph(),
 		"hunt:%s" % RUNG_PENNED_HERD_ID: DetailFormat.CORRAL_GLYPH,
 	}
+	# **THE ROW'S VERB FOLLOWS THE SAME RUNG, and it is a SECOND axis off the same patch dict** — a crew
+	# on a Tended Patch or a Field is TENDING, not foraging (`labor-ui.md` → "The plant web's crew noun
+	# follows the standing rung"). Asserted beside the rung MARK rather than instead of it: the mark
+	# says what the source IS and the label says what is being DONE there, so one passing cannot stand
+	# in for the other. The hunt rows keep their own `WORK_ROW_HUNT_FORMAT` and are not in this table.
+	var expected_labels := {
+		"forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
+			HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y],
+		"forage:%d,%d" % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y]:
+			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y],
+		"forage:%d,%d" % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y]:
+			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y],
+	}
+	var labels_seen := 0
 	var seen := {}
 	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
 		var m: Dictionary = model
@@ -1942,6 +2167,13 @@ func _assert_work_row_rungs() -> void:
 		if not expected.has(key):
 			continue
 		seen[key] = true
+		if expected_labels.has(key):
+			var label := String(m.get("label", ""))
+			if label != String(expected_labels[key]):
+				push_error("band_panel_preview: %s expected row label '%s' but got '%s'" % [
+					key, expected_labels[key], label])
+			else:
+				labels_seen += 1
 		var glyph := String(m.get("rung_glyph", ""))
 		if glyph != String(expected[key]):
 			push_error("band_panel_preview: %s expected rung glyph '%s' but got '%s'" % [
@@ -1953,6 +2185,9 @@ func _assert_work_row_rungs() -> void:
 			push_error("band_panel_preview: no work row for %s on the rung board" % key)
 	if seen.size() == expected.size():
 		print("band_panel_preview: assert OK — %d work rows wear their standing rung (wild bare)" % seen.size())
+	if labels_seen == expected_labels.size():
+		print("band_panel_preview: assert OK — %d plant rows name the verb their rung runs (Forage/Tend)"
+			% labels_seen)
 
 ## The rung mark's TOOLTIP has to actually be reachable, and its slot must not eat the row's click —
 ## two SILENT failures a rendered frame cannot show. A `Label` defaults to `MOUSE_FILTER_IGNORE`, which
@@ -1992,7 +2227,7 @@ func _collect_rung_labels(node: Node, out: Array) -> void:
 		_collect_rung_labels(child, out)
 
 ## Open the work inspector on the row standing on `policy`, with its policy picker EXPANDED, and
-## repage so the picker actually renders. `_work_policy_open` is otherwise never true in either
+## repage so the picker actually renders. `_work_floor_open` is otherwise never true in either
 ## harness, which is why this control had zero frame coverage.
 ## Open the work inspector on the row working a NAMED herd — the trade-row frames need a specific
 ## source (the wolf), not "the first row", which is the forage patch.
@@ -2015,7 +2250,7 @@ func _open_work_policy_picker_for_herd(herd_id: String) -> void:
 		if String(model.get("herd_id", "")) != herd_id:
 			continue
 		_hud._bandpanel._work_open_key = String(model.get("key", ""))
-		_hud._bandpanel._work_policy_open = true
+		_hud._bandpanel._work_floor_open = true
 		_hud._bandpanel._repage_work_zone()
 		return
 	push_error("band_panel_preview: no work row hunting '%s' — fixture drifted?" % herd_id)
@@ -2076,13 +2311,13 @@ func _find_first_grid(node: Node) -> GridContainer:
 ## whole point of the pair.
 func _assert_policy_pick_confirms(standing: String, want_confirm: bool) -> void:
 	var buttons := _picker_rung_buttons()
-	if not buttons.has(PICKED_RUNG_POLICY):
-		push_error("band_panel_preview: no '%s' rung in the work inspector's picker" % PICKED_RUNG_POLICY)
+	if not buttons.has(PICKED_RUNG_PRESET):
+		push_error("band_panel_preview: no '%s' rung in the work inspector's picker" % PICKED_RUNG_PRESET)
 		return
 	var fired := [false]
 	var sink := func(_payload: Dictionary) -> void: fired[0] = true
 	_hud.assign_labor_requested.connect(sink)
-	(buttons[PICKED_RUNG_POLICY] as Button).pressed.emit()
+	(buttons[PICKED_RUNG_PRESET] as Button).pressed.emit()
 	var dialog_shown := false
 	for child in _hud.get_children():
 		if child is ConfirmationDialog:
@@ -2209,7 +2444,7 @@ func _many_sources_band_fixture() -> Dictionary:
 			"kind": "forage", "workers": 1,
 			# Every third patch is overstaffed, so the ⚠ attention chip + the WARN stripe have content.
 			"workers_needed": 1 if i % 3 != 0 else 0,
-			"policy": "sustain",
+			"floor": 0.5,
 			"target_x": MANY_SOURCE_ORIGIN_X + i, "target_y": MANY_SOURCE_ORIGIN_Y,
 			"actual_yield": 0.10 + 0.01 * float(i), "sustainable_yield": 0.10 + 0.01 * float(i),
 		})
@@ -2221,7 +2456,7 @@ func _no_idle_band_fixture() -> Dictionary:
 	var band := _band_fixture()
 	band["idle_workers"] = 0
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 16, "workers_needed": 16, "policy": "sustain",
+		{"kind": "forage", "workers": 16, "workers_needed": 16, "floor": 0.5,
 			"target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48},
 	]
 	return band
@@ -2539,7 +2774,7 @@ func _assert_quarry_eligibility() -> void:
 	var herds := _quarry_herd_fixtures()
 	var far: Dictionary = herds[0]
 	var near: Dictionary = herds[1]
-	_hud.update_herds(herds)
+	_set_world_herds(herds)
 	# NEAR — inside hunt reach: refused, and targeting stays armed so the player can pick again.
 	_hud._compose.clear_party_quarry()
 	_hud._targeting._pending_pick_quarry = {"band": _band_fixture()}
@@ -2607,9 +2842,9 @@ func _cap_demo_band_fixture() -> Dictionary:
 	band["id"] = "Band 8"
 	band["idle_workers"] = 4
 	band["labor_assignments"] = [
-		{"kind": "forage", "workers": 3, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.30, "sustainable_yield": 0.30},
-		{"kind": "forage", "workers": 1, "policy": "sustain", "target_x": 60, "target_y": 20, "actual_yield": 0.10, "sustainable_yield": 0.10},
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 68, "target_y": 15, "actual_yield": 0.20, "sustainable_yield": 0.20},
+		{"kind": "forage", "workers": 3, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.30, "sustainable_yield": 0.30},
+		{"kind": "forage", "workers": 1, "floor": 0.5, "target_x": 60, "target_y": 20, "actual_yield": 0.10, "sustainable_yield": 0.10},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 68, "target_y": 15, "actual_yield": 0.20, "sustainable_yield": 0.20},
 		{"kind": "scout", "workers": 1},
 	]
 	return band
@@ -2725,12 +2960,13 @@ func _band_fixture() -> Dictionary:
 			# is the documented `PLANT_TRADE_FORECAST_NOT_YET_PROJECTED` **0.0**, and the decoder inserts
 			# that key UNCONDITIONALLY. Both keys present, one of them zero, is exactly what the wire sends
 			# and exactly what a `has("realized_trade_yield")` test reads as "projected: nothing".
-			{"kind": "forage", "workers": 5, "workers_needed": 2, "policy": "sustain", "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "trade_yield": 0.04, "realized_trade_yield": 0.0},
+			# The pressure axis is a FLOOR, not a stance — `policy` went with `FollowPolicy`.
+			{"kind": "forage", "workers": 5, "workers_needed": 2, "floor": 0.5, "target_x": 71, "target_y": 18, "actual_yield": 0.48, "sustainable_yield": 0.48, "trade_yield": 0.04, "realized_trade_yield": 0.0},
 			# BOTH PRODUCTS on the worked row (issue #337): a deer pays meat AND hide, so the row
 			# headline must read `+0.20 /turn · ⇄ +0.04` — food leading, trade only because it is
 			# non-zero. `trade_yield` is NOT food income: the Food line's Gathered/Hunted breakdown
 			# still sums `actual_yield` alone, which is what keeps the larder identity closed.
-			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "trade_yield": 0.04, "realized_trade_yield": 0.04},
+			{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.46, "sustainable_yield": 0.20, "trade_yield": 0.04, "realized_trade_yield": 0.04},
 			{"kind": "scout", "workers": 2},
 			{"kind": "warrior", "workers": 2},
 		],
@@ -2748,12 +2984,12 @@ func _concerning_food_band_fixture() -> Dictionary:
 	band["food_consumption"] = 0.95
 	band["labor_assignments"] = [
 		{"kind": "forage", "workers": 3, "target_x": 71, "target_y": 18, "actual_yield": 0.15, "sustainable_yield": 0.15},
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_deer_07", "floor": 0.5, "target_x": 70, "target_y": 17, "actual_yield": 0.15, "sustainable_yield": 0.20},
 		# THE TRADE-ONLY ROW (issue #337): a wolf pack pays pelts and NO meat, so every food field on
 		# this assignment is honestly 0. The row must headline `⇄ +0.22` ALONE — no "+0.00 /turn",
 		# which is the false reading that said the hunt was worth nothing — and it must NOT appear in
 		# the Food line's Hunted total, because trade goods never enter the larder.
-		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "policy": "deplete", "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
+		{"kind": "hunt", "workers": 2, "fauna_id": TRADE_ONLY_HERD_ID, "floor": 0.15, "target_x": 72, "target_y": 19, "actual_yield": 0.0, "sustainable_yield": 0.0, "trade_yield": 0.22, "realized_trade_yield": 0.22},
 		{"kind": "scout", "workers": 2},
 	]
 	return band
@@ -2884,10 +3120,10 @@ func _arrivals_band_fixture() -> Dictionary:
 	band["food_income"] = 3.6
 	band["food_consumption"] = 2.0
 	band["labor_assignments"] = [
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain",
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 2.7, "sustainable_yield": 2.7,
 			"realized_yield": 2.7, "arrival_schedule": _lumpy_hunt_schedule()},
-		{"kind": "forage", "workers": 3, "policy": "sustain", "target_x": 71, "target_y": 18,
+		{"kind": "forage", "workers": 3, "floor": 0.5, "target_x": 71, "target_y": 18,
 			"actual_yield": 0.9, "sustainable_yield": 0.9, "realized_yield": 0.9,
 			"arrival_schedule": _continuous_forage_schedule()},
 		{"kind": "scout", "workers": 2},
@@ -2908,10 +3144,10 @@ func _arrivals_starving_band_fixture() -> Dictionary:
 	band["food_income"] = 0.9
 	band["food_consumption"] = 2.5
 	band["labor_assignments"] = [
-		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "policy": "sustain",
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "floor": 0.5,
 			"target_x": 70, "target_y": 17, "actual_yield": 0.5, "sustainable_yield": 0.5,
 			"realized_yield": 0.5, "arrival_schedule": _sparse_hunt_schedule()},
-		{"kind": "forage", "workers": 2, "policy": "sustain", "target_x": 71, "target_y": 18,
+		{"kind": "forage", "workers": 2, "floor": 0.5, "target_x": 71, "target_y": 18,
 			"actual_yield": 0.4, "sustainable_yield": 0.4, "realized_yield": 0.4,
 			"arrival_schedule": _continuous_forage_schedule(0.4)},
 		{"kind": "scout", "workers": 1},
@@ -2932,7 +3168,7 @@ func _hunt_expedition_fixture() -> Dictionary:
 		"expedition_mission": "hunt",
 		"expedition_phase": "hunting",
 		"expedition_target_herd": "game_deer_79",
-		"expedition_hunt_policy": "surplus",
+		"expedition_floor": 0.3,
 		"home_band_entity": 904,
 		# In-flight next delivery → the parties inspector's "Next delivery: ~14 food in 6 turns" line.
 		"expedition_eta_turns": 6,
@@ -2956,7 +3192,7 @@ func _lean_hunt_expedition_fixture() -> Dictionary:
 		"expedition_mission": "hunt",
 		"expedition_phase": "hunting",
 		"expedition_target_herd": "game_deer_07",
-		"expedition_hunt_policy": "sustain",
+		"expedition_floor": 0.5,
 		"home_band_entity": 904,
 		"expedition_eta_turns": 0,
 		"expedition_projected_delivery": 0.0,
@@ -2980,7 +3216,7 @@ func _lost_hunt_expedition_fixture() -> Dictionary:
 		"expedition_phase": "returning",
 		# NOT in `_herd_fixtures()` — the target the party launched at is no longer in the telemetry.
 		"expedition_target_herd": "game_deer_gone",
-		"expedition_hunt_policy": "sustain",
+		"expedition_floor": 0.5,
 		"home_band_entity": 904,
 		"expedition_eta_turns": 0,
 		"expedition_projected_delivery": 0.0,

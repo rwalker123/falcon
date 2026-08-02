@@ -24,63 +24,57 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
 > **The free path is gone (design fix).** Cultivation used to accrue **silently and for free** under
 > Sustain: same labor, same tile, no cost ⇒ cultivating was always correct and there was **no
 > decision**. It is now the **`Cultivate` improvement** (`Improvement::Cultivate`, plant-only — a
-> `FollowPolicy` variant until issue #442 split the harvest stance from the build verb) with a real
+> harvest-stance variant until issue #442 split the pressure axis from the build verb) with a real
 > up-front cost, and the **early-claim `claim_threshold` is removed** (it would let the player skip the
-> investment — the whole point). Sustain still *teaches* the faction Cultivation knowledge; it just
+> investment — the whole point). Gathering still *teaches* the faction Cultivation knowledge; it just
 > never tames a patch. The animal twin is the **`Corral` policy** — see "Corral".
 - **Rung 1b — the earned-knowledge gate (`docs/plan_intensification.md` §4b).** Cultivation is a
-  faction-level knowledge *learned by doing*, **never start-granted**: a **Sustain** forage on a
-  **Thriving** patch accrues faction **Cultivation** knowledge (discovery `CULTIVATION_DISCOVERY_ID`
-  = 2003, `forage.rs`) in the per-faction `DiscoveryProgressLedger` at
-  `cultivation.knowledge_progress_per_turn` (`add_progress`, clamped to `1.0`). **A patch cannot accrue
+  faction-level knowledge *learned by doing*, **never start-granted**: **any** forage that actually
+  draws a wild patch down accrues faction **Cultivation** knowledge (discovery
+  `CULTIVATION_DISCOVERY_ID` = 2003, `forage.rs`) in the per-faction `DiscoveryProgressLedger`, at the
+  ladder's `knowledge.progress_per_turn` **scaled by the assignment's floor**
+  (`intensification::learn_multiplier` — a crew that leaves more standing learns faster, the food peak
+  is ×1.0; `add_progress`, clamped to `1.0`). The old `Sustain && Thriving` pair of gates is gone —
+  see "The knowledge pattern" in `intensification.md`. **A patch cannot accrue
   `cultivation_progress` until the faction *knows* Cultivation** — `advance_labor_allocation` only calls
   `accrue_cultivation` once `ledger.get_progress(faction, 2003) >= knowledge_completion_threshold`.
-  Knowledge is all Sustain earns — it **never** accrues `cultivation_progress`. The `cultivation` tag →
+  Knowledge is all a plain gather earns — it **never** accrues `cultivation_progress`. The `cultivation` tag →
   discovery 2003 mapping is declared in `start_profile_knowledge_tags.json` purely so it is mappable;
   **no start profile lists it**, so no faction begins knowing Cultivation.
 - **The `Cultivate` improvement — the investment.** In `advance_labor_allocation`'s **Forage** arm
   (Population), a patch worked with `Improvement::Cultivate` in flight:
-  - **Costs a yield dip while preparing.** Its take ceiling is the `plant:tended` rung's
-    `yield_fraction_while_building ×` **the assignment's stance ceiling** (`forage_policy_ceiling`,
-    reusing the **shared** `sustainable_yield` helper, never a second formula). The crew is clearing
-    and planting, not gathering. Under **Sustain** — the stance a builder normally holds — the take is
-    a fraction of MSY and therefore **sustainable**, so the patch stays Thriving (which the accrual
-    gate requires) and the cost is a pure yield dip, not a depletion. It rode Sustain's ceiling
-    unconditionally until issue #442; see "An assignment has TWO axes" in `intensification.md` for why
-    the constant went, and for the measured finding that a harsher stance does **not** currently cost
-    a plant builder anything.
-  - **Accrues `progress_per_turn`** toward `1.0` (sets `owner` on first accrual; only the owner
-    accrues), **gated** on the faction *knowing Cultivation* AND the patch being **Thriving**. If a
-    gate lapses mid-run (another band overdraws the patch to Stressed) progress simply **stops accruing
-    that turn** — it is not lost and the policy is not silently switched; the patch is still marked
-    worked, so it doesn't decay either, and accrual resumes when it recovers.
-  - **Thriving is a START gate, not a CONTINUE gate** (`validate_cultivate`,
-    `ForagePatch::cultivation_underway`). It asks whether the land is fit for a crew to *begin*
-    clearing it, so **a build already underway for this faction** (`cultivation_progress >
-    RUNG_UNSTARTED`, not yet complete, `owner == faction`) is **exempt from the phase check** — and
-    from that check alone. The knowledge gate, the already-cultivated rejection and the
-    other-faction-owner rejection all still run; the exemption is a *condition on one check*, never an
-    early return past the ones below it (pinned by
-    `a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`, which fails against an early
-    return). **The trap it was added for is gone as of issue #442.** Adjusting the crew on a paused
-    build used to re-issue exactly the `Cultivate` assignment this gate refuses, so the only
-    executable response was `workers == 0` — which clears `tended_this_turn` and starts the feral
-    bleed, making "stops accruing, is not lost, is not switched" mean *abandon it or nothing*.
-    `assign_labor` now carries no verb at all, so a crew change never reaches this validator (pinned
-    by `server::tests::a_paused_cultivation_can_still_be_re_crewed`). The exemption survives for the
-    other path: **re-checking the box** on a paused build is a legitimate no-op and must not be
-    refused.
-  - **The animal rungs have no such trap, checked rather than assumed:** `validate_tame` carries **no
-    phase gate at all** (a herd's `ecology_phase` swings as it is hunted, so refusing the verb on it
-    would be un-actionable churn), and `validate_sow` gates on the rung's **`site_requirement`** —
-    static land that cannot lapse — plus knowledge, already-a-Field and the owner rule. Only the plant
-    rung-2 gate reads a value that moves under the build.
+  - **Costs a yield dip while preparing.** The crew carries the `plant:tended` rung's
+    `yield_fraction_while_building ×` what a gathering crew of the same size carries — the dip
+    multiplies **crew throughput**, never the take ceiling (`docs/plan_harvest_floor.md` §3.1). The
+    crew is clearing and planting, not gathering. Two consequences follow and both are intended: a
+    build costs yield **only while hands are the scarce thing** (a crew big enough to saturate the
+    patch's standing stock anyway pays nothing for it — the remedy is to hire twice the people, at the
+    shipped 0.50 dip),
+    and the dip is **floor-independent by construction**, so there is no floor a builder can pick to
+    dodge it. See "The build engine" in `intensification.md` for the measurement that forced the move.
+  - **Accrues `progress_per_turn × learn_multiplier(floor)`** toward `1.0` (sets `owner` on first
+    accrual; only the owner accrues), **gated** on the faction *knowing Cultivation* and on the crew
+    something standing above its floor to work (`systems::labor::crew_is_working_the_source`).
+  - **THERE IS NO HEALTH GATE, on the verb or on the accrual** (`docs/plan_harvest_floor.md` §3.2).
+    `Cultivate` used to demand `EcologyPhase::Thriving` as a **start** gate, with an exemption for a
+    build already underway (`ForagePatch::cultivation_underway`) and a whole start-vs-continue ruling
+    to make the mid-build lapse survivable. All of it is deleted — the gate, the exemption, the helper
+    and the ruling — because the floor replaced the cliff with a **rate**: a crew pulling hard on the
+    ground it is clearing builds slowly, in proportion, and nothing lapses. The rejections that
+    survive are the knowledge gate, the already-cultivated rejection, the other-faction-owner rule and
+    the species gate; `server::tests::cultivate_is_accepted_on_a_stressed_patch` pins the absence
+    positively, so a re-added phase check cannot regress silently.
+  - **The other three rungs never had one**, which is why this is a *uniformity* rather than a
+    relaxation: `validate_tame` carried no phase gate at all (a herd's `ecology_phase` swings as it is
+    hunted), `validate_sow` gates on the rung's **`site_requirement`** — static land that cannot lapse
+    — and `Corral` gates on ownership and the species ceiling. Rung 2 of the plant web was the only
+    verb reading a value that moved under its own build.
   - **Accrues AFTER the turn's take**, so the turn pays exactly what the pre-commit forecast promised
     (forecast == actual). The turn progress reaches `1.0` is the last preparing take; the full tended
     yield starts the next turn.
   - **Marks the patch `tended_this_turn`**, so `advance_cultivation` spares a patch under active
-    preparation — the investment accrues at the **full** `progress_per_turn` (25 turns at the default),
-    not net-of-decay.
+    preparation — the investment accrues at the **full** `progress_per_turn` (25 turns at the default
+    dials, at full crew **and at the food peak**), not net-of-decay.
   - **Break-even, and it is now a CROP choice** (defaults `fraction` 0.25, `progress_per_turn` 0.04).
     Measured on the reference basket below: the dip forgoes **0.527 prov/turn × 25 = 13.19 prov**
     across the build; favoring the basket's **best** staple then out-pays wild Sustain by
@@ -102,8 +96,8 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   concentration term cut a committed tile's capacity and discarded the remainder — and it pays
   `tended_conversion_gain` on the **favored species' term only**, which is the debt S2 recorded and
   left unpaid when it retired the regrowth boost with nothing in its place. It is gathered by the
-  **ordinary `forage_take` path**, exactly like rung 1: **policy-live**
-  (Sustain/Surplus/Deplete/Eradicate), **worker-capped**, and **drawn down** — so a tended patch **can
+  **ordinary `forage_take` path**, exactly like rung 1: **floor-live** (the assignment's own
+  escapement floor — there is no policy axis left to be live on), **worker-capped**, and **drawn down** — so a tended patch **can
   be over-farmed** and the overdraw ⚠ fires on it. This is the exact shape a **pastoral** herd already
   had; the plant web used to collapse a rung *earlier* than the animal web, and that asymmetry was the
   bug. **A committed crop still out-yields the same patch's wild Sustain** on good ground — the
@@ -142,9 +136,9 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
     improvement on every band working the tile — see "Completion CLEARS the improvement" in
     `intensification.md` for the once-per-source "nothing left to build" test that hands a
     non-finishing crew's verb back, and why it has to sit ahead of the Field arm's early return.
-    A gate that **lapses mid-build** is untouched by this and still keeps its build verb (a patch that
-    drops out of Thriving holds its progress and simply stops accruing) — nothing is finished there,
-    so there is nothing to hand off.
+    **There is no lapsing gate left to worry about** (`docs/plan_harvest_floor.md` §3.2): a patch that
+    is drawn down slows its own meter rather than stalling it, so the only way a build stops is the
+    crew taking nothing at all — and then nothing is finished, so there is nothing to hand off.
 - **Feral if unworked — AFTER A GRACE, NEWEST RUNG FIRST, and never silently.**
   `advance_cultivation` (`forage.rs`, `TurnStage::Logistics` alongside `advance_forage_regrowth`) is
   the **decay/feral** pass only. A patch **worked as an improvement this turn** (`tended_this_turn` —
@@ -194,10 +188,9 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   what the client's checkbox does. It **claims nothing**, and since issue #442 it touches the
   improvement slot only, so the band's stance and its committed crop survive by construction (the
   `merge_target` helper that used to carry the crop across a whole-target rewrite is deleted). Gates
-  (`validate_improvement`'s `Cultivate` arm): faction knows Cultivation, patch is **Thriving** *unless this faction
-  already has a build underway on it* (the start-gate/continue-gate rule above), not already
-  cultivated, not another faction's; plus a rejection when **no band is foraging** the tile (staff it
-  first).
+  (`validate_improvement`'s `Cultivate` arm): faction knows Cultivation, not already cultivated, not
+  another faction's; plus a rejection when **no band is foraging** the tile (staff it first). **No
+  health gate** — see "THERE IS NO HEALTH GATE" above.
 - **`abandon_improvement <faction> forage <x> <y>` / `… hunt <herd_id>`** (`handle_abandon_improvement`;
   `AbandonImprovementCommand` proto field **46**, alias `abandon`) — the **clear** half of the four
   setting verbs, and the capability the two-axis split would otherwise have removed (see "An
@@ -217,7 +210,7 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   - **They floor the source's `workers_needed`** (`intensification::source_crew_needed`, the same
     `max(standing crew, take crew)` a managed herd's `herders_needed` has always used, with
     `LadderConfig::build_crew(improvement)` supplying the plant half). Without the floor the count came
-    from the harvest alone — and while a build runs the ceiling is the **dip** — so committing to a
+    from the harvest alone — and while a build runs the crew's throughput is **dipped** — so committing to a
     25-turn improvement asked for **one** forager where the same wild patch under Sustain asks for two,
     and flagged the second worker as overstaffing. *Doing more work required fewer people.* **The floor
     has to reach the assign-time SEED as well as the resolved turn**, or the compose sheet and the tile
@@ -235,7 +228,7 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   rung (`build`: `progress_per_turn` 0.04 → 25 turns to prepare **at full crew**, `decay_per_turn` 0.01
   the feral-reversion rate, **`grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops — **`crew_needed` 2** — the same two hands the reference tile's wild
-  Sustain gather wants — **`yield_fraction_while_building` 0.25** — the old `cultivating_yield_fraction`,
+  Sustain gather wants — **`yield_fraction_while_building` 0.50** — was the old `cultivating_yield_fraction` 0.25 until it was raised to match the animal rungs, which had always been 0.50,
   the investment cost: the preparing take ceiling as a fraction of the patch's Sustain/MSY ceiling), so
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
   in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.0 —
@@ -252,8 +245,8 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   **`field_concentration_gain` is RETIRED** — a Field forces the favored share to 1.0, so there is no
   gain left to tune. Plus the
   **Rung 1b earned-knowledge** levers `knowledge_progress_per_turn` (0.05 — faction Cultivation earned
-  per Sustain-forage-Thriving turn, ~20 turns to know) and `knowledge_completion_threshold` (1.0 = the
-  ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
+  per gathered turn *at the food peak*, ~20 turns to know; the floor scales it) and
+  `knowledge_completion_threshold` (1.0 = the ledger's completion value). The early-claim `claim_threshold` is **removed**. The build dials'
   invariants (`0 < progress_per_turn`, `0 < decay_per_turn < progress_per_turn` **when present**
   — `null` is how a rung says its meter does not bleed, and a parked `0` is rejected because it would
   mean the same thing while reading like a live dial — `grace_turns < 1 / progress_per_turn` (a grace
@@ -350,14 +343,19 @@ herd has one appetite).
   create-from-nothing path is live and tested against constructed bare ground, but its input does not
   occur today. This is also the claim that the stale "~95% of tiles carry no `ForagePatch`" note above
   had made look true.)*
-- **Not gated on Thriving, unlike Cultivate** — load-bearing, not a relaxation: sown ground starts at
-  the reseed floor, i.e. *Collapsing* by construction, so a health gate would forbid the case the rung
-  exists for. You *tend* a healthy wild stand; you *plant* bare ground. (`Tame` draws the same line.)
-- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.25) × what the ground
-  would otherwise pay: the MSY dip on a wild patch (via `forage_policy_ceiling`), and the **managed**
-  dip on a tended patch being upgraded (0.25 × its tended harvest — `forage_forecast` and the labor
-  arm both read the one shared `field_yield_fraction_while_building`). On **bare** ground that is a
-  fraction of nothing, so a bare-ground sow is near-pure investment. `forage_field.rs` pins that as a
+- **Never gated on the ground's health** — load-bearing, not a relaxation: sown ground starts at the
+  reseed floor, i.e. *Collapsing* by construction, so a health gate would forbid the case the rung
+  exists for. Rung 2 has since lost its own (`docs/plan_harvest_floor.md` §3.2), so this is now true
+  of every rung on both webs rather than being rung 3's exception.
+- **Its accrual carries NO work predicate either**, and that is the same fact stated on the other
+  axis: `accrue_field`'s gate is Seed Selection and nothing else. The work predicate is what replaced
+  each rung's `Thriving` gate, rung 3 never had one, and requiring it would make the
+  create-from-nothing case impossible — **bare ground stands below every floor**, by construction. The
+  floor still paces the build, so a crew stripping the ground it is sowing still builds nothing.
+- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.50) × the crew's own
+  throughput (`docs/plan_harvest_floor.md` §3.1 — the dip multiplies hands, not the ceiling). On
+  **bare** ground there is nothing for the crew to carry a fraction of, so a bare-ground sow is
+  near-pure investment. `forage_field.rs` pins that as a
   **relation, not a pair of literals** — the whole build is a trickle beside the Field it buys
   (`while_building_per_turn < BUILD_TRICKLE_FRACTION × field_yield`) — because since #433 the Field's
   payout scales with the committed crop's own rate, so any literal would be true of one crop only.
@@ -405,7 +403,8 @@ herd has one appetite).
   never infer a rung from the float) beside the already-shipped `cultivationProgress`/`isCultivated`,
   so the client has **both** plant meters for the §4.1 two-meter split; `ceilingSow:float` +
   `fieldYield:float` (Sow's payoff, the twin of `tendedYield`; its **dip** is the appended
-  `sowBuildFraction` × the selected stance row since issue #442, and `ceilingSow`/`ceilingCultivate`
+  `sowBuildFraction`, which multiplies the CREW's throughput since `docs/plan_harvest_floor.md` §3.1,
+  and `ceilingSow`/`ceilingCultivate`
   are retired `(deprecated)` slots — two rungs still keep two numbers, so a retune of one cannot move
   the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
   `"too_poor"` / `"too_dry"` / `"too_poor_and_too_dry"` ([`SiteRefusal::as_str`], free-form per the

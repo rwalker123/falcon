@@ -26,14 +26,14 @@ use core_sim::port_base_override;
 use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
-    apply_port_base, available_workers, forage_source_yield_preview, hunt_source_yield_preview,
-    knows, output_multiplier, resolve_active_profile, resolve_committed_species, rung_site_refusal,
-    tile_flora_composition, tile_is_fresh_watered, ActiveStartProfile, BandTravel,
-    BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel, Expedition,
-    ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag,
-    ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand,
-    RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    WellbeingConfigHandle, NO_FORAGE_SEASON,
+    apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
+    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
+    resolve_committed_species, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
+    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
+    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
+    FoodModuleTag, ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
+    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
+    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place, run_turn, scalar_from_f32,
@@ -42,10 +42,10 @@ use core_sim::{
     CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
     CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
     CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EcologyPhase, EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
     EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FollowPolicy, ForageRegistry,
-    FrameSink, GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, ForageRegistry, FrameSink,
+    GenerationId, GenerationRegistry, HerdRegistry, Improvement, InfluencerImpacts,
     InfluentialRoster, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort,
     QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, SentimentAxisBias, Settlement,
     SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
@@ -491,10 +491,13 @@ enum Command {
         target_x: Option<u32>,
         target_y: Option<u32>,
         fauna_id: Option<String>,
-        policy: Option<String>,
         /// Which named plant a forage `Cultivate`/`Sow` should commit the patch to (a
         /// `flora_config.json` species key); `None` = auto-pick the tile's dominant legal plant.
         species: Option<String>,
+        /// **Where the crew stops, as a fraction of the source's `K`.** `None` = the sim's default
+        /// ([`core_sim::DEFAULT_ESCAPEMENT_FLOOR`]); an out-of-range value is **rejected**, never
+        /// clamped.
+        floor: Option<f32>,
     },
     MoveBand {
         faction: FactionId,
@@ -518,7 +521,7 @@ enum Command {
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        policy: Option<String>,
+        floor: Option<f32>,
     },
     FoundSettlement {
         faction: FactionId,
@@ -1375,23 +1378,18 @@ fn handle_set_start_profile(app: &mut bevy::prelude::App, profile_id: String) {
     }
 }
 
-/// Parse a follow policy string, warning (and defaulting to Sustain) when a
-/// non-empty value fails to parse so a typo like `surpluss` is diagnosable rather
-/// than silently accepted.
-fn parse_follow_policy(policy: Option<&str>) -> FollowPolicy {
-    match policy {
-        Some(raw) if !raw.trim().is_empty() => raw.parse().unwrap_or_else(|_| {
-            warn!(
-                target: "shadow_scale::command",
-                command = "follow_herd",
-                policy = %raw,
-                "command.follow_herd.policy_unrecognized=default_sustain"
-            );
-            FollowPolicy::default()
-        }),
-        _ => FollowPolicy::default(),
-    }
-}
+// **RETIRED: `parse_follow_policy(Option<&str>) -> FollowPolicy`** — the assign-labor path's stance
+// parse, which warned and defaulted to Sustain on an unparseable token.
+//
+// Its last caller was `handle_assign_labor`, and the harvest floor arc replaced the token it parsed
+// with a `floor: Option<f32>` that **fails closed** (`floor_is_valid`, rejected with a command
+// failure, never clamped). That is the opposite discipline: this function's whole behaviour was to
+// keep going on a typo, which is defensible for a four-value picker and is not for the one number
+// the harvest model turns on.
+//
+// It is **not** what `send_hunt_expedition` uses — that path has always parsed its own token with
+// its own parse and *rejects* an unusable one, so routing it here would have loosened a
+// gate rather than shared one.
 
 fn handle_found_settlement(
     app: &mut bevy::prelude::App,
@@ -1580,7 +1578,7 @@ fn seed_source_yield(
     let labor = app.world.resource::<LaborConfigHandle>().get();
 
     let seeded = match target {
-        LaborTarget::Forage { tile, policy, .. } => {
+        LaborTarget::Forage { tile, floor, .. } => {
             // Out of the band's work range → the turn pays 0 (assignment kept). Keep the zero row.
             if hex_distance_wrapped(band_pos, *tile, grid_width, wrap_horizontal)
                 > labor.band_work_range
@@ -1622,13 +1620,13 @@ fn seed_source_yield(
                 seasonal,
                 output_mult,
                 workers,
-                *policy,
+                *floor,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
             )
         }
-        LaborTarget::Hunt { fauna_id, policy } => {
+        LaborTarget::Hunt { fauna_id, floor } => {
             let Some(herd) = app.world.resource::<HerdRegistry>().find(fauna_id) else {
                 return; // herd gone → the assignment lapses next turn.
             };
@@ -1647,7 +1645,7 @@ fn seed_source_yield(
                 labor.hunt.per_worker_biomass_capacity,
                 output_mult,
                 workers,
-                *policy,
+                *floor,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -1682,10 +1680,13 @@ fn validate_labor_policy(
 ) -> Result<(), String> {
     let _ = faction;
     match target {
-        LaborTarget::Hunt { fauna_id, policy } => {
-            // **The species' offered ladder** (`fauna::hunt_policies_for`) — the ONE seam this
-            // validator shares with the snapshot's exported `huntPolicyCeilings`, so the picker the
-            // client draws and the picker the sim accepts cannot drift into two lists.
+        LaborTarget::Hunt { fauna_id, floor } => {
+            // **A species that pays NOTHING may only be worked at floor `0`.** "Harvest it
+            // sustainably" is meaningless for a quarry with no product: the only coherent reason to
+            // put hunters on it is to remove it, so every floor that would leave some standing is
+            // refused. The predicate is the species' own yield vector — the ONE seam this validator
+            // shares with the snapshot's exported ladder (`fauna::hunt_policies_for`), so the picker
+            // the client draws and the picker the sim accepts cannot drift into two lists.
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             let species = app
                 .world
@@ -1693,8 +1694,8 @@ fn validate_labor_policy(
                 .find(fauna_id)
                 .map(|herd| herd.species.clone());
             if let Some(species) = species {
-                let offered = core_sim::hunt_policies_for(fauna.hunt_yield_for(&species));
-                if !offered.contains(policy) {
+                let denial_only = core_sim::species_requires_denial(fauna.hunt_yield_for(&species));
+                if denial_only && *floor > core_sim::STRIP_IT_BARE {
                     return Err(format!(
                         "The {} yields neither food nor trade goods — the only thing to do with \
                          it is eradicate it.",
@@ -1812,23 +1813,13 @@ fn validate_cultivate(
             tile.x, tile.y
         ));
     }
-    // **Thriving is a START gate, not a CONTINUE gate.** It asks whether the land is fit for a crew
-    // to *begin* clearing it — a question a build already underway has answered. The sim's own
-    // mid-build ruling is that a patch dropping out of Thriving **holds its progress and stops
-    // accruing**, neither losing the investment nor switching the verb.
-    //
-    // **The re-staffing trap this used to create is gone** (issue #442): adjusting a paused build's
-    // crew is an `assign_labor`, which no longer re-asserts the improvement and therefore never
-    // reaches this function at all. The exemption survives because *re-checking* the box on a paused
-    // build is still a legitimate no-op the player may issue — and because the rejections below it
-    // (in particular the other-faction owner rule) must still run either way. It remains a condition
-    // on **this** check only, never an early return past the ones below.
-    if !patch.cultivation_underway(faction) && patch.ecology_phase != EcologyPhase::Thriving {
-        return Err(format!(
-            "The patch at ({}, {}) is not thriving — let it recover before cultivating it.",
-            tile.x, tile.y
-        ));
-    }
+    // **There is no health gate here** (`docs/plan_harvest_floor.md` §3.2). `Cultivate` used to
+    // demand `EcologyPhase::Thriving`, as a **start** gate with an exemption for a build already
+    // underway (`ForagePatch::cultivation_underway`) — a whole start-vs-continue ruling that existed
+    // to make the mid-build lapse survivable. The harvest floor replaced the cliff with a rate: a
+    // crew pulling hard on the ground they are clearing builds *slowly*
+    // (`intensification::learn_multiplier`), never *not at all*. With nothing left to lapse, the
+    // exemption has nothing to exempt and the gate has nothing to gate.
     if patch.owner.is_some_and(|owner| owner != faction) {
         return Err(format!(
             "Another people are cultivating the patch at ({}, {}).",
@@ -2152,6 +2143,31 @@ fn validate_tame(
 /// (`cultivate`/`sow`/`tame`/`corral`) and **is never touched by this one**
 /// (`docs/plan_investment_rung_toggle.md` §5), which is what makes a paused build's crew editable.
 #[allow(clippy::too_many_arguments)]
+/// **The floor a `LaborTarget` built to NAME A SOURCE carries** — the improvement commands
+/// (`cultivate`/`sow`/`tame`/`corral`), the abandon path and the pen-keeper lookup all construct a
+/// target to identify a tile or a herd, never to state an assignment. [`LaborTarget::same_source`]
+/// keys on the tile/herd id alone, so the floor here is matched by nothing and read by nothing.
+///
+/// It is [`DEFAULT_ESCAPEMENT_FLOOR`] rather than an arbitrary number so that a future reader who
+/// *does* look at it sees the sustainable value, not a strip order.
+const SOURCE_NAMED_NOT_ASSIGNED: f32 = DEFAULT_ESCAPEMENT_FLOOR;
+
+/// The feed channel a labor command reports on, resolved from the **role token** rather than from a
+/// built `LaborTarget` — the floor is validated before a target exists, and a rejection has to land
+/// on the channel the player was looking at.
+fn labor_event_kind(role: &str) -> CommandEventKind {
+    match role.to_ascii_lowercase().as_str() {
+        "forage" => CommandEventKind::Forage,
+        "hunt" => CommandEventKind::Hunt,
+        "scout" => CommandEventKind::Scout,
+        _ => CommandEventKind::CancelOrder,
+    }
+}
+
+// One labor command's worth of context: the band, the role, the crew, the source's coordinates or
+// herd id, and the assignment's two mutable properties (the crop selection and the floor). Bundling
+// them would just move the noise.
+#[allow(clippy::too_many_arguments)]
 fn handle_assign_labor(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -2161,17 +2177,36 @@ fn handle_assign_labor(
     target_x: Option<u32>,
     target_y: Option<u32>,
     fauna_id: Option<String>,
-    policy: Option<String>,
     species: Option<String>,
+    floor: Option<f32>,
 ) {
+    // **The floor FAILS CLOSED** (`docs/plan_harvest_floor.md` §4): absent means the default, but a
+    // value outside `0.0..=1.0` is rejected with its own failure event rather than clamped. A clamp
+    // would turn a typo into a quiet policy change on the one number the whole harvest model turns
+    // on — the `cancel_order` scope precedent.
+    let floor = match floor {
+        None => DEFAULT_ESCAPEMENT_FLOOR,
+        Some(value) if floor_is_valid(value) => value,
+        Some(value) => {
+            emit_command_failure(
+                app,
+                labor_event_kind(&role),
+                faction,
+                format!(
+                    "assign_labor floor must be a fraction of carrying capacity in 0.0..=1.0; got {value}."
+                ),
+            );
+            return;
+        }
+    };
     let target = match role.to_ascii_lowercase().as_str() {
         "forage" => match (target_x, target_y) {
             (Some(x), Some(y)) => LaborTarget::Forage {
                 tile: UVec2::new(x, y),
-                policy: parse_follow_policy(policy.as_deref()),
+                floor,
                 // The optional species selection (Flora Roster S1): which named plant a
                 // `Cultivate`/`Sow` here should commit the patch to. Absent/blank = "pick the tile's
-                // dominant legal plant for me", the same absent-means-none convention `policy` has.
+                // dominant legal plant for me", the same absent-means-default convention the floor has.
                 species: species
                     .as_deref()
                     .map(str::trim)
@@ -2191,7 +2226,7 @@ fn handle_assign_labor(
         "hunt" => match fauna_id {
             Some(id) if !id.trim().is_empty() => LaborTarget::Hunt {
                 fauna_id: id,
-                policy: parse_follow_policy(policy.as_deref()),
+                floor,
             },
             _ => {
                 emit_command_failure(
@@ -2509,39 +2544,27 @@ fn handle_send_hunt_expedition(
     band_id: Option<u64>,
     party_workers: u32,
     fauna_id: String,
-    policy: Option<String>,
+    floor: Option<f32>,
 ) {
-    // Take policy — parsed via `FollowPolicy::from_str`, default Sustain (conservative) when omitted.
-    // An explicit but unparseable token is rejected rather than silently defaulting: Sustain and
-    // Deplete are opposite ecological behaviors, so a typo must not silently flip the herd's fate.
-    let policy: FollowPolicy = match policy.as_deref() {
-        None => FollowPolicy::Sustain,
-        // **A build verb is not parseable as a stance at all since issue #442**, so this rejects one
-        // by the same path as any other unknown token — no predicate, no list, nothing to rot. Every
-        // rung-transition is place-bound work a *resident* band does (a detached party cannot tame a
-        // herd, pen it, or sow a field and walk home), and `ExpeditionMission::Hunt` carries a
-        // `FollowPolicy`, which can no longer name one.
-        //
-        // The two guards this replaces were both hand-written lists, and both had rotted: this gate
-        // silently **accepted `tame`**, which then sailed past `hunt_expedition_floor`'s
-        // `debug_assert!` and took a plausible-looking pastoral-dip ceiling. Factoring them onto
-        // `FollowPolicy::is_investment` fixed that; typing the two sets apart removes the question.
-        Some(token) => match token.parse::<FollowPolicy>() {
-            Ok(parsed) => parsed,
-            _ => {
-                emit_command_failure(
-                    app,
-                    CommandEventKind::ExpeditionSent,
-                    faction,
-                    format!(
-                        "send_hunt_expedition: unusable take policy '{}' — valid options are \
-                         sustain, surplus, deplete, eradicate.",
-                        token
-                    ),
-                );
-                return;
-            }
-        },
+    // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
+    // (the food peak, the conservative reading), and a value outside `0.0..=1.0` is refused with its
+    // own failure event rather than clamped. Where a party stops is the whole of what its orders say
+    // about pressure, so a typo must not silently flip a herd's fate.
+    let floor = match floor {
+        None => DEFAULT_ESCAPEMENT_FLOOR,
+        Some(value) if floor_is_valid(value) => value,
+        Some(value) => {
+            emit_command_failure(
+                app,
+                CommandEventKind::ExpeditionSent,
+                faction,
+                format!(
+                    "send_hunt_expedition: floor must be a fraction of carrying capacity in \
+                     0.0..=1.0; got {value}."
+                ),
+            );
+            return;
+        }
     };
     let Some(band) = select_starting_band(
         app,
@@ -2617,7 +2640,7 @@ fn handle_send_hunt_expedition(
         let registry = app.world.resource::<HerdRegistry>();
         registry
             .find(&fauna_id)
-            .map(|herd| hunt_trip_forecast(party_workers, herd, policy, &fauna, &labor, &cfg))
+            .map(|herd| hunt_trip_forecast(party_workers, herd, floor, &fauna, &labor, &cfg))
     };
     // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
     // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
@@ -2677,7 +2700,7 @@ fn handle_send_hunt_expedition(
                 " — the {} is too lean to raid: at its {} floor it has no surplus, the party would \
                  return empty",
                 fauna_id,
-                policy.as_str()
+                floor
             ),
             " eta_turns=none viability=no_surplus".to_string(),
         ),
@@ -2754,7 +2777,7 @@ fn handle_send_hunt_expedition(
                 home_band: band.entity,
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.clone(),
-                    policy,
+                    floor,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -2772,15 +2795,12 @@ fn handle_send_hunt_expedition(
         CommandEventKind::ExpeditionSent,
         faction,
         format!(
-            "{} hunting expedition ({}) -> herd {}{}",
-            band.label,
-            policy.as_str(),
-            fauna_id,
-            viability_note
+            "{} hunting expedition (floor {:.2}·K) -> herd {}{}",
+            band.label, floor, fauna_id, viability_note
         ),
         Some(format!(
-            "status=applied mission=hunt policy={} workers={} herd={} expedition={}{}",
-            policy.as_str(),
+            "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
+            floor,
             party_workers,
             fauna_id,
             expedition_entity.to_bits(),
@@ -3059,7 +3079,7 @@ fn handle_tame(app: &mut bevy::prelude::App, faction: FactionId, herd_id: String
     // exactly as the player set it (issue #442).
     let target = LaborTarget::Hunt {
         fauna_id: herd_id.clone(),
-        policy: FollowPolicy::default(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
     };
     if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Tame) {
         warn!(
@@ -3190,7 +3210,7 @@ fn handle_answer_fork(
 fn forage_source(tile: UVec2) -> LaborTarget {
     LaborTarget::Forage {
         tile,
-        policy: FollowPolicy::default(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
         species: None,
     }
 }
@@ -3224,7 +3244,7 @@ fn validate_forage_improvement_for_crews(
     for species in crops_named_on_forage_source(app, faction, tile) {
         let target = LaborTarget::Forage {
             tile,
-            policy: FollowPolicy::default(),
+            floor: SOURCE_NAMED_NOT_ASSIGNED,
             species,
         };
         validate_improvement(app, faction, &target, improvement)?;
@@ -3462,7 +3482,7 @@ fn handle_corral(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) 
 
     let target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
-        policy: FollowPolicy::default(),
+        floor: SOURCE_NAMED_NOT_ASSIGNED,
     };
     if let Err(reason) = validate_improvement(app, faction, &target, Improvement::Corral) {
         warn!(
@@ -3563,12 +3583,12 @@ fn handle_abandon_improvement(
     let target = match kind.trim().to_ascii_lowercase().as_str() {
         "forage" => LaborTarget::Forage {
             tile,
-            policy: FollowPolicy::default(),
+            floor: SOURCE_NAMED_NOT_ASSIGNED,
             species: None,
         },
         "hunt" if !fauna_id.trim().is_empty() => LaborTarget::Hunt {
             fauna_id: fauna_id.clone(),
-            policy: FollowPolicy::default(),
+            floor: SOURCE_NAMED_NOT_ASSIGNED,
         },
         "hunt" => {
             emit_command_failure(
@@ -3784,7 +3804,7 @@ fn handle_extend_pen(app: &mut bevy::prelude::App, faction: FactionId, tile: UVe
     // A band must be keeping the pen (a Hunt assignment on it, any policy) or the ring never accrues.
     let keeper_target = LaborTarget::Hunt {
         fauna_id: fauna_id.clone(),
-        policy: FollowPolicy::Sustain, // matched by `same_source` (herd id), so policy is irrelevant
+        floor: SOURCE_NAMED_NOT_ASSIGNED, // matched by `same_source` (herd id) — the floor is irrelevant
     };
     let keepers = app
         .world
@@ -4526,8 +4546,11 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
             fauna_id,
-            policy,
+            // The stance token is retired by the harvest floor arc; the proto field survives only
+            // because a shipped field number is immutable, and nothing reads it.
+            policy: _,
             species,
+            floor,
         } => Some(Command::AssignLabor {
             faction: FactionId(faction_id),
             band_id,
@@ -4536,8 +4559,8 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             target_x,
             target_y,
             fauna_id,
-            policy,
             species,
+            floor,
         }),
         ProtoCommandPayload::MoveBand {
             faction_id,
@@ -4575,13 +4598,13 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
@@ -5385,11 +5408,11 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             target_x,
             target_y,
             fauna_id,
-            policy,
             species,
+            floor,
         } => {
             handle_assign_labor(
-                app, faction, band_id, role, workers, target_x, target_y, fauna_id, policy, species,
+                app, faction, band_id, role, workers, target_x, target_y, fauna_id, species, floor,
             );
         }
         Command::MoveBand {
@@ -5420,9 +5443,9 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             band_id,
             party_workers,
             fauna_id,
-            policy,
+            floor,
         } => {
-            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, policy);
+            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, floor);
         }
         Command::FoundSettlement {
             faction,
@@ -6288,9 +6311,9 @@ mod tests {
     // The ladder's knowledge ids are named only by the tests now: the handlers resolve their gate
     // off the rung record (`unlock_discovery_id`), never a hard-coded id.
     use core_sim::{
-        build_headless_app, ForagePatch, CULTIVATION_DISCOVERY_ID, HERDING_DISCOVERY_ID,
-        NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE, SEED_SELECTION_DISCOVERY_ID,
-        SITE_ACCEPTED,
+        build_headless_app, EcologyPhase, ForagePatch, CULTIVATION_DISCOVERY_ID,
+        HERDING_DISCOVERY_ID, NO_IMPROVEMENT_UNDERWAY, PENNING_DISCOVERY_ID, RUNG_COMPLETE,
+        SEED_SELECTION_DISCOVERY_ID, SITE_ACCEPTED,
     };
 
     /// Insert a **Thriving, wild** patch — a valid Cultivate target (there is no early claim any
@@ -6370,6 +6393,13 @@ mod tests {
 
     /// Workers each test band staffs on its source.
     const BAND_WORKERS: u32 = 5;
+
+    /// The biomass a **stocked patch** fixture is seeded at, as a fraction of `K` — deliberately
+    /// **above** Sustain's escapement floor (`fauna::MSY_BIOMASS_FRACTION`, `0.5`), so a Sustain
+    /// gather has standing stock to take. `0.5` is the one biomass at which a Sustain row honestly
+    /// reads `+0.00` (`docs/plan_harvest_floor.md` §1), which is exactly what these fixtures must not
+    /// measure.
+    const STOCKED_PATCH_FRACTION: f32 = 0.8;
 
     /// A snapshot broadcaster bound to an ephemeral loopback port — enough to satisfy the
     /// world-build path's broadcast without a real client.
@@ -6508,8 +6538,8 @@ mod tests {
             .improvement
     }
 
-    /// The **stance** the band's single assignment currently carries.
-    fn band_policy(app: &bevy::prelude::App, band: Entity) -> FollowPolicy {
+    /// The **floor** the band's single assignment currently carries.
+    fn band_floor(app: &bevy::prelude::App, band: Entity) -> f32 {
         match &app
             .world
             .get::<LaborAllocation>(band)
@@ -6517,7 +6547,7 @@ mod tests {
             .assignments[0]
             .target
         {
-            LaborTarget::Forage { policy, .. } | LaborTarget::Hunt { policy, .. } => *policy,
+            LaborTarget::Forage { floor, .. } | LaborTarget::Hunt { floor, .. } => *floor,
             other => panic!("unexpected labor target {other:?}"),
         }
     }
@@ -6545,7 +6575,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6562,15 +6592,20 @@ mod tests {
             "a rejected cultivate must not start a build"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Sustain,
-            "and it must never touch the band's stance"
+            band_floor(&app, band),
+            0.5,
+            "and it must never touch the band's floor"
         );
     }
 
-    /// `cultivate` is rejected on a **non-Thriving** patch (the second gate) even when known.
+    /// **`cultivate` is ACCEPTED on a non-Thriving patch** — the positive pin on the gate
+    /// `docs/plan_harvest_floor.md` §3.2 deleted. It replaced
+    /// `cultivate_rejected_on_a_stressed_patch`, whose subject is gone: the floor turned the health
+    /// cliff into a rate, so pulling hard on ground you are clearing *slows* the meter instead of
+    /// refusing the verb, and there is no lapse state left to be exempt from. Stated as a test
+    /// rather than deleted, because a re-added phase check would be silent otherwise.
     #[test]
-    fn cultivate_rejected_on_a_stressed_patch() {
+    fn cultivate_is_accepted_on_a_stressed_patch() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -6586,7 +6621,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6594,10 +6629,14 @@ mod tests {
         handle_cultivate(&mut app, faction, coord);
 
         assert!(
-            cultivate_failure_detail_contains(&app, "not thriving"),
-            "cultivate must reject a stressed patch"
+            !cultivate_failure_detail_contains(&app, "not thriving"),
+            "no health gate survives on the Cultivate verb"
         );
-        assert_eq!(band_improvement(&app, band), None);
+        assert_eq!(
+            band_improvement(&app, band),
+            Some(Improvement::Cultivate),
+            "the crew starts clearing unhealthy ground — the floor prices the pressure, not a gate"
+        );
     }
 
     /// The repurposed `cultivate`: with Cultivation known and a Thriving patch, it **sets the
@@ -6615,7 +6654,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6628,9 +6667,9 @@ mod tests {
             "cultivate checks the improvement box on the working band"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Sustain,
-            "and leaves the stance exactly as the player set it (issue #442)"
+            band_floor(&app, band),
+            0.5,
+            "and leaves the floor exactly as the player set it (issue #442)"
         );
         assert!(
             !app.world
@@ -6660,19 +6699,20 @@ mod tests {
         ));
     }
 
-    // --- The Thriving gate is a START gate, not a CONTINUE gate (issues #420 + #442) -------------
+    // --- A build is never refused for the state of the ground under it -------------------------
     //
-    // A build already underway is exempt from the phase check, and from **that check only**.
-    //
-    // **Issue #442 removed the trap this exemption was originally added for.** Re-crewing a paused
-    // build used to re-issue the whole `Cultivate` assignment through this gate, so the sole
-    // executable response to a paused build was `workers == 0` — which stops `tended_this_turn` and
-    // starts the feral bleed. Now `assign_labor` carries no verb at all, so a crew change never
-    // reaches this validator. The exemption survives for the *other* path: re-checking the box on a
-    // paused build is a legitimate no-op the player may issue, and it must not be refused.
+    // The `Cultivate` verb used to demand `EcologyPhase::Thriving` as a **start** gate, with an
+    // exemption for a build already underway (`ForagePatch::cultivation_underway`) — a whole
+    // start-vs-continue ruling that existed only to make the mid-build lapse survivable.
+    // `docs/plan_harvest_floor.md` §3.2 deleted the lot: the floor replaced the cliff with a rate
+    // (`intensification::learn_multiplier`), so pulling hard on ground you are clearing slows the
+    // meter instead of stopping it, and nothing lapses. The tests below pin what survives — the
+    // knowledge gate, the owner rule, the species gate, and the re-crew path — plus the *absence* of
+    // the phase check, which would otherwise regress silently.
 
-    /// Seat the source patch as a **paused build**: part-prepared and owned, but no longer Thriving —
-    /// exactly the state a patch reaches when another band overdraws it mid-cultivation.
+    /// Seat the source patch as a **part-built, unhealthy** patch: progress banked and owned, but no
+    /// longer Thriving — exactly the state a patch reaches when another band overdraws it
+    /// mid-cultivation, and the state the retired phase gate used to refuse.
     fn seed_paused_build(app: &mut bevy::prelude::App, coord: UVec2, owner: Option<FactionId>) {
         let mut registry = app.world.resource_mut::<ForageRegistry>();
         let patch = registry
@@ -6689,7 +6729,8 @@ mod tests {
 
     /// **The re-crew case.** A build this faction has underway on a patch that has dropped out of
     /// Thriving still accepts a `Cultivate` assignment — which is what lets the player *ease workers
-    /// off* and let the patch regrow, the remedy the client's gated-policy sheet actually prescribes.
+    /// off* and let the patch regrow. Doubly true since `docs/plan_harvest_floor.md` §3.2: easing
+    /// off is now also how you *speed the build up*, because a shallower draw is a faster meter.
     #[test]
     fn a_paused_cultivation_can_still_be_re_crewed() {
         let mut app = build_headless_app();
@@ -6705,7 +6746,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
             Improvement::Cultivate,
@@ -6724,7 +6765,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -6774,74 +6815,26 @@ mod tests {
         );
     }
 
-    /// **The gate that must not weaken.** A *fresh* `Cultivate` on a non-Thriving patch — nothing
-    /// banked, nobody's — is still refused, with the same message. Exempting a build underway is not
-    /// exempting the verb.
-    #[test]
-    fn a_fresh_cultivate_on_a_stressed_patch_is_still_refused() {
-        let mut app = build_headless_app();
-        let faction = FactionId(0);
-        let coord = UVec2::new(1, 1);
-        seed_thriving_patch(&mut app, coord);
-        {
-            let mut registry = app.world.resource_mut::<ForageRegistry>();
-            let patch = registry.patch_mut(coord).unwrap();
-            patch.ecology_phase = EcologyPhase::Stressed;
-        }
-        grant_cultivation(&mut app, faction);
+    // `a_fresh_cultivate_on_a_stressed_patch_is_still_refused` was deleted with its subject: it
+    // existed to prove that exempting a build underway did not weaken the phase gate, and there is
+    // no phase gate left to weaken (`docs/plan_harvest_floor.md` §3.2). The positive replacement is
+    // `cultivate_is_accepted_on_a_stressed_patch`.
 
-        let verdict = validate_improvement(
-            &app,
-            faction,
-            &LaborTarget::Forage {
-                tile: coord,
-                policy: FollowPolicy::Sustain,
-                species: None,
-            },
-            Improvement::Cultivate,
-        );
-        assert!(
-            verdict
-                .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
-            "an unstarted build on unhealthy ground is still refused: {verdict:?}"
-        );
-    }
-
-    /// The exemption is **this faction's** build, not any build. Asserted from both sides, because
-    /// the two rejections are different rules and only one of them is the point:
-    ///
-    /// - a rival's **paused** build never reaches the exemption (owner mismatch), so the phase check
-    ///   refuses it — the case the fix must not have opened;
-    /// - a rival's build on **Thriving** ground gets *past* the phase check and is refused by the
-    ///   **owner** rule that sits after it, so that rule is confirmed reachable.
-    ///
-    /// The exemption-is-a-condition-not-an-early-return claim is pinned separately by
-    /// [`a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`], which is the only shape
-    /// that can actually distinguish the two.
+    /// **A rival's part-built patch is refused by the OWNER rule.** Retargeted from
+    /// `another_factions_cultivation_is_still_refused_paused_or_not`, whose other half asserted that
+    /// a rival's *paused* build fell through to the phase check — a check that no longer exists
+    /// (`docs/plan_harvest_floor.md` §3.2). The owner rule is what was really load-bearing there,
+    /// and it survives unchanged.
     #[test]
-    fn another_factions_cultivation_is_still_refused_paused_or_not() {
+    fn another_factions_cultivation_is_refused_by_the_owner_rule() {
         let faction = FactionId(0);
         let rival = FactionId(1);
         let coord = UVec2::new(1, 1);
         let patch = LaborTarget::Forage {
             tile: coord,
-            policy: FollowPolicy::Sustain,
+            floor: 0.5,
             species: None,
         };
-
-        let mut paused = build_headless_app();
-        seed_thriving_patch(&mut paused, coord);
-        seed_paused_build(&mut paused, coord, Some(rival));
-        grant_cultivation(&mut paused, faction);
-        let verdict = validate_improvement(&paused, faction, &patch, Improvement::Cultivate);
-        assert!(
-            verdict
-                .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
-            "a rival's paused build is not this faction's build underway, so the phase check still \
-             refuses it: {verdict:?}"
-        );
 
         let mut thriving = build_headless_app();
         seed_thriving_patch(&mut thriving, coord);
@@ -6857,16 +6850,30 @@ mod tests {
             verdict
                 .as_ref()
                 .is_err_and(|reason| reason.contains("Another people")),
-            "the owner rule sits after the phase check and must still fire: {verdict:?}"
+            "another faction's ground is not yours to clear: {verdict:?}"
+        );
+
+        // …and the same rule fires whatever the ground's health, now that health gates nothing.
+        let mut stressed = build_headless_app();
+        seed_thriving_patch(&mut stressed, coord);
+        seed_paused_build(&mut stressed, coord, Some(rival));
+        grant_cultivation(&mut stressed, faction);
+        let verdict = validate_improvement(&stressed, faction, &patch, Improvement::Cultivate);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|reason| reason.contains("Another people")),
+            "the owner rule is the only thing refusing a rival's stressed ground: {verdict:?}"
         );
     }
 
-    /// **The exemption is a condition on ONE check, not an early return past the rest.** The only
-    /// gate that can tell the two apart is the species selection, which runs *after* the phase check
-    /// and is the one successor a build-underway patch can still fail (the owner rule cannot fire on
-    /// a build this faction owns, which is the exemption's own precondition). So this seats a real
-    /// tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge — and
-    /// asks for a plant that does not exist: an early return would accept it.
+    /// **The SPECIES gate runs on unhealthy ground too** — the surviving half of the retired
+    /// `a_paused_build_is_exempt_from_the_phase_check_and_nothing_else`. That test pinned an
+    /// exemption (a build underway skipped the phase check and *only* the phase check); with the
+    /// phase check gone (`docs/plan_harvest_floor.md` §3.2) what is left worth pinning is that the
+    /// gate *below* it still fires, on exactly the patch state that used to be exempted. This seats
+    /// a real tile — `validate_species_selection` needs a `TileRegistry` to have a basket to judge —
+    /// and asks for a plant that does not exist.
     ///
     /// **It is driven through `handle_cultivate`, not `validate_improvement` directly** (PR #448
     /// review). It used to hand the validator `species: Some("not_a_plant")` by hand — an input **no
@@ -6875,7 +6882,7 @@ mod tests {
     /// gone entirely. The crop now rides the *band's* assignment, which is where a player's
     /// selection genuinely lives, and the assertion is on the **rejection the feed carries**.
     #[test]
-    fn a_paused_build_is_exempt_from_the_phase_check_and_nothing_else() {
+    fn the_species_gate_runs_on_a_part_built_unhealthy_patch_too() {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
 
@@ -6893,7 +6900,7 @@ mod tests {
         handle_cultivate(&mut named, faction, coord);
         assert!(
             cultivate_failure_detail_contains(&named, "know no plant"),
-            "a build underway skips the PHASE check only — the species gate below it still runs"
+            "the species gate runs on a part-built, unhealthy patch — nothing above it exempts it"
         );
     }
 
@@ -6915,7 +6922,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: crop.map(str::to_string),
             },
         );
@@ -7012,7 +7019,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7036,8 +7043,8 @@ mod tests {
             Some(coord.x),
             Some(coord.y),
             None,
-            Some("sustain".to_string()),
             crop.map(str::to_string),
+            None,
         );
     }
 
@@ -7233,7 +7240,7 @@ mod tests {
                 target_x: None,
                 target_y: None,
                 fauna_id: None,
-                policy: None,
+                floor: None,
                 species: None,
             };
             log_dispatched_command(&mut log, &command);
@@ -7297,7 +7304,7 @@ mod tests {
             target_x: None,
             target_y: None,
             fauna_id: None,
-            policy: None,
+            floor: None,
             species: None,
         };
         log_dispatched_command(&mut log, &command);
@@ -7419,7 +7426,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7435,9 +7442,9 @@ mod tests {
             "...and say how it is learned"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Sustain,
-            "a rejected sow must not touch the band's policy"
+            band_floor(&app, band),
+            0.5,
+            "a rejected sow must not touch the band's floor"
         );
     }
 
@@ -7456,7 +7463,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7490,7 +7497,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7533,7 +7540,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7583,7 +7590,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7612,7 +7619,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7655,7 +7662,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -7706,7 +7713,7 @@ mod tests {
                 faction,
                 LaborTarget::Forage {
                     tile: coord,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
             );
@@ -7763,7 +7770,9 @@ mod tests {
             let patch = registry
                 .patch_mut(coord)
                 .expect("sowable ground has a patch");
-            patch.biomass = patch.carrying_capacity * 0.5;
+            // **Above Sustain's escapement floor** — at `K/2` exactly a Sustain row is
+            // honestly `+0.00`, and a dip on nothing is nothing.
+            patch.biomass = patch.carrying_capacity * STOCKED_PATCH_FRACTION;
             patch.cultivation_progress = 1.0;
             patch.field_progress = 0.4;
             patch.owner = Some(FactionId(0));
@@ -7789,16 +7798,17 @@ mod tests {
 
         // Sow's pre-commit pair: the dip now, the payoff once sown. On a TENDED patch the dip bites
         // the tended harvest (the rung above is still unbuilt), and the payoff is the Field's rate.
-        // **Since issue #442 the dip is the FRACTION times the selected stance's row** — the wire
-        // carries `sow_build_fraction` and the four stance rows, so this composes the two exactly as
-        // the client must.
+        // **The dip is the FRACTION times the ceiling the client composes** — the wire carries
+        // `sow_build_fraction` beside the per-biomass rate, `biomass` and `carryingCapacity`, so
+        // this composes the two exactly as the client must (`docs/plan_harvest_floor.md` §5).
         assert!(patch.tended_yield > 0.0);
-        let sustain_ceiling = patch
-            .forage_policy_ceilings
-            .iter()
-            .find(|row| row.policy == FollowPolicy::Sustain.as_str())
-            .map(|row| row.provisions_per_turn)
-            .expect("the four stance rows are on the wire");
+        let sustain_ceiling =
+            (patch.biomass - core_sim::MSY_BIOMASS_FRACTION * patch.carrying_capacity).max(0.0)
+                * patch.provisions_per_biomass;
+        assert!(
+            sustain_ceiling > 0.0,
+            "the fixture patch must stand above the food peak, or the dip below is a fraction of 0"
+        );
         assert!(
             patch.sow_build_fraction > 0.0 && patch.sow_build_fraction < 1.0,
             "the Sow dip crosses as its fraction: {}",
@@ -7806,10 +7816,15 @@ mod tests {
         );
         let sow_dip = sustain_ceiling * patch.sow_build_fraction;
         assert!(
-            sow_dip > 0.0 && sow_dip < patch.tended_yield,
-            "sowing a tended patch pays a fraction of what it would otherwise hand you: {sow_dip} vs {}",
-            patch.tended_yield
+            sow_dip > 0.0 && sow_dip < sustain_ceiling,
+            "sowing pays a FRACTION of the stance the crew is holding while it builds: {sow_dip} vs \
+             {sustain_ceiling}"
         );
+        // **Deliberately not compared against `tended_yield`.** Since the harvest floor a stance row
+        // is constant escapement — a *stock* — while `tendedYield`/`fieldYield` are long-run rates;
+        // ordering a stock against a rate is not a statement about anything
+        // (`docs/plan_harvest_floor.md` §1). The payoff comparison that still means something is
+        // rate-against-rate, below.
         assert!(
             patch.field_yield > patch.tended_yield,
             "the Field out-yields the patch it replaces — that IS the reason to sow: {} vs {}",
@@ -7986,7 +8001,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8033,7 +8048,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8044,9 +8059,9 @@ mod tests {
             "have not learned Herding"
         ));
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Sustain,
-            "a refused tame must not switch the band's policy"
+            band_floor(&app, band),
+            0.5,
+            "a refused tame must not switch the band's floor"
         );
     }
 
@@ -8065,7 +8080,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8099,7 +8114,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8130,7 +8145,7 @@ mod tests {
             intruder,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8264,7 +8279,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8302,7 +8317,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8348,7 +8363,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8393,7 +8408,7 @@ mod tests {
                 faction,
                 LaborTarget::Hunt {
                     fauna_id: id.clone(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
             );
 
@@ -8422,7 +8437,7 @@ mod tests {
             faction,
             LaborTarget::Hunt {
                 fauna_id: id.clone(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
         );
 
@@ -8438,50 +8453,30 @@ mod tests {
     /// unparseable token. No party may be spawned, and the failure must name the four stances that
     /// ARE valid.
     ///
-    /// **Since issue #442 the guarantee is structural** and this test is its behavioural echo: an
-    /// `ExpeditionMission::Hunt` carries a [`FollowPolicy`], which cannot *name* a build verb, so the
-    /// verb is rejected by the ordinary parse. The two hand-written lists this replaces had both
-    /// rotted (the gate silently accepted `tame`), which is what makes the sweep worth keeping.
+    /// **The guarantee is structural, and this is its behavioural echo**: a raid's orders are a
+    /// **floor**, so a build verb cannot be typed there at all — nor can any other word, since the
+    /// launch token is parsed as a number (`sim_runtime`'s `parse_f32`, which also carries the
+    /// retired-stance guard). The two hand-written verb lists this replaces had both rotted (the gate
+    /// silently accepted `tame`), which is what makes the sweep worth keeping.
     #[test]
-    fn send_hunt_expedition_rejects_the_improvement_verbs() {
-        let improvements: Vec<&str> = [
-            Improvement::Cultivate,
-            Improvement::Sow,
-            Improvement::Tame,
-            Improvement::Corral,
-        ]
-        .iter()
-        .inspect(|improvement| {
-            assert!(
-                improvement.as_str().parse::<FollowPolicy>().is_err(),
-                "{improvement:?} must not parse as a stance — that is the whole guarantee"
-            );
-        })
-        .map(|improvement| improvement.as_str())
-        .collect();
-        for token in improvements {
+    fn send_hunt_expedition_rejects_a_floor_outside_the_dial() {
+        for bad in [-0.5_f32, 1.5, f32::NAN] {
             let mut app = build_headless_app();
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
-            handle_send_hunt_expedition(
-                &mut app,
-                faction,
-                None,
-                1,
-                herd_id,
-                Some(token.to_string()),
-            );
+            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad));
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)
-                    && entry.detail.as_deref().is_some_and(|detail| {
-                        detail.contains("unusable take policy") && detail.contains(token)
-                    })
+                    && entry
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains("floor must be"))
             });
             assert!(
                 rejected,
-                "{token} is not an expedition policy — the launch must be refused with a clear reason"
+                "a floor of {bad} is not on the dial — the launch must be refused with a reason"
             );
             let parties = app
                 .world
@@ -8490,23 +8485,22 @@ mod tests {
                 .peekable()
                 .peek()
                 .is_some();
-            assert!(!parties, "{token}: no expedition may be spawned");
+            assert!(!parties, "floor {bad}: no expedition may be spawned");
         }
     }
 
-    /// **§2.1 — a non-Sustain stance beside a running build is LEGAL, and nothing gates it**
-    /// (issue #442, `docs/plan_investment_rung_toggle.md`). The command layer is where a gate would
-    /// have had to live, so this is where its absence is pinned: a `Deplete` forage assignment is
-    /// accepted, checking `Cultivate` on top of it is accepted, and the two survive together on the
-    /// band's row.
+    /// **A deep floor beside a running build is LEGAL, and nothing gates it** (issue #442,
+    /// `docs/plan_investment_rung_toggle.md`). The command layer is where a gate would have had to
+    /// live, so this is where its absence is pinned: a deep-floor forage assignment is accepted,
+    /// checking `Cultivate` on top of it is accepted, and the two survive together on the band's row.
     ///
-    /// The design refuses the gate deliberately — the ecology is what punishes over-drawing while
-    /// building (the meter accrues only while the source is Thriving), and a gate would re-create in
-    /// the UI the very coupling this arc removes from the model. The self-punishment itself is
-    /// measured on the animal web by
-    /// `fauna_husbandry::a_deplete_stance_beside_a_tame_build_takes_more_now_and_stalls_its_own_meter`.
+    /// The design refuses the gate deliberately — the **rate** is what prices over-drawing while
+    /// building (`intensification::learn_multiplier`, `docs/plan_harvest_floor.md` §3), and a gate
+    /// would re-create in the UI the very coupling this arc removes from the model. The price itself
+    /// is measured on the animal web by
+    /// `fauna_husbandry::a_deep_floor_beside_a_tame_build_takes_more_now_and_finishes_later`.
     #[test]
-    fn a_deplete_stance_accepts_a_cultivate_improvement_beside_it() {
+    fn a_deep_floor_accepts_a_cultivate_improvement_beside_it() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
@@ -8517,7 +8511,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Deplete,
+                floor: 0.15,
                 species: None,
             },
         );
@@ -8526,7 +8520,7 @@ mod tests {
         // gates ask about knowledge, health and ownership — never about the stance beside them.
         let target = LaborTarget::Forage {
             tile: coord,
-            policy: FollowPolicy::Deplete,
+            floor: 0.15,
             species: None,
         };
         assert!(validate_labor_policy(&app, faction, &target).is_ok());
@@ -8543,9 +8537,9 @@ mod tests {
             "the build starts under a Deplete stance — it is sayable"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Deplete,
-            "and the stance is untouched: the two axes are independent"
+            band_floor(&app, band),
+            0.15,
+            "and the floor is untouched: the two axes are independent"
         );
     }
 
@@ -8556,12 +8550,13 @@ mod tests {
     /// missing half — the one path that passes `None`.
     ///
     /// **Phase 1 pins the "ungated" claim against a state where a gate really would bite**: the box
-    /// is checked on a patch that has since gone Stressed and has banked **nothing**, so
-    /// `validate_cultivate`'s build-underway exemption does *not* apply and the setting verb is
-    /// refused outright. That is the state the player is most stuck in — the build cannot start and,
-    /// without this command, cannot be called off either — and it is the only fixture that can tell
-    /// an ungated abandon from one that copied `cultivate`'s gates (a *paused* build with progress
-    /// would pass those gates via the exemption and prove nothing).
+    /// is checked on a patch whose faction has **not learned Cultivation**, so the setting verb is
+    /// refused outright and any gate copied onto the abandon path would refuse it too.
+    ///
+    /// It used to use the `EcologyPhase::Thriving` gate for that control. That gate is gone
+    /// (`docs/plan_harvest_floor.md` §3.2 — a build now *slows* under pressure rather than stalling),
+    /// so the knowledge gate is the surviving refusal, and it is the better control anyway: it
+    /// cannot lapse under the build the player is trying to call off.
     ///
     /// **Phase 2 pins that abandoning does not forfeit the meter**, which needs a build with progress
     /// banked.
@@ -8572,17 +8567,14 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         seed_thriving_patch(&mut app, coord);
-        {
-            let mut registry = app.world.resource_mut::<ForageRegistry>();
-            registry.patch_mut(coord).unwrap().ecology_phase = EcologyPhase::Stressed;
-        }
-        grant_cultivation(&mut app, faction);
+        // Deliberately **not** `grant_cultivation` — the faction cannot set this verb, which is what
+        // makes "abandon is ungated" testable at all.
         let band = spawn_resident_working_band(
             &mut app,
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Surplus,
+                floor: 0.3,
                 species: None,
             },
         );
@@ -8601,7 +8593,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Surplus,
+                floor: 0.3,
                 species: None,
             },
             Improvement::Cultivate,
@@ -8609,7 +8601,7 @@ mod tests {
         assert!(
             would_be_refused
                 .as_ref()
-                .is_err_and(|reason| reason.contains("not thriving")),
+                .is_err_and(|reason| reason.contains("not learned Cultivation")),
             "fixture: the SETTING verb must be refused here, or 'ungated' is untested: \
              {would_be_refused:?}"
         );
@@ -8625,13 +8617,13 @@ mod tests {
         assert_eq!(
             band_improvement(&app, band),
             None,
-            "abandoning is not a rung transition — it takes no gate, least of all the phase gate \
-             that stalled the build the player is trying to call off"
+            "abandoning is not a rung transition — it takes no gate, least of all the knowledge \
+             gate that refuses to *start* the build the player is trying to call off"
         );
         assert_eq!(
-            band_policy(&app, band),
-            FollowPolicy::Surplus,
-            "the stance the player chose is untouched, as with every improvement-side command"
+            band_floor(&app, band),
+            0.3,
+            "the floor the player chose is untouched, as with every improvement-side command"
         );
         assert_eq!(
             app.world
@@ -8661,7 +8653,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -8716,7 +8708,7 @@ mod tests {
             faction,
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
         );
@@ -8773,7 +8765,7 @@ mod tests {
             faction,
             &LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
             Improvement::Corral,
@@ -8790,7 +8782,7 @@ mod tests {
             faction,
             &LaborTarget::Hunt {
                 fauna_id: id,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
             Improvement::Cultivate,
         );
@@ -8895,12 +8887,19 @@ mod tests {
             .capacity_for(SOURCE_BIOME)
     }
 
+    /// **The food peak** — the floor a fresh assignment gets, and the one these seeding fixtures
+    /// use whenever the *floor* is not what they are varying.
+    const SUSTAIN_FLOOR: f32 = DEFAULT_ESCAPEMENT_FLOOR;
+
+    /// *"Take everything"* — the floor-`0` end of the dial.
+    const STRIP_FLOOR: f32 = 0.0;
+
     /// Drive the real command handler (band resolved by the default resident-band picker).
     fn assign_forage(
         app: &mut bevy::prelude::App,
         faction: FactionId,
         coord: UVec2,
-        policy: &str,
+        floor: f32,
         workers: u32,
     ) {
         handle_assign_labor(
@@ -8912,8 +8911,8 @@ mod tests {
             Some(coord.x),
             Some(coord.y),
             None,
-            Some(policy.to_string()),
             None,
+            Some(floor),
         );
     }
 
@@ -8921,7 +8920,7 @@ mod tests {
         app: &mut bevy::prelude::App,
         faction: FactionId,
         fauna_id: &str,
-        policy: &str,
+        floor: f32,
         workers: u32,
     ) {
         handle_assign_labor(
@@ -8933,8 +8932,8 @@ mod tests {
             None,
             None,
             Some(fauna_id.to_string()),
-            Some(policy.to_string()),
             None,
+            Some(floor),
         );
     }
 
@@ -8976,11 +8975,11 @@ mod tests {
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
         // Half cap → a clear positive MSY skim; Thriving is the phase that biomass implies.
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
 
         let seeded = source_actual(&app, band);
         assert!(
@@ -9005,7 +9004,7 @@ mod tests {
             1.0,
             1.0,
             BAND_WORKERS,
-            FollowPolicy::Sustain,
+            0.5,
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -9025,11 +9024,11 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
         let seeded = source_actual(&app, band);
         resolve_labor(&mut app);
         let resolved = source_actual(&app, band);
@@ -9053,7 +9052,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, None);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        assign_hunt(&mut app, faction, &id, SUSTAIN_FLOOR, BAND_WORKERS);
 
         let seeded = source_actual(&app, band);
         assert!(
@@ -9071,7 +9070,7 @@ mod tests {
             labor.hunt.per_worker_biomass_capacity,
             1.0,
             BAND_WORKERS,
-            FollowPolicy::Sustain,
+            0.5,
             NO_IMPROVEMENT_UNDERWAY,
             labor.yield_average_horizon_turns,
             labor.arrivals_horizon_turns,
@@ -9107,7 +9106,7 @@ mod tests {
              credit is waiting to be cashed"
         );
 
-        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        assign_hunt(&mut app, faction, &id, SUSTAIN_FLOOR, BAND_WORKERS);
         let seeded = source_actual(&app, band);
         resolve_labor(&mut app);
         let resolved = source_actual(&app, band);
@@ -9133,7 +9132,7 @@ mod tests {
         let id = seed_herd(&mut app, coord, None);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_hunt(&mut app, faction, &id, "sustain", BAND_WORKERS);
+        assign_hunt(&mut app, faction, &id, SUSTAIN_FLOOR, BAND_WORKERS);
         let seeded = source_realized(&app, band);
         assert!(
             seeded > 0.0,
@@ -9149,27 +9148,41 @@ mod tests {
         );
     }
 
-    /// **Policy change re-seeds.** Switching an existing assignment from Sustain (the MSY skim) to
-    /// Eradicate (strip the patch) raises the displayed expectation immediately — the seed tracks
-    /// every shape of the command that moves the number, not just a fresh staffing.
+    /// **A floor change re-seeds.** Dragging an existing assignment from the food peak down to `0`
+    /// raises the displayed expectation immediately — the seed tracks every shape of the command
+    /// that moves the number, not just a fresh staffing.
+    ///
+    /// Swept across the dial rather than asserted at two points, because the floor is continuous
+    /// now: **every** step down must re-seed at least as much as the step above it, so a re-seed
+    /// path that only fired at the four values the retired stances named would fail here.
     #[test]
-    fn changing_the_policy_reseeds_the_expected_yield() {
+    fn changing_the_floor_reseeds_the_expected_yield() {
         let mut app = build_headless_app();
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
-        let sustain = source_actual(&app, band);
-        assign_forage(&mut app, faction, coord, "eradicate", BAND_WORKERS);
-        let eradicate = source_actual(&app, band);
-
+        // Shallow → deep. Each step must re-seed at least as much as the last, and the ends must
+        // differ, or the "it re-seeds" claim is satisfied by a row that never moves.
+        let mut seeded = Vec::new();
+        for floor in [SUSTAIN_FLOOR, 0.42, 0.3, 0.15, STRIP_FLOOR] {
+            assign_forage(&mut app, faction, coord, floor, BAND_WORKERS);
+            seeded.push((floor, source_actual(&app, band)));
+        }
+        for pair in seeded.windows(2) {
+            assert!(
+                pair[1].1 >= pair[0].1 - SEED_EPSILON,
+                "dragging the floor from {} to {} must not LOWER the seeded expectation: {seeded:?}",
+                pair[0].0,
+                pair[1].0
+            );
+        }
         assert!(
-            eradicate > sustain,
-            "Eradicate must re-seed a higher expectation than Sustain (sustain {sustain}, eradicate {eradicate})"
+            seeded[seeded.len() - 1].1 > seeded[0].1,
+            "stripping the patch must re-seed a higher expectation than holding it at the food              peak: {seeded:?}"
         );
     }
 
@@ -9184,13 +9197,60 @@ mod tests {
         seed_patch_with_biomass(&mut app, coord, 0.0, EcologyPhase::Collapsing);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
 
         assert_eq!(
             source_actual(&app, band),
             0.0,
             "a barren patch must still seed a zero yield"
         );
+    }
+
+    /// **An out-of-range floor is REJECTED, not clamped** (`docs/plan_harvest_floor.md` §4). A floor
+    /// is a fraction of `K`; anything outside `0.0..=1.0` names a stock the source cannot have, and
+    /// silently clamping it would turn a typo into a quiet policy change on the one number the whole
+    /// harvest model turns on. Fail closed, the `cancel_order` scope precedent.
+    ///
+    /// The **assignment must be untouched** too — a rejected command changes nothing, so a band that
+    /// was already working the patch keeps the floor it had rather than being left half-edited.
+    #[test]
+    fn an_out_of_range_floor_is_rejected_and_leaves_the_assignment_alone() {
+        for bad in [-0.01_f32, 1.5, f32::NAN, f32::INFINITY] {
+            let mut app = build_headless_app();
+            let faction = FactionId(0);
+            let coord = UVec2::new(1, 1);
+            let tile = seed_tile_grid(&mut app, coord);
+            let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
+            seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
+            let band = spawn_idle_band(&mut app, faction, tile);
+
+            // A good assignment first, so the rejection has something it could have damaged.
+            assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
+            let before = source_actual(&app, band);
+
+            assign_forage(&mut app, faction, coord, bad, BAND_WORKERS);
+
+            assert_eq!(
+                band_floor(&app, band),
+                SUSTAIN_FLOOR,
+                "a floor of {bad} must be refused outright, leaving the assignment as it was"
+            );
+            assert_eq!(
+                source_actual(&app, band),
+                before,
+                "…and the seeded expectation with it"
+            );
+            assert!(
+                app.world.resource::<CommandEventLog>().iter().any(|entry| {
+                    matches!(entry.kind, CommandEventKind::Forage)
+                        && entry
+                            .detail
+                            .as_deref()
+                            .is_some_and(|detail| detail.contains("floor must be"))
+                }),
+                "the refusal must say so on the feed rather than failing silently: {bad}"
+            );
+        }
     }
 
     /// **Unassigning drops the row.** Setting a source to zero workers removes its assignment *and* its
@@ -9202,12 +9262,12 @@ mod tests {
         let faction = FactionId(0);
         let coord = UVec2::new(1, 1);
         let tile = seed_tile_grid(&mut app, coord);
-        let stocked = forage_carrying_capacity(&app) * 0.5;
+        let stocked = forage_carrying_capacity(&app) * STOCKED_PATCH_FRACTION;
         seed_patch_with_biomass(&mut app, coord, stocked, EcologyPhase::Thriving);
         let band = spawn_idle_band(&mut app, faction, tile);
 
-        assign_forage(&mut app, faction, coord, "sustain", BAND_WORKERS);
-        assign_forage(&mut app, faction, coord, "sustain", 0);
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, BAND_WORKERS);
+        assign_forage(&mut app, faction, coord, SUSTAIN_FLOOR, 0);
 
         let allocation = app.world.get::<LaborAllocation>(band).unwrap();
         assert!(allocation.assignments.is_empty(), "the source is unstaffed");
@@ -9250,7 +9310,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
             CANCEL_FORAGE_WORKERS,
@@ -9259,7 +9319,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Hunt {
                 fauna_id: CANCEL_HERD_ID.to_string(),
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
             },
             CANCEL_HUNT_WORKERS,
             available,
@@ -9411,7 +9471,7 @@ mod tests {
         allocation.set_assignment(
             LaborTarget::Forage {
                 tile: coord,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
             CANCEL_FORAGE_WORKERS,

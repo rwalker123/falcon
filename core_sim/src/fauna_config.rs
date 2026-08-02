@@ -745,37 +745,24 @@ fn default_raid_yield_forfeit_fraction() -> f32 {
 /// Hunt tuning: how a take converts to resources, the per-policy take multiples, and the pursuit
 /// geometry (band closes to `pursuit_radius` tiles).
 ///
-/// **The hunt policies are four ASCENDING MULTIPLES OF MSY** (slice 8b, `crate::fauna::hunt_policy_ceiling`):
-/// Sustain takes the sustainable yield, Surplus `surplus_multiplier ×` it, Deplete `deplete_multiplier ×`
-/// it, Eradicate everything. Ordering — and therefore *"each option takes more than the last"* — is
-/// guaranteed because all three are multiples of the same MSY base, validated
-/// `1 ≤ surplus_multiplier < deplete_multiplier`. Constant catch above MSY has no equilibrium, so
-/// Surplus declines a herd and Deplete drives it extinct — the depletion mechanic, on-map.
+/// **The hunt axis is ONE CONTINUOUS ESCAPEMENT FLOOR** (`docs/plan_harvest_floor.md`,
+/// [`crate::fauna::hunt_escapement_ceiling`]): the assignment carries a floor, the take is the stock
+/// standing above it, and a deeper floor takes more. There is no per-stance multiplier left to tune,
+/// which is why this block carries none.
 ///
-/// **`take_fraction` / `min_take` / `take_from` stay RETIRED** — Eradicate takes the whole standing
-/// stock (clamped by carry + quantise), which is what "eradicate" means and needs no dial.
+/// **`surplus_multiplier` / `deplete_multiplier` / `surplus_escapement_fraction` are DELETED**, not
+/// merely unread. They were kept as validated keys through slice 1 so an inverted pair could not read
+/// as a live ladder; once the stances went, keeping them meant `FaunaConfig::validate` could still
+/// *reject a boot* over an ordering with no reader — a `FAUNA_CONFIG_PATH` file setting
+/// `hunt.surplus_escapement_fraction: 0.6` panicked the server for a lever that did nothing.
+///
+/// **`take_fraction` / `min_take` / `take_from` stay RETIRED** — floor `0` takes the whole standing
+/// stock (clamped by carry + quantise), which is what "eradicate" meant and needs no dial.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HuntConfig {
     pub provisions_per_biomass: f32,
     pub trade_goods_per_biomass: f32,
-    /// **Surplus's take, as a multiple of MSY** — *"take extra to sell; the herd slowly declines."*
-    /// `> 1` (else it is not an overdraw) and `< deplete_multiplier` (else Surplus is not the gentler
-    /// policy); `FaunaConfig::validate` enforces both, because that ordering IS the panel-monotonicity
-    /// the whole slice-8b revert exists to give. **Playtest dial** (ships 1.5).
-    pub surplus_multiplier: f32,
-    /// **Deplete's take, as a multiple of MSY** — the hard draw-down, `> surplus_multiplier`, which
-    /// drives a herd to extinction (constant catch this far above MSY never lets it refill). Ships 2.5.
-    pub deplete_multiplier: f32,
-    /// **The Surplus *expedition* raid's escapement floor, as a fraction of `K`.** A greedy hunting
-    /// party (`systems::expeditions::hunt_expedition_floor`) grabs the herd's standing surplus down to
-    /// a per-policy floor and comes home; the floors descend so a deeper policy leaves a leaner herd —
-    /// Sustain `MSY_BIOMASS_FRACTION·K` (0.50), then Surplus `surplus_escapement_fraction·K` (0.30),
-    /// then Deplete `ecology.collapse_fraction·K` (0.15), then Eradicate `0`. Only Surplus's floor is a
-    /// free dial, and `FaunaConfig::validate` pins it strictly between Deplete's and Sustain's.
-    /// **Expedition path ONLY** — a *resident band's* Surplus take is still the `surplus_multiplier ×
-    /// MSY` rate above, untouched. Ships 0.30. **Playtest dial.**
-    pub surplus_escapement_fraction: f32,
     pub pursuit_radius: u32,
     pub pursuit_tiles_per_turn: u32,
     pub max_pursuit_turns: u32,
@@ -786,9 +773,6 @@ impl Default for HuntConfig {
         Self {
             provisions_per_biomass: 0.02,
             trade_goods_per_biomass: 0.005,
-            surplus_multiplier: DEFAULT_SURPLUS_MULTIPLIER,
-            deplete_multiplier: DEFAULT_DEPLETE_MULTIPLIER,
-            surplus_escapement_fraction: DEFAULT_SURPLUS_ESCAPEMENT_FRACTION,
             pursuit_radius: 1,
             pursuit_tiles_per_turn: 3,
             max_pursuit_turns: 12,
@@ -796,17 +780,13 @@ impl Default for HuntConfig {
     }
 }
 
-/// Surplus takes 1.5× MSY — a gentle overdraw the herd cannot quite refill.
-const DEFAULT_SURPLUS_MULTIPLIER: f32 = 1.5;
-/// Deplete takes 2.5× MSY — the hard draw-down that grinds a herd to extinction.
-const DEFAULT_DEPLETE_MULTIPLIER: f32 = 2.5;
-/// A Surplus *raid* strips the herd to 0.30·K — deeper than Sustain's K/2, shallower than Deplete's
-/// Allee floor (`ecology.collapse_fraction`). Expedition-only; see `HuntConfig::surplus_escapement_fraction`.
-const DEFAULT_SURPLUS_ESCAPEMENT_FRACTION: f32 = 0.30;
+// NB: `DEFAULT_SURPLUS_MULTIPLIER` (1.5), `DEFAULT_DEPLETE_MULTIPLIER` (2.5) and
+// `DEFAULT_SURPLUS_ESCAPEMENT_FRACTION` (0.30) went with the three `HuntConfig` fields they defaulted
+// — see that struct's doc for why a defaulted, validated lever with no reader is worse than no lever.
 
 /// **The per-species hunt-yield vector, as CONFIGURED** — *what* a hunt of this species yields, per
 /// unit of biomass taken (`docs/plan_hunt_yield_model.md`, issue #337). *How much* biomass is the
-/// **policy's** job ([`crate::fauna::hunt_policy_rate`]); the two axes are orthogonal, which is the
+/// **stance's** job ([`crate::fauna::hunt_escapement_ceiling`]); the two axes are orthogonal, which is the
 /// whole point of the arc: yield is **product × intensity**, never one routed by the other.
 ///
 /// Mirrors the flora roster's per-species vector (`FloraSpecies::yield`), so the two food webs stay
@@ -1091,9 +1071,9 @@ impl Default for ImmigrationConfig {
 /// Follow tuning: the small per-turn non-food tracking benefit (fog reveal pulse + morale).
 ///
 /// Follow tuning: the small per-turn non-food benefit a tracking band gets (fog-reveal pulse +
-/// morale). Surplus's take multiple lives on [`HuntConfig`] (`surplus_multiplier`), not here — a
-/// `follow.surplus_multiplier` field is **retired** (it was briefly a `1.6 × MSY` *flow*, which a
-/// whole-animal take cannot survive: a constant-in-`B` ceiling never accumulates one body).
+/// morale). A `follow.surplus_multiplier` field is **retired** (it was briefly a `1.6 × MSY` *flow*,
+/// which a whole-animal take cannot survive: a constant-in-`B` ceiling never accumulates one body),
+/// and there is no take multiple anywhere else either — the take axis is a floor.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FollowConfig {
@@ -1595,53 +1575,12 @@ impl FaunaConfig {
             self.hunt.provisions_per_biomass,
         )?;
 
-        // --- **THE HUNT POLICY ORDERING INVARIANT** (slice 8b, `crate::fauna::hunt_policy_ceiling`).
-        //
-        // The four policies are ascending MULTIPLES of MSY: Sustain (≤ 1×) < Surplus < Deplete <
-        // Eradicate (everything). Ordering — *"each option takes more than the last"* — is guaranteed
-        // because Surplus/Deplete are multiples of the SAME base, so the only two dials that can break
-        // it are `surplus_multiplier` and `deplete_multiplier`. Each has a rejection test.
-        //   - `surplus_multiplier ≥ 1`: Surplus must out-take Sustain (whose ceiling is capped at MSY).
-        //   - `surplus_multiplier < deplete_multiplier`: Surplus must be the *gentler* extraction.
-        require_greater_than(
-            "hunt.surplus_multiplier",
-            self.hunt.surplus_multiplier,
-            "1.0 (Surplus must take at least one MSY — as much as Sustain)",
-            MAX_FRACTION,
-        )?;
-        require_greater_than(
-            "hunt.deplete_multiplier",
-            self.hunt.deplete_multiplier,
-            "hunt.surplus_multiplier (Deplete must out-take Surplus)",
-            self.hunt.surplus_multiplier,
-        )?;
-
-        // --- **THE EXPEDITION RAID FLOOR ORDERING** (the greedy hunting raid,
-        // `systems::expeditions::hunt_expedition_floor`). A hunting party grabs the herd's standing
-        // surplus down to a per-policy floor: Sustain `MSY_BIOMASS_FRACTION·K` > Surplus
-        // `surplus_escapement_fraction·K` > Deplete `collapse_fraction·K` > Eradicate `0`. Only Surplus's
-        // floor is tunable, and it must sit STRICTLY between Deplete's and Sustain's — otherwise a deeper
-        // policy would leave a *fatter* herd, inverting the ordering the raid depends on ("Surplus/Deplete
-        // raid deeper"). Each bound has a rejection test.
-        require_greater_than(
-            "hunt.surplus_escapement_fraction",
-            self.hunt.surplus_escapement_fraction,
-            "ecology.collapse_fraction (a Surplus raid must leave a leaner herd than Deplete)",
-            self.ecology.collapse_fraction,
-        )?;
-        if !self.hunt.surplus_escapement_fraction.is_finite()
-            || self.hunt.surplus_escapement_fraction >= crate::fauna::MSY_BIOMASS_FRACTION
-        {
-            return Err(FaunaConfigError::Invalid {
-                field: "hunt.surplus_escapement_fraction",
-                constraint: format!(
-                    "be finite and less than fauna::MSY_BIOMASS_FRACTION (= {}) — a Surplus raid must \
-                     leave a leaner herd than Sustain",
-                    crate::fauna::MSY_BIOMASS_FRACTION
-                ),
-                value: self.hunt.surplus_escapement_fraction.to_string(),
-            });
-        }
+        // NB: **the retired multiples-of-MSY ordering and the Surplus raid-floor bounds are GONE**
+        // with the `HuntConfig` fields they constrained. A validate failure is a boot panic, so a
+        // bound over a lever with no reader could only ever kill a server for a number that changed
+        // nothing — see `HuntConfig`'s doc. The ordering they guaranteed ("each option takes more than
+        // the last") is now a property of the continuous floor itself: a deeper floor leaves less
+        // standing, by construction.
 
         // --- The three ecologies. `regrowth_rate` at `0` is a dead resource (no MSY, no regrowth);
         // the phase fractions must be ordered `extinction_floor < collapse < stressed < 1` or the
@@ -2270,10 +2209,10 @@ fn require_in_unit_range(field: &'static str, value: f32) -> Result<(), FaunaCon
 // `completion_threshold` check, which now states the bound once for both food webs.
 
 // NB: `require_open_unit_fraction` — the strict `(0, 1)` bound — went with the proportional-skim
-// dials it was the only caller of. The hunt axis is four **ordered multiples of MSY** now
-// (`hunt.surplus_multiplier` / `deplete_multiplier`, both `> 1`, so *out* of the unit range), and an
-// ordering is a stronger statement than a range: `require_greater_than` chains them so a multiplier
-// cannot be individually "in range" yet out of order. See `fauna::hunt_policy_ceiling`.
+// dials it was the only caller of, and the multiples-of-MSY dials that briefly replaced them have
+// since gone too (see `HuntConfig`). `require_greater_than` remains for the orderings that are still
+// live, an ordering being a stronger statement than a range: a value cannot be individually "in
+// range" yet out of order.
 
 /// A **gain that must not shrink** the quantity it scales: finite and `>= 1.0`. A husbandry density
 /// below 1 would make domestication *reduce* a herd's carrying capacity — the exact inversion the dial
@@ -2595,7 +2534,8 @@ mod tests {
     /// (`builtin()` would panic below if the shipped config broke one).
     ///
     /// **The `take_from` clamp assertions are gone with the function**: Eradicate takes the whole
-    /// standing stock now, no dial. See `fauna::hunt_policy_ceiling`.
+    /// standing stock now, no dial — it is the `floor = 0` case of
+    /// `fauna::hunt_escapement_ceiling`.
     #[test]
     fn hunt_and_ecology_present() {
         let config = FaunaConfig::builtin();
@@ -2604,61 +2544,36 @@ mod tests {
         assert!(config.follow.reveal_radius >= 1);
     }
 
-    /// **THE HUNT AXIS'S ORDERING INVARIANT, on the shipped multipliers** — *"each option takes more
-    /// than the last."* Asserted as the multiplier ordering, where the guarantee lives: ascending
-    /// multiples of the same MSY base ⇒ ascending takes at every biomass, for every species. (The
-    /// full take sweep across biomass × species is `fauna_deplete::hunt_policy_takes_are_strictly_
-    /// ordered_at_every_biomass`.)
+    /// **THE HUNT BLOCK'S SHAPE, ASSERTED AT COMPILE TIME.** `harvest_floor_trade_rebalance::the_
+    /// deleted_levers_are_gone_and_the_allee_threshold_is_not` reads the shipped JSON, so it can only
+    /// ever say a *key* is absent — and `#[serde(default)]` fills a field whose key is gone, silently.
+    /// That is exactly how `surplus_multiplier`, `deplete_multiplier` and
+    /// `surplus_escapement_fraction` outlived their own key deletion: struct fields with no reader,
+    /// still defaulted, still **validated**, so a `FAUNA_CONFIG_PATH` file naming one could panic the
+    /// server at boot over a number that changed nothing.
+    ///
+    /// An exhaustive destructuring is the guard a value assertion cannot be: re-adding a field to
+    /// [`HuntConfig`] fails to **compile** here (*"pattern does not mention field"*), before it can
+    /// grow a default, a bound or a reader. A new field is welcome — it just has to be named here,
+    /// which is the moment to ask what reads it.
     #[test]
-    fn the_shipped_hunt_multipliers_are_ordered() {
-        let hunt = &FaunaConfig::builtin().hunt;
-        assert!(
-            hunt.surplus_multiplier > 1.0,
-            "Surplus must out-take Sustain (which caps at 1× MSY): {}",
-            hunt.surplus_multiplier
-        );
-        assert!(
-            hunt.surplus_multiplier < hunt.deplete_multiplier,
-            "Deplete must out-take Surplus: {} vs {}",
-            hunt.surplus_multiplier,
-            hunt.deplete_multiplier
-        );
+    fn the_hunt_block_carries_no_take_multiplier() {
+        let HuntConfig {
+            provisions_per_biomass: _,
+            trade_goods_per_biomass: _,
+            pursuit_radius: _,
+            pursuit_tiles_per_turn: _,
+            max_pursuit_turns: _,
+        } = FaunaConfig::builtin().hunt;
     }
 
-    /// **Each ordering bound is REJECTED, not merely documented** — one rejection per bound, because
-    /// the ordering *is* the mechanic (`fauna::hunt_policy_ceiling`) and a config edit is the only way
-    /// to break it.
-    #[test]
-    fn validate_rejects_a_surplus_multiplier_at_or_below_one() {
-        // Surplus at 1× MSY would not out-take Sustain (whose ceiling caps at MSY) — no overdraw.
-        let err = reject(|json| json["hunt"]["surplus_multiplier"] = (1.0).into());
-        assert_rejects_field(err, "hunt.surplus_multiplier");
-    }
-
-    #[test]
-    fn validate_rejects_a_deplete_multiplier_at_or_below_surplus() {
-        // Deplete must be the *harsher* extraction; equal-or-below Surplus inverts the panel order.
-        let err = reject(|json| json["hunt"]["deplete_multiplier"] = (1.5).into());
-        assert_rejects_field(err, "hunt.deplete_multiplier");
-    }
-
-    /// **The expedition raid floor ordering is REJECTED at both bounds** — the greedy raid
-    /// (`systems::expeditions`) leaves a leaner herd for a deeper policy only if
-    /// `collapse_fraction < surplus_escapement_fraction < MSY_BIOMASS_FRACTION`.
-    #[test]
-    fn validate_rejects_a_surplus_escapement_at_or_below_the_deplete_floor() {
-        // At/below Deplete's collapse floor, a Surplus raid would leave the *same or leaner* herd as
-        // Deplete — the ordering inverts.
-        let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.15).into());
-        assert_rejects_field(err, "hunt.surplus_escapement_fraction");
-    }
-
-    #[test]
-    fn validate_rejects_a_surplus_escapement_at_or_above_the_sustain_floor() {
-        // At/above Sustain's K/2 floor, a Surplus raid would leave a *fatter* herd than Sustain.
-        let err = reject(|json| json["hunt"]["surplus_escapement_fraction"] = (0.5).into());
-        assert_rejects_field(err, "hunt.surplus_escapement_fraction");
-    }
+    // NB: `the_shipped_hunt_multipliers_are_ordered`, `validate_rejects_a_surplus_multiplier_at_or_
+    // below_one`, `validate_rejects_a_deplete_multiplier_at_or_below_surplus` and the two
+    // `validate_rejects_a_surplus_escapement_*` cases went with the `HuntConfig` fields they
+    // exercised. They asserted an ordering among dials nothing read; what they were standing in for
+    // — *"a deeper draw leaves a leaner source"* — is now a property of the escapement expression
+    // itself and is covered on the TAKE (`fauna_deplete::hunt_policy_takes_are_strictly_ordered_at_
+    // every_biomass`), which is the shipped representation.
 
     /// **Every species declares a positive body mass** — the quantum a hunt take is floored to
     /// (slice 8). A missing/zero row would mean a herd of infinitely many animals; `validate()`
@@ -2726,9 +2641,9 @@ mod tests {
     }
 
     /// **The per-species hunt-yield vector is REJECTED per component** (`docs/plan_hunt_yield_model.md`
-    /// §3) — one rejection per component, in the `validate_rejects_a_deplete_multiplier_at_or_below_
-    /// surplus` style, because a negative or non-finite rate would pay a negative take or NaN the
-    /// larder and neither shows up as a compile error.
+    /// §3) — one rejection per component, in the `validate_rejects_a_non_positive_body_mass` style,
+    /// because a negative or non-finite rate would pay a negative take or NaN the larder and neither
+    /// shows up as a compile error.
     #[test]
     fn validate_rejects_a_negative_species_hunt_yield_provisions() {
         let err = reject(|json| {

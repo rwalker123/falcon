@@ -69,26 +69,34 @@ paths:
   delta share it): **`carryingCapacity`** → `carrying_capacity` (the herd's CURRENT derived K, what it
   caps at on its range) and **`grazeRangeRadius`** → `graze_range_radius` (the hex radius of its
   grazing range: small game 0, big game 1, migratory = its loiter_radius). Surfaced two ways:
-  - **Herd drawer rows** (`Hud._herd_summary_lines`): the **`Biomass`** row carries the herd's CURRENT
-    head vs the K its range supports as a **`current / max` pair** — **`Biomass: 1480 / 2150`** — the
-    same convention the forage patch (`Forage biomass: 84 / 120`) and the tile card (`Pasture: 236 /
-    240`) use, so a herd reads like the other food stocks. The old standalone `Carrying cap: ~K` row was
-    merged INTO it and removed; the `~` is dropped because a `current / max` pair already implies the max
-    is the derived ceiling. A separate **`Range: N tiles`** row stays (the ground the herd grazes — the
-    hex-disk count `1 + 3r(r+1)` via `_graze_range_label`: radius 0 → "Range: 1 tile" singular, 1 → 7, 2
-    → 19; the SAME count the map ring draws; key ≤ 16 chars so `_split_detail_kv` aligns it as a table
-    row beside Biomass). **Overgrazing is a FEATURE of the pair:** an overgrazed herd has `biomass > K`,
-    so the row honestly reads `current > max` (e.g. **`Biomass: 2100 / 1352`**), and when `biomass >
-    carrying_capacity × (1 + OVERGRAZE_EPSILON)` a WARN-amber full-width **`⚠ Overgrazing — range can't
-    sustain this herd`** row appears beneath (a `DetailFormat.detail_bbcode` branch tinting the sentence with
-    the shared `HudStyle.WARN_HEX` — NOT a parallel styling path). The ⚠ row carries the overgrazing
-    signal; the merged value is deliberately left un-tinted (tinting it too was rendered and rejected as
-    a noisy double-up). This is a **trivial honest comparison of two sim-provided numbers**, never a
-    re-derivation of the ecology model (K and graze flow are the sim's). **Guards:** `carrying_capacity
-    <= 0` (a herd momentarily on barren range derives K = 0) falls back to the bare `Biomass: X` (never
-    `X / 0`) and suppresses the overgrazing test; a **corralled** herd (doesn't roam-graze a range)
-    suppresses the Range row + overgrazing test entirely (its K is a frozen pen-time value), but keeps
-    the merged `Biomass: X / Y` pair.
+  - **Herd drawer rows** (`DetailFormat.herd_summary_lines`): the stock row carries what is standing vs
+    the K its range supports as a **`current / max` pair**, in ANIMALS — **`Herd: 15 / 22 · Thriving`**.
+    **THE KEY NAMES THE UNIT** (`HERD_STOCK_ROW` / `HERD_STOCK_BIOMASS_ROW`): `Herd` counts animals,
+    `Biomass` is the fallback for a species the wire published no `body_mass` for, and the label switches
+    WITH the unit rather than staying put — `Herd 821` invites reading 821 as a head count, wrong by the
+    body mass. `SourceForecast.animal_count` is the one conversion, and **a positive biomass never counts
+    zero**: a herd holding a fifth of a body counts one, as the sim's own kill step does
+    (`min(affordable, max(1, carryable))`). **The ecology phase RIDES this row** rather than standing as
+    an `Ecology:` row of its own, exactly as it does on the tile card's `Foraging` / `Grazing` rows and
+    for the same reason (`HudFloraVocab.STOCK_PHASE_CLAUSE_FORMAT`); `_value_hex` keys the stock row
+    names to `ecology_value_hex`, which matches the phase word wherever in the value it sits, so folding
+    forked no styling. **The herd states NO `Position`** — see `selection-card.md`. The old standalone
+    `Carrying cap: ~K` row was merged INTO the pair and removed; the `~` is dropped because a
+    `current / max` pair already implies the max is the derived ceiling. A separate **`Range: N tiles`**
+    row stays (the ground the herd grazes — the hex-disk count `1 + 3r(r+1)` via `graze_range_label`:
+    radius 0 → "Range: 1 tile" singular, 1 → 7, 2 → 19; the SAME count the map ring draws; key ≤
+    `DETAIL_KEY_MAX_LENGTH` so `_split_detail_kv` aligns it as a table row beside the stock).
+    **Overgrazing is a FEATURE of the pair, and the reason it is a pair and not a fill percentage:** an
+    overgrazed herd has `biomass > K`, so the row honestly reads `current > max` (e.g. **`Herd: 21 /
+    14`**) — both sides divided by the same body, never clamped — and when `biomass > carrying_capacity ×
+    (1 + OVERGRAZE_EPSILON)` a WARN-amber full-width **`⚠ Overgrazing — range can't sustain this herd`**
+    row appears beneath (a `DetailFormat.detail_bbcode` branch tinting the sentence with the shared
+    `HudStyle.WARN_HEX` — NOT a parallel styling path). This is a **trivial honest comparison of two
+    sim-provided numbers**, never a re-derivation of the ecology model (K and graze flow are the sim's).
+    **Guards:** `carrying_capacity <= 0` (a herd momentarily on barren range derives K = 0) falls back to
+    the bare `Herd: X` (never `X / 0`) and suppresses the overgrazing test; a **corralled** herd (doesn't
+    roam-graze a range) suppresses the Range row + overgrazing test entirely (its K is a frozen pen-time
+    value), but keeps the merged pair.
   - **Map range ring** (`BandOverlayRenderer.draw_herd_range_highlights`, drawn from `_draw` when a herd is
     selected, under the herd markers): the tiles within `graze_range_radius` of the herd — the EXACT
     ring the sim grazes / derives K over — as a warm graze-amber FILLED region + gold tile outlines
@@ -105,10 +113,14 @@ paths:
     ORANGE (`PREY_SENSE_RING_FILL` / `PREY_SENSE_RING_OUTLINE`, echoing MapView's
     `HUNT_DANGER_OVERLAY_COLOR`) **INSTEAD OF** the gold graze ring (a REPLACEMENT, not an addition — the
     same `is_predator` branch swaps radius + colours). A herbivore (`prey_sense_radius == 0`) is unchanged.
-  - Verify: ui_preview `herd_grazing_healthy` (`Biomass: 1480 / 2150`, current < max, no warning) /
-    `herd_overgrazing` (`Biomass: 2100 / 1352`, current > max → the ⚠ row) / `herd_grazing_small_game`
-    (radius 0 → "Range: 1 tile") / `herd_domesticated` (the penned case: `Biomass: X / Y` with NO Range
-    row and no ⚠); map_preview `map_pasture_herd_range` (the gold graze ring over the Pasture overlay) /
+  - Verify: ui_preview `herd_grazing_healthy` (`Herd: 15 / 22 · Thriving`, current < max, no warning) /
+    `herd_overgrazing` (`Herd: 21 / 14`, current > max → the ⚠ row) / `herd_grazing_small_game`
+    (radius 0 → "Range: 1 tile") / `herd_domesticated` (the penned case: the pair with NO Range
+    row and no ⚠). **Both stock frames assert the UNIT, not just that a pair rendered** — the fixture's
+    1480 biomass ÷ its `body_mass` 100 is 15 animals, so a row that silently kept counting biomass fails
+    both halves. The fixture's `body_mass` is pinned to its own `food_per_animal` by the sim's identity
+    `food_per_animal = body_mass × provisions_per_biomass`, or it would assert against a herd that could
+    not exist; map_preview `map_pasture_herd_range` (the gold graze ring over the Pasture overlay) /
     `map_predator_prey_sense` (a selected Grey Wolf Pack drawing the wide radius-4 ORANGE prey-sense ring —
     a 61-tile disk — beside a herbivore deer; NOT the small gold graze ring).
 - **Clear-all / move-band** (`Hud.gd`, Early-Game Labor slice 3b): the single-task

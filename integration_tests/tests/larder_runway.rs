@@ -12,7 +12,7 @@
 
 use bevy::prelude::Entity;
 use core_sim::{
-    build_headless_app, run_turn, scalar_from_f32, FollowPolicy, ForageRegistry, LaborAllocation,
+    build_headless_app, run_turn, scalar_from_f32, ForageRegistry, LaborAllocation,
     LaborAssignment, LaborTarget, PopulationCohort, SimulationConfig, SnapshotHistory, Tile, FOOD,
 };
 
@@ -94,7 +94,7 @@ fn the_published_runway_is_the_turn_the_larder_really_empties() {
         assignments: vec![LaborAssignment {
             target: LaborTarget::Forage {
                 tile: patch,
-                policy: FollowPolicy::Sustain,
+                floor: 0.5,
                 species: None,
             },
             workers: GATHERERS,

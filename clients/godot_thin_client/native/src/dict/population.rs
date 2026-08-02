@@ -200,11 +200,9 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
     if let Some(activity) = cohort.activity() {
         let _ = dict.insert("activity", activity);
     }
-    // Fauna-pursuit sub-mode: "single" (one-shot) or "sustain"/"surplus"/"deplete"/
-    // "eradicate" (follow policies); empty when the band isn't hunting. Mirrors `activity`.
-    if let Some(hunt_mode) = cohort.huntMode() {
-        let _ = dict.insert("hunt_mode", hunt_mode);
-    }
+    // `huntMode` is RETIRED (docs/plan_harvest_floor.md): it named the largest Hunt assignment's
+    // stance, and pressure is a per-source FLOOR now — read `labor_assignments[..]["floor"]`. One
+    // band-wide string cannot summarise a continuous per-source dial.
     let _ = dict.insert("supply_network_id", cohort.supplyNetworkId() as i64);
     if let Some(stores) = cohort.stores() {
         let mut stores_dict = VarDictionary::new();
@@ -312,14 +310,16 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             if let Some(fauna_id) = assignment.faunaId() {
                 let _ = entry.insert("fauna_id", fauna_id);
             }
-            if let Some(policy) = assignment.policy() {
-                let _ = entry.insert("policy", policy);
-            }
-            // THE SECOND AXIS (issue #442). `policy` above is now ALWAYS one of the four harvest
-            // STANCES; this is what the crew is BUILDING on the source, independent of how hard it
-            // pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always inserted (as "" when the
-            // string is absent) so the entry shape is stable and no consumer has to distinguish
-            // "not building" from "older snapshot" — the two mean the same thing here.
+            // **WHERE THIS CREW STOPS, as a fraction of the source's carrying capacity** — THE
+            // authority on harvest pressure (`docs/plan_harvest_floor.md`), and since 2b the ONLY
+            // statement of it: the four-value `policy` label that used to ride beside it is a
+            // retired wire slot the sim can no longer write. Always inserted, so the entry shape is
+            // stable.
+            let _ = entry.insert("floor", assignment.floor());
+            // THE SECOND AXIS (issue #442). This is what the crew is BUILDING on the source,
+            // independent of how hard it pulls: "" | "cultivate" | "sow" | "tame" | "corral". Always
+            // inserted (as "" when the string is absent) so the entry shape is stable and no consumer
+            // has to distinguish "not building" from "older snapshot" — the two mean the same thing.
             let _ = entry.insert("improvement", assignment.improvement().unwrap_or_default());
             array.push(&entry.to_variant());
         }
@@ -372,13 +372,12 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         "expedition_target_herd",
         cohort.expeditionTargetHerd().unwrap_or(""),
     );
-    // Hunt-party take policy (sustain|surplus|deplete|eradicate; "" for scouts/bands) + the carry
-    // ceiling (party × per_worker_carry; 0 for scouts/bands). The hunt panel shows "Carried X / cap"
-    // + a FULL state, and the launched party's policy.
-    let _ = dict.insert(
-        "expedition_hunt_policy",
-        cohort.expeditionHuntPolicy().unwrap_or(""),
-    );
+    // WHERE THE RAID STOPS, as a fraction of the herd's carrying capacity — the launched party's
+    // orders (`docs/plan_harvest_floor.md`), replacing the retired `expeditionHuntPolicy` string.
+    // `1.0` on a scout or a resident band: they harvest no herd, and an absent floor must not read as
+    // "take everything". Beside it, the carry ceiling (party × per_worker_carry; 0 for scouts/bands),
+    // which the hunt panel shows as "Carried X / cap" plus a FULL state.
+    let _ = dict.insert("expedition_floor", f64::from(cohort.expeditionFloor()));
     let _ = dict.insert(
         "expedition_carry_cap",
         f64::from(cohort.expeditionCarryCap()),

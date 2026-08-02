@@ -694,14 +694,11 @@ func _activity_glyph(activity: String) -> String:
 
 ## Shared green/amber/red tier for a herd's ecology phase, matching the band
 ## food dot so map/roster/drawer agree: thriving→green, stressed→amber,
-## collapsing→red. Matched on the phase stems from `EcologyPhase::as_str`.
+## collapsing→red. The definition lives on `DetailFormat` beside `ecology_phase_label` /
+## `ecology_value_hex` — the harvest-floor chart tints its stock band with the same tier, and a
+## second copy is how the roster dot and the chart start disagreeing about one phase.
 func _ecology_tier_color(phase: String) -> Color:
-	var normalized := phase.strip_edges().to_lower()
-	if normalized.contains("collaps"):
-		return HudStyle.DANGER
-	if normalized.contains("stress"):
-		return HudStyle.WARN
-	return HudStyle.HEALTHY
+	return DetailFormat.ecology_tier_color(phase)
 
 ## The selected tile's biome name, stripped ("" when none). Public because the band detail lines take
 ## it as a PARAMETER rather than holding the selection model (`BandDetailLines` — the morale row's

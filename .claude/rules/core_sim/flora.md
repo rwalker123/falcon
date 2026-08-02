@@ -46,25 +46,28 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   stock and recovers via normal regrowth instead of sticking at `0` forever. The floor is below
   `collapse_fraction`, so Eradicate still crashes a patch hard into the Collapsing band — it just
   can't hold it permanently at `0`.
-- **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the per-policy ecology
-  ceiling, caps it by gather throughput (`workers × per_worker_biomass_capacity × seasonal_weight`),
-  clamps to the patch's biomass, **subtracts the take**, and converts to provisions
-  (`take × provisions_per_biomass × output_multiplier`). Foraging honors the **full policy axis**
-  (Sustain/Surplus/Deplete/Eradicate — §0-iii, **parity with hunting**), mirroring `hunt_take`'s
-  rungs: **Sustain** = the **Maximum Sustainable Yield** (`sustainable_yield(..)` — regrowth at the
-  most-productive biomass K/2, so a patch *at carrying capacity* still yields a positive skim and a
-  collapsed patch yields nothing; Sustain draws the patch toward K/2); **Surplus** = that ×
-  `surplus_multiplier` (slow
-  decline); **Deplete** = `market.take_fraction × biomass` (a commercial share → fast depletion) and
-  the `Forage` arm sells the take as trade goods (`take × market.trade_goods_per_biomass ×
-  market.trade_goods_multiplier × output_mult` → `FactionInventory` — gathered goods sold, **Deplete
-  only**); **Eradicate** = `eradicate.take_fraction × biomass` (strip the patch, no floor, no trade
-  goods — denial). The `Forage` arm of `advance_labor_allocation` (Population) passes the
-  assignment's policy into `forage_take` and writes the real `sustainable =
-  sustainable_yield(biomass_before, cap, forage.ecology) × provisions_per_biomass ×
-  output_multiplier` (MSY-based) into the
-  yield telemetry, so a non-Sustain gather reads `actual > sustainable` (the over-forage ⚠) exactly
-  as an over-hunt does.
+- **Draw-down** (`forage_take`, the plant mirror of `hunt_take`): resolves the stance's **escapement
+  ceiling** (`forage_escapement_ceiling`), caps it by gather throughput
+  (`workers × per_worker_biomass_capacity × seasonal_weight`), clamps to the patch's biomass,
+  **subtracts the take**, and converts to provisions
+  (`take × provisions_per_biomass × output_multiplier`).
+  **Since `docs/plan_harvest_floor.md` slice 1 the whole axis is ONE expression parameterised by a
+  floor** — `max(0, B − floor·K) × build_dip`, the exact twin of `fauna::hunt_escapement_ceiling` —
+  with the floor carried on the assignment (`LaborTarget::Forage`) as an `f32` fraction of `K`.
+  A deeper floor leaves less standing and so takes more; the `Forage` arm sells the take as trade
+  goods **at the basket's own rate, with no markup of any kind** — the 4×
+  `market.trade_goods_multiplier` is deleted, because a factor attached to one drawdown depth
+  re-welded product to intensity (`docs/plan_harvest_floor.md` §4).
+  **It is `r`-INDEPENDENT and takes no `EcologyConfig`**, which is what makes the rung-2 payoff read
+  as what it is: a tended patch does not get a bigger ceiling, it *refills faster*, so it has more
+  stock standing above the floor next turn.
+  The `Forage` arm of `advance_labor_allocation` (Population) writes the real
+  `sustainable = sustainable_yield(biomass_before, cap, patch_ecology) × provisions_per_biomass ×
+  output_multiplier` (MSY-based) into the yield telemetry as the **long-run reference line the player
+  reads beside the take** — **not** as the ⚠ predicate. The first harvest of a stocked patch is its
+  accumulated stock and legitimately exceeds one turn's regrowth under *every* stance, Sustain
+  included, so the over-forage ⚠ is `components::floor_overdraws` (`floor < K/2` — a fact about where
+  the crew stops), exactly as it is on the animal web.
 - **Config** (`labor_config.json` `forage`): **`capacity_by_biome`** (the per-biome capacity table —
   see "The two food webs"; **validated total** over every `TerrainType` by `LaborConfig::validate`),
   `per_worker_biomass_capacity`,
@@ -72,21 +75,40 @@ forage exactly as it does for overhunting. *Sim-only — the client already rend
   higher than fauna's 0.05; `collapse_fraction`/`stressed_fraction` phase bands), a
   `reseed_floor_fraction` (0.02 — the reseed standing crop as a fraction of `carrying_capacity`, so a
   crashed patch recovers from a seed stock rather than sticking at `0`; below `collapse_fraction`),
-  plus the **policy axis** levers (§0-iii, mirroring fauna's `follow`/`market`/`hunt`):
-  `surplus_multiplier` (1.6),
-  `market: { take_fraction 0.20, trade_goods_multiplier 4.0, trade_goods_per_biomass 0.005 }`,
-  `eradicate: { take_fraction 0.30 }`. The old flat `forage.per_worker_yield` lever is **retired**,
+  and a `cultivation` block. **The whole per-stance lever set is DELETED** — `surplus_multiplier`,
+  `market` (entirely, including its 4× `trade_goods_multiplier`) and `eradicate.take_fraction` all
+  existed to tune four fixed rates, and the harvest floor replaced those with one number the player
+  carries (`docs/plan_harvest_floor.md` §4). **After that deletion no option carries a factor of any
+  kind**, which is the section's own acceptance test
+  (`harvest_floor_trade_rebalance::the_deleted_levers_are_gone_and_the_allee_threshold_is_not`).
+  **`ecology.collapse_fraction` stays**: it is the Allee threshold `net_biomass_delta` reads, and it
+  only ever moonlighted as one stance's floor. The old flat `forage.per_worker_yield` lever is **retired**,
   and so is the flat `forage.carrying_capacity` (120 on every food-module tile) it was replaced by:
   a **constant** human web could not diverge from the spatial animal one, so *"your best farm is not
   your best pasture"* was untrue **by construction**. Per-biome (not per-`FoodModule`) is deliberate —
   the two tables must be comparable tile-for-tile and must be able to disagree *within* a module.
-  Because every yield is linear in `K` (MSY = `r·K/4`), the cultivation incentive and every policy
-  ceiling scale with the tile and need no re-derivation.
-- **Policy plumbing** (§0-iii, the 5-site mirror of Hunt's policy): `LaborTarget::Forage` carries a
-  `policy: FollowPolicy` (a policy change on the same tile is the **same source** in `same_source`,
-  a mutable property); the `assign_labor forage <x> <y> [policy] <workers>` command-text parse takes
-  an optional policy token; `handle_assign_labor` builds it via `parse_follow_policy`; and the
-  policy round-trips through the rollback snapshot (`LaborAssignmentState.policy`, no schema change).
+  Because every yield is linear in `K`, the cultivation incentive and every escapement ceiling scale
+  with the tile and need no re-derivation.
+- **Floor plumbing** (the 5-site mirror of Hunt's, `docs/plan_harvest_floor.md` §4):
+  `LaborTarget::Forage` carries a **`floor: f32`** — a fraction of the patch's `K`, and the whole of
+  what the player decides about pressure. A floor change on the same tile is the **same source** in
+  `same_source` (a mutable property, exactly as the stance it replaced was); the
+  `assign_labor forage <x> <y> [floor] [species] <workers>` command-text parse takes an optional
+  floor token; `handle_assign_labor` **validates it fails-closed** (`floor_is_valid` — finite and in
+  `0.0..=1.0`, rejected with a command failure, never clamped) and defaults an absent one to
+  `DEFAULT_ESCAPEMENT_FLOOR` (0.5, the food peak); and it rides the rollback because `SimState`
+  clones `LaborAllocation` whole (`harvest_floor_rollback.rs`).
+
+  **The forage tail is disambiguated by "does the token parse as `f32`"** — a lone optional token is
+  the floor if it is a number and the **species** otherwise. That is sound rather than heuristic
+  because a `flora_config.json` species key is snake_case and cannot parse as a float, which
+  `flora_roster::every_shipped_species_key_is_covered_by_the_command_grammar` asserts against the
+  shipped roster. With **both** optional tokens present the first is unambiguously the floor.
+
+  On the wire the assignment ships **`floor`** (`LaborAssignment.floor`, appended) beside a
+  four-value **`policy`** label, which the sim writes only when the floor is exactly one of the
+  values those names stand for and leaves `""` otherwise — a label is true of the assignment or
+  absent, never rounded. Read the floor.
 - **Persistence** — `ForageRegistry` survives a rollback exactly like the `HerdRegistry`: the
   **checkpoint carries the registry whole** (`SimState::forage`), including the `progress`/`owner`
   fields that hold **cultivation** (Phase 1a, below), so a mutate-then-restore rewinds it like
@@ -211,12 +233,14 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   roster. `""` means **the wild mixed basket**, not "unknown". Note the pair is *recorded before it
   takes effect* — a patch still being prepared names its crop while still reading full `K` and the
   wild rate.
-- **The selection rides the labor assignment** — `LaborTarget::Forage { tile, policy, species }`,
-  beside the policy and for the same reason (a mutable property of the same source). It crosses the
+- **The selection rides the labor assignment** — `LaborTarget::Forage { tile, floor, species }`,
+  beside the floor and for the same reason (a mutable property of the same source). It crosses the
   wire as `AssignLaborCommand.species` (proto field 9, append-only) and the text form
-  `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>`; it round-trips through
-  `LaborAssignmentState.species`. `cultivate`/`sow` (the command forms of the policy picker) name no
-  crop and **carry over** whatever the band already selected.
+  `assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` — matching the parser's own usage
+  string; **the two optional tokens are disambiguated by "does this parse as `f32`"**, which is why
+  the stance words cannot be accepted here even positionally. It round-trips through
+  `LaborAssignmentState.species`. `cultivate`/`sow` (the command forms of the improvement picker) name
+  no crop and **carry over** whatever the band already selected.
 - **Legality** (`forage::resolve_committed_species`, the one seam the `assign_labor` rejection and the
   labor arm's commit both read): the species exists, its `cultivation_ceiling` permits the rung
   (`allows_cultivate` / `allows_sow` — **live since S1**), and it is in **this tile's** basket via
@@ -400,9 +424,10 @@ land-use tension.
   `field_provisions` is `0` (worthless as food), a grain's `field_trade_goods` is the negligible flat
   token (`biomass × field_provisions_per_biomass × 0.005/0.05`), a hay crop's is `0` — the vector does
   the routing.
-- **No `Deplete` markup.** `field_trade_goods` deliberately does **not** apply the `Deplete` policy's
-  `trade_goods_multiplier`: that markup is a `Deplete`-*policy* concept for wild commercial gathering; a
-  managed Field harvest does not carry it. The existing `Deplete`-policy wild-take arm is unchanged.
+- **No markup, anywhere.** `field_trade_goods` applies no `trade_goods_multiplier` — and neither does
+  anything else now: the whole `forage.market` block is **deleted** with the four stances (see the
+  retired-levers note at the top of this file). A deep floor still out-earns a shallow one on trade
+  **because it takes more biomass**, which is the ladder doing the work rather than a stance bonus.
 - **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild** `provisions_per_biomass`,
   never the species rate, so a 0-provisions cash crop yields exactly 0 food with no divide-by-zero, and
   `YieldVector::pays_something()` passes because trade `> 0`. This is the sharp "pays no calories" edge.
@@ -422,8 +447,25 @@ land-use tension.
   would credit the working band's own `TRADE_GOODS` store (see `yield-forecast.md` → "Trade goods are a
   BAND-LOCAL store"); `0` for a staple/hay or a plant that cannot Sow here. **Client
   done:** the native reader decodes `sowTradePayoff` and the crop picker renders a cash-crop trade row
-  (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was deliberately omitted for parity with fodder —
-  no role-badge mechanism exists for either.
+  (`FLORA_CROP_TRADE_ROW_FORMAT`).
+
+### The `role` tag is on the wire — `FloraShareInfo.role`
+
+Each composition entry carries its species' own `role` (`staple` | `fodder` | `cash`), appended to
+`FloraShareInfo` (append-only). It is the **roster's** tag, copied at the quote site
+(`snapshot/flora_quotes.rs`) and at the roster-fallback in `patch_composition_info`, so the tag has one
+definition and cannot be re-derived into a second. Still a **display tag**: nothing in the sim branches
+on it, and a client renders it and nothing more. `""` means **unstated** (a species the roster no longer
+names), never `staple` — the `displayName` convention.
+
+**A client cannot derive it from the payoffs beside it.** `cultivatePayoff` / `cultivateFodderPayoff` /
+`cultivateTradePayoff` and the `sow*` triple are **rung-2 and rung-3** numbers — they fold in the weeding
+and conversion gains rather than stating the species' own vector — and they are **all zero** for a plant
+that cannot climb on this ground (`canCultivate`/`canSow` false), which is exactly the `wild`-ceiling case
+where the role is still a true and useful fact. Pinned by
+`sim_schema`'s `the_three_crop_roles_survive_the_wire_distinctly` /
+`an_unstated_role_ships_as_an_empty_string_rather_than_a_default_category` and, at the capture site, by
+`flora_quotes::tests::every_quoted_plant_carries_its_rosters_own_role`.
 
 ### The vector routes at RUNG 2 as well — a Tended Patch pays all three accounts
 
@@ -450,10 +492,10 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   seasonal`, so unlike the Field arm's `managed_per_worker_fodder`/`_trade` there is nothing further to
   cap: the crop the crew carries home *is* the take it made.
 - **One trade rule at every drawn-down rung** (#433). There is no committed-vs-wild branch left: every
-  `forage_take` harvest credits `take × patch_trade_per_biomass`, the basket average, and `Deplete`
-  multiplies that by `forage.market.trade_goods_multiplier` (**4.0**) at rung 1 **and** rung 2 alike.
-  The markup is a **policy** concept — *sell harder*, a markup on goods you were already producing —
-  not a rung concept, so it stops being the only way a wild patch sells and starts being one of two
+  `forage_take` harvest credits `take × patch_trade_per_biomass`, the basket average, at rung 1 **and**
+  rung 2 alike — and **nothing multiplies it**. The `forage.market.trade_goods_multiplier` (4.0) this
+  paragraph used to describe is deleted with the stance axis: it re-welded product to policy, which is
+  exactly what the harvest-floor arc removed. A deeper floor sells more because it takes more,
   settings on the same rate. The species-blind `forage.market.trade_goods_per_biomass` (0.005) is
   **retired**; the vector is the rate. Because every staple carries `trade_goods_per_biomass` 0.005,
   a staple-only basket's wild `Deplete` sale is **numerically unchanged** — only baskets holding a
@@ -484,9 +526,9 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   - **All three rung-2 accounts ride ONE take**, `tended_msy_take` — the Sustain skim on the tended
     curve, extracted so `tended_provisions` and the two new quotes cannot describe different harvests
     (the `patch_ecology` no-second-copy rule, applied to the take). The non-food quotes are
-    **policy-blind** with no `market.trade_goods_multiplier`: the markup is a `Deplete`-policy concept
-    applied at the credit site, and a crop-picker row states what the *crop* pays on this ground — the
-    same rule `field_trade_goods` states one rung up. Under `Sustain` on a patch at `K/2` the quote and
+    **floor-blind**, and there is no `market.trade_goods_multiplier` left to be blind to — the lever is
+    deleted. A crop-picker row states what the *crop* pays on this ground — the
+    same rule `field_trade_goods` states one rung up. At the food-peak floor on a patch at `K/2` the quote and
     the credit therefore coincide exactly, which is how they are pinned:
     `forage_tended_vector::the_published_cultivate_{trade,fodder}_quote_is_the_{trade,fodder}_a_tended_patch_actually_credits`
     run a real turn and assert the published quote against what the turn credited (the §4.3 rule).

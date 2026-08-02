@@ -47,27 +47,45 @@ const HERD_SPECIES := {
 	"catfish": "🐟",
 }
 
-# Take-policy glyphs (the extractive `LABOR_HUNT_POLICIES` set shared by forage + hunt, plus the two
-# INVESTMENT rungs — Cultivate is forage-only, Corral is hunt-only). ONE source of
-# truth, read by BOTH consumers: the Hud policy-picker buttons (`HudWidgets.build_policy_picker`) and the
-# map's worked-source yield labels (`BandOverlayRenderer._draw_yield_label`), so a policy always reads the
-# same on the panel and on the map. The four extractive rungs are ONE AXIS — how hard the take
-# presses on the source — so their glyphs read as a ladder: Sustain = take only the regrowth;
-# Surplus = take more now, accept a slow decline; Deplete = draw the source down hard, a fast
-# decline; Eradicate = strip it bare. Cultivate =
-# prepare the patch into a tended one (low yield while working, then a much higher tended yield);
-# Corral = build a pen for a domesticated herd (the same deal, animal side). The 🌱 seedling / 🐄 cow
-# read at picker size (🐄 is already the drawer's Domesticated/Corralled badge).
-# Deplete is ⇊ (downwards paired arrows) — the PRESSURE it applies, doubled against Surplus's single
-# ⬆, so the two read as neighbouring rungs of one ladder rather than as opposites. It replaced ⇄
-# (exchange) with the `Market` → `Deplete` rename (docs/plan_hunt_yield_model.md §2): once every
-# harvesting policy sells the species' trade goods, an exchange arrow named the rung's PRODUCT, which
-# is exactly what stopped distinguishing it. It is NOT 🪙 (coin) / 💰 (money bag) / ⚖ (scales) either:
-# the two pictographic emoji
-# both render as a featureless grey ball at the sizes these glyphs are drawn (a ~13px HUD button, a
-# ~12px map yield label), and the scales render tiny and faint — the known glyph-legibility hazard.
-# What survives the downscale is bold line art (♻ ⬆ ⇊) plus the high-contrast 💀. All verified in
-# the preview frames (band_panel_left / map_band_work).
+# ---- THE ESCAPEMENT FLOOR'S GLYPHS --------------------------------------------------------------
+# ONE glyph per FLOOR ZONE (`SourceForecast.FLOOR_ZONE_*`) — where the crew's floor sits relative to
+# the food peak. It replaced a glyph per harvest STANCE, because there are no stances: a floor is a
+# continuous number, so the only thing a single mark can say about it is which side of the peak it
+# falls on, and that is exactly the thing worth saying.
+#
+# The five read as ONE AXIS — descending harvest pressure, left to right:
+#   strip      the source is taken to nothing (a patch reseeds, a herd dies)
+#   drawdown   below the peak: spending the source's future for calories now
+#   peak       ON the food peak: the most calories, forever
+#   learning   above the peak: buying ladder progress with calories
+#   untouched  the floor is the whole stock — nothing is taken, and nothing is learned either
+#
+# THREE ARE INHERITED VERBATIM from the stance set they replace, and deliberately: ⇊ was Deplete's
+# doubled-arrow PRESSURE mark, 💀 was Eradicate's, ♻ was Sustain's renewable one — each already meant
+# the thing its zone means, and the marks are legibility-proven at 12–13px. ⬆ carried Surplus and now
+# reads as RAISING the floor (leave more standing), which is the opposite pressure; the rename is
+# safe because nothing renders both vocabularies. ⊘ is new and is the only mark that had to be: "take
+# nothing at all" had no stance and so had no glyph.
+#
+# All five are TEXT-PRESENTATION symbols except 💀 — see the note below on why that matters (a text
+# glyph inherits the label's colour and greys out with a disabled button; an emoji cannot be tinted).
+const FLOOR_ZONE_ICONS := {
+	"strip": "💀",
+	"drawdown": "⇊",
+	"peak": "♻",
+	"learning": "⬆",
+	"untouched": "⊘",
+}
+
+## Icon for a floor ZONE key ("" for an unknown zone, so callers render bare text). Every surface that
+## marks a floor — the preset picker, the work row's mark column, the map's yield label — comes
+## through here with `SourceForecast.floor_zone(floor)` in hand, so a floor reads identically wherever
+## it appears. **The classification stays in `SourceForecast`, deliberately**: this module is a leaf
+## the forecast layer already depends on, and taking a float here would point the dependency both
+## ways.
+static func for_floor_zone(zone: String) -> String:
+	return String(FLOOR_ZONE_ICONS.get(zone.strip_edges().to_lower(), ""))
+
 ## The Corral rung's key, named because a THIRD consumer now reads its glyph off this table by key:
 ## the turn orb's `starving_pen` attention row (an unfed pen is a corral problem, so it wears the
 ## corral glyph). The picker/map look policies up by their snapshot string; the orb has no policy in
@@ -92,18 +110,17 @@ const POLICY_CORRAL := "corral"
 # also matters: a text glyph greys out with its button, an emoji stays stubbornly coloured.
 const POLICY_TAME := "tame"
 const POLICY_SOW := "sow"
+# THE IMPROVEMENT (build-verb) GLYPHS, and only those — the four rungs of the two ladders. The four
+# harvest-stance rows that used to head this table are gone with the stances; a floor's mark is
+# `FLOOR_ZONE_ICONS` above.
 const POLICY_ICONS := {
-	"sustain": "♻",
-	"surplus": "⬆",
-	"deplete": "⇊",
-	"eradicate": "💀",
 	"cultivate": "🌱",
 	POLICY_SOW: "▦",
 	POLICY_TAME: "◎",
 	POLICY_CORRAL: "🐄",
 }
 
-## Icon for a take policy ("" for an unknown/absent policy, so callers render bare text).
+## Icon for an improvement verb ("" for an unknown/absent one, so callers render bare text).
 static func for_policy(policy: String) -> String:
 	return String(POLICY_ICONS.get(policy.strip_edges().to_lower(), ""))
 
@@ -127,6 +144,37 @@ static func for_policy(policy: String) -> String:
 # colour (tinting WARN-amber with an overdrawn row, greying out with a disabled button) instead of
 # carrying emoji colours of its own. 🪙 / 💰 / ⚖ were already measured and rejected at these sizes.
 const TRADE_GOODS_GLYPH := "⇄"
+
+# ---- WHAT A PLANT IS FOR — the crop-ROLE glyphs ------------------------------------------------
+# One mark per `FloraShareInfo.role` ("staple" | "fodder" | "cash"), worn by each row of the tile
+# card's basket so the composition of a stand reads at a glance: how much of this ground is food for
+# people, feed for animals, or goods to trade. The role is a DISPLAY TAG the sim ships and nothing
+# branches on — the yield vector is the behaviour — so nothing here may be derived from a payoff.
+#
+# ALL THREE ARE BORROWED, NOT INVENTED, and each is already this HUD's mark for that account:
+#   • 🌾 is the food/forage mark the roster's land row wears beside its staffed forager count
+#     (`2 🌾`) and the map's grassland site marker, i.e. "what people eat off this ground".
+#   • 🐄 is `POLICY_CORRAL`'s penned-livestock mark, and fodder is defined on this HUD as "feed for
+#     penned animals, not food for people" (`FLORA_CROP_FODDER_TOOLTIP_FORMAT`) — the same animals.
+#   • ⇄ is `TRADE_GOODS_GLYPH` itself, the one mark every non-food component of a yield already
+#     wears, so a cash crop is marked with the account it pays into rather than a fourth glyph.
+# Borrowing is also what keeps them legible: 🌾/🐄 are grandfathered emoji already judged at row
+# size (`food_tile.png`, `herd_corral.png`) and ⇄ is a text-presentation symbol that inherits the
+# label's colour. A NEW mark here would have to be re-proven at ~13px; these are already proven.
+const CROP_ROLE_STAPLE := "staple"
+const CROP_ROLE_FODDER := "fodder"
+const CROP_ROLE_CASH := "cash"
+const CROP_ROLE_ICONS := {
+	CROP_ROLE_STAPLE: "🌾",
+	CROP_ROLE_FODDER: POLICY_ICONS[POLICY_CORRAL],
+	CROP_ROLE_CASH: TRADE_GOODS_GLYPH,
+}
+
+## Icon for a crop ROLE. **`""` (or an unknown tag) means UNSTATED, never "staple"** — the wire says
+## so explicitly, and a client that defaulted a missing tag into a real category would invent a fact
+## about the plant. Callers render no icon on the empty answer.
+static func for_crop_role(role: String) -> String:
+	return String(CROP_ROLE_ICONS.get(role.strip_edges().to_lower(), ""))
 
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row

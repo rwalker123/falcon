@@ -41,13 +41,22 @@ invariant.
 
 > #### The ladder is monotone in the LONG-RUN rate, NOT in any single turn — do not "fix" this back
 >
-> Since slice 8 a **Sustain** hunt is **constant escapement on whole animals**: the herd hands over
-> `B − K/2`, which is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2`
-> = **`K/2` for every rung — `r` cancels out entirely**, so a full herd's first harvest is *identical*
-> wild, pastoral and penned. **That is correct and load-bearing.** The surplus standing above the
-> escapement point is *accumulated stock*, and stock does not care how fast you breed. What the ladder
-> buys is that **the next animal comes sooner** — so *"management buys a growth rate"* is now literally
-> and exclusively true, rather than being smeared across a stock term.
+> A **Sustain** hunt is **constant escapement on whole animals**: the herd hands over `B − K/2`, which
+> is a **stock**, not a rate. At `B = K` Sustain's escapement is `K − K/2` = **`K/2` for every rung —
+> `r` cancels out entirely**, so a full herd's first harvest is *identical* wild, pastoral and penned.
+> **That is correct and load-bearing.** The surplus standing above the escapement point is
+> *accumulated stock*, and stock does not care how fast you breed. What the ladder buys is that **the
+> next animal comes sooner** — so *"management buys a growth rate"* is now literally and exclusively
+> true, rather than being smeared across a stock term.
+>
+> **`docs/plan_harvest_floor.md` slice 1 made this true of the WILD hunt too, and changed nothing
+> here.** It generalised the pen's harvest rule to a floor the stance names (`Surplus 0.30·K`,
+> `Deplete 0.15·K`, `Eradicate 0`), so every rung on both webs is now the shape this callout already
+> described. What the arc **did** change is which comparisons are meaningful: a stance ceiling is a
+> stock and a rung payoff (`pastoralYield`, `corralYield`) is a long-run rate, so the two cannot be
+> ordered against each other at a single turn — the ladder lives on the payoff axis, and the 600-turn
+> average is where it is measured (`the_husbandry_ladder_is_a_per_species_growth_rate_ladder`, and the
+> plan's own `stance_probe` property tests).
 >
 > A single turn therefore cannot see the ladder at **either** biomass: at `B = K` you read the
 > rung-blind stock, and at `B = K/2` you read a **pulse** — zero for any species whose one-turn MSY is
@@ -77,7 +86,7 @@ invariant.
 |---|---|---|---|
 | Wild, Sustain hunt | `ecology` | `wild_r` (rabbit 0.35 · deer 0.10 · mammoth 0.04) | a worker |
 | Mobile domesticated (**pastoral**) | `husbandry.pastoral.ecology` | `min(cap, wild_r × pastoral_gain)` (gain 2.0) | **a worker** (a Hunt assignment, like a wild herd — passive-free pastoral is retired) |
-| Corral, building | the `animal:pen` rung's `yield_fraction_while_building × MSY` | — | a worker, 25 turns |
+| Corral, building | the `animal:pen` rung's `yield_fraction_while_building ×` the CREW's carry | — | a worker, 25 turns |
 | Corral, finished (**pen**) | `husbandry.pen.ecology` | `min(cap, wild_r × pen_gain)` (gain 4.0, cap 1.0) | a worker + **feed (footprint-offset)** + pinned |
 
 - **Grazing 2d retired the flat pastoral 0.25 / pen 0.90.** The managed rungs now scale each species'
@@ -97,7 +106,8 @@ invariant.
   free (`pasture_fraction → 1`, larder → 0); a **wholly-barren** footprint keeps the herd's frozen `K`
   and pays the full larder bill (the pre-2d worst case, preserved). See "Phase 2d".
 - **`fauna::herd_ecology(herd, fauna)` and `fauna::herd_capacity(herd, fauna)` are THE single source of
-  that mapping.** `regrow_biomass`, `hunt_policy_ceiling`, `hunt_forecast`, `refresh_ecology_phase`,
+  that mapping.** `regrow_biomass`, `hunt_escapement_ceiling` (capacity only — the take reads no
+  ecology at all), `hunt_forecast`, `refresh_ecology_phase`,
   the expedition ceiling/bound/simulation — **every** consumer resolves through them. **No call site may
   re-derive an ecology or a capacity**: a second copy of this mapping is exactly how a forecast starts
   promising a number the take won't pay (see "Pre-commit Yield Forecast").
@@ -197,25 +207,32 @@ gated, **paid** verb, so both food webs read the same:
 
 - **`Improvement::Tame`** (wire key `"tame"`) — **animal-only** (`Improvement::valid_for_hunt`; a
   Forage assignment carrying it is rejected at its command, exactly as `Corral` is). Since issue #442
-  it is an `Improvement`, not a `FollowPolicy`: it rides `LaborAssignment.improvement` **beside**
-  whatever stance the crew holds, so a herd being tamed is still being Sustain- (or Surplus-, or
-  Deplete-) hunted. It is not a `huntPolicyCeilings` row (those are the four stances) and emits no
-  `huntTripEstimates` row, because an expedition's mission carries a `FollowPolicy` and therefore
+  it is an `Improvement`, not a pressure setting: it rides `LaborAssignment.improvement` **beside**
+  whatever floor the crew holds, so a herd being tamed is still being hunted at that floor. It emits no
+  `huntTripEstimates` row, because an expedition's mission carries a **floor** and therefore
   cannot name it at all.
-- **The investment.** While the meter fills, the take ceiling is the `animal:pastoral` rung's
-  `yield_fraction_while_building × the herd's Sustain (MSY) ceiling` (`hunt_policy_ceiling`, through
-  the *same* shared MSY helper — the crew is gentling the herd, not harvesting it; a fraction of MSY is
-  a sustainable draw, so the herd stays healthy), and `domestication_progress` accrues that rung's
-  `progress_per_turn` **× the species' `taming_rate`** (slice 3c — 0.04 × 1.0 → 25 turns for a rabbit, × 0.2
-  → 125 for a Steppe Runner) via the shared `RungDef::build_accrual` seam. **Gates:** the
-  faction knows **Herding**, the species' `husbandry_ceiling` allows domestication (Grazing 2d-δ), and
-  the herd is **Thriving**. A gate that lapses mid-run just **stops accrual that turn** — progress is
-  neither lost nor silently switched, and the herd is marked `tamed_this_turn` so it does not decay
-  either. Ownership is **not** in the gate: `accrue_domestication` owns the
+- **The investment.** While the meter fills, the crew carries the `animal:pastoral` rung's
+  `yield_fraction_while_building ×` what a hunting crew of the same size carries — the dip multiplies
+  **crew throughput**, never the escapement ceiling (`docs/plan_harvest_floor.md` §3.1): the crew is
+  gentling the herd, not harvesting it. So a build costs yield only while hands are the scarce thing
+  (a crew the herd's own escapement binds pays nothing for it, legibly — hire twice the people), and
+  the dip is **floor-independent by construction**.
+  `domestication_progress` accrues that rung's
+  `progress_per_turn` **× `learn_multiplier(floor)` × the species' `taming_rate`** (slice 3c —
+  0.04 × 1.0 → 25 turns for a rabbit at the food peak, × 0.2 → 125 for a Steppe Runner) via the shared
+  `RungDef::build_accrual` seam. **Gates:** the faction knows **Herding**, the species'
+  `husbandry_ceiling` allows domestication (Grazing 2d-δ), and **something stands above the crew's
+  floor** (`systems::labor::crew_is_working_the_source` — the escapement room in biomass, read before
+  the whole-animal quantiser, so a herd that cannot yet spare a whole body is still being worked).
+  **THE `Thriving` GATE IS GONE** (`docs/plan_harvest_floor.md` §3.2 — the same deletion the plant
+  rung 2 took, for the same reason): gentling a herd you are pulling hard on is now *slow*, not
+  *stopped*, so there is no lapse state left and no "progress is held across it" rule to state.
+  `validate_tame` never had a phase gate, so the command side was already consistent with removing it.
+  The herd is still marked `tamed_this_turn`. Ownership is **not** in the gate: `accrue_domestication` owns the
   `owner is None || owner == faction` rule, exactly as `accrue_cultivation` does on the plant side.
   Accrued **after** the take (mirroring Cultivate/Corral), so the turn pays what the forecast promised.
   **The turn the herd becomes domesticated, the assignment's `improvement` is cleared** — the herd,
-  the crew **and the stance** all intact, so the band starts drawing the undipped pastoral payoff
+  the crew **and the floor** all intact, so the band starts drawing the undipped pastoral payoff
   instead of paying the taming dip on a herd with nothing left to gentle. The completing turn still
   pays the dip. One seam for all four rungs — see "Completion CLEARS the improvement" in
   `intensification.md`.
@@ -225,15 +242,15 @@ gated, **paid** verb, so both food webs read the same:
   progress; what neglect costs is **animals** (the shed, see "Herding is standing labor"). `Herd::tamed_this_turn`
   is still cleared each turn so it can't go stale, but its consumer (the retired decay-sparing) is gone.
   `taming_rate` now scales only the `Tame` *build* (progress-up), never a decay. **Distinct from an ordinary
-  hunt at any other policy**: a Sustain hunt *harvests* a herd; only `Tame` raises the taming meter.
+  hunt at any other floor**: a plain hunt *harvests* a herd; only `Tame` raises the taming meter.
 - **`tame <faction_id> <herd_id>` command** (`handle_tame`; `TameCommand` proto field **40**,
   `CommandEventKind::Tame`) — **sets the `Tame` improvement** on the bands already hunting the herd,
-  the command form of the client's checkbox (issue #442: the stance beside it is left alone). It **tames nothing outright**. It targets a **herd id**
+  the command form of the client's checkbox (issue #442: the floor beside it is left alone). It **tames nothing outright**. It targets a **herd id**
   (not a tile like `corral`): taming is the verb you reach for on a *roaming* herd, identified by who
   follows it, not by where it stands this turn. Rejections, each distinct (`validate_tame`, reached through `validate_improvement`): faction hasn't learned Herding / no such herd / the species is wild
   game (hunt-only) / already domesticated (corral it instead) / another people are taming it / **no
-  band is hunting it** (staff it first). Deliberately **not** gated on Thriving, unlike the patch — a
-  herd's phase swings as it is hunted, and the labor arm pauses accrual gracefully.
+  band is hunting it** (staff it first). It never carried a phase gate — a herd's `ecology_phase`
+  swings as it is hunted — and since `docs/plan_harvest_floor.md` §3.2 neither does the labor arm.
 - **The `domesticate` early-claim is REMOVED** — command, `claim_threshold` lever, its validate bound,
   and `Herd::claim_domestication`. It let the player snap progress to `1.0` and skip the investment,
   which is the entire decision (the plant side removed its twin for that exact reason). **Proto field
@@ -262,9 +279,9 @@ gated, **paid** verb, so both food webs read the same:
   only through a worker's Hunt assignment, at the pastoral `r` — see "Domestication / husbandry" and
   "The husbandry yield ladder") and the **`drift_to_owner`** movement primitive is live (see "Herd
   movement is a rung primitive").
-- **Slice 4 completed the rung's knowledge half:** practising it (working the resulting **pastoral**
-  herd under a stewardship policy) earns **Penning**, which now gates `corral` — so Herding gates
-  `tame` and **only** `tame`. See "The knowledge pattern".
+- **Slice 4 completed the rung's knowledge half:** practising it (hunting the resulting **pastoral**
+  herd) earns **Penning**, which now gates `corral` — so Herding gates `tame` and **only** `tame`.
+  See "The knowledge pattern".
 
 See Also: "Cultivation (Intensification Phase 1a)" (the plant rung 2 this now mirrors exactly), "Corral
 (Intensification Rung 1c)" (the rung above), "The Intensification Ladder" (the engine + the config).
@@ -281,10 +298,11 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
 `corralled_tended_this_turn` flag. *Sim-only — the client readout is a follow-up (see below).*
 
 - **Rung-3 earned-knowledge gate — PENNING** (slice 4's §4.3 reshuffle; **it was Herding**). *Learned
-  by doing* and **never start-granted**: working a **pastoral** (tamed) **Thriving** herd under a
-  stewardship policy accrues faction **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006,
-  `fauna.rs`) at the ladder's `knowledge.progress_per_turn` — *"you learn penning by managing tamed
-  herds"*. The **`Corral` policy** (and the `corral` / `extend_pen` commands, which ride the same
+  by doing* and **never start-granted**: hunting a **pastoral** (tamed) herd accrues faction
+  **Penning** knowledge (discovery `PENNING_DISCOVERY_ID` = 2006, `fauna.rs`) at the ladder's
+  `knowledge.progress_per_turn` **scaled by the assignment's floor** — *"you learn penning by managing
+  tamed herds"*, and how fast depends on how much you leave standing
+  (`intensification::learn_multiplier`; the health gate is gone, `docs/plan_harvest_floor.md` §3.2). The **`Corral` policy** (and the `corral` / `extend_pen` commands, which ride the same
   `animal:pen` rung) is refused until the faction knows it; every gate resolves the id off the rung
   record, never a literal. The `penning` tag → discovery 2006 mapping is declared in
   `start_profile_knowledge_tags.json` purely so it is mappable; **no start profile lists it**
@@ -294,12 +312,13 @@ the pen under construction), `corralled_at: Option<UVec2>` (`Some` = penned at t
   teaches. One knowledge per transition. See "The knowledge pattern".
 - **The `Corral` improvement — the investment.** In `advance_labor_allocation`'s **Hunt** arm, a herd
   worked with `Improvement::Corral` (animal-only) in flight **costs a yield dip while the pen is
-  built**: the take
-  ceiling is the `animal:pen` rung's `yield_fraction_while_building ×` **the selected stance's** rate
-  (`hunt_policy_rate`, reusing the **shared** MSY helper — the crew is building, not hunting; a
-  fraction of a *Sustain* draw is a sustainable draw, so a Sustain builder's herd stays healthy, while
-  a Deplete builder's does not — issue #442 §2.2) and `corral_progress` accrues
-  that rung's `progress_per_turn` (0.04 → 25 turns). **Gates:** the faction knows **Herding**
+  built**: the crew carries the `animal:pen` rung's `yield_fraction_while_building ×` what a hunting
+  crew of the same size carries (`docs/plan_harvest_floor.md` §3.1 — the dip multiplies hands, not the
+  ceiling), and `corral_progress` accrues that rung's
+  `progress_per_turn × learn_multiplier(floor)` (0.04 → 25 turns at the food peak). **Its `eligible`
+  deliberately carries no work predicate**, unlike the two rung-2 builds: it replaced a rung's
+  `Thriving` gate, rung 3 never had one, and fencing a herd is ground work — a pen goes up around a
+  flock already drawn down to its keeper's own floor. **Gates:** the faction knows **Herding**
   AND owns the **domesticated** herd; a gate that lapses **mid-build** just stops accrual that turn
   (progress is kept — a half-built pen is materials on the ground; unlike cultivation it does **not**
   decay *gradually*). That "progress is kept" applies to a **mid-build** lapse only — a **completed
@@ -524,7 +543,7 @@ mechanic (the two are near-mechanical transposes).
 > constructors that read them are **deleted** — with the mirror gone there was no producer left, and a
 > decoder with nothing to decode is a second, drifting definition of a restored herd.
 
-Market hunting shipped as the third extractive rung, now named `FollowPolicy::Deplete`
+Market hunting shipped as the third extractive rung, later renamed `Deplete`
 (`docs/plan_hunt_yield_model.md` §2 — every policy sells, so the rung is named for its
 pressure); `SedentarizationScore` shipped (see
 "Sedentarization" under Campaign Loop); **corrals shipped** (Intensification Rung 1c — see "Corral"

@@ -42,21 +42,38 @@ pub(crate) fn labor_assignment_to_state(
     match &assignment.target {
         LaborTarget::Forage {
             tile,
-            policy,
+            floor,
             species,
         } => {
             state.target_x = tile.x;
             state.target_y = tile.y;
-            state.policy = policy.as_str().to_string();
+            state.floor = *floor;
             state.species = species.clone().unwrap_or_default();
         }
-        LaborTarget::Hunt { fauna_id, policy } => {
+        LaborTarget::Hunt { fauna_id, floor } => {
             state.fauna_id = fauna_id.clone();
-            state.policy = policy.as_str().to_string();
+            state.floor = *floor;
         }
         LaborTarget::Scout | LaborTarget::Warrior => {}
     }
     state
+}
+
+/// Summarize a band's labor allocation into the `activity` string — the dominant assignment's kind,
+/// or `"idle"`.
+///
+/// **The `hunt_mode` half is gone with the stances**: it named the take policy of the largest Hunt
+/// assignment, and pressure is a per-source **floor** now (`LaborAssignmentState::floor`). One
+/// band-wide string cannot summarise a continuous per-source dial, and rounding one to a label would
+/// be the misdescription the floor's `""`-not-nearest rule exists to prevent.
+fn allocation_summary(allocation: Option<&LaborAllocation>) -> String {
+    allocation
+        .into_iter()
+        .flat_map(|allocation| allocation.assignments.iter())
+        .filter(|a| a.workers > 0)
+        .max_by_key(|a| a.workers)
+        .map(|a| a.target.kind().to_string())
+        .unwrap_or_else(|| "idle".to_string())
 }
 
 /// `turns_of_food` sentinel for a cohort that is **not food-limited** — no food demand at all (a
@@ -124,34 +141,6 @@ fn merged_arrival_schedule(allocation: Option<&LaborAllocation>) -> Vec<f32> {
         }
     }
     merged
-}
-
-/// Summarize a band's labor allocation into the legacy `activity`/`hunt_mode` strings (so the
-/// pre-3b client keeps rendering): `activity` = the target-kind with the most workers (else
-/// `"idle"`), `hunt_mode` = the policy of the largest Hunt assignment (else empty).
-pub(crate) fn allocation_summary(allocation: Option<&LaborAllocation>) -> (String, String) {
-    let Some(allocation) = allocation else {
-        return ("idle".to_string(), String::new());
-    };
-    let dominant = allocation
-        .assignments
-        .iter()
-        .filter(|a| a.workers > 0)
-        .max_by_key(|a| a.workers);
-    let activity = dominant
-        .map(|a| a.target.kind().to_string())
-        .unwrap_or_else(|| "idle".to_string());
-    let hunt_mode = allocation
-        .assignments
-        .iter()
-        .filter_map(|a| match &a.target {
-            LaborTarget::Hunt { policy, .. } if a.workers > 0 => Some((a.workers, policy)),
-            _ => None,
-        })
-        .max_by_key(|(workers, _)| *workers)
-        .map(|(_, policy)| policy.as_str().to_string())
-        .unwrap_or_default();
-    (activity, hunt_mode)
 }
 
 /// The global expedition levers the snapshot echoes onto **every** cohort (resolved once per
@@ -224,7 +213,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         cohort.elders,
         &demographics.consumption,
     );
-    let (activity, hunt_mode) = allocation_summary(allocation);
+    let activity = allocation_summary(allocation);
     let working_age = available_workers(cohort.working);
     let assigned = allocation.map(|a| a.assigned_total()).unwrap_or(0);
     let idle_workers = working_age.saturating_sub(assigned);
@@ -293,7 +282,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_mission,
         expedition_phase,
         expedition_target_herd,
-        expedition_hunt_policy,
+        expedition_floor,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
@@ -305,7 +294,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.mission.as_str().to_string(),
             exp.phase.as_str().to_string(),
             exp.mission.target_herd().to_string(),
-            exp.mission.hunt_policy_str().to_string(),
+            exp.mission.hunt_floor(),
             exp.home_band.to_bits(),
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
@@ -317,7 +306,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             String::new(),
             String::new(),
             String::new(),
-            String::new(),
+            // A resident band raids nothing, so it reports the floor that takes nothing — never `0`,
+            // which would read as "take everything" if anything ever acted on it.
+            NO_RAID_FLOOR,
             0,
             false,
             Vec::new(),
@@ -369,7 +360,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         age_turns: cohort.age_turns,
         turns_of_food,
         activity,
-        hunt_mode,
         labor_assignments,
         idle_workers,
         working_age,
@@ -386,12 +376,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pending_reveal_x,
         pending_reveal_y,
         expedition_carried_trade,
+        expedition_floor,
         max_expedition_party_size: expedition_levers.max_party_size,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
         // `.fbs` slot order for `expeditionTargetHerd`/`expeditionHuntPolicy`/`travelTargetX/Y`).
         expedition_target_herd,
-        expedition_hunt_policy,
         travel_target_x,
         travel_target_y,
         hunt_reach,
@@ -637,7 +627,7 @@ mod tests {
             assignments: vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: "test-herd".to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 4,
                 improvement: None,

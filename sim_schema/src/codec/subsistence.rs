@@ -99,26 +99,6 @@ fn create_herds<'a>(
         let size_class = builder.create_string(herd.size_class.as_str());
         let ecology_phase = builder.create_string(herd.ecology_phase.as_str());
         let husbandry_ceiling = builder.create_string(herd.husbandry_ceiling.as_str());
-        let hunt_policy_ceilings = if herd.hunt_policy_ceilings.is_empty() {
-            None
-        } else {
-            let entries: Vec<_> = herd
-                .hunt_policy_ceilings
-                .iter()
-                .map(|ceiling| {
-                    let policy = builder.create_string(ceiling.policy.as_str());
-                    fb::HuntPolicyCeiling::create(
-                        builder,
-                        &fb::HuntPolicyCeilingArgs {
-                            policy: Some(policy),
-                            provisionsPerTurn: ceiling.provisions_per_turn,
-                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&entries))
-        };
         let hunt_trip_estimates = if herd.hunt_trip_estimates.is_empty() {
             None
         } else {
@@ -126,11 +106,11 @@ fn create_herds<'a>(
                 .hunt_trip_estimates
                 .iter()
                 .map(|estimate| {
-                    let policy = builder.create_string(estimate.policy.as_str());
                     fb::HuntTripEstimate::create(
                         builder,
                         &fb::HuntTripEstimateArgs {
-                            policy: Some(policy),
+                            // THE SAMPLED FLOOR — replaces the retired `policy` string.
+                            floor: estimate.floor,
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,
@@ -144,6 +124,14 @@ fn create_herds<'a>(
                 })
                 .collect();
             Some(builder.create_vector(&entries))
+        };
+        // **An EMPTY curve is absent, not a vector of zeros** — the `hunt_trip_estimates` convention
+        // above, and the one that lets a client tell "this source published no curve" from "this
+        // source does not grow", which are different facts.
+        let regrowth_samples = if herd.regrowth_samples.is_empty() {
+            None
+        } else {
+            Some(builder.create_vector(&herd.regrowth_samples))
         };
         let entry = fb::HerdTelemetryState::create(
             builder,
@@ -172,7 +160,11 @@ fn create_herds<'a>(
                 penUpkeep: herd.pen_upkeep,
                 penFedFraction: herd.pen_fed_fraction,
                 // Appended after every earlier-shipped field (append-only wire discipline).
-                huntPolicyCeilings: hunt_policy_ceilings,
+                // RETIRED: the four stance rows cannot express a continuous dial. The client
+                // composes any floor's ceiling from `biomass`/`carryingCapacity`/`*PerBiomass`.
+                provisionsPerBiomass: herd.provisions_per_biomass,
+                fodderPerBiomass: herd.fodder_per_biomass,
+                tradePerBiomass: herd.trade_per_biomass,
                 huntTripEstimates: hunt_trip_estimates,
                 // Ecological K + grazing range (Grazing Phase 2b-iii) — appended last.
                 carryingCapacity: herd.carrying_capacity,
@@ -218,6 +210,16 @@ fn create_herds<'a>(
                 // The neglect grace — appended last.
                 hasNeglectGrace: herd.has_neglect_grace,
                 neglectGraceRemaining: herd.neglect_grace_remaining,
+                // One hunter's BIOMASS throughput — appended last (append-only wire). The term the
+                // crew half of the compose sheet divides a ceiling by; see the schema comment for
+                // why it is not derived from `perWorkerYield / provisionsPerBiomass`.
+                perWorkerBiomass: herd.per_worker_biomass,
+                // The sampled regrowth curve — appended last (append-only wire). Negative below the
+                // Allee threshold, by design; see the schema comment.
+                regrowthSamples: regrowth_samples,
+                // The phase bands this herd's own rung cuts on — appended last (append-only wire).
+                collapseFraction: herd.collapse_fraction,
+                stressedFraction: herd.stressed_fraction,
             },
         );
         entries.push(entry);
@@ -237,34 +239,11 @@ fn create_forage_patches<'a>(
         // The committed crop (S1) — both empty when the patch is the wild mixed basket.
         let committed_species = builder.create_string(patch.committed_species.as_str());
         let committed_display_name = builder.create_string(patch.committed_display_name.as_str());
-        // The TILE's per-rung vector (#426) — one row per rung, all three accounts on each. Built the
-        // same way `hunt_policy_ceilings` is, so the two webs' ceiling lists cannot drift in shape.
-        // `None` on an empty list rather than an empty vector: an absent list is how a reader tells
-        // "this snapshot carries no forecast" from "every rung pays zero", which is the whole
-        // distinction #426 exists to restore.
-        let forage_policy_ceilings = if patch.forage_policy_ceilings.is_empty() {
+        // Absent rather than a vector of zeros — see the herd twin.
+        let regrowth_samples = if patch.regrowth_samples.is_empty() {
             None
         } else {
-            let rows: Vec<_> = patch
-                .forage_policy_ceilings
-                .iter()
-                .map(|ceiling| {
-                    let policy = builder.create_string(ceiling.policy.as_str());
-                    fb::ForagePolicyCeiling::create(
-                        builder,
-                        &fb::ForagePolicyCeilingArgs {
-                            policy: Some(policy),
-                            provisionsPerTurn: ceiling.provisions_per_turn,
-                            tradeGoodsPerTurn: ceiling.trade_goods_per_turn,
-                            fodderPerTurn: ceiling.fodder_per_turn,
-                            perWorkerProvisions: ceiling.per_worker_provisions,
-                            perWorkerTradeGoods: ceiling.per_worker_trade_goods,
-                            perWorkerFodder: ceiling.per_worker_fodder,
-                        },
-                    )
-                })
-                .collect();
-            Some(builder.create_vector(&rows))
+            Some(builder.create_vector(&patch.regrowth_samples))
         };
         let entry = fb::ForagePatchState::create(
             builder,
@@ -289,7 +268,10 @@ fn create_forage_patches<'a>(
                 committedSpecies: Some(committed_species),
                 committedDisplayName: Some(committed_display_name),
                 // The TILE's yield vector — appended last (append-only wire, #426).
-                foragePolicyCeilings: forage_policy_ceilings,
+                // RETIRED: see the herd twin above.
+                provisionsPerBiomass: patch.provisions_per_biomass,
+                fodderPerBiomass: patch.fodder_per_biomass,
+                tradePerBiomass: patch.trade_per_biomass,
                 tendedTrade: patch.tended_trade,
                 tendedFodder: patch.tended_fodder,
                 fieldTrade: patch.field_trade,
@@ -302,6 +284,15 @@ fn create_forage_patches<'a>(
                 neglectGraceRemaining: patch.neglect_grace_remaining,
                 cultivateCrewNeeded: patch.cultivate_crew_needed,
                 sowCrewNeeded: patch.sow_crew_needed,
+                // One gatherer's BIOMASS throughput, seasonal weight folded in — appended last
+                // (append-only wire). The plant twin of the herd field; `0` in a dead season.
+                perWorkerBiomass: patch.per_worker_biomass,
+                // The sampled regrowth curve — appended last (append-only wire). Never negative on
+                // this web; see the schema comment.
+                regrowthSamples: regrowth_samples,
+                // The phase bands this patch's own rung cuts on — appended last (append-only wire).
+                collapseFraction: patch.collapse_fraction,
+                stressedFraction: patch.stressed_fraction,
             },
         );
         entries.push(entry);
@@ -319,6 +310,7 @@ fn create_flora_shares<'a>(
     for share in shares {
         let species = builder.create_string(share.species.as_str());
         let display_name = builder.create_string(share.display_name.as_str());
+        let role = builder.create_string(share.role.as_str());
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
@@ -341,6 +333,9 @@ fn create_flora_shares<'a>(
                 // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
                 cultivateFodderPayoff: share.cultivate_fodder_payoff,
                 cultivateTradePayoff: share.cultivate_trade_payoff,
+                // What the plant is FOR — a display tag off the roster, appended last (append-only
+                // wire). `""` is "unstated", never "staple".
+                role: Some(role),
             },
         );
         entries.push(entry);

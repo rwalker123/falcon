@@ -207,11 +207,18 @@ pub enum CommandPayload {
         target_x: Option<u32>,
         target_y: Option<u32>,
         fauna_id: Option<String>,
+        /// **RETIRED by the harvest floor arc** — a labor assignment carries a [`Self::AssignLabor`]
+        /// `floor`, not a stance. Kept on the payload only because the proto field number is
+        /// immutable once shipped; the server ignores it.
         policy: Option<String>,
         /// Which named plant a **forage** `Cultivate`/`Sow` should commit the patch to — a
         /// `flora_config.json` species key. `None` = *"pick the tile's dominant legal plant"*
-        /// (`docs/plan_flora_roster.md` §4.3). Ignored for every other role and policy.
+        /// (`docs/plan_flora_roster.md` §4.3). Ignored for every other role.
         species: Option<String>,
+        /// **WHERE THE CREW STOPS, as a fraction of the source's carrying capacity.** `None` = the
+        /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`). Validated `0.0..=1.0` at the
+        /// server boundary and **rejected**, never clamped. Ignored by the band-wide roles.
+        floor: Option<f32>,
     },
     MoveBand {
         faction_id: u32,
@@ -235,7 +242,10 @@ pub enum CommandPayload {
         band_id: Option<u64>,
         party_workers: u32,
         fauna_id: String,
-        policy: Option<String>,
+        /// **Where the raid stops**, as a fraction of the herd's carrying capacity. `None` = the
+        /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
+        /// server boundary and **rejected**, never clamped.
+        floor: Option<f32>,
     },
     ExportMap {
         path: Option<String>,
@@ -686,6 +696,7 @@ impl CommandEnvelope {
                 fauna_id,
                 policy,
                 species,
+                floor,
             } => pb::command_envelope::Command::AssignLabor(pb::AssignLaborCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -696,6 +707,7 @@ impl CommandEnvelope {
                 fauna_id: fauna_id.clone(),
                 policy: policy.clone(),
                 species: species.clone(),
+                floor: *floor,
             }),
             CommandPayload::MoveBand {
                 faction_id,
@@ -733,13 +745,15 @@ impl CommandEnvelope {
                 band_id,
                 party_workers,
                 fauna_id,
-                policy,
+                floor,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
                 party_workers: *party_workers,
                 fauna_id: fauna_id.clone(),
-                policy: policy.clone(),
+                // Retired by the harvest floor arc; the number is immutable, the value unread.
+                policy: None,
+                floor: *floor,
             }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
@@ -1028,6 +1042,7 @@ impl CommandEnvelope {
                 fauna_id: cmd.fauna_id,
                 policy: cmd.policy,
                 species: cmd.species,
+                floor: cmd.floor,
             },
             pb::command_envelope::Command::MoveBand(cmd) => CommandPayload::MoveBand {
                 faction_id: cmd.faction_id,
@@ -1054,7 +1069,7 @@ impl CommandEnvelope {
                     band_id: cmd.band_id,
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
-                    policy: cmd.policy,
+                    floor: cmd.floor,
                 }
             }
             pb::command_envelope::Command::ExportMap(cmd) => {

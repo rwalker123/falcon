@@ -365,6 +365,7 @@
     {
       "biomass": 69.25,
       "carrying_capacity": 26.76,
+      "collapse_fraction": 36.84,
       "committed_display_name": "forage_patches[0].committed_display_name",
       "committed_species": "forage_patches[0].committed_species",
       "composition": [
@@ -376,6 +377,7 @@
           "cultivate_trade_payoff": 38.880001,
           "cultivate_yield_ratio": 71.150002,
           "display_name": "forage_patches[0].composition[0].display_name",
+          "role": "forage_patches[0].composition[0].role",
           "share": 4.84,
           "sow_fodder_payoff": 70.239998,
           "sow_payoff": 15.1,
@@ -391,6 +393,7 @@
           "cultivate_trade_payoff": 42.290001,
           "cultivate_yield_ratio": 12.23,
           "display_name": "forage_patches[0].composition[1].display_name",
+          "role": "forage_patches[0].composition[1].role",
           "share": 84.0,
           "sow_fodder_payoff": 56.23,
           "sow_payoff": 63.709999,
@@ -407,49 +410,32 @@
       "field_progress": 67.019997,
       "field_trade": 31.200001,
       "field_yield": 78.199997,
-      "forage_policy_ceilings": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 107.459999,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 31.870001
-      },
-      "forage_policy_fodder_ceilings": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 69.059998,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 46.830002
-      },
-      "forage_policy_per_worker": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 51.66,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 64.940002
-      },
-      "forage_policy_per_worker_fodder": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 24.49,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 48.630001
-      },
-      "forage_policy_per_worker_trade": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 64.410004,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 64.959999
-      },
-      "forage_policy_trade_ceilings": {
-        "forage_patches[0].forage_policy_ceilings[0].policy": 65.650002,
-        "forage_patches[0].forage_policy_ceilings[1].policy": 93.769997
-      },
+      "fodder_per_biomass": 74.5,
       "has_neglect_grace": true,
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
       "neglect_grace_remaining": 181,
       "owner": 114,
+      "per_worker_biomass": 110.809998,
       "per_worker_yield": 54.48,
+      "provisions_per_biomass": 5.97,
+      "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [64.120003, 37.02, 60.77, 28.27, 25.76, 51.169998, 22.4, 111.809998, 39.91, 108.449997, 53.68]},
       "sow_build_fraction": 59.139999,
       "sow_crew_needed": 82,
       "sow_site_refusal": "forage_patches[0].sow_site_refusal",
+      "stressed_fraction": 35.610001,
       "tended_fodder": 66.300003,
       "tended_trade": 73.300003,
       "tended_yield": 11.58,
+      "trade_per_biomass": 40.57,
       "x": 0,
       "y": 0
     },
     {
       "biomass": 74.910004,
       "carrying_capacity": 41.889999,
+      "collapse_fraction": 23.440001,
       "committed_display_name": "forage_patches[1].committed_display_name",
       "committed_species": "forage_patches[1].committed_species",
       "composition": [
@@ -461,6 +447,7 @@
           "cultivate_trade_payoff": 65.269997,
           "cultivate_yield_ratio": 106.290001,
           "display_name": "forage_patches[1].composition[0].display_name",
+          "role": "forage_patches[1].composition[0].role",
           "share": 72.419998,
           "sow_fodder_payoff": 94.639999,
           "sow_payoff": 43.549999,
@@ -476,6 +463,7 @@
           "cultivate_trade_payoff": 111.720001,
           "cultivate_yield_ratio": 48.369999,
           "display_name": "forage_patches[1].composition[1].display_name",
+          "role": "forage_patches[1].composition[1].role",
           "share": 38.57,
           "sow_fodder_payoff": 23.5,
           "sow_payoff": 37.689999,
@@ -492,43 +480,25 @@
       "field_progress": 6.39,
       "field_trade": 33.970001,
       "field_yield": 75.790001,
-      "forage_policy_ceilings": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 70.669998,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 33.669998
-      },
-      "forage_policy_fodder_ceilings": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 94.910004,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 14.6
-      },
-      "forage_policy_per_worker": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 99.849998,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 84.269997
-      },
-      "forage_policy_per_worker_fodder": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 60.790001,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 0.14
-      },
-      "forage_policy_per_worker_trade": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 110.400002,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 30.93
-      },
-      "forage_policy_trade_ceilings": {
-        "forage_patches[1].forage_policy_ceilings[0].policy": 4.82,
-        "forage_patches[1].forage_policy_ceilings[1].policy": 96.849998
-      },
+      "fodder_per_biomass": 95.839996,
       "has_neglect_grace": true,
       "has_owner": true,
       "is_cultivated": true,
       "is_field": true,
       "neglect_grace_remaining": 186,
       "owner": 21,
+      "per_worker_biomass": 109.980003,
       "per_worker_yield": 108.360001,
+      "provisions_per_biomass": 95.019997,
+      "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [50.919998, 94.879997, 68.43, 91.529999, 65.07, 109.040001, 30.07, 62.560001, 26.709999, 53.810001, 78.75]},
       "sow_build_fraction": 10.17,
       "sow_crew_needed": 173,
       "sow_site_refusal": "forage_patches[1].sow_site_refusal",
+      "stressed_fraction": 11.05,
       "tended_fodder": 52.509998,
       "tended_trade": 68.269997,
       "tended_yield": 86.169998,
+      "trade_per_biomass": 7.82,
       "x": 1,
       "y": 1
     }
@@ -676,6 +646,7 @@
       "biomass": 109.120003,
       "body_mass": 32.599998,
       "carrying_capacity": 59.91,
+      "collapse_fraction": 9.08,
       "corral_build_fraction": 42.07,
       "corral_progress": 82.440002,
       "corral_trade": 67.93,
@@ -686,38 +657,35 @@
       "ecology_phase": "herds[0].ecology_phase",
       "ferocity": 35.540001,
       "fodder_draw": 56.889999,
+      "fodder_per_biomass": 10.07,
       "food_per_animal": 22.77,
       "graze_range_radius": 200,
       "has_neglect_grace": true,
       "herded_fraction": 57.66,
       "herders_needed": 45,
       "herders_needed_if_managed": 61,
-      "hunt_policy_ceilings": {
-        "herds[0].hunt_policy_ceilings[0].policy": 13.71,
-        "herds[0].hunt_policy_ceilings[1].policy": 37.509998
-      },
-      "hunt_policy_trade_ceilings": {
-        "herds[0].hunt_policy_ceilings[0].policy": 94.089996,
-        "herds[0].hunt_policy_ceilings[1].policy": 63.439999
-      },
       "hunt_trip_estimates": {
-        "herds[0].hunt_trip_estimates[0].policy:147": {
-          "animals_taken": 76,
-          "delivered_food": 29.25,
-          "delivered_trade": 61.939999,
-          "delivers_food": true,
-          "delivers_trade": true,
-          "turns_to_fill": 15,
-          "wasted_food": 56.849998
-        },
-        "herds[0].hunt_trip_estimates[1].policy:72": {
+        "33.43:72": {
           "animals_taken": 191,
           "delivered_food": 49.540001,
           "delivered_trade": 97.989998,
           "delivers_food": true,
           "delivers_trade": true,
+          "floor": 33.43,
+          "party_workers": 72,
           "turns_to_fill": 180,
           "wasted_food": 76.540001
+        },
+        "36.89:147": {
+          "animals_taken": 76,
+          "delivered_food": 29.25,
+          "delivered_trade": 61.939999,
+          "delivers_food": true,
+          "delivers_trade": true,
+          "floor": 36.889999,
+          "party_workers": 147,
+          "turns_to_fill": 15,
+          "wasted_food": 56.849998
         }
       },
       "huntable": true,
@@ -737,14 +705,19 @@
       "pen_pasture_fraction": 58.049999,
       "pen_radius": 8,
       "pen_upkeep": 13.16,
+      "per_worker_biomass": 8.51,
       "per_worker_trade": 100.550003,
       "per_worker_yield": 30.27,
       "prey_sense_radius": 108,
+      "provisions_per_biomass": 82.150002,
+      "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [35.630001, 62.740002, 96.269997, 59.380001, 74.0, 48.580002, 65.25, 45.23, 107.059998, 81.650002, 97.730003]},
       "route_length": 176,
       "size_class": "herds[0].size_class",
       "species": "herds[0].species",
+      "stressed_fraction": 81.589996,
       "tame_build_fraction": 71.720001,
       "trade_per_animal": 89.330002,
+      "trade_per_biomass": 106.330002,
       "x": 0,
       "y": 0
     },
@@ -754,6 +727,7 @@
       "biomass": 44.529999,
       "body_mass": 55.09,
       "carrying_capacity": 52.919998,
+      "collapse_fraction": 77.970001,
       "corral_build_fraction": 0.28,
       "corral_progress": 69.410004,
       "corral_trade": 7.57,
@@ -764,36 +738,33 @@
       "ecology_phase": "herds[1].ecology_phase",
       "ferocity": 29.459999,
       "fodder_draw": 7.59,
+      "fodder_per_biomass": 75.889999,
       "food_per_animal": 45.939999,
       "graze_range_radius": 93,
       "has_neglect_grace": true,
       "herded_fraction": 76.389999,
       "herders_needed": 64,
       "herders_needed_if_managed": 186,
-      "hunt_policy_ceilings": {
-        "herds[1].hunt_policy_ceilings[0].policy": 108.389999,
-        "herds[1].hunt_policy_ceilings[1].policy": 96.169998
-      },
-      "hunt_policy_trade_ceilings": {
-        "herds[1].hunt_policy_ceilings[0].policy": 88.599998,
-        "herds[1].hunt_policy_ceilings[1].policy": 78.330002
-      },
       "hunt_trip_estimates": {
-        "herds[1].hunt_trip_estimates[0].policy:150": {
+        "22.36:150": {
           "animals_taken": 65,
           "delivered_food": 6.45,
           "delivered_trade": 57.189999,
           "delivers_food": true,
           "delivers_trade": true,
+          "floor": 22.360001,
+          "party_workers": 150,
           "turns_to_fill": 22,
           "wasted_food": 81.800003
         },
-        "herds[1].hunt_trip_estimates[1].policy:73": {
+        "46.47:73": {
           "animals_taken": 118,
           "delivered_food": 61.830002,
           "delivered_trade": 71.190002,
           "delivers_food": true,
           "delivers_trade": true,
+          "floor": 46.470001,
+          "party_workers": 73,
           "turns_to_fill": 1,
           "wasted_food": 84.790001
         }
@@ -815,14 +786,19 @@
       "pen_pasture_fraction": 6.67,
       "pen_radius": 109,
       "pen_upkeep": 26.040001,
+      "per_worker_biomass": 22.99,
       "per_worker_trade": 7.45,
       "per_worker_yield": 37.77,
       "prey_sense_radius": 23,
+      "provisions_per_biomass": 55.490002,
+      "regrowth_samples": {"__packed": "PackedFloat32Array", "len": 11, "items": [81.800003, 54.689999, 52.18, 2.83, 67.639999, 93.059998, 90.550003, 58.049999, 14.47, 99.860001, 41.220001]},
       "route_length": 161,
       "size_class": "herds[1].size_class",
       "species": "herds[1].species",
+      "stressed_fraction": 10.21,
       "tame_build_fraction": 59.450001,
       "trade_per_animal": 4.15,
+      "trade_per_biomass": 52.099998,
       "x": 1,
       "y": 1
     }
@@ -1385,7 +1361,7 @@
       "entity": 100,
       "expedition_carry_cap": 64.029999,
       "expedition_eta_turns": 125,
-      "expedition_hunt_policy": "populations[0].expedition_hunt_policy",
+      "expedition_floor": 69.809998,
       "expedition_mission": "populations[0].expedition_mission",
       "expedition_per_worker_carry": 3.28,
       "expedition_phase": "populations[0].expedition_phase",
@@ -1404,7 +1380,6 @@
       "grievance": 0.000154,
       "home": 193,
       "home_band_entity": 133,
-      "hunt_mode": "populations[0].hunt_mode",
       "hunt_per_worker_provisions": 29.4,
       "hunt_reach": 171,
       "idle_workers": 54,
@@ -1429,10 +1404,10 @@
           "actual_yield": 78.650002,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [53.360001, 85.860001, 62.110001, 89.209999]},
           "fauna_id": "populations[0].labor_assignments[0].fauna_id",
+          "floor": 110.599998,
           "improvement": "populations[0].labor_assignments[0].improvement",
           "kind": "populations[0].labor_assignments[0].kind",
           "overdraws": true,
-          "policy": "populations[0].labor_assignments[0].policy",
           "realized_trade_yield": 22.299999,
           "realized_yield": 50.82,
           "sustainable_yield": 16.4,
@@ -1447,10 +1422,10 @@
           "actual_yield": 43.470001,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [24.74, 44.759998, 71.209999, 53.509998]},
           "fauna_id": "populations[0].labor_assignments[1].fauna_id",
+          "floor": 48.369999,
           "improvement": "populations[0].labor_assignments[1].improvement",
           "kind": "populations[0].labor_assignments[1].kind",
           "overdraws": true,
-          "policy": "populations[0].labor_assignments[1].policy",
           "realized_trade_yield": 22.049999,
           "realized_yield": 67.830002,
           "sustainable_yield": 35.830002,
@@ -1536,7 +1511,7 @@
       "entity": 101,
       "expedition_carry_cap": 0.73,
       "expedition_eta_turns": 200,
-      "expedition_hunt_policy": "populations[1].expedition_hunt_policy",
+      "expedition_floor": 33.860001,
       "expedition_mission": "populations[1].expedition_mission",
       "expedition_per_worker_carry": 96.309998,
       "expedition_phase": "populations[1].expedition_phase",
@@ -1555,7 +1530,6 @@
       "grievance": 0.000053,
       "home": 148,
       "home_band_entity": 32,
-      "hunt_mode": "populations[1].hunt_mode",
       "hunt_per_worker_provisions": 38.400002,
       "hunt_reach": 130,
       "idle_workers": 151,
@@ -1580,10 +1554,10 @@
           "actual_yield": 34.459999,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [14.59, 109.389999, 80.620003, 100.639999]},
           "fauna_id": "populations[1].labor_assignments[0].fauna_id",
+          "floor": 71.43,
           "improvement": "populations[1].labor_assignments[0].improvement",
           "kind": "populations[1].labor_assignments[0].kind",
           "overdraws": true,
-          "policy": "populations[1].labor_assignments[0].policy",
           "realized_trade_yield": 106.169998,
           "realized_yield": 31.379999,
           "sustainable_yield": 23.76,
@@ -1598,10 +1572,10 @@
           "actual_yield": 85.459999,
           "arrival_schedule": {"__packed": "PackedFloat32Array", "len": 4, "items": [35.360001, 53.060001, 26.610001, 75.970001]},
           "fauna_id": "populations[1].labor_assignments[1].fauna_id",
+          "floor": 95.239998,
           "improvement": "populations[1].labor_assignments[1].improvement",
           "kind": "populations[1].labor_assignments[1].kind",
           "overdraws": true,
-          "policy": "populations[1].labor_assignments[1].policy",
           "realized_trade_yield": 35.52,
           "realized_yield": 16.93,
           "sustainable_yield": 31.49,

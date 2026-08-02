@@ -5,7 +5,7 @@ extends RefCounted
 ## the last piece of the selection card to leave `Hud.gd`, after `SelectionCardController` took the
 ## identity/list half and `DrawerComposeController` took the compose half. It owns the one-drawer
 ## dispatch (`render_subject_drawer` → land vs occupant), the land-drawer content producer
-## (`_tile_terrain_lines` + `_format_food_kind_label`), the occupant/expedition/band-move `%AllocationPanel`
+## (`_tile_terrain_lines` + its `_graze_stock_lines` / `_stock_value` leaves), the occupant/expedition/band-move `%AllocationPanel`
 ## branches, and the height-capping fit path.
 ##
 ## Built on the LegendController / SelectionCardController / DrawerComposeController / BandPanelController
@@ -203,9 +203,20 @@ func fit_subject_drawer(force: bool = false) -> void:
 ## Habitability, Climate, Tags, Site — so printing those as rows here restated the strip verbatim,
 ## and `Biome` restated the land ROW's own label (the "no restated identity" rule,
 ## docs/plan_tile_panel_layout.md §8). The chips REPLACE those rows; what is left is the numbers and
-## the stocks, whose subject is the land: Height · the rivers · Pasture · Forage · the patch's
-## biomass/ecology · the two build meters — plus the FoW sentences, which are statements, not
-## conditions, and have no chip.
+## the stocks, whose subject is the land: Height · the rivers · the two food webs' stocks and the
+## basket that decomposes the human one · the committed crop and the two build meters — plus the FoW
+## sentences, which are statements, not conditions, and have no chip.
+##
+## **THE TWO FOOD WEBS READ AS A PAIR, FORAGING THEN GRAZING, WITH NOTHING BETWEEN THEM.** Each is one
+## row named for who eats it, carrying its stock and its ecology phase; the human layer's basket hangs
+## indented beneath its row. They used to be four rows interleaved around the module row and the
+## basket — the human layer split in half by the animal one, under names that inverted each other —
+## and a playtest reader mistook one for the other three times. See `HudFloraVocab.FORAGING_KEY`.
+##
+## **THE `Forage:` MODULE ROW IS GONE.** `Riverine / Delta — River Garden` named a CATEGORY the player
+## can neither choose nor change, and the basket beneath it says the same thing in the terms a decision
+## is made in (which plants, what share, how much of each). Nothing replaced it; the module still
+## drives the land row's glyph and the sim's yield.
 ##
 ## `_render_land_drawer` is the ONE caller (the map hover tooltip builds its own text in
 ## `show_tooltip`), so the trim is local to the drawer.
@@ -233,68 +244,71 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     if tile_info.has("river_edges"):
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
-    # PASTURE — the animal-edible stock (see PASTURE_KEY). Surfaced BEFORE the discovered
-    # early-return because, like the biome on the land row and the habitability chip, grass is a property of the
-    # GROUND: you can read a steppe from a ridge, and a remembered tile already remembers its biome.
-    # (What a remembered tile redacts is live CONTENTS — the bands and herds standing on it.) Only
-    # when the ground carries pasture at all, so a glacier prints nothing rather than "0 / 0".
-    var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
-    if graze_capacity > 0.0:
-        lines.append("%s: %.0f / %.0f" % [
-            HudFloraVocab.PASTURE_KEY, float(tile_info.get("graze_biomass", 0.0)), graze_capacity
-        ])
-        var graze_phase := String(tile_info.get("graze_ecology_phase", "")).strip_edges().to_lower()
-        if graze_phase != "":
-            lines.append("%s: %s" % [HudFloraVocab.PASTURE_ECOLOGY_KEY, DetailFormat.ecology_phase_label(graze_phase)])
+    #
+    # A REMEMBERED TILE KEEPS THE ANIMAL LAYER AND LOSES THE HUMAN ONE, so it takes its own branch.
+    # Grass is a property of the GROUND — you can read a steppe from a ridge, and the biome above it
+    # is already remembered — while every term of the `Foraging` row (`patch_carrying_capacity` /
+    # `patch_biomass` / `patch_ecology_phase`) is live patch state a hex you cannot see does not know,
+    # and is redacted by `MapView._apply_visibility_to_info` before this runs. So this is the ONE
+    # state where the surviving stock row is the animal one, and it is written as an explicit branch
+    # rather than left to the redaction: the pair's meaning is positional (Foraging, then Grazing
+    # under it), and a card that renders `Grazing` alone should do so because we decided to, not
+    # because a key happened to be missing.
+    var graze_lines := _graze_stock_lines(tile_info)
     if visibility_state == HudConst.VISIBILITY_DISCOVERED:
+        lines.append_array(graze_lines)
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
-    var food_label := String(tile_info.get("food_module_label", "None")).strip_edges()
-    if food_label == "":
-        food_label = "None"
-    var food_kind := String(tile_info.get("food_kind", "")).strip_edges()
-    var food_line := "Forage: %s" % food_label
-    if food_kind != "":
-        food_line = "%s — %s" % [food_line, _format_food_kind_label(food_kind)]
-    # NOTE: the module's `seasonal_weight` is deliberately NOT printed — it is an internal
-    # yield coefficient, meaningless to the player (it still drives the sim's yield math).
-    lines.append(food_line)
-    # CROP + WHAT GROWS HERE — the named plants behind the Forage line above (flora roster F1/S1).
-    # They read directly under the module because they say what that module's basket IS; the
-    # stock/ecology rows below then say how much of it there is and how it is faring.
-    #
-    # TWO ROWS THAT SAY DIFFERENT THINGS, AND BOTH ARE WANTED. `Crop:` is what the band COMMITTED
-    # to — recorded on the FIRST worked turn, ~25 turns before the build lands. The basket beneath it
-    # is what is actually GROWING right now. Committing no longer displaces the rest of the basket
-    # (issue #433): it REWEIGHTS it as the build completes — a Tended Patch lifts the favored share to
-    # `min(1, share x tended_weeding_gain)` off the least abundant members, a Field forces it to 1.0 —
-    # and until then the basket has not moved at all. Rendering only the crop row therefore claimed a
-    # 64/36 tile was 100% emmer the instant the order was given; showing both lets the player watch
-    # the weeded-out species fall as the work pays off.
+    # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
+    # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
+    # cultivation can accrue at all, so it belongs on the stock's own row rather than on a second row
+    # named so much like the pasture's that the two inverted each other. Only rendered when the
+    # snapshot carries a real patch (capacity > 0), so a plain food-module tile with no patch stays
+    # bare rather than reading "0 / 0".
+    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
+    # basket below decomposes it. Reading it twice is how the row and its own decomposition would
+    # start describing different stands.
+    var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
+    if patch_capacity > 0.0:
+        lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(
+            patch_biomass, patch_capacity,
+            String(tile_info.get("patch_ecology_phase", "")))])
+        # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
+        # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
+        # fodder) and closing with the biomass its share amounts to. The indent is what says these
+        # decompose the row above; the icons are what make "62% of what grows here is not food"
+        # legible at a glance; the absolutes are what let the rows visibly sum to the stock. The
+        # committed member is marked in SIGNAL so the eye joins it to the `Crop:` row below.
+        #
+        # NESTED UNDER THE CAPACITY GUARD DELIBERATELY. The basket itself is biome-derived and
+        # survives fog, but a share is only a share OF something: with no `Foraging` row above them
+        # and no capacity to state each plant's biomass, these rows would be exactly the free-floating
+        # "three more resources" list this layout exists to stop being.
+        # **THE STANDING STOCK, not the capacity.** These rows say what the `205 / 205` above them is
+        # MADE OF, so on a drawn-down patch reading `90 / 100` they must sum to 90 — splitting the
+        # ceiling instead would decompose a full patch nobody is looking at, and the card would hold
+        # two numbers disagreeing about which stand is under discussion.
+        lines.append_array(DetailFormat.flora_composition_lines(
+            tile_info.get("patch_composition", []), crop_species, patch_biomass))
+    # GRAZING — the animal-edible stock, directly under Foraging. Same shape, same phase-inline rule.
+    # The adjacency IS the point: what HUMANS can eat here (seeds, nuts, tubers — food-module tiles
+    # only) against what ANIMALS can eat here (grass and browse — cellulose people cannot digest, on
+    # nearly every land tile). Your best farm is usually not your best pasture, and a comparison the
+    # player cannot make in one glance is not a comparison.
+    lines.append_array(graze_lines)
+    # THE COMMITTED CROP — what the band committed this patch to, recorded on the FIRST worked turn,
+    # ~25 turns before the build lands. It is a different fact from the basket above: committing
+    # REWEIGHTS the basket as the build completes (issue #433 — a Tended Patch lifts the favored share
+    # to `min(1, share x tended_weeding_gain)` off the least abundant members, a Field forces it to
+    # 1.0) and until then the basket has not moved at all, so rendering only this row once claimed a
+    # 64/36 tile was 100% emmer the instant the order was given. It reads with the BUILD METERS below
+    # rather than beside the basket, because what it states is the standing INVESTMENT on this ground,
+    # not part of the stock pair above; the SIGNAL mark inside the basket is what joins the two.
     var crop_name := String(tile_info.get("patch_committed_display_name", "")).strip_edges()
     if crop_species != "" and crop_name != "":
         lines.append("%s: %s" % [HudFloraVocab.FLORA_CROP_ROW, crop_name])
-    # A header row + one indented 🌿 row per realized plant (its display name + share%), the committed
-    # member marked in SIGNAL so the eye joins it to the Crop row above. Renders nothing on a tile with
-    # no basket, so the "Forage: None" case stays a bare row.
-    lines.append_array(DetailFormat.flora_composition_lines(
-        tile_info.get("patch_composition", []), crop_species))
-    # Standing forage stock vs the patch's ceiling — the patch counterpart to a herd's "Biomass"
-    # row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws the
-    # biomass down and it regrows logistically toward the capacity. Only rendered when the snapshot
-    # carries a real patch (capacity > 0), so a plain food-module tile with no patch stays bare.
-    var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
-    if patch_capacity > 0.0:
-        lines.append("Forage biomass: %.0f / %.0f" % [float(tile_info.get("patch_biomass", 0.0)), patch_capacity])
-    # Ecology phase of the patch — ALWAYS shown for any tile carrying a patch (not just a
-    # cultivated one): the phase gates whether cultivation can accrue at all, so it is the
-    # single most important condition on a forage tile. Same row name / label / tint as the
-    # herd's Ecology row (`DetailFormat.ecology_phase_label` + `ecology_value_hex`), so a stressed patch
-    # and a stressed herd read identically.
-    var patch_phase := String(tile_info.get("patch_ecology_phase", "")).strip_edges().to_lower()
-    if patch_phase != "":
-        lines.append("Ecology: %s" % DetailFormat.ecology_phase_label(patch_phase))
     # Forage-patch intensification ladder: while a patch is being tended it shows the
     # cultivation progress; once cultivated it reads as a "Tended Patch" (SIGNAL tint).
     # Mirrors the herd Husbandry row. Only when the snapshot carries the field so we
@@ -327,24 +341,35 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
                 field_progress, false, building_rung == SourceForecast.IMPROVEMENT_SOW)])
     return lines
 
-func _format_food_kind_label(kind_value: String) -> String:
-    if kind_value == "":
-        return ""
-    var tokens: PackedStringArray = kind_value.split("_", false)
-    if tokens.is_empty():
-        return kind_value.capitalize()
-    var parts: Array[String] = []
-    for token in tokens:
-        if token == "":
-            continue
-        var head := token.substr(0, 1).to_upper()
-        var tail := ""
-        if token.length() > 1:
-            tail = token.substr(1, token.length() - 1)
-        parts.append(head + tail)
-    if parts.is_empty():
-        return kind_value.capitalize()
-    return " ".join(parts)
+## The GRAZING row (or nothing), built once and emitted by BOTH visibility branches — the remembered
+## tile, where it is the only stock left, and the live tile, where it follows `Foraging`. Extracted so
+## the two branches cannot drift into rendering the animal layer two different ways.
+##
+## Empty when the ground carries no pasture at all (`graze_capacity <= 0`, mirroring the sim's
+## `GrazeRegistry`): a glacier prints nothing, never a "0 / 0" that would read as a starved pasture
+## rather than an absent one.
+func _graze_stock_lines(tile_info: Dictionary) -> Array[String]:
+    var lines: Array[String] = []
+    var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
+    if graze_capacity <= 0.0:
+        return lines
+    lines.append("%s: %s" % [HudFloraVocab.GRAZING_KEY, _stock_value(
+        float(tile_info.get("graze_biomass", 0.0)), graze_capacity,
+        String(tile_info.get("graze_ecology_phase", "")))])
+    return lines
+
+## One food web's stock row VALUE — `205 / 205 · Thriving`, or the bare `205 / 205` where the wire
+## states no phase. Shared by both webs so the pair can never read in two different shapes, and the
+## phase goes through the same `DetailFormat.ecology_phase_label` a herd's Ecology row uses; the
+## amber/red tint follows from `DetailFormat._value_hex`, which keys both row names to
+## `ecology_value_hex` and matches the phase word wherever in the value it sits.
+func _stock_value(biomass: float, capacity: float, phase: String) -> String:
+    var stock := HudFloraVocab.STOCK_FORMAT % [biomass, capacity]
+    var normalized := phase.strip_edges().to_lower()
+    if normalized == "":
+        return stock
+    return HudFloraVocab.STOCK_PHASE_CLAUSE_FORMAT % [
+        stock, DetailFormat.ecology_phase_label(normalized)]
 
 # ---- The occupant drawer + its %AllocationPanel branches --------------------------------------
 

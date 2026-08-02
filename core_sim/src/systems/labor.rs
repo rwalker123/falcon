@@ -8,6 +8,76 @@ use super::*;
 /// an assumption to revisit rather than a silently under-crewed fence.
 const PEN_EXTEND_CREW: u32 = 1;
 
+/// **A rung-3 managed source is TENDED, so a crew standing on it is working it** — the `eligible`
+/// term a Field's and a pen's [`credit_rung_lesson`] pass where the extractive rungs ask
+/// [`crew_is_working_the_source`].
+///
+/// At rung 3 the source is *yours*: the keeper feeds, herds and minds it every turn, and the harvest
+/// is a consequence rather than the work. There is no escapement room to ask about either — a
+/// managed source pays its `managed_production` at every floor and is never drawn down — so the
+/// extractive predicate has nothing to read here. Reaching either branch already requires
+/// `workers > 0`.
+const MANAGED_SOURCE_IS_TENDED: bool = true;
+
+/// **"Is this crew actually working the source?"** — THE eligibility term that replaced the
+/// `EcologyPhase::Thriving` gate on both webs (`docs/plan_harvest_floor.md` §3.2), asked of the
+/// **escapement room**: is there anything standing above this assignment's floor?
+///
+/// # It is the CEILING, deliberately, and not the take
+///
+/// The obvious spelling is `take > 0`, and on the plant web the two coincide — a gather is
+/// continuous, so any positive room yields a positive take. **On the animal web they do not**, and
+/// the difference is a quantisation artifact rather than a fact about work.
+/// [`crate::fauna::quantise_animal_take`] rounds to whole animals, so a herd whose room is 60 biomass
+/// against an 80-unit body hands over **nothing** this turn while the crew tracks, culls and handles
+/// it exactly as they did last turn. Reading `AnimalTake::killed == 0` as *"not working"* would make
+/// the learning and build rates depend on `body_mass`: big-bodied species would tame and teach
+/// several times slower than small ones, for a reason nobody designed and nothing measured.
+///
+/// Asked **in biomass, before quantisation and before the worker cap** — the number
+/// `forage::forage_escapement_ceiling` / `fauna::hunt_escapement_ceiling` returns — so it is the same
+/// question on both webs and the rule stops being web-specific.
+///
+/// It still separates the two cases the gate exists to separate:
+/// - **nothing stands above your floor** → you are watching, not working. No lesson, no build. That
+///   is also what makes `floor = 1.0` degenerate: the room is `0` by construction.
+/// - **there is surplus you have not yet banked into a whole body** → you are working it, and the
+///   pulse the quantiser pays is about *when* the food lands, not whether the crew showed up.
+///
+/// The other degenerate end is [`crate::intensification::learn_multiplier`]'s, not this one's:
+/// `floor = 0` leaves nothing standing, so the *rate* is zero however much room there was.
+fn crew_is_working_the_source(standing_above_floor: f32) -> bool {
+    standing_above_floor > NOTHING_STANDS_ABOVE_THE_FLOOR
+}
+
+/// **An empty escapement room** — the value [`crew_is_working_the_source`] compares against, named
+/// because `0.0` as a bare literal there reads as an arbitrary epsilon rather than as the exact
+/// boundary `max(0, B − floor·K)` is clamped at.
+const NOTHING_STANDS_ABOVE_THE_FLOOR: f32 = 0.0;
+
+/// **Credit the lesson the source's rung teaches, at the rate its crew's floor earns.** The caller
+/// side of [`RungDef::knowledge_accrual`]: the rung says *what* is learned and *how much*, this
+/// applies it to the ledger.
+///
+/// It exists as a function rather than as one hoisted call because **`eligible` is not knowable
+/// until the source's own branch is reached** — a Field and a pen answer it differently from a wild
+/// stand (see [`MANAGED_SOURCE_IS_TENDED`]), and the extractive branches need the escapement room
+/// resolved against the pre-take biomass. Each of the four branches (a Field, a wild gather, a pen's
+/// tend, a wild hunt) calls this with its own answer; the *rule* stays in one place so the two webs
+/// cannot drift.
+fn credit_rung_lesson(
+    rung: &RungDef,
+    floor: f32,
+    eligible: bool,
+    knowledge: &LadderKnowledge,
+    faction: FactionId,
+    discovery: &mut DiscoveryProgressLedger,
+) {
+    if let Some((lesson, amount)) = rung.knowledge_accrual(floor, eligible, knowledge) {
+        discovery.add_progress(faction, lesson, scalar_from_f32(amount));
+    }
+}
+
 /// The config handles [`advance_labor_allocation`] reads, bundled into one `SystemParam` so the
 /// system stays under Bevy's 16-parameter ceiling as new configs join it (Predators Phase 0 added
 /// combat + creatures). Each is resolved to its `Arc` once at the top of the system.
@@ -82,8 +152,11 @@ pub fn advance_labor_allocation(
     // the first resolved value exactly.
     let realized_horizon = labor.yield_average_horizon_turns;
     // The horizon for each source's discrete **arrival schedule** — what lands on each of the next N
-    // turns, from the same forward simulation run WITH the kill-credit bank. Its own lever: a
-    // schedule is a display span the client charts, where `realized_horizon` is a smoothing window.
+    // turns, from the same forward simulation `realized` averages, reported per TURN instead of
+    // averaged. **The lumpiness is the whole-animal quantiser and the herd's own regrowth**, not a
+    // kill-credit bank: `project_arrivals_hunt` never touches `Herd::hunt_credit`, which left the
+    // resident path when the take became a stock (see `Herd::hunt_credit`). Its own lever: a schedule
+    // is a display span the client charts, where `realized_horizon` is a smoothing window.
     let arrivals_horizon = labor.arrivals_horizon_turns;
     // **The ladder's knowledge dials (§4)** — the per-turn accrual every teaching rung pays, and the
     // ledger bar at which a faction may act on a knowledge. Hoisted out of the per-cohort loop.
@@ -91,7 +164,10 @@ pub fn advance_labor_allocation(
     // `labor_config.forage.cultivation` and `fauna_config.husbandry`, back when each web had its own
     // hard-coded earn site. The earn path is one rung-driven seam now, so the dials live on the
     // ladder with the build dials — the plant and animal ladders can only be paced together.
-    let knowledge_delta = scalar_from_f32(ladder.knowledge.progress_per_turn);
+    // **`progress_per_turn` is the BASE, not the amount**: since the harvest floor it is scaled per
+    // call by the assignment's own floor (`intensification::learn_multiplier`), so the whole block
+    // travels to `credit_rung_lesson` rather than a pre-multiplied delta.
+    let knowledge_dials = &ladder.knowledge;
     let knowledge_threshold = ladder.knowledge.completion_threshold;
     // The two rungs the build engine drives (`crate::intensification`): the plant's tended patch and
     // the animal's pen. Their build dials — accrual rate, feral decay, and the investment dip — are
@@ -107,9 +183,14 @@ pub fn advance_labor_allocation(
     // animal web sizes a crew off the herd (`herders_needed`), not off the rung — so the value cannot
     // change the rate; it is named rather than a bare literal so a future rung-level animal crew
     // makes this site's assumption visible instead of silently under-crewing every ring.
+    //
+    // **The floor is [`MANAGED_SOURCE_FLOOR`], not the assignment's**: a ring is only ever built
+    // around a herd that is already penned, whose take is its `managed_production` at every floor —
+    // so there is no pressure the keeper chose for the dial to scale.
     let pen_build_rate = pen_rung.build_accrual(
         Some(Improvement::Corral),
         true,
+        MANAGED_SOURCE_FLOOR,
         RUNG_TIMESCALE_UNSCALED,
         PEN_EXTEND_CREW,
     );
@@ -190,7 +271,7 @@ pub fn advance_labor_allocation(
             match &assignment.target {
                 LaborTarget::Forage {
                     tile,
-                    policy,
+                    floor,
                     species,
                 } => {
                     // **Out of range → the assignment is ABANDONED**, the plant twin of the hunt
@@ -376,23 +457,19 @@ pub fn advance_labor_allocation(
                     if improvement.is_some_and(|verb| forage_rung_already_built(patch, verb)) {
                         completed.push(idx);
                     }
-                    // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung N+1.**
-                    // One call, driven entirely by the rung the patch *currently stands on* — a wild
+                    // **THE earn path (§4): practising rung N teaches the knowledge that unlocks rung
+                    // N+1.** Driven entirely by the rung the patch *currently stands on* — a wild
                     // patch teaches **Cultivation**, a tended one **Seed Selection** — so the lesson
                     // is a property of the source's rung, not of the verb. The old hard-coded
                     // `Sustain && Thriving → CULTIVATION_DISCOVERY_ID` branch is gone: `earns_knowledge`
                     // was declarative when slice 2 landed it, and this is where it goes live.
                     //
                     // Knowledge is all that is earned here — working a patch never *tames* it:
-                    // cultivation is an explicit `Cultivate` policy with an investment cost (below).
-                    // The seam owns the §4.2 stewardship rule (Surplus/Deplete/Eradicate teach
-                    // nothing); `eligible` carries the health gate — **you learn from a healthy
-                    // source** — which is the shipped `Thriving` requirement, unchanged.
-                    if let Some(knowledge) = patch_rung(patch, &ladder)
-                        .knowledge_earned(*policy, patch.ecology_phase == EcologyPhase::Thriving)
-                    {
-                        discovery.add_progress(faction, knowledge, knowledge_delta);
-                    }
+                    // cultivation is an explicit `Cultivate` improvement with an investment cost
+                    // (below). The rung is resolved *here*, above the branches, because it is a
+                    // property of the pre-take patch; the **credit** is applied inside each branch,
+                    // once its take is known — see `credit_rung_lesson`.
+                    let lesson_rung = patch_rung(patch, &ladder);
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the patch's PRE-take state (before either
                     // branch draws it down), so it equals the assign-time seed exactly. Both the Field
@@ -406,7 +483,7 @@ pub fn advance_labor_allocation(
                         seasonal,
                         mult_f,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         realized_horizon,
                     );
@@ -463,6 +540,20 @@ pub fn advance_labor_allocation(
                             cohort.stores.add(FOOD, provisions);
                         }
                         let paid = provisions.to_f32();
+                        // **THE earn path, rung 3.** A Field's take is its `managed_production` at
+                        // every floor, so the dial the crew set is inert here and
+                        // [`MANAGED_SOURCE_FLOOR`] is what the lesson is paced by. `plant:field`
+                        // teaches nothing today (`irrigation`/`rotation` is rung 4's business), so
+                        // this is the uniformity that stops rung 4 from having to remember: the
+                        // branch that `continue`s still reaches the earn path.
+                        credit_rung_lesson(
+                            lesson_rung,
+                            MANAGED_SOURCE_FLOOR,
+                            MANAGED_SOURCE_IS_TENDED,
+                            knowledge_dials,
+                            faction,
+                            &mut discovery,
+                        );
                         // **The FODDER account (Flora Roster F3, §5.1).** The *same* managed harvest,
                         // routed by the yield vector's fodder component instead of its provisions
                         // component — a grain Field's `field_fodder` is `0` (its crop pays no fodder),
@@ -513,8 +604,8 @@ pub fn advance_labor_allocation(
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
-                        // delivery this turn has already paid (and, on a hunt, spend the kill-credit
-                        // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
+                        // delivery this turn has already paid. Slot 0 is therefore genuinely the
+                        // *next* turn's delivery.
                         let arrivals = crate::forage::project_arrivals_forage(
                             patch,
                             &tile_composition,
@@ -524,7 +615,7 @@ pub fn advance_labor_allocation(
                             seasonal,
                             mult_f,
                             workers,
-                            *policy,
+                            *floor,
                             improvement,
                             arrivals_horizon,
                         );
@@ -569,11 +660,19 @@ pub fn advance_labor_allocation(
                         continue;
                     }
                     let biomass_before = patch.biomass;
+                    // **The escapement room, resolved PRE-take** — the stock standing above this
+                    // assignment's floor, in biomass and before any cap. It is the source of two
+                    // different answers below: the work predicate ([`crew_is_working_the_source`],
+                    // which replaced this arm's `EcologyPhase::Thriving` gate) and the `production`
+                    // the telemetry row reports as offered.
+                    let standing_above_floor =
+                        forage_escapement_ceiling(*floor, biomass_before, patch.carrying_capacity);
+                    let working_the_patch = crew_is_working_the_source(standing_above_floor);
                     let provisions = forage_take(
                         patch,
                         &tile_composition,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         &labor.forage,
                         &flora,
@@ -582,6 +681,20 @@ pub fn advance_labor_allocation(
                         seasonal,
                     );
                     let take = biomass_before - patch.biomass;
+                    // **THE earn path, rungs 1–2** — the drawn-down half of the split above. A crew
+                    // with nothing standing above its floor is watching the stand, not practising on
+                    // it, whatever it intended; that is what replaced the `EcologyPhase::Thriving`
+                    // term this site used to carry — a cliff where the model now wants a rate — and
+                    // it is what makes `floor = 1.0` (leave it all standing, learn at ×2) honestly
+                    // earn nothing.
+                    credit_rung_lesson(
+                        lesson_rung,
+                        *floor,
+                        working_the_patch,
+                        knowledge_dials,
+                        faction,
+                        &mut discovery,
+                    );
                     if provisions > scalar_zero() {
                         cohort.stores.add(FOOD, provisions);
                     }
@@ -627,13 +740,19 @@ pub fn advance_labor_allocation(
                     }
                     // **Cultivate — the investment.** The crew is clearing and planting, not
                     // gathering: `forage_take` above already paid only the reduced Cultivate ceiling
-                    // (the rung's `yield_fraction_while_building × MSY` — the up-front cost), and here the patch
-                    // accrues toward becoming a tended crop. Gates: the faction must **know
-                    // Cultivation** (earned by Sustain-foraging, above) and the patch must be
-                    // **Thriving**. If a gate lapses mid-run (e.g. another band overdraws the patch to
-                    // Stressed) progress simply **stops accruing that turn** — it is neither lost nor
-                    // silently switched; the patch is still marked worked below, so it doesn't decay
-                    // either, and accrual resumes when the patch recovers.
+                    // (the rung's `yield_fraction_while_building × the crew's throughput` — the
+                    // up-front cost), and here the patch accrues toward becoming a tended crop.
+                    // Gates: the faction must **know Cultivation** (earned above) and the crew must
+                    // have actually drawn something off the patch.
+                    //
+                    // **There is no health gate any more** (`docs/plan_harvest_floor.md` §3.2). The
+                    // patch's `EcologyPhase::Thriving` used to gate this, so a build stalled outright
+                    // the moment a crew — anyone's crew — pulled the stand below Thriving, and the
+                    // "stops accruing but is not lost" lapse state existed to make that survivable.
+                    // The floor replaced it with a **rate**: `learn_multiplier` scales the accrual by
+                    // how much the crew leaves standing, so pulling harder slows the build in
+                    // proportion instead of stopping it at a cliff. Nothing lapses, so there is no
+                    // lapse to hold progress across.
                     //
                     // **Ordering: accrue AFTER the take.** The patch pays this turn per its state at
                     // the *start* of the turn, so the pre-commit forecast the client showed is exactly
@@ -644,10 +763,12 @@ pub fn advance_labor_allocation(
                         // under active preparation neither goes feral nor bleeds its partial progress.
                         patch.tended_this_turn = true;
                         // The rung's own gates, resolved for the engine: the faction must know the
-                        // rung's unlock knowledge (Cultivation) and the patch must be Thriving.
+                        // rung's unlock knowledge (Cultivation), and the crew must actually be
+                        // working the patch ([`crew_is_working_the_source`] — the term that replaced
+                        // the Thriving gate).
                         let eligible = tended_rung.unlock_discovery_id().is_none_or(|knowledge| {
                             knows(&discovery, faction, knowledge, knowledge_threshold)
-                        }) && patch.ecology_phase == EcologyPhase::Thriving
+                        }) && working_the_patch
                             // **Nothing to tend if nothing here climbs.** A patch with no committed
                             // plant is one whose basket the tended rung's `cultivation_ceiling`
                             // refuses outright — the "not every plant climbs" ruling reaching the
@@ -655,10 +776,12 @@ pub fn advance_labor_allocation(
                             && patch.species.is_some();
                         // THE build seam: the rung supplies the accrual (0 unless Cultivate is the
                         // rung's verb and the gates hold); the patch owns its meter and the
-                        // side-effects of completing it.
+                        // side-effects of completing it. The **floor** is the assignment's own — the
+                        // same dial that paced the lesson above paces the build.
                         let accrual = tended_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             RUNG_TIMESCALE_UNSCALED,
                             workers,
                         );
@@ -700,6 +823,7 @@ pub fn advance_labor_allocation(
                             field_rung,
                             improvement,
                             sow_permitted,
+                            *floor,
                             faction,
                             &mut event_log,
                             tick.0,
@@ -709,33 +833,24 @@ pub fn advance_labor_allocation(
                             completed.push(idx);
                         }
                     }
-                    // **The TRADE account — ONE rule at every drawn-down rung** (#433). The take's
-                    // trade credit is the patch basket's own `trade_goods_per_biomass` average, and
-                    // `Deplete` multiplies it by `market.trade_goods_multiplier`. That is all: the
-                    // species-blind flat `market.trade_goods_per_biomass` sale is retired, so the
-                    // committed-vs-wild branch that used to pick between two routes — and could
-                    // therefore have credited both — is gone with it, and a double credit is
-                    // unrepresentable because there is only one expression.
+                    // **Every harvest sells its basket's trade component, at the basket's own
+                    // rate.** No factor of any kind rides the depth of the draw: the retired
+                    // `market.trade_goods_multiplier` (4×) paid one drawdown rate a product bonus,
+                    // which re-welded product to intensity — the exact thing the yield vector
+                    // exists to separate (`docs/plan_hunt_yield_model.md` §2). A deep floor still
+                    // out-earns a shallow one on trade, because it *takes more biomass*: that is
+                    // the intensity ladder doing the work, not a bonus.
                     //
-                    // **The markup is a POLICY concept, not a rung concept** — *sell harder*, a
-                    // markup on goods you were already producing — so it now applies at rung 2 as
-                    // well as rung 1. Every other policy carries the goods home at the basket's
-                    // plain rate, which is why a `Sustain` gather of wild ground that happens to
-                    // realize grapevine returns trade goods: **you gathered them**. Every staple
-                    // carries the same 0.005 token, so a staple-only basket's wild `Deplete` sale is
-                    // numerically what it always was; only baskets holding a cash crop move.
-                    //
-                    // (Rung 3 keeps its own no-markup rule in `field_trade_goods` — a Field is never
-                    // drawn down and has no policy axis to mark up.)
-                    let forage_trade =
-                        tended_take_trade_goods(
-                            take,
-                            patch,
-                            &tile_composition,
-                            &flora,
-                            &labor.forage,
-                            mult_f,
-                        ) * crate::forage::deplete_trade_markup(*policy, &labor.forage);
+                    // (Rung 3 keeps its own rule in `field_trade_goods` — a Field is never drawn
+                    // down at all.)
+                    let forage_trade = tended_take_trade_goods(
+                        take,
+                        patch,
+                        &tile_composition,
+                        &flora,
+                        &labor.forage,
+                        mult_f,
+                    );
                     {
                         let trade_goods = scalar_from_f32(forage_trade);
                         if trade_goods > scalar_zero() {
@@ -761,37 +876,42 @@ pub fn advance_labor_allocation(
                         &labor.forage,
                     ) * mult_f;
                     // The two staffing signals, from the same take. **Overstaffing**: invert the take
-                    // by the **effective** per-worker throughput this turn (`per_worker_biomass_capacity
-                    // × seasonal`, matching `forage_take`'s worker cap) so a labor-bound low-season
-                    // patch isn't falsely flagged. **Understaffing** (`wasted`): what the policy
-                    // ceiling offered beyond what the crew could gather — here it is not lost, it
-                    // simply stays in the stock and regrows, but it is the same "add hands" answer.
-                    let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal);
+                    // by the **effective** per-worker throughput this turn — the whole of
+                    // `forage_take`'s worker cap, `per_worker_biomass_capacity × seasonal ×
+                    // build_dip`, so a labor-bound low-season patch isn't falsely flagged and neither
+                    // is a labor-bound *building* one. §3.1 moved the dip onto the crew and this
+                    // divisor kept the pre-§3.1 shape, so a fully-employed Cultivate crew inverted to
+                    // `workers × dip` and the row said "only 4 of 8 working" about 8 hands that were
+                    // every one of them gathering — advice that, taken, halves the take. Read through
+                    // the one [`LadderConfig::build_dip`] seam, the same one `forage_take` multiplies
+                    // by. **Understaffing** (`wasted`): what the escapement ceiling offered beyond
+                    // what the crew could gather — here it is not lost, it simply stays in the stock
+                    // and regrows, but it is the same "add hands" answer.
+                    let per_worker_biomass = forage_per_worker_biomass(&labor.forage, seasonal)
+                        * ladder.build_dip(improvement);
                     // **Floored at the build's own crew**, the plant twin of a herd's `herders_needed`
-                    // (see [`source_crew_needed`]): while an improvement runs the take is the DIP, so
-                    // inverting it alone told the player a 25-turn build wanted fewer hands than
-                    // gathering the same ground. Read through `LadderConfig::build_crew`, the *same*
+                    // (see [`source_crew_needed`]): a rung declares how many hands its build wants,
+                    // and a thin patch can absorb fewer gatherers than that — inverting the take
+                    // alone told the player a 25-turn build wanted fewer hands than the rung
+                    // demands. Read through `LadderConfig::build_crew`, the *same*
                     // lookup `forage::forage_source_yield_preview` seeds with, so the row this turn
                     // writes cannot disagree with the row the compose that staffed it wrote.
                     let workers_needed = source_crew_needed(
                         ladder.build_crew(improvement),
                         workers_needed_for_take(take, per_worker_biomass, workers),
                     );
-                    let production = forage_policy_ceiling(
-                        *policy,
-                        improvement,
-                        biomass_before,
-                        patch.carrying_capacity,
-                        &patch_ecology(patch, &labor.forage),
-                        &labor.forage,
-                        &ladder,
-                    )
-                    .clamp(0.0, biomass_before);
+                    // The stock the patch **offered** this turn — the same pre-take escapement room
+                    // the work predicate read. Undipped since the build dip moved onto the crew
+                    // (`docs/plan_harvest_floor.md` §3.1): the ground standing above the floor is
+                    // there whether the crew is gathering it or clearing it, so a building crew's
+                    // shortfall shows up honestly as `wasted` — "this is what more hands would have
+                    // brought home" — rather than being hidden in the ceiling.
+                    let production = standing_above_floor.clamp(0.0, biomass_before);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
                     // turn leaves behind: projecting from the pre-take state would re-promise the
-                    // delivery this turn has already paid (and, on a hunt, spend the kill-credit
-                    // bank twice). Slot 0 is therefore genuinely the *next* turn's delivery.
+                    // delivery this turn has already paid. Slot 0 is therefore genuinely the
+                    // *next* turn's delivery.
                     let arrivals = crate::forage::project_arrivals_forage(
                         patch,
                         &tile_composition,
@@ -801,7 +921,7 @@ pub fn advance_labor_allocation(
                         seasonal,
                         mult_f,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         arrivals_horizon,
                     );
@@ -834,10 +954,10 @@ pub fn advance_labor_allocation(
                         // Plants stay flow-based (slice 8), so the wild/tended gather ⚠ is unchanged:
                         // Sustain/Cultivate/Sow take the MSY or a dip on it, Surplus/Deplete/Eradicate
                         // draw the patch down.
-                        overdraws: policy.overdraws(),
+                        overdraws: floor_overdraws(*floor),
                     };
                 }
-                LaborTarget::Hunt { fauna_id, policy } => {
+                LaborTarget::Hunt { fauna_id, floor } => {
                     let Some(herd_pos) = registry.find(fauna_id).map(|herd| herd.position()) else {
                         // Herd despawned (extinction / another hunter) → lapse.
                         lapsed.push(idx);
@@ -886,7 +1006,7 @@ pub fn advance_labor_allocation(
                     // **The steady headline** — the forward-projected average food/turn over the next
                     // `realized_horizon` turns, computed from the herd's PRE-take state (before the pen
                     // feed/harvest or the wild take mutates it), so it equals the assign-time seed
-                    // exactly. Rate-based (no kill-credit bank), so it is smooth where `actual` pulses;
+                    // exactly. Rate-based (an average over the horizon), so it is smooth where `actual` pulses;
                     // a corralled herd projects its managed pen yield instead. Both the pen-tend and the
                     // wild-take branches record this one value.
                     let hunt_realized = fauna::project_realized_hunt(
@@ -896,7 +1016,7 @@ pub fn advance_labor_allocation(
                         labor.hunt.per_worker_biomass_capacity,
                         mult_f,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         realized_horizon,
                     );
@@ -907,20 +1027,16 @@ pub fn advance_labor_allocation(
                     // tamed ones"). The old hard-coded `Sustain && Thriving → HERDING_DISCOVERY_ID`
                     // branch is retired; `earns_knowledge` drives it now.
                     //
-                    // **Resolved BEFORE the rung branches below** (the corral tend arm `continue`s,
-                    // and the take arm draws biomass), so *every* rung reaches the earn path
-                    // uniformly — including the pen, whose `earns_knowledge` is null today but is
-                    // where rung 4's `selective_breeding` will hang. Moving it ahead of the take is
-                    // behaviour-neutral: `ecology_phase` is written only by `refresh_ecology_phase`
-                    // in Logistics, never by a take, so the gate reads the same value either side.
+                    // **The RUNG is resolved here, above the branches; the CREDIT is applied inside
+                    // each of them** — the corral tend arm `continue`s, and the two branches answer
+                    // `eligible` differently (a pen is *tended*, a wild herd must have stock standing
+                    // above the crew's floor). It used to be one call here, which was behaviour-
+                    // neutral only while the gate read `ecology_phase`, a value no take moves. Both branches call `credit_rung_lesson`, so every rung still reaches the
+                    // earn path — including the pen, whose `earns_knowledge` is Foddering.
                     //
                     // The two webs cannot cross-teach (§4.2) for free: a herd resolves to an `animal`
                     // rung, so only an animal knowledge is reachable from here.
-                    if let Some(knowledge) = fauna::herd_rung(herd, &ladder)
-                        .knowledge_earned(*policy, herd.ecology_phase == EcologyPhase::Thriving)
-                    {
-                        discovery.add_progress(faction, knowledge, knowledge_delta);
-                    }
+                    let lesson_rung = fauna::herd_rung(herd, &ladder);
                     // **Corral (Rung 1c) — the pen is a managed POPULATION, not a flat rate.** A Hunt
                     // assignment on a **corralled** herd is herding/tending it, not hunting, and the
                     // turn has two halves (`docs/plan_corral_managed_population.md` §3.1):
@@ -1100,6 +1216,18 @@ pub fn advance_labor_allocation(
                         if provisions > scalar_zero() {
                             cohort.stores.add(FOOD, provisions);
                         }
+                        // **THE earn path, rung 3** — *you learn to hay a herd by keeping one*
+                        // (`animal:pen` earns Foddering). The pen's take is its managed production at
+                        // every floor, so the keeper's dial is inert and the lesson runs at
+                        // [`MANAGED_SOURCE_FLOOR`]; the work is the tending, not the slaughter.
+                        credit_rung_lesson(
+                            lesson_rung,
+                            MANAGED_SOURCE_FLOOR,
+                            MANAGED_SOURCE_IS_TENDED,
+                            knowledge_dials,
+                            faction,
+                            &mut discovery,
+                        );
                         // Trade goods land in the keeper band's own store, like the food beside them,
                         // and are scaled off what was **carried home**.
                         let pen_trade = scalar_from_f32(paid.trade_goods);
@@ -1139,8 +1267,8 @@ pub fn advance_labor_allocation(
                         // **The arrival schedule — computed POST-take, unlike `realized`.** It
                         // answers "when does the next food land", so it must start from the state the
                         // turn leaves behind: projecting from the pre-take state would re-promise the
-                        // delivery this turn has already paid, and would spend the herd's kill-credit
-                        // bank twice. Slot 0 is therefore genuinely the *next* turn's delivery.
+                        // delivery this turn has already paid. Slot 0 is therefore genuinely the
+                        // *next* turn's delivery.
                         let arrivals = fauna::project_arrivals_hunt(
                             herd,
                             &fauna,
@@ -1148,7 +1276,7 @@ pub fn advance_labor_allocation(
                             labor.hunt.per_worker_biomass_capacity,
                             mult_f,
                             workers,
-                            *policy,
+                            *floor,
                             improvement,
                             arrivals_horizon,
                         );
@@ -1186,17 +1314,45 @@ pub fn advance_labor_allocation(
                     // kill in biomass — killed / carried / wasted — and has already drawn every animal
                     // killed off the herd.
                     let biomass_before = herd.biomass;
+                    // **The escapement room, resolved PRE-take** — the stock standing above this
+                    // assignment's floor, in biomass and before the whole-animal quantiser. Two
+                    // readers below: the work predicate ([`crew_is_working_the_source`], which
+                    // replaced this arm's `EcologyPhase::Thriving` gate) and the crew the telemetry
+                    // row sizes off what the herd offered.
+                    let standing_above_floor = fauna::hunt_escapement_ceiling(
+                        *floor,
+                        biomass_before,
+                        herd_capacity(herd, &fauna),
+                    );
+                    let working_the_herd = crew_is_working_the_source(standing_above_floor);
                     // The band has no carry room — it eats/banks whatever it hauls, so pass an
                     // unbounded carry cap (behaviour unchanged from before the expedition clamp).
                     let take = hunt_take(
                         herd,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         labor.hunt.per_worker_biomass_capacity,
                         &fauna,
                         &ladder,
                         f32::INFINITY,
+                    );
+                    // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
+                    // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
+                    // **Penning** on a tamed one. The gate is the **escapement room**, never
+                    // `take.killed > 0`: a herd whose room is lighter than one body hands over
+                    // nothing this turn while the crew tracks and handles it exactly as before, and
+                    // reading that as *"not working"* would pace the whole ladder off `body_mass`.
+                    // See [`crew_is_working_the_source`]. It replaced the `EcologyPhase::Thriving`
+                    // gate this site used to carry, and it is what makes `floor = 1.0` (leave the
+                    // whole herd standing, learn at ×2) honestly earn nothing.
+                    credit_rung_lesson(
+                        lesson_rung,
+                        *floor,
+                        working_the_herd,
+                        knowledge_dials,
+                        faction,
+                        &mut discovery,
                     );
                     // **THE take's yield: product × intensity** (`docs/plan_hunt_yield_model.md`).
                     // `hunt_take` above decided HOW MUCH biomass came home (the policy's job); the
@@ -1210,12 +1366,19 @@ pub fn advance_labor_allocation(
                     // above already paid only the reduced Tame ceiling (the `animal:pastoral` rung's
                     // `yield_fraction_while_building × MSY` — the up-front cost), and here the herd
                     // accrues toward pastoral. Gates: the faction must **know Herding** (earned by
-                    // Sustain-hunting, above), the species' husbandry ceiling must allow taming
+                    // hunting, above), the species' husbandry ceiling must allow taming
                     // (Grazing 2d-δ — a `wild`-ceiling species never tames; `accrue_domestication`
                     // self-guards too, and the command path rejects it, so this is belt and braces),
-                    // and the herd must be **Thriving**. A gate that lapses mid-run just stops
-                    // accrual that turn — progress is neither lost nor silently switched, and the
-                    // herd is marked tamed-this-turn below so it doesn't decay either.
+                    // and the herd must be **standing above the crew's floor**
+                    // ([`crew_is_working_the_source`] — not "an animal died", which is a
+                    // quantisation fact rather than a fact about work).
+                    //
+                    // **There is no health gate any more** (`docs/plan_harvest_floor.md` §3.2), the
+                    // plant side's change applied to the identical `EcologyPhase::Thriving` condition
+                    // here. The floor replaced the cliff with a rate: gentling a herd you are pulling
+                    // hard on is *slow*, not *stopped*, so there is no lapse state left to hold
+                    // progress across. `validate_tame` never had a phase gate, so the command side
+                    // was already consistent with removing it.
                     //
                     // **Ownership is NOT in `eligible`** — `accrue_domestication` owns the
                     // `owner is None || owner == faction` rule (and sets ownership on first accrual),
@@ -1231,15 +1394,19 @@ pub fn advance_labor_allocation(
                             pastoral_rung.unlock_discovery_id().is_none_or(|knowledge| {
                                 knows(&discovery, faction, knowledge, knowledge_threshold)
                             }) && herd.can_domesticate()
-                                && herd.ecology_phase == EcologyPhase::Thriving;
+                                && working_the_herd;
                         // THE build seam — the same call the plant side's Cultivate arm makes, at
                         // **this species' own taming timescale** (slice 3c): the rung owns the
                         // mechanic, the species scales it (rabbit ×1.0 → 25 turns, Steppe Runner ×0.2
                         // → 125). The seam applies the multiplier to the decay too, so a herd that is
                         // slow to tame is equally slow to forget — see `RungDef::build_accrual`.
+                        // The **floor** is the assignment's own, the same dial that paced the lesson
+                        // above; it rides *beside* the timescale rather than folding into it, because
+                        // the timescale reaches the decay and the floor must not.
                         let accrual = pastoral_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             fauna.taming_rate_for(&herd.species),
                             workers,
                         );
@@ -1280,10 +1447,17 @@ pub fn advance_labor_allocation(
                             && herd.owner == Some(faction);
                         // THE build seam — the same call the plant side's Cultivate arm makes.
                         // Penning is a flat build for every species — only *taming* varies (slice
-                        // 3c): a fence is a fence.
+                        // 3c): a fence is a fence. The **floor** paces it as it paces every build.
+                        //
+                        // **The work predicate is deliberately NOT in `eligible` here**, for
+                        // `accrue_field`'s reason (see there): it replaced a rung's
+                        // `EcologyPhase::Thriving` gate, and rung 3 never had one on either web.
+                        // Fencing a herd is ground work — a pen goes up around a flock already drawn
+                        // down to its keeper's own floor.
                         let accrual = pen_rung.build_accrual(
                             improvement,
                             eligible,
+                            *floor,
                             RUNG_TIMESCALE_UNSCALED,
                             workers,
                         );
@@ -1358,34 +1532,36 @@ pub fn advance_labor_allocation(
                     // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
                     // the haul-side count.
                     //
-                    // The haul side is the **steady peak-drop carry crew** ([`fauna::hunt_haul_workers`])
-                    // off the policy's steady per-turn rate — the SAME `hunt_policy_rate` the take path
-                    // banked — NOT this turn's lumpy `take.carried`. A slow breeder whose MSY <
-                    // `body_mass` carries `0` on a wait turn, which would collapse `workers_needed` and
-                    // contradict `wasted_yield`; the steady crew equals the client's max-useful count, so
-                    // the overstaff note is stable across wait/kill turns. The rate reads the herd's own
-                    // ecology/capacity + pre-regrowth biomass, unchanged by the take above, so it matches
-                    // what `hunt_take` used.
-                    let rate = fauna::hunt_policy_rate(
-                        *policy,
-                        improvement,
-                        herd.biomass_before_regrowth,
-                        herd_capacity(herd, &fauna),
-                        &herd_ecology(herd, &fauna),
-                        &fauna,
-                        &ladder,
-                    );
+                    // The haul side is the **peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off
+                    // the SAME escapement ceiling the take was bounded by — NOT this turn's lumpy
+                    // `take.carried`. A slow breeder whose room is lighter than one body carries `0` on
+                    // a wait turn, which would collapse `workers_needed` and contradict `wasted_yield`;
+                    // sizing off the ceiling keeps the two in agreement and equals the client's
+                    // max-useful count. It is re-derived at the **pre-take** biomass, which is what
+                    // `hunt_take` read, so the crew describes the take that was just paid.
+                    // The **ceiling** is the same pre-take escapement room the work predicate read,
+                    // and it is undipped: the herd offers what stands above the floor whether the
+                    // hunters are harvesting it or gentling it. **The THROUGHPUT is dipped**, because
+                    // §3.1 put the build dip on the crew — a gentling hunter hauls
+                    // `yield_fraction_while_building ×` what a harvesting one does, so it takes
+                    // proportionally more of them to clear the same room. Dividing an undipped rate
+                    // into a room the take is dipped against sized the crew at the harvesting count
+                    // and then paid it the building take: the row read "enough hands" while the crew
+                    // demonstrably could not lift the drop, and it disagreed with the client's own
+                    // cap (`SourceForecast.max_useful_workers`, which divides by `carry × dip`) by
+                    // exactly the dip. Read through the one [`LadderConfig::build_dip`] seam so the
+                    // two webs cannot dip differently.
                     let take_workers = fauna::hunt_haul_workers(
-                        rate,
+                        standing_above_floor,
                         herd.body_mass,
-                        labor.hunt.per_worker_biomass_capacity,
+                        labor.hunt.per_worker_biomass_capacity * ladder.build_dip(improvement),
                     );
                     let workers_needed = source_crew_needed(herders_needed, take_workers);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It
                     // answers "when does the next food land", so it must start from the state the
                     // turn leaves behind: projecting from the pre-take state would re-promise the
-                    // delivery this turn has already paid, and would spend the herd's kill-credit
-                    // bank twice. Slot 0 is therefore genuinely the *next* turn's delivery.
+                    // delivery this turn has already paid. Slot 0 is therefore genuinely the
+                    // *next* turn's delivery.
                     let arrivals = fauna::project_arrivals_hunt(
                         herd,
                         &fauna,
@@ -1393,7 +1569,7 @@ pub fn advance_labor_allocation(
                         labor.hunt.per_worker_biomass_capacity,
                         mult_f,
                         workers,
-                        *policy,
+                        *floor,
                         improvement,
                         arrivals_horizon,
                     );
@@ -1406,7 +1582,7 @@ pub fn advance_labor_allocation(
                         sustainable,
                         wasted: hunt_yield.apply(take.wasted, mult_f).provisions,
                         workers_needed,
-                        overdraws: policy.overdraws(),
+                        overdraws: floor_overdraws(*floor),
                         // The forward-projected steady headline (computed pre-take above): rate-based,
                         // so it is smooth where `actual` (the whole-animal kill) pulses.
                         realized: hunt_realized.provisions,
@@ -1705,6 +1881,14 @@ fn hunt_rung_already_built(herd: &Herd, improvement: Improvement) -> bool {
 /// `eligible` is the faction's **Seed Selection** gate and nothing else. A lapse just stops accrual
 /// for the turn: progress is neither lost nor silently switched.
 ///
+/// **It deliberately does NOT carry the work predicate** ([`crew_is_working_the_source`]), which
+/// every other build gate gained with the harvest floor (`docs/plan_harvest_floor.md` §3.2). That
+/// term replaced each rung's `EcologyPhase::Thriving` gate, and rung 3 never had one — for the reason
+/// that also forbids the term: **bare ground stands below every floor**, by construction, so
+/// requiring a positive escapement room would make the create-from-nothing case the rung exists for
+/// impossible. `floor` still paces it, so a crew stripping the ground it is sowing still builds
+/// nothing.
+///
 /// `workers` is the crew this assignment put on the tile: the rung's `crew_needed` scales the accrual
 /// by `min(workers / crew_needed, 1)`, so a Sow the player under-staffed takes proportionally longer.
 ///
@@ -1718,13 +1902,20 @@ fn accrue_field(
     field_rung: &RungDef,
     improvement: Option<Improvement>,
     eligible: bool,
+    floor: f32,
     faction: FactionId,
     event_log: &mut CommandEventLog,
     tick: u64,
     tile: UVec2,
     workers: u32,
 ) -> bool {
-    let accrual = field_rung.build_accrual(improvement, eligible, RUNG_TIMESCALE_UNSCALED, workers);
+    let accrual = field_rung.build_accrual(
+        improvement,
+        eligible,
+        floor,
+        RUNG_TIMESCALE_UNSCALED,
+        workers,
+    );
     if accrual <= 0.0 {
         return false;
     }
@@ -2168,9 +2359,15 @@ mod labor_yield_tests {
     //! is no longer the overdraw question — `SourceYield::overdraws` answers it from the policy's own
     //! escapement floor. See `SourceYield`.
     use super::advance_labor_allocation;
+
+    /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
+    /// Every accrual assertion below that is *not about the floor* passes it, so the call reads the
+    /// rung's stated `progress_per_turn` rather than a floor's fraction of it.
+    const FOOD_PEAK_FLOOR: f32 = crate::fauna::MSY_BIOMASS_FRACTION;
+
     use crate::components::{
-        FollowPolicy, Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore,
-        MoraleCause, PopulationCohort, SourceYield, Tile,
+        Improvement, LaborAllocation, LaborAssignment, LaborTarget, LocalStore, MoraleCause,
+        PopulationCohort, SourceYield, Tile,
     };
     use crate::fauna::{
         forecast_expected_take, hunt_forecast, sustainable_yield, EcologyPhase, Herd, HerdRegistry,
@@ -2289,12 +2486,21 @@ mod labor_yield_tests {
         registry.herds.push(herd);
         world.insert_resource(registry);
 
-        // Depletable forage patch on the source tile, seeded at half its carrying capacity so a
-        // Sustain gather draws a clear (positive) regrowth skim (`forage.actual > 0`).
+        // Depletable forage patch on the source tile, seeded at the **post-regrowth steady state a
+        // Sustain gather holds it at**: `K/2` (Sustain's escapement floor) plus the one turn of
+        // regrowth Logistics adds before Population takes. These unit tests run
+        // `advance_labor_allocation` alone, so the regrowth has to be in the fixture — seating the
+        // patch *at* `K/2` would leave a Sustain gather nothing standing above its floor and every
+        // row would read `0`.
         let forage_cfg = world.resource::<LaborConfigHandle>().get();
         let patch_cap = forage_cfg.forage.capacity_for(SOURCE_BIOME);
         let mut patch = ForagePatch::new(UVec2::new(0, 0), patch_cap);
-        patch.biomass = patch_cap * 0.5;
+        patch.biomass = patch_cap * crate::fauna::MSY_BIOMASS_FRACTION
+            + sustainable_yield(
+                patch_cap * crate::fauna::MSY_BIOMASS_FRACTION,
+                patch_cap,
+                &forage_cfg.forage.ecology,
+            );
         patch.refresh_ecology_phase(&forage_cfg.forage.ecology);
         drop(forage_cfg);
         let mut forage_registry = ForageRegistry::default();
@@ -2366,7 +2572,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: UVec2::new(0, 0),
-                        policy: FollowPolicy::Sustain,
+                        floor: 0.5,
                         species: None,
                     },
                     workers: WORKERS,
@@ -2375,7 +2581,7 @@ mod labor_yield_tests {
                 LaborAssignment {
                     target: LaborTarget::Hunt {
                         fauna_id: HERD_ID.to_string(),
-                        policy: FollowPolicy::Sustain,
+                        floor: 0.5,
                     },
                     workers: WORKERS,
                     improvement: None,
@@ -2390,20 +2596,12 @@ mod labor_yield_tests {
             sustainable_yield(start, CAP, &fauna.ecology) * fauna.hunt.provisions_per_biomass;
         drop(fauna);
 
-        // **Seed the kill-credit bank to one body** (slice 8b) so turn one lands a whole animal. This
-        // test is about a Hunt row *capturing its yield telemetry* alongside a Forage row; a fresh
-        // bank would correctly *wait* for MSY (1.25) to accumulate to a body (5) — that pulse is
-        // `sustain_hunt_at_capacity_yields_msy`'s subject, not this one's.
-        {
-            let mut registry = world.resource_mut::<HerdRegistry>();
-            let herd = registry
-                .herds
-                .iter_mut()
-                .find(|h| h.id == HERD_ID)
-                .expect("seeded herd");
-            herd.hunt_credit = herd.body_mass;
-        }
-
+        // **No bank to seed — the fixture's own STOCK is what lands the animal.** This used to prime
+        // `Herd::hunt_credit` to one body so turn one paid, back when the resident take was a banked
+        // rate; the take is a stock now (`docs/plan_harvest_floor.md` §1), so the seeding was inert and
+        // the comment described a mechanism the path no longer reads. The herd stands at `CAP * 0.9`,
+        // which leaves 40 biomass above the food peak — eight whole bodies — so the take is a kill
+        // turn by construction rather than by priming.
         world.run_system_once(advance_labor_allocation);
 
         let alloc = world.get::<LaborAllocation>(band).unwrap();
@@ -2454,7 +2652,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Eradicate,
+                    floor: 0.0,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2481,11 +2679,11 @@ mod labor_yield_tests {
     }
 
     /// Regression (Phase 0 bug): a herd AT carrying capacity used to yield 0 under a Sustain hunt
-    /// (logistic regrowth is 0 at K), leaving a full herd stuck. The MSY-based `sustainable_yield`
-    /// ceiling skims regrowth at the most-productive biomass (K/2), so a full herd stays
-    /// sustainably huntable — the parity fix mirroring the forage full-patch case.
+    /// (logistic regrowth is 0 at K), leaving a full herd stuck. Constant escapement answers that
+    /// case directly — a full herd is **all** surplus above `K/2` — so it stays huntable, and the
+    /// harvest lands it exactly on its most productive biomass and never below.
     #[test]
-    fn sustain_hunt_at_capacity_yields_msy() {
+    fn sustain_hunt_at_capacity_yields_its_surplus_and_stops_at_the_floor() {
         let start = CAP; // full herd — the old net_biomass_delta(K) == 0 bug.
         let (mut world, tile) = world_with_source(start);
         let band = spawn_band(
@@ -2494,7 +2692,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2518,46 +2716,38 @@ mod labor_yield_tests {
             hunt.sustainable,
             expected_sustainable
         );
-        // **RETARGETED FOR THE KILL-CREDIT MODEL (slice 8b): a full herd yields MSY GENTLY, no burst.**
-        // The escapement *burst* (this used to assert `actual > sustainable`, cropping a full herd to
-        // `K/2` in one turn) is gone: Sustain banks its MSY rate into `hunt_credit` and pays a whole
-        // animal only when the bank clears one body. The fixture's MSY (1.25) is well under one body
-        // (5), so turn one is a **wait** (`actual == 0`) and a kill lands every ~4 turns.
-        //
-        // So the test now pins the two properties the credit model guarantees: **(1) no burst** — the
-        // herd is not slashed to `K/2` on turn one; **(2) the long-run take is MSY** — averaged over
-        // enough turns to contain the pulses. (No `advance_herds` here, so the herd does not regrow;
-        // the standing surplus above `K/2` is what the MSY draw comes out of, gently.)
+        // **The first harvest is the accumulated stock, and it is honestly larger than one turn's
+        // regrowth** (`docs/plan_harvest_floor.md` §1). `sustainable` still reports the long-run MSY
+        // line, so `actual > sustainable` here is not an overdraw and must not be read as one — the ⚠
+        // is `overdraws`, a fact about the stance's FLOOR.
         assert!(
-            hunt.actual < hunt.sustainable + 1e-4,
-            "no burst: turn one takes AT MOST the MSY rate, never the whole `B − K/2` surplus: {hunt:?}"
+            hunt.actual > hunt.sustainable,
+            "a full herd hands over its standing surplus, not a rate: {hunt:?}"
         );
-        assert!(
-            world
-                .resource::<HerdRegistry>()
-                .find(HERD_ID)
-                .unwrap()
-                .biomass
-                > start * 0.9,
-            "no burst: a full herd is not cropped toward K/2 in one turn (still ~full)"
-        );
+        assert!(!hunt.overdraws, "Sustain never overdraws: {hunt:?}");
 
-        // Average take over many turns == the MSY rate (the pulses wash out).
-        // 6 whole pulse cycles (body/MSY = 4 turns each), and the herd stays above K/2 throughout
-        // (24 × MSY = 30 killed, 100 → 70), so the rate is a full MSY on every one.
-        const AVG_TURNS: u32 = 24;
-        let mut total = hunt.actual;
-        for _ in 1..AVG_TURNS {
+        // **And it stops dead on the floor.** No `advance_herds` here, so the herd never regrows:
+        // every later turn takes exactly nothing, because nothing stands above `K/2`. That is the
+        // whole of "Sustain cannot draw a herd below its most productive biomass".
+        let floor = CAP * crate::fauna::MSY_BIOMASS_FRACTION;
+        for _ in 0..8 {
             world.run_system_once(advance_labor_allocation);
-            total += world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         }
-        let avg = total / AVG_TURNS as f32;
+        let biomass = world
+            .resource::<HerdRegistry>()
+            .find(HERD_ID)
+            .unwrap()
+            .biomass;
         assert!(
-            (avg - expected_sustainable).abs() < expected_sustainable * 0.1,
-            "the long-run Sustain take averages MSY ({expected_sustainable}), realised as a kill every \
-             few turns: got {avg}"
+            biomass >= floor - TEST_GAME_BODY_MASS && biomass < floor + TEST_GAME_BODY_MASS,
+            "a Sustain-hunted herd settles ON its escapement floor ({floor}), within one body: \
+             {biomass}"
         );
         let last = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
+        assert_eq!(
+            last.actual, 0.0,
+            "at the floor there is nothing standing above it to take: {last:?}"
+        );
         assert!(!last.overdraws, "Sustain never overdraws: {last:?}");
     }
 
@@ -2578,7 +2768,7 @@ mod labor_yield_tests {
 
     /// Switch a band's (single) Forage assignment to `policy` — what the client's picker does. (The
     /// *finishing* case needs no picker since issue #420: completion retires the build verb itself.)
-    fn set_forage_policy(world: &mut World, band: Entity, policy: FollowPolicy) {
+    fn set_forage_floor(world: &mut World, band: Entity, floor: f32) {
         let mut allocation = world
             .get_mut::<LaborAllocation>(band)
             .expect("band forages");
@@ -2587,13 +2777,10 @@ mod labor_yield_tests {
             .iter_mut()
             .find(|assignment| matches!(assignment.target, LaborTarget::Forage { .. }))
             .expect("a Forage assignment");
-        let LaborTarget::Forage {
-            policy: current, ..
-        } = &mut assignment.target
-        else {
+        let LaborTarget::Forage { floor: current, .. } = &mut assignment.target else {
             unreachable!("filtered to Forage above");
         };
-        *current = policy;
+        *current = floor;
     }
 
     /// Stand the source patch up as a completed **Field** (rung 3) at `biomass` — the plant twin of
@@ -2620,7 +2807,7 @@ mod labor_yield_tests {
 
     /// Run a single Forage assignment (given policy) with `WORKERS` on a full patch and return the
     /// captured `workers_needed` — the throughput to invert the per-policy take into a worker count.
-    fn forage_workers_needed(policy: FollowPolicy) -> u32 {
+    fn forage_workers_needed(floor: f32) -> u32 {
         let (mut world, tile) = world_with_source(CAP);
         let patch_cap = world
             .resource::<LaborConfigHandle>()
@@ -2634,7 +2821,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy,
+                    floor,
                     species: None,
                 },
                 workers: WORKERS,
@@ -2645,13 +2832,18 @@ mod labor_yield_tests {
         world.get::<LaborAllocation>(band).unwrap().last_yields[0].workers_needed
     }
 
-    /// Overstaffing: a Sustain hunt whose take is set by the regrowth (MSY) ceiling — not labor —
-    /// needs a **single** worker even with 5 assigned, so `workers_needed == 1 < assigned`.
+    /// Overstaffing: a Sustain hunt whose take is set by the **escapement ceiling** — not labor —
+    /// reports the crew that ceiling needs and no more, so `workers_needed < assigned` and the idle
+    /// hands are visible.
+    ///
+    /// **The count is the crew that would clear the herd to its floor in one turn**
+    /// (`docs/plan_harvest_floor.md` §7.6), which is bigger than the old MSY-rate count and is
+    /// deliberately not clamped: it is what makes *"this crew cannot draw the herd that low"* a thing
+    /// the readout can say.
     #[test]
-    fn sustain_source_overstaffed_reports_one_worker_needed() {
-        // **Above the escapement point** (slice 8): `K/2` is exactly where a Sustain hunt spares
-        // nothing, so the old `CAP * 0.5` ("half cap → clear positive MSY skim" — a flow-model
-        // reading) now seeds the one biomass at which this test's premise cannot hold.
+    fn sustain_source_overstaffed_reports_fewer_workers_than_assigned() {
+        // **Above the escapement point**: `K/2` is exactly where a Sustain hunt spares nothing, so the
+        // old `CAP * 0.5` seeds the one biomass at which this test's premise cannot hold.
         let (mut world, tile) = world_with_source(CAP * 0.9);
         let assigned = 5;
         let band = spawn_band(
@@ -2660,24 +2852,28 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: assigned,
                 improvement: None,
             }],
         );
 
-        // Seed the kill-credit bank to one body so this turn lands a whole animal (slice 8b) — the
-        // point here is the *overstaffing* readout on a real take, not the accumulation wait.
-        {
-            let mut registry = world.resource_mut::<HerdRegistry>();
-            let herd = registry
-                .herds
-                .iter_mut()
-                .find(|h| h.id == HERD_ID)
-                .expect("seeded herd");
-            herd.hunt_credit = herd.body_mass;
-        }
+        // The crew the escapement ceiling asks for, off the same helper the sim uses.
+        let expected_crew = {
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
+            crate::fauna::hunt_haul_workers(
+                crate::fauna::hunt_escapement_ceiling(
+                    0.5,
+                    herd.biomass,
+                    crate::fauna::herd_capacity(herd, &fauna),
+                ),
+                herd.body_mass,
+                labor.hunt.per_worker_biomass_capacity,
+            )
+        };
 
         world.run_system_once(advance_labor_allocation);
 
@@ -2687,8 +2883,8 @@ mod labor_yield_tests {
             "the sustain hunt produced food: {hunt:?}"
         );
         assert_eq!(
-            hunt.workers_needed, 1,
-            "one animal's throughput needs a single worker: {hunt:?}"
+            hunt.workers_needed, expected_crew,
+            "the crew is the one the escapement ceiling needs: {hunt:?}"
         );
         assert!(
             hunt.workers_needed < assigned,
@@ -2705,13 +2901,13 @@ mod labor_yield_tests {
         let cfg = world.resource::<LaborConfigHandle>().get();
         let patch_cap = cfg.forage.capacity_for(SOURCE_BIOME);
         let capacity = cfg.forage.per_worker_biomass_capacity;
-        let eradicate_fraction = cfg.forage.eradicate.take_fraction;
         drop(cfg);
         set_wild_patch_biomass(&mut world, patch_cap); // full patch.
         let assigned = 2;
-        // The scenario is labor-bound iff worker throughput is below the Eradicate biomass ceiling.
+        // The scenario is labor-bound iff worker throughput is below the stance's escapement ceiling.
+        // Eradicate's floor is `0`, so on a full patch that ceiling is the whole standing crop.
         assert!(
-            assigned as f32 * capacity < eradicate_fraction * patch_cap,
+            assigned as f32 * capacity < patch_cap,
             "test precondition: the take must be labor-bound, not ceiling-bound"
         );
         let band = spawn_band(
@@ -2720,7 +2916,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy: FollowPolicy::Eradicate,
+                    floor: 0.0,
                     species: None,
                 },
                 workers: assigned,
@@ -2737,14 +2933,14 @@ mod labor_yield_tests {
         );
     }
 
-    /// A higher-take policy needs more workers on the **same** resource: Deplete/Eradicate draw a large
-    /// biomass fraction, so their inverted worker count exceeds Sustain's MSY skim on identical full
-    /// patches.
+    /// A deeper floor needs more workers on the **same** resource: Deplete/Eradicate leave less
+    /// standing, so more of the crop is takeable and their inverted worker count exceeds Sustain's on
+    /// identical full patches.
     #[test]
     fn deplete_and_eradicate_need_more_workers_than_sustain() {
-        let sustain = forage_workers_needed(FollowPolicy::Sustain);
-        let deplete = forage_workers_needed(FollowPolicy::Deplete);
-        let eradicate = forage_workers_needed(FollowPolicy::Eradicate);
+        let sustain = forage_workers_needed(0.5);
+        let deplete = forage_workers_needed(0.15);
+        let eradicate = forage_workers_needed(0.0);
         assert!(
             deplete > sustain,
             "deplete's larger take needs more workers: {deplete} vs {sustain}"
@@ -2793,7 +2989,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -2806,7 +3002,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -2827,7 +3023,21 @@ mod labor_yield_tests {
         // Asserted against the shared helper rather than a magic number, so it tracks a gain retune.
         let expected_foragers = {
             let world_labor = world.resource::<LaborConfigHandle>().get();
-            let take_biomass = tended.actual / world_labor.forage.provisions_per_biomass;
+            let flora = world
+                .resource::<crate::flora_config::FloraConfigHandle>()
+                .get();
+            let composition = source_tile_composition(&world);
+            let patch = world.resource::<ForageRegistry>().patch(SOURCE).unwrap();
+            // **The patch's OWN basket rate**, not the flat global one: a tended patch converts at
+            // `patch_provisions_per_biomass`, so inverting `actual` through anything else measures a
+            // different take than the sim staffed.
+            let rate = crate::forage::patch_provisions_per_biomass(
+                patch,
+                &composition,
+                &flora,
+                &world_labor.forage,
+            );
+            let take_biomass = tended.actual / rate;
             let per_worker = crate::forage::forage_per_worker_biomass(&world_labor.forage, 1.0);
             (take_biomass / per_worker).ceil() as u32
         };
@@ -2895,8 +3105,10 @@ mod labor_yield_tests {
             "the fixture crew must be non-trivial to observe the fix: {crew}"
         );
 
-        // Snapshots to compute the expected haul crew (the value the OLD code collapsed to) + confirm the
-        // ownership gate.
+        // The expected haul crew (the value the OLD code collapsed to) + the ownership gate. **One
+        // number, not two**: the haul crew is taken on the ceiling, and since the build dip moved
+        // onto crew throughput (`docs/plan_harvest_floor.md` §3.1) a build no longer changes the
+        // ceiling at all, so the Tame row and the pure-harvest row are sized on the same one.
         let (haul, gated) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let ladder = world.resource::<LadderConfigHandle>().get();
@@ -2910,14 +3122,14 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
             );
-            let haul = crate::fauna::hunt_haul_workers(
-                forecast
-                    .ceiling_under(FollowPolicy::Sustain, Some(Improvement::Tame))
-                    .provisions,
-                forecast.body_mass_yield.provisions,
-                forecast.per_worker_yield.provisions,
-            );
-            (haul, crate::fauna::herd_herders_needed(herd, &fauna))
+            (
+                crate::fauna::hunt_haul_workers(
+                    forecast.ceiling_at(0.5).provisions,
+                    forecast.body_mass_yield.provisions,
+                    forecast.per_worker_yield.provisions,
+                ),
+                crate::fauna::herd_herders_needed(herd, &fauna),
+            )
         };
         assert_eq!(
             gated, 0,
@@ -2925,7 +3137,8 @@ mod labor_yield_tests {
         );
         assert!(
             crew > haul,
-            "the crew must exceed the haul count, or the fix is invisible: crew {crew} vs haul {haul}"
+            "the crew must exceed the haul count, or the fix is invisible: crew {crew} vs haul \
+             {haul}"
         );
 
         // Build the two seeds (a Tame build vs a pure harvest) on the still-WILD herd. Both hold the
@@ -2942,7 +3155,7 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
                 crew,
-                FollowPolicy::Sustain,
+                0.5,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -2968,7 +3181,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: crew,
                 improvement: Some(Improvement::Tame),
@@ -3041,7 +3254,7 @@ mod labor_yield_tests {
                 SEASONAL_WEIGHT,
                 NEUTRAL_OUTPUT_MULT,
                 crew,
-                FollowPolicy::Sustain,
+                SHALLOW_DRAW_FLOOR,
                 improvement,
                 labor.yield_average_horizon_turns,
                 labor.arrivals_horizon_turns,
@@ -3050,9 +3263,13 @@ mod labor_yield_tests {
         let cultivate_seed = seed(Some(Improvement::Cultivate), &world);
         let gather_seed = seed(NO_IMPROVEMENT_UNDERWAY, &world);
 
-        // **The count the un-floored seed used to report** — the dipped take inverted by the crew's
-        // own throughput, the exact arithmetic `forecast_source_yield`'s continuous branch does. It
-        // must come in *below* the crew, or the floor is invisible and this test asserts nothing.
+        // **The take side of the seed, re-derived here** — the dipped take inverted by the crew's
+        // **dipped** throughput, the exact arithmetic `forecast_source_yield`'s continuous branch
+        // does. (It divided by the *undipped* rate until the §3.1 follow-up; that inversion reported
+        // `workers × dip` hands working out of `workers` assigned, which is a different bug from the
+        // one this test guards and had to be fixed before this margin meant anything.) It must come
+        // in *below* the crew, or the floor is invisible and this test asserts nothing — which is
+        // what [`SHALLOW_DRAW_FLOOR`] buys.
         let per_worker = {
             let labor = world.resource::<LaborConfigHandle>().get();
             let flora = world
@@ -3072,7 +3289,11 @@ mod labor_yield_tests {
             .per_worker_yield
             .provisions
         };
-        let dipped_take_crew = workers_needed_for_take(cultivate_seed.actual, per_worker, crew);
+        let dipped_take_crew = workers_needed_for_take(
+            cultivate_seed.actual,
+            per_worker * build_dip(&world, Improvement::Cultivate),
+            crew,
+        );
         assert!(
             dipped_take_crew < crew,
             "the dipped take must invert below the build crew, or the floor is invisible: \
@@ -3098,7 +3319,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: SHALLOW_DRAW_FLOOR,
                     species: None,
                 },
                 workers: crew,
@@ -3117,43 +3338,266 @@ mod labor_yield_tests {
         );
     }
 
+    /// **A CULTIVATING crew that is fully employed reports every hand working** — the plant half of
+    /// §3.1's dip-on-the-crew move, checked on the *resolved* row.
+    ///
+    /// The bug: `forage_take` caps the crew at `per_worker × seasonal × build_dip`, but the
+    /// overstaffing inversion beside it divided the resulting take by the **undipped**
+    /// `per_worker × seasonal`. The quotient is then literally `workers × dip` — at the shipped 0.50,
+    /// **half the assigned crew** — so a labor-bound Cultivate reported *"only 4 of 8 working"* about
+    /// eight hands that were every one of them gathering, in the same row as a positive `wasted` that
+    /// says *add hands*. Acting on the advice halves the take and doubles the build.
+    ///
+    /// Asserted as the CONTRADICTION rather than as a bare number: `wasted > 0` (the patch offered
+    /// more than the crew carried) and `workers_needed < workers` (drop hands) cannot both be true of
+    /// one row. Before the fix they both were.
+    #[test]
+    fn a_labor_bound_cultivate_crew_is_not_reported_overstaffed() {
+        let (mut world, tile) = world_with_source(CAP);
+        world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+        grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+
+        // **Staffed so the CREW binds, not the patch**: at the bare floor the whole standing stock is
+        // offerable, and this crew's dipped throughput cannot carry all of it. The build crew floor
+        // (2) is well below the head-count, so it cannot be what the assertion is reading.
+        let workers = LABOR_BOUND_CULTIVATE_CREW;
+        let (offered, carried) = {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let registry = world.resource::<ForageRegistry>();
+            let patch = registry.patch(SOURCE).expect("the fixture seeded a patch");
+            (
+                patch.biomass,
+                workers as f32
+                    * crate::forage::forage_per_worker_biomass(&labor.forage, SEASONAL_WEIGHT)
+                    * build_dip(&world, Improvement::Cultivate),
+            )
+        };
+        assert!(
+            carried < offered,
+            "the crew must be the binding term, or there is no overstaffing claim to test: \
+             carries {carried} of {offered} standing"
+        );
+
+        // **The ASSIGN-TIME seed says the same number** — `forecast_source_yield`'s *continuous*
+        // branch, the plant twin of the animal branch's haul crew, and the half a compose sheet
+        // shows before the turn resolves. Both halves inverted by the undipped rate, so they agreed
+        // with each other and both disagreed with the take.
+        let seed = {
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let flora = world
+                .resource::<crate::flora_config::FloraConfigHandle>()
+                .get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let composition = source_tile_composition(&world);
+            let registry = world.resource::<ForageRegistry>();
+            crate::forage::forage_source_yield_preview(
+                registry.patch(SOURCE).expect("the fixture seeded a patch"),
+                &composition,
+                &labor.forage,
+                &flora,
+                &ladder,
+                SEASONAL_WEIGHT,
+                NEUTRAL_OUTPUT_MULT,
+                workers,
+                crate::components::STRIP_IT_BARE,
+                Some(Improvement::Cultivate),
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
+            )
+        };
+
+        let band = spawn_band(
+            &mut world,
+            tile,
+            vec![LaborAssignment {
+                target: LaborTarget::Forage {
+                    tile: SOURCE,
+                    floor: crate::components::STRIP_IT_BARE,
+                    species: None,
+                },
+                workers,
+                improvement: Some(Improvement::Cultivate),
+            }],
+        );
+        world.run_system_once(advance_labor_allocation);
+        let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
+
+        assert!(
+            row.wasted > 0.0,
+            "the patch offered more than the crew carried, so the row says 'add hands': {row:?}"
+        );
+        assert_eq!(
+            row.workers_needed, workers,
+            "…and it must not ALSO say 'drop hands': every assigned forager was gathering, so the \
+             count is the crew itself. Dividing the dipped take by the undipped rate reported \
+             `workers × dip` here: {row:?}"
+        );
+
+        assert_eq!(
+            seed.workers_needed, row.workers_needed,
+            "seed == resolved (the compose sheet and the tile card cannot disagree in one frame): \
+             {seed:?} vs {row:?}"
+        );
+    }
+
+    /// Foragers on the harness patch at the bare floor: enough that the crew's **dipped** throughput
+    /// falls short of the standing stock (patch `K` 70, seeded near `K/2` + one turn's regrowth ⇒ ~39
+    /// standing; 8 foragers carry `8 × 8 × 0.50 = 32`), and comfortably above the `plant:tended`
+    /// rung's crew of 2 so the build floor cannot be what a passing assertion is reading.
+    const LABOR_BOUND_CULTIVATE_CREW: u32 = 8;
+
+    /// **A crew GENTLING a herd needs MORE haulers than one hunting it** — the animal half of §3.1's
+    /// dip-on-the-crew move.
+    ///
+    /// `hunt_haul_workers` answers *"how many hands carry home the peak drop this ceiling allows"*,
+    /// and it exists so `workers_needed` and `wasted` can never contradict each other. The bug: the
+    /// ceiling was passed undipped **and so was the per-hauler rate**, while the take the row
+    /// describes was paid at `rate × build_dip`. So a Tame row quoted the *hunting* crew for a
+    /// *gentling* take — a crew that provably cannot lift the drop — and disagreed with the client's
+    /// own stepper cap (`SourceForecast.max_useful_workers`, which divides by `carry × dip`) by
+    /// exactly the dip.
+    ///
+    /// The ceiling stays undipped, and that asymmetry is the whole point: the herd offers what stands
+    /// above the floor whether the party is harvesting it or gentling it. Only the *carrying* is
+    /// slower.
+    #[test]
+    fn a_herd_being_tamed_sizes_its_haul_crew_on_the_dipped_carry() {
+        let dip = {
+            let (world, _) = world_with_source(CAP);
+            build_dip(&world, Improvement::Tame)
+        };
+        assert!(
+            (0.0..1.0).contains(&dip),
+            "the shipped Tame dip must be a real discount, or the two rows cannot differ: {dip}"
+        );
+
+        // One hunt turn on the slow breeder at a KILL biomass, with and without a Tame in flight.
+        // Same herd, same floor, same crew — the improvement is the only axis.
+        let row = |improvement: Option<Improvement>| {
+            let (mut world, tile) = world_with_source(CAP);
+            reseat_slow_breeder(&mut world, SLOW_BREEDER_KILL_BIOMASS);
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        floor: crate::fauna::MSY_BIOMASS_FRACTION,
+                    },
+                    workers: WORKERS,
+                    improvement,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone()
+        };
+        let taming = row(Some(Improvement::Tame));
+        let hunting = row(NO_IMPROVEMENT_UNDERWAY);
+
+        let per_worker = LaborConfigHandle::default()
+            .get()
+            .hunt
+            .per_worker_biomass_capacity;
+        let ceiling = crate::fauna::escapement_ceiling(
+            crate::fauna::MSY_BIOMASS_FRACTION,
+            SLOW_BREEDER_KILL_BIOMASS,
+            SLOW_BREEDER_CAP,
+        );
+        assert_eq!(
+            taming.workers_needed,
+            crate::fauna::hunt_haul_workers(ceiling, SLOW_BREEDER_BODY, per_worker * dip),
+            "a gentling crew is sized on its DIPPED carry against the same undipped ceiling: \
+             {taming:?}"
+        );
+        assert!(
+            taming.workers_needed > hunting.workers_needed,
+            "…which is strictly more hands than the same herd wants from a pure hunt — reading the \
+             two as equal is the bug: taming {} vs hunting {}",
+            taming.workers_needed,
+            hunting.workers_needed
+        );
+        // **The ASSIGN-TIME seed says the same number.** Both halves used to divide by the undipped
+        // rate, so the seed and the resolved row agreed *with each other* while both disagreed with
+        // the take — which is exactly why a seed==resolved test on its own cannot see this class of
+        // bug, and why the assertion above had to come first.
+        let seed = {
+            let (mut world, _) = world_with_source(CAP);
+            reseat_slow_breeder(&mut world, SLOW_BREEDER_KILL_BIOMASS);
+            let fauna = world.resource::<FaunaConfigHandle>().get();
+            let labor = world.resource::<LaborConfigHandle>().get();
+            let ladder = world.resource::<LadderConfigHandle>().get();
+            let registry = world.resource::<HerdRegistry>();
+            crate::fauna::hunt_source_yield_preview(
+                registry.find(HERD_ID).expect("the fixture seeded a herd"),
+                &fauna,
+                &ladder,
+                labor.hunt.per_worker_biomass_capacity,
+                NEUTRAL_OUTPUT_MULT,
+                WORKERS,
+                crate::fauna::MSY_BIOMASS_FRACTION,
+                Some(Improvement::Tame),
+                labor.yield_average_horizon_turns,
+                labor.arrivals_horizon_turns,
+            )
+        };
+        assert_eq!(
+            seed.workers_needed, taming.workers_needed,
+            "seed == resolved (the compose sheet and the band panel cannot disagree in one frame): \
+             {seed:?} vs {taming:?}"
+        );
+        // The property the count exists to guarantee: at `workers_needed` the crew can actually lift
+        // the biggest drop the ceiling allows (`floor(ceiling/body) + 1` whole bodies).
+        let peak_biomass = ((ceiling / SLOW_BREEDER_BODY).floor() + 1.0) * SLOW_BREEDER_BODY;
+        assert!(
+            taming.workers_needed as f32 * per_worker * dip >= peak_biomass,
+            "the reported crew must be able to haul the peak drop it was sized on: {} hands carry \
+             {} of {peak_biomass}",
+            taming.workers_needed,
+            taming.workers_needed as f32 * per_worker * dip
+        );
+    }
+
     /// Reseat the harness herd as a **Wild-Aurochs-shaped slow breeder**: a `body_mass` heavier than one
-    /// turn's MSY (`r·K/4 = 0.05·100/4 = 1.25 ≪ 80`), so it **pulses** — it drops zero animals on most
-    /// turns while its kill-credit banks, then a whole one when the bank clears a body. `credit` seeds
-    /// that bank so a test can force a **kill** turn (`credit = body`) or a **wait** turn (`credit = 0`).
-    fn reseat_slow_breeder(world: &mut World, biomass: f32, credit: f32) {
+    /// turn's regrowth at the operating point (`r·K/4 = 0.05·400/4 = 5 ≪ 80`), so it **pulses** — it
+    /// spares zero animals on most turns while the stock above its floor rebuilds, then a whole one
+    /// when that room clears a body. `biomass` is what picks the turn a test measures: below
+    /// `K/2 + body` is a **wait**, at or above it a **kill**.
+    fn reseat_slow_breeder(world: &mut World, biomass: f32) {
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let mut registry = world.resource_mut::<HerdRegistry>();
         let herd = &mut registry.herds[0];
         herd.body_mass = SLOW_BREEDER_BODY;
         herd.carrying_capacity = SLOW_BREEDER_CAP;
         herd.biomass = biomass;
-        // These fixtures set biomass directly (no `regrow_biomass`), and the take rate reads
-        // `biomass_before_regrowth` (slice 8b) — keep it in sync.
+        // These fixtures set biomass directly (no `regrow_biomass`); the rung payoff projections read
+        // `biomass_before_regrowth` — keep it in sync.
         herd.biomass_before_regrowth = biomass;
-        herd.hunt_credit = credit;
         herd.refresh_ecology_phase(&fauna);
     }
 
-    /// One aurochs-shaped body — heavier than one turn's MSY, and heavier than one hauler carries.
+    /// One aurochs-shaped body — heavier than one turn's regrowth, and heavier than one hauler carries.
     const SLOW_BREEDER_BODY: f32 = 80.0;
-    /// The slow breeder's capacity: `MSY = r·K/4 = 1.25`, far below `SLOW_BREEDER_BODY`.
-    const SLOW_BREEDER_CAP: f32 = 100.0;
-    /// Above the escapement point (`K/2`), so the herd has whole animals to spare once the bank clears.
-    const SLOW_BREEDER_BIOMASS: f32 = 90.0;
+    /// The slow breeder's capacity: `MSY = r·K/4 = 5`, far below `SLOW_BREEDER_BODY`, and big enough
+    /// that `K/2 + body` is a reachable biomass (so a **kill** turn is expressible at all).
+    const SLOW_BREEDER_CAP: f32 = 400.0;
+    /// Above the escapement point (`K/2 = 200`), but by **less than one body** — the WAIT turn: there
+    /// is standing surplus, just not a whole animal of it.
+    const SLOW_BREEDER_BIOMASS: f32 = 240.0;
+    /// `K/2` plus more than one body — the KILL turn.
+    const SLOW_BREEDER_KILL_BIOMASS: f32 = 300.0;
 
-    /// A single Sustain-hunt turn on the slow breeder with `credit` banked and `workers` assigned;
-    /// returns the captured yield row.
-    fn slow_breeder_hunt(credit: f32, workers: u32) -> SourceYield {
+    /// A single Sustain-hunt turn on the slow breeder at `biomass` with `workers` assigned; returns
+    /// the captured yield row.
+    fn slow_breeder_hunt(biomass: f32, workers: u32) -> SourceYield {
         let (mut world, tile) = world_with_source(CAP);
-        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, credit);
+        reseat_slow_breeder(&mut world, biomass);
         let band = spawn_band(
             &mut world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers,
                 improvement: None,
@@ -3165,16 +3609,16 @@ mod labor_yield_tests {
 
     /// One hunt turn under `policy` on the slow breeder (biomass above `K/2`, empty bank), staffed so
     /// the worker cap never binds; returns the captured yield row.
-    fn slow_breeder_hunt_policy(policy: FollowPolicy) -> SourceYield {
+    fn slow_breeder_hunt_at(floor: f32) -> SourceYield {
         let (mut world, tile) = world_with_source(CAP);
-        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, 0.0);
+        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS);
         let band = spawn_band(
             &mut world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy,
+                    floor,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -3186,17 +3630,26 @@ mod labor_yield_tests {
 
     /// **The forward-projected `realized` reads the HONEST OVERHUNTING RATE — and sees the decline.**
     /// `sustainable` is the herd's MSY (the overhunting reference), policy-independent. The lumpy
-    /// `actual` cannot be compared to it turn by turn (a kill cashes a whole banked animal and spikes
-    /// above MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized`
-    /// IS comparable: a **Sustain** hunt projects `≈ sustainable` (stable at K/2), an overhunting
-    /// **Surplus/Deplete** hunt projects *above* it — and, because the projection simulates the herd
-    /// declining under the overdraw, **Deplete projects BELOW its naive `2.5×MSY` steady rate** (the
-    /// stock runs out inside the horizon), the honest reading the instantaneous rate could not give.
+    /// `actual` cannot be compared to it turn by turn (a kill lands a whole animal and spikes above
+    /// MSY even under Sustain), which is why `overdraws` exists. The forward-projected `realized` IS
+    /// comparable, and it is ordered by how deep the stance's floor is.
+    ///
+    /// **A Sustain projection sits ABOVE MSY, and that is honest, not an overdraw.** The window opens
+    /// on a herd standing above `K/2`, so the first projected turn draws that accumulated surplus down
+    /// to the floor and the rest of the horizon pays the regrowth — an average between the two. What
+    /// makes Sustain sustainable is its floor, not its being under a line.
+    ///
+    /// **The decline is visible as `realized < actual` on Surplus**: the opening turn draws the stock
+    /// down to `0.30·K` and the horizon that follows pays only the trickle back, so the steady
+    /// headline lands well below the turn the player just watched. **Deplete cannot be read that way**
+    /// — it leaves the herd *at* the Allee brink, where the projection terminates (nothing more to
+    /// take), so its average is the strip rate over the turns it actually delivered, exactly like
+    /// Eradicate's. That termination rule is what keeps it from being diluted toward zero.
     #[test]
     fn realized_reads_the_honest_overhunting_rate() {
-        let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
-        let surplus = slow_breeder_hunt_policy(FollowPolicy::Surplus);
-        let deplete = slow_breeder_hunt_policy(FollowPolicy::Deplete);
+        let sustain = slow_breeder_hunt_at(0.5);
+        let surplus = slow_breeder_hunt_at(0.3);
+        let deplete = slow_breeder_hunt_at(0.15);
 
         // `sustainable` is MSY, the same under every policy (it is the reference, not the take).
         assert!(
@@ -3204,11 +3657,15 @@ mod labor_yield_tests {
                 && (sustain.sustainable - deplete.sustainable).abs() < 1e-6,
             "sustainable is the policy-independent MSY reference: {sustain:?} {surplus:?} {deplete:?}"
         );
-        // Sustain projects ~its sustainable MSY (a Sustain hunt holds the herd at K/2 and does not
-        // overdraw, so the whole horizon pays MSY).
+        // Sustain projects at or above its sustainable MSY — the opening drawdown to `K/2` plus a
+        // horizon of regrowth — and never below it: a Sustain hunt is not an under-draw either.
         assert!(
-            (sustain.realized - sustain.sustainable).abs() < 1e-5,
-            "a Sustain hunt projects ≈ its sustainable MSY: {sustain:?}"
+            sustain.realized >= sustain.sustainable - 1e-5,
+            "a Sustain hunt projects at least its sustainable MSY: {sustain:?}"
+        );
+        assert!(
+            sustain.realized > 0.0,
+            "a Sustain hunt on a healthy herd projects a LIVE rate, not zero: {sustain:?}"
         );
         // Overhunting projects the honest rate ABOVE the sustainable reference, ordered by policy.
         assert!(
@@ -3219,16 +3676,19 @@ mod labor_yield_tests {
             deplete.realized > surplus.realized,
             "Deplete projects deeper than Surplus: {deplete:?} {surplus:?}"
         );
-        // The projection SEES THE DECLINE: Deplete drives the herd out within the horizon, so its
-        // average is strictly below the naive instantaneous `deplete_multiplier × MSY` steady rate — the
-        // honest reading the old instantaneous rate could not produce. MSY = `sustainable` (both are
-        // `HuntYield::apply(peak_regrowth)` above K/2), so the naive Deplete rate is `2.5 × sustainable`.
-        let naive_deplete_rate =
-            FaunaConfigHandle::default().get().hunt.deplete_multiplier * deplete.sustainable;
+        // The projection SEES THE DECLINE on the stance that survives its own draw: Surplus takes the
+        // standing surplus on turn one and then lives on the regrowth above `0.30·K`, so its horizon
+        // average is far below the take the player just watched land. The instantaneous reading could
+        // not produce that.
         assert!(
-            deplete.realized > 0.0 && deplete.realized < naive_deplete_rate,
-            "Deplete projects below its naive {naive_deplete_rate} steady rate (sees the decline): \
-             {deplete:?}"
+            surplus.realized > 0.0 && surplus.realized < surplus.actual,
+            "Surplus projects well below its opening draw (sees the decline): {surplus:?}"
+        );
+        // Deplete leaves the herd at the Allee brink with nothing standing above it, so its projection
+        // terminates and reports the strip it delivered rather than a horizon-diluted average.
+        assert!(
+            deplete.realized > 10.0 * deplete.sustainable,
+            "Deplete reads the strip it delivered, not a diluted average: {deplete:?}"
         );
     }
 
@@ -3239,8 +3699,8 @@ mod labor_yield_tests {
     /// *below* Sustain, the exact dilution the divide-by-turns-simulated rule prevents).
     #[test]
     fn eradicate_realized_reads_the_strip_rate_not_a_diluted_average() {
-        let sustain = slow_breeder_hunt_policy(FollowPolicy::Sustain);
-        let eradicate = slow_breeder_hunt_policy(FollowPolicy::Eradicate);
+        let sustain = slow_breeder_hunt_at(0.5);
+        let eradicate = slow_breeder_hunt_at(0.0);
 
         assert!(
             eradicate.realized > sustain.realized,
@@ -3257,59 +3717,72 @@ mod labor_yield_tests {
         );
     }
 
-    /// **A hunt's `workers_needed` is its STEADY carry crew — the same on a wait turn and a kill turn.**
+    /// **A hunt's `workers_needed` is its CEILING's carry crew — never the lumpy `0` of a wait turn.**
     /// The bug: sizing the crew off *this turn's* `take.carried` reads `0` on a slow breeder's wait turn
-    /// (MSY < `body_mass`, so nothing drops while the bank fills), collapsing `workers_needed` beside a
-    /// `wasted_yield` that says the crew is understaffed — *drop workers* and *add workers* on one row.
-    /// The steady peak-drop crew (`ceil(body_mass / per_worker)` here) does not flicker with the pulse,
-    /// so the band-panel overstaff note is stable.
+    /// (the room above the floor is lighter than one body, so nothing drops), collapsing
+    /// `workers_needed` beside a `wasted_yield` that says the crew is understaffed — *drop workers* and
+    /// *add workers* on one row. The ceiling-derived crew cannot flicker with the pulse, because it is
+    /// taken on the same number `wasted_yield` is.
     #[test]
-    fn a_slow_breeder_hunt_reports_its_steady_carry_crew_on_wait_and_kill_turns() {
-        let steady_crew = {
-            let per_worker = LaborConfigHandle::default()
-                .get()
-                .hunt
-                .per_worker_biomass_capacity;
-            (SLOW_BREEDER_BODY / per_worker).ceil() as u32 // ceil(80 / 40) = 2.
+    fn a_slow_breeder_hunt_reports_its_carry_crew_on_a_wait_turn_never_zero() {
+        let per_worker = LaborConfigHandle::default()
+            .get()
+            .hunt
+            .per_worker_biomass_capacity;
+        // The crew each turn's ceiling asks for, off the same helper the sim uses.
+        let crew_for = |biomass: f32| {
+            crate::fauna::hunt_haul_workers(
+                crate::fauna::escapement_ceiling(
+                    crate::fauna::MSY_BIOMASS_FRACTION,
+                    biomass,
+                    SLOW_BREEDER_CAP,
+                ),
+                SLOW_BREEDER_BODY,
+                per_worker,
+            )
         };
+        let wait_crew = crew_for(SLOW_BREEDER_BIOMASS);
         assert!(
-            steady_crew >= 2,
+            wait_crew >= 2,
             "the fixture must need more than one hauler, or the wait-turn collapse is invisible"
         );
 
-        // Wait turn (empty bank): the herd spares nothing, but the crew is still the steady carry crew,
-        // NOT the old `0`.
-        let wait = slow_breeder_hunt(0.0, steady_crew);
+        // Wait turn: the room above the floor is under one body, so nothing drops — but the crew is
+        // still the one the ceiling asks for, NOT the old `0`.
+        let wait = slow_breeder_hunt(SLOW_BREEDER_BIOMASS, wait_crew);
         assert_eq!(
             wait.actual, 0.0,
-            "a slow breeder waits on an empty bank: {wait:?}"
+            "a slow breeder waits while its room rebuilds: {wait:?}"
         );
         assert_eq!(
-            wait.workers_needed, steady_crew,
-            "the wait-turn crew is the steady carry crew, not the lumpy 0: {wait:?}"
+            wait.workers_needed, wait_crew,
+            "the wait-turn crew is the ceiling's carry crew, not the lumpy 0: {wait:?}"
         );
 
-        // Kill turn (one body banked): a whole animal lands, and the crew is UNCHANGED.
-        let kill = slow_breeder_hunt(SLOW_BREEDER_BODY, steady_crew);
-        assert!(
-            kill.actual > 0.0,
-            "the banked body lands this turn: {kill:?}"
+        // Kill turn: the room clears a body, an animal lands, and the crew is still the ceiling's.
+        let kill_crew = crew_for(SLOW_BREEDER_KILL_BIOMASS);
+        let kill = slow_breeder_hunt(SLOW_BREEDER_KILL_BIOMASS, kill_crew);
+        assert!(kill.actual > 0.0, "the whole animal lands: {kill:?}");
+        assert_eq!(
+            kill.workers_needed, kill_crew,
+            "the kill-turn crew is the ceiling's carry crew too: {kill:?}"
         );
         assert_eq!(
-            kill.workers_needed, steady_crew,
-            "the kill-turn crew equals the wait-turn crew — no flicker: {kill:?}"
+            kill.wasted, 0.0,
+            "a crew sized to the ceiling wastes nothing — the pairing `workers_needed`/`wasted` \
+             must never disagree: {kill:?}"
         );
 
-        // Overstaffed beyond the steady crew: the count is rate-derived (not clamped up to assigned), so
+        // Overstaffed beyond that crew: the count is ceiling-derived (not clamped up to assigned), so
         // an extra hand is still flagged.
-        let over = slow_breeder_hunt(SLOW_BREEDER_BODY, steady_crew + 1);
+        let over = slow_breeder_hunt(SLOW_BREEDER_KILL_BIOMASS, kill_crew + 1);
         assert_eq!(
-            over.workers_needed, steady_crew,
-            "the crew is the steady need, independent of overstaffing: {over:?}"
+            over.workers_needed, kill_crew,
+            "the crew is the ceiling's need, independent of overstaffing: {over:?}"
         );
         assert!(
-            steady_crew + 1 > over.workers_needed,
-            "a herd overstaffed beyond its steady crew still flags the idle hand: {over:?}"
+            kill_crew + 1 > over.workers_needed,
+            "a herd overstaffed beyond its crew still flags the idle hand: {over:?}"
         );
     }
 
@@ -3320,7 +3793,7 @@ mod labor_yield_tests {
     #[test]
     fn a_domesticated_slow_breeder_reports_max_of_herders_and_steady_crew_matching_the_client() {
         let (mut world, tile) = world_with_source(CAP);
-        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS, SLOW_BREEDER_BODY);
+        reseat_slow_breeder(&mut world, SLOW_BREEDER_BIOMASS);
         // Tame it outright so it owes a standing herder cost (owner = the band's faction).
         {
             let mut registry = world.resource_mut::<HerdRegistry>();
@@ -3335,33 +3808,28 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: assigned,
                 improvement: None,
             }],
         );
-        world.run_system_once(advance_labor_allocation);
-        let yielded = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
-
-        // The sim's expectation: one crew, `max(herders, steady_haul)`.
+        // The sim's expectation: one crew, `max(herders, steady_haul)` — taken on the **pre-take**
+        // herd, which is the state the labor arm sizes the crew against (an escapement ceiling falls
+        // with the take that just drew it, so reading it afterwards would measure a different turn).
         let (herders, steady_haul, client_max_useful) = {
             let fauna = world.resource::<FaunaConfigHandle>().get();
             let labor = world.resource::<LaborConfigHandle>().get();
             let ladder = LadderConfig::builtin();
             let herd = world.resource::<HerdRegistry>().find(HERD_ID).unwrap();
             let herders = crate::fauna::herd_herders_needed(herd, &fauna);
-            let rate = crate::fauna::hunt_policy_rate(
-                FollowPolicy::Sustain,
-                None,
-                herd.biomass_before_regrowth,
+            let ceiling_biomass = crate::fauna::hunt_escapement_ceiling(
+                0.5,
+                herd.biomass,
                 crate::fauna::herd_capacity(herd, &fauna),
-                &crate::fauna::herd_ecology(herd, &fauna),
-                &fauna,
-                &ladder,
             );
             let steady_haul = crate::fauna::hunt_haul_workers(
-                rate,
+                ceiling_biomass,
                 herd.body_mass,
                 labor.hunt.per_worker_biomass_capacity,
             );
@@ -3374,7 +3842,9 @@ mod labor_yield_tests {
                 labor.hunt.per_worker_biomass_capacity,
                 1.0,
             );
-            let ceiling = forecast.ceiling_for(FollowPolicy::Sustain).provisions;
+            let ceiling = forecast
+                .ceiling_at(crate::fauna::MSY_BIOMASS_FRACTION)
+                .provisions;
             let food_per_animal = forecast.body_mass_yield.provisions;
             let per_worker_yield = forecast.per_worker_yield.provisions;
             let client = ((((ceiling / food_per_animal).floor() + 1.0) * food_per_animal
@@ -3382,6 +3852,8 @@ mod labor_yield_tests {
                 .ceil()) as u32;
             (herders, steady_haul, client)
         };
+        world.run_system_once(advance_labor_allocation);
+        let yielded = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
 
         assert!(
             herders >= 1,
@@ -3418,6 +3890,22 @@ mod labor_yield_tests {
     /// `spawn_band` bands sit at morale 1.0 → a neutral productivity multiplier, which is also the
     /// multiplier the snapshot captures forecasts at (`FORECAST_OUTPUT_MULTIPLIER`).
     const NEUTRAL_OUTPUT_MULT: f32 = 1.0;
+    /// **A floor just ABOVE the food peak**, so the harness patch offers only a sliver of standing
+    /// stock — less than one *dipped* worker's throughput. It exists so the build-crew floor stays
+    /// load-bearing in `a_patch_being_cultivated_seeds_the_same_build_crew_the_turn_resolves`: at the
+    /// peak itself this patch happens to offer almost exactly the rung's crew's dipped throughput, so
+    /// the take side and the build crew agree and the assertion would hold for the wrong reason.
+    const SHALLOW_DRAW_FLOOR: f32 = 0.55;
+
+    /// The shipped `yield_fraction_while_building` for `improvement`, off the world's own ladder —
+    /// the one seam the sim reads it through ([`LadderConfig::build_dip`]), so a test can never
+    /// hard-code a fraction the config has since retuned.
+    fn build_dip(world: &World, improvement: Improvement) -> f32 {
+        world
+            .resource::<LadderConfigHandle>()
+            .get()
+            .build_dip(Some(improvement))
+    }
     /// f32 slack between the forecast (`workers × per_worker_yield`, provisions) and the sim's take
     /// (biomass → fixed-point provisions): different multiplication order + a 1e-6 fixed-point grid.
     /// Orders of magnitude below one provision.
@@ -3438,16 +3926,15 @@ mod labor_yield_tests {
     fn expected_yield(
         forecast: &SourceYieldForecast,
         workers: u32,
-        policy: FollowPolicy,
+        floor: f32,
         improvement: Option<Improvement>,
     ) -> f32 {
-        forecast_expected_take(forecast, workers, policy, improvement).provisions
+        forecast_expected_take(forecast, workers, floor, improvement).provisions
     }
 
     /// The client's worker-stepper cap.
-    fn max_useful_workers(forecast: &SourceYieldForecast, policy: FollowPolicy) -> u32 {
-        (forecast.ceiling_for(policy).provisions / forecast.per_worker_yield.provisions).ceil()
-            as u32
+    fn max_useful_workers(forecast: &SourceYieldForecast, floor: f32) -> u32 {
+        (forecast.ceiling_at(floor).provisions / forecast.per_worker_yield.provisions).ceil() as u32
     }
 
     /// Re-seat the test herd at `biomass`/`cap` (the harness's default 100-cap herd saturates every
@@ -3464,15 +3951,25 @@ mod labor_yield_tests {
         herd.refresh_ecology_phase(&fauna);
     }
 
-    /// **Forage forecast == actual.** For every policy × staffing (labor-bound, ceiling-bound), the
-    /// client's `min(workers × per_worker_yield, ceiling[policy])` equals the provisions
-    /// `advance_labor_allocation` actually pays. Both binding regimes are asserted to have been
-    /// exercised, so this can't silently degenerate into testing one branch.
+    /// **The floors both forecast==actual sweeps walk.** The four the retired stance axis named
+    /// (`0.50 / 0.30 / 0.15 / 0`), plus `0.80` and `1.0` — values the assignment can carry now and
+    /// the stance axis could not express, `1.0` being the degenerate *"take nothing"* end where the
+    /// room is exactly zero.
+    const SWEPT_FLOORS: [f32; 6] = [0.0, 0.15, 0.3, 0.5, 0.8, 1.0];
+
+    /// **Forage forecast == actual, at every FLOOR.** For every floor × staffing (labor-bound,
+    /// ceiling-bound), the client's `min(workers × per_worker_yield, ceiling_at(floor))` equals the
+    /// provisions `advance_labor_allocation` actually pays. Both binding regimes are asserted to
+    /// have been exercised, so this can't silently degenerate into testing one branch.
+    ///
+    /// **Swept over floors rather than over four stances** (`docs/plan_harvest_floor.md` §5): the
+    /// assignment carries a continuous number now, so a sweep of four fixed values would only pin
+    /// the four the retired axis happened to name.
     #[test]
-    fn forage_forecast_equals_actual_take_for_every_policy_and_staffing() {
+    fn forage_forecast_equals_actual_take_for_every_floor_and_staffing() {
         let mut saw_labor_bound = false;
         let mut saw_ceiling_bound = false;
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             for improvement in FORAGE_IMPROVEMENTS {
                 for workers in [1u32, 2, 20] {
                     let (mut world, tile) = world_with_source(CAP);
@@ -3502,7 +3999,7 @@ mod labor_yield_tests {
                         vec![LaborAssignment {
                             target: LaborTarget::Forage {
                                 tile: SOURCE,
-                                policy,
+                                floor: policy,
                                 species: None,
                             },
                             workers,
@@ -3513,7 +4010,7 @@ mod labor_yield_tests {
                     let actual = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
                     let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
-                    let ceiling = forecast.ceiling_under(policy, improvement).provisions;
+                    let ceiling = forecast.ceiling_at(policy).provisions;
                     if labor_term < ceiling {
                         saw_labor_bound = true;
                     } else {
@@ -3522,7 +4019,7 @@ mod labor_yield_tests {
                     let expected = expected_yield(&forecast, workers, policy, improvement);
                     assert!(
                     (actual - expected).abs() < FORECAST_EPSILON,
-                    "forage forecast must equal the actual take ({policy:?} + {improvement:?}, \
+                    "forage forecast must equal the actual take (floor {policy} + {improvement:?}, \
                      {workers} workers): forecast={expected} actual={actual} ({forecast:?})"
                 );
                 }
@@ -3538,29 +4035,23 @@ mod labor_yield_tests {
     /// The herd is re-seated at a large capacity so the Eradicate ceiling exceeds a single hunter's
     /// throughput (a labor-bound case); 20 hunters overstaff every policy (the ceiling binds).
     ///
-    /// **The forecast is now the STEADY sustainable rate, not the credit-inclusive burst** — it drops
-    /// the transient `hunt_credit` term (see `hunt_forecast`). So forecast == actual holds exactly when
-    /// **`hunt_credit == 0`**: with an empty bank the take path's `min(0 + rate, biomass)` IS the steady
-    /// rate, so the first turn's take equals the displayed ceiling. A herd carrying banked credit would
-    /// legitimately take *more* this turn (it cashes the bank) than the steady readout advertises — that
-    /// lumpiness is the take's, not the forecast's — so the invariant is asserted on a fresh herd, and
-    /// the `hunt_credit == 0` precondition below is load-bearing, not incidental.
+    /// **The forecast IS the take**, helper for helper: both are
+    /// `min(crew throughput, hunt_escapement_ceiling(...))` quantised to whole animals, so the
+    /// invariant holds turn by turn rather than in the long run. The old caveat — that it held only on
+    /// an empty kill-credit bank, because the readout was a steady rate while the take cashed a
+    /// banked burst — died with the bank (`Herd::hunt_credit`).
     ///
-    /// **It sweeps TWO stock levels, and the drawn-down one is the whole point** (PR #448 review).
-    /// At `B = K` the standing-stock clamp never binds, so the sweep could not see *where* the build
-    /// dip is applied: `min(rate, B) × d` and `min(rate × d, B)` are the same number when `rate < B`.
-    /// [`DRAWN_DOWN_BIOMASS`] sits inside the window where they differ — below the undipped
-    /// Surplus/Deplete rate (a multiple of `peak_regrowth(K)`, so biomass-independent) and above the
-    /// dipped one — which is exactly the (non-Sustain stance × improvement) pair issue #442 legalised.
-    /// The `saw_stock_bound_dip` assertion below pins that the window was actually entered, so this
-    /// cannot degrade into a second copy of the `B = K` case.
+    /// **It sweeps TWO stock levels**: a full herd and [`DRAWN_DOWN_BIOMASS`], a remnant standing
+    /// barely above the deepest floors, where a whole-animal take is a large fraction of what is left.
+    /// The `stock_cap` clamp is asserted **inert** throughout — an escapement ceiling is `B − floor·K`
+    /// and so cannot exceed `B` — which is the property that retired the dip-versus-clamp ordering
+    /// question rather than an assumption made about it.
     #[test]
-    fn hunt_forecast_equals_actual_take_for_every_policy_and_staffing() {
+    fn hunt_forecast_equals_actual_take_for_every_floor_and_staffing() {
         let mut saw_labor_bound = false;
         let mut saw_ceiling_bound = false;
-        let mut saw_stock_bound_dip = false;
         for biomass in [BIG_HERD_CAP, DRAWN_DOWN_BIOMASS] {
-            for policy in FollowPolicy::ALL {
+            for policy in SWEPT_FLOORS {
                 for improvement in HUNT_IMPROVEMENTS {
                     for workers in [1u32, 2, 20] {
                         let (mut world, tile) = world_with_source(CAP);
@@ -3571,10 +4062,9 @@ mod labor_yield_tests {
                             .cloned()
                             .expect("seeded herd");
                         assert_eq!(
-                    herd.hunt_credit, 0.0,
-                    "forecast == actual is the empty-bank invariant: the steady readout matches the \
-                     take only when no banked credit is waiting to be cashed"
-                );
+                            herd.hunt_credit, 0.0,
+                            "the resident take path must not read or write the expedition's bank"
+                        );
                         let fauna = world.resource::<FaunaConfigHandle>().get();
                         let per_worker = world
                             .resource::<LaborConfigHandle>()
@@ -3596,7 +4086,7 @@ mod labor_yield_tests {
                             vec![LaborAssignment {
                                 target: LaborTarget::Hunt {
                                     fauna_id: HERD_ID.to_string(),
-                                    policy,
+                                    floor: policy,
                                 },
                                 workers,
                                 improvement,
@@ -3606,26 +4096,23 @@ mod labor_yield_tests {
                         let actual =
                             world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
 
-                        let labor_term = workers as f32 * forecast.per_worker_yield.provisions;
-                        let ceiling = forecast.ceiling_under(policy, improvement).provisions;
+                        // **The build dip is on the LABOR term, not the ceiling**
+                        // (`docs/plan_harvest_floor.md` §3.1) — so which side binds is itself a
+                        // function of the improvement, and both regimes have to be reached with the
+                        // dip in place or the sweep would only ever exercise the undipped half.
+                        let dip = forecast.build_dips.of(improvement);
+                        let labor_term =
+                            workers as f32 * forecast.per_worker_yield.provisions * dip;
+                        let ceiling = forecast.ceiling_at(policy).provisions;
                         if labor_term < ceiling {
                             saw_labor_bound = true;
                         } else {
                             saw_ceiling_bound = true;
                         }
-                        // **The dip-inside-the-clamp window, observed rather than assumed.** Under
-                        // the wrong order `ceiling_under` is exactly `ceiling_for × dip`, so any
-                        // case where it is strictly *larger* is one the old order got wrong.
-                        let dip = forecast.build_dips.of(improvement);
-                        if ceiling
-                            > forecast.ceiling_for(policy).provisions * dip + FORECAST_EPSILON
-                        {
-                            saw_stock_bound_dip = true;
-                        }
                         let expected = expected_yield(&forecast, workers, policy, improvement);
                         assert!(
                             (actual - expected).abs() < FORECAST_EPSILON,
-                            "hunt forecast must equal the actual take (B={biomass}, {policy:?} + \
+                            "hunt forecast must equal the actual take (B={biomass}, floor {policy} + \
                              {improvement:?}, {workers} workers): forecast={expected} \
                              actual={actual} ({forecast:?})"
                         );
@@ -3637,12 +4124,6 @@ mod labor_yield_tests {
             saw_labor_bound && saw_ceiling_bound,
             "both regimes must be covered: labor-bound={saw_labor_bound} ceiling-bound={saw_ceiling_bound}"
         );
-        assert!(
-            saw_stock_bound_dip,
-            "the drawn-down rows must actually enter the window where the standing stock binds the \
-             undipped stance but not the dipped one — otherwise this sweep is blind to the order \
-             the dip and the clamp are applied in"
-        );
     }
 
     /// Carrying capacity the hunt forecast sweep re-seats its herd at: large enough that the
@@ -3650,14 +4131,13 @@ mod labor_yield_tests {
     /// overstaff every policy (the ceiling binds).
     const BIG_HERD_CAP: f32 = 1_000.0;
 
-    /// **A herd drawn down INTO the window where the dip and the standing-stock clamp do not
-    /// commute.** With the fixture's `r = 0.05` and `K = 1000` the undipped Deplete rate is
-    /// `2.5 × peak_regrowth(K) = 31.25` and the dipped one (both animal rungs dip 0.50) is `15.625`,
-    /// so any biomass strictly between them is stock-bound undipped and rate-bound dipped. `15.0`
-    /// sits there with room on both sides, and — with `TEST_GAME_BODY_MASS = 5.0` — the two orders
-    /// quantise to a **different number of animals** (3 against 1), so the discrepancy survives the
-    /// whole-animal rounding rather than being swallowed by it.
-    const DRAWN_DOWN_BIOMASS: f32 = 15.0;
+    /// **A remnant herd, standing barely above the deepest escapement floors.** With `K = 1000` it is
+    /// under Sustain's `K/2` and under Surplus's `0.30·K` (so those rows honestly offer nothing),
+    /// a hair above Deplete's `0.15·K`, and — with `TEST_GAME_BODY_MASS = 5.0` — its Eradicate room
+    /// is a handful of whole animals rather than a smooth fraction. That is the regime where a
+    /// forecast is easiest to get wrong: near-empty rows, quantisation biting hard, and the standing
+    /// stock within a rounding error of the ceiling.
+    const DRAWN_DOWN_BIOMASS: f32 = 155.0;
 
     /// **The rung-3 shape: the POLICY axis collapses, the WORKER cap does not** (slice 7). A **Field**
     /// and a **pen** are yours — you control their reproduction, so no policy takes more or less than
@@ -3722,22 +4202,22 @@ mod labor_yield_tests {
         );
         drop(fauna);
 
-        // **The policy axis is collapsed**: every policy — including the investment rungs, since the
-        // improvement is already built — quotes the one managed yield.
-        for policy in FollowPolicy::ALL {
+        // **The floor axis is collapsed**: every floor — and every improvement, since the build is
+        // already done — quotes the one managed yield.
+        for policy in SWEPT_FLOORS {
             for improvement in FORAGE_IMPROVEMENTS {
                 assert_eq!(
-                    patch_forecast.ceiling_under(policy, improvement).provisions,
+                    patch_forecast.ceiling_at(policy).provisions,
                     patch_forecast.managed_yield.provisions,
-                    "a Field is yours — no stance takes more or less of it, and there is nothing \
-                     left to build on it ({policy:?} + {improvement:?})"
+                    "a Field is yours — no floor takes more or less of it, and there is nothing \
+                     left to build on it (floor {policy} + {improvement:?})"
                 );
             }
         }
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             for improvement in HUNT_IMPROVEMENTS {
                 assert_eq!(
-                    herd_forecast.ceiling_under(policy, improvement).provisions,
+                    herd_forecast.ceiling_at(policy).provisions,
                     herd_forecast.managed_yield.provisions,
                     "a pen is yours — no stance takes more or less of it ({policy:?} + \
                      {improvement:?})"
@@ -3748,12 +4228,12 @@ mod labor_yield_tests {
         // **The worker cap is NOT collapsed.** `per_worker_yield` is the crew's real throughput, so
         // this Field genuinely needs more than one pair of hands — the readout the old hardcoded `1`
         // made permanently false.
-        let field_workers_needed = max_useful_workers(&patch_forecast, FollowPolicy::Sustain);
+        let field_workers_needed = max_useful_workers(&patch_forecast, 0.5);
         assert!(
             field_workers_needed > 1,
             "a Field at capacity offers more than one worker can carry: {field_workers_needed}"
         );
-        for policy in FollowPolicy::ALL {
+        for policy in SWEPT_FLOORS {
             assert_eq!(
                 max_useful_workers(&patch_forecast, policy),
                 field_workers_needed
@@ -3768,7 +4248,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: field_workers_needed,
@@ -3781,7 +4261,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: 1,
                 improvement: None,
@@ -3794,12 +4274,7 @@ mod labor_yield_tests {
             .unwrap()
             .last_yields[0]
             .clone();
-        let field_forecast = expected_yield(
-            &patch_forecast,
-            field_workers_needed,
-            FollowPolicy::Sustain,
-            None,
-        );
+        let field_forecast = expected_yield(&patch_forecast, field_workers_needed, 0.5, None);
         assert!(field_forecast > 0.0);
         assert!(
             (field_row.actual - field_forecast).abs() < FORECAST_EPSILON,
@@ -3821,7 +4296,7 @@ mod labor_yield_tests {
             .unwrap()
             .last_yields[0]
             .clone();
-        let pen_forecast = expected_yield(&herd_forecast, 1, FollowPolicy::Sustain, None);
+        let pen_forecast = expected_yield(&herd_forecast, 1, 0.5, None);
         assert!(pen_forecast > 0.0);
         assert!(
             (pen_row.actual - pen_forecast).abs() < FORECAST_EPSILON,
@@ -3864,7 +4339,14 @@ mod labor_yield_tests {
             let wild = ForagePatch::new(SOURCE, patch_cap);
             crate::forage::patch_provisions_per_biomass(&wild, &composition, &flora, &cfg.forage)
         };
-        let wild_msy = sustainable_yield(biomass, patch_cap, &forage.ecology) * wild_rate;
+        // The **wild counterfactual take**: the stock standing above Sustain's escapement floor,
+        // capped by the crew. It is deliberately computed off the wild patch's numbers — the whole
+        // claim is that a bare tended patch pays exactly this.
+        let wild_take = {
+            let cfg = world.resource::<LaborConfigHandle>().get();
+            let crew = WORKERS as f32 * crate::forage::forage_per_worker_biomass(&cfg.forage, 1.0);
+            crew.min(biomass - patch_cap * crate::fauna::MSY_BIOMASS_FRACTION) * wild_rate
+        };
         cultivate_source_patch(&mut world, biomass);
 
         let band = spawn_band(
@@ -3873,7 +4355,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -3883,10 +4365,11 @@ mod labor_yield_tests {
 
         world.run_system_once(advance_labor_allocation);
 
-        // At the neutral gain a bare tended patch reads the same MSY curve as wild — the boost is
-        // retired, and no committed crop means no conversion. `WORKERS` is enough hands to reach the
-        // ceiling, so the ceiling — not the crew — binds.
-        let expected = wild_msy * forage.cultivation.tended_regrowth_gain;
+        // A bare tended patch reads exactly what the same ground reads wild. Under constant
+        // escapement that is now true for **two independent reasons** and the test pins both: the
+        // ceiling is `r`-free (so the rung's boosted curve cannot enter it at all), and with no crop
+        // committed the conversion rate is the wild basket's.
+        let expected = wild_take;
         let paid = world
             .get::<PopulationCohort>(band)
             .unwrap()
@@ -3895,12 +4378,7 @@ mod labor_yield_tests {
             .to_f32();
         assert!(
             (paid - expected).abs() < 1e-3,
-            "bare tended band gathers the neutral MSY: {paid} vs {expected}"
-        );
-        assert!(
-            (paid - wild_msy).abs() < 1e-3,
-            "with the boost retired and no crop committed, a bare tended patch pays exactly wild — \
-             the payoff moved to weeding + conversion: {paid} vs {wild_msy}"
+            "bare tended band gathers the wild escapement surplus: {paid} vs {expected}"
         );
         // **It draws down** — the correction. A tended patch is a wild stand, so gathering it takes
         // biomass out of it, which is what makes over-farming it possible at all.
@@ -3914,11 +4392,12 @@ mod labor_yield_tests {
             patch.biomass
         );
         assert!(patch.tended_this_turn, "tending marks the patch worked");
-        // Telemetry: a Sustain take of the boosted curve is exactly sustainable → no ⚠, but
-        // `sustainable` is now a *measured* line rather than a copy of `actual`.
+        // Telemetry: `sustainable` is a *measured* MSY line, and a Sustain take is sustainable by
+        // its FLOOR (`overdraws`), not by being under that line — the first harvest of a full patch
+        // is its accumulated stock and legitimately exceeds one turn's regrowth.
         let row = world.get::<LaborAllocation>(band).unwrap().last_yields[0].clone();
         assert!((row.actual - expected).abs() < 1e-3);
-        assert!((row.actual - row.sustainable).abs() < 1e-3);
+        assert!(!row.overdraws, "a Sustain gather never overdraws: {row:?}");
     }
 
     /// **The playtest bug, pinned: every policy on a completed Tended Patch forecast the identical
@@ -3934,16 +4413,11 @@ mod labor_yield_tests {
     /// past the flat Deplete skim; that swap is gone with the boost.)
     #[test]
     fn a_tended_patch_is_policy_live_worker_capped_and_can_be_over_farmed() {
-        let extractive = [
-            FollowPolicy::Sustain,
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ];
+        let extractive = [0.5, 0.3, 0.15, 0.0];
         // A real operating point: a patch under active harvest sits below its cap (still above K/2, so
         // Sustain reads the MSY plateau). Full-cap would land Surplus exactly on Deplete (see docstring).
         const OPERATING_FRACTION: f32 = 0.8;
-        let mut takes: Vec<(FollowPolicy, f32)> = Vec::new();
+        let mut takes: Vec<(f32, f32)> = Vec::new();
         for policy in extractive {
             let (mut world, tile) = world_with_source(CAP);
             let patch_cap = world
@@ -3958,7 +4432,7 @@ mod labor_yield_tests {
                 vec![LaborAssignment {
                     target: LaborTarget::Forage {
                         tile: SOURCE,
-                        policy,
+                        floor: policy,
                         species: None,
                     },
                     workers: WORKERS,
@@ -3972,10 +4446,17 @@ mod labor_yield_tests {
                 patch.biomass < patch_cap,
                 "{policy:?} must draw the tended patch down"
             );
-            if matches!(policy, FollowPolicy::Sustain) {
+            if policy >= crate::fauna::MSY_BIOMASS_FRACTION {
+                // Sustainable **by its floor**, not by sitting under the MSY line: a first harvest of
+                // a patch standing above `K/2` legitimately takes the accumulated surplus, and lands
+                // the patch exactly on its most productive biomass.
                 assert!(
-                    row.actual <= row.sustainable + 1e-3,
-                    "Sustain on the boosted curve is sustainable — no ⚠: {row:?}"
+                    !row.overdraws,
+                    "Sustain stops at the MSY point — no ⚠: {row:?}"
+                );
+                assert!(
+                    patch.biomass >= patch_cap * crate::fauna::MSY_BIOMASS_FRACTION - 1e-3,
+                    "Sustain never draws a tended patch below `K/2`: {row:?}"
                 );
             } else {
                 assert!(
@@ -3999,16 +4480,16 @@ mod labor_yield_tests {
         // ...and ordered as the axis means: restraint takes least, denial takes most. At the S2 neutral
         // gain the tended patch reads the wild curve, so the natural order holds end to end — Sustain
         // the leanest, then the boosted Surplus, then the flat Deplete skim, Eradicate the deepest.
-        let take_of = |wanted: FollowPolicy| {
+        let take_of = |wanted: f32| {
             takes
                 .iter()
                 .find(|(policy, _)| *policy == wanted)
                 .expect("every policy ran")
                 .1
         };
-        assert!(take_of(FollowPolicy::Sustain) < take_of(FollowPolicy::Surplus));
-        assert!(take_of(FollowPolicy::Surplus) < take_of(FollowPolicy::Deplete));
-        assert!(take_of(FollowPolicy::Deplete) < take_of(FollowPolicy::Eradicate));
+        assert!(take_of(0.5) < take_of(0.3));
+        assert!(take_of(0.3) < take_of(0.15));
+        assert!(take_of(0.15) < take_of(0.0));
     }
 
     /// Place-locality: only the band that tends the cultivated patch is paid. A second same-faction
@@ -4031,7 +4512,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(0, 0),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4047,7 +4528,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: UVec2::new(1, 0),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4092,7 +4573,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4164,7 +4645,9 @@ mod labor_yield_tests {
         // (see the note on the Cultivate world below), or the comparison is between two baskets.
         world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
         grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
-        let (fraction, progress_per_turn) = {
+        // The dip is read only to assert the rung *is* an investment; its exact composition is
+        // pinned by the forecast==actual sweep (see the note at the end of this test).
+        let (_dip_fraction, progress_per_turn) = {
             let ladder = world.resource::<LadderConfigHandle>().get();
             let tended = ladder.rung(RungKey::PlantTended);
             (
@@ -4174,6 +4657,7 @@ mod labor_yield_tests {
                 tended.build_accrual(
                     Some(Improvement::Cultivate),
                     true,
+                    FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(tended),
                 ),
@@ -4187,7 +4671,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4215,7 +4699,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4224,10 +4708,15 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
+        // **The dip prices HANDS, not the floor** (`docs/plan_harvest_floor.md` §3.1). The take is
+        // `min(workers × per_worker × dip, ceiling)`, so this crew — big enough to saturate the
+        // ceiling several times over — pays **nothing** for the build: hands were not the scarce
+        // thing here. That is the legible half of the change ("at 25% carry it takes four times the
+        // people to clear the same surplus"), and it is asserted beside the sparse-crew case below,
+        // because either reading alone looks like a bug.
         assert!(
-            (preparing - fraction * sustain_yield).abs() < FORECAST_EPSILON,
-            "preparing pays fraction × the Sustain yield: {preparing} vs {}",
-            fraction * sustain_yield
+            (preparing - sustain_yield).abs() < FORECAST_EPSILON,
+            "a crew that saturates the ceiling anyway pays no dip: {preparing} vs {sustain_yield}"
         );
         assert!(
             (patch_progress(&world) - progress_per_turn).abs() < 1e-6,
@@ -4267,7 +4756,11 @@ mod labor_yield_tests {
         // *payoff*, and it must read that number off the harvest rung whatever put the band there.
         // The retire itself is pinned by
         // `a_completed_cultivation_retires_the_build_verb_onto_the_harvest_rung`.
-        set_forage_policy(&mut world, band, FollowPolicy::Sustain);
+        set_forage_floor(&mut world, band, 0.5);
+        // One Logistics turn first: under constant escapement a patch that was just gathered is
+        // sitting **on** its floor with nothing above it, so a payoff read without the regrowth would
+        // measure an empty turn rather than the rung.
+        world.run_system_once(advance_forage_regrowth);
         world.run_system_once(advance_labor_allocation);
         let tended = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -4279,7 +4772,48 @@ mod labor_yield_tests {
             tended > preparing,
             "the payoff exceeds the preparing dip: {tended} vs {preparing}"
         );
+
+        // **…and a SPARSE crew does pay it.** One forager's throughput is the binding term under
+        // both, so the dip shows up undiluted: `fraction ×` what the same lone forager gathers.
+        // This is the half that makes the build a real cost — the crew clearing ground carries a
+        // fraction of what a gathering crew carries.
+        let sparse_take = |improvement: Option<Improvement>| {
+            let (mut world, tile) = world_with_source(CAP);
+            world.resource_mut::<SimulationConfig>().map_seed = WORTH_TENDING_SEED;
+            grant_knowledge(&mut world, CULTIVATION_DISCOVERY_ID);
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Forage {
+                        tile: SOURCE,
+                        floor: 0.5,
+                        species: None,
+                    },
+                    workers: SOLE_FORAGER,
+                    improvement,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual
+        };
+        let sparse_building = sparse_take(Some(Improvement::Cultivate));
+        let sparse_gathering = sparse_take(None);
+        assert!(
+            sparse_building < sparse_gathering,
+            "a crew that is the binding term really is slowed by the dip: {sparse_building} vs \
+             {sparse_gathering}"
+        );
+        // The exact composition `min(workers × per_worker × dip, ceiling)` is pinned per component
+        // and at both binding regimes by
+        // `forage_forecast_equals_actual_take_for_every_floor_and_staffing`, against a real
+        // `advance_labor_allocation` run — not restated here.
     }
+
+    /// **One forager**, so the crew's throughput is the binding term rather than the patch's
+    /// standing stock — the only regime in which the build dip is visible at all since it moved onto
+    /// crew throughput (`docs/plan_harvest_floor.md` §3.1).
+    const SOLE_FORAGER: u32 = 1;
 
     /// **Corral mirrors Cultivate.** With Herding known and a domesticated herd it owns, a band working
     /// it under `Corral` takes only `corralling_yield_fraction × the Sustain (MSY) yield` while the pen
@@ -4302,6 +4836,7 @@ mod labor_yield_tests {
                 pen.build_accrual(
                     Some(Improvement::Corral),
                     true,
+                    FOOD_PEAK_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(pen),
                 ),
@@ -4338,7 +4873,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -4370,7 +4905,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4378,29 +4913,14 @@ mod labor_yield_tests {
         );
         world.run_system_once(advance_labor_allocation);
         let preparing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
-        // **RETARGETED IN SLICE 8: the dip is exact in BIOMASS, and it cannot be exact in ANIMALS.**
-        // The take is `floor(dip × escapement / body_mass)` whole animals, and `floor` does not
-        // distribute over a scale: `floor(0.5 × 9 animals)` is 4, not 4.5. So asserting
-        // `preparing == fraction × sustain_yield` to a float epsilon is asserting that a rounding
-        // artifact doesn't exist. The **contract** the dip actually has is that it is the rung's
-        // fraction of the Sustain take *to within the one animal quantisation can cost*, and that it
-        // is strictly less than Sustain — the investment must visibly cost something.
-        let one_animal = {
-            let fauna = world.resource::<FaunaConfigHandle>().get();
-            let registry = world.resource::<HerdRegistry>();
-            crate::fauna::herd_hunt_yield(&registry.herds[0], &fauna)
-                .apply(TEST_GAME_BODY_MASS, 1.0)
-                .provisions
-        };
+        // **RETARGETED BY THE HARVEST FLOOR: the dip prices HANDS, not the escapement** (§3.1). It
+        // multiplies `workers × per_worker_carry`, so this crew — ample enough that the herd's own
+        // escapement is the binding term either way — pays **nothing** for the pen. That is the
+        // legible half of the move ("at 50% carry it takes twice the people to bring the same
+        // animals home"), and the sparse-crew case below is the other; either alone reads as a bug.
         assert!(
-            (preparing - fraction * sustain_yield).abs() <= one_animal + FORECAST_EPSILON,
-            "building the pen pays fraction × the Sustain yield, to within one whole animal: \
-             {preparing} vs {} (one animal = {one_animal})",
-            fraction * sustain_yield
-        );
-        assert!(
-            preparing < sustain_yield,
-            "the pen build must cost real yield against Sustain: {preparing} vs {sustain_yield}"
+            (preparing - sustain_yield).abs() < FORECAST_EPSILON,
+            "a crew the escapement binds anyway pays no dip: {preparing} vs {sustain_yield}"
         );
 
         let turns_to_build = (1.0 / build_per_turn).ceil() as u32;
@@ -4428,7 +4948,56 @@ mod labor_yield_tests {
             corral_yield > preparing,
             "a penned herd out-pays the build dip: {corral_yield} vs {preparing}"
         );
+
+        // **…and a SPARSE crew pays the dip exactly.** One hunter's carry is the binding term under
+        // both, and the dip halves it, so the whole-animal quantiser divides the same body mass into
+        // both takes and the identity survives rounding: `preparing == fraction × hunting`.
+        let sparse_take = |improvement: Option<Improvement>| {
+            let (mut world, tile) = world_with_source(CAP);
+            reseat_herd(
+                &mut world,
+                BIG_HERD_CAP * DIP_TEST_ESCAPEMENT_FRACTION,
+                BIG_HERD_CAP,
+            );
+            grant_knowledge(&mut world, PENNING_DISCOVERY_ID);
+            {
+                let mut registry = world.resource_mut::<HerdRegistry>();
+                registry.herds[0].accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+            }
+            let band = spawn_band(
+                &mut world,
+                tile,
+                vec![LaborAssignment {
+                    target: LaborTarget::Hunt {
+                        fauna_id: HERD_ID.to_string(),
+                        floor: 0.5,
+                    },
+                    workers: SOLE_HUNTER,
+                    improvement,
+                }],
+            );
+            world.run_system_once(advance_labor_allocation);
+            world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual
+        };
+        let sparse_building = sparse_take(Some(Improvement::Corral));
+        let sparse_hunting = sparse_take(None);
+        assert!(
+            sparse_building < sparse_hunting,
+            "a crew that is the binding term really is slowed by the dip: {sparse_building} vs \
+             {sparse_hunting}"
+        );
+        assert!(
+            (sparse_building - fraction * sparse_hunting).abs() < FORECAST_EPSILON,
+            "…and pays exactly `fraction ×` what the same lone hunter takes: {sparse_building} vs \
+             {}",
+            fraction * sparse_hunting
+        );
     }
+
+    /// **One hunter**, so the crew's carry is the binding term rather than the herd's escapement —
+    /// the only regime in which the build dip is visible at all since it moved onto crew throughput
+    /// (`docs/plan_harvest_floor.md` §3.1).
+    const SOLE_HUNTER: u32 = 1;
 
     // ---------------------------------------------------------------------------------------------
     // **Completion CLEARS the improvement and leaves the stance alone** (issues #420 + #442). All four
@@ -4444,19 +5013,21 @@ mod labor_yield_tests {
     /// left alone" from "the stance was rewritten to the value it already had". Surplus is a real
     /// player choice and is *not* what the retired constant would have written.
     ///
-    /// It is also gentle enough to let a build finish: the dip multiplies it
-    /// (`0.25 × 1.6 × MSY < MSY` on the plant rungs, `0.5 × 1.5 × MSY` on the animal ones), so the
-    /// source stays Thriving and the meter keeps accruing — the §2.1 ecology rule doing its work
-    /// rather than a gate.
-    const BUILDER_STANCE: FollowPolicy = FollowPolicy::Surplus;
+    /// **Every completion test computes its build length AT this floor**, not at the food peak:
+    /// since `docs/plan_harvest_floor.md` §3 the accrual is `progress_per_turn ×
+    /// learn_multiplier(floor)`, so a builder holding `0.3` takes `0.5/0.3` times as many turns. A
+    /// fixture that counted peak-rate turns would stop one short of the completion it is asserting.
+    /// There is no health gate left for the floor to trip — pulling harder now *slows* the meter
+    /// rather than stopping it.
+    const BUILDER_FLOOR: f32 = 0.3;
 
-    /// The client's pre-turn expected take on the source patch under `policy`, off the patch's
+    /// The client's pre-turn expected take on the source patch at `floor`, off the patch's
     /// **current** state — the same `forage_forecast` composition the forecast==actual sweep uses. Lets
     /// a test name the exact number a turn should pay without re-deriving the MSY/dip arithmetic.
     fn forage_expected_take(
         world: &World,
         workers: u32,
-        policy: FollowPolicy,
+        floor: f32,
         improvement: Option<Improvement>,
     ) -> f32 {
         let patch = world
@@ -4475,7 +5046,7 @@ mod labor_yield_tests {
             SEASONAL_WEIGHT,
             NEUTRAL_OUTPUT_MULT,
         );
-        expected_yield(&forecast, workers, policy, improvement)
+        expected_yield(&forecast, workers, floor, improvement)
     }
 
     /// **What the source tile grows** — the realized basket, through the one `tile_flora_composition`
@@ -4548,6 +5119,7 @@ mod labor_yield_tests {
                 tended.build_accrual(
                     Some(Improvement::Cultivate),
                     true,
+                    BUILDER_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(tended),
                 )
@@ -4559,7 +5131,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: BUILDER_STANCE,
+                    floor: BUILDER_FLOOR,
                     species: Some(crop.clone()),
                 },
                 workers: WORKERS,
@@ -4589,12 +5161,8 @@ mod labor_yield_tests {
 
         // (1) The completing turn still pays the dip, to the number.
         world.run_system_once(advance_forage_regrowth);
-        let promised_dip = forage_expected_take(
-            &world,
-            WORKERS,
-            BUILDER_STANCE,
-            Some(Improvement::Cultivate),
-        );
+        let promised_dip =
+            forage_expected_take(&world, WORKERS, BUILDER_FLOOR, Some(Improvement::Cultivate));
         world.run_system_once(advance_labor_allocation);
         let completing = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -4621,15 +5189,15 @@ mod labor_yield_tests {
         );
         let LaborTarget::Forage {
             tile: completed_tile,
-            policy,
+            floor,
             species,
         } = &completed.target
         else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
-            *policy, BUILDER_STANCE,
-            "THE #442 fix: the sim never rewrites the player's stance — it was never vacated, so \
+            *floor, BUILDER_FLOOR,
+            "THE #442 fix: the sim never rewrites the player's floor — it was never vacated, so \
              there is nothing to hand back"
         );
         assert_eq!(*completed_tile, SOURCE, "the same ground");
@@ -4641,7 +5209,7 @@ mod labor_yield_tests {
 
         // (3) The bug: the next turn pays the tended harvest, not the dip.
         world.run_system_once(advance_forage_regrowth);
-        let promised_harvest = forage_expected_take(&world, WORKERS, BUILDER_STANCE, None);
+        let promised_harvest = forage_expected_take(&world, WORKERS, BUILDER_FLOOR, None);
         world.run_system_once(advance_labor_allocation);
         let after = world.get::<LaborAllocation>(band).unwrap().last_yields[0].actual;
         assert!(
@@ -4654,6 +5222,24 @@ mod labor_yield_tests {
             "the payoff the 25 turns bought arrives WITHOUT the player touching the picker — the \
              whole of issue #420: {after} vs the dip {completing}"
         );
+    }
+
+    /// One Logistics-stage regrowth for the source herd, through the shipped `fauna::regrow_biomass`
+    /// — the **exact twin of the `advance_forage_regrowth` call the plant completion test above
+    /// already makes**, and the asymmetry it removes.
+    ///
+    /// The completion harnesses otherwise drive the Population stage only, so a herd never regrows.
+    /// A 42-turn build at [`BUILDER_FLOOR`] would then be asserted against a herd its own crew
+    /// emptied to that floor in four turns — after which nothing stands above the floor and
+    /// `crew_is_working_the_source` is correctly false. That is the sim behaving properly, not a
+    /// gate to route around: a Population-only loop is half a turn, and a *completion* test needs the
+    /// order the sim runs. (It was invisible before the harvest floor only because the retired
+    /// `EcologyPhase::Thriving` gate read a phase `refresh_ecology_phase` never updated here, so it
+    /// stayed frozen at the value `reseat_herd` set.)
+    fn regrow_source_herd(world: &mut World) {
+        let fauna = world.resource::<FaunaConfigHandle>().get();
+        let mut registry = world.resource_mut::<HerdRegistry>();
+        crate::fauna::regrow_biomass(&mut registry.herds[0], &fauna);
     }
 
     /// **The animal twin, rung 2.** A herd that finishes taming this turn hands its crew to the harvest
@@ -4675,6 +5261,7 @@ mod labor_yield_tests {
                     pastoral.build_accrual(
                         Some(Improvement::Tame),
                         true,
+                        BUILDER_FLOOR,
                         fauna.taming_rate_for(&species),
                         full_crew(pastoral),
                     )
@@ -4692,7 +5279,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: BUILDER_STANCE,
+                    floor: BUILDER_FLOOR,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Tame),
@@ -4701,6 +5288,7 @@ mod labor_yield_tests {
 
         let turns_to_tame = (1.0 / taming_per_turn).ceil() as u32;
         for _ in 0..turns_to_tame - 1 {
+            regrow_source_herd(&mut world);
             world.run_system_once(advance_labor_allocation);
         }
         assert!(
@@ -4717,6 +5305,7 @@ mod labor_yield_tests {
             "an unfinished build keeps its verb"
         );
 
+        regrow_source_herd(&mut world);
         world.run_system_once(advance_labor_allocation);
         assert!(
             world
@@ -4729,11 +5318,11 @@ mod labor_yield_tests {
         let completed = only_assignment(&world, band);
         assert_eq!(completed.workers, WORKERS, "the crew stays on the herd");
         assert_eq!(completed.improvement, None, "completion clears the verb");
-        let LaborTarget::Hunt { fauna_id, policy } = &completed.target else {
+        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
-            *policy, BUILDER_STANCE,
+            *floor, BUILDER_FLOOR,
             "the player's stance is never rewritten (issue #442)"
         );
         assert_eq!(fauna_id, HERD_ID, "the same herd");
@@ -4759,6 +5348,7 @@ mod labor_yield_tests {
                 pen.build_accrual(
                     Some(Improvement::Corral),
                     true,
+                    BUILDER_FLOOR,
                     RUNG_TIMESCALE_UNSCALED,
                     full_crew(pen),
                 )
@@ -4770,7 +5360,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: BUILDER_STANCE,
+                    floor: BUILDER_FLOOR,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4810,11 +5400,11 @@ mod labor_yield_tests {
             "the keeper crew stays on the pen"
         );
         assert_eq!(completed.improvement, None, "completion clears the verb");
-        let LaborTarget::Hunt { fauna_id, policy } = &completed.target else {
+        let LaborTarget::Hunt { fauna_id, floor } = &completed.target else {
             panic!("completion must not change the target's KIND: {completed:?}");
         };
         assert_eq!(
-            *policy, BUILDER_STANCE,
+            *floor, BUILDER_FLOOR,
             "the player's stance is never rewritten (issue #442)"
         );
         assert_eq!(fauna_id, HERD_ID, "the same herd");
@@ -4832,7 +5422,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4857,7 +5447,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4884,7 +5474,7 @@ mod labor_yield_tests {
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy: FollowPolicy::Sustain,
+                    floor: 0.5,
                 },
                 workers: WORKERS,
                 improvement: Some(Improvement::Corral),
@@ -4918,14 +5508,14 @@ mod labor_yield_tests {
     }
 
     /// Staff a band on the source herd under `policy` and resolve one turn.
-    fn hunt_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+    fn hunt_one_turn(world: &mut World, tile: Entity, policy: f32) {
         spawn_band(
             world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Hunt {
                     fauna_id: HERD_ID.to_string(),
-                    policy,
+                    floor: policy,
                 },
                 workers: WORKERS,
                 improvement: None,
@@ -4935,14 +5525,14 @@ mod labor_yield_tests {
     }
 
     /// Staff a band on the source patch under `policy` and resolve one turn.
-    fn forage_one_turn(world: &mut World, tile: Entity, policy: FollowPolicy) {
+    fn forage_one_turn(world: &mut World, tile: Entity, policy: f32) {
         spawn_band(
             world,
             tile,
             vec![LaborAssignment {
                 target: LaborTarget::Forage {
                     tile: SOURCE,
-                    policy,
+                    floor: policy,
                     species: None,
                 },
                 workers: WORKERS,
@@ -4959,7 +5549,7 @@ mod labor_yield_tests {
     #[test]
     fn sustain_hunting_a_wild_herd_still_earns_herding_only() {
         let (mut world, tile) = world_with_source(CAP);
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, HERDING_DISCOVERY_ID) > 0.0,
@@ -4987,7 +5577,7 @@ mod labor_yield_tests {
                 "the herd stands on rung 2"
             );
         }
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, PENNING_DISCOVERY_ID) > 0.0,
@@ -5007,7 +5597,7 @@ mod labor_yield_tests {
             patch.accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
             assert!(patch.is_cultivated(), "the patch stands on rung 2");
         }
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        forage_one_turn(&mut world, tile, 0.5);
 
         assert!(
             knowledge(&world, SEED_SELECTION_DISCOVERY_ID) > 0.0,
@@ -5015,95 +5605,115 @@ mod labor_yield_tests {
         );
     }
 
-    /// **§4.2 — only stewardship teaches.** The overdrawing policies earn **nothing, at any rung**:
-    /// you learn husbandry by managing, not by slaughtering. Swept across both webs and both of the
-    /// rungs that teach, so a future rung cannot quietly opt out of the rule.
+    /// **§4.2, RESTATED AS A RATE — a deeper floor learns SLOWER, and stripping learns nothing.**
+    ///
+    /// It replaced `the_overdrawing_policies_teach_nothing_at_any_rung`, whose subject was a **step**
+    /// at the food peak (teach at or above it, nothing below). The harvest floor made restraint a
+    /// rate (`intensification::learn_multiplier`, §3), so "these floors teach nothing" is no longer
+    /// true of anything but `floor = 0` — and asserting the old inequality would now be asserting
+    /// the model the arc removed. Swept across both webs and both of the rungs that teach, so a
+    /// future rung cannot quietly opt out.
     #[test]
-    fn the_overdrawing_policies_teach_nothing_at_any_rung() {
-        for policy in [
-            FollowPolicy::Surplus,
-            FollowPolicy::Deplete,
-            FollowPolicy::Eradicate,
-        ] {
-            // Animal rung 1 (wild) and rung 2 (pastoral).
-            for tamed in [false, true] {
-                let (mut world, tile) = world_with_source(CAP);
-                reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
-                if tamed {
-                    world.resource_mut::<HerdRegistry>().herds[0]
-                        .accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
-                }
-                hunt_one_turn(&mut world, tile, policy);
-                assert_eq!(
-                    knowledge(&world, HERDING_DISCOVERY_ID),
-                    0.0,
-                    "{policy:?} must teach no Herding (tamed={tamed})"
-                );
-                assert_eq!(
-                    knowledge(&world, PENNING_DISCOVERY_ID),
-                    0.0,
-                    "{policy:?} must teach no Penning (tamed={tamed})"
-                );
-            }
+    fn a_deeper_floor_learns_slower_and_stripping_learns_nothing() {
+        // Descending, so each entry must teach strictly less than the one before it. It reaches
+        // **above** the food peak — the range the retired four-stance axis could not express.
+        const DESCENDING_FLOORS: [f32; 4] = [0.9, 0.5, 0.3, 0.15];
 
-            // Plant rung 1 (wild) and rung 2 (tended).
-            for cultivated in [false, true] {
-                let (mut world, _) = world_with_source(CAP);
-                let tile = world.resource::<TileRegistry>().tiles[0];
-                if cultivated {
-                    world
-                        .resource_mut::<ForageRegistry>()
-                        .patch_mut(SOURCE)
-                        .expect("seeded patch")
-                        .accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+        /// The floor at which nothing is left standing — the one that must teach exactly nothing
+        /// because the *rate* is zero.
+        const STRIP_IT_BARE: f32 = 0.0;
+
+        /// **Leave it all standing.** The other degenerate end: the rate is its highest (×2), but
+        /// nothing stands above the floor, so `crew_is_working_the_source` is false. Watching teaches
+        /// nothing — the trade the dial offers, taken past its limit.
+        const TOUCH_NOTHING: f32 = 1.0;
+
+        // Animal rung 1 (wild) and rung 2 (pastoral), then plant rung 1 (wild) and rung 2 (tended).
+        let hunt_lesson = |floor: f32, tamed: bool| {
+            let (mut world, tile) = world_with_source(CAP);
+            reseat_herd(&mut world, TEACHING_HERD_CAP, TEACHING_HERD_CAP);
+            if tamed {
+                world.resource_mut::<HerdRegistry>().herds[0]
+                    .accrue_domestication(BAND_FACTION, RUNG_COMPLETE);
+            }
+            hunt_one_turn(&mut world, tile, floor);
+            let lesson = if tamed {
+                PENNING_DISCOVERY_ID
+            } else {
+                HERDING_DISCOVERY_ID
+            };
+            knowledge(&world, lesson)
+        };
+        let forage_lesson = |floor: f32, cultivated: bool| {
+            let (mut world, _) = world_with_source(CAP);
+            let tile = world.resource::<TileRegistry>().tiles[0];
+            // Seated at capacity, so a floor **above** the food peak still leaves stock standing and
+            // the sweep can reach the over-restraint half of the dial at all. The default fixture
+            // sits on `K/2`, where every such floor honestly takes nothing.
+            {
+                let mut registry = world.resource_mut::<ForageRegistry>();
+                let patch = registry.patch_mut(SOURCE).expect("seeded patch");
+                patch.biomass = patch.carrying_capacity;
+            }
+            if cultivated {
+                world
+                    .resource_mut::<ForageRegistry>()
+                    .patch_mut(SOURCE)
+                    .expect("seeded patch")
+                    .accrue_cultivation(BAND_FACTION, RUNG_COMPLETE);
+            }
+            forage_one_turn(&mut world, tile, floor);
+            let lesson = if cultivated {
+                SEED_SELECTION_DISCOVERY_ID
+            } else {
+                CULTIVATION_DISCOVERY_ID
+            };
+            knowledge(&world, lesson)
+        };
+
+        // **Both webs assert the SAME shape**, which is the point of the predicate the earn path
+        // reads: it is the escapement room, in biomass, before the whole-animal quantiser — so the
+        // *lesson* is `progress_per_turn × learn_multiplier(floor)` on both webs and orders strictly
+        // in the floor. It does not, and must not, depend on `body_mass`.
+        for rung_two in [false, true] {
+            for (web, lesson_at) in [
+                ("plant", &forage_lesson as &dyn Fn(f32, bool) -> f32),
+                ("animal", &hunt_lesson as &dyn Fn(f32, bool) -> f32),
+            ] {
+                // **Liveness first**: a diff-based property improves when the feature breaks, so an
+                // ordering sweep alone would pass on an earn path that credited zero everywhere.
+                assert!(
+                    lesson_at(DESCENDING_FLOORS[0], rung_two) > 0.0,
+                    "{web}: the rung must actually teach at the top floor (rung 2 = {rung_two})"
+                );
+                let mut previous = f32::INFINITY;
+                for floor in DESCENDING_FLOORS {
+                    let learned = lesson_at(floor, rung_two);
+                    assert!(
+                        learned < previous,
+                        "{web} floor {floor} must learn strictly less than the floor above it \
+                         (rung 2 = {rung_two}): {learned} vs {previous}"
+                    );
+                    previous = learned;
                 }
-                forage_one_turn(&mut world, tile, policy);
                 assert_eq!(
-                    knowledge(&world, CULTIVATION_DISCOVERY_ID),
+                    lesson_at(STRIP_IT_BARE, rung_two),
                     0.0,
-                    "{policy:?} must teach no Cultivation (cultivated={cultivated})"
+                    "{web}: stripping the source bare teaches nothing (rung 2 = {rung_two})"
                 );
                 assert_eq!(
-                    knowledge(&world, SEED_SELECTION_DISCOVERY_ID),
+                    lesson_at(TOUCH_NOTHING, rung_two),
                     0.0,
-                    "{policy:?} must teach no Seed Selection (cultivated={cultivated})"
+                    "{web}: …and watching it teaches nothing either (rung 2 = {rung_two})"
                 );
             }
         }
     }
 
-    /// **You learn from a HEALTHY source** — the `Thriving` gate both shipped earn sites had, and the
-    /// refactor preserves. A collapsing herd teaches nothing even under Sustain.
-    #[test]
-    fn a_source_that_is_not_thriving_teaches_nothing() {
-        let (mut world, tile) = world_with_source(CAP);
-        {
-            let mut registry = world.resource_mut::<HerdRegistry>();
-            registry.herds[0].ecology_phase = EcologyPhase::Collapsing;
-        }
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
-        assert_eq!(
-            knowledge(&world, HERDING_DISCOVERY_ID),
-            0.0,
-            "a collapsing herd teaches nothing — you learn from a healthy source"
-        );
-
-        let (mut world, _) = world_with_source(CAP);
-        let tile = world.resource::<TileRegistry>().tiles[0];
-        {
-            let mut registry = world.resource_mut::<ForageRegistry>();
-            registry
-                .patch_mut(SOURCE)
-                .expect("seeded patch")
-                .ecology_phase = EcologyPhase::Collapsing;
-        }
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
-        assert_eq!(
-            knowledge(&world, CULTIVATION_DISCOVERY_ID),
-            0.0,
-            "a collapsing patch teaches nothing"
-        );
-    }
+    // `a_source_that_is_not_thriving_teaches_nothing` was deleted with its subject: the
+    // `EcologyPhase::Thriving` gate both earn sites carried is gone (`docs/plan_harvest_floor.md`
+    // §3.2), replaced by `crew_is_working_the_source` and a floor-paced rate. A collapsing source
+    // that still stands above the crew's floor is still being practised on.
 
     /// **§4.2 — the two food webs learn separately.** Hunting only ever advances the animal track and
     /// foraging the plant track: a master rancher isn't automatically a farmer. This falls out of the
@@ -5112,7 +5722,7 @@ mod labor_yield_tests {
     fn the_two_food_webs_do_not_cross_teach() {
         // Hunting a wild herd teaches Herding and touches NEITHER plant knowledge.
         let (mut world, tile) = world_with_source(CAP);
-        hunt_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        hunt_one_turn(&mut world, tile, 0.5);
         assert!(knowledge(&world, HERDING_DISCOVERY_ID) > 0.0);
         assert_eq!(
             knowledge(&world, CULTIVATION_DISCOVERY_ID),
@@ -5128,7 +5738,7 @@ mod labor_yield_tests {
         // Foraging a wild patch teaches Cultivation and touches NEITHER animal knowledge.
         let (mut world, _) = world_with_source(CAP);
         let tile = world.resource::<TileRegistry>().tiles[0];
-        forage_one_turn(&mut world, tile, FollowPolicy::Sustain);
+        forage_one_turn(&mut world, tile, 0.5);
         assert!(knowledge(&world, CULTIVATION_DISCOVERY_ID) > 0.0);
         assert_eq!(
             knowledge(&world, HERDING_DISCOVERY_ID),
