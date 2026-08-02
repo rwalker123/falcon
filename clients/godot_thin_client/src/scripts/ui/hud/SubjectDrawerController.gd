@@ -122,11 +122,16 @@ func render_subject_drawer() -> void:
 func _render_land_drawer() -> void:
     if _tile_detail == null:
         return
-    _tile_detail.visible = true
     # Skip the `.text` reassignment (and its implicit BBCode reparse + `minimum_size_changed`) when
     # the terrain lines are identical to last render — the common per-snapshot restate of the same
     # hex, where only numbers on OTHER widgets moved.
     var lines := _tile_terrain_lines(_selection.tile_info())
+    # HIDDEN WHEN IT HAS NO ROWS, which since the FoW copy pass is a state that actually occurs: an
+    # UNEXPLORED hex produces none at all (nothing about that ground is knowable, and its one
+    # sentence is the roster note below). A visible empty RichTextLabel is not free — it still takes
+    # its line height and the drawer's separation, so it would read as a blank gap between the land
+    # row and that note.
+    _tile_detail.visible = not lines.is_empty()
     if lines != _tile_detail_lines_cache:
         # No context: the LAND has no band behind it, and every tint its rows take (Sight,
         # Habitability, Ecology, Cultivation, Field) is a pure function of the row's own value.
@@ -228,11 +233,15 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # Fog of War: never-seen tiles reveal nothing; remembered (Discovered) tiles
     # show only their last-known terrain, not current contents. See MapView
     # _apply_visibility_to_info, which redacts the hidden fields before this runs.
-    # The Sight CHIP states which of the three states this hex is in; the sentence says what that
-    # costs you, which is the part a chip cannot carry.
+    #
+    # NEITHER UNSEEN STATE ADDS A SENTENCE HERE — the drawer emits ROWS, and the one sentence each
+    # state gets is the roster's own unknown-contents note (`_render_unknown_contents_note`, which
+    # renders directly beneath this label). An unexplored hex used to append `Not yet scouted — send
+    # a band to reveal this area.` immediately above `Nobody has been here. Send a band to reveal
+    # what's on this ground.`, which is the same sentence twice — with the `Unexplored` chip pinned
+    # above saying it a third time. Exactly the duplication the remembered branch below had.
     var visibility_state := String(tile_info.get("visibility_state", ""))
     if visibility_state == HudConst.VISIBILITY_UNEXPLORED:
-        lines.append("Not yet scouted — send a band to reveal this area.")
         return lines
     if tile_info.has("height_display"):
         lines.append("Height: %s" % String(tile_info["height_display"]))
