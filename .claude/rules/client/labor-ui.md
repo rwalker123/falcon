@@ -577,16 +577,19 @@ quoting `grows past 1075` — caught in a rendered frame, not in review — so t
 rendering exists, not two kept in step by hand. `floor_chart_model` binds `body_mass` / `quarry` once
 and passes them BOTH to `harvest_verdict` and out on the model, for the same reason.
 
-**THE FLAG LEADS WITH THE PERCENT WHERE IT COUNTS ANIMALS** (`FLOOR_FLAG_ANIMALS_FORMAT`,
-`leave 50% · ≈11 Red Deer`) — the one thing the chart decides locally, and it decides LAYOUT, never
-what the number says. Biomass has a value per `FLOOR_STEP`; a count over a K of ~21 animals has ~21,
-so an animal-first flag sits unmoved across a tenth of the drag and reads as a stuck control. **A flag
-on a draggable control has to move when you drag it**, so the continuous term leads and the count
-glosses it — which is also the honest order, since the sim's floor IS a K-fraction (`B − floor·K`,
-quantised later at the kill) and `classify_ecology_phase`'s cut points are fractions of the same K.
-`≈` is the vocabulary the rest of the sheet already uses for a rounded animal count. A PATCH has no
-body, so its flag is unchanged (biomass first, no `≈`, no species) — asserted alongside the herd's,
-or the suite could not tell "fauna converted" from "everything converted".
+**THE FLAG LEADS WITH THE PERCENT, ON BOTH WEBS** — ONE `FLOOR_FLAG_FORMAT`, `leave 50% · 98` on a
+patch and `leave 50% · ≈11 Red Deer` on a herd, and **`HarvestFloorChart` branches on nothing**: it
+supplies the order, `stock_face` supplies the unit. **A flag on a draggable control has to move when
+you drag it.** Biomass has a value per `FLOOR_STEP`; an animal count over a K of ~21 has ~21, so an
+animal-first flag sits unmoved across a tenth of the drag and reads as a stuck control. Once the
+percent must lead for that reason on fauna, leading with it on flora costs nothing and stops one
+control swapping its terms when the player clicks from a patch to a herd. It is also the honest
+order: the sim's floor IS a K-fraction (`B − floor·K`, quantised later at the kill) and
+`classify_ecology_phase`'s cut points are fractions of that same K, so the percent is the axis and
+the quantity is the gloss. `≈` is the vocabulary the rest of the sheet already uses for a rounded
+animal count. Both webs are asserted, with `==` rather than `contains` — `contains` passes on either
+order, and without the patch's line the suite could not tell "fauna converted" from "everything
+converted".
 
 ### §7.2: THE HOLD NUMBER IS THE CEILING ON USEFULNESS, AND IDLE CREW IS REPORTED, NEVER RELEASED
 

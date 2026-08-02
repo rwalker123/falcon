@@ -80,23 +80,21 @@ const SERIES_START_DOT_RADIUS := 3.0
 const FLOOR_LINE_WIDTH := 1.5
 const FLOOR_ARROW_LENGTH := 7.0
 const FLOOR_ARROW_HALF_HEIGHT := 5.0
-## The floor's flag: `leave 98 · 50%`, or the one value that has no quantity to state.
-const FLOOR_FLAG_FORMAT := "leave %s · %d%%"
-## **A HERD'S FLAG COUNTS ANIMALS, AND LEADS WITH THE PERCENT** — `leave 50% · ≈5 Wild Boar`. Two
-## separate reasons, and the ordering is the load-bearing one:
+## **THE FLOOR'S FLAG: THE PERCENT, THEN THE QUANTITY** — `leave 50% · 98` on a patch,
+## `leave 50% · ≈11 Red Deer` on a herd. ONE format for both webs, because the order follows from what
+## the control IS, not from what happens to be standing on it.
 ##
-## The unit, because biomass was the LAST holdout on a hunt sheet — the readout row states
-## `≈0.41 Grey Wolf/turn`, the raid states `delivers ≈8 Wild Boar`, and `crew_to_hold` divides by
-## `body_mass` to answer at all. A floor in biomass reconciled with none of them.
+## **A flag on a draggable control has to move when you drag it.** Biomass has a value per
+## `FLOOR_STEP`; an animal count over a K of ~21 has ~21, so an animal-first flag sits unmoved across
+## a tenth of the axis and reads as a stuck control. Once the percent has to lead for that reason on
+## fauna, leading with it on flora costs nothing and stops the same control swapping its terms when
+## the player clicks from a patch to a herd.
 ##
-## The ordering, because **a flag on a draggable control has to move when you drag it.** Biomass has
-## a value per `FLOOR_STEP`; a count over a K of ~11 animals has eleven, so an animal-first flag sits
-## on `leave 5` across a tenth of the axis and reads as a stuck control. The percent moves on every
-## step, so the percent leads and the count glosses it. That is also the honest order: the sim's
-## floor IS a K-fraction (`escapement_ceiling` = `B - floor·K`, quantised later at the kill), and
-## `classify_ecology_phase`'s cut points are fractions of the same K — so the percent is the axis and
-## the count is the rounding. `≈` says so, in the vocabulary the rest of the sheet already uses.
-const FLOOR_FLAG_ANIMALS_FORMAT := "leave %d%% · %s"
+## It is also the honest order. The sim's floor IS a K-fraction (`escapement_ceiling` = `B − floor·K`,
+## quantised later at the kill) and `classify_ecology_phase`'s cut points are fractions of that same
+## K — so the percent is the axis and the quantity is the gloss. WHICH UNIT that quantity is in is
+## `SourceForecast.stock_face`'s business, never this script's: nothing here branches on the web.
+const FLOOR_FLAG_FORMAT := "leave %d%% · %s"
 const FLOOR_FLAG_STRIP := "leave nothing"
 const FLOOR_FLAG_FONT_SIZE := 10
 const FLOOR_FLAG_PAD := 3.0
@@ -298,20 +296,13 @@ func _draw_floor(plot: Rect2) -> void:
 	draw_string(font, Vector2(flag_x, flag_y), text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, FLOOR_FLAG_FONT_SIZE, HudStyle.INK)
 
-## The flag's words for a floor that leaves something standing. It branches on whether the source has
-## a BODY, not on which panel is drawing it: a herd counts animals, a patch states biomass, and the
-## model's own `body_mass` / `quarry` pair is what tells them apart. See `FLOOR_FLAG_ANIMALS_FORMAT`.
+## The flag's words for a floor that leaves something standing. **No branch on the web**: the quantity
+## comes from `stock_face`, which the at-floor verdict under this chart also reads, so the two can
+## only ever name the threshold identically. See `FLOOR_FLAG_FORMAT` for why the percent leads.
 func _floor_flag_text(floor_value: float, floor_stock: float) -> String:
-	var quarry := String(_model.get("quarry", ""))
-	var body_mass := float(_model.get("body_mass", 0.0))
-	# The QUANTITY comes from `stock_face`, which the at-floor verdict under this chart also reads —
-	# only the ORDER is decided here, and only because an animal count is too coarse to lead a flag on
-	# a drag target. What branches locally is the layout; what the number SAYS never does.
-	if SourceForecast.stock_counts_animals(floor_stock, body_mass, quarry):
-		return FLOOR_FLAG_ANIMALS_FORMAT % [SourceForecast.floor_percent(floor_value),
-			SourceForecast.stock_face(floor_stock, body_mass, quarry)]
-	return FLOOR_FLAG_FORMAT % [SourceForecast.stock_face(floor_stock, body_mass, quarry),
-		SourceForecast.floor_percent(floor_value)]
+	return FLOOR_FLAG_FORMAT % [SourceForecast.floor_percent(floor_value),
+		SourceForecast.stock_face(floor_stock, float(_model.get("body_mass", 0.0)),
+			String(_model.get("quarry", "")))]
 
 ## THE LEARNING RAIL — `learn_multiplier` as a gradient, brightest where the most is left standing,
 ## with a marker at the floor. It answers "are these people, on this ground, contributing to the

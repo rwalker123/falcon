@@ -2087,12 +2087,10 @@ static func animal_count(biomass: float, body_mass: float) -> int:
 ## flag learned to count animals while the verdict went on quoting `grows past 1075` — so the cure is
 ## that there is no second place for a rendering to live, not a second place kept in step by hand.
 const STOCK_ANIMALS_FORMAT := "≈%d %s"
-static func stock_counts_animals(stock: float, body_mass: float, quarry: String) -> bool:
-    return animal_count(stock, body_mass) != ANIMAL_COUNT_NONE and quarry != ""
-
 static func stock_face(stock: float, body_mass: float, quarry: String) -> String:
-    if stock_counts_animals(stock, body_mass, quarry):
-        return STOCK_ANIMALS_FORMAT % [animal_count(stock, body_mass), quarry]
+    var animals := animal_count(stock, body_mass)
+    if animals != ANIMAL_COUNT_NONE and quarry != "":
+        return STOCK_ANIMALS_FORMAT % [animals, quarry]
     return format_stock(stock)
 
 static func herd_display_name(herd: Dictionary) -> String:

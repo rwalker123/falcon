@@ -3786,25 +3786,26 @@ func _ready() -> void:
 			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
 
 	# **THE FLOOR FLAG'S UNIT AND ITS ORDER**, which no PNG can testify to at 10px. Asserted against
-	# hand-built models rather than the live sheet so both branches are reachable from one place and
-	# the expected strings are computable by eye: 1075 ÷ 100 = 10.75 → 11 animals at floor 0.50.
+	# hand-built models rather than the live sheet so both webs are reachable from one place and the
+	# expected strings are computable by eye: 1075 ÷ 100 = 10.75 → 11 animals at floor 0.50.
 	#
-	# The ORDER is the assertion that matters. An animal count over a K of ~21 animals has ~21 states
-	# where biomass had one per FLOOR_STEP, so an animal-FIRST flag would sit unmoved across a tenth of
-	# the drag and read as a stuck control. Leading with the percent is what keeps the flag responsive,
-	# and `==` (not `contains`) is what pins the order.
+	# The ORDER is the assertion that matters, and it is now the SAME on both. An animal count over a K
+	# of ~21 has ~21 states where biomass had one per FLOOR_STEP, so an animal-FIRST flag would sit
+	# unmoved across a tenth of the drag and read as a stuck control; the percent leads to keep the flag
+	# responsive, and once it must lead on fauna the patch follows it so one control cannot swap its
+	# terms mid-session. `==` (not `contains`) is what pins the order — a `contains` passes on either.
 	var flag_probe := HarvestFloorChart.new()
 	flag_probe.set_model({"known": true, "floor": SourceForecast.FLOOR_FOOD_PEAK,
 		"capacity": 2150.0, "body_mass": 100.0, "quarry": "Red Deer"})
-	_assert_hud("a HERD's floor flag counts animals and leads with the percent",
+	_assert_hud("a HERD's floor flag counts animals, after the percent",
 		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
 			== "leave 50% · ≈11 Red Deer")
-	# THE OTHER HALF OF THE BRANCH, and the reason it is a branch at all: a patch has no body, so a
-	# forage flag is byte-for-byte what it was — biomass first, no `≈`, no species. Without this the
-	# suite could not tell "fauna converted" from "everything converted".
+	# THE OTHER WEB: a patch has no body, so its quantity stays biomass — no `≈`, no species — while
+	# the ORDER around it is identical. Without this the suite could not tell "fauna converted" from
+	# "everything converted", and could not see the patch's percent silently moving back to the tail.
 	flag_probe.set_model({"known": true, "floor": SourceForecast.FLOOR_FOOD_PEAK, "capacity": 195.0})
-	_assert_hud("…while a PATCH's flag is unchanged: biomass first, no animal count",
-		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 97.5) == "leave 98 · 50%")
+	_assert_hud("…and a PATCH's states biomass, in the same order and with no animal count",
+		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 97.5) == "leave 50% · 98")
 	flag_probe.free()
 	# The conversion itself, on literals. `animal_count` is the ONE place biomass becomes a head count
 	# (the drawer row and the flag both read it), so its two edges are worth stating outright: a
