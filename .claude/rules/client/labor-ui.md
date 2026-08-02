@@ -70,8 +70,11 @@ term — while every ceiling stays undipped. It moved because dipping the ceilin
 build for FREE (a fraction of a bigger standing stock still filled the crew's baskets), and it is what
 leaves the ceiling linear in the floor and therefore composable at all. The player-visible
 consequence: a crew big enough to saturate the source's stock pays **no** dip, so the remedy for a
-slow build is HANDS — at a 25% carry, four times as many (`_cultivating_forage_band_fixture`'s
-`workers_needed` went 2 → 12 on exactly that arithmetic). `expected_yield_account` therefore has **no
+slow build is HANDS — at the shipped 50% carry, twice as many; at the 25% that fixture cans, four
+times (`_cultivating_forage_band_fixture`'s `workers_needed` went 2 → 12 on exactly that arithmetic).
+**The harness fixtures carry their own `*_build_fraction` wire values** (`STALE_VERB_BUILD_FRACTION`
+0.25, `HERD_DIP_BUILD_FRACTION` 0.5), so a config re-dial does NOT move them — which is what keeps
+these frames pinned to the arithmetic they were built to prove rather than to a balance number. `expected_yield_account` therefore has **no
 `ceiling_scale` parameter**: `improvement_forecast` carries a whole `base_forecast` and a whole
 `build_forecast`, and the deal's two terms are the same call against each. **Any surviving `×
 fraction` on a ceiling is wrong, and it looks plausible.**
@@ -309,7 +312,9 @@ own deal line — which all carry the composed verb — were not. A herd mid-Tam
 ~2× (the animal rungs' `yield_fraction_while_building` is **0.5**, not the plant rungs' 0.25) what the
 sim would pay, and the sheet contradicted itself inside one card: the deal's *while building* term and
 the readout's take are the same quantity and disagreed. `improvement` is now a **required** parameter
-there, so no call site can take the identity by omission.
+there, so no call site can take the identity by omission. (That the two are ONE quantity is also what
+later retired the deal line — see "THE DEAL LINE IS DELETED"; the readout is now the only place it is
+stated, so the disagreement is no longer expressible.)
 
 - **THE DIP MULTIPLIES THE COLLECTION, AND `quantise_animal_take` RUNS AFTER IT.** The sim composes
   `collection = workers × per_worker × build_dip` and *then* takes
@@ -364,6 +369,30 @@ the number moves as the floor is dragged and the chart's gradient rail only gest
 - A rung that declares no lesson renders **no line**, not an empty one. `SourceForecast.rung_lesson`
   reads the **standing** rung, highest first, mirroring the sim: the same crew learns Herding on a
   wild herd and Penning on a tamed one, so a herd mid-Corral still teaches Penning while it builds.
+- **A LESSON THE FACTION HAS ALREADY LEARNED IS NOT TAUGHT AGAIN.** `rung_lesson` keys off the
+  SOURCE's rung and nothing else, so a wild patch went on reading `Teaching cultivation at ×1.00`
+  for the rest of the game — reported from play. The line does TWO jobs and only one dies with the
+  lesson: since slice 3 one multiplier paces the craft AND the build meter, so a known lesson keeps
+  the BUILDING half (`Building at ×1.00 — a higher floor builds faster.`,
+  `TEACHING_BUILD_ONLY_FORMAT`) while a build is in flight and renders **no line at all** when there
+  is none. The `TEACHING_NOTHING_*` ends are UNLEARNED-only for the same reason: they name why no
+  lesson is being earned, which is not a question for someone who already has it.
+  - **The track is resolved from the NEXT RUNG UP, not stored beside the word** — the lesson a
+    standing rung teaches IS the knowledge that gates the rung above it (a wild patch teaches
+    `cultivation`, which gates Cultivate), and `RungGates.RUNG_KNOWLEDGE_TRACKS` already writes that
+    mapping down. A second column in `RUNG_LESSONS` would be a second spelling of it, free to drift
+    the first time a rung's knowledge is renamed. `SourceForecast.rung_lesson_known` is that
+    resolution and takes `knowledge` as a PARAMETER, threaded through `floor_chart_model` from
+    `DrawerComposeController`'s `_player_knowledge()`: this layer is all-`static` and holds no
+    snapshot, so it must never reach for a faction's tracks.
+  - **Assert the PAIR, never the empty half alone** — emptying the line unconditionally satisfies a
+    lone negative. The plant A/B is `floor_chart_drawn_down` → **`forage_lesson_known`** (one patch,
+    one crew, one floor; only the faction's Cultivation moves) and the animal A/B is
+    `herd_corral_gated` → `herd_corral_ungated`. The KNOWN-plus-build half rides
+    `improvement_running_plant` / `improvement_running_animal`, asserted as *the word "Teaching" is
+    gone* AND *the building sentence is there*. That is also why the chart block re-dials Cultivation
+    down to a part-learned value: at the all-complete dial the frames above it leave behind, a WILD
+    patch teaches nothing and the live-drag assertion would be comparing two empty strings.
 - It is a function of the floor, so it lives in the `_refresh_floor_live` registry with the yields and
   the crew targets.
 
@@ -456,16 +485,20 @@ have passed silently.
 
 **THE BUILD DIP IS STATED ON THAT ROW, beside the two numbers it explains** (`build_crew_dip_note`,
 from the chart model's own `build_dip` — one resolution, so the note and the targets cannot come from
-two reads). A crew preparing a rung carries its `yield_fraction_while_building`, a quarter on both
-plant rungs, so six foragers move 12 biomass a turn where the patch's published throughput says 48 —
+two reads). A crew preparing a rung carries its `yield_fraction_while_building` — **0.50 on all four rungs of
+both webs** since the plant pair was raised off its legacy 0.25 to match the animals
+(`.claude/rules/core_sim/intensification.md`) — so six foragers move 24 biomass a turn where the
+patch's published throughput says 48 —
 and every impossible-looking number on a building sheet follows from that one factor. The only other
 cue was a ticked box further down, which says a build is running and never says its price; without the
 line, *"six foragers cannot out-take one patch"* is inexplicable. It renders **only** where a dip is
 live, because a line on every sheet claims nothing (frames: `forage_build_dip` /
 `forage_build_dip_none`, asserted by presence AND by absence through `HudWidgets.CREW_ROW_DIP_META`).
-Its wording deliberately avoids `while building` — that is `IMPROVEMENT_DEAL_FORMAT`'s middle term and
-the phrase the deal line is IDENTIFIED by; two labels on one sheet carrying one phrase is how a search
-for either finds the other, measured at seven false failures.
+Its wording deliberately avoids `while building` — that was the DEAL LINE's middle term and the phrase
+that line was IDENTIFIED by; two labels on one sheet carrying one phrase is how a search for either
+finds the other, measured at seven false failures. The deal line is gone (see "THE DEAL LINE IS
+DELETED" below) and `ui_preview` now spends that phrase as the needle proving its absence, so the
+avoidance is what keeps that needle unambiguous rather than merely tidy.
 
 **The readout is one bounded well with three registers** (`_mount_readout`, `HudStyle.readout_stylebox`):
 
@@ -863,8 +896,9 @@ and the other two wear faces made of live numbers, so a text match would find no
 
 **A SIXTH CASE — `forage_build_dip` / `_decline` / `_none`, WHERE THE REGROWTH BEATS THE ROOM.** The
 played frame: `K 195`, ~9 biomass standing above a 45% floor while the patch regrows ~12, worked by
-six foragers at a live Cultivate's quarter carry (`_building_patch_tile_fixture`, every constant the
-shipped one — the stale-verb patch's basket and 8.0 carry, the ladder's 0.25). It is the only fixture
+six foragers at this fixture's quarter carry (`_building_patch_tile_fixture` — the stale-verb patch's
+basket and 8.0 carry, and a canned 0.25 that was the ladder's value when the frame was built; the
+ladder ships 0.50 now, and the fixture keeps 0.25 deliberately, being a proof about the arithmetic). It is the only fixture
 in the set whose crew carry lands just UNDER the source's own regrowth, and all three defects above
 need exactly that: the *clear* quotient falls below the reaching crew, the food-peak ceiling is zero so
 the ⚠ degenerates, and the dip is what makes the numbers look impossible. **THE DEFECT WAS THAT THE
@@ -940,7 +974,8 @@ retires, so no rung of that picker can be disabled.
    **On the COMPOSE SHEET this state is reached by a SOURCE gate only** — a knowledge gate builds no
    control here at all, which is why the example above is the ground's refusal and not the knowledge
    line it used to be; see "A KNOWLEDGE gate renders NO improvement control on the compose sheet".
-2. **Running** — checked and **LIVE**, carrying the build meter (`🌱 Cultivating — 60%`). Unchecking
+2. **Running** — checked and **LIVE**, carrying the build meter AND the rung's payoff
+   (`🌱 Cultivating — 60% · then 1.20 food`, the offered box's own `· then` grammar). Unchecking
    it abandons the build (`abandon_improvement`, below).
 3. **Done** — a static `Label` naming the state (`🌾 Tended Patch`), with the NEXT rung's checkbox
    beneath it when there is one.
@@ -953,20 +988,49 @@ toward. The two answers differ on **the gate alone**, and that difference is the
 MARK (promises the verb is available, so a gated rung must not wear one) and a CONTROL (is how the
 player discovers the rung exists).
 
-**The forecast states the whole deal, in three terms**, composed in ONE place
-(`SourceForecast.improvement_forecast`) so no surface can derive it differently:
+### THE DEAL LINE IS DELETED — its payoff rides the running control's face
+
+The improvement forecast used to render a line of its own beneath the box:
 
 ```
-+0.96 food  →  +0.24 food while building  →  +1.20 food
-   stance            preparing (WARN-amber)        payoff
+0.61 food · 1.25 trade → 0.15 food · 0.31 trade while building → 1.39 food · 0.38 trade
+        today                    preparing (WARN-amber)                  payoff
 ```
 
-`preparing = stanceCeiling × <rung>BuildFraction`, **per account** — the dip applies to provisions,
-trade goods and fodder exactly as the take does, and each term is priced through
-`expected_yield_account` so a crew below max-useful sees its own capped take rather than a ceiling it
-does not reach. The **first** term is the number the old two-term `Preparing: X → then Y` line
-structurally could not show: a build verb *was* the policy, so committing vacated the stance and there
-was no baseline left to quote.
+**Two of its three terms were already on the sheet.** The MIDDLE term is byte-identical to the
+readout's own `PER TURN` headline — the same crew through the same dipped forecast, which is why the
+harness assertion pairing them never once disagreed — and the FIRST is the price of building, which
+the crew row states qualitatively as a factor (*"building this rung, each carries 50% as much"* on
+shipped values). Only
+the payoff was unique to it, and the OFFERED state already puts the payoff on the checkbox face. So
+the payoff moved to the RUNNING face in the offer's own grammar and the line went:
+
+| state | face |
+|---|---|
+| offered | `🌱 Cultivate this patch · then 1.39 food` (`IMPROVEMENT_OFFER_FORMAT`) |
+| running | `🌱 Cultivating — 40% · then 1.39 food` (`IMPROVEMENT_RUNNING_FORMAT`) |
+| running, feed rung | `🐄 Building the pen — 0% · then 0.00 food − 0.14 feed` (`…_FEED_FORMAT`) |
+| running, no quoted deal | `🌱 Cultivating — 40%` (`…_BARE_FORMAT`) — never a fabricated `· then +0.00` |
+
+- **The payoff is composed the way the deal composed it**, from `improvement_forecast` at the
+  composed floor: the caller's `payoff_face` Callable where there is one (the plant web substitutes
+  the CROP, so the box that offers a rung and the box running it can never quote different crops),
+  else `picker_products` over the payoff vector × the band's `output_multiplier`.
+- **`IMPROVEMENT_DEAL_DEPLETED_NOTE` OUTLIVED THE LINE, deliberately.** A pen whose payoff is 0.00
+  under a running feed is a pure loss and that is the most valuable thing this control can say; it
+  rides `build_improvement_control`'s note slot now — the same WARN-inked slot the paused-build line
+  uses — beside the zero on the face, which still renders in full. Frame + assertion:
+  `herd_corral_depleted`.
+- **The UNSTAFFED variants died BY DESIGN.** They existed because the today/dip terms are
+  staffing-scaled while the payoff is not, so a zero crew read as a sequence it was not on track for.
+  With only the payoff left there is no sequence to misread.
+- **Assert the pair, never the absence alone** — "the line is gone" also passes on a sheet that lost
+  the payoff with it. `forage_unstaffed`, `improvement_running_plant` and `improvement_running_animal`
+  each pin the absence (by the `while building` needle) AND the payoff on the face (by
+  `IMPROVEMENT_CONTROL_META`), both webs, sabotage-verified in both directions.
+
+The dip itself is unchanged: `build_forecast` is the crew's own forecast with its throughput dipped
+per account, and it is what the readout's `PER TURN` row has quoted since §3.1.
 
 **A non-Sustain stance beside a running build is LEGAL and is not an error state.** It defeats itself
 through the ecology, not through a gate: the build meter accrues only while the source is Thriving,

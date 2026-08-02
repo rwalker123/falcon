@@ -1348,6 +1348,13 @@ const TEACHING_RATE_FORMAT := "Teaching %s at ×%.2f"
 # builder is told the two move together rather than being told again to raise the floor.
 const TEACHING_RATE_FLOOR_TAIL := " — a higher floor teaches faster."
 const TEACHING_RATE_BUILD_TAIL := " and building at the same rate."
+# …and the same sentence with its TEACHING half dropped, for a lesson the faction has already
+# finished learning. One multiplier paces the lesson and the build meter alike, so when the lesson is
+# known the build is the whole of what the top of the dial still buys — and the line that went on
+# saying "Teaching cultivation at ×1.00" long after the player learned Cultivation was reported from
+# play. Same decimals and the same "a higher floor …" shape as the two tails above, because it is the
+# same fact about the same number.
+const TEACHING_BUILD_ONLY_FORMAT := "Building at ×%.2f — a higher floor builds faster."
 # `floor = 0` — the multiplier itself is zero: stripping teaches nothing.
 const TEACHING_NOTHING_STRIPPED := "Teaching nothing: nothing is left standing."
 # …and the other end: the escapement room is empty (or nobody is assigned), so the sim's work
@@ -1385,12 +1392,41 @@ static func rung_lesson(kind: String, src: Dictionary, prefix: String) -> String
     var lessons: Dictionary = RUNG_LESSONS.get(kind, {})
     if lessons.is_empty():
         return ""
-    var ladder: Array = FORAGE_IMPROVEMENTS if kind == SOURCE_KIND_FORAGE else HUNT_IMPROVEMENTS
+    var idx := _standing_rung_index(kind, src, prefix)
+    var standing := IMPROVEMENT_NONE if idx < 0 else String(_improvement_ladder(kind)[idx])
+    return String(lessons.get(standing, ""))
+
+## **DOES THE FACTION ALREADY KNOW THE LESSON THIS SOURCE TEACHES?** — the test that stops the aside
+## teaching a craft the player finished learning twenty turns ago (reported from play: a wild patch
+## read `Teaching cultivation at ×1.00` forever, because `RUNG_LESSONS` keys off the source's rung and
+## nothing else).
+##
+## **THE TRACK IS RESOLVED FROM THE NEXT RUNG UP, NOT STORED BESIDE THE WORD**, and that is the whole
+## reason this is a function rather than a second column in `RUNG_LESSONS`: the lesson a standing rung
+## teaches IS the knowledge that gates the rung above it (a wild patch teaches `cultivation`, which is
+## what gates Cultivate), and `RungGates.RUNG_KNOWLEDGE_TRACKS` already writes that mapping down. A
+## per-lesson track key here would be a second spelling of it, free to drift the first time a rung's
+## knowledge is renamed. `knowledge` is the faction's `{track: progress}` row, threaded in — this
+## layer holds no snapshot and must never reach for one.
+static func rung_lesson_known(kind: String, src: Dictionary, prefix: String,
+        knowledge: Dictionary) -> bool:
+    var ladder := _improvement_ladder(kind)
+    var next_idx := _standing_rung_index(kind, src, prefix) + 1
+    if next_idx >= ladder.size():
+        return false
+    return not RungGates.knowledge_gate_unmet(String(ladder[next_idx]), knowledge)
+
+## The index in this web's ladder of the highest rung the source has BUILT — `-1` for a source still
+## standing on wild ground, which is `IMPROVEMENT_NONE`'s row in every rung-keyed table.
+static func _standing_rung_index(kind: String, src: Dictionary, prefix: String) -> int:
+    var ladder := _improvement_ladder(kind)
     for i in range(ladder.size() - 1, -1, -1):
-        var rung := String(ladder[i])
-        if improvement_is_done(src, prefix, rung):
-            return String(lessons.get(rung, ""))
-    return String(lessons.get(IMPROVEMENT_NONE, ""))
+        if improvement_is_done(src, prefix, String(ladder[i])):
+            return i
+    return -1
+
+static func _improvement_ladder(kind: String) -> Array:
+    return FORAGE_IMPROVEMENTS if kind == SOURCE_KIND_FORAGE else HUNT_IMPROVEMENTS
 
 ## **IS THIS CREW TAKING ANYTHING?** — the client's reading of the sim's work predicate
 ## (`systems::labor::crew_is_working_the_source`, `standing_above_floor > 0`), plus the crew term the
@@ -1404,10 +1440,33 @@ static func crew_is_taking(workers: int, biomass: float, capacity: float, floor:
 ## The aside's teaching line as `{text, teaching}` — `teaching` is whether the source is actually
 ## being taught at a rate, which is what earns the line SIGNAL cyan. `{}` when this rung teaches
 ## nothing at all, which is the caller's cue to render no line rather than an empty one.
+##
+## **THE LINE DOES TWO JOBS AND ONLY ONE OF THEM DIES WITH THE LESSON.** `Teaching cultivation at
+## ×1.00 and building at the same rate` is a claim about the CRAFT and a claim about the BUILD METER,
+## paced by one multiplier — so once the faction knows the craft the first half is false and the
+## second is as true as ever. A known lesson therefore keeps the BUILDING sentence while a build is in
+## flight and renders NO LINE at all when there is none, rather than going on teaching a craft the
+## player has finished (`lesson_known`, resolved by `rung_lesson_known` from the faction's own
+## tracks). The `TEACHING_NOTHING_*` ends below are UNLEARNED-only for the same reason: they name why
+## no lesson is being earned, which is not a question for someone who already has it.
 static func teaching_note(lesson: String, floor: float, taking: bool,
-        building: bool) -> Dictionary:
+        building: bool, lesson_known: bool) -> Dictionary:
     if lesson == "":
         return {}
+    if lesson_known:
+        # **THE BUILD HALF IS GATED ON THE SAME WORK PREDICATE THE LESSON IS**, and that is a fact
+        # about the sim, not a display nicety: build accrual and knowledge accrual are paced by the
+        # one `learn_multiplier` and gated by the one `crew_is_working_the_source`, so a crew taking
+        # nothing is building nothing. Without this the line reads `Building at ×1.00` beside a
+        # verdict saying no one is assigned — the multiplier is a function of the FLOOR alone, so it
+        # happily reads 1.00 at the food peak with an empty crew. (At a STRIPPED floor it would read
+        # 0.00 and merely look odd; the unworked case is the one that states a falsehood.)
+        if not building or not taking:
+            return {}
+        return {
+            "text": TEACHING_BUILD_ONLY_FORMAT % learn_multiplier(floor),
+            "teaching": true,
+        }
     # "The floor is at zero" is `floor_zone`'s own STRIP test, not a second spelling of it — the same
     # answer the 💀 glyph and the strip hint are keyed off, so the aside cannot disagree with them.
     var stripped := floor_zone(floor) == FLOOR_ZONE_STRIP
@@ -1464,8 +1523,12 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
 ## does nothing there), one the wire published no curve for, and a RUNG-3 MANAGED source, whose stock
 ## the sim never draws down: composing an escapement projection on a Field would draw a decline that
 ## cannot happen.
+## `lesson_known` is the faction's answer to "have we already learned what this source teaches?"
+## (`rung_lesson_known`), and it is a PARAMETER because this layer is all-`static` and holds no
+## snapshot: knowledge belongs to the faction, not to the source, so nothing here can look it up.
 static func floor_chart_model(src: Dictionary, kind: String, prefix: String, floor: float,
-        workers: int, improvement: String, crew_noun: String) -> Dictionary:
+        workers: int, improvement: String, crew_noun: String,
+        lesson_known: bool) -> Dictionary:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
@@ -1530,7 +1593,7 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # player has ticked, so a builder's sentence follows the checkbox too.
         "teaching_note": teaching_note(rung_lesson(kind, src, prefix), floor_value,
             crew_is_taking(workers, biomass, capacity, floor_value),
-            improvement != IMPROVEMENT_NONE),
+            improvement != IMPROVEMENT_NONE, lesson_known),
     }
 
 ## The component this HERD actually pays, from its per-worker vector (the sim's `ratio_axis()` rule:

@@ -153,6 +153,11 @@ const FLOOR_CHART_ABOVE_STOCK := 0.95
 ## re-read. This value crosses the sim's work predicate, so the drag moves the aside from that end of
 ## the non-degeneracy rule to a live rate.
 const FLOOR_CHART_TEACHING_DRAG_FLOOR := 0.10
+## The faction's Cultivation while the chart block renders — part-learned, so its WILD patches still
+## have a lesson to teach and the aside's teaching line exists to be dragged and compared at all. The
+## frames above this block complete every track, and a source teaches nothing once its lesson is
+## known; `forage_lesson_known` flips it back to 1.0 and asserts exactly that.
+const FLOOR_CHART_CULTIVATION_LEARNING := 0.55
 # A stock already drawn well below the food peak but comfortably above a plant's reseed floor: low
 # enough that the projection's descent to the floor is legible, high enough that the curve has room to
 # flatten rather than bottoming out in the first turn.
@@ -1400,27 +1405,34 @@ func _ready() -> void:
 		and _find_improvement_control(_hud._drawercompose._compose_sheet,
 			SourceForecast.IMPROVEMENT_SOW) == null)
 
-	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE FORECAST. The "→ then" term used to quote
+	# State 2-crop-then-a / -b — THE PICKER ACTUALLY MOVES THE PAYOFF. The "· then" term used to quote
 	# a species-BLIND patch number, so committing to Ground Nut showed Wild Emmer's payoff and the picker
 	# appeared to change nothing above it. These two frames are the SAME tile with a DIFFERENT crop
-	# selected; the assertion is that the forecast line differs between them, which is the only thing
+	# selected; the assertion is that the payoff differs between them, which is the only thing
 	# that proves the substitution is wired to the selection rather than rendered once.
+	#
+	# **READ OFF THE RUNNING CONTROL'S OWN FACE, by meta.** The payoff used to ride a separate deal line
+	# beneath the box and now rides the face itself, in the offered box's `· then` grammar — so the one
+	# Callable feeding both states is asserted where the player actually reads it.
 	_hud._compose.set_forage_count(1)
 	_hud._compose.set_forage_species("wild_emmer")
-	# The ARROW, not the bare word: the Cultivate policy hint on the same card also says "then".
 	_compose_forage(_long_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_then_emmer")
-	var then_emmer := _label_text_containing(_hud._drawercompose._compose_sheet, FORECAST_THEN_NEEDLE)
+	var then_emmer := _improvement_face(
+		_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 
 	_hud._compose.set_forage_species("ground_nut")
 	_compose_forage(_long_basket_tile_fixture())
 	await _settle()
 	await _save("forage_crop_then_groundnut")
-	var then_groundnut := _label_text_containing(_hud._drawercompose._compose_sheet, FORECAST_THEN_NEEDLE)
+	var then_groundnut := _improvement_face(
+		_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
 	print("ui_preview: then-term  emmer=%s  ground_nut=%s" % [then_emmer, then_groundnut])
-	_assert_hud("the forecast's 'then' payoff tracks the SELECTED crop",
-		then_emmer != "" and then_groundnut != "" and then_emmer != then_groundnut)
+	_assert_hud("the running rung's 'then' payoff tracks the SELECTED crop",
+		then_emmer.contains(IMPROVEMENT_PAYOFF_NEEDLE)
+			and then_groundnut.contains(IMPROVEMENT_PAYOFF_NEEDLE)
+			and then_emmer != then_groundnut)
 	_hud._compose.set_forage_species("")
 
 	# State 2-crop-marginal — the ALL-MARGINAL tile (RollingHills' real ratios). Every legal crop is
@@ -1455,10 +1467,10 @@ func _ready() -> void:
 	# and the button + the forecast line have to agree in BOTH. These frames are judged as a PAIR.
 	#
 	# State 2-unstaffed (A) — 0 foragers on a tile this band does NOT work. Pressing Forage would send a
-	# command that changes nothing, so the button is DISABLED and still reads `Forage`; the forecast
-	# drops the "Preparing: +0.00 → then +1.20" promise (an unstaffed build meter never advances, so
-	# that sequence cannot arrive) and states the payoff as a condition instead. The payoff NUMBER stays
-	# — it is how the player decides the tile is worth staffing at all.
+	# command that changes nothing, so the button is DISABLED and still reads `Forage`. The payoff
+	# NUMBER stays on the running box's face — it is how the player decides the tile is worth staffing
+	# at all — and there is no longer a SEQUENCE beside it to be wrong about at zero crew: the deal
+	# line's today/dip terms are what a zero crew made unreachable, and only the payoff survived it.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
 	_hud._compose.reset_forage_source()
 	_show_tile(_food_tile_fixture())
@@ -1473,10 +1485,22 @@ func _ready() -> void:
 	var unstaffed_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Forage")
 	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
 		unstaffed_btn != null and unstaffed_btn.disabled)
-	_assert_hud("…and the deal drops the sequence it cannot promise at zero crew",
+	# **THE DELETED DEAL LINE, ASSERTED AS A PAIR.** Absence alone is vacuous — deleting the payoff too
+	# would satisfy it — so the same frame asserts the payoff is ON the running control's face, in the
+	# offered box's own `· then` grammar.
+	_assert_hud("the improvement deal LINE is gone from the sheet",
 		not _has_label_containing(_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
-	_assert_hud("…while still showing what the tile would pay once prepared",
-		_has_label_containing(_hud._drawercompose._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+	_assert_hud("…while what the tile would pay once prepared rides the running box's own face",
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CULTIVATE)
+			.contains(IMPROVEMENT_PAYOFF_NEEDLE))
+	# **A CREW OF ZERO IS BUILDING NOTHING, AND THE ASIDE MAY NOT SAY OTHERWISE.** `learn_multiplier`
+	# is a function of the FLOOR alone, so at the food peak it reads ×1.00 no matter who is assigned —
+	# and this frame has a composed Cultivate with NOBODY on it. The build half is gated on the same
+	# work predicate the lesson is, which is a fact about the sim rather than a display nicety: build
+	# accrual and knowledge accrual share one multiplier and one `crew_is_working_the_source` gate.
+	# Asserted on this frame because it is the only one that pairs a live build with an empty crew.
+	_assert_hud("an unstaffed build claims no build rate — nobody is building it",
+		not _teaching_line(_hud._drawercompose._compose_sheet).to_lower().contains("building at"))
 
 	# State 2-unassign (B) — the SAME 0 workers on a tile this band DOES work: that is the sim's
 	# unassign, not a no-op. The button stays live and is RENAMED, and the "assign to begin" line is
@@ -1494,8 +1518,12 @@ func _ready() -> void:
 	var unassign_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Unassign")
 	_assert_hud("0 workers on a tile this band works stays live, renamed Unassign",
 		unassign_btn != null and not unassign_btn.disabled)
-	_assert_hud("…and does not also tell the player to assign foragers",
-		not _has_label_containing(_hud._drawercompose._compose_sheet, UNSTAFFED_COPY_NEEDLE))
+	# …and the improvement control is SUPPRESSED here, which is the other half of the same judgement:
+	# offering to START a build in the act of abandoning the source says two opposite things at once.
+	# Asked of the whole control family, so a rung merely spelled differently cannot satisfy it.
+	_assert_hud("…and offers no rung to start while it is handing the source back",
+		_find_meta_node(_hud._drawercompose._compose_sheet,
+			HudWidgets.IMPROVEMENT_CONTROL_META) == null)
 
 	# Restore the unassigned near band for the frames that follow.
 	_hud._band_labor._player_band = _forage_range_bands()[0]
@@ -2160,6 +2188,17 @@ func _ready() -> void:
 	# Five fixtures, each breaking the instrument a DIFFERENT way — a chart is exactly the kind of
 	# thing that compiles, runs, exits 0 and is visibly wrong, so each is rendered AND looked at.
 	# Three are here (the two patches and the dead season above); the herd pair rides beside the wolf.
+	#
+	# **THE FACTION IS PUT BACK TO STILL-LEARNING CULTIVATION FOR THIS BLOCK, and that is a fixture
+	# repair rather than a convenience.** These patches are WILD, so the lesson they teach is
+	# Cultivation — and a source teaches nothing once the faction knows its lesson, so at the
+	# all-complete dial the frames above leave behind, the aside's teaching line is correctly ABSENT
+	# and the live-drag assertion below (that the line RE-READS on a drag) would be asserting nothing.
+	# The pair at the end of the block flips the dial back and asserts the absence deliberately.
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": FLOOR_CHART_CULTIVATION_LEARNING, "herding": 1.0,
+		"seed_selection": 1.0, "penning": 0.0,
+	}])
 
 	# State floor_chart_full — A FULL PATCH WITH THE FLOOR ABOVE ITS STOCK. Nothing stands above the
 	# line, so there is nothing to clear (that target reads 0, not a crew) and the verdict reports
@@ -2300,6 +2339,27 @@ func _ready() -> void:
 	_hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
 	_compose_forage(drawn_patch)
 
+	# State forage_lesson_known — **A LESSON THE FACTION HAS ALREADY LEARNED IS NOT TAUGHT AGAIN**, and
+	# the claim is only meaningful as an A/B: this is the SAME patch, the same crew and the same floor
+	# as the frame above, with the faction's Cultivation as the only thing that moves. `rung_lesson`
+	# keys off the SOURCE's standing rung alone, so a wild patch went on reading `Teaching cultivation
+	# at ×1.00` for the rest of the game (reported from play) — and asserting only the empty half would
+	# pass on a line blanked unconditionally, which is why the learning half is captured first.
+	var teaching_learning := _teaching_line(_hud._drawercompose._compose_sheet)
+	_hud.update_intensification([{
+		"faction": 0, "cultivation": 1.0, "herding": 1.0, "seed_selection": 1.0, "penning": 0.0,
+	}])
+	_compose_forage(drawn_patch)
+	await _settle()
+	await _save("forage_lesson_known")
+	_assert_hud("a lesson still being earned IS named, so the pair is not vacuous",
+		teaching_learning.contains(TEACHING_LESSON_NEEDLE)
+			and teaching_learning.contains(String(SourceForecast.RUNG_LESSONS[
+				SourceForecast.SOURCE_KIND_FORAGE][SourceForecast.IMPROVEMENT_NONE])))
+	# NO LINE AT ALL rather than an empty one: with no build in flight there is no second half to keep.
+	_assert_hud("…and the same patch teaches nothing once the faction knows it — no line, not a blank",
+		_teaching_line(_hud._drawercompose._compose_sheet) == "")
+
 	# Reset so the states after this render their usual staple patch + Sustain rung.
 	_hud._compose.set_forage_floor(SourceForecast.FLOOR_FOOD_PEAK)
 	_hud._compose.set_forage_species("")
@@ -2312,16 +2372,15 @@ func _ready() -> void:
 	_hud._compose.reset_forage_source()
 	_show_tile(_food_tile_fixture())
 	_compose_forage(_food_tile_fixture())
-	# CEILING-BOUND ON PURPOSE, and it is what makes the frame beneath this one legible. Both terms of
-	# the deal are `min(crew x per_worker, ceiling)`, so at a small crew LABOR binds and every stance
-	# quotes the same take — the two frames would then differ only in which rung is lit. Saturating the
-	# patch puts the CEILING in charge, which is the term the stance actually moves.
+	# CEILING-BOUND ON PURPOSE, and it is what makes the frame beneath this one legible. The readout's
+	# take is `min(crew x per_worker, ceiling)`, so at a small crew LABOR binds and every floor quotes
+	# the same number — the two frames would then differ only in which rung is lit. Saturating the
+	# patch puts the CEILING in charge, which is the term the floor actually moves.
 	_hud._compose.set_forage_count(IMPROVEMENT_STANCE_FRAME_FORAGERS)
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("improvement_running_plant")
-	var sustain_deal := _label_text_containing(
-		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
+	var sustain_yields := _yields_text(_hud._drawercompose._compose_sheet)
 	var running_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate")
 	_assert_hud("a running Cultivate renders a CHECKED improvement box",
 		running_box is CheckBox and (running_box as CheckBox).button_pressed)
@@ -2333,11 +2392,26 @@ func _ready() -> void:
 	_assert_hud("…and the stance row is untouched, still on the band's own Sustain",
 		_rung_is_selected(_find_policy_rung(_hud._drawercompose._compose_sheet,
 			SourceForecast.FLOOR_PRESET_PEAK)))
-	# THREE TERMS, COUNTED. Testing that the middle term appears somewhere in the sheet says nothing
-	# about the other two — the two-term line this replaced would have satisfied it just as well once
-	# the words changed. The deal is `A → B while building → C`, so the line must carry BOTH arrows.
-	_assert_hud("…and the deal states all THREE terms, the baseline the old line could not show",
-		sustain_deal.count(IMPROVEMENT_DEAL_TERM_SEPARATOR) == IMPROVEMENT_DEAL_SEPARATORS)
+	# **THE DEAL LINE IS GONE AND ITS PAYOFF IS ON THE FACE — asserted as a PAIR**, because "gone" alone
+	# is satisfied by having deleted the payoff with it. The line's middle term restated the readout's
+	# own PER TURN headline verbatim and its first term the price of building, which the crew row states
+	# as a factor; only the payoff was unique to it, so only the payoff travelled — into the very
+	# `· then` grammar the OFFERED box already used, so the control reads alike in both states.
+	_assert_hud("…and the deal LINE beneath the box is gone",
+		not _has_label_containing(_hud._drawercompose._compose_sheet,
+			IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
+	_assert_hud("…with its payoff moved onto the running box's face, in the offer's own grammar",
+		_improvement_face(_hud._drawercompose._compose_sheet, "cultivate")
+			.contains(IMPROVEMENT_PAYOFF_NEEDLE))
+	# **KNOWN LESSON + A BUILD IN FLIGHT — the teaching line keeps the half that is still true.**
+	# Cultivation completed several frames above, so `Teaching cultivation at ×1.00` would be teaching a
+	# craft this faction finished learning; one multiplier paces the lesson and the build meter alike,
+	# so what survives is the BUILDING half. Both halves asserted: the word must be gone AND the
+	# building sentence present, or blanking the line entirely would pass.
+	_assert_hud("a lesson the faction already knows is not taught again beside a running build",
+		not _teaching_line(_hud._drawercompose._compose_sheet).contains(TEACHING_LESSON_NEEDLE))
+	_assert_hud("…while the BUILD half, which one multiplier still paces, keeps its line",
+		_teaching_line(_hud._drawercompose._compose_sheet).contains(TEACHING_BUILD_NEEDLE))
 	# **THE RUNNING BOX IS LIVE, AND IS NEVER GATED.** Unchecking abandons the build, and the abandon
 	# path asks for nothing — no knowledge, no ceiling, no site, no Thriving — because abandoning a
 	# STALLED build is the case it exists for. A disabled box here would be the regression the split
@@ -2355,11 +2429,15 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("improvement_deplete_while_building")
-	var deplete_deal := _label_text_containing(
-		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
-	print("ui_preview: deal  sustain=%s  deplete=%s" % [sustain_deal, deplete_deal])
-	_assert_hud("…and the RENDERED deal moves with the stance, not just the model behind it",
-		sustain_deal != "" and deplete_deal != "" and sustain_deal != deplete_deal)
+	# THE READING THAT MOVES IS THE READOUT'S, and it is the one the deal's middle term used to restate
+	# — which is why deleting that term lost no information. Compared against the food-peak frame above:
+	# a deeper floor frees a larger ceiling, so the same crew on the same patch must quote a different
+	# take. The PAYOFF deliberately does not move (it is a property of the finished rung, not of the
+	# floor), so asserting the face here would assert a constant.
+	var deplete_yields := _yields_text(_hud._drawercompose._compose_sheet)
+	print("ui_preview: take  peak=%s  deep=%s" % [sustain_yields, deplete_yields])
+	_assert_hud("…and the RENDERED take moves with the floor, not just the model behind it",
+		sustain_yields != "" and deplete_yields != "" and sustain_yields != deplete_yields)
 	# BOTH AXES, READ OFF THEIR OWN CONTROLS. This asserted the two compose-model fields the frame had
 	# just written, which is true whatever the sheet rendered — and "no gate, no repaint" is precisely a
 	# claim about the rendering: the Deplete rung must be lit AND live, with the Cultivate box still
@@ -2436,19 +2514,18 @@ func _ready() -> void:
 		sim_workers_needed, BUILD_CREW_IDLE_ON_HAND, build_floor)["can_add"])
 	_assert_hud("…and the WORK BOARD's `+` gates at the same count — live below it, dead at it",
 		row_below and not row_at)
-	# THE GREEN LINE AND THE DEAL'S MIDDLE TERM, both read off the RENDERED sheet. They are two different
-	# producers over one patch and one crew; the fix is only real if they now carry the same figure —
-	# and it is the sim's `min(w × per_worker, ceiling × dip)`, not the undipped labour take.
+	# THE READOUT'S TAKE, read off the RENDERED sheet: it must be the sim's own
+	# `min(w × per_worker × dip, ceiling)`, not the undipped labour take.
+	#
+	# **THE SECOND HALF OF THIS PAIR WAS THE DEAL'S "while building" TERM, and it is gone WITH the deal
+	# line rather than merely untested.** The two were asserted to carry the same figure, and they did —
+	# byte for byte, being the same crew through the same dipped forecast — which is precisely the
+	# duplication that retired the line. What remains is the one producer.
 	var build_green := _yields_text(_hud._drawercompose._compose_sheet)
-	var build_deal := _label_text_containing(
-		_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
-	print("ui_preview: build crew  green=%s  deal=%s" % [build_green, build_deal])
+	print("ui_preview: build crew  take=%s" % build_green)
 	_assert_hud("the green forecast line quotes the DIPPED take the sim pays (%s)"
 		% BUILD_CREW_DIPPED_TAKE, build_green.contains(BUILD_CREW_DIPPED_TAKE)
 		and build_green.contains(SourceForecast.YIELD_RENEWABLE_NOTE.to_upper()))
-	_assert_hud("…and the deal's 'while building' term is the SAME number, not a second answer",
-		build_deal.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT % BUILD_CREW_DIPPED_TAKE)
-		and build_deal.contains(IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
 
 	# THE ABANDON, plant side — driven here rather than on the frame above because committing CLOSES
 	# the sheet and writes a pending assign, which the Deplete frame beside it reads.
@@ -3016,6 +3093,13 @@ func _ready() -> void:
 	_assert_hud("Penning alone unlocks Corral — the same herd now offers it as a live choice",
 		corral_ungated is CheckBox and not (corral_ungated as CheckBox).disabled
 		and not (corral_ungated as CheckBox).button_pressed)
+	# **AND THE ASIDE STOPS TEACHING IT, in the same breath.** This is the animal half of the A/B the
+	# plant web runs on `forage_lesson_known`: nothing about the herd moved between the two frames, so
+	# the gated one above naming `penning` and this one naming nothing is the whole claim that the line
+	# reads the FACTION and not just the rung. No build is composed here, so no half of the sentence
+	# survives — a line, not a blank.
+	_assert_hud("…and the aside stops teaching a craft the faction has finished learning",
+		_teaching_line(_hud._drawercompose._compose_sheet) == "")
 	# **AN UNTICKED BOX HAS TO BE THERE TO BE TICKED.** Godot's stock `unchecked` art is a FILLED
 	# near-black square drawn for a LIGHT surface, so on this console it reserved its width and painted
 	# nothing: an offer that read as a line of prose with no control on it. Measure the thing that was
@@ -3091,13 +3175,24 @@ func _ready() -> void:
 
 	# State 3d-corral-depleted — the SAME rung on a herd BELOW the pen's escapement point (K/2). The
 	# managed harvest takes only the biomass standing above that point, so the payoff is honestly
-	# +0.00 /turn while the feed is still 0.14 — a pure loss. The row must SHOW both zeros and turn
-	# amber with "⚠ Too depleted to pen", never suppress the zero as if it were missing data.
+	# +0.00 /turn while the feed is still 0.14 — a pure loss. The face must SHOW both zeros and carry
+	# the WARN "⚠ Too depleted to pen" note, never suppress the zero as if it were missing data.
 	_hud._compose.reset_hunt_source()
 	_show_herd(_depleted_corral_herd_fixture())
 	_compose_herd(_depleted_corral_herd_fixture(), COMPOSE_COUNT_UNSET, COMPOSE_FLOOR_UNSET, "corral")
 	await _settle()
 	await _save("herd_corral_depleted")
+	# **THE WARNING SURVIVED THE DEAL LINE IT WAS WRITTEN UNDER.** It rides the improvement control's
+	# own note slot now (the slot the paused-build line uses), so this frame — the only one that
+	# produces it — is where a silent loss would show. The zero it explains is asserted beside it: a
+	# note over a suppressed payoff would be a warning about a number the player cannot see.
+	_assert_hud("a pen that would pay nothing says so, in the note slot under its own box",
+		_has_label_containing(_hud._drawercompose._compose_sheet,
+			HudComposeVocab.IMPROVEMENT_DEAL_DEPLETED_NOTE))
+	_assert_hud("…above a face that still states the zero payoff and the feed it would still eat",
+		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_CORRAL)
+			.contains(SourceForecast.PICKER_FOOD_PRODUCT_FORMAT
+				% SourceForecast.format_magnitude(0.0)))
 
 	# ---- THE INTENSIFICATION LADDER, slice 6b -----------------------------------------------------
 	# THE TWO-METER SPLIT (docs/plan_intensification_ladder.md §4.1) — the headline of this slice, and
@@ -3238,11 +3333,22 @@ func _ready() -> void:
 	var tame_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "tame")
 	_assert_hud("a running Tame renders a CHECKED improvement box, as Cultivate does",
 		tame_box is CheckBox and (tame_box as CheckBox).button_pressed)
-	# Counted, like its plant twin: "the same three-term deal" is a claim about all three, and the
-	# middle term's presence alone would survive losing either of the others.
-	_assert_hud("…and states the same three-term deal the plant web does",
-		_label_text_containing(_hud._drawercompose._compose_sheet, IMPROVEMENT_DEAL_MIDDLE_NEEDLE)
-			.count(IMPROVEMENT_DEAL_TERM_SEPARATOR) == IMPROVEMENT_DEAL_SEPARATORS)
+	# **THE SAME PAIR ITS PLANT TWIN CARRIES, on the web that shares the control.** The deal LINE is
+	# gone from both sheets and the payoff rides both faces; asserting only the absence would pass on a
+	# sheet that had lost the payoff too, which is why the second half names the face.
+	_assert_hud("…with no deal LINE beneath it, exactly as the plant web has none",
+		not _has_label_containing(_hud._drawercompose._compose_sheet,
+			IMPROVEMENT_DEAL_MIDDLE_NEEDLE))
+	_assert_hud("…and the payoff on the running box's face, in the offer's own grammar",
+		_improvement_face(_hud._drawercompose._compose_sheet, "tame")
+			.contains(IMPROVEMENT_PAYOFF_NEEDLE))
+	# KNOWN LESSON + A BUILD IN FLIGHT, on the animal web: Herding is complete for this faction, so the
+	# aside drops the craft and keeps the build the same multiplier paces. Both halves, for the reason
+	# the plant twin states.
+	_assert_hud("a known lesson is not taught again on the hunt sheet either",
+		not _teaching_line(_hud._drawercompose._compose_sheet).contains(TEACHING_LESSON_NEEDLE))
+	_assert_hud("…while its BUILD half still reads, as it does on the plant sheet",
+		_teaching_line(_hud._drawercompose._compose_sheet).contains(TEACHING_BUILD_NEEDLE))
 	_assert_hud("a running Tame's box is LIVE too — the abandon path is ungated on both webs",
 		tame_box is CheckBox and not (tame_box as CheckBox).disabled)
 	# **THE HERD FORM, which is the one a shared branch gets wrong.** `abandon_improvement` targets by
@@ -3911,10 +4017,11 @@ func _ready() -> void:
 	var strip_crew := 64
 	var stripped_herd := SourceForecast.floor_chart_model(allee_herd, SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew,
-		SourceForecast.IMPROVEMENT_NONE, "hunters")
+		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
 	var stripped_patch := SourceForecast.floor_chart_model(drawn_patch,
 		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
-		SourceForecast.FLOOR_MIN, strip_crew, SourceForecast.IMPROVEMENT_NONE, "foragers")
+		SourceForecast.FLOOR_MIN, strip_crew, SourceForecast.IMPROVEMENT_NONE, "foragers",
+		LESSON_NOT_YET_LEARNED)
 	var stripped_herd_text := String((stripped_herd.get("verdict", {}) as Dictionary).get("text", ""))
 	var stripped_patch_text := String((stripped_patch.get("verdict", {}) as Dictionary).get("text", ""))
 	_assert_hud("both stripped sources REACH their floor, so both are stating the reaching verdict",
@@ -3932,7 +4039,7 @@ func _ready() -> void:
 	var held_herd := SourceForecast.floor_chart_model(
 		_floorify(_grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
 		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew,
-		SourceForecast.IMPROVEMENT_NONE, "hunters")
+		SourceForecast.IMPROVEMENT_NONE, "hunters", LESSON_NOT_YET_LEARNED)
 	var held_herd_text := String((held_herd.get("verdict", {}) as Dictionary).get("text", ""))
 	_assert_hud("a HERD that still regrows at its floor keeps the clause — it is the growth, not the web",
 		held_herd_text.contains("Reaches the floor") and held_herd_text.contains("grows back"))
@@ -4025,13 +4132,15 @@ func _ready() -> void:
 	_hud._compose.reset_hunt_source()
 	_hud._compose.set_hunt_band(-1)
 	_show_herd(payoff_boar)
-	# TAME RUNNING: its own payoff rides the deal line beneath the checked box.
+	# TAME RUNNING: its own payoff rides the checked box's own face, exactly as the offered box's does
+	# below — which is what makes the pair of assertions here a comparison of two STATES of one control
+	# rather than of two different widgets.
 	_compose_herd(payoff_boar, PELT_FRAME_HUNTERS, COMPOSE_FLOOR_UNSET, "tame")
 	await _settle()
 	await _save("herd_investment_both_products")
 	_assert_hud("Tame's payoff names BOTH products, food leading",
-		_label_text_containing(_hud._drawercompose._compose_sheet,
-			IMPROVEMENT_DEAL_MIDDLE_NEEDLE).ends_with(BOAR_TAME_PAYOFF_FACE))
+		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME)
+			.ends_with(BOAR_TAME_PAYOFF_FACE))
 	# CORRAL OFFERED: the boar is fully tamed here, so Tame is DONE and Corral is the rung on offer —
 	# its payoff quoted on the checkbox's own face, which is where a not-yet-started rung states terms.
 	var penned_boar := _investment_pair_boar_herd()
@@ -5447,15 +5556,20 @@ func _ready() -> void:
 	# "This herd is N% tamed" reason line, which only existed while a build verb was a picker rung; the
 	# meter on the checked Tame box states the SAME number, is the thing the player actually reads, and
 	# is unambiguously per-herd — so a stale captured dict shows through it just as plainly.
-	var stale_meter := HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
+	# **BUILT FROM THE METER FORMAT AND MATCHED AS A PREFIX**, because the face now carries the rung's
+	# payoff after the percent (`🐾 Taming — 4% · then 1.20 food`) and the payoff is not what this pair
+	# is about. The percent is followed by `%` in the format, so one meter's face can never be a prefix
+	# of the other's — `— 0%` does not lead `— 34%` — and the claim stays as exact as the `==` was.
+	var stale_meter := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
 		FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME),
 		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[HudConst.LABOR_POLICY_TAME]), 0]
-	var fresh_meter := HudComposeVocab.IMPROVEMENT_RUNNING_FORMAT % [
+	var fresh_meter := HudComposeVocab.IMPROVEMENT_RUNNING_BARE_FORMAT % [
 		FoodIcons.for_policy(HudConst.LABOR_POLICY_TAME),
 		String(HudComposeVocab.IMPROVEMENT_RUNNING_LABELS[HudConst.LABOR_POLICY_TAME]),
 		HudFormat.progress_percent(REOPEN_TAMING_DOMESTICATION)]
 	_assert_hud("precondition: the WILD herd's sheet quotes its own untamed meter",
-		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME) == stale_meter)
+		_improvement_face(_hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).begins_with(stale_meter))
 	# The player closes the sheet and ends the turn. Closing matters: with the sheet OPEN the snapshot's
 	# `refresh_compose_sheet` rebuilds it against `_selection.herd()` and self-heals, which is exactly
 	# why the bug reads as "one turn behind" rather than as a permanent lie.
@@ -5477,7 +5591,8 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_compose_reopen_fresh")
 	_assert_hud("the reopened sheet quotes the FRESH meter (4% tamed), not the captured 0%",
-		_improvement_face(_hud._drawercompose._compose_sheet, HudConst.LABOR_POLICY_TAME) == fresh_meter)
+		_improvement_face(_hud._drawercompose._compose_sheet,
+			HudConst.LABOR_POLICY_TAME).begins_with(fresh_meter))
 	# The HERDERS row is the second witness, and a different field entirely (`herders_needed` 0 -> 4),
 	# so the two cannot both pass off one stale-or-fresh dict by coincidence.
 	#
@@ -6121,32 +6236,31 @@ func _find_meta_label(node: Node, meta: String) -> RichTextLabel:
 ## has been COLLAPSED into a tooltip is no longer any label's text, so this tells a spelled-out
 ## prerequisite from a one-line "locked (N requirements unmet)" summary.
 ## The text of the first Label under `root` containing `needle` — "" when there is none. Lets a frame
-## assert on a value that must CHANGE (the forecast's "→ then" term) rather than merely be present.
-## The forecast's dip→payoff arrow. Deliberately NOT the bare word "then": the Cultivate policy hint
-## rendered on the same card ("…then a much higher tended yield") contains it too.
-## The unstaffed forecast's opening, in its SHORT form ("Assign foragers — +1.20 /turn").
-const UNSTAFFED_COPY_NEEDLE := "Assign foragers —"
+## assert on a value that must CHANGE (a rung's payoff face) rather than merely be present.
 ## Slack allowed when asserting a control sits INSIDE its card (`_rect_contains`): a control laid out
 ## flush against the card's inner edge can land a sub-pixel over it and is not what "clipped" means.
 const CLIP_TOLERANCE_PX := 1.0
 ## The two remedies a STANDING-but-gated Cultivate must still spell out (issue #420). Each is the tail
 ## of its `HudFloraVocab` reason, so the assertion reads the sentence the player reads and not just the
 ## rung's presence: the paused build's ease-off advice, and the finished patch's harvest advice.
-## The three IMPROVEMENT-CONTROL needles (issue #442), each pinning a phrase only ONE of the control's
-## states can produce, so a passing assertion cannot be satisfied by the frame merely rendering.
-## `IMPROVEMENT_DEAL_MIDDLE_NEEDLE` is the term the two-term "Preparing: X → then Y" line structurally
-## could not carry — the stance baseline the dip is measured against — so its presence IS the
-## three-term forecast.
+## **THE PHRASE ONLY THE DELETED DEAL LINE COULD PRODUCE.** The improvement forecast line read
+## `A → B while building → C`; its middle term restated the readout's own PER TURN headline and its
+## first term the price of building (the crew row's dip note), so only the payoff was unique to it and
+## the payoff moved onto the running control's FACE. Nothing else on either sheet says "while
+## building" — `CREW_BUILD_DIP_NOTE_FORMAT` deliberately does not — so this needle now asserts the
+## line's ABSENCE. **Absence alone is a vacuous claim** (deleting the payoff too would satisfy it), so
+## every frame asserting it also asserts the payoff ON the face, by meta.
 const IMPROVEMENT_DEAL_MIDDLE_NEEDLE := "while building"
-## The deal line's own separator, and how many of them a THREE-term line carries (`A → B → C`).
-## Counting them is what makes "all three terms" an assertion rather than a claim about one of them.
-const IMPROVEMENT_DEAL_TERM_SEPARATOR := "→"
-const IMPROVEMENT_DEAL_SEPARATORS := 2
-## The improvement DEAL line, matched on the WARN-amber middle term that only it can produce. It was
-## `"→ then"` while the forecast had two terms; the three-term line spells the same promise as
-## `A → B while building → C`, so `IMPROVEMENT_DEAL_MIDDLE_NEEDLE` is the needle and this is its alias
-## at the crop-substitution call sites, which are asking a different question of the same line.
-const FORECAST_THEN_NEEDLE := IMPROVEMENT_DEAL_MIDDLE_NEEDLE
+## The `· then` grammar the OFFERED box and the RUNNING one now share — the whole point of moving the
+## payoff onto the face is that the two states of one control read alike, so one needle serves both.
+const IMPROVEMENT_PAYOFF_NEEDLE := "· then "
+## `floor_chart_model`'s `lesson_known` for a probe reading the VERDICT rather than the aside: the
+## faction has NOT learned this source's lesson, so the teaching line is the one it always carried.
+const LESSON_NOT_YET_LEARNED := false
+## The teaching line's two halves, as the needles that tell them apart: a lesson still being earned
+## leads with the verb, and a lesson already known states only the BUILD the same multiplier paces.
+const TEACHING_LESSON_NEEDLE := "Teaching"
+const TEACHING_BUILD_NEEDLE := "Building at ×"
 
 const IMPROVEMENT_PAUSED_NEEDLE := "ease off and it resumes"
 ## A crop `_food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
