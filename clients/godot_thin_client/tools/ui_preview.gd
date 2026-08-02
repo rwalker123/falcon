@@ -2072,6 +2072,37 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_sow_done")
 
+	# State forage_field_from_wild — **A FIELD SOWN STRAIGHT FROM WILD GROUND**, which the frame above
+	# cannot be: its fixture climbs rung by rung, so a Field is also cultivated there and the retire
+	# test passes for the wrong reason. `Sow` needs no prior patch, so `cultivation_progress` is 0 and
+	# stays 0 — and the client asked "is Cultivate built?" by reading `is_cultivated`, got a truthful
+	# false, and OFFERED the lower rung on a finished Field. Reported from play. The sim has never
+	# agreed: `forage_rung_already_built` matches `Cultivate => patch.is_managed()`, so the box was
+	# live for a build the server treats as already built.
+	var wild_sown := _wild_sown_field_tile_fixture()
+	_hud._compose.reset_forage_source()
+	_hud._compose.set_forage_improvement("")
+	_show_tile(wild_sown)
+	_compose_forage(wild_sown)
+	await _settle()
+	await _save("forage_field_from_wild")
+	_assert_hud("the fixture really is the state at issue — rung 3 built on an UNcultivated patch",
+		SourceForecast.improvement_is_done(wild_sown, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+				SourceForecast.IMPROVEMENT_SOW)
+			and not bool(wild_sown["patch_is_cultivated"]))
+	_assert_hud("…so a completed Field retires Cultivate, as the sim's own rung test does",
+		SourceForecast.improvement_is_done(wild_sown, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+			SourceForecast.IMPROVEMENT_CULTIVATE))
+	_assert_hud("…and the sheet offers no Cultivate box on it",
+		not (_find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate") is CheckBox))
+	# **THE PAIR THAT STOPS THIS BECOMING "CULTIVATE IS NEVER OFFERED".** A retire test that answered
+	# true unconditionally would satisfy every line above; a wild patch with the knowledge in hand must
+	# still offer the rung.
+	_assert_hud("…while a WILD patch still offers Cultivate — the rung is retired, not deleted",
+		not SourceForecast.improvement_is_done(_food_tile_fixture(),
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
+	_hud._compose.reset_forage_source()
+
 	# ---- ALL THREE ACCOUNTS ON A FORAGE FACE (issue #426, face treatment A) -----------------------
 	# State forage_three_accounts — THE FRAME THIS PASS IS JUDGED ON. Every other forage fixture pays
 	# provisions alone, so the picker's three-account face had no frame at all and a hay meadow was
@@ -9284,6 +9315,17 @@ func _sowing_tile_fixture() -> Dictionary:
 
 ## A COMPLETED Field — the top of the plant ladder. The row must read "▦ Field" (SIGNAL), a visibly
 ## DIFFERENT THING from "🌾 Tended Patch", not a bigger percentage.
+## **A FIELD SOWN STRAIGHT FROM WILD GROUND — the state `_field_tile_fixture` cannot reach.** That one
+## climbs the ladder rung by rung (`_sowing_tile_fixture` sets `patch_is_cultivated`), so on it a
+## Field is also cultivated and the retire test passes for the wrong reason. `Sow` needs no prior
+## patch, so this is the shipped shape too: rung 3 built, rung 2's meter at ZERO and staying there.
+## It is the frame the "a completed Field offers Cultivate" defect lived in.
+func _wild_sown_field_tile_fixture() -> Dictionary:
+	var tile := _field_tile_fixture()
+	tile["patch_cultivation_progress"] = 0.0
+	tile["patch_is_cultivated"] = false
+	return tile
+
 func _field_tile_fixture() -> Dictionary:
 	var tile := _sowing_tile_fixture()
 	tile["patch_field_progress"] = 1.0

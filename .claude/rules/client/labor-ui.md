@@ -1791,7 +1791,9 @@ discard is precisely what this axis split removed.
       `This herd is 40% tamed — ◎ Tame it to finish`.
       **THE GATE RESHUFFLE (§4.3) — one knowledge per transition, and the client encodes it in
       `_hunt_policy_gates` / `_forage_policy_gates`** (mirroring the sim's `assign_labor` validation):
-      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch **and NOT already `is_cultivated`** —
+      * `Cultivate` ← `cultivation >= 1` **and** a Thriving patch **and the rung not already built —
+        which is `is_cultivated` OR `is_field`**, since Sow can skip rung 2 (see "A FIELD IS NOT
+        NECESSARILY `is_cultivated`") —
         a finished patch retires Cultivate outright (`GATE_REASON_ALREADY_TENDED_FORMAT`, "Already a
         Tended Patch — ♻ Sustain-forage it to harvest"), because re-running the verb only pays the low
         prep dip forever. The completed reason SUPERSEDES the prep prerequisites (a done patch's
@@ -2398,10 +2400,19 @@ situations, and collapsing them into a single glyph loses the more dangerous one
 **WILD IS THE ABSENCE OF A MARK.** Rung 1 is where every source starts, so glyphing it would put a
 mark on every row in the game to say nothing has happened yet.
 
-**THE HIGHER RUNG WINS, and the test order is what enforces it.** A Field is *also* `is_cultivated`
-and a penned herd is *also* fully domesticated, so `BandPanelController._work_source_rung` tests
-`is_field` before `is_cultivated` and `corralled` before `domestication` — reversed, every rung-3
-source would wear its rung-2 mark, which is the one distinction the mark exists to draw.
+**THE HIGHER RUNG WINS, and the test order is what enforces it.** A penned herd is *also* fully
+domesticated, so `BandPanelController._work_source_rung` tests `is_field` before `is_cultivated` and
+`corralled` before `domestication` — reversed, every rung-3 source would wear its rung-2 mark, which
+is the one distinction the mark exists to draw.
+
+> **A FIELD IS NOT NECESSARILY `is_cultivated`, and assuming it was cost a defect.** `Sow` needs no
+> prior patch, so a Field sown from wild ground carries `cultivation_progress == 0` forever. Ordering
+> alone therefore does not retire the lower rung — `SourceForecast.improvement_is_done` carries
+> `FORECAST_RETIRED_BY_HIGHER_RUNG` for it, mirroring the sim's `forage_rung_already_built`
+> (`Cultivate => patch.is_managed()`). Without it a completed Field OFFERED `Cultivate this patch`:
+> a live checkbox for a build the server treats as already built, which its own docstring records as
+> having "stalled forever, silently". Reported from play. The animal web needs no such term — Corral
+> demands a herd already tamed, so its rung 2 cannot be skipped.
 
 **The animal side BORROWS the `tame` verb's ◎ because it has no rung glyph of its own.**
 `DetailFormat.husbandry_label` (Domesticated) and `corral_label` (Corralled) both wear 🐄, so reusing

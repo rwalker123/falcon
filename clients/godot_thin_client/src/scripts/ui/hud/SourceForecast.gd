@@ -580,6 +580,28 @@ const FORECAST_DONE_FLAG_KEYS := {
     IMPROVEMENT_SOW: "is_field",
     IMPROVEMENT_CORRAL: "corralled",
 }
+## **A HIGHER RUNG RETIRES THE ONE BELOW IT, and on the plant web that has to be said out loud** —
+## because `Sow` skips rung 2. A Field sown from wild ground carries `cultivation_progress == 0`
+## FOREVER (the sim: *"`Sow` needs no prior patch, so a Field may stand on ground that was never
+## tended"*), so `is_cultivated` is honestly false on a finished Field. Reading the bare flag made a
+## completed Field offer `Cultivate this patch` — a live checkbox for a build the sim treats as
+## already built. Reported from play.
+##
+## **The sim already answers this correctly and this mirrors it**: `forage_rung_already_built` matches
+## `Improvement::Cultivate => patch.is_managed()`, whose own docstring says *"a Field is above rung
+## 2"* and records that a `cultivate` sent to a wild-sown Field "stalled forever, silently".
+##
+## **DO NOT reuse `source_is_managed` here, despite the sim's predicate being named `is_managed`.**
+## The word means different things on the two sides: the client's is rung-3 ONLY — the "the sim never
+## draws this source down" branch, which a Tended Patch deliberately fails — while the sim's is
+## `is_field() || is_cultivated()`. It would be right by accident on this line and wrong wherever
+## else it is read.
+##
+## The animal web needs no entry: `Corral` demands a herd already tamed, so its rung 2 cannot be
+## skipped, which is why `hunt_rung_already_built` carries no cross-rung term either.
+const FORECAST_RETIRED_BY_HIGHER_RUNG := {
+    IMPROVEMENT_CULTIVATE: [IMPROVEMENT_SOW],
+}
 # Below this a component's rate is zero — nothing to divide by. NOT the same question as "did the wire
 # carry a forecast", which `known` now answers separately (see `forecast_inputs`).
 const FORECAST_MIN_PER_WORKER := 0.0001
@@ -1948,7 +1970,12 @@ static func improvement_is_done(src: Dictionary, prefix: String, improvement: St
             >= DOMESTICATION_COMPLETE
     if not FORECAST_DONE_FLAG_KEYS.has(improvement):
         return false
-    return bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false))
+    if bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[improvement]), false)):
+        return true
+    for higher_variant in FORECAST_RETIRED_BY_HIGHER_RUNG.get(improvement, []):
+        if bool(src.get(prefix + String(FORECAST_DONE_FLAG_KEYS[String(higher_variant)]), false)):
+            return true
+    return false
 
 ## How far along this improvement's build meter is, 0..1. Clamped, so a wire value that overshoots
 ## cannot render a >100% meter. See `FORECAST_BUILD_METER_KEYS` for which meter each verb fills.
