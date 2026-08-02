@@ -167,12 +167,8 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) cohort: &'a PopulationCohort,
     pub(crate) allocation: Option<&'a LaborAllocation>,
     pub(crate) expedition: Option<&'a Expedition>,
-    pub(crate) home_position: Option<UVec2>,
     pub(crate) current_position: Option<UVec2>,
     pub(crate) is_traveling: bool,
-    pub(crate) stockpile_radius: u32,
-    pub(crate) start_position: Option<UVec2>,
-    pub(crate) inventory: &'a FactionInventory,
     pub(crate) demographics: &'a DemographicsConfig,
     pub(crate) wellbeing: &'a crate::wellbeing_config::WellbeingConfig,
     pub(crate) supply_membership: &'a SupplyNetworkMembership,
@@ -195,12 +191,8 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         cohort,
         allocation,
         expedition,
-        home_position,
         current_position,
         is_traveling,
-        stockpile_radius,
-        start_position,
-        inventory,
         demographics,
         wellbeing,
         supply_membership,
@@ -414,13 +406,11 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // labor allocation replaces them). Always empty now.
         harvest_task: None,
         scout_task: None,
-        accessible_stockpile: accessible_stockpile_state(
-            inventory,
-            cohort.faction,
-            home_position,
-            start_position,
-            stockpile_radius,
-        ),
+        // Retired proximity readout: it published the faction stockpile to bands near the faction's
+        // START position, which is not a rule the game has. The band-to-band radius that does exist
+        // is `SupplyNetworkConfig.reach_tiles`, and it equalizes `stores` rather than publishing a
+        // second store. The table stays in the schema (append-only) and always serializes absent.
+        accessible_stockpile: None,
         settlement_stage,
         food_income,
         food_consumption,
@@ -461,36 +451,6 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
         raid_radius,
     }
-}
-
-pub(crate) fn accessible_stockpile_state(
-    inventory: &FactionInventory,
-    faction: FactionId,
-    home_position: Option<UVec2>,
-    start_position: Option<UVec2>,
-    radius: u32,
-) -> Option<AccessibleStockpileState> {
-    let home = home_position?;
-    let origin = start_position?;
-    let distance = home.x.abs_diff(origin.x) + home.y.abs_diff(origin.y);
-    if (radius == 0 && distance > 0) || (radius > 0 && distance > radius) {
-        return None;
-    }
-    let stockpile = inventory.stockpile(faction)?;
-    let mut entries: Vec<AccessibleStockpileEntryState> = Vec::new();
-    for (item, quantity) in stockpile.iter() {
-        if *quantity == 0 {
-            continue;
-        }
-        entries.push(AccessibleStockpileEntryState {
-            item: item.clone(),
-            quantity: *quantity,
-        });
-    }
-    if entries.is_empty() {
-        return None;
-    }
-    Some(AccessibleStockpileState { radius, entries })
 }
 
 pub(crate) fn generation_state(profile: &GenerationProfile) -> GenerationState {
@@ -632,12 +592,8 @@ mod tests {
             cohort,
             allocation,
             expedition,
-            home_position: None,
             current_position: None,
             is_traveling: false,
-            stockpile_radius: 0,
-            start_position: None,
-            inventory: &FactionInventory::default(),
             demographics: &DemographicsConfig::builtin(),
             wellbeing: &crate::wellbeing_config::WellbeingConfig::builtin(),
             supply_membership: &SupplyNetworkMembership::default(),

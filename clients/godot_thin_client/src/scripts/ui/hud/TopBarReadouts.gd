@@ -3,15 +3,21 @@ extends RefCounted
 
 ## Owns the TOP-BAR FACTION READOUTS cluster (docs/plan_hud_decomposition.md): the Sedentarization
 ## meter, the demographics line, the discovered Wondrous-Sites strip, the intensification-ladder
-## knowledge strip, and the left-dock stockpile panel. Built on the LegendController/CommandFeedController
+## knowledge strip. Built on the LegendController/CommandFeedController
 ## idiom — HudLayer holds one as `_topbar` and delegates the snapshot `update_*` handlers to it.
 ##
 ## It holds PURE DATA + the top-bar label nodes, never `_selection`/`_band_labor`. Everything
 ## SHARED-BUT-PURE left HudLayer entirely and is called statically rather than injected or duplicated —
 ## `HudFormat.meter_bar` (the Sedentarization + knowledge strips; the herd-drawer danger bars read it
-## too), `HudFormat.progress_percent`, `HudWidgets.set_label_tooltip`, and `HudFormat.stockpile_label`
-## (whose other reader is the band drawer's accessible-stock rows). The gate helpers read this cluster's
-## knowledge back through the public `faction_knowledge()`.
+## too), `HudFormat.progress_percent` and `HudWidgets.set_label_tooltip`. The gate helpers read this
+## cluster's knowledge back through the public `faction_knowledge()`.
+##
+## THE STOCKPILE PANEL LEFT THIS CLUSTER (issue #381): the left-dock card was retired for the band
+## dock's Trade row, which is purely BAND-scoped (a per-turn rate, no faction stock), so no HUD cluster
+## reads `faction_inventory` any more and `HudLayer.update_stockpiles` is gone with it. The snapshot key
+## still has a consumer — `MapPanel.apply_update` reads it for the scenario description.
+## `HudFormat.stockpile_label` went with it: its second reader, the band drawer's accessible-stock
+## rows, was retired in the same pass (those rows printed the faction stockpile too).
 
 # --- Block-glyph meter widths (the top-bar strip's own display constants) ---
 # The Sedentarization meter width. The knowledge strip runs NARROWER because it carries four tracks on
@@ -83,8 +89,6 @@ var discoveries_row: HBoxContainer = null
 var discoveries_label: Label = null
 var discoveries_strip: HBoxContainer = null
 var intensification_label: Label = null
-var stockpile_panel: PanelContainer = null
-var stockpile_list: VBoxContainer = null
 
 # --- Collaborators ---
 var _command_feed: CommandFeedController = null
@@ -96,7 +100,6 @@ var _command_feed: CommandFeedController = null
 var _intensification_knowledge: Dictionary = {}
 # "<faction>:<track>" keys already announced to the command feed, so the nudge fires once.
 var _knowledge_announced: Dictionary = {}
-var _stockpile_totals: Dictionary = {}
 
 func _init(
 	turn_label_: Label,
@@ -107,8 +110,6 @@ func _init(
 	discoveries_label_: Label,
 	discoveries_strip_: HBoxContainer,
 	intensification_label_: Label,
-	stockpile_panel_: PanelContainer,
-	stockpile_list_: VBoxContainer,
 	command_feed: CommandFeedController,
 ) -> void:
 	turn_label = turn_label_
@@ -119,8 +120,6 @@ func _init(
 	discoveries_label = discoveries_label_
 	discoveries_strip = discoveries_strip_
 	intensification_label = intensification_label_
-	stockpile_panel = stockpile_panel_
-	stockpile_list = stockpile_list_
 	_command_feed = command_feed
 
 ## WORLD BOUNDARY (`Main._reset_per_world_state` → `HudLayer.reset_world_state`): drop every top-bar
@@ -130,8 +129,11 @@ func _init(
 ## generated world sends `intensification_knowledge: []`, and `_ingest_intensification` MERGES — an
 ## empty array writes nothing, so without this the strip kept showing the PREVIOUS game's
 ## `Herding ✔`. `_knowledge_announced` rides along because a track re-learned in the new world
-## deserves its unlock nudge again, and `_stockpile_totals` because it is a previous-VALUE cache: a
-## delta column comparing the new world's stores against the old one's is meaningless.
+## deserves its unlock nudge again.
+##
+## THE FACTION STOCKPILE IS NO LONGER RESET HERE, and no longer needs to be: it left this cluster with
+## the Stockpiles card (issue #381), and the band dock's Trade row that replaced it holds no cached
+## stock at all — it renders a per-turn rate straight off the band dict, which every snapshot restates.
 ##
 ## Sedentarization and demographics are rebuilt wholesale from each snapshot and so need no cache
 ## clearing, but they are re-rendered empty here too: they only update when their key is PRESENT, so
@@ -139,10 +141,8 @@ func _init(
 func reset_world_state() -> void:
 	_intensification_knowledge.clear()
 	_knowledge_announced.clear()
-	_stockpile_totals.clear()
 	update_intensification([])
 	update_discoveries([])
-	update_stockpiles([])
 	update_sedentarization([])
 	update_demographics([])
 
@@ -439,80 +439,4 @@ func _sedentarization_color(stage: String) -> Color:
 			return HudStyle.WARN
 		_:
 			return HudStyle.INK_DIM
-
-func update_stockpiles(faction_inventory_variant: Variant) -> void:
-	if stockpile_panel == null:
-		return
-	var faction_array: Array = faction_inventory_variant if faction_inventory_variant is Array else []
-	var next_totals: Dictionary = {}
-	for faction_entry in faction_array:
-		if not (faction_entry is Dictionary):
-			continue
-		if int(faction_entry.get("faction", -1)) != HudConst.PLAYER_FACTION_ID:
-			continue
-		var inventory_variant: Variant = faction_entry.get("inventory", [])
-		if inventory_variant is Array:
-			var inventory_entries: Array = inventory_variant
-			for stock_entry in inventory_entries:
-				if not (stock_entry is Dictionary):
-					continue
-				var item_name := String(stock_entry.get("item", "")).strip_edges()
-				if item_name == "":
-					continue
-				next_totals[item_name] = int(stock_entry.get("quantity", 0))
-		break
-	var combined_keys: Array = []
-	for key in _stockpile_totals.keys():
-		if not combined_keys.has(key):
-			combined_keys.append(key)
-	for key in next_totals.keys():
-		if not combined_keys.has(key):
-			combined_keys.append(key)
-	combined_keys.sort()
-	var panel_entries: Array = []
-	for key in combined_keys:
-		var amount := int(next_totals.get(key, 0))
-		var previous := int(_stockpile_totals.get(key, 0))
-		if amount == 0 and previous == 0:
-			continue
-		var delta := float(amount - previous)
-		panel_entries.append({
-			"label": HudFormat.stockpile_label(key),
-			"amount": amount,
-			"delta": delta,
-		})
-	_stockpile_totals = next_totals
-	if stockpile_list == null or stockpile_panel == null:
-		return
-	for child in stockpile_list.get_children():
-		child.queue_free()
-	if panel_entries.is_empty():
-		stockpile_panel.visible = false
-		return
-	stockpile_panel.visible = true
-	for entry in panel_entries:
-		stockpile_list.add_child(_build_stockpile_row(entry))
-
-func _build_stockpile_row(entry: Dictionary) -> Control:
-	var row := HBoxContainer.new()
-	row.custom_minimum_size = Vector2(0, 24)
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var label := Label.new()
-	label.text = String(entry.get("label", "Stockpile"))
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
-	var amount_label := Label.new()
-	amount_label.text = str(entry.get("amount", 0))
-	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	amount_label.custom_minimum_size = Vector2(60, 0)
-	row.add_child(amount_label)
-	var delta := float(entry.get("delta", 0.0))
-	if not is_equal_approx(delta, 0.0):
-		var delta_label := Label.new()
-		delta_label.text = ("+%.0f" % delta) if delta > 0.0 else ("%.0f" % delta)
-		delta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		delta_label.custom_minimum_size = Vector2(60, 0)
-		delta_label.modulate = Color(0.6, 0.9, 0.6) if delta > 0.0 else Color(0.95, 0.6, 0.5)
-		row.add_child(delta_label)
-	return row
 

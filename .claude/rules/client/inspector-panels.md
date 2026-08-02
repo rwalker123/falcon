@@ -31,18 +31,17 @@ paths:
 | `Inspector.gd` | Inspector coordinator: streaming fan-out, capability gating, typography; hosts per-tab panels |
 | `ui/inspector/PowerPanel.gd` | Power tab panel — reference for the tab-panel extraction contract (`apply_update`/`reset`) |
 | `ui/inspector/CrisisPanel.gd` | Crisis tab panel — adds command hooks (`set_command_hooks`) and `apply_typography` to the contract |
-| `ui/inspector/KnowledgePanel.gd` | Knowledge tab panel — adds `set_command_connected` (connection-gating), `ingest_log_entry` (log-path telemetry), and `append_events` (Trade→Knowledge feed) |
-| `ui/inspector/TradePanel.gd` | Trade tab panel — `set_map_view` (overlay), owns the Map-tab overlay toggle, and emits `knowledge_events_produced` (the coordinator forwards it to KnowledgePanel — panels stay decoupled) |
+| `ui/inspector/KnowledgePanel.gd` | Knowledge tab panel — adds `set_command_connected` (connection-gating) and `ingest_log_entry` (log-path telemetry), which since issue #381 also parses the `trade.telemetry ` line itself. **`append_events` and the Trade→Knowledge signal seam are GONE** — the Trade tab was retired and this panel was that batch's only consumer, so the parse moved to the one place already being fed every log entry |
 | `ui/inspector/SentimentPanel.gd` | Sentiment tab panel — display; axis bias is coordinator-owned and pushed in via `set_axis_bias` |
 | `ui/inspector/VictoryPanel.gd` | Victory tab panel — display + one-shot "victory achieved" log via `set_log_hook` |
 | `ui/inspector/FaunaPanel.gd` | Fauna tab panel — **display-only** herd list/detail + estimated hunt yields. The follow-herd command it used to emit was retired with the single-task fauna commands (Early-Game Labor slice 3a; hunting is now HUD labor allocation), so it issues no command; `set_command_connected` is a contract no-op |
 | `ui/inspector/GreatDiscoveriesPanel.gd` | GreatDiscoveries tab panel — large, self-contained (ledger + progress + definition catalog + details); capability-gated (`CAP_MEGAPROJECTS`), no command/log/MapView coupling |
-| `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge/Trade); fed synthetic lines via `append_entry`. **Ingest is per entry, render is once per poll.** `_render()` rebuilds the whole `LOG_ENTRY_LIMIT` buffer into one BBCode string and re-shapes it (`set_text` + `get_line_count()`), so calling it from `_record` re-shaped the buffer once per ingested line — ~145 times per turn at `RUST_LOG=info`, measured at **1.9–2.2 s of blocked main thread per turn** (client-wide: `_apply_snapshot` was only 11–31 ms of it). It now renders once in `_poll_stream`'s `if updated:` block beside `_update_sparkline()`; `append_entry` renders its own single line. The INGEST stays per entry — a dropped log line is an accumulator loss, not a re-renderable one |
+| `ui/inspector/LogsPanel.gd` | Logs tab panel — owns the LogStreamClient + polling + filters + tick sparkline; emits `log_entry_received` (coordinator dispatches to Knowledge); fed synthetic lines via `append_entry`. **Ingest is per entry, render is once per poll.** `_render()` rebuilds the whole `LOG_ENTRY_LIMIT` buffer into one BBCode string and re-shapes it (`set_text` + `get_line_count()`), so calling it from `_record` re-shaped the buffer once per ingested line — ~145 times per turn at `RUST_LOG=info`, measured at **1.9–2.2 s of blocked main thread per turn** (client-wide: `_apply_snapshot` was only 11–31 ms of it). It now renders once in `_poll_stream`'s `if updated:` block beside `_update_sparkline()`; `append_entry` renders its own single line. The INGEST stays per entry — a dropped log line is an accumulator loss, not a re-renderable one |
 | `ui/inspector/InfluencerPanel.gd` | Influencers tab panel — owns the influencer roster; capability-gated (`CAP_INDUSTRY_T1`/`T2`) via `set_available`; exposes `aggregate_resonance()` (coordinator feeds it into the Culture tab) and `get_influencers()` (coordinator's still-inline influencer command controls read the roster back). The influencer *command* controls stay coordinator-owned |
 | `ui/inspector/CorruptionPanel.gd` | Corruption tab panel — display-only ledger (reputation modifier, audit capacity, incidents); not capability-gated |
 | `ui/inspector/CommandsPanel.gd` | Commands tab panel — the designer/debug console (axis-bias, influencer/channel/spawn, corruption inject, heat, config reload, autoplay row, command status/log; the scenario scout/follow rows were removed with the retired single-task commands). Outbound: issues verbs via `set_command_hooks` and logs via the sink; the command transport + autoplay timer + turn-sending stay in the coordinator. Couplings are coordinator-mediated: emits `axis_bias_apply_requested` (coordinator owns `_axis_bias`, pushes back via `set_axis_bias`), `autoplay_toggled`/`autoplay_interval_changed` (coordinator drives the timer, mirrors via `set_autoplay_active`); fed the roster via `set_influencer_roster` and gated via `set_command_connected`. NOT in `_tab_panels` (no snapshot inputs) |
 | `ui/inspector/OverlayPanel.gd` | "Map Overlays" section (nested inside the Map tab, attached to `OverlaySection`) — owns the overlay-channel selector (built at runtime), channel metadata, and the culture/military readouts; drives `MapView.set_overlay_channel`. Fed via `set_map_view` + `ingest(overlay_dict, terrain_tag_labels)` (the coordinator re-homes the palette → Terrain and crisis_annotations → Crisis side-routes that share the `overlays` key, and passes Terrain's tag labels since the terrain-tags channel depends on them). NOT in `_tab_panels` |
-| `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` via `set_map_view`. The nested Map-Overlays section keeps its own `OverlayPanel` script |
+| `ui/inspector/MapPanel.gd` | Map tab panel — map-size controls, start-profile (scenario) controls, and the highlight-rivers toggle (now a shader uniform — see Edge Blending → Rivers). Snapshot-driven (in `_tab_panels`): `apply_update` consumes `grid`/`campaign_profiles`/`campaign_label`/`faction_inventory`. Issues `map_size`/`start_profile` via `set_command_hooks`, gated by `set_command_connected`, and drives `MapView.set_highlight_rivers` **and the trade overlay** via `set_map_view` — the `%LogisticsOverlayToggle` always lived physically under this tab and became this panel's when the Trade tab was retired (issue #381); the sync pushes **only `set_trade_overlay_enabled`** — the links come from the snapshot's `trade_links` section via `MapView.display_snapshot`, and since the renderer rebuilds its list from whatever array it is handed, a panel that pushed links too would be a competing source of truth. The per-link selection highlight went with the retired tab, which owned the `ItemList` that chose one. The nested Map-Overlays section keeps its own `OverlayPanel` script |
 | `ui/inspector/CulturePanel.gd` | Culture tab panel — culture layers, divergence list + detail, tension readout; drives `MapView.set_culture_layer_highlight`. Snapshot-driven (in `_tab_panels`): `apply_update` ingests `culture_layers`/`culture_layer_updates`/`culture_layer_removed`/`culture_tensions`, but rendering is driven by the coordinator via `render(resonance)` — the influencer-resonance "pushes" line is coordinator-mediated (`InfluencerPanel.aggregate_resonance()` passed in). `set_map_view` (highlight) + `set_log_hook` (new tensions log to the Logs feed) |
 | `ui/inspector/TerrainPanel.gd` | Terrain tab panel — the largest: biome list + drill-down, tile list/detail, the runtime terrain-highlight dropdown, and the **Export Map** button (the tile Scout button was retired with the single-task `scout` command). Snapshot-driven (in `_tab_panels`): `apply_update` ingests `tiles`/`tile_updates`/`tile_removed`/`food_modules` and renders. Owns the inbound MapView hex-selection (`focus_tile_from_map`, coordinator forwards) and drives `set_terrain_highlight` / `relative_height_at` via `set_map_view`. The biome palette + tag labels arrive on the `overlays` key (coordinator routes them in via `set_terrain_palette`/`set_terrain_tag_labels`; `get_terrain_tag_labels()` feeds OverlayPanel). Export sends via `set_command_hooks`, gated by `set_command_connected` |
 ## A hidden Inspector does not render — the contract on `_apply_update`
@@ -131,7 +130,7 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Military | Readiness heatmaps, cohort summaries |
 | Power | Grid metrics, node list, incident feed |
 | Crisis | Dashboard gauges, modifier tray, event log |
-| Knowledge | Ledger overview, timeline graph, espionage mission queue |
+| Knowledge | Ledger overview, timeline graph, espionage mission queue, trade-diffusion events |
 | Logs | Streaming tracing feed, level/target/text filters, duration sparkline |
 | Commands | Turn/rollback/autoplay, axis bias, spawn utilities, debug hooks |
 
@@ -179,10 +178,13 @@ Optional contract hooks a panel adds only if it needs them:
 - `ingest_log_entry(entry: Dictionary)` — for tabs fed by parsed *log messages*
   rather than snapshot keys (`KnowledgePanel` knowledge/espionage/counter-intel
   telemetry). The coordinator's log loop calls it per entry.
-- Public feeder methods for cross-panel data flow (`KnowledgePanel.append_events`,
-  fed by Trade's diffusion records). The two panels never reference each other —
-  `TradePanel` emits `knowledge_events_produced(records)` and the coordinator
-  forwards the batch to `KnowledgePanel.append_events` (wired in `_ready`).
+- Public feeder methods for cross-panel data flow. **The one instance of this is retired**:
+  `KnowledgePanel.append_events` was fed by Trade's diffusion records via a
+  `knowledge_events_produced` signal the coordinator forwarded. Issue #381 removed the Trade tab,
+  and since Knowledge was the batch's only consumer AND already received every log entry through
+  `ingest_log_entry`, the parse moved there — deleting the signal, the forward and the feeder.
+  Prefer that shape: if the would-be producer and consumer are both already fed the same raw
+  stream, parse at the consumer instead of adding a seam.
 - Coordinator-owned state pushed into a display panel: `SentimentPanel.set_axis_bias`
   — axis bias belongs to the Commands axis controls (which mutate it optimistically),
   so the coordinator pushes it to the Sentiment view at both the snapshot and the
@@ -200,9 +202,7 @@ conflict (see the `crisis_overlay` vs `overlays.crisis_annotations` precedence n
 **Reference implementations:** `ui/inspector/PowerPanel.gd` (Power — pure
 snapshot/render), `ui/inspector/CrisisPanel.gd` (Crisis — command hooks +
 typography), `ui/inspector/KnowledgePanel.gd` (Knowledge — the fullest: connection
-gating, log-path ingestion, and the Trade→Knowledge event feed), and
-`ui/inspector/TradePanel.gd` (Trade — map-overlay collaborator + the emit side of
-the Knowledge↔Trade seam). **The decomposition is complete** — every inspector tab is
+gating and log-path ingestion). **The decomposition is complete** — every inspector tab is
 now its own panel (see the key-scripts table). `Inspector.gd` (≈880 lines, down from
 ~6,500) is purely the coordinator: streaming fan-out, the command hub + autoplay timer,
 capability gating, typography, MapView attach, and the cross-panel seams (faction

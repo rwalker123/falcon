@@ -132,7 +132,7 @@ also clears `_campaign_label_signature` / `_victory_analytics_signature`, which 
 from each snapshot. Three shapes qualify — it **merges** (the knowledge strip above); it is **keyed by
 an id and erases only on ABSENCE** (`herd_trails`, `culture_layer_map`); or it was **pushed IN from
 another surface** keyed by an id the new world reuses (`BandOverlayRenderer._labor_pending` from the
-HUD, `AnnotationRenderer._selected_trade_entity` from the Trade tab, MapView's culture highlight from
+HUD, `AnnotationRenderer._selected_trade_entity` (pushed by the Trade tab until issue #381 retired it; the overlay toggle moved to `MapPanel` and no longer pushes a selection), MapView's culture highlight from
 the Culture tab, and the selection triplet `selected_unit_id` / `selected_herd_id` / `selected_tile` +
 `cycle_index`). Everything `display_snapshot` clears-and-refills — the `tile_*` lookups, `food_sites`,
 `discovered_sites`, `forage_patch_lookup`, `harvest_sites`/`scout_sites`, `units`/`herds`, the overlay

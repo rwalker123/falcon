@@ -18,7 +18,7 @@ use core_sim::{
     MoraleCause, PopulationCohort, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
     SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
     StartProfileKnowledgeTagsHandle, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY,
+    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 
 fn spawn_world() -> App {
@@ -751,9 +751,9 @@ fn non_sustain_forage_trips_overdraw_while_sustain_does_not() {
 /// stock, so it sells more.
 ///
 /// Asserted as an **ordering that tracks the drawdown**, not a ratio against a lever: the trade
-/// ordering must match the biomass ordering exactly, which is a statement a bonus would break.
-/// (The unrounded rate-level statement lives in `forage_basket_reweight.rs`, which can read below the
-/// integer stockpile; this reads whole trade goods, so it uses a fat basket to clear the rounding.)
+/// ordering must match the biomass ordering exactly, which is a statement a bonus would break. It
+/// reads the **band's own `TRADE_GOODS` store** — the fixed-point account every ongoing harvest
+/// credits — so the compared numbers are the unrounded ones the sim really banks.
 #[test]
 fn a_deeper_floor_sells_more_because_it_takes_more() {
     /// A crew large enough that the escapement ceiling is always the binding term. With a small
@@ -780,14 +780,15 @@ fn a_deeper_floor_sells_more_because_it_takes_more() {
             forage_alloc_policy(pos, CEILING_BOUND_CREW, floor),
         );
         app.world.run_system_once(advance_labor_allocation);
-        // Read the *unrounded* trade off the yield row, not the integer stockpile: the point is the
-        // proportionality, and integer rounding would hide it on a staple basket.
+        // Read the band's own fixed-point store: the point is the proportionality, and the retired
+        // integer faction stockpile would have rounded it away on a staple basket.
         let trade = app
             .world
-            .get::<LaborAllocation>(band)
-            .expect("band allocation")
-            .last_yields[0]
-            .trade;
+            .get::<PopulationCohort>(band)
+            .expect("the foraging band still exists")
+            .stores
+            .get(TRADE_GOODS)
+            .to_f32();
         let after = app
             .world
             .resource::<ForageRegistry>()

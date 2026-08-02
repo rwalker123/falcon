@@ -1625,9 +1625,11 @@ func _draw_terrain_direct(radius: float, origin: Vector2, viewport_size: Vector2
 
 
 
-## The three Trade-tab overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these
-## THREE NAMES can move: TradePanel.gd reaches every one of them via has_method/call, so a rename
-## would silently do nothing rather than error.
+## The trade-overlay pushes. THIN PASS-THROUGHS to AnnotationRenderer, and none of these THREE NAMES
+## can move: `MapPanel.gd` reaches them via has_method/call, so a rename would silently do nothing
+## rather than error. (They were the retired Trade tab's until issue #381; `set_trade_overlay_selection`
+## has NO caller now — the per-link selection went with that tab — but it stays because the overlay's
+## selection state is still real and the seam is reflective either way.)
 func update_trade_overlay(trade_links: Array, enabled: bool = _annotations.is_trade_overlay_enabled()) -> void:
 	_annotations.update_trade_overlay(trade_links, enabled)
 	queue_redraw()
@@ -2323,9 +2325,6 @@ func _rebuild_unit_markers(snapshot: Dictionary) -> void:
 				marker["dest_x"] = int(scout.get("target_x", -1))
 				marker["dest_y"] = int(scout.get("target_y", -1))
 				marker["travel_task_kind"] = "scout"
-		var stockpile_variant: Variant = entry.get("accessible_stockpile", {})
-		if stockpile_variant is Dictionary:
-			marker["accessible_stockpile"] = (stockpile_variant as Dictionary).duplicate(true)
 		if bool(marker.get("is_expedition", false)) \
 				and String(marker.get("expedition_phase", "")) == EXPEDITION_PHASE_AWAITING:
 			_has_awaiting_expedition = true

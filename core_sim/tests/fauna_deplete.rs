@@ -19,7 +19,7 @@ use core_sim::{
     LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort, SimulationConfig,
     SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
     StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    WellbeingConfigHandle,
+    WellbeingConfigHandle, TRADE_GOODS,
 };
 
 /// Whole-worker head-count assigned to the hunt — large enough that the per-worker biomass cap
@@ -197,13 +197,16 @@ fn biomass_ratio(app: &App, id: &str) -> Option<f32> {
         .map(|h| h.biomass / h.carrying_capacity)
 }
 
-fn trade_goods(app: &App, faction: FactionId) -> i64 {
+/// Trade goods sitting in ONE BAND's own store. Every ongoing harvest credits `TRADE_GOODS` on the
+/// producing cohort's `LocalStore` (the `FOOD`/`FODDER` treatment) — `FactionInventory` now only ever
+/// holds the start profile's opening grant, so reading it here would report `0` forever.
+fn trade_goods(app: &App, band: bevy::prelude::Entity) -> f32 {
     app.world
-        .resource::<FactionInventory>()
-        .stockpile(faction)
-        .and_then(|m| m.get("trade_goods"))
-        .copied()
-        .unwrap_or(0)
+        .get::<PopulationCohort>(band)
+        .expect("the hunting band still exists")
+        .stores
+        .get(TRADE_GOODS)
+        .to_f32()
 }
 
 fn has_hunt_assignment(app: &App, band: bevy::prelude::Entity) -> bool {
@@ -268,8 +271,8 @@ fn deplete_and_surplus_decline_faster_than_sustain_holds() {
             h.body_mass = COMPARISON_BODY_MASS;
         }
     }
-    spawn_hunter(&mut app, &deplete_herd, 0.15, FactionId(0));
-    spawn_hunter(&mut app, &surplus_herd, 0.3, FactionId(1));
+    let deplete_band = spawn_hunter(&mut app, &deplete_herd, 0.15, FactionId(0));
+    let surplus_band = spawn_hunter(&mut app, &surplus_herd, 0.3, FactionId(1));
     spawn_hunter(&mut app, &sustain_herd, 0.5, FactionId(2));
 
     run_turns(&mut app, 10);
@@ -292,8 +295,8 @@ fn deplete_and_surplus_decline_faster_than_sustain_holds() {
         "Sustain holds the herd at/above its K/2 operating point: {sustain}"
     );
     // Commercial harvest: bigger take + boosted trade rate → far more trade goods.
-    let deplete_trade = trade_goods(&app, FactionId(0));
-    let surplus_trade = trade_goods(&app, FactionId(1));
+    let deplete_trade = trade_goods(&app, deplete_band);
+    let surplus_trade = trade_goods(&app, surplus_band);
     assert!(
         deplete_trade > surplus_trade,
         "deplete should out-earn surplus on trade: deplete {deplete_trade} vs surplus {surplus_trade}"

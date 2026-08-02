@@ -878,9 +878,9 @@ impl HuntYield {
 }
 
 /// **What one take actually pays, in every account.** The return of [`HuntYield::apply`] — food
-/// (fully fractional, banked on the larder's `Scalar` grid), trade goods (rounded to an integer
-/// faction stockpile by the caller), and fodder (the plant web's animal feed, `FODDER` on a band's
-/// `LocalStore`).
+/// (fully fractional, banked on the larder's `Scalar` grid), trade goods (`TRADE_GOODS` on the same
+/// store), and fodder (the plant web's animal feed, `FODDER` on a band's `LocalStore`). All three land
+/// on the producing band's `LocalStore`.
 ///
 /// **Three accounts, not two, since #426.** A harvest of `B` biomass pays `B × yield.*` into all
 /// three, and `forage_take` already credits all three — so a two-component forecast could not pin

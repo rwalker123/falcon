@@ -65,7 +65,6 @@ const PANEL_CONSUMED_KEYS := [
 	"travel_target_x",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"travel_target_y",     # travel-destination map draw (BandOverlayRenderer._draw_travel_destination)
 	"activity",            # roster activity glyph
-	"accessible_stockpile", # BandDetailLines accessible-stockpile rows
 	"is_expedition",       # expedition panel gating + distinct marker
 	"expedition_mission",  # expedition panel mission line
 	"expedition_phase",    # expedition marker awaiting state + panel phase line
@@ -173,7 +172,6 @@ const FIXTURE_ENTRY := {
 		{"kind": "scout", "workers": 3},
 	],
 	"stores": {"provisions": 120.0},
-	"accessible_stockpile": {"item": "provisions", "qty": 40.0},
 	# Expedition discriminators (distinct non-default values so a dropped copy shows up).
 	"is_expedition": true,
 	"expedition_mission": "scout",
