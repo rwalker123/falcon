@@ -345,7 +345,13 @@ const YIELD_ACCOUNT_ROUTE_CAMP := "camp"
 const YIELD_ACCOUNT_ROUTE_STOCKPILE := "stockpile"
 const YIELD_ACCOUNT_ROUTES := {
     YIELD_ACCOUNT_FOOD: YIELD_ACCOUNT_ROUTE_CAMP,
-    YIELD_ACCOUNT_TRADE: YIELD_ACCOUNT_ROUTE_STOCKPILE,
+    # **TRADE LANDS IN THE CAMP TOO since #381 moved it band-local.** It read `-> stockpile` because
+    # it once credited the FACTION's `FactionInventory` while food and fodder credited the band —
+    # that was the whole reason this table had two values. Every take path now writes
+    # `cohort.stores.add(TRADE_GOODS, ..)`, the expedition's fold-back included, so the old suffix
+    # was simply false. The three routes being identical makes the suffix informationally empty; see
+    # the note on `YIELD_ACCOUNT_ROUTES` about whether it should survive at all.
+    YIELD_ACCOUNT_TRADE: YIELD_ACCOUNT_ROUTE_CAMP,
     YIELD_ACCOUNT_FODDER: YIELD_ACCOUNT_ROUTE_CAMP,
 }
 

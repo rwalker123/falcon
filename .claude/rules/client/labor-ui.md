@@ -468,7 +468,8 @@ for either finds the other, measured at seven false failures.
 
 **The route is a property of the ACCOUNT, written down once** (`SourceForecast.YIELD_ACCOUNT_ROUTES`):
 provisions feed the working band and fodder feeds the pens it keeps, so both land in the CAMP, while
-trade goods are banked to the faction-wide stockpile. There is no role branch anywhere — the vector
+trade goods are banked to the band's own store as well, since #381 moved them band-local. There is
+no role branch anywhere — the vector
 does the routing.
 
 **THE RENDER-ONLY-WHERE-THE-VECTOR-PAYS RULE SURVIVED THE RESIZE, because the row set is not composed
