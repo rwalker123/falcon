@@ -760,29 +760,38 @@ func _build_improvement_control(kind: String, source: Dictionary, prefix: String
     # axis is still visibly present and still identifiable. What is lost is the payoff terms as
     # motivation ("here is what it would pay"); that is deliberate — a number you cannot act on is
     # noise at the moment you are told you cannot act, and the rung's tooltip still carries its hint.
-    # **A KNOWLEDGE gate renders NOTHING on this sheet, and that is not the same as hiding it.** The
-    # aside two rows up already states the lesson live and quantified ("Teaching cultivation at ×1.38
-    # — a higher floor teaches faster"), and the reason's remedy — *forage a wild patch to learn it* —
-    # names the very work this sheet is composing. So the line told the player to do what they were in
-    # the middle of doing, under a sentence that had already said it better. Discovery of the rung is
-    # not lost: the aside names the lesson while it is being earned, and the checkbox appears the turn
-    # the knowledge completes.
+    # **A KNOWLEDGE gate renders NOTHING ON ITS OWN, and that is not the same as hiding it.** When it
+    # is the SOLE reason, the aside two rows up already states the lesson live and quantified
+    # ("Teaching cultivation at ×1.38 — a higher floor teaches faster") and the reason's remedy —
+    # *forage a wild patch to learn it* — names the very work this sheet is composing, so the line told
+    # the player to do what they were in the middle of doing, under a sentence that had said it
+    # better. The control does not render either: dropping the reason alone would leave an unchecked,
+    # live, clickable box (with its crop picker beneath it on the plant web) for a build the sim
+    # rejects outright — strictly worse than the sentence removed. Suppressing the reason and
+    # suppressing the control are ONE change, not a change plus a consequence.
     #
-    # **Only the knowledge reason goes.** A SOURCE gate is a fact the player cannot learn anywhere
-    # else on this sheet and cannot fix by working — this ground will never take seed, this patch is
-    # Stressed, this animal will never be tamed — so those still render, and still lead the control.
-    # `RungGates.knowledge_gate_unmet` is the same `track < KNOWLEDGE_COMPLETE` test the gate builders
-    # make, asked structurally rather than by matching the reason's words.
-    if not reasons.is_empty() and RungGates.knowledge_gate_unmet(rung, _player_knowledge()):
-        reasons = reasons.slice(1)
-        # **AND WITH NOTHING LEFT, THE CONTROL DOES NOT RENDER AT ALL — falling through here would
-        # OFFER the rung.** Dropping the reason without this return leaves an unchecked, live,
-        # clickable box (with its crop picker beneath it on the plant web) for a build the sim will
-        # reject outright: strictly worse than the sentence that was removed, and invisible to a
-        # reader of the slice above. Suppressing the reason and suppressing the control are ONE
-        # change, not a change plus a consequence.
-        if reasons.is_empty():
-            return
+    # **BUT IT IS DROPPED ONLY WHEN IT IS ALONE, because deleting it beside a SOURCE gate changes what
+    # the survivor MEANS.** Reported from play: a tended patch at Seed Selection 77% on ground with no
+    # fresh water rendered only *"This ground is rich but too dry to farm"* — a lone reason reads as
+    # THE reason, so the sheet claimed the knowledge was in hand and the water was all that stood in
+    # the way. That is the message for a player who HAS Seed Selection.
+    #
+    # The suppression rested on a premise that is conditional: the aside states the lesson only while
+    # the crew is genuinely working the source (`teaching_note`'s own `taking` test). On that frame
+    # the floor sat at the stock, the crew took nothing, and the aside read "Teaching nothing" — so
+    # the reason was deleted in favour of a sentence that then said nothing. Nothing is saved by
+    # suppressing it beside a source gate anyway: the control renders regardless, so the choice is
+    # only WHICH fact to show, and the one being deleted is the actionable one.
+    #
+    # Both then render — the knowledge reason leads (it is `reasons[0]`, the near-term one a player
+    # can move on) and the source gate keeps the note treatment below. They are different decisions:
+    # *you do not know how yet* means wait, *this ground will never take seed* means move on, and
+    # collapsing them to one loses whichever the player needed. `RungGates.knowledge_gate_unmet` is
+    # the same `track < KNOWLEDGE_COMPLETE` test the gate builders make, asked structurally rather
+    # than by matching the reason's words; the builders append the knowledge reason FIRST on both
+    # webs, so `size() == 1` under an unmet gate is exactly "the knowledge reason, alone".
+    if reasons.size() == 1 and RungGates.knowledge_gate_unmet(rung, _player_knowledge()):
+        return
     if not reasons.is_empty():
         target.add_child(HudWidgets.build_improvement_control(rung,
             HudWidgets.IMPROVEMENT_STATE_GATED,

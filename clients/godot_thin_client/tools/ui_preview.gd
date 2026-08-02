@@ -1697,12 +1697,19 @@ func _ready() -> void:
 	# so BOTH kinds of reason are live at once: one fixed by PRACTICE (work a Tended Patch), one only
 	# by MOVING somewhere else. No other rung on either ladder has the latter.
 	#
-	# **THAT PAIR IS WHY THIS FRAME PINS THE SUPPRESSION RULE, not merely the survival of it.** The
-	# compose sheet renders the SOURCE reason and drops the KNOWLEDGE one (the aside states that lesson
-	# live and quantified two rows up, and its remedy names the very work this sheet is composing), so
-	# a frame carrying only a source gate could not tell "the knowledge reason was suppressed" from
-	# "there was no knowledge gate to begin with". Here there provably was one — it leads the gate
-	# builder's array — and the control still leads with the ground's refusal.
+	# **THAT PAIR IS WHY THIS FRAME PINS THE SUPPRESSION RULE, not merely the survival of it** — and it
+	# is the frame that was asserting the DEFECT. The sheet used to delete the knowledge reason
+	# unconditionally and render the source one alone, on the premise that the aside states that lesson
+	# live two rows up. Reported from play: a lone reason reads as THE reason, so a tended patch at
+	# Seed Selection 77% on dry ground claimed the knowledge was in hand and the water was all that
+	# stood in the way — the message for a player who HAS Seed Selection. The premise is conditional
+	# too: the aside names the lesson only while the crew is actually working the source, and on that
+	# frame it read "Teaching nothing".
+	#
+	# The knowledge reason is now dropped ONLY when it is the sole one. Here BOTH render: the knowledge
+	# reason leads (the near-term one a player can move), the ground's refusal keeps the note slot
+	# beneath. They are different decisions — *you do not know how yet* means wait, *this ground will
+	# never take seed* means move on.
 	_hud.update_intensification([{
 		"faction": 0, "cultivation": 1.0, "herding": 1.0,
 		"seed_selection": SOW_LOCKED_SEED_SELECTION, "penning": 0.0,
@@ -1724,20 +1731,20 @@ func _ready() -> void:
 	var sow_box := _find_improvement_control(_hud._drawercompose._compose_sheet, "sow")
 	_assert_hud("a SOURCE-gated improvement is SHOWN, never hidden — the rung stays discoverable",
 		sow_box != null and not (sow_box is CheckBox))
-	_assert_hud("…with that unmet prerequisite as the control's OWN text, not an offer above it",
+	var sow_knowledge_reason := HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
+		HudFormat.progress_percent(SOW_LOCKED_SEED_SELECTION),
+		FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]
+	_assert_hud("…with the KNOWLEDGE prerequisite leading as the control's OWN text — the one a player can move",
 		_improvement_face(_hud._drawercompose._compose_sheet, SourceForecast.IMPROVEMENT_SOW)
 			== HudComposeVocab.IMPROVEMENT_GATED_FORMAT % [
-				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_SOW),
-				String(HudFloraVocab.SOW_REFUSAL_REASONS[SOW_LOCKED_REFUSAL_KEY])])
-	# THE OTHER HALF OF THE SAME CLAIM, and it is not a restatement: the knowledge reason is FIRST in
-	# the gate builder's array, so the assertion above passing already proves it was not the LEAD — but
-	# it says nothing about the note slot beneath, where a second reason renders. Asked of the whole
-	# sheet, because "suppressed" means it appears NOWHERE, not merely not on the lead line.
-	_assert_hud("…and the KNOWLEDGE reason it would otherwise lead with appears nowhere on the sheet",
-		not _has_label_containing(_hud._drawercompose._compose_sheet,
-			HudFloraVocab.GATE_REASON_SEED_SELECTION_KNOWLEDGE_FORMAT % [
-				HudFormat.progress_percent(SOW_LOCKED_SEED_SELECTION),
-				FoodIcons.for_floor_zone(SourceForecast.FLOOR_ZONE_PEAK)]))
+				FoodIcons.for_policy(SourceForecast.IMPROVEMENT_SOW), sow_knowledge_reason])
+	# **AND THE SOURCE GATE SURVIVES BENEATH IT — asserted as the PAIR, because either alone is the
+	# bug.** Only the lead line would mean the ground's permanent refusal had been swallowed; only the
+	# presence of the knowledge reason somewhere would be satisfied by the old lead-with-the-source
+	# rendering. Asked of the whole sheet, since a reason "renders" wherever it lands.
+	_assert_hud("…and the ground's own refusal still renders beneath it, not swallowed by the lead",
+		_has_label_containing(_hud._drawercompose._compose_sheet,
+			String(HudFloraVocab.SOW_REFUSAL_REASONS[SOW_LOCKED_REFUSAL_KEY])))
 	# …and the rung BELOW it reads as the state it left behind, not as a second greyed option.
 	_assert_hud("…above a DONE label for the rung already built",
 		_find_improvement_control(_hud._drawercompose._compose_sheet, "cultivate") is Label)
