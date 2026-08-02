@@ -6,10 +6,10 @@
 slices: `FollowPolicy` and its `Eradicate` variant no longer exist, and `ExpeditionMission::Hunt`
 carries a `floor: f32`. The field's own doc comment already hands denial off to this doc.
 
-**This doc specifies two things, and recommends they land as two issues.** §1–§3 are a change to the
-**general hunt model** that stands on its own merits and affects every hunt in the game; §4–§6 are
-the denial mission, which rides on it. Landing them together would put a board-wide balance change
-and a new mission in one review.
+**This doc specifies two things that land under one issue, in order.** §1–§3 are a change to the
+**general hunt model** that affects every hunt in the game; §4–§6 are the denial mission, which rides
+on it. They are separate slices (§7) because the balance change wants its own PR to be reviewable,
+not because they are separate pieces of work.
 
 ---
 
@@ -69,29 +69,59 @@ one.
 > **Kill rate is the ceiling. A hunt additionally clamps to carry. Denial does not.**
 
 ```text
-kill_capacity  = workers × hunt.per_worker_kill_biomass
-                         × equipment
-                         × engagement(wariness)
-                         / toughness(defense)
+kill_capacity  = workers × hunt.per_worker_kill_capacity × equipment
+                         × engagement(wariness) / toughness(defense)
 
 carry_capacity = workers × hunt.per_worker_biomass_capacity × build_dip      // unchanged
 
-bound   = if denial { kill_capacity }
-          else      { min(kill_capacity, carry_capacity, carry_room) }
+affordable = floor( ceiling / body_mass )                                    // the herd's spare stock
+killable   = floor( kill_capacity / (body_mass + hunt.stalk_overhead) )      // NEW
+carryable  = floor( min(carry_capacity, carry_room) / body_mass )            // today's bound
 
-killed  = min( floor(ceiling / body_mass), floor(bound / body_mass) )
+killed  = if denial { min(affordable, killable) }
+          else      { min(affordable, killable, carryable) }
+
 carried = min( killed × body_mass, carry_capacity, carry_room )
 wasted  = killed × body_mass − carried
 ```
 
 `ceiling` is unchanged: `hunt_escapement_ceiling(floor, B, K)` = `max(0, B − floor·K)`. The escapement
-model from #451 is untouched — this adds a second bound beside it, it does not replace it.
+model from #451 is untouched — this adds a bound beside it, it does not replace it.
 
 **`carried` keeps its existing formula in both missions.** The mission flag changes exactly one
-thing: whether carry participates in the *kill* bound. Denial still banks whatever the party can haul
+thing: whether `carryable` participates in the *kill*. Denial still banks whatever the party can haul
 on the way home — a rounding error against what it killed, which is the point.
 
-### 1.1 The one-animal floor dissolves rather than moving
+### 1.1 What the kill capacity is, and why it is denominated in biomass
+
+`hunt.per_worker_kill_capacity` is **the biomass of animal one hunter can bring down per turn** — the
+killing twin of `hunt.per_worker_biomass_capacity`, which is the biomass one hunter can *carry* per
+turn (`40` today). Same unit on purpose: the two are compared, so they have to be commensurable.
+
+It is a **global rate**, and it is not wariness. Wariness is the per-species modifier applied to it.
+The full chain reads:
+
+| term | scope | says |
+|---|---|---|
+| `workers` | the party | how many hunters |
+| `hunt.per_worker_kill_capacity` | global config | what one hunter brings down per turn, baseline |
+| `equipment` | the band (TOE) | spears or bare hands |
+| `engagement(wariness)` | **per species** | whether it lets you close |
+| `toughness(defense)` | **per species** | how hard it is once you have |
+
+Denominating the budget in biomass is the short way of writing *"killing effort scales with the
+animal's size"* — a mammoth is 20 deer of work because it is 13 deer of animal and fights harder.
+Written out as an animal count it would be `kills_per_worker / difficulty(body_mass, defense)` with
+`difficulty` linear in mass, which is the same expression with more moving parts.
+
+**`hunt.stalk_overhead` is what stops that from breaking at the small end.** Effort proportional to
+mass alone says a party that takes one 800-biomass mammoth can take **2,600 rabbits** in the same
+turn, which is absurd: you have to find, stalk and kill each animal individually no matter how small
+it is. The overhead is that fixed per-animal cost, expressed in the same biomass currency, so every
+animal costs `body_mass + stalk_overhead` against the budget. At `5` it is invisible on a mammoth
+(`805` vs `800`) and dominant on a rabbit (`5.3` vs `0.3`), which is exactly the right shape.
+
+### 1.2 The one-animal floor dissolves rather than moving
 
 `max(1, carryable)` exists so a party too small to haul a whole animal still takes one and wastes the
 rest. Once carry is no longer a kill bound, that special case has nothing left to protect against and
@@ -101,7 +131,7 @@ Its replacement is a real behaviour change, and a wanted one: a party whose *kil
 one `body_mass` kills **zero**. Two hunters with bare hands cannot bring down a mammoth, and the
 model should say so instead of granting them one out of arithmetic politeness.
 
-### 1.2 The kill bound is opt-in per caller
+### 1.3 The kill bound is opt-in per caller
 
 `quantise_animal_take` is shared by the resident band's Hunt, the scout's opportunistic replenish,
 the expedition, the forecast, **and the pen's corral-tend branch**. A penned animal is not being
@@ -209,22 +239,24 @@ the seam is the deliverable, so the real model drops in without touching callers
 ### 2.4 Calibration
 
 The constants are playtest dials; what must hold is the **shape**. Illustrative, at
-`per_worker_kill_biomass = 100`, `defense_weight = 0.08`, equipped `= 1.0`, unequipped `= 0.4`,
-against today's `per_worker_biomass_capacity = 40`:
+`per_worker_kill_capacity = 120`, `stalk_overhead = 5`, `defense_weight = 0.08`, equipped `= 1.0`,
+unequipped `= 0.4`, against today's `per_worker_biomass_capacity = 40`:
 
-| case | kill bound | carry bound | binds | today |
+| case | killable | carryable | binds | today |
 |---|---|---|---|---|
-| 20 hunters, mammoth (w 0.10, def 12, 800) | 918 → **1** | 800 → 1 | either | 1 |
-| 5 hunters, wild elk (w 0.50, def 3, 40) | 202 → 5 | 200 → **5** | carry | 5 |
-| 5 hunters, deer (w 0.65, def 1, 60) | 162 → **2** | 200 → 3 | **kill** | 3 |
-| 5 hunters, gazelle (w 0.85, def 1, 4) | 69 → **17** | 200 → 50 | **kill** | 50 |
-| 20 hunters, mammoth, **unequipped** | 367 → **0** | 800 → 1 | **kill** | 1 |
+| 20 hunters, mammoth (w 0.10, def 12, 800) | 1102 → **1** | 800 → 1 | either | 1 |
+| 5 hunters, wild elk (w 0.50, def 3, 40) | 242 → 5 | 200 → **5** | carry | 5 |
+| 5 hunters, deer (w 0.65, def 1, 60) | 194 → **2** | 200 → 3 | **kill** | 3 |
+| 5 hunters, gazelle (w 0.85, def 1, 4) | 83 → **9** | 200 → 50 | **kill** | 50 |
+| 5 hunters, rabbit (w 0.75, no combat, 0.3) | 150 → **28** | 200 → 666 | **kill** | 666 |
+| 20 hunters, mammoth, **unequipped** | 441 → **0** | 800 → 1 | **kill** | 1 |
 
-Read the last three rows: a skittish herd now yields materially less than the same crew could haul,
-which is the general-hunting effect this change exists for, and a party without spears cannot take a
+Read the bottom four rows: a skittish herd now yields materially less than the same crew could haul,
+which is the general-hunting effect this change exists for; small game is bounded by how many animals
+you can stalk rather than by the absurd carry number; and a party without spears cannot take a
 mammoth at all.
 
-**The dial has a real trade-off in it, and it is the design.** `per_worker_kill_biomass` sets how
+**The dial has a real trade-off in it, and it is the design.** `per_worker_kill_capacity` sets how
 often kill binds instead of carry. Push it high and normal hunting is always carry-bound (wariness
 stops mattering); push it low and denial is barely faster than harvesting. The interesting band is
 where **which bound binds depends on the species** — and the resulting property is a good one:
@@ -295,11 +327,13 @@ is the best one, with no new mechanism required:
 > hunting kit in proportion to the slaughter — and in M1 that kit is **irreplaceable**. You spend
 > your own ability to feed yourself to remove someone else's.
 
-**This imposes one requirement on the TOE arc: durability consumption must scale with kills, not
-with turns elapsed.** Turn-based wear would make denial free. The TOE doc's own wording — "wears down
-with use" — is already the right reading; this pins it.
+**This does not gate anything.** Denial ships against the equipment seam at the unequipped tier; its
+costs until TOE lands are travel, exposure and the forgone food, which is a playable mission. The kit
+cost is a *consequence to compose* when slice 5 arrives, not a precondition to wait for.
 
-Until slice 5, denial's only costs are travel, exposure and the forgone food.
+The one thing to carry into that conversation: the payoff only appears if durability wears with
+**kills** rather than with turns elapsed, since a turn-based clock charges a raid the same as an idle
+march. The TOE doc's own wording — "wears down with use" — already reads that way.
 
 ---
 
@@ -337,24 +371,23 @@ Until slice 5, denial's only costs are travel, exposure and the forgone food.
 
 ## 7. Slices
 
-**Issue A — the kill rate** (the general hunt-model change; lands first, on its own).
+One issue (#456), five slices, each its own PR. Slices 1–3 are the general hunt model and are
+independently reviewable as a balance change; 4–5 are the mission.
 
-1. **The species terms.** `SpeciesDef::wariness` + all twenty values; `hunt.per_worker_kill_biomass`,
-   `hunt.defense_weight`, and the `equipment` seam constant at the unequipped tier.
+1. **The species terms.** `SpeciesDef::wariness` + all twenty values;
+   `hunt.per_worker_kill_capacity`, `hunt.stalk_overhead`, `hunt.defense_weight`, and the `equipment`
+   seam constant at the unequipped tier.
 2. **The bound.** `quantise_animal_take` takes a kill capacity; `max(1, carryable)` comes out; the pen
    branch passes infinity. `hunt_take` and `expedition_take_biomass` compute it; the forecast follows
    through the same helper so `forecast == actual` holds per component.
 3. **The wire + client.** `SourceYield` / `HuntTripForecast` report which bound binds; the readout
    says so.
-
-**Issue B — the denial mission** (rides on A).
-
-4. **The mission.** `ExpeditionMission::Deny`, wire key, command, checkpoint, `hunt_floor() = 0`.
-   `bound` drops carry. `DenialForecast::turns_to_collapse`.
+4. **The mission.** `ExpeditionMission::Deny`, wire key, command, checkpoint, `hunt_floor() = 0`,
+   `carryable` dropped from the kill. `DenialForecast::turns_to_collapse`.
 5. **Client.** Third verb at launch; the collapse verdict line; waste readout.
 
-**Elsewhere — TOE slice 5** fills the equipment seam and lights up denial's kit cost. Neither issue
-blocks on it.
+**TOE slice 5 is elsewhere and blocks nothing** — it fills the equipment seam and lights up denial's
+kit cost (§4.2) whenever it lands.
 
 ---
 
@@ -371,7 +404,10 @@ blocks on it.
   the regression the shared quantiser makes easy to cause.
 - **A party with kill capacity below one `body_mass` kills zero**, and the herd is unchanged. Pinned
   explicitly, because it is the removed `max(1, …)`.
-- **The §2.4 table is a test**, not just prose — the five rows pinned against the shipped config.
+- **The §2.4 table is a test**, not just prose — all six rows pinned against the shipped config.
+- **Small game is stalk-bound, not carry-bound.** A rabbit take is bounded by `stalk_overhead` and
+  lands in the tens, never the hundreds; a party's rabbit and mammoth takes must not differ by their
+  mass ratio. This is the assertion that would have caught the model before `stalk_overhead` existed.
 - **Denial reaches collapse; hunting does not.** A placid herd under a denial raid crosses
   `collapse_fraction` in bounded turns and then declines without further pressure; the same herd under
   any floor above `collapse_fraction` never does, however long it is hunted.
@@ -384,7 +420,9 @@ blocks on it.
 
 | # | Question | Notes |
 |---|---|---|
-| 1 | **`per_worker_kill_biomass`'s value.** | §2.4 sets the trade-off it controls. `100` is a starting point calibrated to leave mid-roster species carry-bound; it wants a live pass. |
+| 1 | **`per_worker_kill_capacity`'s value.** | §2.4 sets the trade-off it controls. `120` is a starting point calibrated to leave mid-roster species carry-bound; it wants a live pass. |
+| 1a | **Is killing effort really linear in `body_mass`?** | §1.1's budget says a 13×-heavier animal is 13× the work, corrected only by `stalk_overhead` at the small end. If the big end also needs bending (a mammoth is not 2,600 rabbits of work in *either* direction) that is an exponent on `body_mass`, one more config lever and no structural change. |
+| 1b | **Rename `per_worker_biomass_capacity` → `per_worker_carry_capacity`?** | It has meant "carry" since it was written (`SpeciesDef::body_mass` documents it as such) but was the only per-worker rate, so the bare name was unambiguous. With a kill twin beside it, it no longer is. Cheap rename, entirely internal. |
 | 2 | **Does `engagement` interact with party size?** | Realistically a bigger party is easier to detect, making throughput sub-linear in workers for wary species. Specified as linear; the nonlinearity is a config lever if wanted, and the client already cannot re-derive the take. |
 | 3 | **Does a collapsing herd tell anyone?** | §5 settles that denial names no target. But a herd crossing `collapse_fraction` is visible ecology — whether the *other* users of that herd are told, and how, is unresolved. |
 | 4 | **The wariness values themselves.** | §2.1's table is a proposal. Ordering is the load-bearing part; the numbers are dials. |
