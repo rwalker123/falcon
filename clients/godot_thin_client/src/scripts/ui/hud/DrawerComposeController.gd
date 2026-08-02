@@ -1094,9 +1094,6 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, _crew: int) -> void:
             var lines: Array[Dictionary] = []
-            var idle_note := String(live.get("idle_note", ""))
-            if idle_note != "":
-                lines.append(HudWidgets.readout_aside_line(idle_note))
             lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
                 float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind)))
             # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what

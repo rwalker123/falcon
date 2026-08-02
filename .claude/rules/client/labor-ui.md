@@ -179,7 +179,7 @@ the floor watched the verdict move while the food and trade numbers *they were d
 frozen until release. Reported from play. `_register_live(hosts, host, model, workers, fill)` now takes
 any container plus the `fill(host, model, workers)` that refills it, and `_refresh_floor_live` walks
 the list, so the rule is stated once: **anything whose value depends on the floor belongs in the set —
-the yields, both crew targets, the verdict, the idle-crew note and the teaching line — and anything
+the yields, both crew targets, the verdict and the teaching line — and anything
 that does not must stay out, or the drag pays for work it does not need.** Adding a reading is one
 call, not a new key plus a new type test plus a new branch.
 
@@ -338,7 +338,16 @@ there, so no call site can take the identity by omission.
 
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
-The aside's second line states the **live learning rate**, and it is the only thing in the client that
+**THE PEAK ZONE STATES NO HINT** (`HudComposeVocab.FLOOR_ZONE_HINTS`, an empty entry renders no line).
+It read *"The food peak — the most food this source can pay, turn after turn, forever"*, which is
+precisely what the yields row's `after` reading states as a number once each account says
+`now → after`. The other four zones survive because each says something no number on the sheet does,
+and **`strip`'s is load-bearing**: it is the only place the sheet says floor 0 is irreversible on the
+animal web, and the reaching verdict drops its own *"then holds it"* clause there on the understanding
+that this line carries the consequence. Assert the pair, never the negative alone — emptying the whole
+table would pass a lone "the peak says nothing".
+
+The aside's other line states the **live learning rate**, and it is the only thing in the client that
 makes slice 3 visible to a player: `intensification::learn_multiplier` is `floor / the food peak`, so
 the number moves as the floor is dragged and the chart's gradient rail only gestures at it.
 
@@ -464,7 +473,7 @@ for either finds the other, measured at seven false failures.
 |---|---|---|
 | **yields** | what this crew brings home at this floor, now and once holding | a header (`PER TURN · NOW → AFTER`) over 15px tabular numbers + 10px uppercase account names (`2.26 → 0.42  FOOD`) |
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
-| **aside** | the idle-crew note and the floor's teaching line | 11px `INK_FAINT` under a dashed rule |
+| **aside** | the floor's zone hint and its teaching line | 11px `INK_FAINT` under a dashed rule |
 
 **A reading states its unit and NO destination.** All three accounts land in the working band's own
 stores — provisions feed the band, fodder feeds the pens it keeps, and #381 moved trade goods
@@ -673,14 +682,17 @@ stock further down every turn instead of settling above the floor, which is stri
 quotient's crew achieves. Frame + assertion: `forage_build_dip` (`7 clear it now` under `max 7 workers
 useful here`, the press asserted to land the stepper on 7).
 
-Workers above the *hold* number contribute nothing once the source is holding at its floor, so the
-readout says how many and stops (`IDLE_CREW_NOTE_FORMAT`) — the same number the cap floors on, so
-"idle" means *above the hold crew* on both surfaces. No auto-release, no notification:
-at-the-floor is the most **reversible** condition in the model — drop the floor, or let the season
-move the hold number, and they are wanted again — and this repo only rewrites an assignment for
-PERMANENT conditions (an out-of-range lapse, a completed build retiring its verb). The note renders
-only once the projection actually reaches the floor; a crew still drawing the source down is using
-every hand it has.
+Workers above the *hold* number contribute nothing once the source is holding at its floor, and they
+are **still never released**: at-the-floor is the most **reversible** condition in the model — drop
+the floor, or let the season move the hold number, and they are wanted again — and this repo only
+rewrites an assignment for PERMANENT conditions (an out-of-range lapse, a completed build retiring
+its verb).
+
+**The panel no longer NARRATES it.** `2 of your 3 foragers go idle once it is holding — only 1 can
+carry what grows back` was arithmetic over two numbers a centimetre above it: the stepper's count and
+the *hold it after* pill's. That pill is also a BUTTON that sets the count, so the remedy was never a
+sentence away either. The cap still floors on the same number, so "idle" still means *above the hold
+crew* wherever it is computed.
 
 ### ONE HINT RULE, NOT TWELVE ROWS
 

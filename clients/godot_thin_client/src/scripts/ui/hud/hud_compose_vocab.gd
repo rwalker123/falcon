@@ -26,10 +26,18 @@ const START_ORDER_PENDING_VERB := "Starting"
 # `%s` in the STRIP row takes the web's own consequence (`FLOOR_STRIP_CONSEQUENCE`), because "a patch
 # reseeds from bare ground" and "the herd dies out, for you and for everyone else" are not the same
 # warning and must never be blurred into one. Composed by `HudFormat.floor_hint`.
+#
+# **THE PEAK ZONE STATES NO HINT, because the readout now states it as a NUMBER.** It read "the most
+# food this source can pay, turn after turn, forever" — which is precisely what the yields row's
+# `after` reading is, once each account began stating `now → after`. An empty entry renders no line;
+# the other four survive because each says something no number on the sheet does. `strip`'s is the
+# load-bearing one: it is the only statement that floor 0 is IRREVERSIBLE on the animal web, and the
+# reaching verdict drops its own "then holds it" clause there on the understanding that this line
+# carries the consequence.
 const FLOOR_ZONE_HINTS := {
 	"strip": "Take everything — the crew leaves nothing standing. %s",
 	"drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",
-	"peak": "The food peak — the most food this source can pay, turn after turn, forever.",
+	"peak": "",
 	"learning": "Above the food peak — you give up food to leave more standing, and your people learn faster from what they work.",
 	"untouched": "Nothing is taken — the whole stock stays standing. A crew with nothing to work learns nothing and builds nothing.",
 }

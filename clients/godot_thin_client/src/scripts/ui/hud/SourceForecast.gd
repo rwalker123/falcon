@@ -1331,11 +1331,13 @@ const VERDICT_SETTLES_END := "."
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
-# §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE REPORTED, NEVER RELEASED. At-the-floor is the most
-# reversible condition in the model (drop the floor, or let the season move the hold number, and they
-# are wanted again), and this repo only rewrites an assignment for PERMANENT conditions. So: say how
-# many, and stop. No auto-release, no notification.
-const IDLE_CREW_NOTE_FORMAT := "%d of your %d %s go idle once it is holding — only %d can carry what grows back."
+# §7.2 — WORKERS ABOVE THE HOLD NUMBER ARE STILL NEVER RELEASED. At-the-floor is the most reversible
+# condition in the model (drop the floor, or let the season move the hold number, and they are wanted
+# again), and this repo only rewrites an assignment for PERMANENT conditions. What changed is that the
+# panel no longer NARRATES it: `4 of your 6 foragers go idle once it is holding — only 2 can carry
+# what grows back` was arithmetic over two numbers already on screen a centimetre above it, the
+# stepper's count and the `hold it after` pill's. The pill is also a BUTTON — clicking it sets the
+# count — so the remedy was never a sentence away.
 # THE ASIDE'S SECOND LINE — the teaching RATE, which is what `learn_multiplier` buys and the chart's
 # gradient rail only gestures at. Cyan (a live state) whenever the crew is actually taking something
 # at a floor above zero; otherwise it names WHICH of the sim's two non-degeneracy ends the player is
@@ -1480,11 +1482,6 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry)
     var hold := crew_to_hold(samples, floor_value, carry, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
     var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry)
-    var idle_note := ""
-    # The note is only true once the crew is actually HOLDING the source at its floor — a crew still
-    # drawing it down is using every hand it has.
-    if hold > 0 and workers > hold and int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
-        idle_note = IDLE_CREW_NOTE_FORMAT % [workers - hold, workers, crew_noun, hold]
     # Bound once and passed BOTH to the verdict and out on the model: the flag draws from the model
     # and the verdict is composed here, so a second read of the same two keys is how the sheet ends up
     # naming one threshold in two units. See `stock_face`.
@@ -1527,7 +1524,6 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # this sheet read `0 hold it after` beside "then holds it — taking only what grows back".
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
             crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0),
-        "idle_note": idle_note,
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
         # by every live drag, and this model IS what a drag recomposes. `improvement` is the box the

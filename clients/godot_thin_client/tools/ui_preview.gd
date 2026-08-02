@@ -2070,6 +2070,18 @@ func _ready() -> void:
 	_assert_hud("…and a row with no transition is given a header with no arrow to key",
 		_yields_header(_hud._drawercompose._compose_sheet).contains("PER TURN")
 			and not _yields_header(_hud._drawercompose._compose_sheet).contains("→"))
+	# **THE PEAK ZONE STATES NO HINT** — this sheet sits at `FLOOR_FOOD_PEAK`, and the line it used to
+	# render ("the most food this source can pay, turn after turn, forever") is what the yields row's
+	# `after` reading now states as a number. Paired with the STRIP entry below rather than asserted
+	# alone: emptying the whole table would pass a lone negative, and `strip`'s line is the only place
+	# the sheet says floor 0 is irreversible on the animal web — the reaching verdict drops its own
+	# "then holds it" clause there on the understanding that this line carries the consequence.
+	_assert_hud("the peak zone adds no hint — its sentence is a number on the row now",
+		HudFormat.floor_hint(SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.LABOR_KIND_FORAGE) == ""
+			and not _readout_aside_text(_hud._drawercompose._compose_sheet).contains("turn after turn"))
+	_assert_hud("…while the STRIP zone still warns, on the web whose floor 0 is permanent",
+		HudFormat.floor_hint(SourceForecast.FLOOR_MIN, SourceForecast.LABOR_KIND_HUNT)
+			.contains("gone for good"))
 
 	# State forage_three_accounts_overdraw — THE SAME meadow at floor 0 with a crew big enough to bite.
 	#
@@ -2218,6 +2230,18 @@ func _ready() -> void:
 	_assert_hud("…and the held rate is the LOWER of the two, on every account it states",
 		_yield_now_after(burst_text, "FOOD")[1] < _yield_now_after(burst_text, "FOOD")[0]
 			and _yield_now_after(burst_text, "FODDER")[1] < _yield_now_after(burst_text, "FODDER")[0])
+	# **THE ASIDE NO LONGER NARRATES WHAT THE NUMBERS ABOVE IT ALREADY SAY.** Two lines went:
+	#   • the idle-crew note (`2 of your 3 foragers go idle once it is holding — only 1 can carry what
+	#     grows back`) was arithmetic over the stepper's count and the `hold it after` pill, both a
+	#     centimetre above it — and that pill is a BUTTON that sets the count, so the remedy was never
+	#     a sentence away either. THIS frame is the one that carried it (3 foragers, hold crew 1), so
+	#     it is the frame that can testify it is gone.
+	#   • the PEAK zone's hint, asserted below where a peak-floor sheet is on screen.
+	# The idle needle is the whole rendered clause, not the bare count: `1` appears in the crew targets
+	# and in the stepper, so a digit search would pass with the line restored.
+	_assert_hud("the aside does not narrate the idle count the crew row already states twice",
+		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD) == 1
+			and not _readout_aside_text(_hud._drawercompose._compose_sheet).contains("go idle"))
 	# **THE UNIT IS SAID ONCE, IN THE HEADER, AND THE HEADER KEYS THE ARROW.** Three `/TURN`s were the
 	# widest thing on the row and it could not afford them once each account stated two numbers; the
 	# header also stops `→` being a glyph the player has to guess. `NOW → AFTER` is the crew buttons'
