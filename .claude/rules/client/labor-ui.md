@@ -2379,6 +2379,28 @@ suppressed).
 Every surface for a sown Field said *forage* / *Foragers* — the wrong verb, not merely an awkward
 one. Reported from play.
 
+**THE ANIMAL WEB HAS THE SAME RULE AND ITS COMMIT VERB WAS THE LAST THING NOT FOLLOWING IT.**
+`_herd_crew_noun` has always resolved Hunters/Herders — a penned or fully-tamed herd is kept, not
+hunted — and the eyebrow, the stepper and the drawer's `Assign … ▸` all read it. The commit button
+did not: it was hard-coded to `ASSIGN_LOCAL_HUNT_BUTTON`, so an `ASSIGN HERDERS` sheet over a
+`Herders` stepper committed with **`Hunt Here`**. Reported from play. `HUNT_ASSIGN_BUTTONS` keys the
+verb off that already-resolved label, the twin of `PLANT_ASSIGN_BUTTONS` and of the `HUNT_NOOP_HINTS`
+table that was already keyed that way — so on both webs the stepper's noun, the button's verb and the
+dead-button hint's singular are three readings of ONE answer.
+
+The verb is derived from the noun identically on both: Foragers→Forage, Tenders→Tend, Hunters→`Hunt
+Here`, Herders→`Herd Here`. `Here` carries the local-vs-expedition distinction against the expedition
+branch's `Send …`, which is why it appears on the animal verbs and on neither plant one.
+
+> **The two webs differ on the IN-FLIGHT case, deliberately.** The plant resolver reads done-flags
+> only — a crew mid-Sow is still foraging the wild stand, which is what the build dip charges them
+> for — while `is_managed_hunt_source` counts a composed Corral, because keepers building a pen have
+> already stopped hunting. Same rule, different answer, because the builds differ in what they do to
+> the crew's work.
+>
+> Assert both webs as PAIRS. A verb hard-coded the other way satisfies every managed-source assertion
+> on its own; the wild-herd line is what makes the managed one mean something.
+
 **THE LADDER CONFIG IS THE AUTHORITY, and it already drew the distinction.** Each plant rung declares
 a `harvest` primitive in `core_sim/src/data/intensification_ladder.json`: `wild` → `worker_take`,
 `tended` → `worker_tend`, `field` → `worker_tend`. A managed source is never gather-drawn (the sim's

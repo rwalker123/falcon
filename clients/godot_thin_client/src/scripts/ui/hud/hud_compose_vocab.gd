@@ -447,6 +447,18 @@ const SEND_HUNT_EXPEDITION_HINT := "Detach a party to follow a migratory herd, t
 # distinction — the only thing "Local" was contributing — against the expedition branch's `Send …`.
 const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 
+# **THE HUNT WEB'S SECOND COMMIT VERB, and its absence was a bug.** `_herd_crew_noun` has always
+# resolved Hunters/Herders off the standing rung, and the header, the stepper and the drawer's open
+# button all followed it — but the commit button was hard-coded, so an `ASSIGN HERDERS` sheet over a
+# `Herders` stepper committed with `Hunt Here`. Reported from play. A penned or fully-tamed herd is
+# not hunted; its crew keep it.
+#
+# The verb is derived from the crew noun the same way on both webs — Foragers→Forage, Tenders→Tend,
+# Hunters→Hunt Here, Herders→Herd Here — so a noun can never acquire a verb that does not belong to
+# it. `Here` carries the local-vs-expedition distinction against the expedition branch's `Send …`,
+# which is why it survives on this web and appears on neither plant verb.
+const ASSIGN_LOCAL_HERD_BUTTON := "Herd Here"
+
 # Range-aware forage assign: foraging is stationary gathering (NO expedition fallback), so a tile
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
@@ -454,9 +466,11 @@ const FORAGE_ASSIGN_BUTTON := "Forage"
 # The plant web's SECOND commit verb, for a crew that is not gathering. A managed source — a Tended
 # Patch or a Field — is never gather-drawn (the sim's `is_managed()` branch), and the ladder config
 # says so in its own vocabulary: the `wild` rung's harvest primitive is `worker_take` while `tended`
-# and `field` both declare `worker_tend`. So the button follows the rung the source STANDS on, exactly
-# as the hunt web's `Hunt Here` follows its crew noun. See `PLANT_ASSIGN_BUTTONS`, which keys the pair
-# off the ONE resolved noun so a header saying `Tenders` can never sit over a button saying `Forage`.
+# and `field` both declare `worker_tend`. So the button follows the rung the source STANDS on. See
+# `PLANT_ASSIGN_BUTTONS`, which keys the pair off the ONE resolved noun so a header saying `Tenders`
+# can never sit over a button saying `Forage`. (This comment once said the hunt web already worked
+# that way. It did not — only its noun did, and its button was hard-coded until `HUNT_ASSIGN_BUTTONS`
+# below; the animal web now keys its verb the same way, from the same kind of table.)
 const TEND_ASSIGN_BUTTON := "Tend"
 
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
@@ -475,6 +489,14 @@ const UNASSIGN_BUTTON := "Unassign"
 # The hunt web's twin, per CREW NOUN — a wild herd is staffed by hunters and a managed one by herders
 # (`HERD_CREW_LABEL`), so the dead button's explanation names whoever the stepper above it just asked
 # for. Keyed by the crew label the sheet already resolved, so the two can never disagree.
+# The COMMIT VERB per hunt-web crew noun — the twin of `PLANT_ASSIGN_BUTTONS`, keyed the same way off
+# the label `_herd_crew_noun` has already resolved, so the stepper's noun, the button's verb and the
+# hint's singular below are three readings of ONE answer.
+const HUNT_ASSIGN_BUTTONS := {
+    HUNT_CREW_LABEL: ASSIGN_LOCAL_HUNT_BUTTON,
+    HERD_CREW_LABEL: ASSIGN_LOCAL_HERD_BUTTON,
+}
+
 const HUNT_NOOP_HINTS := {
     HUNT_CREW_LABEL: "Nobody assigned yet — send at least one hunter.",
     HERD_CREW_LABEL: "Nobody assigned yet — send at least one herder.",

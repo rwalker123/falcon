@@ -1438,8 +1438,13 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         if is_noop and cap_note == "":
             target.add_child(HudWidgets.alloc_hint_label(
                 String(HudComposeVocab.HUNT_NOOP_HINTS.get(crew_label, ""))))
+        # THE VERB FOLLOWS THE CREW NOUN, off the SAME `crew_label` the stepper and the noop hint
+        # above already read. It was hard-coded to `Hunt Here`, so an `ASSIGN HERDERS` sheet over a
+        # `Herders` stepper committed with `Hunt Here` — reported from play. A penned or fully-tamed
+        # herd is not hunted.
         assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
-            else HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON
+            else String(HudComposeVocab.HUNT_ASSIGN_BUTTONS.get(crew_label,
+                HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON))
         HudStyle.apply_button(assign_btn, "primary")
         assign_btn.disabled = is_noop
     if is_expedition:

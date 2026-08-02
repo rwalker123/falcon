@@ -2910,6 +2910,14 @@ func _ready() -> void:
 	_compose_herd(_herd_fixture())
 	await _settle()
 	await _save("herd_verbs")
+	# THE PAIR. Without a wild herd asserted here, "commits with the herders' verb" is satisfied by a
+	# button hard-coded the OTHER way — the same bug with the sides swapped.
+	_assert_hud("a WILD herd is still staffed by HUNTERS and still commits `Hunt Here`",
+		_crew_row_label(_hud._drawercompose._compose_sheet)
+				== HudComposeVocab.HUNT_CREW_LABEL.to_upper()
+			and _compose_commit_button(_hud._drawercompose._compose_sheet) != null
+			and _compose_commit_button(_hud._drawercompose._compose_sheet).text
+				== HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON)
 	# ASSERT the HARMLESS case: the base Red Deer carries no combat components (all default 0), so its
 	# component rows all read empty — and crucially NO "Harmless"/"Deadly" verdict word appears (words
 	# don't survive the roster). The rows are the raw components, Elevation-style.
@@ -3241,6 +3249,18 @@ func _ready() -> void:
 	_compose_herd(_corral_ready_herd_fixture(), COMPOSE_COUNT_UNSET, COMPOSE_FLOOR_UNSET, "corral")
 	await _settle()
 	await _save("herd_corral")
+	# **THE COMMIT VERB FOLLOWS THE CREW NOUN ON THIS WEB TOO, and it did not.** `_herd_crew_noun` has
+	# always resolved Hunters/Herders off the standing rung, and the eyebrow, the stepper and the
+	# drawer's open button all followed — but the commit button was HARD-CODED, so an `ASSIGN HERDERS`
+	# sheet over a `Herders` stepper committed with `Hunt Here`. Reported from play. Asserted with the
+	# stepper beside it, because the claim is that the two agree, not merely that the button changed.
+	_assert_hud("a managed herd's sheet is staffed by HERDERS",
+		_crew_row_label(_hud._drawercompose._compose_sheet)
+			== HudComposeVocab.HERD_CREW_LABEL.to_upper())
+	_assert_hud("…and commits with their own verb, not the hunt one",
+		_compose_commit_button(_hud._drawercompose._compose_sheet) != null
+			and _compose_commit_button(_hud._drawercompose._compose_sheet).text
+				== HudComposeVocab.ASSIGN_LOCAL_HERD_BUTTON)
 
 	# State 3d-corral-under-herded — the HERDER-DEFICIT cap fix. A composing-Corral herd needs 2 herders
 	# every turn to hold its tameness, but the Corral rung's take/prepare max-useful is 1. The compose
