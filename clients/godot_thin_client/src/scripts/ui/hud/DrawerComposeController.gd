@@ -1045,18 +1045,11 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, _crew: int) -> void:
             var lines: Array[Dictionary] = []
-            # **THE PEAK ZONE'S HINT IS DROPPED HERE AND ONLY HERE.** "The most food this source can
-            # pay, turn after turn, forever" is precisely what the yields row above states as a
-            # NUMBER, once each account began reading `now → after` — so on THIS surface it is the
-            # same fact twice. It was briefly dropped from `FLOOR_ZONE_HINTS` instead, which silenced
-            # it on all five consumers for a reason true of one: the EXPEDITION sheet has no readout
-            # box, its branch keeps the floor hint precisely because of that, and a raid was left
-            # showing three floor presets with nothing anywhere saying what they meant. The other
-            # four zones stay — none of them is restated by a number.
-            var aside_floor := float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
-            if SourceForecast.floor_zone(aside_floor) != SourceForecast.FLOOR_ZONE_PEAK:
-                lines.append(HudWidgets.readout_aside_line(
-                    HudFormat.floor_hint(aside_floor, labor_kind)))
+            # The floor's own teaching line, whatever zone it is in. A zone with nothing to say
+            # answers `""` in `FLOOR_ZONE_HINTS` and `build_readout_aside` drops an empty line, so
+            # there is no zone to test for here.
+            lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
+                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind)))
             # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what
             # `learn_multiplier` actually buys — the chart's gradient rail only gestures at it — so
             # it wears `SIGNAL` while the crew is genuinely earning it, and the aside's own faint ink
@@ -1086,6 +1079,73 @@ func _fill_yields_host(host: Container, model: Dictionary, labor_kind: String) -
         note,
         HudStyle.WARN if overdraws else HudStyle.HEALTHY,
         String(model[YIELD_MODEL_WASTE])))
+
+## **THE EXPEDITION'S READOUT — the same box, the same three registers, a different question.** The
+## branch used to answer with one wrapped bbcode sentence carrying five facts (the animals, the
+## turns, the split, the food, the trade and the waste), beside a local sheet that laid the same
+## kinds of fact out in a bounded well. Two sheets on one panel, reading nothing alike.
+##
+## What must NOT carry over is the local readout's PER-TURN framing: the header
+## (`EXPEDITION_TRIP_ROW_HEADER`), the absent `now → after` on every row, and a verdict about the
+## trip's length rather than about which of the crew and the floor binds — all three because a raid
+## is one bounded errand, not a rate a resident crew settles into.
+##
+## Only a DELIVERING trip reaches here (`SourceForecast.hunt_trip_delivers`); the refused states keep
+## their sentence, an empty box being worse than the line it replaced.
+func _mount_trip_readout(parent: VBoxContainer, trip: Dictionary, quarry: String,
+        floor_value: float) -> void:
+    var column := HudWidgets.build_readout_box(parent)
+    # The waste rides the yields row's own `waste` slot, exactly as the local hunt's does — a kill the
+    # party could not haul is the animal web's concern on both branches, and it is amber either way.
+    var waste_pct := float(trip.get("waste_pct", 0.0))
+    column.add_child(HudWidgets.build_yields_row(
+        _trip_yield_rows(trip, quarry),
+        HudStyle.INK,
+        "",
+        HudStyle.HEALTHY,
+        SourceForecast.HUNT_WASTE_NOTE_FORMAT % int(round(waste_pct * 100.0)) \
+            if waste_pct > 0.0 else "",
+        SourceForecast.EXPEDITION_TRIP_ROW_HEADER))
+    column.add_child(HudWidgets.build_verdict_line(SourceForecast.hunt_trip_verdict(trip)))
+    # THE ASIDE IS THE FLOOR HINT AND NOTHING ELSE. The local readout's other line — the live teaching
+    # rate — has no counterpart here: an expedition accrues no husbandry (the gap
+    # `FLOOR_LEARNING_HINT_EXPEDITION` already names in the learning zone), so a teaching line would
+    # quote a multiplier this party never earns. A zone with nothing to say renders no aside at all,
+    # rather than a dashed rule over empty space.
+    # The COMPOSED floor, not the estimate row's nearest sample: the hint explains the preset the
+    # player is holding, and the sampling is a fact about the forecast table rather than about them.
+    var hint := HudFormat.floor_hint(floor_value, SourceForecast.LABOR_KIND_HUNT, true)
+    if hint != "":
+        column.add_child(HudWidgets.build_readout_aside(
+            [HudWidgets.readout_aside_line(hint)]))
+
+## The trip's payload as yields rows: the ANIMALS the party brings back, then whatever accounts those
+## bodies pay.
+##
+## **THE ANIMAL COUNT LEADS, IN THE LOCAL HUNT ROW'S OWN IDIOM** — its `YIELD_ROW_NUMBER` /
+## `YIELD_ROW_UNIT` overrides, the quarry as the unit and `YIELD_ACCOUNT_NONE` as the account,
+## because a body is not an account. It borrows the `≈` FACE vocabulary and deliberately not the
+## `/turn` UNIT one: this is a whole-trip count, and the header above already says so.
+##
+## The food and trade rows go through `SourceForecast.yield_rows`, so the render-only-where-the-
+## vector-pays rule keeps one definition — a wolf raid states pelts and no `0 food`, an edible quarry
+## with no trade states food alone. `YIELD_ACCOUNT_NONE` as the zero account means NO row is
+## synthesised when both are empty; that state cannot arrive here anyway (it is `empty`, and the
+## caller took the sentence branch), so a fabricated zero would be a reading of nothing.
+##
+## No `after` on any row: a trip has no holding state to arrow toward.
+func _trip_yield_rows(trip: Dictionary, quarry: String) -> Array[Dictionary]:
+    var animals := int(trip.get("animals", 0))
+    var rows: Array[Dictionary] = [{
+        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
+        SourceForecast.YIELD_ROW_VALUE: float(animals),
+        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % animals,
+        HudWidgets.YIELD_ROW_UNIT: quarry,
+    }]
+    rows.append_array(SourceForecast.yield_rows(
+        float(trip.get("food", 0.0)), float(trip.get("trade", 0.0)), 0.0,
+        SourceForecast.YIELD_ACCOUNT_NONE))
+    return rows
 
 ## The herd "Assign hunters" controls (compose a count + policy, then Assign). Shown
 ## only for a huntable herd while a player band exists to staff it.
@@ -1256,16 +1316,26 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     # a herd. The two things that genuinely differ are composed in, not tabulated: what stripping
     # COSTS (a patch reseeds; a herd is gone for good) and the fact that a detached party learns no
     # craft, so the above-peak trade is not one an expedition can make.
+    # **THE TRIP, RESOLVED BEFORE THE CREW ROW** — the same `_compose.hunt_count()` the stepper below
+    # renders (the cap clamp is already done above, and nothing between here and the button moves it),
+    # so the readout at the bottom and the floor hint at the top branch on ONE lookup rather than two.
+    var trip: Dictionary = {}
     if is_expedition:
         target.add_child(HudWidgets.alloc_hint_label(
             "%s is %d tiles away — beyond this band's hunt reach (%d). Detach a party to follow it." \
             % [_herd_label_for_id(herd_id), distance, reach]))
-        # **THE EXPEDITION KEEPS ITS TEACHING LINE HERE**, because it has no readout box to put one in:
-        # a raid's forecast is the sim's forward-simulated trip, not a per-turn account vector, so the
-        # branch below states it as a sentence rather than as yields. The local branch's copy travels
-        # into the readout's aside instead — see `_mount_readout`.
-        target.add_child(HudWidgets.alloc_hint_label(HudFormat.floor_hint(
-            _compose.hunt_floor(), SourceForecast.LABOR_KIND_HUNT, true)))
+        trip = SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(),
+            _compose.hunt_count(), _band_labor.grid_width(), _band_labor.wrap_horizontal())
+        # **THE FLOOR HINT TRAVELS INTO THE TRIP READOUT'S ASIDE**, where the local sheet keeps its
+        # own — the two branches now read alike. It stays HERE only for the raids that get no readout
+        # box (no estimate, a denial quarry, a herd with nothing above the floor): those state one
+        # sentence in place of the box, so the hint has nowhere else to go. Empty hints render no
+        # label at all; a zone with nothing to say must not leave a blank line behind it.
+        if not SourceForecast.hunt_trip_delivers(trip):
+            var refused_hint := HudFormat.floor_hint(
+                _compose.hunt_floor(), SourceForecast.LABOR_KIND_HUNT, true)
+            if refused_hint != "":
+                target.add_child(HudWidgets.alloc_hint_label(refused_hint))
     # THE CREW, on ONE line with both targets (§7.6) — with its cap note, which explains THIS stepper's
     # dead `+` and therefore travels with it. Clicking a target staffs it, clamped to the same cap the
     # `+` obeys: a target is a shortcut to a count, never a way past the ceiling.
@@ -1298,18 +1368,24 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
     if is_expedition:
-        # LIVE turns-to-fill for the party + policy currently dialed. This block re-renders on every
-        # stepper tick and policy click, so the forecast tracks the compose state instead of arriving
-        # as a confirmation — and it comes from the SAME helpers the targeting banner uses, so the two
-        # entry points can never quote different numbers.
+        # **THE TRIP READOUT** — the raid's answer in the SAME bounded box the local sheet uses, so a
+        # player moving between the two branches reads one layout: the payload as a yields row, the
+        # trip's length as the verdict, the floor's meaning as the aside. It re-renders with this
+        # whole block on every stepper tick and policy click, which is what keeps it a live forecast
+        # rather than a confirmation — and there is no chart on this branch, hence no drag to keep
+        # alive, so it stays out of `_register_live` deliberately.
         # `trip`, NOT `forecast`: the outer `forecast` is the LOCAL hunt's per-turn ceiling inputs
         # (client arithmetic over the BAND flow ceiling). This one is the sim's forward-simulated TRIP
         # estimate — a pure table lookup, zero client arithmetic. The two must never be confused.
-        var trip := SourceForecast.hunt_trip_forecast(band, herd, _compose.hunt_floor(), _compose.hunt_count(),
-            _band_labor.grid_width(), _band_labor.wrap_horizontal())
-        var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
-        if forecast_line != "":
-            target.add_child(HudWidgets.forecast_label(forecast_line))
+        if SourceForecast.hunt_trip_delivers(trip):
+            _mount_trip_readout(target, trip, _herd_label_for_id(herd_id), _compose.hunt_floor())
+        else:
+            # A raid with nothing to lay out in rows — no estimate, a denial quarry, a herd at its
+            # floor — keeps the ONE-LINE form, which is also the send-hunt banner's, so the two entry
+            # points still cannot quote different refusals.
+            var forecast_line := SourceForecast.hunt_forecast_line_bbcode(trip, _herd_label_for_id(herd_id))
+            if forecast_line != "":
+                target.add_child(HudWidgets.forecast_label(forecast_line))
         # The no-surplus refusal — computed ONCE and used for both the button tooltip and the reason
         # line, and identical to what the targeting flow posts to the command feed.
         var no_surplus := SourceForecast.hunt_trip_no_surplus(trip)

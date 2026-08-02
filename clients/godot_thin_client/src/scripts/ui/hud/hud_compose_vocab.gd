@@ -27,17 +27,28 @@ const START_ORDER_PENDING_VERB := "Starting"
 # reseeds from bare ground" and "the herd dies out, for you and for everyone else" are not the same
 # warning and must never be blurred into one. Composed by `HudFormat.floor_hint`.
 #
-# **THE TABLE IS COMPLETE; SUPPRESSION BELONGS TO THE SURFACE, NOT TO THE VOCABULARY.** The `peak`
-# entry was briefly emptied here on the grounds that the compose readout states it as a NUMBER (the
-# yields row's `after` reading). That is true of exactly ONE of this table's five consumers, and
-# blanking the entry silenced it on the other four — most damagingly the EXPEDITION sheet, which has
-# no readout box at all and whose branch comment says it keeps its floor hint precisely for that
-# reason. A raid then showed three floor presets with nothing anywhere saying what they meant. The
-# readout's aside now drops the peak line at its own call site instead.
+# **THE PEAK ZONE SAYS NOTHING, BECAUSE THERE IS NOTHING TO SAY.** It read "the most food this source
+# can pay, turn after turn, forever", which is the DEFINITION of the preset the player just clicked,
+# restated: it names no consequence, offers no comparison and asks for no decision, so a player who
+# reads it knows exactly what they knew before. It is empty rather than absent so the five zones stay
+# one enumeration — `HudFormat.floor_hint` answers `""` and every consumer renders no line.
+#
+# The other four each state something the number does not. `strip`'s is LOAD-BEARING beyond its own
+# sentence: it is the only place the sheet says floor 0 is irreversible on the animal web, and the
+# reaching verdict DROPS its own "then holds it" clause there on the understanding that this line
+# carries the consequence.
+#
+# **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's
+# aside, the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition
+# tooltip. That is the intent for a line worth nothing anywhere, and it is a REGRESSION for a line
+# worth something somewhere — which is how the peak line was blanked once before, for a reason true of
+# one surface, and left a raid rendering three floor presets with nothing saying what they meant. The
+# expedition sheet is where such a blanking surfaces first: it has no chart, so its readout's aside is
+# the whole of what it says a floor MEANS.
 const FLOOR_ZONE_HINTS := {
 	"strip": "Take everything — the crew leaves nothing standing. %s",
 	"drawdown": "Below the food peak — more food now, taken out of what this source will grow back. It declines while you hold this.",
-	"peak": "The food peak — the most food this source can pay, turn after turn, forever.",
+	"peak": "",
 	"learning": "Above the food peak — you give up food to leave more standing, and your people learn faster from what they work.",
 	"untouched": "Nothing is taken — the whole stock stays standing. A crew with nothing to work learns nothing and builds nothing.",
 }

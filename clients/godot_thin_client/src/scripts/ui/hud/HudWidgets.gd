@@ -966,15 +966,21 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## **THE HEADER CARRIES THE UNIT AND THE ARROW'S KEY, so neither is repeated per account.** It is a
 ## `VBoxContainer` now rather than the bare flow — the flow keeps `YIELDS_ROW_META`, so everything
 ## that reaches for the row by identity still finds the readings and not the caption over them.
+##
+## `header` OVERRIDES that caption for a caller whose readings are not a per-turn rate at all — the
+## raid's whole-trip payload, which has no `/turn` and no holding state to arrow toward. Left empty,
+## the per-turn pair is derived from the rows as before, so no rate-stating caller can drift.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String) -> VBoxContainer:
+        waste: String, header: String = "") -> VBoxContainer:
     var block := VBoxContainer.new()
     block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
     var has_after := rows.any(func(row: Dictionary) -> bool:
         return row.has(SourceForecast.YIELD_ROW_AFTER))
-    block.add_child(alloc_section_label(SourceForecast.YIELD_ROW_HEADER_WITH_AFTER if has_after \
-        else SourceForecast.YIELD_ROW_HEADER))
+    var caption := header if header != "" \
+        else (SourceForecast.YIELD_ROW_HEADER_WITH_AFTER if has_after \
+            else SourceForecast.YIELD_ROW_HEADER)
+    block.add_child(alloc_section_label(caption))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)
     flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL

@@ -343,25 +343,31 @@ stated, so the disagreement is no longer expressible.)
 
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
-**THE READOUT'S ASIDE DROPS THE PEAK HINT, AND SUPPRESSION BELONGS TO THE SURFACE — NOT THE
-VOCABULARY.** *"The food peak — the most food this source can pay, turn after turn, forever"* is
-precisely what the yields row states as a number once each account reads `now → after`, so on the
-COMPOSE READOUT it is the same fact twice; `_mount_readout` skips it there on `floor_zone == PEAK`.
+**THE PEAK ZONE STATES NOTHING, AND THE ENTRY IS EMPTY IN THE VOCABULARY.** *"The food peak — the most
+food this source can pay, turn after turn, forever"* is the definition of the preset the player just
+clicked, restated: it names no consequence, offers no comparison and asks for no decision, so a player
+who reads it knows exactly what they knew before. It is struck from `FLOOR_ZONE_HINTS` rather than
+suppressed per surface — worthless copy is worthless on all five consumers — and the entry stays
+present-but-empty so the five zones remain one enumeration: `HudFormat.floor_hint` answers `""` and
+every consumer renders no line.
 
-> It was first emptied out of `FLOOR_ZONE_HINTS` itself, which silenced it on **all five** consumers
-> for a reason true of one. The worst casualty was the **EXPEDITION** sheet: that branch has no chart
-> and no readout box — both deliberate, a raid being a forward-simulated trip rather than a per-turn
-> drawdown — so its floor hint is the WHOLE of what it says a floor means, and its own branch comment
-> says it keeps the line there for exactly that reason. A raid rendered three unexplained preset
-> buttons and an empty label. Reported from play. The other victims were the work-row hint, the
-> send-hunt banner and the expedition tooltip.
+The other four each state something the number does not, and **`strip`'s is load-bearing**: it is the
+only place the sheet says floor 0 is irreversible on the animal web, and the reaching verdict drops its
+own *"then holds it"* clause there on the understanding that this line carries the consequence.
 
-The other four zones are never dropped anywhere — none is restated by a number — and **`strip`'s is
-load-bearing**: it is the only place the sheet says floor 0 is irreversible on the animal web, and the
-reaching verdict drops its own *"then holds it"* clause there on the understanding that this line
-carries the consequence. **Assert gone-from-the-aside and still-in-the-table as a PAIR**, plus the
-expedition sheet on its own: the aside assertion alone passes with the vocabulary blanked, which is
-precisely how the regression shipped.
+> **EMPTYING AN ENTRY HERE SILENCES IT ON EVERY CONSUMER — five of them**: the compose readout's aside,
+> the expedition compose sheet, the work-row hint, the send-hunt banner and the expedition tooltip.
+> That is the intent for a line worth nothing anywhere and a REGRESSION for a line worth something
+> somewhere, which is how the peak line was blanked once before, for a reason true of one surface. The
+> **EXPEDITION** sheet is where such a blanking surfaces first and it is worth knowing why: it has no
+> chart, so the floor hint is the WHOLE of what it says a floor means, and a raid rendered three
+> unexplained preset buttons and an empty label. Reported from play.
+
+**Assert the peak's silence as a PAIR with the strip zone's warning**, on the table AND on a rendered
+aside: a lone negative is satisfied by emptying the whole table, which is the mistake this pairing
+exists to catch. `forage_three_accounts` carries the table + strip half; `herd_hunt_expedition` carries
+the rendered half (its trip readout renders no aside at all at the peak, rather than a dashed rule over
+empty space).
 
 The aside's other line states the **live learning rate**, and it is the only thing in the client that
 makes slice 3 visible to a player: `intensification::learn_multiplier` is `floor / the food peak`, so
@@ -550,10 +556,43 @@ default) is one DEVICE pixel whatever the scale; `draw_rect` of the same height 
 rule also needs `resized.connect(queue_redraw)`: a Control draws once on entering the tree, before its
 container has laid it out, so the only pass runs at `size.x == 0` and the dash loop never iterates.
 
-**The expedition branch keeps the old shape and keeps its teaching line in place**, deliberately: a
-raid's forecast is the sim's forward-simulated trip rather than a per-turn account vector, so it builds
-no readout box and has nowhere to put an aside. It does take the new crew row (the stepper alone — no
-chart model means no floor axis, hence no targets to price), so the shared spine is unchanged.
+**THE EXPEDITION BRANCH TAKES THE SAME READOUT BOX, RE-KEYED FROM A RATE TO A TRIP.** It answered with
+one wrapped sentence carrying five facts — *delivers ≈1 Wild Boar over ≈18 turns (2 hunting + 16
+travel) · ~1 food · ⇄ ~0 trade goods · ⚠ 20% wasted* — beside a local sheet that laid the same kinds of
+fact out in a bounded well, so one panel read two ways. `_mount_trip_readout` composes the same three
+registers:
+
+| register | the raid's version |
+|---|---|
+| **yields** | header `THIS TRIP`, the ANIMAL count leading in the local hunt row's own idiom (its `YIELD_ROW_NUMBER`/`UNIT` overrides, the quarry as the unit, `YIELD_ACCOUNT_NONE` as the account), then food and trade through `SourceForecast.yield_rows`, and the waste on the row's own `waste` slot |
+| **verdict** | `SourceForecast.hunt_trip_verdict` — how long the party is away and where those turns go, `slow` past the band's warn line and on an unbounded raid |
+| **aside** | the floor-zone hint alone |
+
+**What must NOT carry over is the per-turn framing**, and all three registers are where it would have:
+`per turn · now → after` keys a rate and a transition into a holding state, and a raid has neither — it
+is one bounded errand whose numbers are taken once. Hence `EXPEDITION_TRIP_ROW_HEADER`, no `after` on
+any row, and a verdict about the trip's LENGTH rather than about which of the crew and the floor binds
+(a party is fixed at launch; there is no contest to adjudicate).
+
+- **There is still NO chart and NO crew targets**, and those absences are asserted beside the box. A
+  raid's trip is the sim's forward simulation, not a per-turn drawdown by a resident crew, so there is
+  no floor curve to walk and no holding crew to price — and without the pair, "made it look like the
+  local sheet" could quietly come to mean "gave it a chart".
+- **The aside carries the floor hint and nothing else.** The local readout's teaching line has no
+  counterpart: an expedition accrues no husbandry, the gap `FLOOR_LEARNING_HINT_EXPEDITION` already
+  names, so a teaching rate here would quote a multiplier the party never earns. A zone with nothing to
+  say renders no aside at all rather than a dashed rule over blank space.
+- **The three non-delivering states keep the one-line form** — no estimate at all, a denial quarry that
+  pays neither product, a herd stripped to its floor — because each has exactly one thing to say and an
+  empty box would read as a raid delivering nothing measurable rather than one being refused.
+  `SourceForecast.hunt_trip_delivers` is that branch, and `hunt_forecast_line_bbcode` stays: the
+  send-hunt banner is its second caller and keeps the sentence.
+- **It re-renders with the whole compose block** (every stepper tick, every preset click) and is
+  deliberately OUTSIDE `_register_live` — that registry exists to keep readings alive under a chart
+  DRAG, and this branch has no chart.
+
+It takes the crew row as before (the stepper alone — no chart model means no floor axis, hence no
+targets to price), so the shared spine is unchanged.
 
 ### THE CARD IS AS WIDE AS ITS WIDEST ROW, and `CARD_WIDTH` is only where that starts
 

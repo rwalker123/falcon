@@ -234,11 +234,30 @@ const NO_SURPLUS_ANIMALS := 0
 const BOAR_RAID_ANIMALS := [5, 8, 8, 8, 8, 8, 8, 8]
 const BOAR_RAID_TURNS := [7, 8, 4, 3, 3, 3, 3, 3]
 const BOAR_FOOD_PER_ANIMAL := 4.0
+# The Thunder Mammoth's food quantum — big enough that no fieldable party can carry a whole one, which
+# is what makes `_partial_waste_mammoth` the WASTE fixture: a party of `w` hauls ~`w` of the 16 and
+# rots the rest. Named here rather than left a local because the waste assertion computes the same
+# percentage the readout prints, and two spellings of one quantum would drift.
+const MAMMOTH_FOOD_PER_ANIMAL := 16.0
 # One animal's worth of TRADE GOODS on an EDIBLE quarry (issue #337) — a hunt pays a vector, so every
 # raid cell carries a trade payload beside its food one and the readout names both. Deliberately much
 # smaller than the food quantum: a deer/boar is meat first, hide second (the INEDIBLE case, where trade
 # is the whole payload, is the wolf fixture below).
 const RAID_TRADE_PER_ANIMAL := 0.5
+# The DISTANCE frames' raid (`_hunt_distance_herd`, the reference Red Deer at 2.0 food/animal): a party
+# of `i+1` lands `DISTANCE_RAID_ANIMALS[i]` animals in `DISTANCE_RAID_TURNS[i]` HUNTING turns. Those
+# frames open at the seeded party of 1, so the first cell is the one they render; the plateau at 3
+# animals-taken keeps the party stepper's max-useful cap meaningful rather than unbounded. The turns sit
+# well inside a band's `expedition_viability_warn_turns`, so the trip verdict reads OK there and the
+# slow/long raids stay the business of the fixtures built for them.
+const DISTANCE_RAID_ANIMALS := [3, 5, 6, 6, 6, 6, 6, 6]
+const DISTANCE_RAID_TURNS := [9, 7, 6, 6, 6, 6, 6, 6]
+# The `herd_hunt_raid_travel` frame's two halves, named so the split assertion states the arithmetic
+# rather than a pair of literals: `_raid_travel_band` sits 8 tiles from the (66,10) boar and moves 2
+# tiles a turn, so the round trip is ceil(2 × 8 / 2), and the boar's own 2-party cell fills in 8
+# hunting turns (`BOAR_RAID_TURNS[1]`). 16 total, inside the band's 20-turn warn line.
+const RAID_TRAVEL_TURNS := 8
+const RAID_TRAVEL_HUNT_TURNS := 8
 # 0 = the raid ran the whole forecast horizon still delivering (a long raid), used by the no-surplus /
 # collapsed fixtures where the raid also lands 0 animals.
 const NEVER_FILLS_TRIP_TURNS := 0
@@ -648,12 +667,26 @@ const LEGACY_STANCE_FLOORS := {
 ## Re-key a legacy `"<stance>:<party>"` raid table onto `"<floor>:<party>"`, and put the two fields
 ## the client SCANS on each row (`floor` / `party_workers`) — it no longer rebuilds the key, since the
 ## real key renders the floor with Rust's float Display.
+##
+## **IT MUST BE IDEMPOTENT, AND IT WAS NOT.** A converted row's key is `"0.5:4"`, whose leading token
+## is not a stance, so a SECOND pass over the same dict skipped every row and left an EMPTY table
+## behind — and `_floorify_ceilings` reaches here even on its early return, so any state that calls
+## `_show_herd(h)` and then `_compose_herd(h)` with the SAME dict silently lost its whole raid table.
+## Every expedition frame in the `_hunt_assign_forecast_states` block and the boar-raid set did exactly
+## that: `hunt_trip_forecast` answered `available: false`, the sheet rendered no forecast at all, and
+## the states went on passing because nothing asserted on a readout those frames no longer had. A row
+## already carrying the floor field is therefore kept verbatim rather than dropped.
 func _floorify_estimates(src: Dictionary) -> Dictionary:
 	var estimates: Variant = src.get("hunt_trip_estimates", null)
 	if not (estimates is Dictionary):
 		return src
 	var rekeyed := {}
 	for key in (estimates as Dictionary):
+		var converted: Variant = (estimates as Dictionary)[key]
+		if converted is Dictionary \
+				and (converted as Dictionary).has(SourceForecast.HUNT_ESTIMATE_FLOOR_KEY):
+			rekeyed[key] = converted
+			continue
 		var parts := String(key).split(":")
 		if parts.size() != 2:
 			continue
@@ -2098,20 +2131,21 @@ func _ready() -> void:
 	_assert_hud("…and a row with no transition is given a header with no arrow to key",
 		_yields_header(_hud._drawercompose._compose_sheet).contains("PER TURN")
 			and not _yields_header(_hud._drawercompose._compose_sheet).contains("→"))
-	# **THE READOUT DROPS THE PEAK HINT; THE TABLE STILL HOLDS IT.** This sheet sits at
-	# `FLOOR_FOOD_PEAK`, and "the most food this source can pay, turn after turn, forever" is what the
-	# yields row above states as a NUMBER once each account reads `now → after` — the same fact twice
-	# ON THIS SURFACE. It was first dropped from `FLOOR_ZONE_HINTS` itself, which silenced it on all
-	# five consumers for a reason true of one, and left the EXPEDITION sheet — which has no readout
-	# box and keeps its floor hint precisely because of that — showing three floor presets with
-	# nothing anywhere saying what they meant. So both halves are asserted: gone from the ASIDE, still
-	# in the TABLE. The first line alone passes with the vocabulary blanked; the second is what makes
-	# it mean the aside dropped it.
-	_assert_hud("the readout's aside drops the peak hint — its sentence is a number on the row",
+	# **THE PEAK ZONE CONTRIBUTES NOTHING, ANYWHERE.** Its line — "the most food this source can pay,
+	# turn after turn, forever" — restated the definition of the preset the player had just clicked and
+	# named no consequence they could act on, so it is struck from `FLOOR_ZONE_HINTS` itself rather
+	# than suppressed per surface: an empty entry silences it on all five consumers, which is the
+	# intent for copy worth nothing on any of them. Both halves are asserted, the TABLE's and the
+	# ASIDE's, because a suppression at either level would satisfy only one.
+	#
+	# **PAIRED WITH THE STRIP ZONE, which must still warn.** A lone negative is satisfied by emptying
+	# the whole table, and `strip`'s line is the one that may never go: it is the only place the sheet
+	# says floor 0 is irreversible on the animal web, and the reaching verdict drops its own "then
+	# holds it" clause there on the understanding that this line carries the consequence.
+	_assert_hud("the hint TABLE carries nothing for the peak zone — the sentence said nothing",
+		HudFormat.floor_hint(SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.LABOR_KIND_FORAGE) == "")
+	_assert_hud("…so the readout's aside states no peak hint either",
 		not _readout_aside_text(_hud._drawercompose._compose_sheet).contains("turn after turn"))
-	_assert_hud("…while the hint TABLE still carries it, for the surfaces with no such number",
-		HudFormat.floor_hint(SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.LABOR_KIND_FORAGE)
-			.contains("turn after turn"))
 	_assert_hud("…and the STRIP zone still warns, on the web whose floor 0 is permanent",
 		HudFormat.floor_hint(SourceForecast.FLOOR_MIN, SourceForecast.LABOR_KIND_HUNT)
 			.contains("gone for good"))
@@ -3638,21 +3672,56 @@ func _ready() -> void:
 	# builds no improvement control (a detached party builds nothing), so only the shared HEAD is
 	# claimed here, which is exactly what `_record_compose_spine` asserts.
 	_record_compose_spine(COMPOSE_SPINE_KEY_EXPEDITION)
-	# **THE EXPEDITION'S FLOOR HINT IS ITS ONLY EXPLANATION OF THE THREE PRESETS ABOVE IT**, and it is
-	# what a vocabulary-level suppression silently took away. This branch has NO chart and NO readout
-	# box — both deliberate, a raid being a forward-simulated trip rather than a per-turn drawdown —
-	# so the hint is the whole of what the sheet says a floor MEANS. Blanking `FLOOR_ZONE_HINTS.peak`
-	# for the compose readout's sake left a raid showing three unexplained buttons, reported from
-	# play. Asserted on the SHEET, not on `floor_hint`: the vocabulary assertion elsewhere passes
-	# while this branch renders an empty label.
-	_assert_hud("an expedition sheet still explains the floor it is dialled to",
-		_has_label_containing(_hud._drawercompose._compose_sheet, "turn after turn"))
-	# …and the twin that says the sheet is genuinely bare of the two surfaces that would otherwise
-	# carry it — without this, restoring a chart or a readout here would satisfy the line above while
-	# the branch quietly stopped being an expedition sheet.
-	_assert_hud("…and it remains the ONLY such surface — no chart, no readout box",
+	# **THE TRIP READOUT — the expedition's answer in the SAME box the local sheet uses.** The branch
+	# used to render one wrapped sentence carrying five facts ("delivers ≈3 Red Deer over ≈9 turns ·
+	# ~6 food · ⇄ ~2 trade goods"), beside a local sheet that laid the same kinds of fact out in a
+	# bounded well — two sheets on one panel reading nothing alike. What must NOT carry over is the
+	# per-turn framing, and the header is where that shows: a trip has no steady state, so
+	# `THIS TRIP` and not `PER TURN`, and no `now → after` arrow to key.
+	_assert_hud("the expedition sheet's readout is headed for a TRIP, not for a rate",
+		_yields_header(_hud._drawercompose._compose_sheet)
+			== SourceForecast.EXPEDITION_TRIP_ROW_HEADER.to_upper())
+	_assert_hud("…so it states no PER TURN header and no now → after arrow",
+		not _yields_header(_hud._drawercompose._compose_sheet).contains("PER TURN")
+			and not _yields_header(_hud._drawercompose._compose_sheet).contains("→"))
+	# THE PAYLOAD, ALL THREE TERMS. The animal count leads in the local hunt row's own idiom (the `≈`
+	# face, the quarry as the unit, no account), then the accounts those bodies pay. Every term is
+	# named, because matching one survives losing either of the others — and this quarry pays BOTH
+	# accounts, which is the positive half of the render-only-where-the-vector-pays pair asserted on
+	# the zero-trade mammoth below.
+	var trip_yields := _yields_text(_hud._drawercompose._compose_sheet)
+	_assert_hud("the ANIMAL count leads the row, in the quarry's own name",
+		trip_yields.contains("≈%d" % DISTANCE_RAID_ANIMALS[0]) and trip_yields.contains("RED DEER"))
+	_assert_hud("…with the trip's FOOD beside it",
+		trip_yields.contains(SourceForecast.format_magnitude(DISTANCE_RAID_ANIMALS[0] * 2.0))
+			and trip_yields.contains("FOOD"))
+	_assert_hud("…and its TRADE, since this quarry pays both",
+		trip_yields.contains(SourceForecast.format_magnitude(
+			DISTANCE_RAID_ANIMALS[0] * RAID_TRADE_PER_ANIMAL)) and trip_yields.contains("TRADE"))
+	_assert_hud("a raid that hauls its whole kill states NO waste note",
+		not trip_yields.contains("wasted".to_upper()))
+	# THE VERDICT states the trip's length. This band carries no move rate, so travel is 0 and there is
+	# no split to spell out — the pair that DOES is `herd_hunt_raid_travel` below.
+	_assert_hud("the verdict states how long the party is away",
+		_verdict_text(_hud._drawercompose._compose_sheet).contains(str(DISTANCE_RAID_TURNS[0])))
+	_assert_hud("…and a brisk raid reads OK",
+		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_OK)
+	# **THE BOX IS NOT A CHART, AND A PARTY IS NOT A CREW.** Without this pair, "made the expedition
+	# look like the local sheet" could quietly come to mean "gave it a chart and crew targets" — both
+	# of which are deliberately absent, a raid being a forward-simulated trip rather than a per-turn
+	# drawdown by a resident crew, with no floor curve to walk and no holding crew to price.
+	_assert_hud("…and the branch is still an EXPEDITION sheet — no chart, no crew targets",
 		_find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) == null
-			and _find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.YIELDS_ROW_META) == null)
+			and _find_crew_target(_hud._drawercompose._compose_sheet,
+				HudWidgets.CREW_TARGET_CLEAR) == null
+			and _find_crew_target(_hud._drawercompose._compose_sheet,
+				HudWidgets.CREW_TARGET_HOLD) == null)
+	# The peak zone's half of change A, on the surface that has the least redundancy: this sheet sits
+	# at `FLOOR_FOOD_PEAK`, the zone now says nothing, and the aside renders NOT AT ALL rather than a
+	# dashed rule over empty space. Paired with the strip-zone assertion on `forage_three_accounts`,
+	# which is what keeps "empty the whole table" from passing.
+	_assert_hud("the peak zone contributes no aside to the trip readout either",
+		_readout_aside_text(_hud._drawercompose._compose_sheet) == "")
 
 	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
 	# the herd (distance 0 ≤ reach 7) → "Hunt Here" + assign_labor. The band-picker selection —
@@ -3715,6 +3784,7 @@ func _ready() -> void:
 		_compose_herd(far_herd, HUNT_FORECAST_PARTY, float(state["floor"]))
 		await _settle()
 		await _save(String(state["name"]))
+		_assert_trip_readout(String(state["name"]))
 
 	# AUTO-MAX on a policy click (expedition branch): picking a policy fills the Party to that policy's
 	# max-useful cap. The mammoth's Sustain payload keeps rising to the fieldable ceiling, so a Sustain
@@ -3773,6 +3843,18 @@ func _ready() -> void:
 	_compose_herd(boar, 2)
 	await _settle()
 	await _save("herd_hunt_raid_travel")
+	# **THE SPLIT — the half of the trip verdict `herd_hunt_expedition` structurally cannot show.**
+	# That band carries no move rate, so its trip is all hunting and the verdict states one number;
+	# this one walks 8 tiles each way at 2 tiles a turn, so the total is 8 hunting + 8 travel and the
+	# verdict has to spell out where those turns go. Asserted as a PAIR with the total, because a
+	# verdict quoting the split alone would leave the player adding it up themselves.
+	var travel_verdict := _verdict_text(_hud._drawercompose._compose_sheet)
+	_assert_hud("a raid with travel states the TOTAL and the split it is made of",
+		travel_verdict.contains(str(RAID_TRAVEL_HUNT_TURNS + RAID_TRAVEL_TURNS))
+			and travel_verdict.contains("%d hunting, %d travel" % [
+				RAID_TRAVEL_HUNT_TURNS, RAID_TRAVEL_TURNS]))
+	_assert_hud("…and a trip inside the band's warn line still reads OK",
+		_verdict_severity(_hud._drawercompose._compose_sheet) == SourceForecast.VERDICT_OK)
 	# Restore the far band (no move rate) for the remaining raid states.
 	_hud._band_labor._player_bands = [_hunt_preview_far_band()]
 	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
@@ -6812,6 +6894,58 @@ func _verdict_severity(root: Node) -> String:
 	var node := _find_meta_node(root, HudWidgets.VERDICT_META)
 	return String((node as Control).get_meta(HudWidgets.VERDICT_META, "")) if node != null else ""
 
+## The verdict's SENTENCE — the row's Labels joined (the severity dot is a Label of the row too, so it
+## leads). Found by the same meta as the severity above, because the row's two halves are one claim and
+## a needle search across the sheet would match whichever line happened to carry the same number. "" when
+## no verdict rendered, which fails a `contains` assertion rather than satisfying it.
+func _verdict_text(root: Node) -> String:
+	var node := _find_meta_node(root, HudWidgets.VERDICT_META)
+	return " ".join(_face_lines(node)) if node != null else ""
+
+## The TRIP-READOUT claims that live on the `_hunt_assign_forecast_states` frames, dispatched by state
+## name so each fixture is asserted on the ONE thing it was built to show. They ride here rather than
+## after the loop because the loop is where each state is actually staged, and re-staging one to assert
+## it would risk asserting a sheet the frame never rendered.
+##
+## **EACH IS ONE HALF OF A PAIR**, the other half being `herd_hunt_expedition`'s block (a clean raid
+## paying BOTH accounts, no waste, a brisk OK verdict): a lone "the waste note is here" passes on a
+## readout that always prints one, and a lone "there is no trade row" passes on a readout that can no
+## longer print any account at all.
+func _assert_trip_readout(state_name: String) -> void:
+	var sheet: Control = _hud._drawercompose._compose_sheet
+	match state_name:
+		"herd_hunt_forecast_viable":
+			# A party of 4 kills a 16-food mammoth and hauls 4 of it — the WASTE half, and the ZERO
+			# ACCOUNT half in one fixture: this cell carries no `delivers_trade` at all, so the trade
+			# row must not render. The trade-paying deer in `herd_hunt_expedition` is its twin.
+			var wasted := _yields_text(sheet)
+			var waste_pct := int(round((MAMMOTH_FOOD_PER_ANIMAL - HUNT_FORECAST_PARTY)
+				/ MAMMOTH_FOOD_PER_ANIMAL * 100.0))
+			_assert_hud("a partial kill states its WASTE on the trip's yields row",
+				wasted.contains((SourceForecast.HUNT_WASTE_NOTE_FORMAT % waste_pct).to_upper()))
+			_assert_hud("…and an account the quarry does not pay renders NO row",
+				wasted.contains("FOOD") and not wasted.contains("TRADE"))
+		"herd_hunt_forecast_slow":
+			# 54 turns past the band's 20-turn warn line — the verdict carries the severity the Send
+			# button and the one-line form already carry, so the box cannot disagree with either.
+			_assert_hud("a raid past the band's warn line reads SLOW in the trip verdict",
+				_verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
+					and _verdict_text(sheet).contains(str(DEER_SUSTAIN_TRIP_TURNS)))
+		"herd_hunt_forecast_eradicate":
+			# `turns_to_fill == 0` — the raid ran the whole forecast horizon still delivering, so there
+			# is no total to quote and the verdict says so instead of printing a bare 0.
+			_assert_hud("an unbounded raid states no total, and still reads SLOW",
+				_verdict_severity(sheet) == SourceForecast.VERDICT_SLOW
+					and _verdict_text(sheet).contains(
+						SourceForecast.EXPEDITION_TRIP_LONG_VERDICT))
+		"herd_hunt_forecast_no_surplus":
+			# **A REFUSED RAID RENDERS NO BOX AT ALL.** It has no payload to lay out in rows, and an
+			# empty well would read as a raid delivering nothing measurable rather than one the panel
+			# is declining — so the branch keeps the one-line refusal it always had.
+			_assert_hud("a raid with no surplus renders the refusal, never an empty readout box",
+				_find_meta_node(sheet, HudWidgets.YIELDS_ROW_META) == null
+					and _has_label_containing(sheet, "too lean to raid"))
+
 ## Every Label text under `root`, in tree order — the rung face's lines as they are stacked.
 func _face_lines(root: Node) -> Array[String]:
 	var lines: Array[String] = []
@@ -7658,9 +7792,20 @@ func _standing_forage_band_fixture() -> Dictionary:
 
 ## The herd the distance-aware states select — the same (66,10) herd but a NON-food tile_info, so the
 ## Tile card drops its "Assign foragers" block and the hunt button + distance hint sit in-frame.
+##
+## **IT CARRIES A RAID TABLE, and without one the expedition frames judge nothing about the trip.**
+## `_herd_fixture` publishes the BAND's flow ceilings and no `hunt_trip_estimates`, so every expedition
+## sheet opened on it answered `available: false` and rendered no forecast at all — a state a live herd
+## cannot be in (the sim exports an estimate row for every huntable herd) and the one state in which
+## every claim about the trip readout would pass vacuously. The counts are the reference deer's own
+## `food_per_animal` 2.0 through `_raid_estimate_table`, so the payload is `animals × 2` food beside
+## `animals × RAID_TRADE_PER_ANIMAL` trade — both accounts positive, which is what makes the
+## zero-account frame beside it (`_partial_waste_mammoth`, no trade at all) a real contrast.
 func _hunt_distance_herd() -> Dictionary:
 	var herd := _herd_fixture()
 	herd["tile_info"] = _plain_herd_tile_info()
+	herd["hunt_trip_estimates"] = _raid_estimate_table(
+		DISTANCE_RAID_TURNS, DISTANCE_RAID_ANIMALS, float(herd["food_per_animal"]))
 	return herd
 
 ## A Wild Boar carrying the server's MEASURED raid (K=1433, body 50, B=1010, 4 food/hunter): 1 hunter →
@@ -7862,7 +8007,7 @@ func _partial_waste_mammoth() -> Dictionary:
 	var herd := _assign_preview_herd("game_mammoth_11", "Thunder Mammoth", "thriving", 2.7,
 		MAMMOTH_SUSTAIN_TRIP_TURNS, MAMMOTH_SURPLUS_TRIP_TURNS,
 		MAMMOTH_SUSTAIN_ANIMALS, MAMMOTH_SUSTAIN_ANIMALS)
-	var fpa := 16.0
+	var fpa := MAMMOTH_FOOD_PER_ANIMAL
 	herd["food_per_animal"] = fpa
 	# Eradicate rides the SAME loop as the other three (#337): it is paid the species' yield vector like
 	# every rung, so a mammoth is edible on Eradicate too. It merely raids fastest (2 turns), which keeps

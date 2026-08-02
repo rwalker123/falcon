@@ -684,6 +684,26 @@ const HUNT_FORECAST_WARN_GLYPH := "⚠ "
 const HUNT_WASTE_NOTE_FORMAT := "⚠ %d%% wasted"
 const HUNT_WASTE_SUFFIX_FORMAT := " · " + HUNT_WASTE_NOTE_FORMAT
 
+# ---- THE TRIP READOUT — the raid's own header and verdict (the expedition compose sheet) ---------
+# **A TRIP HAS NO STEADY STATE, WHICH IS WHY IT CANNOT BORROW `YIELD_ROW_HEADER`.** The local sheet's
+# `per turn · now → after` keys a rate and the transition into the holding state a resident crew
+# settles at. A raid is one bounded errand: the party goes, takes what stands above the floor, and
+# comes home — the numbers under this header are the WHOLE trip's, taken once, and there is no
+# "after" to arrow toward. So the header names the errand instead of a rate, and neither the `/turn`
+# nor the `now → after` key may follow the readout box onto this branch.
+const EXPEDITION_TRIP_ROW_HEADER := "this trip"
+# The verdict on a raid answers a different question from the local sheet's — nothing here is
+# "binding", the party being fixed at launch — so it states the one cost a trip has: how long these
+# hands are gone. The split renders only where there is travel to split off; a band already standing
+# beside its quarry has none, and "18 turns — 18 hunting, 0 travel" would be three numbers for one.
+const EXPEDITION_TRIP_VERDICT_FORMAT := "Away ≈%d turns."
+const EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT := "Away ≈%d turns — %d hunting, %d travel."
+# `turns_to_fill == 0` is the sim saying the raid ran the whole forecast horizon still delivering, so
+# there is no total to quote — the same "many turns" the one-line form words it as. Travel is still
+# known (the client adds it), so it is named rather than folded into an unbounded total.
+const EXPEDITION_TRIP_LONG_VERDICT := "Away many turns — still delivering at the end of the forecast."
+const EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT := "Away many turns — still delivering at the end of the forecast, after %d turns of travel."
+
 # THE SEND BUTTON'S FOUR FACES, owned by `style_send_hunt_button`. A trip that is a trap names the cost
 # (amber "armed") but is NEVER gated behind a confirm — the player is told, then trusted. Only the
 # no-surplus raid, which has no upside at all, disables.
@@ -2517,6 +2537,40 @@ static func _raid_payload_suffix(forecast: Dictionary) -> String:
 ## entry points (panel button + targeting click) gate on it.
 static func hunt_trip_no_surplus(forecast: Dictionary) -> bool:
     return bool(forecast.get("available", false)) and bool(forecast.get("empty", false))
+
+## **DOES THIS TRIP HAVE A PAYLOAD TO PUT IN A READOUT?** The three states that do NOT — no estimate
+## at all, a denial quarry that pays neither product, a herd stripped to its floor — each have exactly
+## one thing to say and say it as a sentence (`hunt_forecast_line_bbcode`); only a delivering raid has
+## an animal count, a yield vector and a trip length to lay out as rows. The compose sheet branches on
+## this so a non-viable raid can never render an empty box, which would read as a raid that delivers
+## nothing measurable rather than one that is refused.
+static func hunt_trip_delivers(forecast: Dictionary) -> bool:
+    return bool(forecast.get("available", false)) \
+        and not bool(forecast.get("denial", false)) and not bool(forecast.get("empty", false))
+
+## The trip's length as the readout's VERDICT — `{severity, text}`, the shape `HudWidgets`
+## `build_verdict_line` renders for both webs. A raid has no crew-versus-floor contest to adjudicate
+## (the party is fixed at launch), so what its verdict states is the one price every trip charges:
+## how many turns these hands are away, and where those turns go. Severity is the SAME judgement the
+## one-line form and the Send button already make — `slow` past the band's warn threshold, `long_raid`
+## when the sim's estimate never bounded the trip — so the box, the sentence and the button cannot
+## disagree about whether a raid is worth the wait.
+static func hunt_trip_verdict(forecast: Dictionary) -> Dictionary:
+    var travel := int(forecast.get("travel", 0))
+    if bool(forecast.get("long_raid", false)):
+        return {
+            "severity": VERDICT_SLOW,
+            "text": EXPEDITION_TRIP_LONG_VERDICT_TRAVEL_FORMAT % travel if travel > 0 \
+                else EXPEDITION_TRIP_LONG_VERDICT,
+        }
+    var turns := int(forecast.get("turns", 0))
+    var text := EXPEDITION_TRIP_VERDICT_SPLIT_FORMAT % [
+        turns, int(forecast.get("hunt_turns", 0)), travel] if travel > 0 \
+        else EXPEDITION_TRIP_VERDICT_FORMAT % turns
+    return {
+        "severity": VERDICT_SLOW if bool(forecast.get("slow", false)) else VERDICT_OK,
+        "text": text,
+    }
 
 ## The ONE sentence spoken about a no-surplus raid — shared verbatim by the herd panel (reason line +
 ## disabled-button tooltip) and the targeting-click command-feed refusal, so the two entry points can
