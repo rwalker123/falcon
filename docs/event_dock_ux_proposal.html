@@ -679,7 +679,7 @@
         <p class="says">Something was lost, or needs you.</p>
         <p>Crimson or amber, glyph-led, and it holds its slot until you have seen it.</p>
         <p class="kinds">
-          predator_raid · hunt_danger · died<br>
+          predator_raid · hunt_danger<br>
           status=feral · status=lapsed<br>
           system: socket lost · command rejected
         </p>
@@ -689,10 +689,10 @@
         <p class="says">The world changed in a way worth knowing.</p>
         <p>Signal cyan. The default floor — this is what most players will see most of the time.</p>
         <p class="kinds">
+          died · migrated · came_of_age<br>
           site_discovered · found_settlement<br>
           campaign_milestone · campaign_victory<br>
-          expedition_arrived · expedition_returned<br>
-          came_of_age · tame
+          expedition_arrived · expedition_returned · tame
         </p>
       </div>
       <div class="rung routine">
@@ -905,18 +905,23 @@
     </div>
 
     <div class="findings" style="margin-top:24px">
-      <div class="finding">
-        <span class="n">!</span>
+      <div class="finding is-note">
+        <span class="n">→</span>
         <div>
-          <h4>The wire cost is real and worth stating out loud</h4>
+          <h4>So the log stops shipping whole, in this same change</h4>
         </div>
         <p>
           The delta path ships <code>command_events</code> via <code>diff_whole</code> — the entire
           log re-serialises whenever any part of it changes, which is every turn. At 32 entries that
-          was free. At 20 turns × ~10 events it is ~200 entries per turn. Still small in absolute
-          terms, but it is now a number that grows with the feature, and the honest fix — an
-          append-only delta for this one field — is a separate piece of work, not something to
-          smuggle in here.
+          was free. At 20 turns × ~10 events it is ~200 entries every turn, and the number grows
+          with exactly the feature being added.
+        </p>
+        <p>
+          <b>An append-only delta is therefore in scope here, not deferred.</b> Each entry carries a
+          monotonic <code>seq</code>; a delta ships only the entries appended since the baseline,
+          plus the current base sequence so the client can drop what the sim has evicted. Widening
+          the retention window and leaving it shipping whole would be the worst of both — a longer
+          log costing more every turn to say the same thing.
         </p>
       </div>
     </div>
@@ -942,9 +947,22 @@
           </tr>
           <tr>
             <td class="k">died <span class="pill new">new</span></td>
-            <td class="d"><span class="pill alert">Alert</span></td>
-            <td class="d">A bracket's death accumulator crosses a whole person.</td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              A bracket's death accumulator crosses a whole person. <b>Notable, not Alert</b> —
+              bands routinely lose elders to cold, and a rung that interrupts for every one of them
+              teaches the player to stop reading the bar.
+            </td>
             <td class="k">band= count= bracket= cause=</td>
+          </tr>
+          <tr>
+            <td class="k">migrated <span class="pill new">new</span></td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              <code>lastEmigrated</code> / <code>lastImmigrated</code> is non-zero. Whole counts
+              already, so no accumulator.
+            </td>
+            <td class="k">band= count= direction=</td>
           </tr>
           <tr>
             <td class="k">came_of_age <span class="pill new">new</span></td>
@@ -997,7 +1015,11 @@
   </section>
 
   <section>
-    <div class="sec-head"><span class="sec-num">06</span><h2>Decisions I need from you</h2></div>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Decisions, settled</h2></div>
+    <p class="lede">
+      All six were reviewed and taken as recommended, with one amendment: a death is
+      <b>Notable</b>, not an Alert. Each recommendation below is now the spec.
+    </p>
 
     <div class="decisions">
       <div class="dq">
@@ -1009,7 +1031,7 @@
           stops meaning "the latest thing".
         </p>
         <p class="rec">
-          <b>Recommend</b> newest-first, with one exception: an unread Alert pins to the leading slot
+          <b>Settled:</b> newest-first, with one exception: an unread Alert pins to the leading slot
           and stays until the log is opened. You get chronology and you never lose the raid. That is
           the default the prototype boots in.
         </p>
@@ -1022,7 +1044,7 @@
           outside the band panel (hard against the screen edge) or inside it.
         </p>
         <p class="rec">
-          <b>Recommend</b> the bar hugs the edge, band panel inboard — a thin strip on the rim reads
+          <b>Settled:</b> the bar hugs the edge, band panel inboard — a thin strip on the rim reads
           as chrome, and it means the band panel's own position relative to the map never changes
           when the bar grows a row. Costs one renumbering of <code>RESERVER_PRIORITY</code>.
         </p>
@@ -1035,7 +1057,7 @@
           feed's 40%-of-dock cap exists to stop it crowding out the selection card.
         </p>
         <p class="rec">
-          <b>Recommend</b> retiring the left-dock feed entirely and freeing <code>R</code> to toggle
+          <b>Settled:</b> retiring the left-dock feed entirely and freeing <code>R</code> to toggle
           this bar instead. Its <code>KIND_STYLE</code> alert table and signature de-duplication move
           across; the dock column goes back to the selection card.
         </p>
@@ -1049,7 +1071,7 @@
           already two files and the panel rules say not to add a third.
         </p>
         <p class="rec">
-          <b>Recommend</b> a new <code>[events]</code> section in <code>narrative.cfg</code> holding
+          <b>Settled:</b> a new <code>[events]</code> section in <code>narrative.cfg</code> holding
           <code>edge</code>, <code>recent_count</code>, <code>detail_level</code>,
           <code>channels</code> and <code>suppressed</code>.
         </p>
@@ -1062,9 +1084,24 @@
           deltas already on the wire — no accumulator needed, they are whole counts today.
         </p>
         <p class="rec">
-          <b>Recommend</b> yes, as a Notable <code>migrated</code> kind, since a band losing people
-          to a neighbour is precisely the thing the current diff-based alert misreads as death. Say
-          the word and it goes in; it is out of the plan otherwise.
+          <b>Settled:</b> yes, as a Notable <code>migrated</code> kind, since a band losing people
+          to a neighbour is precisely the thing the current diff-based alert misreads as death.
+        </p>
+      </div>
+
+      <div class="dq">
+        <h4>How loud is a death?</h4>
+        <p>
+          The first draft put <code>died</code> on the Alert rung beside a wolf raid. But bands lose
+          elders to cold as a matter of course, and a rung that interrupts for every one of them
+          trains the player to stop reading the bar — the precise failure the three-rung ladder
+          exists to prevent.
+        </p>
+        <p class="rec">
+          <b>Settled:</b> <code>died</code> is <b>Notable</b>. Alert stays for violence, for an
+          investment going feral, and for the client's own faults. A death that matters — a whole
+          band starving out — will announce itself through the starvation and morale channels that
+          already exist.
         </p>
       </div>
     </div>
