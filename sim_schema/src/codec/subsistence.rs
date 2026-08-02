@@ -310,6 +310,7 @@ fn create_flora_shares<'a>(
     for share in shares {
         let species = builder.create_string(share.species.as_str());
         let display_name = builder.create_string(share.display_name.as_str());
+        let role = builder.create_string(share.role.as_str());
         let entry = fb::FloraShareInfo::create(
             builder,
             &fb::FloraShareInfoArgs {
@@ -332,6 +333,9 @@ fn create_flora_shares<'a>(
                 // The same two accounts at the TENDED rung — appended last (append-only wire, #419).
                 cultivateFodderPayoff: share.cultivate_fodder_payoff,
                 cultivateTradePayoff: share.cultivate_trade_payoff,
+                // What the plant is FOR — a display tag off the roster, appended last (append-only
+                // wire). `""` is "unstated", never "staple".
+                role: Some(role),
             },
         );
         entries.push(entry);

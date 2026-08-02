@@ -787,15 +787,22 @@ fn patch_composition_info(
                 .iter()
                 .find(|info| info.species == entry.species)
                 .map_or_else(
-                    || FloraShareInfo {
-                        species: entry.species.clone(),
-                        display_name: flora
-                            .species
-                            .get(&entry.species)
-                            .map(|def| def.display_name.clone())
-                            .unwrap_or_default(),
-                        share: entry.share,
-                        ..FloraShareInfo::default()
+                    || {
+                        // The roster is the one place a species' name and its display `role` are
+                        // decided, so both come off the same lookup; a key the roster no longer
+                        // knows ships both fields empty ("unstated") rather than fabricated.
+                        let def = flora.species.get(&entry.species);
+                        FloraShareInfo {
+                            species: entry.species.clone(),
+                            display_name: def
+                                .map(|def| def.display_name.clone())
+                                .unwrap_or_default(),
+                            role: def
+                                .map(|def| def.role.as_str().to_string())
+                                .unwrap_or_default(),
+                            share: entry.share,
+                            ..FloraShareInfo::default()
+                        }
                     },
                     |info| FloraShareInfo {
                         share: entry.share,

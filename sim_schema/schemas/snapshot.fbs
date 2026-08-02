@@ -1558,6 +1558,21 @@ table FloraShareInfo {
   // this ground. The same rule `sowTradePayoff` states one rung up.
   cultivateFodderPayoff:float = 0;
   cultivateTradePayoff:float = 0;
+  // --- WHAT THIS PLANT IS FOR (appended, tile-card crop roles) ---
+  // The species' own `role` (flora_config.json -> species): "staple" | "fodder" | "cash". A DISPLAY
+  // TAG — nothing in the sim branches on it, and nothing on a client may either. The yield vector is
+  // the behaviour; this only says which component of it dominates, so a tile card can show one icon
+  // per crop and a player can see at a glance how much of a stand is food, cash or feed.
+  //
+  // `""` means UNSTATED (a species this server's roster no longer knows), NOT "staple" — a client
+  // must not default a missing tag into a real category. Same convention as `displayName`.
+  //
+  // SHIPPED RATHER THAN DERIVED FROM THE PAYOFFS ABOVE, which cannot answer it: those are rung-2 and
+  // rung-3 numbers, so they fold in the weeding and conversion gains rather than stating the plant's
+  // own vector, and they are ALL ZERO for a species that cannot climb on this ground
+  // (`canCultivate`/`canSow` false) — exactly the wild-ceiling case where the role is still a true
+  // and useful fact.
+  role:string;
 }
 
 // Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

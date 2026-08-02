@@ -413,4 +413,98 @@ mod tests {
             "the two tables must carry their OWN cuts — a global echo would make this pass blind"
         );
     }
+
+    /// **The three shipped crop roles reach the client as three distinct words.**
+    ///
+    /// `FloraShareInfo::role` is a display tag the client cannot re-derive — the payoffs beside it
+    /// are rung-2/rung-3 numbers and read `0` for a plant that cannot climb here — so a codec that
+    /// dropped it, or wrote one row's string for every row, would be invisible until a tile card
+    /// painted every crop with the same icon. Asserted on the **encoded envelope** rather than the
+    /// state structs, because it is the encoding that has to preserve the distinction.
+    #[test]
+    fn the_three_crop_roles_survive_the_wire_distinctly() {
+        let roles = [
+            ("wild_emmer", "staple"),
+            ("cotton", "cash"),
+            ("hay_grass", "fodder"),
+        ];
+        let snapshot = WorldSnapshot {
+            forage_patches: vec![ForagePatchState {
+                composition: roles
+                    .iter()
+                    .map(|(species, role)| FloraShareInfo {
+                        species: (*species).to_string(),
+                        role: (*role).to_string(),
+                        ..FloraShareInfo::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let composition = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0)
+            .composition()
+            .expect("the patch's composition");
+
+        assert_eq!(composition.len(), roles.len());
+        for (index, (species, role)) in roles.iter().enumerate() {
+            let share = composition.get(index);
+            assert_eq!(share.species(), Some(*species));
+            assert_eq!(
+                share.role(),
+                Some(*role),
+                "{species} must ship its own role, not a neighbour's"
+            );
+        }
+    }
+
+    /// A species the roster does not name ships `""` — **unstated**, which a client must not read as
+    /// `"staple"`. The empty-string convention is only worth anything if the encoder actually writes
+    /// the field rather than leaving the slot absent.
+    #[test]
+    fn an_unstated_role_ships_as_an_empty_string_rather_than_a_default_category() {
+        let snapshot = WorldSnapshot {
+            forage_patches: vec![ForagePatchState {
+                composition: vec![FloraShareInfo {
+                    species: "a_plant_this_roster_forgot".to_string(),
+                    ..FloraShareInfo::default()
+                }]
+                .into(),
+                ..ForagePatchState::default()
+            }],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("a decodable snapshot envelope");
+        let role = envelope
+            .payload_as_snapshot()
+            .expect("a snapshot payload")
+            .subsistence()
+            .expect("a subsistence section")
+            .foragePatches()
+            .expect("the forage patches")
+            .get(0)
+            .composition()
+            .expect("the patch's composition")
+            .get(0)
+            .role();
+
+        assert_eq!(
+            role,
+            Some(""),
+            "an unstated role is empty, never a category"
+        );
+    }
 }

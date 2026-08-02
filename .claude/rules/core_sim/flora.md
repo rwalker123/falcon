@@ -443,8 +443,25 @@ land-use tension.
 - **Wire (append-only):** `FloraShareInfo.sowTradePayoff` — trade/turn a sown Field of this plant
   would credit the faction stockpile; `0` for a staple/hay or a plant that cannot Sow here. **Client
   done:** the native reader decodes `sowTradePayoff` and the crop picker renders a cash-crop trade row
-  (`FLORA_CROP_TRADE_ROW_FORMAT`). The cash **badge** was deliberately omitted for parity with fodder —
-  no role-badge mechanism exists for either.
+  (`FLORA_CROP_TRADE_ROW_FORMAT`).
+
+### The `role` tag is on the wire — `FloraShareInfo.role`
+
+Each composition entry carries its species' own `role` (`staple` | `fodder` | `cash`), appended to
+`FloraShareInfo` (append-only). It is the **roster's** tag, copied at the quote site
+(`snapshot/flora_quotes.rs`) and at the roster-fallback in `patch_composition_info`, so the tag has one
+definition and cannot be re-derived into a second. Still a **display tag**: nothing in the sim branches
+on it, and a client renders it and nothing more. `""` means **unstated** (a species the roster no longer
+names), never `staple` — the `displayName` convention.
+
+**A client cannot derive it from the payoffs beside it.** `cultivatePayoff` / `cultivateFodderPayoff` /
+`cultivateTradePayoff` and the `sow*` triple are **rung-2 and rung-3** numbers — they fold in the weeding
+and conversion gains rather than stating the species' own vector — and they are **all zero** for a plant
+that cannot climb on this ground (`canCultivate`/`canSow` false), which is exactly the `wild`-ceiling case
+where the role is still a true and useful fact. Pinned by
+`sim_schema`'s `the_three_crop_roles_survive_the_wire_distinctly` /
+`an_unstated_role_ships_as_an_empty_string_rather_than_a_default_category` and, at the capture site, by
+`flora_quotes::tests::every_quoted_plant_carries_its_rosters_own_role`.
 
 ### The vector routes at RUNG 2 as well — a Tended Patch pays all three accounts
 

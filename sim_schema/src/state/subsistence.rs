@@ -734,6 +734,21 @@ pub struct FloraShareInfo {
     /// has been *paid* trade since #433 while being *previewed* as `0`. Appended (append-only).
     #[serde(default)]
     pub cultivate_trade_payoff: f32,
+    /// **What this plant is for** — the species' own `role` (`flora_config.json` → `species`):
+    /// `"staple" | "fodder" | "cash"`. A **display tag**: nothing in the sim branches on it and
+    /// nothing on a client may either — the yield vector is the behaviour, and this only names which
+    /// component of it dominates, so a tile card can show one icon per crop.
+    ///
+    /// `""` means **unstated** (a species the roster no longer knows), *not* `"staple"` — the same
+    /// convention [`Self::display_name`] carries, and a client must not default a missing tag into a
+    /// real category.
+    ///
+    /// **Not derivable from the payoffs above**: those are rung-2/rung-3 numbers that fold in the
+    /// weeding and conversion gains rather than stating the plant's own vector, and they are all `0`
+    /// for a species that cannot climb here — exactly the `Wild`-ceiling case where the role is still
+    /// true. Appended (append-only).
+    #[serde(default)]
+    pub role: String,
 }
 
 /// Per-faction intensification-ladder knowledge: the faction's progress on each of the ladder's

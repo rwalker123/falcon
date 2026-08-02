@@ -351,6 +351,11 @@ fn derive_tile_quotes(
                 // managed rate standing in for an MSY skim on a rung the player commits 25 turns to.
                 cultivate_fodder_payoff: fodder_payoff(RungKey::PlantTended),
                 cultivate_trade_payoff: trade_payoff(RungKey::PlantTended),
+                // **What this plant is FOR** — the roster's own `role`, shipped verbatim as the
+                // display tag it is. Taken off `def` rather than re-read from the yield vector here,
+                // because a tag whose whole purpose is to be ONE definition must have exactly one
+                // place that decides it (`FloraRole`). Nothing in the sim branches on it.
+                role: def.role.as_str().to_string(),
             }
         })
         .collect();
@@ -404,6 +409,54 @@ mod tests {
                 tile.position
             );
         }
+    }
+
+    /// **The published `role` is the ROSTER's role, for every plant on every tile** — the display
+    /// tag has exactly one definition (`FloraDef::role`) and the quote site copies it rather than
+    /// re-reading which component of the yield vector dominates. Asserted as a *relation* against the
+    /// loaded roster, so a re-tagged species moves both sides at once.
+    ///
+    /// The second half is what stops the guard passing blind: across a sweep of biomes the baskets
+    /// must name **more than one** role, or a capture site that hardcoded one word would satisfy the
+    /// first half everywhere.
+    #[test]
+    fn every_quoted_plant_carries_its_rosters_own_role() {
+        let (flora, labor) = configs();
+        let grid = UVec2::new(64, 64);
+        let mut cache = FloraQuoteCache::default();
+        let mut sweep = cache.sweep(&flora, &labor, 11, grid);
+
+        let mut roles_seen: Vec<&str> = Vec::new();
+        for (index, terrain) in [
+            TerrainType::MixedWoodland,
+            TerrainType::Floodplain,
+            TerrainType::AlluvialPlain,
+            TerrainType::PrairieSteppe,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for x in 0..16 {
+                let tile = tile_at(UVec2::new(x, index as u32), terrain);
+                for share in sweep.quotes(&tile) {
+                    let def = &flora.species[&share.species];
+                    assert_eq!(
+                        share.role,
+                        def.role.as_str(),
+                        "{} on {terrain:?} published a role its roster row does not state",
+                        share.species
+                    );
+                    if !roles_seen.contains(&def.role.as_str()) {
+                        roles_seen.push(def.role.as_str());
+                    }
+                }
+            }
+        }
+
+        assert!(
+            roles_seen.len() > 1,
+            "one role across every biome — the tag is not being read per species: {roles_seen:?}"
+        );
     }
 
     /// Two tiles of one biome carry different baskets (per-tile realization is keyed on
