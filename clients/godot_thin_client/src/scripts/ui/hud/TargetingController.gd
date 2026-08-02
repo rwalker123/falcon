@@ -25,7 +25,8 @@ extends RefCounted
 ##     hold. (NOT in the original spec's ctor — the pick flow needs it; see the report.)
 ##   • `_drawercompose` — the cluster's three `close_compose_sheet()` nudges (a targeting flow closes a
 ##     sheet floating over the map — §15).
-##   • `_command_feed` — the two miss/refusal `note()` nudges the quarry pick posts.
+##   • `_note_sink` — where the two miss/refusal nudges the quarry pick posts go:
+##     `HudLayer.note_system_event`, i.e. the event dock's System channel. It was the retired feed.
 ##   • `_host` — the HUD CanvasLayer, so this `RefCounted` has a node to parent the banner into (a
 ##     `RefCounted` cannot `add_child`). The banner is parented into the host's `LayoutRoot` (NOT the
 ##     bare CanvasLayer) so it keeps insetting with the reserved-edge docks exactly as before.
@@ -51,7 +52,7 @@ signal send_expedition_requested(payload: Dictionary)
 var _band_labor: HudBandLaborState = null
 var _compose: ComposeState = null
 var _drawercompose: DrawerComposeController = null
-var _command_feed: CommandFeedController = null
+var _note_sink: Callable
 # The HUD CanvasLayer, so this RefCounted has a node to parent the banner into.
 var _host: Node = null
 
@@ -73,13 +74,13 @@ var _targeting_banner: PanelContainer = null
 var _targeting_banner_label: RichTextLabel = null
 
 func _init(band_labor: HudBandLaborState, compose: ComposeState,
-		drawercompose: DrawerComposeController, command_feed: CommandFeedController, host: Node,
+		drawercompose: DrawerComposeController, note_sink: Callable, host: Node,
 		resolve_assign_band: Callable, after_pending_change: Callable,
 		rerender_band_panel: Callable) -> void:
 	_band_labor = band_labor
 	_compose = compose
 	_drawercompose = drawercompose
-	_command_feed = command_feed
+	_note_sink = note_sink
 	_host = host
 	_resolve_assign_band_fn = resolve_assign_band
 	_after_pending_change_fn = after_pending_change
@@ -361,7 +362,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	var herd := _huntable_herd_on_tile(tile_info)
 	var fauna_id := String(herd.get("id", "")).strip_edges()
 	if fauna_id == "":
-		_command_feed.note("Hunt expedition", "No huntable herd there — click on a herd.")
+		_note_sink.call("Hunt expedition", "No huntable herd there — click on a herd.")
 		return
 	# A herd INSIDE the band's hunt reach is a local hunt, not a party's job. Refuse it here and stay
 	# in targeting, exactly like the miss above — and say why, since the reach split is invisible on
@@ -369,7 +370,7 @@ func _try_pick_quarry(tile_info: Dictionary) -> void:
 	var band: Dictionary = _pending_pick_quarry.get("band", {})
 	if not is_expedition_quarry(band, herd):
 		var band_tile := SourceForecast.band_tile(band)
-		_command_feed.note("Hunt expedition", HudComposeVocab.QUARRY_WITHIN_REACH_FORMAT % [
+		_note_sink.call("Hunt expedition", HudComposeVocab.QUARRY_WITHIN_REACH_FORMAT % [
 			SourceForecast.herd_display_name(herd),
 			_hex_distance_wrapped(band_tile.x, band_tile.y,
 				int(herd.get("x", -1)), int(herd.get("y", -1))),

@@ -3976,6 +3976,12 @@ fn handle_reload_simulation_config(app: &mut bevy::prelude::App, path: Option<St
         *config_res = new_config.clone();
     }
 
+    // The event log's turn window is a live tunable: re-window (and prune) the running log so the
+    // reloaded number is the one the next snapshot publishes.
+    if let Some(mut log) = app.world.get_resource_mut::<CommandEventLog>() {
+        log.set_retention_turns(new_config.command_events_retention_turns);
+    }
+
     // The publication ring's depth is a constant now (`snapshot::PUBLICATION_RING_DEPTH`), so a
     // config reload no longer resizes it; `checkpoint_history_turns` is read where it is used.
 
@@ -5086,6 +5092,12 @@ fn command_kind_display(kind: CommandEventKind) -> &'static str {
         CommandEventKind::ExpeditionRecalled => "Expedition recalled",
         CommandEventKind::ExpeditionReturned => "Expedition returned",
         CommandEventKind::HerdUnderHerded => "Under-herded",
+        // The demographic kinds are world events, not commands — they never reach
+        // `emit_command_failure`. Named anyway so the display map stays total.
+        CommandEventKind::Born => "Birth",
+        CommandEventKind::Died => "Death",
+        CommandEventKind::CameOfAge => "Came of age",
+        CommandEventKind::Migrated => "Migration",
     }
 }
 

@@ -402,6 +402,7 @@ pub mod knowledge {
                 capability_flags: 0,
                 campaign_profiles: Vec::new(),
                 command_events: Vec::new(),
+                command_events_retention_turns: 0,
                 pending_forks: Vec::new(),
                 stance_axes: Vec::new(),
                 voice_medium: Vec::new(),

@@ -2761,6 +2761,10 @@ fn spawn_population_entity(
     // The band's durable identity — see `BandId`. Allocated here rather than derived from position
     // because several bands can share a hex and a band outlives the hex it started on.
     entity.insert(band_ids.allocate());
+    // The fractional carry that turns the demographic rates into whole-person feed events. Spawned
+    // empty here, beside the cohort whose flows it accumulates — a band without one runs the model
+    // but reports no births/deaths (see `simulate_population`'s query).
+    entity.insert(DemographicFlowAccumulator::default());
     // Positive `ResidentBand` marker: this is a real band and participates in the
     // population/settlement arc (demographics, migration, sedentarization, startup seeding, supply
     // networks, default-band command pickers). Detached expeditions are spawned separately and

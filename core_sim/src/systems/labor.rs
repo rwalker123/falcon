@@ -1957,9 +1957,13 @@ pub fn advance_population_migration(
     wellbeing_config: Res<WellbeingConfigHandle>,
     tile_registry: Res<TileRegistry>,
     tiles: Query<&Tile>,
+    tick: Res<SimulationTick>,
+    mut event_log: ResMut<CommandEventLog>,
     // `With<ResidentBand>`: migration relocates people between real bands only — an expedition is
-    // never a migration source or destination.
-    mut cohorts: Query<(Entity, &mut PopulationCohort), With<ResidentBand>>,
+    // never a migration source or destination. `Option<&BandId>` for the same reason
+    // `simulate_population` takes one: a band with no durable id has nothing to name a feed event
+    // after (worldgen always gives one).
+    mut cohorts: Query<(Entity, &mut PopulationCohort, Option<&BandId>), With<ResidentBand>>,
 ) {
     let wellbeing = wellbeing_config.get();
     let disc_cfg = &wellbeing.discontent;
@@ -1995,7 +1999,7 @@ pub fn advance_population_migration(
     }
     let mut bands: Vec<Band> = cohorts
         .iter()
-        .map(|(entity, cohort)| {
+        .map(|(entity, cohort, _)| {
             let move_fraction = migration_move_fraction(cohort.morale, mig_cfg);
             // Weighted bracket masses; the total is apportioned in proportion to these.
             let w_working = cohort.working;
@@ -2107,9 +2111,20 @@ pub fn advance_population_migration(
         .enumerate()
         .map(|(i, b)| (b.entity, i))
         .collect();
-    for (entity, mut cohort) in cohorts.iter_mut() {
+    for (entity, mut cohort, band_id) in cohorts.iter_mut() {
         cohort.last_emigrated = emigrated.get(&entity).copied().unwrap_or(0);
         cohort.last_immigrated = immigrated.get(&entity).copied().unwrap_or(0);
+        if let Some(band_id) = band_id {
+            // Whole people already, so this is reported the turn it happens — no accumulator.
+            crate::systems::population::push_migration_events(
+                &mut event_log,
+                tick.0,
+                cohort.faction,
+                *band_id,
+                cohort.last_emigrated,
+                cohort.last_immigrated,
+            );
+        }
         if let Some((dw, dc, de)) = deltas.get(&entity) {
             cohort.working = (cohort.working + *dw).max(scalar_zero());
             cohort.children = (cohort.children + *dc).max(scalar_zero());

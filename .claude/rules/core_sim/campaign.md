@@ -65,6 +65,14 @@ The bedrock number the rest of the economy builds on. Each `PopulationCohort` (a
    total is clamped to `population_cap`. The **dependency ratio** `(children+elders)/working` is
    the core tension.
 
+> **The flows are REPORTED, not discarded** (issue #272). `DemographicOutcome::flows` carries
+> births, maturations and the three death terms (with the dominant `DeathCause` per bracket) out of
+> `advance_demographics`, and a per-band `DemographicFlowAccumulator` turns each rate into
+> whole-person feed events (`born` / `came_of_age` / `died`, plus `migrated` off the already-whole
+> `last_emigrated`/`last_immigrated`). A rate has to accumulate before it can be an event — a
+> thirty-person band earns a fraction of a birth per turn — and the carry is checkpoint state.
+> See `.claude/rules/core_sim/event-feed.md`.
+
 > #### Fertility is stock **and** flow — three named factors, not two larder ratios
 >
 > **`fertility = birth_rate × hunger × reserve × trend`** (`fertility_factors`, design:

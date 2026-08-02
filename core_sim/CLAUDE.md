@@ -67,6 +67,7 @@ environment overrides. A new config's row goes in its arc's rule, not here.
 | `ports.md` | Port-block allocation, the handshake file, client discovery precedence (**spans both halves**) | `port_alloc.rs`, `server.rs`, `ServerPortsFile.gd`, `run_stack.sh` |
 | `world-handoff.md` | Which world a snapshot frame belongs to: no frame replay on connect, the reveal gate, retry-until-answered, per-world client caches (**spans both halves**) | `network.rs`, `Main.gd`, `GameLaunch.gd` |
 | `snapshot-socket.md` | Staying alive when a client stops reading: accept split from broadcast, the write timeout and why a timed-out client must be dropped, the bounded frame queue | `network.rs`, `tests/snapshot_socket.rs` |
+| `event-feed.md` | The `CommandEventLog` turn window, the event sequence, the append-only `diff_appended` delta, the demographic flow accumulator | `resources.rs`, `systems/population.rs`, `snapshot/mod.rs`, `decode_fixture.rs` |
 | `config-loading.md` | The strict boot-loader rule (absent default = builtin, present-but-broken = panic), the `config_load.rs` seam, why hot reload is the opposite | `config_load.rs`, `*_config.rs`, `resources.rs`, `server.rs` |
 
 **Cross-reference convention.** A quoted phrase like `see "The knowledge pattern"`
@@ -82,7 +83,7 @@ the top of this file for the test.
 
 | File | Purpose |
 |------|---------|
-| `src/data/simulation_config.json` | Grid size, environmental tuning, trade/power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting) |
+| `src/data/simulation_config.json` | Grid size, environmental tuning, trade/power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting), `command_events_retention_turns` (see `event-feed.md`) |
 | `src/data/map_presets.json` | World generation tuning parameters |
 | `src/data/start_profiles.json` | Campaign initialization (units, inventory, knowledge tags) |
 | `src/data/victory_config.json` | Victory mode thresholds and `continue_after_win` flag |

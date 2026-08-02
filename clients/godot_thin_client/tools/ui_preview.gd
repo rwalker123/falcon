@@ -45,6 +45,11 @@ const PREVIEW_PREFS_PATH := "user://ui_preview_prefs.cfg"
 ## Scratch DOCK prefs for the `BandCityPanel` this harness injects — NEVER the player's
 ## `user://band_city_dock.cfg`. A second file because the panel keeps its own (edge / collapsed / tab).
 const PREVIEW_DOCK_PREFS_PATH := "user://ui_preview_dock_prefs.cfg"
+## Scratch prefs for the `EventDockPanel` — a THIRD scratch file, for the same reason as the second:
+## the dock reads its edge / row count / detail floor on construction and writes them back as the
+## harness walks them, so without this a frame would depend on what the last run left behind AND the
+## walk would land in the developer's real `user://narrative.cfg`.
+const PREVIEW_EVENT_PREFS_PATH := "user://ui_preview_event_prefs.cfg"
 # Force-compile MapView here so the harness also acts as a full-context compile
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
@@ -56,6 +61,10 @@ const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## renders into this panel, so it is the only way to render the drawer's "it went over there"
 ## pointer line rather than the no-panel legacy fallback.
 const BAND_CITY_PANEL_SCENE := preload("res://src/ui/BandCityPanel.tscn")
+## Injected for the `event_dock_*` block at the end of the run and freed again. Like the band panel
+## it is its OWN CanvasLayer (not part of `HudLayer.tscn`), so it exists only for the states that
+## judge it and cannot leak a reserved strip into the other 200-odd frames.
+const EVENT_DOCK_SCENE := preload("res://src/ui/EventDockPanel.tscn")
 const OUT_DIR := "res://ui_preview_out"
 # The canvas EVERY frame renders at. Pinned rather than set once, because `project.godot` opens the
 # window MAXIMIZED and the WM applies — and RE-applies — that asynchronously; see `_ensure_canvas`.
@@ -769,6 +778,10 @@ func _ready() -> void:
 	# rendering `work` in one run and `band` in the next, off nothing but that leftover file.
 	BandCityPanel.config_path_override = PREVIEW_DOCK_PREFS_PATH
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_DOCK_PREFS_PATH))
+	# THE THIRD prefs file, same two reasons: the event dock persists its edge, row count, detail
+	# floor and channels, and the `event_dock_*` states walk all four.
+	EventDockPanel.config_path_override = PREVIEW_EVENT_PREFS_PATH
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PREVIEW_EVENT_PREFS_PATH))
 	# The Telling panel restores its collapsed state in its constructor, so pin it expanded BEFORE
 	# the HUD instantiates (into the scratch file, now that the override is set).
 	TellingPanel.save_collapsed(false)
@@ -1100,8 +1113,9 @@ func _ready() -> void:
 	await _settle()
 	await _save("band_alerts")
 
-	# State 1c — Wondrous Sites: the top-bar `◈ Discoveries` readout plus a `SiteDiscovered`
-	# command-feed entry (server-provided kind/label render generically). Confirms both surfaces.
+	# State 1c — Wondrous Sites: the top-bar `◈ Discoveries` readout. The `site_discovered` event is
+	# pushed alongside it because a real snapshot carries both; the HUD's own consumer of that array
+	# is the Telling now (the event dock is `Main`'s panel — see the `event_dock_*` block).
 	_hud.ingest_command_events([
 		{"tick": 42, "kind": "site_discovered", "label": "Discovered Verdant Basin", "detail": "A settle-site revealed at (20, 14)."},
 	])
@@ -1109,20 +1123,9 @@ func _ready() -> void:
 	await _settle()
 	await _save("discoveries")
 
-	# State 1d — Predators Phase 3 threat/casualty feed alerts (CommandFeedController.KIND_STYLE).
-	# `predator_raid` renders a ⚔ + crimson-tinted label, `hunt_danger` a ⚠ + amber label, and a plain
-	# `site_discovered` row rides alongside for contrast — the styled kinds must read as ALERTS distinct
-	# from the routine receipt.
-	_hud.ingest_command_events([
-		{"tick": 51, "kind": "predator_raid", "label": "Wolves raided Band 2", "detail": "Lost 1.2 provisions to the pack."},
-		{"tick": 51, "kind": "hunt_danger", "label": "Mammoth gored a hunter", "detail": "The hunt turned costly."},
-		{"tick": 51, "kind": "site_discovered", "label": "Discovered Verdant Basin", "detail": "A routine receipt, for contrast."},
-	])
-	_hud.clear_selection()
-	_hud.toggle_command_feed()   # hidden by default (opens on `R`) — reveal it to judge the styled rows
-	await _settle()
-	await _save("predator_feed")
-	_hud.toggle_command_feed()   # hide again so it does not leak into later states
+	# (State 1d — `predator_feed` — is RETIRED with the left-dock command feed it rendered. The
+	# threat/casualty alert styling it judged moved into `HudEventVocab.KIND_STYLE` and is judged on
+	# `event_dock_bottom` / `event_dock_pinned_alert` at the end of this run.)
 
 	# State 1e — Predators Phase 3 band readout: the Warrior-card "⚠ Predator nearby — N on guard"
 	# crimson alert AND the "⚔ Lost to raids −1.20" ledger row, both lit at once. A threatening predator
@@ -4878,16 +4881,8 @@ func _ready() -> void:
 	tile_panel_band_panel.queue_free()
 	await get_tree().process_frame
 
-	# tile_panel_feed_shown — the command feed is hidden by default now (six read-only receipts, no
-	# verbs) and opens on `R`. Toggled on, the dock must reflow with the selection card above it and
-	# nothing clipped.
-	_hud.ingest_command_events(_telling_command_receipts())
-	_show_tile(_food_tile_fixture())
-	_hud.toggle_command_feed()
-	await _settle()
-	await _save("tile_panel_feed_shown")
-	_hud.toggle_command_feed()
-	await _settle()
+	# (`tile_panel_feed_shown` is RETIRED with the command feed. It existed to prove the left dock's
+	# TWO growing cards could share one height budget; there is one growing card there now.)
 
 	# Restore the single-band compose context the states below assume.
 	_hud._band_labor._player_bands = []
@@ -5399,7 +5394,6 @@ func _ready() -> void:
 	# narrative cards get squeezed out of the frame entirely.
 	_hud._selection._selected_tile_info.clear()
 	_hud.clear_selection()
-	_hud.reset_command_feed()
 	_hud._telling.reset()
 
 	# G1 — ORAL: the current utterance only. No page furniture, no leaf controls, no page number — oral
@@ -5437,9 +5431,10 @@ func _ready() -> void:
 	await _settle()
 	await _save("telling_panel_unread")
 
-	# G4 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel holds its fixed page while the
-	# command feed carries ordinary receipts: before the split, two beats filled the feed card outright
-	# and pushed every receipt off screen. The receipts must be READABLE here. (Oral restored.)
+	# G4 — THE FRAME THAT PROVES THE SPLIT WORKED. The Telling panel holds its fixed page while a batch
+	# of ordinary command receipts arrives: before the split, two beats filled the narrative card
+	# outright and pushed every receipt off screen. The Telling must claim exactly its own kinds here
+	# and nothing else — the receipts belong to the event dock. (Oral restored.)
 	_hud.update_voice_medium([{"faction": 0, "medium_id": TELLING_MEDIUM_ORAL, "medium_index": 0}])
 	_hud.ingest_command_events(_telling_command_receipts())
 	await _settle()
@@ -5448,7 +5443,8 @@ func _ready() -> void:
 	# G5 — THE DEFAULT DOCK LAYOUT. The right dock holds the Telling panel ALONE: Victory and
 	# Terrain Types both ship suppressed, so the narrative surface gets the full right-dock height
 	# instead of the squeezed share it had while it lived under the left dock's selection cards.
-	# The command feed stays on the left, which is the layout this frame exists to show.
+	# The left dock is the selection card's alone now — the command feed that used to sit under it is
+	# retired — which is the layout this frame exists to show.
 	_hud.update_victory_state(_victory_state_fixture())
 	await _settle()
 	await _save("dock_default_layout")
@@ -6032,6 +6028,147 @@ func _ready() -> void:
 	_assert_hud("offered — a wild-ceiling species is offered nothing, gated or otherwise",
 		RungGates.next_rung_offered("hunt", rr_forever_wild, RUNG_BUILDING_NOTHING,
 			rr_knows_none).is_empty())
+
+
+	# ---- THE EVENT DOCK (issue #272) ---------------------------------------------------------
+	# Its own CanvasLayer, injected here and freed below, so it exists only for the frames that judge
+	# it. The reservation is pushed into the HUD by hand — `Main` owns that fan-out and `Main` is
+	# never instanced here — so the frames show the HUD reflowing off the reserved strip exactly as
+	# it does live.
+	_hud.clear_selection()
+	_hud._selection._selected_tile_info.clear()
+	await _settle()
+	var event_dock: EventDockPanel = EVENT_DOCK_SCENE.instantiate()
+	add_child(event_dock)
+	event_dock.reservation_changed.connect(_on_preview_event_dock_reservation)
+	await get_tree().process_frame
+	_on_preview_event_dock_reservation(event_dock.get_dock(), event_dock.current_reservation_size())
+
+	# THE ROLLBACK REGRESSION. `CommandEventLog` is checkpoint state, so a rollback restores it
+	# INCLUDING its `next_seq` counter and the replayed events REUSE sequence numbers the client has
+	# already seen. A rollback publishes a FULL frame, which is why `Main` clears the dock on every
+	# full snapshot BEFORE applying its events — without that clear the dock suppresses every replayed
+	# row as a duplicate `seq` and goes on showing a plausible but stale log, silently. Drive exactly
+	# that: a batch, then `reset()` (what the full frame does), then rows REUSING those `seq` values
+	# with different labels. The new labels must be what the dock holds.
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_rollback_before())
+	_assert_hud("rollback: the pre-rollback batch is held",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ROLLBACK_BEFORE_LABEL) == 1)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_rollback_after())
+	_assert_hud("rollback: a replayed event REUSING a seen `seq` is shown, not swallowed as a duplicate",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ROLLBACK_AFTER_LABEL) == 1)
+	_assert_hud("rollback: …and the pre-rollback row it replaced is gone, not stacked beside it",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ROLLBACK_BEFORE_LABEL) == 0)
+
+	# A `seq` of ZERO is a SENTINEL, not a key: it is the FlatBuffers default and means the row never
+	# went through `CommandEventLog::push`. Keyed on, every such row would collide onto one. Two rows
+	# that differ only in label must therefore both survive.
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_zero_seq_fixture())
+	_assert_hud("seq 0 is a sentinel, not a key: two unsequenced rows do not collide",
+		event_dock._events.size() == EVENT_DOCK_ZERO_SEQ_ROWS)
+
+	# THE BAND NAME IS THE CLIENT'S. The sim writes a positional `Band <BandId>` because the snapshot
+	# carries no band name; the HUD's roster says that band is `Band 1`, and the dock must say so too
+	# — bounded at a digit boundary, so a `Band 3` fixture cannot rewrite the `Band 30` beside it.
+	event_dock.reset()
+	event_dock.set_band_labels(EVENT_DOCK_BAND_LABELS)
+	event_dock.ingest_events(_event_dock_band_label_fixture())
+	_assert_hud("band label: the sim's positional `Band 3` is re-labelled to the roster's own name",
+		_preview_event_label_count(event_dock, EVENT_DOCK_RELABELLED, true) == 1)
+	_assert_hud("band label: an id the roster does not know keeps the sim's own label untouched",
+		_preview_event_label_count(event_dock, EVENT_DOCK_UNKNOWN_BAND_LABEL, true) == 1)
+	_assert_hud("band label: the substitution stops at a DIGIT boundary (`Band 3` ≠ `Band 30`)",
+		_preview_event_label_count(event_dock, EVENT_DOCK_DIGIT_BOUNDARY_LABEL, true) == 1)
+	event_dock.set_band_labels({})
+
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_fixture())
+	_assert_hud("seq de-dup: two identical same-turn raids are TWO events, not one",
+		_preview_event_kind_count(event_dock, "predator_raid") == EVENT_DOCK_DUPLICATE_RAIDS)
+	# And the SIGNATURE fallback still de-dupes a row with no usable `seq`, so a mixed frame cannot
+	# duplicate every row every turn. It is a degrade path, not a second mechanism — it carries the
+	# old collapse-two-identical-rows bug for exactly the rows that give it no better key.
+	var seqless := [{"tick": 47, "kind": "forage", "label": "A row with no seq", "detail": ""}]
+	event_dock.ingest_events(seqless)
+	event_dock.ingest_events(seqless)
+	_assert_hud("seq de-dup: a row carrying no usable seq still falls back to the signature",
+		_preview_event_label_count(event_dock, "A row with no seq") == 1)
+
+	# The client's own System-channel note — the Inspector's console chatter routed onto the dock,
+	# in the shape `Inspector._append_command_log` emits it (the LINE is the label; there is no
+	# separate detail, or the only words that matter end up at the far end of the bar).
+	event_dock.note_system("Command socket lost — reconnecting", "", true)
+
+	# event_dock_bottom — THE SHIPPED DEFAULT: bottom edge, 2 rows, the `notable` floor. Opened and
+	# closed first, which is what a player does and what marks the alerts read, so this frame shows
+	# the plain newest-first bar rather than the pinned one (that is its own state below).
+	event_dock.set_expanded(true)
+	event_dock.set_expanded(false)
+	await _settle()
+	await _save("event_dock_bottom")
+
+	# event_dock_top_expanded — the OTHER edge, log open. Two claims: the bar reads as a one-line
+	# title and NOT as a second copy of the log's newest turn-group (the failure the prototype made
+	# unmissable), and the log opens INWARD from the top edge with the bar still hugging it.
+	event_dock.set_dock(SIDE_TOP)
+	event_dock.set_expanded(true)
+	await _settle()
+	await _save("event_dock_top_expanded")
+	_assert_hud("expanded: the bar is ONE row, not a reprint of the log's newest turn-group",
+		event_dock._rows.get_child_count() == 1)
+
+	# event_dock_everything_expanded — the `routine` floor, i.e. every receipt the retired feed used
+	# to carry, with the log open. This is the state the strip could eat the map in, so it is where
+	# the yield cap is asserted.
+	event_dock.set_detail_level(HudEventVocab.RUNG_ROUTINE)
+	await _settle()
+	await _save("event_dock_everything_expanded")
+
+	# event_dock_alerts_only — the quietest setting on the narrowest bar: one row, alerts only. The
+	# `status=feral` row must be here (a `cultivate` kind PROMOTED to Alert by its detail token) and
+	# every routine receipt must be gone.
+	event_dock.set_expanded(false)
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_recent_count(1)
+	event_dock.set_detail_level(HudEventVocab.RUNG_ALERT)
+	await _settle()
+	await _save("event_dock_alerts_only")
+
+	# event_dock_pinned_alert — 4 rows at the `notable` floor over a FRESH ingest, so the alerts are
+	# unread again. Turn 47's raid is inside the window; the pin is judged on the deeper one, so the
+	# fixture's alerts sit far enough back that the newest four rows cannot contain them.
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_detail_level(HudEventVocab.RUNG_NOTABLE)
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_pin_fixture())
+	await _settle()
+	await _save("event_dock_pinned_alert")
+	_assert_hud("pinned alert: the unread raid holds the LEADING slot",
+		event_dock._pinned_order >= 0)
+
+	# THE STRIP YIELDS TO THE MAP. Both ways the dock can grow — the widest BAR (`RECENT_COUNT_MAX`
+	# rows, log closed) and the LOG open (which collapses the bar to one title line) — must leave the
+	# reserved strip inside `MAX_STRIP_HEIGHT_FRACTION` of the canvas, which is what leaves a usable
+	# viewport. Measured as a PAIR because the bar and the log are alternatives, not addends, so
+	# neither one alone is the worst case by inspection. A picture cannot carry this claim at all: a
+	# strip that had eaten 90% of the screen would still render as a plausible bar.
+	var widest_bar := event_dock.current_reservation_size()
+	event_dock.set_expanded(true)
+	await _settle()
+	var open_log := event_dock.current_reservation_size()
+	var strip_cap := float(PREVIEW_CANVAS_SIZE.y) * EventDockPanel.MAX_STRIP_HEIGHT_FRACTION
+	_assert_hud("the strip yields to the map: %d rows = %.0f px, log open = %.0f px, cap %.0f of a %d px canvas"
+			% [EVENT_DOCK_MAX_ROWS, widest_bar, open_log, strip_cap, PREVIEW_CANVAS_SIZE.y],
+		maxf(widest_bar, open_log) <= strip_cap)
+
+	event_dock.reservation_changed.disconnect(_on_preview_event_dock_reservation)
+	_hud.set_reserved_inset(&"event_dock", SIDE_BOTTOM, 0.0)
+	event_dock.queue_free()
+	await get_tree().process_frame
+	await _settle()
 
 	# Icon probe last, on a top layer with its own backdrop (rendering is warm by
 	# now), so every food glyph is captured via the map's draw path.
@@ -7341,6 +7478,140 @@ func _flora_row_has_role_icon(row: String) -> bool:
 ## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
 ## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
 ## for someone to notice a card that should not be there.
+# ---- the event dock's fixtures + probes ---------------------------------------------------------
+
+## The largest bar the dock offers, referenced rather than written as a 4 so the state and the
+## panel's own `RECENT_COUNT_MAX` cannot drift.
+const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
+## How many `predator_raid` rows the fixture carries on turn 47 — TWO, deliberately identical apart
+## from `seq`. This is the number the old signature de-duplication answered 1 to.
+const EVENT_DOCK_DUPLICATE_RAIDS := 2
+
+## Push the dock's reservation into the HUD by hand. `Main._apply_reservation` does this live (plus
+## the MapView half, which this harness has no visible map for); here it is what makes the frames
+## show the HUD reflowing off the reserved strip instead of sitting under it.
+func _on_preview_event_dock_reservation(edge: int, size: float) -> void:
+	_hud.set_reserved_inset(&"event_dock", edge, size)
+
+## How many retained events of one kind the dock is holding — read off its own accumulator, since the
+## claim is about DE-DUPLICATION and a rendered row count would also be filtered by the detail floor.
+func _preview_event_kind_count(dock: EventDockPanel, kind: String) -> int:
+	var count := 0
+	for event in dock._events:
+		if String(event["kind"]) == kind:
+			count += 1
+	return count
+
+## `rendered` reads the label the dock would DRAW (`_row_label`, i.e. after the band substitution)
+## rather than the raw one it stored. The band-label assertions have to ask the rendered one — the
+## substitution is deliberately a render-time resolution, so a raw read would pass on a dock that
+## never re-labels anything.
+func _preview_event_label_count(dock: EventDockPanel, label: String, rendered: bool = false) -> int:
+	var count := 0
+	for event in dock._events:
+		var found: String = dock._row_label(event) if rendered else String(event["label"])
+		if found == label:
+			count += 1
+	return count
+
+## The rollback fixture pair: two batches REUSING the same `seq` values with different labels, which
+## is exactly what a restored `CommandEventLog` replays (its `next_seq` counter is checkpoint state).
+const EVENT_DOCK_ROLLBACK_SEQ := 501
+const EVENT_DOCK_ROLLBACK_BEFORE_LABEL := "Hunters brought back red deer"
+const EVENT_DOCK_ROLLBACK_AFTER_LABEL := "The hunt came home empty"
+
+func _event_dock_rollback_before() -> Array:
+	return [{"tick": 60, "kind": "hunt", "faction": 0,
+		"label": EVENT_DOCK_ROLLBACK_BEFORE_LABEL, "detail": "", "seq": EVENT_DOCK_ROLLBACK_SEQ}]
+
+func _event_dock_rollback_after() -> Array:
+	return [{"tick": 60, "kind": "hunt", "faction": 0,
+		"label": EVENT_DOCK_ROLLBACK_AFTER_LABEL, "detail": "", "seq": EVENT_DOCK_ROLLBACK_SEQ}]
+
+## Two rows carrying the SENTINEL `seq` of 0 and differing only in label. Keyed on `seq` they would
+## collide onto one; routed to the signature fallback they are two.
+const EVENT_DOCK_ZERO_SEQ_ROWS := 2
+
+func _event_dock_zero_seq_fixture() -> Array:
+	return [
+		{"tick": 61, "kind": "forage", "faction": 0, "label": "An unsequenced row", "detail": "", "seq": 0},
+		{"tick": 61, "kind": "forage", "faction": 0, "label": "A second unsequenced row", "detail": "", "seq": 0},
+	]
+
+## The band-relabel fixture. The roster knows `band=3` as `Band 1` (its ROSTER POSITION, not its id)
+## and `band=30` as `Band 2`, and knows nothing of `band=9`.
+##
+## **The third row is the DIGIT-BOUNDARY trap, and it is CONSTRUCTED rather than quoted.** The sim
+## names exactly one band per label today (`systems::population::push_migration_events` writes
+## `"4 left Band 3"`), so no live event reaches the trap — but a plain `String.replace` of `Band 3`
+## finds the `Band 3` inside `Band 30` first and corrupts the label to `Band 10`, which is a bug
+## waiting for the first label that names two bands (a split or a merge is the obvious next one).
+## A fixture that cannot reach the state it claims makes the assertion decorative, so this one
+## reaches it. Note the honest limitation it also pins: only the band the `band=` token NAMES is
+## substituted — the second band keeps whatever the sim called it.
+const EVENT_DOCK_BAND_LABELS := {"3": "Band 1", "30": "Band 2"}
+const EVENT_DOCK_RELABELLED := "A child came of age in Band 1"
+const EVENT_DOCK_UNKNOWN_BAND_LABEL := "A child came of age in Band 9"
+const EVENT_DOCK_DIGIT_BOUNDARY_LABEL := "Four left Band 1 for Band 30"
+
+func _event_dock_band_label_fixture() -> Array:
+	return [
+		{"tick": 62, "kind": "came_of_age", "faction": 0,
+			"label": "A child came of age in Band 3", "detail": "band=3 count=1", "seq": 601},
+		{"tick": 62, "kind": "came_of_age", "faction": 0,
+			"label": "A child came of age in Band 9", "detail": "band=9 count=1", "seq": 602},
+		{"tick": 62, "kind": "migrated", "faction": 0,
+			"label": "Four left Band 3 for Band 30", "detail": "band=3 count=4 direction=out", "seq": 603},
+	]
+
+## The dock's main fixture — the proposal's own prototype vocabulary, carried on the real wire shape
+## (`{tick, kind, faction, label, detail, seq}`). It spans six turns so the log has turn-groups to
+## walk, covers all three rungs, both channels' worth of styling, and the three ways a row's accent
+## is decided: the kind's own threat style (`predator_raid` ⚔ crimson, `hunt_danger` ⚠ amber), a
+## `status=` detail token PROMOTING a routine kind to Alert (`cultivate status=feral`), and the
+## plain rung defaults.
+##
+## `seq` is monotonic across the whole array, oldest first, exactly as the sim appends it.
+func _event_dock_fixture() -> Array:
+	return [
+		{"tick": 42, "kind": "forage", "faction": 0, "label": "Foragers returned with 9 provisions", "detail": "", "seq": 1},
+		{"tick": 42, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame", "detail": "", "seq": 2},
+		{"tick": 43, "kind": "born", "faction": 0, "label": "A child was born in Windhollow", "detail": "count=1", "seq": 3},
+		{"tick": 43, "kind": "found_settlement", "faction": 0, "label": "Windhollow was settled", "detail": "", "seq": 4},
+		{"tick": 44, "kind": "scout", "faction": 0, "label": "Two workers sent to scout the northern ridge", "detail": "", "seq": 5},
+		{"tick": 44, "kind": "came_of_age", "faction": 0, "label": "A child came of age in Windhollow", "detail": "count=1", "seq": 6},
+		{"tick": 44, "kind": "campaign_milestone", "faction": 0, "label": "Ashfoot has become a hamlet", "detail": "", "seq": 7},
+		{"tick": 45, "kind": "corral", "faction": 0, "label": "Corral raised at Ashfoot", "detail": "", "seq": 8},
+		{"tick": 45, "kind": "cultivate", "faction": 0, "label": "The upper patch has gone feral", "detail": "status=feral", "seq": 9},
+		{"tick": 45, "kind": "expedition_arrived", "faction": 0, "label": "Expedition reached 24,9 — awaiting orders", "detail": "", "seq": 10},
+		{"tick": 45, "kind": "died", "faction": 0, "label": "An elder died of cold in Windhollow", "detail": "cause=cold bracket=elders", "seq": 11},
+		{"tick": 46, "kind": "hunt", "faction": 0, "label": "Hunters brought back red deer", "detail": "", "seq": 12},
+		{"tick": 46, "kind": "born", "faction": 0, "label": "A child was born in Ashfoot", "detail": "count=1", "seq": 13},
+		{"tick": 46, "kind": "site_discovered", "faction": 0, "label": "The Weeping Arch", "detail": "category=landmark at=18,31", "seq": 14},
+		{"tick": 46, "kind": "hunt_danger", "faction": 0, "label": "The aurochs hunt cost the party three lives", "detail": "losses=3", "seq": 15},
+		{"tick": 47, "kind": "sow", "faction": 0, "label": "Barley sown on the river terrace", "detail": "", "seq": 16},
+		{"tick": 47, "kind": "forage", "faction": 0, "label": "Foragers returned with 12 provisions", "detail": "", "seq": 17},
+		{"tick": 47, "kind": "migrated", "faction": 0, "label": "Four left Ashfoot for Windhollow", "detail": "count=4 direction=out", "seq": 18},
+		{"tick": 47, "kind": "came_of_age", "faction": 0, "label": "Two children came of age in Ashfoot", "detail": "count=2", "seq": 19},
+		# THE DE-DUPLICATION PAIR — byte-identical apart from `seq`. Two packs, one turn, one band.
+		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 20},
+		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 21},
+	]
+
+## The PIN fixture: one Alert, deliberately OLD, under enough newer Notable rows that a 4-row bar
+## cannot reach it on chronology alone. That is the whole test — the raid must claim the leading slot
+## rather than being pushed off by the receipts that followed it.
+func _event_dock_pin_fixture() -> Array:
+	return [
+		{"tick": 40, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 101},
+		{"tick": 41, "kind": "came_of_age", "faction": 0, "label": "A child came of age in Ashfoot", "detail": "count=1", "seq": 102},
+		{"tick": 42, "kind": "site_discovered", "faction": 0, "label": "The Weeping Arch", "detail": "at=18,31", "seq": 103},
+		{"tick": 43, "kind": "died", "faction": 0, "label": "An elder died of cold in Windhollow", "detail": "cause=cold", "seq": 104},
+		{"tick": 44, "kind": "migrated", "faction": 0, "label": "Four left Ashfoot for Windhollow", "detail": "count=4 direction=out", "seq": 105},
+		{"tick": 45, "kind": "expedition_arrived", "faction": 0, "label": "Expedition reached 24,9 — awaiting orders", "detail": "", "seq": 106},
+		{"tick": 46, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame", "detail": "", "seq": 107},
+	]
+
 func _assert_hud(label: String, ok: bool) -> void:
 	if ok:
 		print("ui_preview: PASS hud — ", label)

@@ -360,6 +360,48 @@ where
     Some(current.to_vec())
 }
 
+/// Diff an **append-only log** against a published cursor: the rows appended since, or `None`.
+///
+/// The third diff shape, and the only one whose baseline is a single number. `command_events` is a
+/// log — rows are appended, never edited, and the oldest fall out of the retention window — so
+/// `diff_whole` re-serialised the entire retained ring on every turn any event fired, which at a
+/// 20-turn window is ~200 rows to say that three of them are new.
+///
+/// **A dropped delta permanently loses the events it carried**, where a whole-vector resend was
+/// self-healing. That is safe for exactly one reason: the client applies a delta only when it holds
+/// the base frame (`WorldCache::accepts`), and a gap raises `resync_needed`, whose answer is a full
+/// snapshot carrying the whole retained ring. Break that gate and this diff silently drops history —
+/// `core_sim/tests/delta_streaming.rs` pins the pairing.
+///
+/// **`Baseline::Hold` must not advance the cursor**, and that is load-bearing rather than symmetry
+/// with the other diffs: a mid-tick recapture that advanced it would consume the rows, and the next
+/// real turn delta — which diffs from the *turn's* baseline — would never send them at all. It is
+/// the same cumulativity property recaptures already have for every other section.
+fn diff_appended(
+    baseline: &mut u64,
+    current: &[CommandEventState],
+    write: Baseline,
+) -> Option<Vec<CommandEventState>> {
+    let cursor = *baseline;
+    let appended: Vec<CommandEventState> = current
+        .iter()
+        .filter(|state| state.seq > cursor)
+        .cloned()
+        .collect();
+    if appended.is_empty() {
+        return None;
+    }
+    if write == Baseline::Advance {
+        // The highest seq PRESENT, not the highest ever issued: the two differ only if the window
+        // evicted the newest row, which cannot happen, and taking the max of what shipped is what
+        // keeps the cursor a statement about the client's held state.
+        if let Some(highest) = appended.iter().map(|state| state.seq).max() {
+            *baseline = highest;
+        }
+    }
+    Some(appended)
+}
+
 /// The O(changed) property of the indexed diffs, asserted on the baseline map itself.
 ///
 /// A steady-state turn is almost entirely unchanged entries, so "an unchanged entry is not touched"
@@ -487,6 +529,90 @@ mod indexed_diff_tests {
             Some(vec![4u8])
         );
         assert_eq!(baseline, vec![4u8]);
+    }
+
+    fn event(seq: u64) -> CommandEventState {
+        CommandEventState {
+            tick: seq,
+            kind: "born".to_string(),
+            faction: 0,
+            label: format!("event {seq}"),
+            detail: None,
+            seq,
+        }
+    }
+
+    #[test]
+    fn an_append_only_diff_ships_only_the_rows_above_the_cursor() {
+        let mut cursor = 0u64;
+        let ring = vec![event(1), event(2), event(3)];
+
+        let first = diff_appended(&mut cursor, &ring, Baseline::Advance)
+            .expect("a fresh cursor is owed every row");
+        assert_eq!(
+            first.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(cursor, 3, "the cursor advances to the newest row shipped");
+
+        assert_eq!(
+            diff_appended(&mut cursor, &ring, Baseline::Advance),
+            None,
+            "nothing new is `None`, not an empty vector — an empty section on the wire would mean \
+             'the log was cleared'"
+        );
+
+        let mut grown = ring.clone();
+        grown.push(event(4));
+        let second = diff_appended(&mut cursor, &grown, Baseline::Advance).expect("one new row");
+        assert_eq!(
+            second.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![4]
+        );
+        assert_eq!(cursor, 4);
+    }
+
+    /// **The `Hold` case, which is the whole reason `write` is a parameter here.** A mid-tick
+    /// recapture must not consume rows: it does not commit the baseline, so the committed turn
+    /// delta is still responsible for them, and a cursor advanced by a recapture would make that
+    /// turn delta skip them forever.
+    #[test]
+    fn a_held_diff_reports_the_same_rows_again() {
+        let mut cursor = 0u64;
+        let ring = vec![event(1), event(2)];
+
+        let recapture = diff_appended(&mut cursor, &ring, Baseline::Hold).expect("both rows");
+        assert_eq!(
+            recapture.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            cursor, 0,
+            "a recapture leaves the cursor exactly where it was"
+        );
+
+        let mut grown = ring.clone();
+        grown.push(event(3));
+        let turn = diff_appended(&mut cursor, &grown, Baseline::Advance)
+            .expect("the committed turn still owes all three");
+        assert_eq!(
+            turn.iter().map(|row| row.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "cumulative — losing the recapture frame costs nothing"
+        );
+        assert_eq!(cursor, 3);
+    }
+
+    /// The window evicting old rows must not re-send anything: the cursor is a statement about the
+    /// client, not an index into the ring.
+    #[test]
+    fn eviction_does_not_resurrect_delivered_rows() {
+        let mut cursor = 0u64;
+        diff_appended(&mut cursor, &[event(1), event(2)], Baseline::Advance).expect("both rows");
+
+        // The window dropped 1 and 2; 3 is new.
+        let after = diff_appended(&mut cursor, &[event(3)], Baseline::Advance).expect("one row");
+        assert_eq!(after.iter().map(|row| row.seq).collect::<Vec<_>>(), vec![3]);
     }
 }
 
@@ -685,6 +811,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
@@ -747,6 +874,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),
@@ -804,6 +932,7 @@ mod tests {
             capability_flags: 0,
             campaign_profiles: Vec::new(),
             command_events: Vec::new(),
+            command_events_retention_turns: 0,
             pending_forks: Vec::new(),
             stance_axes: Vec::new(),
             voice_medium: Vec::new(),

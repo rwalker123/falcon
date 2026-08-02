@@ -63,6 +63,20 @@ signal alert_focus_requested(x: int, y: int)
 ## chosen occupant without a hex click.
 signal roster_occupant_selected(kind: String, id: Variant)
 
+## A CLIENT-SIDE note the player should see — a refused quick-hunt, an unanswered fork, a knowledge
+## unlock. It used to be written straight into the left-dock command feed; that feed is retired and
+## the surface these land on (`EventDockPanel`, System channel) belongs to `Main`, so the HUD emits
+## and `Main` relays. Same shape as every other HudLayer signal: the coordinator mediates.
+signal system_note_requested(label: String, detail: String)
+
+## `band_id` (as a String) → the name this HUD gives that band, published on every snapshot from the
+## player-band roster. **The snapshot carries no band NAME**: the sim writes a positional
+## `Band <BandId>` into a demographic event's label and repeats the id as a `band=` detail token, so
+## the event dock can re-label the row with whatever the rest of the HUD calls that band. The client
+## name is a ROSTER POSITION and the sim's is a durable id, so the two routinely disagree — the token
+## is the only thing that can join them, and this map is the only place the join is possible.
+signal band_labels_changed(labels: Dictionary)
+
 ## PURE FALLBACK build identifier of THIS client — used only when no git stamp is present.
 ## The real build id is the git stamp `scripts/run_stack.sh` writes to `res://build_stamp.txt`
 ## (`<commit-date>-<short-hash>[-dirty]`, mirroring the server's `CORE_SIM_BUILD_ID`), read via
@@ -98,9 +112,6 @@ var _server_build: String = "?"
 @onready var terrain_legend_description: Label = %LegendDescription
 @onready var victory_panel: PanelContainer = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel
 @onready var victory_status_label: RichTextLabel = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/VictoryPanel/Margin/VictoryLabel
-@onready var command_feed_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel as PanelCard
-@onready var command_feed_scroll: ScrollContainer = %CommandFeedScroll
-@onready var command_feed_label: RichTextLabel = %CommandFeedLabel
 @onready var telling_panel: PanelCard = $LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack/TellingPanel as PanelCard
 @onready var telling_scroll: ScrollContainer = %TellingScroll
 @onready var telling_label: RichTextLabel = %TellingLabel
@@ -136,7 +147,9 @@ var tooltip_panel: PanelContainer
 var tooltip_label: Label
 
 # The legend card + its terrain-only Name/Count sort header now live in
-# ui/hud/LegendController.gd; the command feed card in ui/hud/CommandFeedController.gd.
+# ui/hud/LegendController.gd. The left-dock COMMAND FEED is gone: the event dock
+# (`ui/EventDockPanel.gd`, its own CanvasLayer) replaced it, and the client-side notes that used to
+# land in it are relayed out as `system_note_requested` instead.
 # These two aliases keep `HudLayer.LEGEND_SORT_FIELD_*` resolvable for external
 # callers (e.g. tools/ui_preview.gd) with the controller as the single source of truth.
 const LEGEND_SORT_FIELD_NAME := LegendController.SORT_FIELD_NAME
@@ -160,17 +173,20 @@ const UI_BALANCE_CONFIG_PATH := "res://src/config/ui_balance.json"
 const HUD_PANELS_CONFIG_SECTION := "hud_panels"
 const CONFIG_KEY_LEGEND_SUPPRESSED := "legend_suppressed"
 const CONFIG_KEY_VICTORY_SUPPRESSED := "victory_suppressed"
-const CONFIG_KEY_COMMAND_FEED_SUPPRESSED := "command_feed_suppressed"
 # Both reference cards start HIDDEN: the right dock is the narrative surface's home, and Victory /
 # Terrain Types are look-it-up readouts the player opens on demand (V / L) rather than standing
 # furniture competing with the telling for dock height.
 const PANEL_SUPPRESSED_BY_DEFAULT := true
 const DEFAULT_TRAVEL_SPEED := 3.0
 const DEFAULT_TRAVEL_PREVIEW_LIMIT := 12
-# The legend card (rows + sort header + suppress state) is owned by _legend; the
-# command feed card by _command_feed; the narrative panel by _telling. Hud delegates to all three.
+# The legend card (rows + sort header + suppress state) is owned by _legend; the narrative panel by
+# _telling. Hud delegates to both.
 var _legend: LegendController = null
-var _command_feed: CommandFeedController = null
+## The client-side note sink the three controllers that post one are handed (the top bar's
+## knowledge unlock, the turn orb's unanswered fork, targeting's two quarry refusals). It was a
+## `CommandFeedController` reference until that feed retired; a Callable onto `note_system_event`
+## now, because the panel those notes land on is not the HUD's to hold.
+var _note_sink: Callable = Callable(self, "note_system_event")
 var _topbar: TopBarReadouts = null
 var _telling: TellingPanel = null
 # Victory's counterpart to the legend's `legend_suppressed` — the player-hidden state of a dock
@@ -305,23 +321,22 @@ func _ready() -> void:
     # `SourceForecast`, not in the model.
     _compose = ComposeState.new(SourceForecast.DEFAULT_HARVEST_FLOOR)
     _legend = LegendController.new(terrain_legend_panel, terrain_legend_scroll, terrain_legend_list, terrain_legend_description)
-    _command_feed = CommandFeedController.new(command_feed_panel, command_feed_scroll, command_feed_label, left_dock_scroll)
-    # Top-bar faction readouts — constructed AFTER _command_feed so it can route the
-    # knowledge-unlock nudge straight through it. The meter glyph and percent formatter are
-    # `HudFormat.meter_bar` / `HudFormat.progress_percent` now, which the cluster calls directly —
-    # no Callable injection.
+    # Top-bar faction readouts. The meter glyph and percent formatter are `HudFormat.meter_bar` /
+    # `HudFormat.progress_percent` now, which the cluster calls directly — no Callable injection.
+    # The one injection left is `_note_sink`: the knowledge-unlock nudge is a System-channel note,
+    # and the panel it lands on is `Main`'s, not the HUD's.
     _topbar = TopBarReadouts.new(
         turn_label, metrics_label, sedentarization_label, demographics_label,
         discoveries_row, discoveries_label, discoveries_strip, intensification_label,
-        _command_feed)
+        _note_sink)
     # The telling GROWS TO FIT its current page, capped at `PAGE_MAX_HEIGHT` (docs/plan_the_telling_book_ux.md),
     # so it no longer needs a dock-scroll ceiling to fit against — a page is bounded (one turn's beats), and
     # the right dock's own scroll stacks it above Victory + Terrain Types with no bespoke height math.
     _telling = TellingPanel.new(telling_panel, telling_scroll, telling_label)
-    # Turn orb / attention / fork — constructed AFTER _telling and _command_feed (it needs both), handed
-    # the HUD CanvasLayer as the host it parents the fork panel into. It emits its OWN signals; HudLayer
+    # Turn orb / attention / fork — constructed AFTER _telling (it needs it), handed the HUD
+    # CanvasLayer as the host it parents the fork panel into. It emits its OWN signals; HudLayer
     # relays each onto the signals Main connects to (the controller never emits a HudLayer signal).
-    _turnorb = TurnOrbController.new(turn_orb, self, _telling, _command_feed)
+    _turnorb = TurnOrbController.new(turn_orb, self, _telling, _note_sink)
     _turnorb.answer_fork_requested.connect(func(payload: Dictionary) -> void: answer_fork_requested.emit(payload))
     _turnorb.advance_requested.connect(func() -> void: next_turn_requested.emit(1))
     # `_turnorb.focus_requested` is wired to `_attention.on_turn_orb_focus` further down, once `_attention`
@@ -355,7 +370,7 @@ func _ready() -> void:
     # controller never emits a HudLayer signal). Handed the HUD CanvasLayer as the host it parents the
     # banner into (a RefCounted can't).
     _targeting = TargetingController.new(
-        _band_labor, _compose, _drawercompose, _command_feed, self,
+        _band_labor, _compose, _drawercompose, _note_sink, self,
         _resolve_assign_band, _after_pending_change, func() -> void: _bandpanel.rerender())
     _targeting.targeting_changed.connect(func(info: Dictionary) -> void: targeting_changed.emit(info))
     _targeting.move_band_requested.connect(func(payload: Dictionary) -> void: move_band_requested.emit(payload))
@@ -420,16 +435,16 @@ func _ready() -> void:
     _legend.refresh_rows()
     _refresh_campaign_label()
     _refresh_victory_status()
-    _command_feed.render()
     _telling.render()
     _connect_selection_buttons()
     left_dock = PanelDock.new(left_stack)
     right_dock = PanelDock.new(right_stack)
     left_dock.add(tile_panel, 10)
-    left_dock.add(command_feed_panel, 30)
+    # THE LEFT DOCK IS THE SELECTION CARD'S AGAIN. The command feed that used to sit under it is
+    # retired — its events are the event dock's now, and its 40%-of-dock cap existed only to stop it
+    # crowding out the card that has the verbs on it.
     # The right dock is the narrative surface's home: the telling owns the top of it and, with both
-    # reference cards hidden by default, effectively the whole column. Sharing the left dock left it
-    # cramped under the selection cards + command feed.
+    # reference cards hidden by default, effectively the whole column.
     right_dock.add(telling_panel, 10)
     right_dock.add(victory_panel, 20)
     right_dock.add(terrain_legend_panel, 30)
@@ -792,11 +807,11 @@ func quick_assign_hunters(herd_id: String) -> void:
         return
     var band := _resolve_assign_band()
     if band.is_empty():
-        _note_command_feed("Quick-hunt", "No player band to assign.")
+        note_system_event("Quick-hunt", "No player band to assign.")
         return
     var idle := int(band.get("idle_workers", 0))
     if idle <= 0:
-        _note_command_feed("Quick-hunt", "No idle workers to assign to %s." % herd_id)
+        note_system_event("Quick-hunt", "No idle workers to assign to %s." % herd_id)
         return
     # The improvement the band is ALREADY building on this herd rides the edit (issue #442): the
     # shortcut sets a crew and a floor, and letting the pending overlay default to `IMPROVEMENT_NONE`
@@ -874,8 +889,6 @@ func _refresh_campaign_label() -> void:
 ## stale receipts would double them up. The Telling panel is deliberately NOT reset here: its
 ## signature de-dup makes re-ingesting the ring harmless, and clearing would throw away every
 ## telling that has already scrolled past the server's 32-entry ring.
-func reset_command_feed() -> void:
-    _command_feed.reset()
 
 ## WORLD BOUNDARY (`Main._reset_per_world_state`): the snapshot about to be applied describes a
 ## DIFFERENT world, so every HUD cache keyed to the old one is dropped. Coordinator ONLY — each
@@ -1122,14 +1135,13 @@ func _load_ui_balance_config() -> void:
         if cap_value > 0:
             travel_preview_turn_cap = cap_value
 
-## Fan one batch of command events out to BOTH surfaces. Each controller filters for the kinds it
-## owns (the split's one definition is `TellingPanel.handles_kind`), so passing the whole array to
-## both is correct and keeps each one's own retention + de-duplication.
+## The Telling's half of the command-event stream. It filters for the kinds it OWNS (the split's one
+## definition is `TellingPanel.handles_kind`), and the event dock — which `Main` feeds the same array
+## — skips exactly those, so a kind can never be claimed by both surfaces or dropped by both.
 ##
 ## This is also the Telling panel's BACKFILL: a full snapshot carries the server's whole
 ## `commandEvents` ring, so a player opening the client mid-session sees recent history.
 func ingest_command_events(events_variant: Variant) -> void:
-    _command_feed.ingest_events(events_variant)
     _telling.ingest_events(events_variant)
 func update_band_alerts(populations_variant: Variant) -> void:
     if not (populations_variant is Array):
@@ -1166,6 +1178,16 @@ func update_band_alerts(populations_variant: Variant) -> void:
     var attention := _attention.build_band_attention(player_bands, player_expeditions)
     # 3. Ingest (overwrites prev_band_sizes) — unchanged.
     _band_labor.ingest_snapshot_bands(new_sizes, player_band, player_bands, player_expeditions)
+    # 3a. Publish this roster's band NAMES for the event dock (see `band_labels_changed`). Keyed by
+    # the durable `band_id` the sim puts in an event's `band=` token, valued with the same
+    # `HudFormat.band_display_name` the cycler, the picker and the orb's rows all use — so one band
+    # has one name across every surface. Rebuilt each snapshot, so a roster change relabels the
+    # dock's already-held rows too.
+    var band_labels: Dictionary = {}
+    for i in range(player_bands.size()):
+        var roster_band: Dictionary = player_bands[i]
+        band_labels[str(int(roster_band.get("band_id", -1)))] = HudFormat.band_display_name(roster_band, i + 1)
+    band_labels_changed.emit(band_labels)
     # 4. Feed the band/expedition half to the turn-orb controller, which caches it and pushes the whole
     # registry (bands + the fork producer) as ONE replace — set_attention is wholesale, so a separate
     # call would wipe these rows.
@@ -1184,8 +1206,12 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # snapshot, or it would be unusable under autoplay (§15). It closes only if its subject is gone.
     _drawercompose.refresh_compose_sheet()
 
-func _note_command_feed(label: String, detail: String) -> void:
-    _command_feed.note(label, detail)
+## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock
+## command feed; it is a System-channel event on the event dock now, which is `Main`'s panel, so the
+## HUD EMITS rather than reaching for it. `_note_sink` is the Callable the three controllers that
+## post these were handed in place of the retired feed.
+func note_system_event(label: String, detail: String) -> void:
+    system_note_requested.emit(label, detail)
 func _refresh_victory_status() -> void:
     # A data refresh never un-hides a card the player suppressed.
     _apply_victory_visibility()
@@ -1273,18 +1299,6 @@ func toggle_victory() -> void:
     _apply_victory_visibility()
     _save_panel_pref(CONFIG_KEY_VICTORY_SUPPRESSED, _victory_suppressed)
 
-## The command feed's counterpart to `toggle_legend` / `toggle_victory` (bound to `R` in Main). The
-## feed holds six read-only receipts and NO verbs, so hiding it absorbs nothing — it simply hands
-## its dock height to the selection card, which is where the actions are. Hiding goes through the
-## controller (not a bare `visible = false`) so the dock reflows with no gap AND the next command
-## receipt can't re-show a card the player closed.
-func toggle_command_feed() -> void:
-    if _command_feed == null:
-        return
-    _command_feed.toggle_suppressed()
-    _refit_left_dock()
-    _save_panel_pref(CONFIG_KEY_COMMAND_FEED_SUPPRESSED, _command_feed.feed_suppressed)
-
 func _apply_victory_visibility() -> void:
     if victory_panel == null:
         return
@@ -1303,22 +1317,6 @@ func _refit_right_dock() -> void:
     if _telling != null:
         _telling.refit()
 
-## The left dock's twin, for the one event that moves BOTH of its growing cards at once: the `R`
-## toggle. The drawer sizes itself against whatever the feed below it reserves, so on a toggle the
-## two must settle in a fixed order or each measures the other mid-flight and their sum overspills
-## the dock. Release the drawer's claim → let the feed re-fit into the freed column → then let the
-## drawer take exactly the remainder. Ordinary selection changes need none of this: the feed is
-## already settled and `_drawer.fit_subject_drawer` alone fits into what is left.
-func _refit_left_dock() -> void:
-    if subject_scroll != null:
-        subject_scroll.custom_minimum_size.y = 0.0
-    await get_tree().process_frame
-    if _command_feed != null:
-        _command_feed.refit()
-    await get_tree().process_frame
-    # The feed just changed the room the drawer may claim, so force past the same-height gate.
-    _drawer.fit_subject_drawer(true)
-
 # ---- dock-card visibility persistence --------------------------------------
 
 func _load_hud_panel_prefs() -> void:
@@ -1329,15 +1327,10 @@ func _load_hud_panel_prefs() -> void:
                 HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_LEGEND_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
         _victory_suppressed = bool(cfg.get_value(
             HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_VICTORY_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT))
-        if _command_feed != null:
-            _command_feed.set_suppressed(bool(cfg.get_value(
-                HUD_PANELS_CONFIG_SECTION, CONFIG_KEY_COMMAND_FEED_SUPPRESSED, PANEL_SUPPRESSED_BY_DEFAULT)))
     else:
         # No prefs file yet (or unreadable): fall back to the hidden-by-default layout.
         if _legend != null:
             _legend.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
-        if _command_feed != null:
-            _command_feed.set_suppressed(PANEL_SUPPRESSED_BY_DEFAULT)
     _apply_victory_visibility()
 
 ## Persist ONE panel's preference — never the whole section.

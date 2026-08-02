@@ -440,6 +440,77 @@ pub enum MoraleCause {
     Unrest,
 }
 
+/// Which of the two mortality terms did most of the killing in one age bracket on one turn.
+///
+/// The demographic model kills through a starvation term (scaled by the food deficit and the
+/// bracket's vulnerability) and a uniform cold term. Once a death is *reported*, the turn that
+/// produced it is gone — post-turn brackets and a refilled larder cannot say what emptied them —
+/// so the cause is recorded when the deaths accrue and carried on
+/// [`DemographicFlowAccumulator`] until the whole-person event fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeathCause {
+    /// The food deficit dominated (or the two tied — a starving band is the louder reading).
+    #[default]
+    Hunger,
+    /// The cold term dominated.
+    Cold,
+}
+
+impl DeathCause {
+    /// The `cause=` token on a `died` event's detail string — and, unchanged, the word inside
+    /// "died of …" in its label.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeathCause::Hunger => "hunger",
+            DeathCause::Cold => "cold",
+        }
+    }
+}
+
+/// The fractional carry that turns a demographic **rate** into whole-person **events**.
+///
+/// `births = working × fertility` is a `Scalar`: a band of thirty earns a fraction of a birth per
+/// turn. Rounding that per turn either invents a birth in a band too small to have had one, or
+/// reports none for the whole game. So each flow accrues here, and an event fires only when the
+/// carry crosses a whole person — the remainder staying put is what makes a small band's births
+/// *late* rather than *absent*.
+///
+/// One per band, alongside the cohort. Checkpointed with it (`sim_state::BandRecord`): the carry is
+/// real state, and a rollback that dropped it would re-time every event after the restore.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct DemographicFlowAccumulator {
+    /// Fractional births not yet reported.
+    pub births: Scalar,
+    /// Fractional children→working transitions not yet reported.
+    pub maturations: Scalar,
+    /// Fractional deaths per bracket, each with the cause recorded on the last turn that killed
+    /// anyone in it — read when the carry crosses, never re-derived afterwards.
+    pub child_deaths: Scalar,
+    pub working_deaths: Scalar,
+    pub elder_deaths: Scalar,
+    pub child_death_cause: DeathCause,
+    pub working_death_cause: DeathCause,
+    pub elder_death_cause: DeathCause,
+}
+
+impl DemographicFlowAccumulator {
+    /// Add one turn's fractional `flow` to `carry` and hand back the **whole people** it now owes,
+    /// leaving the remainder in place.
+    ///
+    /// This is the whole honesty of the model in three lines: the returned count is `floor` of the
+    /// carry, and what is subtracted is exactly that count — so nothing is invented and nothing is
+    /// lost, however many turns a crossing takes.
+    pub fn accrue(carry: &mut Scalar, flow: Scalar) -> u32 {
+        *carry += flow;
+        let whole = carry.raw().div_euclid(Scalar::SCALE);
+        if whole <= 0 {
+            return 0;
+        }
+        *carry -= Scalar::from_i64(whole);
+        whole as u32
+    }
+}
+
 impl MoraleCause {
     /// Encode for the snapshot's `moraleCause:ubyte` field: `0=None, 1=Terrain, 2=Cold, 3=Unrest`.
     pub fn as_u8(self) -> u8 {
@@ -1833,5 +1904,61 @@ mod tests {
         assert!(allocation.assignments.is_empty());
         // Nothing to hang a verb on once the source is unstaffed.
         assert!(!allocation.set_improvement(&deplete, Some(Improvement::Cultivate)));
+    }
+
+    /// A thirty-person band earns a fraction of a birth per turn. Per-turn rounding would either
+    /// invent a birth it never had or report none for the whole game; the carry does neither.
+    #[test]
+    fn a_band_too_small_for_a_birth_this_turn_reports_one_later() {
+        // 30 working × a 0.01 birth rate = 0.3 of a person per turn.
+        let flow = scalar_from_f32(0.3);
+        let mut carry = scalar_zero();
+
+        assert_eq!(DemographicFlowAccumulator::accrue(&mut carry, flow), 0);
+        assert_eq!(DemographicFlowAccumulator::accrue(&mut carry, flow), 0);
+        assert_eq!(
+            DemographicFlowAccumulator::accrue(&mut carry, flow),
+            0,
+            "0.9 of a person is still nobody"
+        );
+        assert_eq!(
+            DemographicFlowAccumulator::accrue(&mut carry, flow),
+            1,
+            "the fourth turn crosses"
+        );
+    }
+
+    /// A big band crosses several people in one turn, and reports them as ONE event's count rather
+    /// than one crossing per turn for the next several turns.
+    #[test]
+    fn a_large_band_reports_several_people_in_one_turn() {
+        let mut carry = scalar_zero();
+        assert_eq!(
+            DemographicFlowAccumulator::accrue(&mut carry, scalar_from_f32(3.5)),
+            3
+        );
+    }
+
+    /// **The property that makes the whole model honest**: the crossing subtracts exactly the whole
+    /// people it reported, so the remainder rides on and nothing is invented or lost.
+    #[test]
+    fn the_remainder_survives_the_crossing() {
+        let flow = scalar_from_f32(0.6);
+        let mut carry = scalar_zero();
+
+        assert_eq!(DemographicFlowAccumulator::accrue(&mut carry, flow), 0);
+        assert_eq!(DemographicFlowAccumulator::accrue(&mut carry, flow), 1);
+        assert!(
+            (carry.to_f32() - 0.2).abs() < 1e-5,
+            "1.2 reported one person and kept 0.2, not 0: {}",
+            carry.to_f32()
+        );
+
+        // Five turns of 0.6 owe exactly three people, and only a preserved remainder pays the third.
+        let mut reported = 1;
+        reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
+        reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
+        reported += DemographicFlowAccumulator::accrue(&mut carry, flow);
+        assert_eq!(reported, 3, "5 × 0.6 = 3.0 people");
     }
 }

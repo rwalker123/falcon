@@ -4,7 +4,7 @@ extends RefCounted
 ## Owns the TURN-ORB / ATTENTION / FORK cluster (HUD decomposition Phase 1b, docs/plan_hud_decomposition.md):
 ## the bottom-right turn orb's wiring, the narrative-fork panel (The Telling), and the attention-registry
 ## ASSEMBLY (the band/expedition half cached by HudLayer + the snapshot-driven fork producer). Built on the
-## LegendController/CommandFeedController/TopBarReadouts idiom — HudLayer holds one as `_turnorb`, keeps thin
+## LegendController/TopBarReadouts idiom — HudLayer holds one as `_turnorb`, keeps thin
 ## reflective delegators for the five methods Main reaches by reflection, and RELAYS this controller's own
 ## signals onto the HudLayer signals Main connects to (the controller never emits a HudLayer signal directly).
 ##
@@ -27,7 +27,11 @@ var _turn_orb: TurnOrb = null
 # The HUD CanvasLayer, so the RefCounted controller has a node to parent the fork panel into.
 var _host: Node = null
 var _telling: TellingPanel = null
-var _command_feed: CommandFeedController = null
+## Where a client-side note goes. It was the retired left-dock command feed; it is
+## `HudLayer.note_system_event` now (→ `system_note_requested` → the event dock's System channel),
+## injected as a Callable because the panel is `Main`'s and neither this controller nor the HUD owns
+## it. Injected rather than reached for through `_host`, which is a PARENTING host, not a back-ref.
+var _note_sink: Callable
 
 # --- Owned state (moved off HudLayer) ---
 # The player faction's pending forks + stance axes, cached from the snapshot. `_band_attention` is the
@@ -42,11 +46,11 @@ var _band_attention: Array = []
 var _auto_opened_forks: Dictionary = {}
 var _fork_panel: NarrativeForkPanel = null
 
-func _init(turn_orb: TurnOrb, host: Node, telling: TellingPanel, command_feed: CommandFeedController) -> void:
+func _init(turn_orb: TurnOrb, host: Node, telling: TellingPanel, note_sink: Callable) -> void:
 	_turn_orb = turn_orb
 	_host = host
 	_telling = telling
-	_command_feed = command_feed
+	_note_sink = note_sink
 	_connect_turn_orb()
 	_ensure_fork_panel()
 
@@ -235,10 +239,10 @@ func has_pending_fork() -> bool:
 
 ## The dev toolbar / autoplay advanced past an unanswered fork. Not a gate — a RECEIPT: the server will
 ## expire the fork to its defer branch, which is a real narrative outcome, so a developer who skipped the
-## question must be able to see that they did. Routed straight through the command feed controller, the
-## same sink HudLayer._note_command_feed forwards to.
+## question must be able to see that they did. Routed through the same note sink every other
+## client-side note takes, which lands it on the event dock's System channel.
 func note_unanswered_fork() -> void:
-	_command_feed.note(HudAttentionVocab.UNANSWERED_FORK_LABEL, HudAttentionVocab.UNANSWERED_FORK_DETAIL)
+	_note_sink.call(HudAttentionVocab.UNANSWERED_FORK_LABEL, HudAttentionVocab.UNANSWERED_FORK_DETAIL)
 
 ## An orb row's "Jump →". The band routing stays on HudLayer (`_on_turn_orb_focus` reaches into band/labor
 ## helpers), so the controller just re-emits its own `focus_requested`, which HudLayer relays into that

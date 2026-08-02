@@ -140,6 +140,25 @@ inline divide — and a new `Scalar` **cohort** field belongs in `CohortScalars`
 (`dict/population.rs`), which is the one part of this crate `cargo test` can reach
 (`VarDictionary` cannot be built outside a live engine).
 
+`command_events_to_array` (`dict/campaign.rs`) carries **`seq`**, and the campaign section carries
+**`command_events_retention_turns`** — the two fields the event dock needs (issue #272,
+`.claude/rules/client/event-dock.md`). Two decode rules ride them, and both are about a FlatBuffers
+default being indistinguishable from a real value:
+
+- **`seq` is published raw and is ONE-BASED**: `0` is both the schema default and the sim's own
+  "never pushed through `CommandEventLog`" sentinel, so the CLIENT decides what to do with it (it
+  falls back to signature de-duplication). The decoder does not invent a substitute.
+- **`command_events_retention_turns` is WITHHELD when 0**, on both the full and the delta path,
+  because "not stated" and "a retention window of zero" are the same bits and only one of them is
+  ever meant. The client's own default then stands. It goes on the delta through **`insert_always`,
+  not `insert_changed`**: it rides the campaign section rather than being a section of its own, and
+  naming it in the manifest would invite a consumer to gate on a section name nothing else uses.
+
+**The decoder does NOT accumulate `command_events`.** It is per-frame history by existing contract —
+a delta carries only the newly appended rows, a full snapshot the whole retained ring — and the
+accumulation belongs to the CONSUMERS (`EventDockPanel`, `TellingPanel`), each with its own retention
+and de-duplication. `WorldCache` must not grow a ring for it.
+
 `population_to_dict` decodes two **Predators Phase 3** cohort keys (appended after `fodderStore` in
 the schema): `raid_radius` ← `cohort.raidRadius()` (a plain `uint` reach, `as i64` — like `work_range`,
 NOT a Scalar), the odd-r hex distance within which an aggressive carnivore herd raids this band's

@@ -12,6 +12,7 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
 @onready var band_city_panel: CanvasLayer = $BandCityPanel
+@onready var event_dock: CanvasLayer = $EventDockPanel
 @onready var pause_layer: CanvasLayer = $PauseLayer
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
 
@@ -299,13 +300,14 @@ func _ready() -> void:
     _ensure_action_binding("toggle_inspector", Key.KEY_I)
     _ensure_action_binding("toggle_legend", Key.KEY_L)
     _ensure_action_binding("toggle_victory", Key.KEY_V)
-    _ensure_action_binding("toggle_command_feed", Key.KEY_R)
+    _ensure_action_binding("toggle_event_dock", Key.KEY_R)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
         _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
     _connect_band_city_panel()
+    _connect_event_dock()
     _connect_pause_menu()
 
 ## The ESC pause overlay ($PauseLayer): hidden until ESC opens it. Resume hides it, Abandon
@@ -496,6 +498,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
     # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
+    # The turn a client-side System event is stamped with, so it groups with the sim events of the
+    # turn it actually happened on.
+    _event_dock_invoke("set_current_turn", [int(snapshot.get("turn", 0))])
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
@@ -534,10 +539,28 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         _hud_invoke("update_voice_medium", [snapshot["voice_medium"]])
     if snapshot.has("populations") and SnapshotSections.changed(snapshot, "populations"):
         _hud_invoke("update_band_alerts", [snapshot["populations"]])
+    # `command_events` is PER-FRAME HISTORY, never reconstructible: a delta carries only the rows
+    # appended since the baseline, a full snapshot carries the whole retained ring. Both consumers
+    # (the Telling, and the event dock) accumulate and de-duplicate, so re-ingesting a full
+    # snapshot's ring is harmless.
+    #
+    # **THE DOCK IS CLEARED ON EVERY FULL SNAPSHOT, BEFORE THAT SNAPSHOT'S EVENTS ARE APPLIED**, and
+    # the order is the contract — the same frame carries the backfill, so clearing after the dispatch
+    # would wipe what just landed. It is a correctness requirement, not hygiene: `CommandEventLog` is
+    # checkpoint state, so a ROLLBACK restores it including its `next_seq` counter and the replayed
+    # events reuse sequence numbers the client has already seen. A rollback publishes a full frame, so
+    # without this clear the dock would suppress every replayed row as a duplicate `seq` and go on
+    # showing a plausible but stale log, silently. (The Telling is deliberately NOT reset here — it
+    # keeps its own scrolled-off history and de-dupes on a signature, not on `seq`.)
     if not is_delta:
-        _hud_invoke("reset_command_feed")
+        _event_dock_invoke("reset")
+    # Retention BEFORE the ingest: the sim's window is hot-reloadable, so a frame can both narrow it
+    # and carry the events that must be trimmed against the NEW value.
+    if snapshot.has("command_events_retention_turns"):
+        _event_dock_invoke("set_retention_turns", [int(snapshot["command_events_retention_turns"])])
     if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
+        _event_dock_invoke("ingest_events", [snapshot["command_events"]])
     if snapshot.has("victory") and SnapshotSections.changed(snapshot, "victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
@@ -609,6 +632,9 @@ func _record_hud_calls(profile: TurnProfile) -> void:
 ## Main uses, so a surface without one simply skips (it merges nothing worth clearing).
 func _reset_per_world_state() -> void:
     _hud_invoke("reset_world_state")
+    # The event dock needs no clear here: a world change always arrives on a FULL snapshot, and the
+    # `command_events` dispatch below clears it on every one of those (see the note there — a
+    # rollback reuses `seq`, so the full-frame clear is a correctness requirement in its own right).
     if map_view != null and map_view.has_method("reset_world_state"):
         map_view.call("reset_world_state")
     # Both analytics lines print once per DISTINCT value, so a new world whose campaign label or
@@ -1077,9 +1103,13 @@ func _toggle_inspector_visibility() -> void:
     # The inset update arrives via the inspector's reserved_width_changed signal.
 
 ## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
-## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
-const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+## edge). **The event dock hugs the edge, the Band panel is offset inboard of it** — a thin strip on
+## the rim reads as chrome, and it means the band panel's position relative to the map never changes
+## when the bar grows a row. The Inspector sits between them (it is always `SIDE_LEFT`, so it never
+## actually shares an edge with the top/bottom-only dock; the number keeps the order total).
+const RESERVER_PRIORITY := {&"event_dock": 0, &"inspector": 1, &"band_panel": 2}
 const BAND_PANEL_RESERVER := &"band_panel"
+const EVENT_DOCK_RESERVER := &"event_dock"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
@@ -1105,7 +1135,7 @@ func _update_band_panel_edge_offset() -> void:
     if band_city_panel == null or not band_city_panel.has_method("set_edge_offset") or not band_city_panel.has_method("get_dock"):
         return
     var band_edge: int = int(band_city_panel.call("get_dock"))
-    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 1))
+    var band_priority: int = int(RESERVER_PRIORITY.get(BAND_PANEL_RESERVER, 0))
     var offset: float = 0.0
     for other_id in _reservations:
         if other_id == BAND_PANEL_RESERVER:
@@ -1152,6 +1182,61 @@ func _connect_band_city_panel() -> void:
 func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
     _apply_reservation(&"band_panel", edge, size)
 
+## Wire the event dock onto the reservation fan-out and seed its initial reservation (the panel's
+## own startup emit happens before we are ready, exactly as with the Band/City panel, so query it).
+## Its priority is 0, so it always hugs its edge and never needs an edge offset of its own.
+func _connect_event_dock() -> void:
+    if event_dock == null:
+        return
+    if event_dock.has_signal("reservation_changed") and not event_dock.is_connected(
+            "reservation_changed", Callable(self, "_on_event_dock_reservation_changed")):
+        event_dock.connect("reservation_changed", Callable(self, "_on_event_dock_reservation_changed"))
+    # The HUD's own client-side notes (a quick-hunt refusal, a knowledge unlock, an unanswered fork)
+    # used to land in the command feed. They are System-channel events now, and the HUD relays them
+    # rather than reaching for a panel it does not own.
+    if hud != null and hud.has_signal("system_note_requested") and not hud.is_connected(
+            "system_note_requested", Callable(self, "_on_system_note_requested")):
+        hud.connect("system_note_requested", Callable(self, "_on_system_note_requested"))
+    # THE DOCK NAMES A BAND THE WAY THE REST OF THE HUD DOES. The snapshot carries no band NAME, so
+    # the sim writes a positional `Band <BandId>` into a demographic event's label and repeats the id
+    # in the detail's `band=` token; the client's own name is a ROSTER POSITION, which the HUD owns.
+    # So the HUD publishes the map and the dock does the substitution — the sim's label is never
+    # changed, and neither surface reaches into the other.
+    if hud != null and hud.has_signal("band_labels_changed") and not hud.is_connected(
+            "band_labels_changed", Callable(self, "_on_band_labels_changed")):
+        hud.connect("band_labels_changed", Callable(self, "_on_band_labels_changed"))
+    # The Inspector's console chatter — connection state, a command sent or refused, a rollback.
+    # A dropped command socket is something the player must be told, and the debug console is not
+    # where they will see it.
+    if inspector != null and inspector.has_signal("system_event") and not inspector.is_connected(
+            "system_event", Callable(self, "_on_inspector_system_event")):
+        inspector.connect("system_event", Callable(self, "_on_inspector_system_event"))
+    if event_dock.has_method("get_dock") and event_dock.has_method("current_reservation_size"):
+        _apply_reservation(EVENT_DOCK_RESERVER, int(event_dock.call("get_dock")),
+            float(event_dock.call("current_reservation_size")))
+
+func _on_event_dock_reservation_changed(edge: int, size: float) -> void:
+    _apply_reservation(EVENT_DOCK_RESERVER, edge, size)
+
+func _on_band_labels_changed(labels: Dictionary) -> void:
+    _event_dock_invoke("set_band_labels", [labels])
+
+func _on_system_note_requested(label: String, detail: String) -> void:
+    _note_system_event(label, detail, false)
+
+func _on_inspector_system_event(label: String, detail: String, alert: bool) -> void:
+    _note_system_event(label, detail, alert)
+
+func _note_system_event(label: String, detail: String, alert: bool) -> void:
+    if event_dock != null and event_dock.has_method("note_system"):
+        event_dock.call("note_system", label, detail, alert)
+
+## `R` toggles the event dock — the hotkey the retired left-dock command feed used to own, and the
+## persisted `command_feed_suppressed` preference migrates onto the dock's own `suppressed` key.
+func _toggle_event_dock_visibility() -> void:
+    if event_dock != null and event_dock.has_method("toggle_suppressed"):
+        event_dock.call("toggle_suppressed")
+
 func _toggle_legend_visibility() -> void:
     if hud == null:
         return
@@ -1163,14 +1248,6 @@ func _toggle_victory_visibility() -> void:
         return
     if hud.has_method("toggle_victory"):
         _hud_invoke("toggle_victory")
-
-## The command feed ships hidden (six read-only receipts, no verbs) so the selection card owns the
-## left dock's height; `R` opens it on demand, exactly as `L` / `V` open the two reference cards.
-func _toggle_command_feed_visibility() -> void:
-    if hud == null:
-        return
-    if hud.has_method("toggle_command_feed"):
-        _hud_invoke("toggle_command_feed")
 
 # FOG OF WAR IS SERVER-AUTHORITATIVE. The sim owns `fog_enabled` on its config — it gates BOTH the
 # visibility raster and the herd display list, which is the point: with fog off the fauna the filter
@@ -1277,8 +1354,8 @@ func _process(delta: float) -> void:
         _toggle_legend_visibility()
     if Input.is_action_just_pressed("toggle_victory"):
         _toggle_victory_visibility()
-    if Input.is_action_just_pressed("toggle_command_feed"):
-        _toggle_command_feed_visibility()
+    if Input.is_action_just_pressed("toggle_event_dock"):
+        _toggle_event_dock_visibility()
     if Input.is_action_just_pressed("toggle_fow"):
         _toggle_fow_overlay()
     if command_client != null:
@@ -1405,6 +1482,12 @@ func _snapshot_is_delta(snapshot: Dictionary) -> bool:
         if snapshot.has(field):
             return true
     return false
+
+## The event dock's twin of `_hud_invoke` — a silent `has_method` probe, so a client running
+## without the panel (a harness, a partial scene) simply does nothing rather than erroring.
+func _event_dock_invoke(method: String, args: Array = []) -> void:
+    if event_dock != null and event_dock.has_method(method):
+        event_dock.callv(method, args)
 
 func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null

@@ -103,9 +103,20 @@ Three clauses, and the third is the one that bites:
    the decoder builds a fresh tree per frame that no consumer mutates.
 3. **Anything ACCUMULATING must stay above the gate.** The test is not "is it cheap", it is **"is
    it reconstructible from the next full snapshot?"** Panel state is a rebuild-from-keys and so
-   survives being skipped. `_ingest_command_events` is not: those are per-turn *events*, and a
-   dropped one is gone from the running log forever. It runs unconditionally, and replay is safe
-   because `_seen_command_events` dedupes.
+   survives being skipped.
+
+   **The Inspector currently holds NO accumulator, and that is a change worth knowing about.**
+   `command_events` was the one — per-turn *events*, a dropped one gone from the running log
+   forever, so `_ingest_command_events` ran unconditionally and `_seen_command_events` made the
+   replay safe. Issue #272 retired that stream: the events belong to the **event dock**
+   (`Main._apply_snapshot` feeds `EventDockPanel.ingest_events` directly and never routes them
+   through here), and the Commands tab is the debug console it always was. What survives above the
+   gate is the cheap per-frame prefix — `_cached_snapshot` and `_last_turn` — which is what makes
+   clauses 1 and 2 possible at all, so the gate still may not creep upward over it.
+   `inspector_hidden_guard` witnesses the prefix on `_last_turn` (written above the gate, read
+   nowhere else on this path) now that `_seen_command_events` is gone.
+
+   **An accumulator added back here goes above the gate and gets its own assertion in that guard.**
 
    Adding anything to `_apply_update` means answering that question for it. Near-misses that are
    safe, each checked rather than assumed: `VictoryPanel._log_victory` is edge-triggered but on
@@ -116,6 +127,28 @@ Three clauses, and the third is the one that bites:
 `tools/inspector_hidden_guard.gd` pins all of it (see `test-harnesses.md`) — the property is
 invisible in normal play, since a stale-when-opened Inspector looks like a panel that just hasn't
 updated yet.
+
+## The console chatter stays; it just also leaves the building
+
+`_append_command_log` is the funnel for every client-side line the Inspector writes — connection
+state, a command sent, a command refused, a rollback. All of it still goes to the Commands tab and
+the log buffer exactly as before: that widget is the **debug console** and it stays one.
+
+What changed is that each line ALSO goes out on **`system_event(label, detail, alert)`**, which
+`Main` relays to the event dock's System channel. A dropped command socket is something the player
+must be told, and a console that ships hidden is not where they will see it.
+
+Two details are load-bearing:
+
+- **`alert` is stated by the emitting site, never derived from the text.** `_append_command_log`
+  takes it as a defaulted parameter (`false`), so the six panel-injected `Callable`s (Map / Terrain
+  / Crisis / Knowledge / Victory / Commands) are unchanged and a panel's own command receipt is a
+  Routine note; the six FAILURE sites in this file pass `true`. This file knows which of its own
+  lines is bad news — a string match on its own log strings would only pretend to.
+- **The LINE is the dock row's label, not a detail beside a fixed one.** A dock row draws its label
+  at full size on the leading edge and its detail as small faint text on the TRAILING one, so
+  emitting `("Command", entry)` strands the only words that matter at the far end of a screen-wide
+  bar. The channel chip already says where the line came from.
 
 ## Inspector Panels
 

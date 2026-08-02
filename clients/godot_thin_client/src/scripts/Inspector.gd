@@ -6,6 +6,15 @@ class_name InspectorLayer
 ## amount so the Inspector never overlaps other panels.
 signal reserved_width_changed(width: float)
 
+## One line of the client's own console chatter, re-broadcast for the EVENT DOCK's System channel
+## (`Main._on_inspector_system_event` -> `EventDockPanel.note_system`). The Inspector's log widget
+## keeps every one of these — it is the debug console and it stays one — but a dropped command
+## socket or a refused command is something the PLAYER must be told, and that console is not where
+## they will see it. `alert` is stated by the emitting site rather than derived from the text: this
+## file knows which of its own lines is bad news, and a string match on its own log strings would
+## only pretend to.
+signal system_event(label: String, detail: String, alert: bool)
+
 const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
 # TerrainDefinitions moved to TerrainPanel.
@@ -65,7 +74,6 @@ var _panel_visible: bool = true
 ## skip in `_apply_update` safe — see its header.
 var _cached_snapshot: Dictionary = {}
 var _hidden_snapshot_pending: bool = false
-var _seen_command_events: Dictionary = {}
 var _resolved_font_size: int = Typography.DEFAULT_FONT_SIZE
 var _last_turn: int = 0
 var command_client: Object = null
@@ -157,8 +165,9 @@ func set_panel_visible(visible: bool) -> void:
 ## empties the panels while they are already visible.
 ##
 ## Safe to re-run against a snapshot already partly consumed: every panel rebuilds its state from
-## the snapshot's keys, and the one accumulator on this path (`_ingest_command_events`) dedupes on
-## `_seen_command_events`, so the events ingested while hidden are not logged twice.
+## the snapshot's keys. **There is no accumulator on this path any more** — `command_events` used to
+## be one, appending to a running log nothing later could reconstruct; it belongs to the event dock
+## now (`Main` feeds it directly), so a replay here cannot double-log anything.
 func _catch_up_hidden_snapshot() -> void:
 	if not _hidden_snapshot_pending or _cached_snapshot.is_empty():
 		return
@@ -218,10 +227,12 @@ func update_delta(delta: Dictionary) -> void:
 ## once per world.
 ##
 ## **The prefix below runs hidden or not**, and the dividing line is not "cheap" but
-## *reconstructible*: `_ingest_command_events` consumes a per-turn EVENT array and appends to a
-## running log — history no later snapshot carries — so skipping it would silently lose command
-## feed entries. Everything after the gate rebuilds panel state from snapshot keys and is therefore
-## recoverable. Anything added to this method must be classified the same way before it is placed.
+## *reconstructible*: anything consuming per-turn history no later snapshot carries must run whatever
+## else is skipped, while everything after the gate rebuilds panel state from snapshot keys and is
+## therefore recoverable. The prefix's one ACCUMULATOR — `command_events` — moved out to the event
+## dock, so what is left above the gate is the cheap per-frame scalars. **Anything added to this
+## method must be classified the same way before it is placed**, and an accumulator added back here
+## has to sit above the gate.
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	# Held by REFERENCE, not deep-copied: the native decoder builds a fresh Dictionary tree per
 	# frame and no consumer mutates it in place (MapView duplicates the sub-dicts it keeps), so
@@ -234,9 +245,9 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 
 	# campaign_profiles / campaign_label / faction_inventory / grid are consumed by
 	# MapPanel via the _tab_panels fan-out at the end of this method.
-	# ACCUMULATOR — see the header: a running log, not reconstructible state, so it runs while hidden.
-	if data.has("command_events"):
-		_ingest_command_events(data["command_events"])
+	# `command_events` is NOT read here. It was the one accumulator on this path — the reason the
+	# prefix above the visibility gate exists at all — and it belongs to the event dock now, which
+	# `Main` feeds directly. The Commands tab is a debug console, never a notification surface.
 	# food_modules + tiles/tile_updates/tile_removed are consumed by TerrainPanel via the
 	# _tab_panels fan-out at the end of this method.
 
@@ -310,7 +321,6 @@ func _render_static_sections() -> void:
 		great_discoveries_panel.reset()
 	if logs_panel != null:
 		logs_panel.reset()
-	_seen_command_events.clear()
 	if terrain_panel != null:
 		terrain_panel.reset()
 	if culture_panel != null:
@@ -460,7 +470,7 @@ func set_command_client(client: Object, connected: bool) -> void:
 				port_value = int(port_variant)
 		_append_command_log("Connected to command endpoint %s:%d." % [host_value, port_value])
 	elif not command_connected and was_connected:
-		_append_command_log("Command endpoint disconnected.")
+		_append_command_log("Command endpoint disconnected.", true)
 	elif not command_connected and not was_connected:
 		if command_client != null:
 			var host_unavailable: String = "?"
@@ -473,9 +483,9 @@ func set_command_client(client: Object, connected: bool) -> void:
 				var port_unavailable_variant = command_client.call("get", "port")
 				if typeof(port_unavailable_variant) in [TYPE_INT, TYPE_FLOAT]:
 					port_unavailable = int(port_unavailable_variant)
-			_append_command_log("Command endpoint unavailable (%s:%d)." % [host_unavailable, port_unavailable])
+			_append_command_log("Command endpoint unavailable (%s:%d)." % [host_unavailable, port_unavailable], true)
 		else:
-			_append_command_log("Command endpoint unavailable.")
+			_append_command_log("Command endpoint unavailable.", true)
 
 func set_streaming_active(active: bool) -> void:
 	if stream_active == active:
@@ -484,7 +494,7 @@ func set_streaming_active(active: bool) -> void:
 	if stream_active:
 		_append_command_log("Streaming snapshots active.")
 	else:
-		_append_command_log("Streaming unavailable.")
+		_append_command_log("Streaming unavailable.", true)
 		if autoplay_timer != null and not autoplay_timer.is_stopped():
 			_disable_autoplay(true)
 	_update_command_status()
@@ -527,10 +537,21 @@ func _update_command_status() -> void:
 		commands_panel.set_status(status_text)
 	_update_command_controls_enabled()
 
-func _append_command_log(entry: String) -> void:
+## One line of client-side console chatter. It goes to the Commands tab and the log buffer exactly
+## as before, AND out on `system_event` so the event dock can put it on the System channel.
+##
+## `alert` defaults to `false`, which is what keeps the six panel-injected `Callable`s (Map /
+## Terrain / Crisis / Knowledge / Victory / Commands) working unchanged: a panel's own command
+## receipt is a Routine note. The FAILURE sites in this file pass `true` explicitly.
+func _append_command_log(entry: String, alert: bool = false) -> void:
 	if commands_panel != null:
 		commands_panel.append_log(entry)
 	_append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
+	# THE LINE IS THE LABEL, not a detail beside one. A dock row renders its label at full size on
+	# the leading edge and its detail as small faint text on the TRAILING one — so passing a fixed
+	# "Command" label and the message as detail strands the only words that matter at the far end
+	# of a screen-wide bar. The channel chip already says where the line came from.
+	system_event.emit(entry, "", alert)
 
 func _update_command_controls_enabled() -> void:
 	var connected = command_connected
@@ -571,7 +592,7 @@ func _ensure_command_connection() -> bool:
 			return false
 		_:
 			command_connected = false
-			_append_command_log("Command unavailable (%s)." % error_string(ensure_err))
+			_append_command_log("Command unavailable (%s)." % error_string(ensure_err), true)
 			_update_command_status()
 			return false
 
@@ -583,7 +604,7 @@ func _send_command(line: String, success_message: String) -> bool:
 		command_client.call("poll")
 		err = command_client.call("send_line", line)
 	if err != OK:
-		_append_command_log("Command failed (%s): %s" % [line, error_string(err)])
+		_append_command_log("Command failed (%s): %s" % [line, error_string(err)], true)
 		_update_command_status()
 		return false
 	_append_command_log(success_message)
@@ -815,28 +836,6 @@ func _on_axis_bias_apply_requested(axis_idx: int, value: float) -> void:
 			sentiment_panel.set_axis_bias(_axis_bias)
 		if commands_panel != null:
 			commands_panel.set_axis_bias(_axis_bias)
-
-func _ingest_command_events(events_variant: Variant) -> void:
-	if not (events_variant is Array):
-		return
-	var events_array: Array = events_variant
-	for entry_variant in events_array:
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		var tick: int = int(entry.get("tick", -1))
-		var kind: String = String(entry.get("kind", "")).strip_edges()
-		var label: String = String(entry.get("label", "")).strip_edges()
-		var detail: String = String(entry.get("detail", "")).strip_edges()
-		var signature := "%d|%s|%s|%s" % [tick, kind, label, detail]
-		if _seen_command_events.has(signature):
-			continue
-		_seen_command_events[signature] = true
-		var prefix := kind.capitalize() if kind != "" else "Command"
-		var message := "[SIM] %s: %s" % [prefix, label]
-		if detail != "":
-			message += " (%s)" % detail
-		_append_command_log(message)
 
 func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"

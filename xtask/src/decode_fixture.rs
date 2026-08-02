@@ -225,6 +225,13 @@ struct DeltaPlan {
     /// The `populations` / `culture_layers` row this delta moves — one of the fixture's two, so the
     /// other stays untouched and the merged frame can be checked for keeping it.
     row: usize,
+    /// How many appended `command_events` rows precede this delta's, so the two deltas' sequences
+    /// are disjoint and CHAINED — delta 2 continues delta 1's numbering, exactly as the sim's
+    /// monotonic log does.
+    command_event_offset: u64,
+    /// The retention window this delta reports. Different on the two deltas so the merged frame
+    /// proves the scalar is actually carried and overwritten, not defaulted.
+    retention_turns: u32,
 }
 
 #[cfg(test)]
@@ -245,6 +252,8 @@ const DELTA_ONE: DeltaPlan = DeltaPlan {
     tile_count: 3,
     splatmap_offset: 2,
     row: 0,
+    command_event_offset: 0,
+    retention_turns: 20,
 };
 
 /// Delta 2: the NEXT three tiles and the OTHER row — disjoint from [`DELTA_ONE`] in every section.
@@ -253,6 +262,8 @@ const DELTA_TWO: DeltaPlan = DeltaPlan {
     tile_count: 3,
     splatmap_offset: 0,
     row: DELTA_ONE.row + 1,
+    command_event_offset: DELTA_COMMAND_EVENT_ROWS,
+    retention_turns: 24,
 };
 
 /// How far a delta moves each changed tile's graze/forage reading. Applied as an OFFSET from the
@@ -272,6 +283,16 @@ const DELTA_RIVER_EDGE_BIT: u16 = 0b01;
 /// How far a delta moves the probe field on the `populations` / `culture_layers` row it carries.
 /// An OFFSET, for the same reason as [`DELTA_BIOMASS_STEP`].
 const DELTA_COUNT_STEP: u32 = 7;
+
+/// How many newly-appended `command_events` rows each delta carries.
+///
+/// **This section's delta is APPEND-only** (`core_sim::snapshot::diff_appended`) — it ships the
+/// rows whose `seq` is above the client's cursor, never the retained ring — so the fixture models
+/// what the sim really sends: a couple of fresh rows whose `seq` sits above every row the baseline
+/// holds. A decoder that *replaced* the section instead of appending, or dropped `seq`, is exactly
+/// what this makes visible. (`assert_no_empty_arrays` also refuses an empty repeated field, so the
+/// count cannot be zero.)
+const DELTA_COMMAND_EVENT_ROWS: u64 = 2;
 
 /// Does this delta carry the WHOLE-SECTION witness (`demographics`)?
 ///
@@ -429,12 +450,36 @@ fn build_planned_delta(
             .collect()
     });
 
+    // The append-only section: rows the baseline has never seen, numbered above every seq it holds.
+    // The two deltas are disjoint here as everywhere else — delta 2 continues delta 1's numbering.
+    let first_new_seq = snapshot
+        .command_events
+        .iter()
+        .map(|event| event.seq)
+        .max()
+        .unwrap_or(0)
+        + 1
+        + plan.command_event_offset;
+    let command_events = Some(
+        (0..DELTA_COMMAND_EVENT_ROWS)
+            .map(|i| {
+                let mut appended = snapshot.command_events.first().cloned().unwrap_or_default();
+                appended.seq = first_new_seq + i;
+                appended.tick = header.tick;
+                appended.label = format!("{}#{}", appended.label, appended.seq);
+                appended
+            })
+            .collect(),
+    );
+
     WorldDelta {
         header,
         tiles,
         populations,
         culture_layers,
         demographics,
+        command_events,
+        command_events_retention_turns: Some(plan.retention_turns),
         // Carried on every delta rather than diffed (see `WorldDelta::fog_enabled`); the derived
         // `Default` says `false`, which would silently flip the merged world's fog.
         fog_enabled: snapshot.fog_enabled,

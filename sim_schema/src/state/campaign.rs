@@ -311,6 +311,11 @@ pub struct CommandEventState {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// The log's monotonic append sequence for this row. Deltas ship only the rows above the
+    /// client's cursor, so this is both the ordering key and the "have I seen this?" test — see
+    /// `core_sim::snapshot::diff_appended`.
+    #[serde(default)]
+    pub seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

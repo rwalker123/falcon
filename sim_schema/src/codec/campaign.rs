@@ -28,6 +28,7 @@ pub(crate) fn serialize_campaign_section<'a>(
             pendingForks: Some(pending_forks),
             stanceAxes: Some(stance_axes),
             voiceMedium: Some(voice_medium),
+            commandEventsRetentionTurns: snapshot.command_events_retention_turns,
         },
     )
 }
@@ -66,6 +67,10 @@ pub(crate) fn serialize_campaign_section_delta<'a>(
             pendingForks: pending_forks,
             stanceAxes: stance_axes,
             voiceMedium: voice_medium,
+            // `0` IS the absent encoding — FlatBuffers omits a default-valued scalar, and a
+            // zero-turn retention window is not a legal value, so the client reads 0 as "unchanged"
+            // and keeps what it holds. The same shape `capabilityFlags` uses.
+            commandEventsRetentionTurns: delta.command_events_retention_turns.unwrap_or(0),
         },
     )
 }
@@ -375,6 +380,7 @@ fn create_command_events<'a>(
                 faction: event.faction,
                 label: Some(label),
                 detail,
+                seq: event.seq,
             },
         );
         entries.push(entry);

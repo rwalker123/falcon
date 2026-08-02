@@ -385,8 +385,11 @@
     gap: 0;
     min-height: 0;
   }
+  /* ROWS READ NEWEST-FIRST, TOP TO BOTTOM, ON BOTH EDGES. An earlier draft flipped
+     them on a bottom dock so the newest sat against the screen edge; that gives the
+     leading slot two different positions depending on where the bar is docked, and
+     the pinned alert is defined by holding the LEADING slot. One rule, both edges. */
   .dock-rows { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-  .screen[data-edge="bottom"] .dock-rows { flex-direction: column-reverse; }
 
   .ev {
     display: flex;
@@ -399,7 +402,6 @@
     line-height: 1.45;
   }
   .ev + .ev { border-top: 1px solid rgba(27,40,45,0.75); }
-  .screen[data-edge="bottom"] .dock-rows .ev + .ev { border-top: none; border-bottom: 1px solid rgba(27,40,45,0.75); }
   .ev .glyph { flex: none; width: 14px; text-align: center; font-size: 12px; line-height: 1.4; }
   .ev .turn {
     flex: none;

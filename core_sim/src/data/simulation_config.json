@@ -71,5 +71,6 @@
   "command_bind": "127.0.0.1:41001",
   "log_bind": "127.0.0.1:41003",
   "crisis_auto_seed": false,
-  "fog_enabled": true
+  "fog_enabled": true,
+  "command_events_retention_turns": 20
 }
