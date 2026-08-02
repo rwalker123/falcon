@@ -227,7 +227,7 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   rung (`build`: `progress_per_turn` 0.04 → 25 turns to prepare **at full crew**, `decay_per_turn` 0.01
   the feral-reversion rate, **`grace_turns` 2** — cleared, weeded ground keeps its clearing a couple of
   turns after the crew stops — **`crew_needed` 2** — the same two hands the reference tile's wild
-  Sustain gather wants — **`yield_fraction_while_building` 0.25** — the old `cultivating_yield_fraction`,
+  Sustain gather wants — **`yield_fraction_while_building` 0.50** — was the old `cultivating_yield_fraction` 0.25 until it was raised to match the animal rungs, which had always been 0.50,
   the investment cost: the preparing take ceiling as a fraction of the patch's Sustain/MSY ceiling), so
   the plant and animal ladders can only be tuned together (see "The Intensification Ladder"). What stays
   in `labor_config.json` `forage.cultivation` (`CultivationConfig`): **`tended_regrowth_gain`** (1.0 —
@@ -351,7 +351,7 @@ herd has one appetite).
   each rung's `Thriving` gate, rung 3 never had one, and requiring it would make the
   create-from-nothing case impossible — **bare ground stands below every floor**, by construction. The
   floor still paces the build, so a crew stripping the ground it is sowing still builds nothing.
-- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.25) × the crew's own
+- **The investment.** The `plant:field` rung's `yield_fraction_while_building` (0.50) × the crew's own
   throughput (`docs/plan_harvest_floor.md` §3.1 — the dip multiplies hands, not the ceiling). On
   **bare** ground there is nothing for the crew to carry a fraction of, so a bare-ground sow is
   near-pure investment. `forage_field.rs` pins that as a
