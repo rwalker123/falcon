@@ -343,14 +343,25 @@ stated, so the disagreement is no longer expressible.)
 
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
-**THE PEAK ZONE STATES NO HINT** (`HudComposeVocab.FLOOR_ZONE_HINTS`, an empty entry renders no line).
-It read *"The food peak — the most food this source can pay, turn after turn, forever"*, which is
-precisely what the yields row's `after` reading states as a number once each account says
-`now → after`. The other four zones survive because each says something no number on the sheet does,
-and **`strip`'s is load-bearing**: it is the only place the sheet says floor 0 is irreversible on the
-animal web, and the reaching verdict drops its own *"then holds it"* clause there on the understanding
-that this line carries the consequence. Assert the pair, never the negative alone — emptying the whole
-table would pass a lone "the peak says nothing".
+**THE READOUT'S ASIDE DROPS THE PEAK HINT, AND SUPPRESSION BELONGS TO THE SURFACE — NOT THE
+VOCABULARY.** *"The food peak — the most food this source can pay, turn after turn, forever"* is
+precisely what the yields row states as a number once each account reads `now → after`, so on the
+COMPOSE READOUT it is the same fact twice; `_mount_readout` skips it there on `floor_zone == PEAK`.
+
+> It was first emptied out of `FLOOR_ZONE_HINTS` itself, which silenced it on **all five** consumers
+> for a reason true of one. The worst casualty was the **EXPEDITION** sheet: that branch has no chart
+> and no readout box — both deliberate, a raid being a forward-simulated trip rather than a per-turn
+> drawdown — so its floor hint is the WHOLE of what it says a floor means, and its own branch comment
+> says it keeps the line there for exactly that reason. A raid rendered three unexplained preset
+> buttons and an empty label. Reported from play. The other victims were the work-row hint, the
+> send-hunt banner and the expedition tooltip.
+
+The other four zones are never dropped anywhere — none is restated by a number — and **`strip`'s is
+load-bearing**: it is the only place the sheet says floor 0 is irreversible on the animal web, and the
+reaching verdict drops its own *"then holds it"* clause there on the understanding that this line
+carries the consequence. **Assert gone-from-the-aside and still-in-the-table as a PAIR**, plus the
+expedition sheet on its own: the aside assertion alone passes with the vocabulary blanked, which is
+precisely how the regression shipped.
 
 The aside's other line states the **live learning rate**, and it is the only thing in the client that
 makes slice 3 visible to a player: `intensification::learn_multiplier` is `floor / the food peak`, so

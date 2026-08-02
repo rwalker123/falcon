@@ -1045,8 +1045,18 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
     _register_live(hosts, aside_host, model, workers,
         func(host: Container, live: Dictionary, _crew: int) -> void:
             var lines: Array[Dictionary] = []
-            lines.append(HudWidgets.readout_aside_line(HudFormat.floor_hint(
-                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), labor_kind)))
+            # **THE PEAK ZONE'S HINT IS DROPPED HERE AND ONLY HERE.** "The most food this source can
+            # pay, turn after turn, forever" is precisely what the yields row above states as a
+            # NUMBER, once each account began reading `now → after` — so on THIS surface it is the
+            # same fact twice. It was briefly dropped from `FLOOR_ZONE_HINTS` instead, which silenced
+            # it on all five consumers for a reason true of one: the EXPEDITION sheet has no readout
+            # box, its branch keeps the floor hint precisely because of that, and a raid was left
+            # showing three floor presets with nothing anywhere saying what they meant. The other
+            # four zones stay — none of them is restated by a number.
+            var aside_floor := float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
+            if SourceForecast.floor_zone(aside_floor) != SourceForecast.FLOOR_ZONE_PEAK:
+                lines.append(HudWidgets.readout_aside_line(
+                    HudFormat.floor_hint(aside_floor, labor_kind)))
             # **THE TEACHING RATE, and the one aside line that can be CYAN.** It states what
             # `learn_multiplier` actually buys — the chart's gradient rail only gestures at it — so
             # it wears `SIGNAL` while the crew is genuinely earning it, and the aside's own faint ink

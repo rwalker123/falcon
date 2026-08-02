@@ -2098,16 +2098,21 @@ func _ready() -> void:
 	_assert_hud("…and a row with no transition is given a header with no arrow to key",
 		_yields_header(_hud._drawercompose._compose_sheet).contains("PER TURN")
 			and not _yields_header(_hud._drawercompose._compose_sheet).contains("→"))
-	# **THE PEAK ZONE STATES NO HINT** — this sheet sits at `FLOOR_FOOD_PEAK`, and the line it used to
-	# render ("the most food this source can pay, turn after turn, forever") is what the yields row's
-	# `after` reading now states as a number. Paired with the STRIP entry below rather than asserted
-	# alone: emptying the whole table would pass a lone negative, and `strip`'s line is the only place
-	# the sheet says floor 0 is irreversible on the animal web — the reaching verdict drops its own
-	# "then holds it" clause there on the understanding that this line carries the consequence.
-	_assert_hud("the peak zone adds no hint — its sentence is a number on the row now",
-		HudFormat.floor_hint(SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.LABOR_KIND_FORAGE) == ""
-			and not _readout_aside_text(_hud._drawercompose._compose_sheet).contains("turn after turn"))
-	_assert_hud("…while the STRIP zone still warns, on the web whose floor 0 is permanent",
+	# **THE READOUT DROPS THE PEAK HINT; THE TABLE STILL HOLDS IT.** This sheet sits at
+	# `FLOOR_FOOD_PEAK`, and "the most food this source can pay, turn after turn, forever" is what the
+	# yields row above states as a NUMBER once each account reads `now → after` — the same fact twice
+	# ON THIS SURFACE. It was first dropped from `FLOOR_ZONE_HINTS` itself, which silenced it on all
+	# five consumers for a reason true of one, and left the EXPEDITION sheet — which has no readout
+	# box and keeps its floor hint precisely because of that — showing three floor presets with
+	# nothing anywhere saying what they meant. So both halves are asserted: gone from the ASIDE, still
+	# in the TABLE. The first line alone passes with the vocabulary blanked; the second is what makes
+	# it mean the aside dropped it.
+	_assert_hud("the readout's aside drops the peak hint — its sentence is a number on the row",
+		not _readout_aside_text(_hud._drawercompose._compose_sheet).contains("turn after turn"))
+	_assert_hud("…while the hint TABLE still carries it, for the surfaces with no such number",
+		HudFormat.floor_hint(SourceForecast.FLOOR_FOOD_PEAK, SourceForecast.LABOR_KIND_FORAGE)
+			.contains("turn after turn"))
+	_assert_hud("…and the STRIP zone still warns, on the web whose floor 0 is permanent",
 		HudFormat.floor_hint(SourceForecast.FLOOR_MIN, SourceForecast.LABOR_KIND_HUNT)
 			.contains("gone for good"))
 
@@ -3633,6 +3638,21 @@ func _ready() -> void:
 	# builds no improvement control (a detached party builds nothing), so only the shared HEAD is
 	# claimed here, which is exactly what `_record_compose_spine` asserts.
 	_record_compose_spine(COMPOSE_SPINE_KEY_EXPEDITION)
+	# **THE EXPEDITION'S FLOOR HINT IS ITS ONLY EXPLANATION OF THE THREE PRESETS ABOVE IT**, and it is
+	# what a vocabulary-level suppression silently took away. This branch has NO chart and NO readout
+	# box — both deliberate, a raid being a forward-simulated trip rather than a per-turn drawdown —
+	# so the hint is the whole of what the sheet says a floor MEANS. Blanking `FLOOR_ZONE_HINTS.peak`
+	# for the compose readout's sake left a raid showing three unexplained buttons, reported from
+	# play. Asserted on the SHEET, not on `floor_hint`: the vocabulary assertion elsewhere passes
+	# while this branch renders an empty label.
+	_assert_hud("an expedition sheet still explains the floor it is dialled to",
+		_has_label_containing(_hud._drawercompose._compose_sheet, "turn after turn"))
+	# …and the twin that says the sheet is genuinely bare of the two surfaces that would otherwise
+	# carry it — without this, restoring a chart or a readout here would satisfy the line above while
+	# the branch quietly stopped being an expedition sheet.
+	_assert_hud("…and it remains the ONLY such surface — no chart, no readout box",
+		_find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.FLOOR_CHART_META) == null
+			and _find_meta_node(_hud._drawercompose._compose_sheet, HudWidgets.YIELDS_ROW_META) == null)
 
 	# State 3i — TWO bands at DIFFERENT distances from ONE herd, NEAR band selected: band 811 sits ON
 	# the herd (distance 0 ≤ reach 7) → "Hunt Here" + assign_labor. The band-picker selection —
