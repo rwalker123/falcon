@@ -74,12 +74,16 @@ kill_capacity  = workers × hunt.per_worker_kill_capacity × equipment
 
 carry_capacity = workers × hunt.per_worker_biomass_capacity × build_dip      // unchanged
 
-affordable = floor( ceiling / body_mass )                                    // the herd's spare stock
-killable   = floor( kill_capacity / (body_mass + hunt.stalk_overhead) )      // NEW
+kill_bank += kill_capacity                                                   // NEW — see §1.2
+
+affordable = floor( ceiling   / body_mass )                                  // the herd's spare stock
+killable   = floor( kill_bank / (body_mass + hunt.stalk_overhead) )          // NEW
 carryable  = floor( min(carry_capacity, carry_room) / body_mass )            // today's bound
 
 killed  = if denial { min(affordable, killable) }
-          else      { min(affordable, killable, carryable) }
+          else      { min(affordable, killable, max(1, carryable)) }
+
+kill_bank -= killed × (body_mass + hunt.stalk_overhead)
 
 carried = min( killed × body_mass, carry_capacity, carry_room )
 wasted  = killed × body_mass − carried
@@ -121,15 +125,27 @@ it is. The overhead is that fixed per-animal cost, expressed in the same biomass
 animal costs `body_mass + stalk_overhead` against the budget. At `5` it is invisible on a mammoth
 (`805` vs `800`) and dominant on a rabbit (`5.3` vs `0.3`), which is exactly the right shape.
 
-### 1.2 The one-animal floor dissolves rather than moving
+### 1.2 The one-animal floor stays on carry; the kill side banks instead
 
-`max(1, carryable)` exists so a party too small to haul a whole animal still takes one and wastes the
-rest. Once carry is no longer a kill bound, that special case has nothing left to protect against and
-**comes out entirely** — its intent is absorbed structurally.
+**`max(1, carryable)` survives untouched.** It exists so a party too small to *haul* a whole animal
+still takes one and wastes the rest, and that is still the right rule — it is the source of hunting's
+waste, and removing it silently deletes waste from the game everywhere except denial. Worse, without
+it big game becomes all-or-nothing: `carryable` is `0` for any party under twenty hunters on an
+800-biomass mammoth, so `min(…, carryable)` would zero the kill outright and a mammoth herd would
+feed nobody at all until the party crossed exactly twenty.
 
-Its replacement is a real behaviour change, and a wanted one: a party whose *kill* capacity is below
-one `body_mass` kills **zero**. Two hunters with bare hands cannot bring down a mammoth, and the
-model should say so instead of granting them one out of arithmetic politeness.
+**The kill side takes the opposite treatment: it accumulates.** A party whose kill capacity is below
+one animal does not fail — it banks toward one, in `Herd::hunt_credit`, and lands a kill when the
+bank clears `body_mass + stalk_overhead`. Five hunters take a mammoth every third turn; three hunters
+every fifth. That is the wait-then-feast rhythm `SpeciesDef::body_mass` already describes, and it is
+what keeps megafauna *accessible* to a small band rather than gated behind a headcount cliff.
+
+**Banking here is legitimate, and banking the ceiling was not.** #451 stopped `hunt_take` from
+advancing `hunt_credit` because the escapement ceiling is a **stock**: adding it to an accumulator
+offered the herd's whole surplus plus everything it had already handed over, compounding a quantity
+that was never a flow. Kill capacity *is* a flow — biomass-of-animal per turn — so an accumulator is
+its correct integral, and the field the bank left behind is the one it moves into. **The distinction
+is structural, not a convention to remember:** a stock must not bank, a rate must.
 
 ### 1.3 The kill bound is opt-in per caller
 
@@ -242,19 +258,20 @@ The constants are playtest dials; what must hold is the **shape**. Illustrative,
 `per_worker_kill_capacity = 120`, `stalk_overhead = 5`, `defense_weight = 0.08`, equipped `= 1.0`,
 unequipped `= 0.4`, against today's `per_worker_biomass_capacity = 40`:
 
-| case | killable | carryable | binds | today |
-|---|---|---|---|---|
-| 20 hunters, mammoth (w 0.10, def 12, 800) | 1102 → **1** | 800 → 1 | either | 1 |
-| 5 hunters, wild elk (w 0.50, def 3, 40) | 242 → 5 | 200 → **5** | carry | 5 |
-| 5 hunters, deer (w 0.65, def 1, 60) | 194 → **2** | 200 → 3 | **kill** | 3 |
-| 5 hunters, gazelle (w 0.85, def 1, 4) | 83 → **9** | 200 → 50 | **kill** | 50 |
-| 5 hunters, rabbit (w 0.75, no combat, 0.3) | 150 → **28** | 200 → 666 | **kill** | 666 |
-| 20 hunters, mammoth, **unequipped** | 441 → **0** | 800 → 1 | **kill** | 1 |
+| case | killable | carryable | killed | binds | today |
+|---|---|---|---|---|---|
+| 20 hunters, mammoth (w 0.10, def 12, 800) | 1 | 1 | **1** | either | 1 |
+| 5 hunters, mammoth — banks 276/turn | 1 per **2.9 turns** | 0 → `max(1,·)` | **1 per 2.9** | **kill** | 1 per turn |
+| 5 hunters, wild elk (w 0.50, def 3, 40) | 5 | 5 | **5** | carry | 5 |
+| 5 hunters, deer (w 0.65, def 1, 60) | 2 | 3 | **2** | **kill** | 3 |
+| 5 hunters, gazelle (w 0.85, def 1, 4) | 9 | 50 | **9** | **kill** | 50 |
+| 5 hunters, rabbit (w 0.75, no combat, 0.3) | 28 | 666 | **28** | **kill** | 116 (herd-bound) |
+| 20 hunters, mammoth, **unequipped** | 1 per 2.5 turns | 1 | **1 per 2.5** | **kill** | 1 per turn |
 
-Read the bottom four rows: a skittish herd now yields materially less than the same crew could haul,
+Read the middle rows: a skittish herd now yields materially less than the same crew could haul,
 which is the general-hunting effect this change exists for; small game is bounded by how many animals
-you can stalk rather than by the absurd carry number; and a party without spears cannot take a
-mammoth at all.
+you can stalk rather than by the absurd carry number; and equipment shows up as *cadence* — an
+unequipped party still works a mammoth, at two and a half turns per kill instead of one.
 
 **The dial has a real trade-off in it, and it is the design.** `per_worker_kill_capacity` sets how
 often kill binds instead of carry. Push it high and normal hunting is always carry-bound (wariness
@@ -402,8 +419,13 @@ kit cost (§4.2) whenever it lands.
   non-decreasing in `workers` and `equipment`.
 - **The pen is untouched** — a corral-tend take is byte-identical before and after slice 2. This is
   the regression the shared quantiser makes easy to cause.
-- **A party with kill capacity below one `body_mass` kills zero**, and the herd is unchanged. Pinned
-  explicitly, because it is the removed `max(1, …)`.
+- **A sub-threshold party banks rather than stalling.** Kill capacity below one animal yields zero
+  kills for N turns and then exactly one — never zero forever, and never a fractional animal. Pinned
+  with a liveness assertion, because "always zero" and "correctly waiting" look identical for the
+  first few turns.
+- **`max(1, carryable)` still fires**, and its waste with it: a five-hunter party takes a mammoth and
+  leaves 600 biomass on the range. Pinned, because deleting it is the easy mistake — it reads like
+  the kill bound's job now, and removing it silently zeroes big game below twenty hunters.
 - **The §2.4 table is a test**, not just prose — all six rows pinned against the shipped config.
 - **Small game is stalk-bound, not carry-bound.** A rabbit take is bounded by `stalk_overhead` and
   lands in the tens, never the hundreds; a party's rabbit and mammoth takes must not differ by their
