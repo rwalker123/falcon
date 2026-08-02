@@ -774,19 +774,16 @@ static func build_floor_picker(
 ## built here would be thrown away. `FLOOR_STEP` is the granularity — fine enough to sit anywhere
 ## between two presets, coarse enough that the value is readable and reproducible.
 ##
-## The caption states the CURRENT value in the same words the picker's tooltips use
-## (`FLOOR_VALUE_FORMAT`), because a control with no readout is one whose state cannot be read back —
-## and the number is the thing the player is choosing. The chart states it again on its own floor
-## flag; the caption is what a screen-reader-less keyboard user reads after an arrow press.
+## **THE HEADER NAMES THE AXIS AND STATES NO VALUE**, so it never has to be refreshed on a drag. The
+## chart owns the readback: it is `FOCUS_ALL`, handles its own arrow keys, and redraws its floor flag
+## from the model, which puts the number on the control being moved instead of a line above it. A
+## header that repeated the flag was the same fact twice — the caption did that while the control was
+## a plain slider with no readout of its own, and outlived it. It stays a header rather than nothing
+## because every other block in the sheet has one and the chart's vertical axis is otherwise unnamed.
 static func build_floor_chart(model: Dictionary, on_change: Callable) -> VBoxContainer:
     var block := VBoxContainer.new()
     block.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    var caption := Label.new()
-    caption.text = "%s %s" % [HudComposeVocab.FLOOR_CONTROL_LABEL,
-        HudFormat.floor_face(float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)))]
-    caption.add_theme_color_override("font_color", HudStyle.INK)
-    caption.add_theme_font_size_override("font_size", HudWorkVocab.POLICY_PICKER_METRIC_FONT_SIZE)
-    block.add_child(caption)
+    block.add_child(alloc_section_label(HudComposeVocab.FLOOR_CONTROL_LABEL))
     var chart := HarvestFloorChart.new()
     chart.set_meta(FLOOR_CHART_META, true)
     chart.set_model(model)

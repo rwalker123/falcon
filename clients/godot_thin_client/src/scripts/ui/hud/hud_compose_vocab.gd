@@ -63,11 +63,13 @@ const FLOOR_PRESET_LABELS := {
 # turn. One phrasing, so the slider, the picker face and the work row cannot word it three ways.
 const FLOOR_VALUE_FORMAT := "%d%% left standing"
 
-# The floor control's own caption, above the chart. The chart states the value on its floor flag too,
-# but a caption is what stays readable after a keyboard step and what names the AXIS for a player
-# meeting the chart for the first time. (It was `FLOOR_SLIDER_LABEL` while the control below it was a
-# plain slider; the name went with the control.)
-const FLOOR_CONTROL_LABEL := "Leave standing:"
+# The floor block's section header, in the same grammar as `Foragers` and `Crop to commit to` —
+# `alloc_section_label` upper-cases it. **It names the chart's vertical AXIS and states no value.**
+# It carried the live floor while the control below it was a plain slider, whose state was otherwise
+# unreadable; the chart that replaced it puts that number on its own draggable flag, so a caption
+# that repeated it read `Leave standing: 50% left standing` — the same fact twice in one line, one of
+# them saying "standing" twice. The flag names the value, this names what the value is OF.
+const FLOOR_CONTROL_LABEL := "Leave standing"
 
 # ---- THE TWO CREW TARGETS (docs/plan_harvest_floor.md §7.6) -------------------------------------
 # A floor and a crew are INDEPENDENT statements, so "how many workers" has two answers and the panel

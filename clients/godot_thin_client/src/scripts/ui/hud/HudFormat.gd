@@ -137,13 +137,6 @@ static func floor_preset_face(preset: String) -> String:
     var glyph := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
     return "%s%s" % [source_icon_prefix(glyph), HudComposeVocab.FLOOR_PRESET_LABELS.get(preset, "")]
 
-## The floor as the player reads it — `💀 0% left standing`. Used wherever a dialled value has to be
-## stated as itself rather than as one of the three presets, which is most of the dial.
-static func floor_face(floor: float) -> String:
-    var glyph := FoodIcons.for_floor_zone(SourceForecast.floor_zone(floor))
-    return "%s%s" % [source_icon_prefix(glyph),
-        HudComposeVocab.FLOOR_VALUE_FORMAT % SourceForecast.floor_percent(floor)]
-
 ## **THE ONE SENTENCE SAID ABOUT A FLOOR** — the replacement for the three per-stance hint tables, and
 ## the whole of what the client says about harvest pressure. It is composed rather than looked up
 ## because two facts vary independently of the zone: WHAT STRIPPING COSTS differs by web (a patch
