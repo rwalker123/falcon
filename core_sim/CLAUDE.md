@@ -24,22 +24,6 @@
 
 Bevy-based ECS headless simulation that resolves turns via `run_turn`. Systems execute in `TurnStage` order (`src/lib.rs`): Influence → Logistics → Knowledge → GreatDiscovery → Population → Visibility → Crisis → Telling → Finalize → Victory → Snapshot.
 
-## Quick Reference
-
-```bash
-# Build
-cargo build -p core_sim
-
-# Test
-cargo test -p core_sim
-
-# Benchmark
-cargo bench -p core_sim --bench turn_bench
-
-# Run server
-cargo run -p core_sim --bin server
-```
-
 <!-- HUB ROUTING BLURB — source of truth: scripts/hub_blurb_core_sim.md, appended into
      core_sim/CLAUDE.md by scripts/split_claude_md.sh. Edit the source file; an
      edit made only in the hub is reverted by the next re-run.
@@ -181,12 +165,6 @@ per-faction orders -> command server -> turn queue -> run_turn -> snapshot -> br
 1. **Collect** - `TurnQueue` awaits faction submissions
 2. **Resolve** - Apply directives, execute `run_turn`, capture metrics, broadcast delta
 3. **Advance** - Reset queue for next turn
-
-### Turn Pipeline Config (`turn_pipeline_config.json`)
-- **Logistics**: `flow_gain_min/max`, `effective_gain_min`, `penalty_min`, `capacity_min`, `attrition_max`
-- **Trade**: `tariff_min`, `tariff_max_scalar`
-- **Population**: Attrition scaling, temperature penalty, morale weighting, growth clamp, migration thresholds
-- **Power**: `efficiency_adjust_scale`, `efficiency_floor`, storage efficiency/bleed clamps
 
 ---
 
