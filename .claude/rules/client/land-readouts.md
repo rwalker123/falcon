@@ -29,48 +29,100 @@ paths:
   `_field_label` / `_field_value_hex`). The two are **independent meters on one source** and never
   merge: `Sow` needs no prior patch (seed travels), so a Field may stand on ground that was never
   tended. See `core_sim` intensification ladder — cultivation, and the two-meter split above.
-  It also shows an **Ecology** row (`patch_ecology_phase`) for **every** tile carrying a patch —
-  cultivated or not, directly under **Forage biomass**. The phase gates whether cultivation can
-  accrue at all, so it is the tile's headline condition; it is deliberately **not** gated on
-  `is_cultivated` (it was, which hid it on exactly the ordinary forage tiles that needed it).
-  Named and rendered **identically to the herd's Ecology row** — same `_ecology_phase_label`
-  (neutral `Thriving`, warned `⚠ Stressed` / `⚠ Collapsing`) and the same `DetailFormat.ecology_value_hex`
-  amber/red tint applied by `DetailFormat.detail_bbcode`, which now keys one shared `"Ecology"` case
-  for both surfaces. The module's internal `seasonal_weight` is **not** printed on the `Forage:`
-  row (it is a yield coefficient, meaningless to the player); it still drives the sim's yield.
-  ui_preview: `food_tile` (Thriving) / `food_tile_stressed` (⚠ Stressed) / `tended_tile`.
-  It also shows a **Forage biomass** row — `Forage biomass: 84 / 120` (`biomass` /
-  `carryingCapacity`, decoded in `forage_patches_to_array`) — the patch counterpart to a herd's
-  **Biomass** row, so a foraged patch reads like wild game does ("how much there is"). Foraging draws
-  the biomass down and it regrows logistically toward the capacity (sim default 120). Rendered only
-  when `patch_carrying_capacity > 0`, so a plain food-module tile with no patch stays bare.
-- **Tile-card "What grows here" — the plant COMPOSITION** (Flora Roster F1,
-  `docs/plan_flora_roster.md` §2; snapshot `ForagePatchState.composition:[FloraShareInfo]` →
-  decoded in `native/src/lib.rs forage_patches_to_array` as a `composition` array of
-  `{species, display_name, share}`, cross-refed by `MapView._tile_info_at` as
-  `patch_composition`). A **SECTION** directly under `Forage:` — a quiet `What grows here` header, then
-  **one indented 🌿 row per realized plant** (`🌿 Wild Grain 45%` / `🌿 Ground Nut 30%` / `🌿 Berry Scrub
-  25%`) so the per-tile basket scans down the card the way the compose sheet's crop picker reads
-  (`DetailFormat.flora_composition_lines` → `SubjectDrawerController._tile_terrain_lines`; the render is F5,
-  upgraded from the earlier one-line `What grows here: A · B · C` value). The rows reuse the food/morale
-  breakdown's 4-space `MORALE_BREAKDOWN_INDENT` but are tinted **neutral ink**, not the ▲/▼ two-tone — a
-  share is descriptive, not a good/bad signal — so `DetailFormat.detail_bbcode` keys a dedicated branch off
-  the shared 🌿 sprig (`FoodIcons.DEFAULT`, tested BEFORE the morale-indent branch since they share the
-  indent). **No per-species flora icons yet** — the whole basket wears the one generic plant glyph; a
-  per-species flora icon set is the roster-side F5 follow-up. It names the plants the tile's forage capacity
-  is MADE OF — **naming decomposes, it does not add**: the shares sum to 1, so this says what the Forage
-  number already on the card consists of; nothing about the economy changed. Three rules: the wire list is
-  **already sorted** (share DESC, then species key ASC) and is rendered **verbatim, never re-sorted**; the
-  **displayed percentages always sum to 100** — independent rounding can total 99/101, so
-  `SourceForecast.flora_basket_entries` folds the remainder into the LARGEST share (the first entry), which
-  is what stops a decomposition visibly failing to decompose; and an empty / absent list renders **no header
-  and no rows** (a biome that carries no forage). **Deliberately NOT in `FOW_DISCOVERED_HIDDEN_KEYS`** — it
-  is a pure function of the BIOME, like the terrain label or the river edges, so a remembered tile still
-  knows what grows there (never-seen tiles are already covered by the `unexplored` redaction, and nothing on
-  the patch can change it). ui_preview: `food_tile` / `tile_panel_land` (the fixture's shares naively round
-  to 101%, so those frames ARE the rounding test), `tile_growing_here` + `tile_growing_here_variant` (TWO
-  Alluvial Plain tiles with DIFFERENT baskets — Wild Emmer 70%/Flax 30% vs Cotton 55%/Flax 45% — the visible
-  per-tile-realization proof on the card), and `tile_panel_no_forage` (no list → no section).
+  The patch's stock and its **ecology phase** ride the **`Foraging`** row (see "The tile card's TWO
+  FOOD-WEB ROWS" below), not rows of their own. The module's internal `seasonal_weight` is **not**
+  printed anywhere (it is a yield coefficient, meaningless to the player); it still drives the sim's
+  yield. ui_preview: `food_tile` (Thriving) / `food_tile_stressed` (⚠ Stressed) / `tended_tile`.
+- **The tile card's TWO FOOD-WEB ROWS — `Foraging` above `Grazing`, and nothing between them**
+  (`SubjectDrawerController._tile_terrain_lines` + its `_graze_stock_lines` / `_stock_value` leaves;
+  keys in `HudFloraVocab.FORAGING_KEY` / `GRAZING_KEY`). One row per web, each `stock / ceiling ·
+  phase`, with the human web's basket indented beneath it:
+  ```
+  Height     5  ▬▭▭▭▭▭▭▭▭▭
+  Foraging   205 / 205 · Thriving
+     🌾 Wild Tubers    38%  (77)
+     ⇄ Cotton Fields   31%  (64)
+     🐄 Hay Grass      31%  (64)
+  Grazing    130 / 130 · Thriving
+  ```
+  This replaced **four interleaved rows** — `Pasture` / `Pasture ecology`, then the module row and
+  the basket, then `Forage biomass` / `Ecology` — and each of the three faults it fixed was confirmed
+  in playtest by a reader who mistook one web for the other three times:
+  - **THE NAMES INVERTED EACH OTHER.** The stock rows were `Pasture` (bare) and `Forage biomass`
+    (qualified) while the ecology rows were `Pasture ecology` (qualified) and `Ecology` (bare), so
+    the unqualified word meant the ANIMAL web in one pair and the HUMAN web in the other. `Foraging`
+    / `Grazing` are named for **who eats it**, the one axis on which they cannot invert.
+  - **THE HUMAN WEB WAS SPLIT IN HALF** by the animal one sitting between its two halves. The pair is
+    now consecutive, Foraging first — this is a forage-oriented card, and **adjacency is what stops
+    the conflation**. A comparison the player cannot make in one glance is not a comparison.
+  - **THE PHASE IS INLINE**, not a standing row. `DetailFormat._value_hex` keys BOTH row names to the
+    shared `ecology_value_hex`, which matches the phase word wherever in the value it sits, so
+    folding the rows forked no styling path: a stressed patch, a stressed pasture and a stressed herd
+    still read identically.
+  Each row renders only where that web has a stock at all (`patch_carrying_capacity > 0` /
+  `graze_capacity > 0`) — never a `0 / 0`, which reads as a starved stock rather than an absent one.
+  **A REMEMBERED TILE IS THE ONE STATE WHERE THE SURVIVING ROW IS THE ANIMAL ONE**, and it takes its
+  own explicit branch rather than relying on redaction: grass is a property of the GROUND (you can
+  read a steppe from a ridge, and the biome is already remembered) while every term of `Foraging` is
+  live patch state in `FOW_DISCOVERED_HIDDEN_KEYS`. Written as a branch because the pair's meaning is
+  POSITIONAL — a card showing `Grazing` alone must do so by decision, not because a key happened to
+  be missing (and a leaky fixture would otherwise render a false frame).
+  **The `Forage:` MODULE ROW WAS DELETED OUTRIGHT.** `Riverine / Delta — River Garden` named a
+  category the player can neither choose nor change, and the basket says the same thing in the terms
+  a decision is actually made in. Nothing replaced it; the module still drives the land row's glyph
+  and the sim's yield, and `_format_food_kind_label` + `_value_hex`'s `"Forage"` case went with it.
+  ui_preview: `tile_food_layers` (the three-role reference tile) / `food_tile` (staples only) /
+  `tile_pasture_stressed` (the phase inline and amber) / `tile_pasture_none` + `tile_panel_no_forage`
+  (each web absent) / `tile_sight_remembered` (`Grazing` alone).
+- **The tile card's BASKET — the plant COMPOSITION, as the `Foraging` row's decomposition** (Flora
+  Roster F1/F5; snapshot `ForagePatchState.composition:[FloraShareInfo]` →
+  decoded in `native/src/dict/subsistence.rs` as a `composition` array of
+  `{species, display_name, share, role, …}`, cross-refed by `MapView._tile_info_at` as
+  `patch_composition`). **One indented row per realized plant, always visible, directly under
+  `Foraging`** (`DetailFormat.flora_composition_lines` → `SubjectDrawerController._tile_terrain_lines`):
+  a **role icon**, the plant's display name, its **share**, and the **absolute biomass** that share
+  amounts to — `🌾 Wild Tubers 38%  (77)`.
+  - **THE HEADING AND THE DISCLOSURE ARE BOTH GONE.** A quiet `What grows here` header above the rows
+    made the list read as a FOURTH resource standing beside the stocks; the indent under `Foraging`
+    says "these decompose the row above" without a word, and always-visible is what lets a player see
+    at a glance that (on the reference tile) **62% of what grows here is not food**.
+  - **EACH ROW STATES ITS ABSOLUTE, and the three sum to the `Foraging` ceiling EXACTLY.** A share is
+    a ratio and cannot be added to anything. The biomass is `percent × patch_carrying_capacity` off
+    the ALREADY-ROUNDED percent (so a row's two numbers can never disagree), with the same
+    largest-share remainder fold applied a second time — `DetailFormat._flora_biomass_split`. It is
+    the CEILING, not the standing stock: the shares describe what the ground GROWS, a property of the
+    patch rather than of how hard it has lately been worked.
+  - **EACH ROW LEADS WITH ITS CROP ROLE** (`FoodIcons.for_crop_role`, from `FloraShareInfo.role`):
+    🌾 staple / 🐄 fodder / ⇄ cash. All three marks are BORROWED from vocabulary this HUD already
+    proved at row size rather than invented — see `sprites-widgets.md` → the FoodIcons row.
+    **`""` MEANS UNSTATED, NOT "staple"**: the row renders `FLORA_ROLE_ICON_UNSTATED`, a blank slot
+    that holds its width, because defaulting a missing tag into a real category would invent a fact
+    about the plant. **Never re-derive a role from the payoff fields** — they are rung-2/rung-3
+    numbers folding in the weeding and conversion gains, and they read all-zero for a species that
+    cannot climb on this ground, which is exactly where the role is still true and useful.
+  - **The rows are tinted NEUTRAL ink**, not the ▲/▼ two-tone — a share is descriptive, not a
+    good/bad signal. `detail_bbcode` now has ONE indented-sub-row branch that tints by the SIGN GLYPH
+    (▲ healthy / ▼ warn / **neither → neutral**), because the leading mark here is a role icon that is
+    one of three or nothing at all and no literal can identify these rows. The old pair keyed its
+    neutral branch off the single 🌿 sprig every basket row then wore.
+  It names the plants the tile's forage capacity is MADE OF — **naming decomposes, it does not add**.
+  Three rules: the wire list is **already sorted** (share DESC, then species key ASC) and is rendered
+  **verbatim, never re-sorted**; the **displayed percentages always sum to 100** —
+  `SourceForecast.flora_basket_entries` folds the rounding remainder into the LARGEST share (the
+  first entry); and an empty / absent list renders **no rows** (a biome that carries no forage).
+  **The basket itself is NOT in `FOW_DISCOVERED_HIDDEN_KEYS`** — it is a pure function of the BIOME —
+  **but it no longer renders on a remembered tile anyway**, because it is nested under the `Foraging`
+  row's capacity guard. With no parent row above them and no capacity to state each plant's biomass,
+  the rows would be exactly the free-floating "three more resources" list this layout exists to stop.
+  ui_preview: `tile_food_layers` (all three roles, and the biomass-remainder test — 38/31/31 of 205
+  naively rounds to 206) / `tile_food_layers_unstated` (the same tile with one role missing from the
+  wire: that row renders no icon) / `food_tile` / `tile_panel_land` (the fixture's shares naively round
+  to 101%, so those frames ARE the percentage rounding test), `tile_growing_here` +
+  `tile_growing_here_variant` (TWO Alluvial Plain tiles with DIFFERENT baskets — the visible
+  per-tile-realization proof on the card), and `tile_panel_no_forage` (no list → no rows).
+  Four `_assert_food_layer_rows` assertions carry what a frame cannot — that the biomasses sum to the
+  ceiling, that an unstated role renders no icon while its neighbours keep theirs, and that `Grazing`
+  follows `Foraging`'s basket with nothing between — each sabotage-verified.
   **TWO ROWS, TWO QUESTIONS — the COMMITTED crop BESIDE the standing basket** (`docs/plan_flora_roster.md`
   §4.3, issue #433; `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
   `forage_patches_to_array` as `committed_species` / `committed_display_name`, cross-refed by
@@ -249,29 +301,17 @@ paths:
   same fix; it takes a `crew_label` so the sentence names hunters/herders/foragers correctly. ui_preview:
   `forage_unstaffed` / `forage_unassign`, each with assertions on the button state AND on the copy, so
   the pair cannot drift back into contradicting itself.
-- **Tile-card Pasture rows — the ANIMAL-edible twin of Forage biomass** (`Hud._tile_terrain_lines`;
-  Grazing Phase 2a, `docs/plan_grazing_foundation.md`). `TileState.grazeBiomass` / `grazeCapacity` /
-  `grazeEcologyPhase` are decoded in `native/src/lib.rs tile_to_dict` (plain floats, not fixed-point;
-  the ubyte phase code is resolved THERE into the same phase *strings* the herd/patch payloads carry,
-  so the client keeps ONE ecology vocabulary), cached in `MapView.tile_graze` — **only for tiles that
-  actually carry pasture**, mirroring the sim's `GrazeRegistry`, so "no pasture" is an *absent*
-  reading — and cross-referenced onto `tile_info` by `_tile_info_at`. Two rows:
-  `Pasture: 236 / 240` and `Pasture ecology: ⚠ Stressed`. The pair with `Forage biomass` **is** the
-  point: what HUMANS can eat here (seeds/nuts/tubers, food-module tiles only) vs what ANIMALS can eat
-  here (grass/browse, nearly every land tile) — *your best farm is usually not your best pasture*.
-  - **Rendered only when `graze_capacity > 0`** — on a glacier the card prints **nothing**, never
-    `0 / 0` (which would read as a starved pasture rather than an absent one). ui_preview
-    `tile_pasture_none`.
-  - **The ecology row reuses the shared path** — `_ecology_phase_label` + `DetailFormat.ecology_value_hex`, the
-    same neutral/amber/red tint a stressed herd or a stressed forage patch gets. It carries its own
-    row KEY (`PASTURE_ECOLOGY_KEY`) purely so a forage tile does not print two rows both named
-    "Ecology"; `DetailFormat.detail_bbcode` keys both to the one helper — the styling path is not forked.
-  - **Pasture is REMEMBERED knowledge, not live state** — it is emitted BEFORE the Discovered
-    early-return and is deliberately **not** in `FOW_DISCOVERED_HIDDEN_KEYS`. Grass is a property of
-    the GROUND (you can read a steppe from a ridge) and the biome above it is already remembered; what
-    a remembered tile redacts is live *contents* (the bands and herds standing on it).
-  - ui_preview: `food_tile` (the healthy pair — `Forage biomass 84 / 120` beside
-    `Pasture 240 / 240 · Thriving`) / `tile_pasture_stressed` / `tile_pasture_none`.
+- **The GRAZE layer's wire terms** (Grazing Phase 2a, `docs/plan_grazing_foundation.md`).
+  `TileState.grazeBiomass` / `grazeCapacity` / `grazeEcologyPhase` are decoded in
+  `native/src/dict/map.rs tile_to_dict` (plain floats, not fixed-point; the ubyte phase code is
+  resolved THERE into the same phase *strings* the herd/patch payloads carry, so the client keeps ONE
+  ecology vocabulary), cached in `MapView.tile_graze` — **only for tiles that actually carry
+  pasture**, mirroring the sim's `GrazeRegistry`, so "no pasture" is an *absent* reading — and
+  cross-referenced onto `tile_info` by `_tile_info_at`. They are **deliberately NOT in
+  `FOW_DISCOVERED_HIDDEN_KEYS`**: grass is a property of the GROUND (you can read a steppe from a
+  ridge) and the biome above it is already remembered, so a remembered tile keeps its `Grazing` row;
+  what a remembered tile redacts is live *contents*. How the row itself reads — and why it sits
+  directly under `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in

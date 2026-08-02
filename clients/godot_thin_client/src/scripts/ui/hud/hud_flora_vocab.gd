@@ -119,25 +119,36 @@ const RUNG_REVERTING_LABEL := "Reverting"
 # and a different glyph from "🌾 Tended Patch", because rung 3 is a different thing, not a bigger number.
 const FIELD_ROW := "Field"
 
-# Tile card "What grows here" SECTION HEADER (flora roster F1/F5) — the quiet label above the per-plant
-# 🌿 rows `DetailFormat.flora_composition_lines` renders. Colon-less on purpose: `detail_bbcode` prints
-# it as a dim section header (the `_split_kv` sentence path), the plants themselves following as their
-# own indented rows below. Names the plants this tile's forage capacity is MADE OF — naming DECOMPOSES,
-# it never adds (the shares sum to 1) — and derived from the biome, so it is descriptive, not a state.
-const FLORA_COMPOSITION_ROW := "What grows here"
-
-# One plant's row within that section — `Wild Grain 45%`. Shared with the crop picker, which prints its
+# One plant's row within the basket — `Wild Grain 45%`. Shared with the crop picker, which prints its
 # own rows with it too (beside the `· N.N×` payoff term the picker adds).
+#
+# THERE IS NO LONGER A "What grows here" HEADING ABOVE THESE ROWS on the tile card. The heading made
+# the basket read as a fourth resource sitting beside the stocks; the rows are now an always-visible
+# INDENTED list directly under the `Foraging` row, and the indent is what says they decompose it.
 const FLORA_SHARE_FORMAT := "%s %d%%"
 
-# Tile card "Crop" row (flora roster S1) — the row that appears ABOVE FLORA_COMPOSITION_ROW once a
-# band commits the patch to one species under Cultivate/Sow. The two are NOT mutually exclusive and
-# never were after issue #433: a commitment REWEIGHTS the basket over the build (a Tended Patch weeds
-# the favored share up toward `min(1, share x tended_weeding_gain)`, a Field forces it to 1.0) instead
-# of displacing it, and the species is recorded on the first worked turn — ~25 turns before any of
-# that lands. So this row says WHAT WAS COMMITTED TO and the section below says WHAT IS GROWING, which
-# are different facts for most of a build. Kept well under `DetailFormat`'s 16-char key limit so it
-# aligns as a normal table row.
+# …and what that share is IN — the plant's own standing biomass, `share × the patch's carrying
+# capacity`, rounded. A percentage alone cannot be added to anything; stating the absolute beside it
+# is what lets the three rows visibly sum to the `Foraging` stock they sit under. Parenthesised and
+# trailing so the share stays the row's headline and the absolute reads as its expansion.
+const FLORA_SHARE_BIOMASS_CLAUSE_FORMAT := "  (%d)"
+
+# The role-icon SLOT on a basket row, blank when the wire states no role. `FloraShareInfo.role` is
+# `""` for a species this server's roster no longer knows, and that means UNSTATED, never "staple" —
+# so the row renders no icon rather than claiming a category. The slot still holds its width, so one
+# untagged plant cannot shift the whole list's names out of column.
+const FLORA_ROLE_ICON_UNSTATED := "  "
+
+# Tile card "Crop" row (flora roster S1) — the row a band's commitment to one species under
+# Cultivate/Sow puts on the card. It and the basket are NOT mutually exclusive and never were after
+# issue #433: a commitment REWEIGHTS the basket over the build (a Tended Patch weeds the favored share
+# up toward `min(1, share x tended_weeding_gain)`, a Field forces it to 1.0) instead of displacing it,
+# and the species is recorded on the first worked turn — ~25 turns before any of that lands. So this
+# row says WHAT WAS COMMITTED TO and the basket says WHAT IS GROWING, which are different facts for
+# most of a build. It reads with the BUILD METERS, below the two stock rows, because what it states is
+# the standing investment on this ground rather than part of the stock pair; the SIGNAL mark on the
+# committed member inside the basket is what joins the two. Kept well under `DetailFormat`'s 16-char
+# key limit so it aligns as a normal table row.
 const FLORA_CROP_ROW := "Crop"
 
 # THE CROP PICKER (flora roster S1) — the compose control that makes committing a DECISION instead of
@@ -309,15 +320,37 @@ const KNOWLEDGE_TRACK_SEED_SELECTION := "seed_selection"
 
 const KNOWLEDGE_TRACK_PENNING := "penning"
 
-# Tile-card PASTURE rows (the graze layer). The twin of `Forage biomass`, and the pair is the point:
-# forage is what HUMANS can eat here (seeds, nuts, tubers — food-module tiles only), pasture is what
-# ANIMALS can eat here (grass and browse — cellulose humans cannot digest, on nearly every land tile).
-# Your best farm is usually not your best pasture. Rendered ONLY where the ground actually carries
-# pasture (`graze_capacity > 0`): on a glacier the card prints nothing, never "0 / 0".
-const PASTURE_KEY := "Pasture"
+# ---- THE TILE CARD'S TWO FOOD-WEB STOCK ROWS ---------------------------------------------------
+# One row per WEB, named for WHO EATS IT, and rendered ADJACENT with Foraging first.
+#
+# THE NAMES ARE THE FIX. The card carried both stocks under names that inverted each other: the
+# stock rows were `Pasture` (bare) and `Forage biomass` (qualified) while the ecology rows were
+# `Pasture ecology` (qualified) and `Ecology` (bare) — so the unqualified word meant the ANIMAL layer
+# in one pair and the HUMAN layer in the other, and a reader who learned one pattern was mis-taught
+# by the other. `Foraging` / `Grazing` are parallel on the one axis that cannot invert: who is doing
+# the eating. (Playtest: one reader mistook one layer for the other three times.)
+#
+# THE ADJACENCY IS THE OTHER HALF. The two used to be interleaved — pasture's pair, then the module
+# row, then the basket, then forage's pair — which split the human layer in half around the animal
+# one. They are now consecutive rows, because a comparison the player cannot make with one glance is
+# not a comparison. What each web offers is still the point: humans eat seeds/nuts/tubers off a
+# food-module tile; animals eat grass and browse off nearly every land tile. Your best farm is
+# usually not your best pasture.
+#
+# Each is rendered ONLY where that web has a stock at all — `patch_carrying_capacity > 0` /
+# `graze_capacity > 0` — so a glacier prints no Grazing row and a moduleless tile no Foraging row,
+# never a "0 / 0" that would read as a starved stock rather than an absent one.
+const FORAGING_KEY := "Foraging"
 
-# Its own row key rather than the shared "Ecology" one — a forage tile would otherwise show two rows
-# both called "Ecology" (the patch's and the pasture's) with no way to tell them apart. The LABEL and
-# the TINT are still the shared `DetailFormat.ecology_phase_label` / `ecology_value_hex` path, so a stressed
-# pasture reads exactly like a stressed herd or a stressed patch.
-const PASTURE_ECOLOGY_KEY := "Pasture ecology"
+const GRAZING_KEY := "Grazing"
+
+# Standing stock over its ceiling, the shape both webs read in — `205 / 205`. Whole units: these are
+# biomass stocks in the hundreds, and a decimal on either side buys no decision.
+const STOCK_FORMAT := "%.0f / %.0f"
+
+# THE ECOLOGY PHASE RIDES THE STOCK ROW, IT IS NO LONGER A ROW OF ITS OWN. Two standing `Ecology` /
+# `Pasture ecology` rows doubled the height of a readout whose whole content is one word each, and
+# put the second web's stock two rows away from the first's. The phase is a condition OF that stock,
+# so it reads after it on the same line — and the tint is unchanged: `DetailFormat.ecology_value_hex`
+# still keys the neutral/amber/red off the phase word, now matched inside the composed value.
+const STOCK_PHASE_CLAUSE_FORMAT := "%s · %s"

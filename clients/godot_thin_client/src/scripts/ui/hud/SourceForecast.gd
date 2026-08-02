@@ -2102,6 +2102,13 @@ static func flora_basket_entries(composition: Variant) -> Array[Dictionary]:
             # pair its policy names, exactly as it already does for the ratio and the food payoff.
             "cultivate_fodder_payoff": float(entry.get("cultivate_fodder_payoff", 0.0)),
             "cultivate_trade_payoff": float(entry.get("cultivate_trade_payoff", 0.0)),
+            # WHAT THIS PLANT IS FOR — the sim's own display tag ("staple"/"fodder"/"cash"), carried
+            # so the tile card's basket rows can lead with a role icon. **`""` is UNSTATED and must
+            # stay `""`**: defaulting a missing tag to "staple" would invent a fact, and re-deriving
+            # one from the payoffs above is wrong twice over — they are rung-2/rung-3 numbers folding
+            # in the weeding and conversion gains, and they read all-zero for a species that cannot
+            # climb on this ground, which is exactly where the role is still true and useful.
+            "role": String(entry.get("role", "")).strip_edges().to_lower(),
         })
     if entries.is_empty():
         return entries

@@ -257,16 +257,18 @@ const EXPEDITION_NEXT_DELIVERY_TARGET_LOST := "Next delivery: target herd lost �
 # The click affordance on an Active-expeditions row (the whole row is the button there).
 const EXPEDITION_ROW_FOCUS_HINT := "Click to show this expedition on the map."
 
-# ---- Tile card "What grows here" species rows (flora roster F1/F5). Each realized plant reads on its
-# OWN indented row — a section under the `Forage:` line, not one comma-joined value — so the per-tile
-# basket scans like the compose sheet's crop picker does. Each row is the shared 🌿 sprig
-# (`FoodIcons.DEFAULT`: there are no per-species flora icons yet, so the whole basket wears one generic
-# plant glyph — see the report's roster follow-up), the plant's display name, and its share as a
-# percentage (`HudFloraVocab.FLORA_SHARE_FORMAT`). Rows reuse the food/morale breakdown's 4-space
-# `MORALE_BREAKDOWN_INDENT`, but are tinted NEUTRAL ink, not the ▲green/▼amber two-tone — a share is
-# descriptive, not a good/bad signal — so `detail_bbcode` keys a dedicated branch off the sprig glyph
-# (which is why that branch must be tested BEFORE the morale-indent one: they share the indent).
-const FLORA_COMPOSITION_GLYPH := FoodIcons.DEFAULT
+# ---- The tile card's BASKET rows — what the `Foraging` stock above them is MADE OF (flora roster
+# F1/F5). Each realized plant reads on its OWN indented row: a role icon, the plant's display name,
+# its share of the patch (`HudFloraVocab.FLORA_SHARE_FORMAT`) and the standing biomass that share
+# amounts to. Rows reuse the food/morale breakdown's 4-space `MORALE_BREAKDOWN_INDENT`, and the
+# indent is doing REAL WORK here — it is what says these rows decompose the row above them rather
+# than listing three more resources beside it.
+#
+# THE ROLE ICON REPLACED ONE GENERIC 🌿 SPRIG ON EVERY ROW, and that is why the tint branch in
+# `detail_bbcode` no longer sniffs for a glyph: the leading mark is now `FoodIcons.for_crop_role`,
+# which is one of three marks OR nothing at all (an unstated role renders no icon, never a defaulted
+# one), so no literal could identify these rows. The renderer tells a descriptive sub-row from a
+# SIGNED one by the ▲/▼ the signed families all carry — see `detail_bbcode`.
 const FLORA_COMPOSITION_SUBLINE_FORMAT := "%s%s %s"
 
 # ---- The Growth row + its itemized fertility breakdown (the birth path's parallel of the morale
@@ -334,26 +336,30 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 table_open = false
             out += "\n"
             continue
-        # The tile card's "What grows here" species rows (flora roster F1/F5): the SAME 4-space indent
-        # the morale/food breakdown uses, but tinted NEUTRAL ink — a plant's share is descriptive, not
-        # a positive/negative signal, so it must never borrow the ▲green/▼amber two-tone below. Keyed
-        # off the shared 🌿 sprig, and tested FIRST precisely because the morale branch matches the
-        # same indent (it would otherwise claim these rows and mis-tint them amber).
-        if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT) and line.contains(DetailFormat.FLORA_COMPOSITION_GLYPH):
-            if table_open:
-                out += "[/table]\n"
-                table_open = false
-            out += "[color=#%s]%s[/color]\n" % [HudStyle.INK_HEX, line]
-            continue
-        # Itemized morale / food breakdown sub-lines render full-width, tinted by their sign
-        # glyph (▲ positive = healthy, ▼ negative = amber) — kept two-tone, not a rainbow. The
-        # `\n` after `[/table]` forces a block break: a RichTextLabel `[table]` is inline, so text
+        # INDENTED SUB-ROWS — ONE branch for every family that hangs rows beneath a headline row.
+        # They render full-width (never as a lopsided table row), and THE SIGN GLYPH DECIDES THE TINT:
+        #   • ▲ → HEALTHY green, ▼ → WARN amber. The itemized morale / food / fertility breakdowns,
+        #     kept deliberately two-tone rather than a rainbow.
+        #   • NEITHER → neutral ink. The tile card's basket rows, which are DESCRIPTIVE — a plant's
+        #     share of the ground is not a good or a bad thing — so they must not borrow the two-tone.
+        # **The neutral case is matched by the ABSENCE of a sign, not by a mark of its own**, and that
+        # is why this is one branch instead of the two it used to be: the basket rows now lead with a
+        # crop ROLE icon that is one of three marks or nothing at all (an unstated role renders no
+        # icon), so no literal can identify them. The old pair keyed its neutral branch off the single
+        # 🌿 sprig every basket row then wore, and had to be tested first because both matched the
+        # same indent. Any future indented family is neutral until it carries a sign, which is the
+        # safe default — the old fallthrough tinted it WARN.
+        # The `\n` after `[/table]` forces a block break: a RichTextLabel `[table]` is inline, so text
         # emitted right after it otherwise floats onto the table's top-right when there's room.
         if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT):
             if table_open:
                 out += "[/table]\n"
                 table_open = false
-            var row_hex := HudStyle.HEALTHY_HEX if line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH) else HudStyle.WARN_HEX
+            var row_hex := HudStyle.INK_HEX
+            if line.contains(DetailFormat.MORALE_CONTRIB_POSITIVE_GLYPH):
+                row_hex = HudStyle.HEALTHY_HEX
+            elif line.contains(DetailFormat.MORALE_CONTRIB_NEGATIVE_GLYPH):
+                row_hex = HudStyle.WARN_HEX
             out += "[color=#%s]%s[/color]\n" % [row_hex, line]
             continue
         # The overgrazing warning is a full-width WARN sentence (biomass > K), tinted with the same
@@ -407,20 +413,18 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
         # not a "good", so the top bucket is neutral ink even when the band out-breeds its base rate.
         if not is_nan(ctx.fertility):
             return BandFoodStatus.hex_for_fertility(ctx.fertility)
-    elif key == "Forage":
-        # The tile's gather module reads in the success/ETA amber.
-        return HudStyle.WARN_HEX
     elif key == "Habitability":
         # The tile's habitability rating tints by its bucket (green→red).
         return TileHabitability.hex_for_rating(value)
     elif key == HudConst.TILE_SIGHT_KEY:
         # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
         return sight_value_hex(value)
-    elif key == "Ecology" or key == HudFloraVocab.PASTURE_ECOLOGY_KEY:
-        # Shared by the herd drawer, the forage-patch tile card and the tile card's PASTURE row — one
-        # phase tint (neutral/amber/red) for every ecology in the game. The pasture row keeps its own
-        # KEY only so a forage tile doesn't print two rows named "Ecology"; the styling path is
-        # deliberately not forked.
+    elif key == "Ecology" or key == HudFloraVocab.FORAGING_KEY or key == HudFloraVocab.GRAZING_KEY:
+        # ONE phase tint (neutral/amber/red) for every ecology in the game — the herd drawer's own
+        # `Ecology` row, and the tile card's two food-web STOCK rows, which now carry their phase
+        # INLINE after the stock (`205 / 205 · ⚠ Stressed`) instead of on standalone rows beneath
+        # them. `ecology_value_hex` matches the phase WORD wherever it sits in the value, so folding
+        # the two rows into one forked nothing: the styling path is still the single shared one.
         return ecology_value_hex(value)
     elif key == "Husbandry":
         return husbandry_value_hex(value)
@@ -687,9 +691,13 @@ static func field_value_hex(value: String) -> String:
         return HudStyle.WARN_HEX
     return HudStyle.INK_HEX
 
-## The tile card's "What grows here" SECTION — a quiet header row naming the section, then one
-## indented 🌿 row per realized plant (`Wild Grain 45%` / `Ground Nut 30%` / …), so the per-tile basket
-## reads down the card the way the compose sheet's crop picker reads, not as one comma-joined value.
+## The tile card's BASKET — one indented row per realized plant, sitting directly under the `Foraging`
+## stock they DECOMPOSE (`🌾 Wild Tubers 38%  (78)` / `⇄ Cotton Fields 31%  (63)` / …).
+##
+## **THERE IS NO HEADER ROW AND NO DISCLOSURE.** A `What grows here` heading made the list read as a
+## fourth resource standing beside the stocks rather than as the composition of one of them; the
+## indent under `Foraging` says the same thing without a word, and always-visible is what lets a
+## player see at a glance that (say) 62% of what grows on this ground is not food.
 ##
 ## The wire list is ALREADY sorted (share descending, then species key ascending) and its shares sum
 ## to 1, so this only formats: the order is the sim's and is rendered VERBATIM, never re-derived here.
@@ -697,32 +705,71 @@ static func field_value_hex(value: String) -> String:
 ## THE DISPLAYED PERCENTAGES ALWAYS SUM TO 100. `SourceForecast.flora_basket_entries` folds the
 ## rounding remainder into the LARGEST share (the first entry), so a basket that naively rounds to
 ## 99/101 still decomposes to 100. Returns [] for a tile with no composition (a biome that carries no
-## forage), so neither the header nor any row renders.
+## forage), so no row renders.
+##
+## **`capacity` IS THE PATCH'S CARRYING CAPACITY, and it is what makes the decomposition checkable.**
+## A share is a ratio and cannot be added to anything, so each row also states the standing biomass it
+## amounts to — `percent × capacity`, off the ALREADY-ROUNDED percent so the two columns of a row can
+## never disagree, with the same largest-share remainder fold applied again so the biomasses sum to
+## the `Foraging` ceiling above them EXACTLY. Pass `0` (the default) for a surface with no capacity in
+## hand and the rows render shares alone. It is the CEILING, not the standing stock: the shares
+## describe what the ground grows, which is a property of the patch and not of how hard it has
+## lately been worked.
 ##
 ## `committed_species` is the patch's committed crop KEY (not its display name) — "" for an
 ## uncommitted patch. That one member's row is marked in `HudStyle.SIGNAL`, the tint this HUD already
 ## spends on a standing investment (`cultivation_value_hex` / `field_value_hex`, the work board's rung
-## mark), so the eye joins the `Crop:` row above to the share it currently holds in the basket. It is a
+## mark), so the eye joins the `Crop:` row to the share it currently holds in the basket. It is a
 ## MARK, not a filter: every member still lists, because a commitment REWEIGHTS the basket over the
 ## build rather than emptying it, and watching the other shares fall is the feedback. The tint rides
-## the row as inline BBCode, nested inside the neutral wrap `detail_bbcode` puts on every 🌿 row — so
-## it covers the NAME AND SHARE only, leaving the indent and the sprig outside the tag, because that
-## branch recognizes the row by `begins_with(MORALE_BREAKDOWN_INDENT)` + the literal glyph.
-static func flora_composition_lines(composition: Variant, committed_species: String = "") -> Array[String]:
+## the row as inline BBCode, nested inside the neutral wrap `detail_bbcode` puts on every indented
+## row — so it covers the NAME, SHARE AND BIOMASS only, leaving the indent and the role icon outside
+## the tag, because that branch recognizes the row by `begins_with(MORALE_BREAKDOWN_INDENT)`.
+static func flora_composition_lines(
+    composition: Variant, committed_species: String = "", capacity: float = 0.0
+) -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
     var lines: Array[String] = []
     if entries.is_empty():
         return lines
     var committed := committed_species.strip_edges()
-    lines.append(HudFloraVocab.FLORA_COMPOSITION_ROW)
-    for entry in entries:
-        var share := HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])]
+    var biomass := _flora_biomass_split(entries, capacity)
+    for index in entries.size():
+        var entry: Dictionary = entries[index]
+        var face := HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])]
+        if capacity > 0.0:
+            face += HudFloraVocab.FLORA_SHARE_BIOMASS_CLAUSE_FORMAT % biomass[index]
         if committed != "" and String(entry["species"]) == committed:
-            share = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, share]
-        lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [
-            MORALE_BREAKDOWN_INDENT, FLORA_COMPOSITION_GLYPH, share,
-        ])
+            face = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, face]
+        # An UNSTATED role renders the blank slot, never a defaulted icon — see `FoodIcons.for_crop_role`.
+        var icon := FoodIcons.for_crop_role(String(entry.get("role", "")))
+        if icon == "":
+            icon = HudFloraVocab.FLORA_ROLE_ICON_UNSTATED
+        lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [MORALE_BREAKDOWN_INDENT, icon, face])
     return lines
+
+## Each basket entry's standing biomass, as whole units summing EXACTLY to `round(capacity)`.
+##
+## Derived from the entries' already-rounded PERCENTS rather than the raw shares, so a row's two
+## numbers are consistent with each other (38% of 205 really is the 78 printed beside it) — and the
+## remainder is folded into the FIRST (largest) entry, exactly as `flora_basket_entries` folds the
+## percentage remainder, because a decomposition that visibly fails to add up is worse than a ±1 on
+## the row where it is proportionally smallest. Returns zeros for a capacity-less surface; those rows
+## print no biomass at all.
+static func _flora_biomass_split(entries: Array[Dictionary], capacity: float) -> Array[int]:
+    var split: Array[int] = []
+    if capacity <= 0.0:
+        split.resize(entries.size())
+        split.fill(0)
+        return split
+    var total := 0
+    for entry in entries:
+        var value := int(round(
+            float(entry["percent"]) / float(SourceForecast.FLORA_SHARE_PERCENT_TOTAL) * capacity))
+        total += value
+        split.append(value)
+    split[0] = split[0] + int(round(capacity)) - total
+    return split
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of
 ## `cultivation_label`. A finished pen shows the livestock glyph; an in-progress one reads

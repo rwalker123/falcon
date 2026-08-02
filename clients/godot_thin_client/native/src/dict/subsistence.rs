@@ -485,6 +485,21 @@ pub(crate) fn forage_patches_to_array(
                 // POLICY's question, so both ride the entry and the picker picks by rung.
                 let _ = share_dict.insert("cultivate_fodder_payoff", share.cultivateFodderPayoff());
                 let _ = share_dict.insert("cultivate_trade_payoff", share.cultivateTradePayoff());
+                // WHAT THIS PLANT IS FOR — "staple" | "fodder" | "cash", the species' own display
+                // tag. The tile card leads each basket row with one icon per role, so a player sees
+                // at a glance how much of a stand is food, feed or cash.
+                //
+                // **ABSENT MEANS UNSTATED, NOT "staple"** — the key is only inserted when the wire
+                // carries one, exactly as `species`/`display_name` are, so GDScript reads `""` and
+                // renders NO icon rather than defaulting a missing tag into a real category.
+                //
+                // NEVER RE-DERIVE IT FROM THE PAYOFFS ABOVE: those are rung-2/rung-3 numbers that
+                // fold in the weeding and conversion gains, and they are all zero for a species
+                // that cannot climb on this ground — which is exactly the case where the role is
+                // still a true fact about the plant.
+                if let Some(role) = share.role() {
+                    let _ = share_dict.insert("role", role);
+                }
                 shares.push(&share_dict.to_variant());
             }
             let _ = dict.insert("composition", &shares);

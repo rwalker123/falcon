@@ -1215,11 +1215,34 @@ func _ready() -> void:
 	await _settle()
 	await _save("climate_tropical")
 
-	# ---- Pasture: the ANIMAL-edible stock on the tile card (Grazing Phase 2a) --------------------
-	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Pasture 61 / 240" with a
-	# WARN-amber "⚠ Stressed" under it, identical in label and tint to a stressed herd or patch. (The
-	# healthy pair — "Forage biomass 84 / 120" beside "Pasture 240 / 240 · Thriving" — is on `food_tile`.)
+	# ---- The tile card's TWO FOOD-WEB ROWS ------------------------------------------------------
+	# `Foraging` (people) directly above `Grazing` (animals), each carrying its stock and its ecology
+	# phase inline, with the human layer's basket indented beneath its row. The pair replaced four
+	# interleaved rows under names that inverted each other (`Pasture` bare beside `Forage biomass`
+	# qualified; `Pasture ecology` qualified beside `Ecology` bare), which a playtest reader mistook
+	# one for the other three times.
+	#
+	# State food_layers — the reference frame: all THREE crop roles on one patch, so every role icon is
+	# in one picture and the card states outright that 62% of what grows on this ground is not food.
 	_hud._compose.set_forage_count(1)
+	_show_tile(_three_role_tile_fixture())
+	await _settle()
+	await _save("tile_food_layers")
+
+	# State food_layers_unstated — the SAME tile with the cash crop's role missing from the wire. `""`
+	# means UNSTATED, not "staple", so that row must render NO icon while its two neighbours keep
+	# theirs; a defaulted icon here would invent a fact about the plant.
+	_show_tile(_unstated_role_tile_fixture())
+	await _settle()
+	await _save("tile_food_layers_unstated")
+
+	# The three claims a PICTURE cannot carry, asserted over the REAL producer's lines (the harness
+	# pokes `_drawer` directly, the `tile_panel_*` idiom). Each is sabotage-verified.
+	_assert_food_layer_rows()
+
+	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Grazing 61 / 240 ·
+	# ⚠ Stressed", the phase inline and WARN-amber, identical in label and tint to a stressed herd or
+	# patch. (The healthy pair — `Foraging` above `Grazing`, both Thriving — is on `food_tile`.)
 	_show_tile(_overgrazed_tile_fixture())
 	await _settle()
 	await _save("tile_pasture_stressed")
@@ -6498,6 +6521,84 @@ func _count_buttons_by_text(root: Node, text: String) -> int:
 		total += _count_buttons_by_text(child, text)
 	return total
 
+## ---- THE TILE CARD'S TWO FOOD-WEB ROWS — the three claims a frame cannot carry ----------------
+##
+## A picture shows that the card LOOKS right; none of these can be read off one. They run against the
+## REAL line producer (`SubjectDrawerController._tile_terrain_lines`), never against a re-derivation
+## here, so a regression in the producer is what fails them.
+##
+## 1. THE BASKET DECOMPOSES THE STOCK. The indented rows' biomasses must sum to the `Foraging` row's
+##    own ceiling — the whole reason each row states an absolute beside its share. Independent
+##    rounding does NOT sum (78 + 64 + 64 = 206 against this fixture's 205), so this is a real test of
+##    the remainder fold and not of arithmetic that could not fail.
+## 2. AN UNSTATED ROLE RENDERS NO ICON. `""` means the roster does not know this species, not
+##    "staple", so the row must carry none of the three role marks while its neighbours carry theirs.
+## 3. THE TWO ROWS ARE ADJACENT, FORAGING FIRST. Adjacency is what stops the two webs being confused,
+##    and it is invisible to any assertion that merely finds both rows present.
+func _assert_food_layer_rows() -> void:
+	var lines := _hud._drawer._tile_terrain_lines(_floorify(
+		_three_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	var forage_index := _detail_row_index(lines, HudFloraVocab.FORAGING_KEY)
+	var graze_index := _detail_row_index(lines, HudFloraVocab.GRAZING_KEY)
+	_assert_hud("the tile card states a Foraging row and a Grazing row",
+		forage_index >= 0 and graze_index >= 0)
+	# The basket rows sit BETWEEN them, so "adjacent" means the animal row follows the human block —
+	# the human layer is never split by it, which is exactly what used to happen.
+	var basket := _flora_basket_rows(lines)
+	_assert_hud("…Foraging leads, and Grazing follows its basket with nothing else between",
+		forage_index >= 0 and graze_index == forage_index + basket.size() + 1)
+	var basket_total := 0
+	for row in basket:
+		basket_total += _flora_row_biomass(row)
+	_assert_hud("…and the basket's biomasses sum to the Foraging ceiling (%d of %d)" % [
+			basket_total, int(THREE_ROLE_CAPACITY)],
+		basket.size() == 3 and basket_total == int(THREE_ROLE_CAPACITY))
+	var unstated := _flora_basket_rows(_hud._drawer._tile_terrain_lines(_floorify(
+		_unstated_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)))
+	var icon_rows := 0
+	var cotton_has_icon := true
+	for row in unstated:
+		var has_icon := _flora_row_has_role_icon(row)
+		if has_icon:
+			icon_rows += 1
+		if row.contains("Cotton"):
+			cotton_has_icon = has_icon
+	_assert_hud("a species whose role the wire leaves UNSTATED renders no role icon",
+		unstated.size() == 3 and not cotton_has_icon)
+	_assert_hud("…while the two roles the wire DOES state still wear theirs", icon_rows == 2)
+
+## The index of the `Key: value` row with this key, or -1. Matches the key EXACTLY (up to the
+## `DetailFormat` separator) so `Foraging` cannot be found by a row that merely mentions it.
+func _detail_row_index(lines: Array[String], key: String) -> int:
+	var prefix := key + DetailFormat.DETAIL_KV_SEPARATOR
+	for index in lines.size():
+		if lines[index].begins_with(prefix):
+			return index
+	return -1
+
+## The indented basket rows, in order. They are the only indented rows the LAND drawer emits.
+func _flora_basket_rows(lines: Array[String]) -> Array[String]:
+	var rows: Array[String] = []
+	for line in lines:
+		if line.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT):
+			rows.append(line)
+	return rows
+
+## The `(78)` a basket row closes with — parsed back out of the RENDERED row, so this reads what the
+## player reads rather than recomputing what it should have been.
+func _flora_row_biomass(row: String) -> int:
+	var open_paren := row.rfind("(")
+	var close_paren := row.rfind(")")
+	if open_paren < 0 or close_paren <= open_paren:
+		return 0
+	return int(row.substr(open_paren + 1, close_paren - open_paren - 1))
+
+func _flora_row_has_role_icon(row: String) -> bool:
+	for role in FoodIcons.CROP_ROLE_ICONS:
+		if row.contains(String(FoodIcons.CROP_ROLE_ICONS[role])):
+			return true
+	return false
+
 ## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
 ## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
 ## for someone to notice a card that should not be there.
@@ -7817,15 +7918,15 @@ func _food_tile_fixture() -> Dictionary:
 		# species, and it is what the compose sheet's "→ then" term quotes once a crop is picked: the two
 		# rows differ (1.20 vs 0.85), which is what makes the selection visibly move the forecast.
 		"patch_composition": [
-			{"species": "wild_grain", "display_name": "Wild Grain", "share": 0.455,
+			{"species": "wild_grain", "role": "staple", "display_name": "Wild Grain", "share": 0.455,
 				"can_cultivate": true, "can_sow": true,
 				"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
 				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
-			{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.295,
+			{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.295,
 				"can_cultivate": true, "can_sow": false,
 				"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.85, "sow_payoff": 0.0},
-			{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.25,
+			{"species": "oak_mast", "role": "staple", "display_name": "Oak Mast", "share": 0.25,
 				"can_cultivate": false, "can_sow": false,
 				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
@@ -7923,19 +8024,19 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 	tile["patch_committed_display_name"] = "Wild Emmer"
 	tile["patch_cultivation_progress"] = 0.04
 	tile["patch_composition"] = [
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.47,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.47,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.40, "sow_yield_ratio": 4.20,
 			"cultivate_payoff": 1.39, "sow_payoff": 2.40},
-		{"species": "flax_fields", "display_name": "Flax Fields", "share": 0.21,
+		{"species": "flax_fields", "role": "cash", "display_name": "Flax Fields", "share": 0.21,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 11.7},
-		{"species": "hay_grass", "display_name": "Hay Grass", "share": 0.21,
+		{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.21,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_fodder_payoff": 15.6},
-		{"species": "wild_grapevine", "display_name": "Wild Grapevine", "share": 0.11,
+		{"species": "wild_grapevine", "role": "cash", "display_name": "Wild Grapevine", "share": 0.11,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0, "sow_trade_payoff": 12.5},
@@ -7949,26 +8050,26 @@ func _four_species_committed_tile_fixture() -> Dictionary:
 func _long_basket_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["patch_composition"] = [
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.34,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.34,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 2.10,
 			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
-		{"species": "hazel", "display_name": "Hazel", "share": 0.24,
+		{"species": "hazel", "role": "staple", "display_name": "Hazel", "share": 0.24,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.34, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.67, "sow_payoff": 0.0,
 			"cultivate_trade_payoff": 0.06, "sow_trade_payoff": 0.0},
-		{"species": "river_fish", "display_name": "River Fish", "share": 0.18,
+		{"species": "river_fish", "role": "staple", "display_name": "River Fish", "share": 0.18,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.14,
+		{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.45, "sow_payoff": 0.0,
 			"cultivate_trade_payoff": 0.04, "sow_trade_payoff": 0.0},
-		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.10,
+		{"species": "oak_mast", "role": "staple", "display_name": "Oak Mast", "share": 0.10,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
@@ -7988,35 +8089,35 @@ func _overlong_basket_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["terrain_label"] = "Rolling Hills"
 	tile["patch_composition"] = [
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.22,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.22,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 4.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 2.10},
-		{"species": "hazel", "display_name": "Hazel", "share": 0.17,
+		{"species": "hazel", "role": "staple", "display_name": "Hazel", "share": 0.17,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 2.20, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 1.10, "sow_payoff": 0.0},
-		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.14,
+		{"species": "wild_tubers", "role": "staple", "display_name": "Wild Tubers", "share": 0.14,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.70, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.85, "sow_payoff": 0.0},
-		{"species": "river_fish", "display_name": "River Fish", "share": 0.13,
+		{"species": "river_fish", "role": "staple", "display_name": "River Fish", "share": 0.13,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-		{"species": "ground_nut", "display_name": "Ground Nut", "share": 0.11,
+		{"species": "ground_nut", "role": "staple", "display_name": "Ground Nut", "share": 0.11,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 1.44, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.72, "sow_payoff": 0.0},
-		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.09,
+		{"species": "berry_scrub", "role": "staple", "display_name": "Berry Scrub", "share": 0.09,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.90, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.45, "sow_payoff": 0.0},
-		{"species": "oak_mast", "display_name": "Oak Mast", "share": 0.08,
+		{"species": "oak_mast", "role": "staple", "display_name": "Oak Mast", "share": 0.08,
 			"can_cultivate": false, "can_sow": false,
 			"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-		{"species": "marsh_reed", "display_name": "Marsh Reed", "share": 0.06,
+		{"species": "marsh_reed", "role": "fodder", "display_name": "Marsh Reed", "share": 0.06,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.70, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.35, "sow_payoff": 0.0},
@@ -8028,19 +8129,19 @@ func _marginal_basket_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
 	tile["terrain_label"] = "Rolling Hills"
 	tile["patch_composition"] = [
-		{"species": "hazel", "display_name": "Hazel", "share": 0.34,
+		{"species": "hazel", "role": "staple", "display_name": "Hazel", "share": 0.34,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.94, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.47, "sow_payoff": 0.0},
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.28,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.28,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.84, "sow_yield_ratio": 1.26,
 			"cultivate_payoff": 0.42, "sow_payoff": 0.63},
-		{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.22,
+		{"species": "wild_tubers", "role": "staple", "display_name": "Wild Tubers", "share": 0.22,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.68, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.34, "sow_payoff": 0.0},
-		{"species": "berry_scrub", "display_name": "Berry Scrub", "share": 0.16,
+		{"species": "berry_scrub", "role": "staple", "display_name": "Berry Scrub", "share": 0.16,
 			"can_cultivate": true, "can_sow": false,
 			"cultivate_yield_ratio": 0.49, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.25, "sow_payoff": 0.0},
@@ -8066,13 +8167,13 @@ func _sowable_long_basket_tile_fixture() -> Dictionary:
 func _fodder_basket_tile_fixture() -> Dictionary:
 	var tile := _sowable_tile_fixture()
 	tile["patch_composition"] = [
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.70,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.70,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
 			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
-		{"species": "hay_grass", "display_name": "Hay Grass", "share": 0.30,
+		{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.30,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.25, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.12, "sow_payoff": 0.0,
@@ -8096,13 +8197,13 @@ func _fodder_basket_tile_fixture() -> Dictionary:
 func _cash_basket_tile_fixture() -> Dictionary:
 	var tile := _sowable_tile_fixture()
 	tile["patch_composition"] = [
-		{"species": "wild_emmer", "display_name": "Wild Emmer", "share": 0.70,
+		{"species": "wild_emmer", "role": "staple", "display_name": "Wild Emmer", "share": 0.70,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 2.70, "sow_yield_ratio": 3.20,
 			"cultivate_payoff": 1.35, "sow_payoff": 1.60,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
 			"cultivate_trade_payoff": 0.11, "sow_trade_payoff": 0.16},
-		{"species": "flax", "display_name": "Flax", "share": 0.30,
+		{"species": "flax", "role": "cash", "display_name": "Flax", "share": 0.30,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
@@ -8122,13 +8223,13 @@ func _cash_variant_basket_tile_fixture() -> Dictionary:
 	tile["x"] = 68
 	tile["y"] = 12
 	tile["patch_composition"] = [
-		{"species": "cotton", "display_name": "Cotton", "share": 0.55,
+		{"species": "cotton", "role": "cash", "display_name": "Cotton", "share": 0.55,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.28, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.14, "sow_payoff": 0.0,
 			"cultivate_fodder_payoff": 0.0, "sow_fodder_payoff": 0.0,
 			"cultivate_trade_payoff": 1.42, "sow_trade_payoff": 3.6},
-		{"species": "flax", "display_name": "Flax", "share": 0.45,
+		{"species": "flax", "role": "cash", "display_name": "Flax", "share": 0.45,
 			"can_cultivate": true, "can_sow": true,
 			"cultivate_yield_ratio": 0.30, "sow_yield_ratio": 0.0,
 			"cultivate_payoff": 0.15, "sow_payoff": 0.0,
@@ -8137,6 +8238,89 @@ func _cash_variant_basket_tile_fixture() -> Dictionary:
 	]
 	return tile
 
+
+## **THE TILE THE FOOD-LAYER ROWS ARE JUDGED ON — all three crop ROLES on one patch.** A river-delta
+## stand carrying a staple, a cash crop and a fodder crop, so the card's basket shows one of every
+## role icon and states outright that most of what grows on this ground is not food: 38% staple
+## against 62% cash + fodder. Every other basket fixture is staple-dominant, so until this one existed
+## the role icons had no frame that could tell them apart.
+##
+## **IT STATES ITS OWN STOCK AND CAPACITY, so it deliberately does NOT go through `_seed_forage_rows`**
+## (the `_stale_verb_tile_fixture` precedent), which pins every fixture it touches to one
+## `FIXTURE_CAPACITY`. The capacity is what each basket row's absolute biomass is a share OF, so it has
+## to be a number the three rows can be checked against by eye — and 205 is chosen so the naive
+## rounding of `38 / 31 / 31` percent MISSES it by one (78 + 64 + 64 = 206), making this frame the
+## biomass-remainder test exactly as `_food_tile_fixture`'s 46/30/25 is the percentage one.
+##
+## Standing at full capacity, so `Foraging 205 / 205` and the three rows sum to both numbers at once —
+## the clearest possible reading of "these decompose the row above".
+const THREE_ROLE_CAPACITY := 205.0
+
+const THREE_ROLE_GRAZE_CAPACITY := 130.0
+
+func _three_role_tile_fixture() -> Dictionary:
+	return {
+		"x": 64, "y": 8,
+		"terrain_label": "Alluvial Plain",
+		"tags_text": "Fertile, Fresh Water",
+		"visibility_state": "active",
+		"habitability": 0.02,
+		"temperature": 19.0,
+		"height_display": "5 ▬▭▭▭▭▭▭▭▭▭",
+		"food_module": "riverine_delta",
+		"food_module_label": "Riverine Delta",
+		"food_kind": "river_garden",
+		"site_name": "",
+		"patch_ecology_phase": "thriving",
+		"patch_biomass": THREE_ROLE_CAPACITY,
+		"patch_carrying_capacity": THREE_ROLE_CAPACITY,
+		"patch_provisions_per_biomass": 0.012,
+		"patch_trade_per_biomass": 0.021,
+		"patch_fodder_per_biomass": 0.017,
+		"patch_per_worker_biomass": 26.0,
+		"patch_per_worker_yield": 0.31,
+		"patch_is_cultivated": false,
+		"patch_cultivation_progress": 0.0,
+		"patch_is_field": false,
+		"patch_field_progress": 0.0,
+		"patch_composition": [
+			{"species": "wild_tubers", "role": "staple", "display_name": "Wild Tubers", "share": 0.38,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 2.10, "sow_yield_ratio": 3.60,
+				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
+			{"species": "cotton", "role": "cash", "display_name": "Cotton Fields", "share": 0.31,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 0.28, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.14, "sow_payoff": 0.0,
+				"cultivate_trade_payoff": 1.42, "sow_trade_payoff": 3.6},
+			{"species": "hay_grass", "role": "fodder", "display_name": "Hay Grass", "share": 0.31,
+				"can_cultivate": true, "can_sow": true,
+				"cultivate_yield_ratio": 0.25, "sow_yield_ratio": 0.0,
+				"cultivate_payoff": 0.12, "sow_payoff": 0.0,
+				"cultivate_fodder_payoff": 0.72, "sow_fodder_payoff": 1.8},
+		],
+		"graze_biomass": THREE_ROLE_GRAZE_CAPACITY,
+		"graze_capacity": THREE_ROLE_GRAZE_CAPACITY,
+		"graze_ecology_phase": "thriving",
+	}
+
+## **THE SAME TILE WITH ONE PLANT'S ROLE UNSTATED** — the `""` case, which the wire says means "this
+## server's roster no longer knows this species", NOT "staple". The row must render its share and its
+## biomass with NO icon at all rather than defaulting into a real category, and the two tagged rows
+## beside it are what make that visible. The key is OMITTED rather than set to `""` so the fixture also
+## covers the shape the decoder produces when the wire carries no role (it only inserts the key when
+## the string is there).
+func _unstated_role_tile_fixture() -> Dictionary:
+	var tile := _three_role_tile_fixture()
+	tile["x"] = 65
+	var basket: Array = []
+	for entry_variant in tile["patch_composition"]:
+		var entry: Dictionary = (entry_variant as Dictionary).duplicate(true)
+		if String(entry["species"]) == "cotton":
+			entry.erase("role")
+		basket.append(entry)
+	tile["patch_composition"] = basket
+	return tile
 
 func _overgrazed_tile_fixture() -> Dictionary:
 	var tile := _food_tile_fixture()
@@ -8343,19 +8527,19 @@ func _stale_verb_tile_fixture() -> Dictionary:
 		"patch_tended_yield": 1.20,
 		"patch_field_yield": 2.40,
 		"patch_composition": [
-			{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.35,
+			{"species": "wild_tubers", "role": "staple", "display_name": "Wild Tubers", "share": 0.35,
 				"can_cultivate": true, "can_sow": true,
 				"cultivate_yield_ratio": 2.10, "sow_yield_ratio": 3.60,
 				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
-			{"species": "cotton", "display_name": "Cotton Fields", "share": 0.30,
+			{"species": "cotton", "role": "cash", "display_name": "Cotton Fields", "share": 0.30,
 				"can_cultivate": true, "can_sow": true,
 				"cultivate_yield_ratio": 1.40, "sow_yield_ratio": 2.60,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-			{"species": "flax", "display_name": "Flax Fields", "share": 0.20,
+			{"species": "flax", "role": "cash", "display_name": "Flax Fields", "share": 0.20,
 				"can_cultivate": true, "can_sow": false,
 				"cultivate_yield_ratio": 1.30, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
-			{"species": "wild_rice", "display_name": "Wild Rice", "share": 0.15,
+			{"species": "wild_rice", "role": "staple", "display_name": "Wild Rice", "share": 0.15,
 				"can_cultivate": false, "can_sow": false,
 				"cultivate_yield_ratio": 0.0, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},
@@ -8438,11 +8622,11 @@ func _building_patch_tile_fixture() -> Dictionary:
 		"patch_tended_yield": 1.20,
 		"patch_field_yield": 2.40,
 		"patch_composition": [
-			{"species": "wild_tubers", "display_name": "Wild Tubers", "share": 0.65,
+			{"species": "wild_tubers", "role": "staple", "display_name": "Wild Tubers", "share": 0.65,
 				"can_cultivate": true, "can_sow": true,
 				"cultivate_yield_ratio": 2.10, "sow_yield_ratio": 3.60,
 				"cultivate_payoff": 1.20, "sow_payoff": 2.40},
-			{"species": "flax", "display_name": "Flax Fields", "share": 0.35,
+			{"species": "flax", "role": "cash", "display_name": "Flax Fields", "share": 0.35,
 				"can_cultivate": true, "can_sow": false,
 				"cultivate_yield_ratio": 1.30, "sow_yield_ratio": 0.0,
 				"cultivate_payoff": 0.0, "sow_payoff": 0.0},

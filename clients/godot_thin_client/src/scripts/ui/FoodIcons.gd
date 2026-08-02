@@ -145,6 +145,37 @@ static func for_policy(policy: String) -> String:
 # carrying emoji colours of its own. 🪙 / 💰 / ⚖ were already measured and rejected at these sizes.
 const TRADE_GOODS_GLYPH := "⇄"
 
+# ---- WHAT A PLANT IS FOR — the crop-ROLE glyphs ------------------------------------------------
+# One mark per `FloraShareInfo.role` ("staple" | "fodder" | "cash"), worn by each row of the tile
+# card's basket so the composition of a stand reads at a glance: how much of this ground is food for
+# people, feed for animals, or goods to trade. The role is a DISPLAY TAG the sim ships and nothing
+# branches on — the yield vector is the behaviour — so nothing here may be derived from a payoff.
+#
+# ALL THREE ARE BORROWED, NOT INVENTED, and each is already this HUD's mark for that account:
+#   • 🌾 is the food/forage mark the roster's land row wears beside its staffed forager count
+#     (`2 🌾`) and the map's grassland site marker, i.e. "what people eat off this ground".
+#   • 🐄 is `POLICY_CORRAL`'s penned-livestock mark, and fodder is defined on this HUD as "feed for
+#     penned animals, not food for people" (`FLORA_CROP_FODDER_TOOLTIP_FORMAT`) — the same animals.
+#   • ⇄ is `TRADE_GOODS_GLYPH` itself, the one mark every non-food component of a yield already
+#     wears, so a cash crop is marked with the account it pays into rather than a fourth glyph.
+# Borrowing is also what keeps them legible: 🌾/🐄 are grandfathered emoji already judged at row
+# size (`food_tile.png`, `herd_corral.png`) and ⇄ is a text-presentation symbol that inherits the
+# label's colour. A NEW mark here would have to be re-proven at ~13px; these are already proven.
+const CROP_ROLE_STAPLE := "staple"
+const CROP_ROLE_FODDER := "fodder"
+const CROP_ROLE_CASH := "cash"
+const CROP_ROLE_ICONS := {
+	CROP_ROLE_STAPLE: "🌾",
+	CROP_ROLE_FODDER: POLICY_ICONS[POLICY_CORRAL],
+	CROP_ROLE_CASH: TRADE_GOODS_GLYPH,
+}
+
+## Icon for a crop ROLE. **`""` (or an unknown tag) means UNSTATED, never "staple"** — the wire says
+## so explicitly, and a client that defaulted a missing tag into a real category would invent a fact
+## about the plant. Callers render no icon on the empty answer.
+static func for_crop_role(role: String) -> String:
+	return String(CROP_ROLE_ICONS.get(role.strip_edges().to_lower(), ""))
+
 # Action-STATUS glyphs, read by the Band panel's Current-actions + Active-expeditions rows (Hud) so
 # a row states what it is doing with a glyph instead of a word (the words move into the row
 # tooltip). TWO ORTHOGONAL LAYERS ride the same vocabulary and must stay separate:
