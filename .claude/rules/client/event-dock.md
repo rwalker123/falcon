@@ -135,11 +135,15 @@ Two details:
 ## `command_events` is per-frame history, so the dock ACCUMULATES
 
 A delta carries only the rows appended since the baseline; a full snapshot carries the whole retained
-ring. So re-ingesting a full snapshot's ring is harmless (it is the backfill for a player who
-connected mid-session) and there is **no per-full-snapshot reset**. The only legitimate clear is a
-**world boundary** — `Main._reset_per_world_state` → `EventDockPanel.reset()` — because a new world
-is not another snapshot of the same history. Resetting per full frame would additionally throw away
-the client's own System-channel events every time the sim restated its ring.
+ring. So re-ingesting a full snapshot's ring is harmless — it is the backfill for a player who
+connected mid-session, and the `seq` de-duplication absorbs the overlap.
+
+Re-ingesting is harmless, but it is **not** what happens: the dock is cleared on every full frame
+first, for the rollback reason in the section above. The two are not in tension — the clear costs
+nothing on an ordinary full snapshot precisely *because* that frame carries the whole ring, and the
+one thing it does cost (the client's own System-channel notes) is the deliberate trade against a
+silently stale log. A world boundary needs no separate clear of its own; it always arrives on a full
+snapshot and is covered by the same line.
 
 **Retention is measured in TURNS, not entries.** Add a birth, a death and a coming-of-age per band
 per turn and a fixed entry ring evicts a wolf raid inside two turns — the cap would quietly eat

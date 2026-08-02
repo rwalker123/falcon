@@ -1062,11 +1062,16 @@ func _load_prefs() -> void:
 		HudEventVocab.DEFAULT_DETAIL_LEVEL))
 	if HudEventVocab.DETAIL_FLOOR.has(level):
 		_detail_level = level
-	var enabled_variant: Variant = cfg.get_value(CONFIG_SECTION, CONFIG_KEY_CHANNELS, null)
-	if enabled_variant is Array:
-		var enabled: Array = enabled_variant
-		for channel in HudEventVocab.CHANNEL_ORDER:
-			_channels[String(channel)] = enabled.has(String(channel))
+	# GUARD WITH `has_section_key`, NEVER a `null` default: `ConfigFile.get_value` treats a null
+	# default as "no default was given" and pushes an engine ERROR. It cannot be defaulted to `[]`
+	# either — an absent key means "every channel on", while a stored empty array means the player
+	# turned them all off, and those must not collapse to the same branch.
+	if cfg.has_section_key(CONFIG_SECTION, CONFIG_KEY_CHANNELS):
+		var enabled_variant: Variant = cfg.get_value(CONFIG_SECTION, CONFIG_KEY_CHANNELS, [])
+		if enabled_variant is Array:
+			var enabled: Array = enabled_variant
+			for channel in HudEventVocab.CHANNEL_ORDER:
+				_channels[String(channel)] = enabled.has(String(channel))
 	# MIGRATION — the retired command feed's hidden/shown key. A player who had opened the feed with
 	# `R` lands on the bar that replaces it open too. Read once and ERASED, so a stale key in the
 	# other section can never overwrite a later choice made here.

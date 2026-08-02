@@ -6084,6 +6084,24 @@ func _ready() -> void:
 		_preview_event_label_count(event_dock, EVENT_DOCK_DIGIT_BOUNDARY_LABEL, true) == 1)
 	event_dock.set_band_labels({})
 
+	# THE PREFS FILE THAT EXISTS BUT HAS NO `[events]` SECTION — i.e. every player upgrading into
+	# this build, whose `narrative.cfg` already carries the voice register and `[hud_panels]`. This
+	# escaped the first pass because the harness pointed the override at a path that did not exist
+	# at all, so `ConfigFile.load` failed and `_load_prefs` returned before it ever read a key.
+	# `channels` is the ONLY key whose absence cannot be expressed as a plain default: absent means
+	# "every channel on", a stored EMPTY array means the player turned them all off, and collapsing
+	# those two is what a naive `[]` default would do. Both branches are walked here.
+	_write_event_prefs_without_section()
+	event_dock._load_prefs()
+	_assert_hud("prefs: an existing file with no [events] section leaves every channel ON",
+		_preview_event_channels_all_on(event_dock))
+	_write_event_prefs_with_channels([])
+	event_dock._load_prefs()
+	_assert_hud("prefs: a STORED empty channel list is all-off, not mistaken for an absent key",
+		not _preview_event_channels_all_on(event_dock))
+	_write_event_prefs_without_section()
+	event_dock._load_prefs()
+
 	event_dock.reset()
 	event_dock.ingest_events(_event_dock_fixture())
 	_assert_hud("seq de-dup: two identical same-turn raids are TWO events, not one",
@@ -7501,6 +7519,25 @@ func _preview_event_kind_count(dock: EventDockPanel, kind: String) -> int:
 		if String(event["kind"]) == kind:
 			count += 1
 	return count
+
+func _preview_event_channels_all_on(dock: EventDockPanel) -> bool:
+	for channel in HudEventVocab.CHANNEL_ORDER:
+		if not bool(dock._channels.get(String(channel), false)):
+			return false
+	return true
+
+## A scratch `narrative.cfg` that EXISTS and carries another panel's section, but no `[events]` —
+## the shape every upgrading player's file has on first launch into this build.
+func _write_event_prefs_without_section() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("hud_panels", "legend_suppressed", true)
+	cfg.save(EventDockPanel.config_path())
+
+func _write_event_prefs_with_channels(channels: Array) -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("hud_panels", "legend_suppressed", true)
+	cfg.set_value("events", "channels", channels)
+	cfg.save(EventDockPanel.config_path())
 
 ## `rendered` reads the label the dock would DRAW (`_row_label`, i.e. after the band substitution)
 ## rather than the raw one it stored. The band-label assertions have to ask the rendered one — the
