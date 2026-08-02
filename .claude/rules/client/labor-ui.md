@@ -1260,6 +1260,21 @@ discard is precisely what this axis split removed.
     perfectly sustainable (every policy has a ceiling), or overdrawn while fully used. `workers_needed
     == 0` (rehydrated, or a pending optimistic assign) means "unknown" → no note, never a
     wrong one.
+    **THE MUTED `· N wasted` NOTE IS THE ANIMAL WEB'S ALONE**, gated on `kind` inside
+    `source_yield_readout` so every surface that reads it follows at once. One wire field carries two
+    opposite facts: on a herd `wasted_yield` is `killed_biomass − carried`, meat that really rotted and
+    a genuine call for more hands; on a patch it is `escapement_room − take`, stock the crew did not
+    reach, which `systems/labor.rs` says outright is *"not lost, it simply stays in the stock and
+    regrows"*. It also fired on the wrong side of the condition there — `room > take` is positive
+    whenever a crew does not clear the whole room in ONE turn, which is the state the compose sheet
+    **recommends** (its `hold it after` target sits far below its `clear it now` one), so a player who
+    staffed the sustainable number was told they wasted food every turn forever, with no action that
+    would clear it. On a herd `killed > carried` is genuinely exceptional, which is why the note never
+    read wrong there. Understaffing a BUILD *is* a real loss (a Cultivate or Tame accrues at
+    `min(workers / crew_needed, 1)` and decays when neglected) — but this note never carried that
+    signal, so silencing it on flora costs nothing. **Assert the PAIR**: no forage fixture carries a
+    non-zero `wasted_yield`, so a frame assertion passes with the bug fully present, and a lone
+    negative is satisfied by silencing the note on both webs.
     **ONE yield row per rung — each rung gets the row that informs ITS decision, never both.** On the
     **local hunt** the EXTRACTIVE four render `_local_hunt_preview_bbcode` (the crew's honest carry-aware
     delivered take, ANIMALS-first — `≈1 Red Deer/turn` — PLUS the sustainability verdict `· renewable` /

@@ -2175,9 +2175,27 @@ static func source_yield_readout(m: Dictionary, kind: String) -> Dictionary:
     # UNDERSTAFFING: `wasted_yield` is food the source offered that the crew could not collect — the
     # party is under-crewed for the kill. A muted note (the low-key mirror of the overstaff note); the
     # tooltip spells it out. Below FOOD_FLOW_MIN ⇒ hidden (0 on a rehydrated save).
+    #
+    # **THE ANIMAL WEB ONLY, and that is a claim about the NUMBER rather than about any one surface.**
+    # One wire field carries two opposite facts. On a herd it is `killed_biomass − carried`: meat the
+    # crew killed and left to rot, gone for good, and a genuine call to send more hands. On a patch it
+    # is `escapement_room − take` — stock the crew simply did not reach, which the sim's own note says
+    # outright is "not lost, it simply stays in the stock and regrows". Nothing rots and nothing is
+    # owed.
+    #
+    # It also fired on the WRONG SIDE of the condition there. `max(0, room − take)` is positive
+    # whenever a crew does not clear the whole escapement room in ONE turn — the ordinary state on a
+    # patch, and the state the compose sheet actively recommends: its `hold it after` target is by
+    # construction far below its `clear it now` one, so a player who staffs the sustainable number was
+    # told they were wasting food every turn, forever, with no action that would ever clear it. On a
+    # herd `killed > carried` is genuinely exceptional, which is why the note never read wrong there.
+    #
+    # Understaffing a BUILD is a real loss and a real prompt — a Cultivate or a Tame accrues at
+    # `min(workers / crew_needed, 1)` and decays when neglected — but this note has never carried that
+    # signal, so nothing is lost by silencing it here.
     var muted_note := ""
     var wasted := float(m.get("wasted_yield", 0.0))
-    if wasted >= FOOD_FLOW_MIN:
+    if kind != LABOR_KIND_FORAGE and wasted >= FOOD_FLOW_MIN:
         muted_note = WASTED_NOTE_FORMAT % format_magnitude(wasted)
         var wasted_tip := WASTED_TOOLTIP % format_yield(wasted)
         tooltip = wasted_tip if tooltip == "" else tooltip + TOOLTIP_LINE_SEPARATOR + wasted_tip

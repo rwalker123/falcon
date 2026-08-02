@@ -5416,6 +5416,29 @@ func _ready() -> void:
 	await _settle()
 	await _save("hunt_actions_rhythm")
 	_set_world_herds(_world_herds_fixture())
+	# **THE WASTED NOTE IS THE ANIMAL WEB'S, AND THE SAME NUMBER MEANS THE OPPOSITE ON A PATCH.** One
+	# wire field, two facts: on a herd `wasted_yield` is `killed − carried`, meat that really rotted;
+	# on a patch it is `room − take`, stock the crew did not reach, which the sim's own note says
+	# "stays in the stock and regrows". Reported from play as `0.75 wasted` sitting permanently on a
+	# well-run Alluvial Plain — and permanent is the word, because `room > take` is the state the
+	# compose sheet RECOMMENDS (its `hold it after` target is far below its `clear it now` one).
+	#
+	# **Asserted as a PAIR against ONE readout call**, not on a rendered frame: no forage fixture
+	# carries a non-zero `wasted_yield`, so a frame assertion would pass with the bug fully present.
+	# The hunt half is what stops the fix from being "silence the note everywhere", and the tooltip is
+	# checked beside the note because the wasted text was appended to both.
+	var wasted_model := {"has_yield": true, "workers": 2, "workers_needed": 0,
+		"actual_yield": 0.30, "sustainable_yield": 0.30, "wasted_yield": 0.75, "overdraws": false}
+	var wasted_forage := SourceForecast.source_yield_readout(
+		wasted_model, SourceForecast.LABOR_KIND_FORAGE)
+	var wasted_hunt := SourceForecast.source_yield_readout(
+		wasted_model, SourceForecast.LABOR_KIND_HUNT)
+	_assert_hud("a PATCH states no waste — the stock it did not reach is still standing",
+		String(wasted_forage.get("muted_note", "")) == ""
+			and not String(wasted_forage.get("tooltip", "")).contains("wasted"))
+	_assert_hud("…while a HERD still does, where the meat really rotted",
+		String(wasted_hunt.get("muted_note", "")).contains("wasted")
+			and String(wasted_hunt.get("tooltip", "")) != "")
 
 	# Fix #2 + #1(forecast) + #6 — the LOCAL hunt compose view: the policy picker shows each rung's
 	# per-turn take so Sustain < Surplus < Deplete < Eradicate reads as ASCENDING, and the live preview
