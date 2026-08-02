@@ -245,26 +245,32 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         lines.append_array(RiverEdges.summary_lines(int(tile_info["river_edges"])))
     # (A discovered Wondrous Site is a standing condition of the ground — it rides the chip strip.)
     #
-    # A REMEMBERED TILE KEEPS THE ANIMAL LAYER AND LOSES THE HUMAN ONE, so it takes its own branch.
-    # Grass is a property of the GROUND — you can read a steppe from a ridge, and the biome above it
-    # is already remembered — while every term of the `Foraging` row (`patch_carrying_capacity` /
-    # `patch_biomass` / `patch_ecology_phase`) is live patch state a hex you cannot see does not know,
-    # and is redacted by `MapView._apply_visibility_to_info` before this runs. So this is the ONE
-    # state where the surviving stock row is the animal one, and it is written as an explicit branch
-    # rather than left to the redaction: the pair's meaning is positional (Foraging, then Grazing
-    # under it), and a card that renders `Grazing` alone should do so because we decided to, not
-    # because a key happened to be missing.
-    var graze_lines := _graze_stock_lines(tile_info)
-    if visibility_state == HudConst.VISIBILITY_DISCOVERED:
+    # A REMEMBERED TILE KEEPS BOTH WEBS' CAPACITIES AND LOSES BOTH THEIR STOCKS (issue #462). The rule
+    # cuts across the two webs, not between them: a capacity is recomputed from the tile every turn
+    # and no player action moves it, so the value we hold for an unseen hex is the value that hex last
+    # showed; a biomass moves every turn as the ground is grazed or gathered, so a remembered reading
+    # of it is stale by construction. It reads `Foraging: — / 205` over `Grazing: — / 130` — the same
+    # two rows in the same order as the live card, which is what keeps the pair's POSITIONAL meaning
+    # intact and is why this stays an explicit branch rather than a consequence of the redaction: the
+    # card states what it knows because we decided what it knows, not because a key happened to be
+    # missing. `MapView.FOW_DISCOVERED_HIDDEN_KEYS` carries the other half of this rule.
+    #
+    # It renders WITHOUT the basket, and that follows from the same fact. Each basket row states the
+    # biomass its share amounts to, so with no stock to decompose the rows would be the free-floating
+    # "three more resources" list the layout exists to stop (`land-readouts.md` → the basket).
+    var stock_known := visibility_state != HudConst.VISIBILITY_DISCOVERED
+    var graze_lines := _graze_stock_lines(tile_info, stock_known)
+    if not stock_known:
+        lines.append_array(_forage_stock_lines(tile_info, false))
         lines.append_array(graze_lines)
         lines.append("Last seen — information incomplete. Scout to update.")
         return lines
     # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
     # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
     # cultivation can accrue at all, so it belongs on the stock's own row rather than on a second row
-    # named so much like the pasture's that the two inverted each other. Only rendered when the
-    # snapshot carries a real patch (capacity > 0), so a plain food-module tile with no patch stays
-    # bare rather than reading "0 / 0".
+    # named so much like the pasture's that the two inverted each other. The row's own
+    # "no patch here → no row" test lives in `_forage_stock_lines`, beside the pasture's; this local
+    # copy of the capacity is the BASKET's guard, which needs the same answer one level out.
     var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
     # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
     # basket below decomposes it. Reading it twice is how the row and its own decomposition would
@@ -272,9 +278,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     if patch_capacity > 0.0:
-        lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(
-            patch_biomass, patch_capacity,
-            String(tile_info.get("patch_ecology_phase", "")))])
+        lines.append_array(_forage_stock_lines(tile_info, true))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
         # fodder) and closing with the biomass its share amounts to. The indent is what says these
@@ -341,21 +345,39 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
                 field_progress, false, building_rung == SourceForecast.IMPROVEMENT_SOW)])
     return lines
 
+## The FORAGING row (or nothing) — the human-edible web's stock over its ceiling. The exact twin of
+## `_graze_stock_lines` below, and it is a helper for that reason: the two webs are one rule rendered
+## twice, so each branch of `_tile_terrain_lines` calls the pair and neither can grow a shape the
+## other lacks (issue #462 was precisely that drift).
+##
+## Empty when the ground carries no patch at all (`patch_carrying_capacity <= 0`): a moduleless tile
+## prints nothing, never a "0 / 0" that would read as an exhausted stand rather than an absent one.
+func _forage_stock_lines(tile_info: Dictionary, stock_known: bool) -> Array[String]:
+    var lines: Array[String] = []
+    var capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    if capacity <= 0.0:
+        return lines
+    lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(
+        float(tile_info.get("patch_biomass", 0.0)), capacity,
+        String(tile_info.get("patch_ecology_phase", "")), stock_known)])
+    return lines
+
 ## The GRAZING row (or nothing), built once and emitted by BOTH visibility branches — the remembered
-## tile, where it is the only stock left, and the live tile, where it follows `Foraging`. Extracted so
-## the two branches cannot drift into rendering the animal layer two different ways.
+## tile, where it states a capacity alone, and the live tile, where it states the full stock under
+## `Foraging`. Extracted so the two branches cannot drift into rendering the animal layer two
+## different ways.
 ##
 ## Empty when the ground carries no pasture at all (`graze_capacity <= 0`, mirroring the sim's
 ## `GrazeRegistry`): a glacier prints nothing, never a "0 / 0" that would read as a starved pasture
 ## rather than an absent one.
-func _graze_stock_lines(tile_info: Dictionary) -> Array[String]:
+func _graze_stock_lines(tile_info: Dictionary, stock_known: bool) -> Array[String]:
     var lines: Array[String] = []
     var graze_capacity := float(tile_info.get("graze_capacity", 0.0))
     if graze_capacity <= 0.0:
         return lines
     lines.append("%s: %s" % [HudFloraVocab.GRAZING_KEY, _stock_value(
         float(tile_info.get("graze_biomass", 0.0)), graze_capacity,
-        String(tile_info.get("graze_ecology_phase", "")))])
+        String(tile_info.get("graze_ecology_phase", "")), stock_known)])
     return lines
 
 ## One food web's stock row VALUE — `205 / 205 · Thriving`, or the bare `205 / 205` where the wire
@@ -363,7 +385,17 @@ func _graze_stock_lines(tile_info: Dictionary) -> Array[String]:
 ## phase goes through the same `DetailFormat.ecology_phase_label` a herd's Ecology row uses; the
 ## amber/red tint follows from `DetailFormat._value_hex`, which keys both row names to
 ## `ecology_value_hex` and matches the phase word wherever in the value it sits.
-func _stock_value(biomass: float, capacity: float, phase: String) -> String:
+##
+## `stock_known == false` is the REMEMBERED tile: `— / 205`, the capacity alone. **The phase goes with
+## the biomass and is never rendered here**, because a phase is `classify_ecology_phase`'s reading OF
+## that biomass — printing `Thriving` beside an unknown stock would state the very thing the em-dash
+## just declined to. It is passed as a FLAG rather than inferred from an absent key so that the row
+## says what it says by decision; a fixture that leaks a redacted key must not silently restore a
+## live-looking reading (`.claude/rules/client/land-readouts.md` → "Fog splits a stock from its
+## capacity").
+func _stock_value(biomass: float, capacity: float, phase: String, stock_known: bool) -> String:
+    if not stock_known:
+        return HudFloraVocab.STOCK_UNKNOWN_FORMAT % capacity
     var stock := HudFloraVocab.STOCK_FORMAT % [biomass, capacity]
     var normalized := phase.strip_edges().to_lower()
     if normalized == "":
