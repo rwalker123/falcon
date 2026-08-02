@@ -51,8 +51,13 @@ paths:
     `_tile_contents_unseen` (which re-reads MapView's `visibility_state` flag — NOT a second visibility
     test) makes `_assemble_roster` list nothing, `_build_forage_assign_controls` offer nothing, and
     `_render_unknown_contents_note` state it in the drawer instead of an empty list
-    ("You remember the ground here, but not what's on it now — bands and herds move. Scout it to see."
-    / "Nobody has been here…"). An EMPTY roster is a claim of emptiness the client can't back up, so it
+    ("You remember the ground here, but not what's on it now." / "Nobody has been here. Send a band to
+    reveal what's on this ground."). **The remembered one states and does not instruct** — it closed
+    `… — bands and herds move. Scout it to see.` until issue #462, and scouting cannot take a hex out
+    of the very state that sentence describes; the unexplored one keeps its verb because there sending
+    a band DOES change the state. That rule, and the drawer sentences deleted alongside it, live in
+    `land-readouts.md` → "An unseen hex says so ONCE, and promises nothing it cannot do".
+    An EMPTY roster is a claim of emptiness the client can't back up, so it
     is never rendered on a hex you can't see. Terrain rows stay (geography is remembered knowledge;
     occupants are live state). ui_preview states `tile_sight_active` / `tile_sight_remembered` (fixture
     deliberately carries a herd → proves it is NOT listed) / `tile_sight_unexplored`.

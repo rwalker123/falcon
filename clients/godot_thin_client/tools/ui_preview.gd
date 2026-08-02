@@ -1280,6 +1280,9 @@ func _ready() -> void:
 	# The three claims a PICTURE cannot carry, asserted over the REAL producer's lines (the harness
 	# pokes `_drawer` directly, the `tile_panel_*` idiom). Each is sabotage-verified.
 	_assert_food_layer_rows()
+	# The FOG half of the same pair (issue #462) — what each web states on a hex the player remembers
+	# but cannot see. `tile_sight_remembered` is its frame; these are the claims that frame cannot make.
+	_assert_fog_stock_parity()
 
 	# State 2-pasture-stressed — the graze drawn down into the stressed band: "Grazing 61 / 240 ·
 	# ⚠ Stressed", the phase inline and WARN-amber, identical in label and tint to a stressed herd or
@@ -2845,6 +2848,31 @@ func _ready() -> void:
 	_show_tile(_own_expedition_unexplored_tile())
 	await _settle()
 	await _save("tile_sight_own_expedition")
+
+	# tile_panel_unexplored_own_band — THE SAME HEX with the LAND row lit instead of the auto-picked
+	# party, which is where the two FoW rules collide. UNEXPLORED ground yields NO terrain rows at all,
+	# so `_render_land_drawer` hides `%TileDetail` and the forage/herd/allocation blocks with it — and
+	# the unknown-contents note suppresses itself whenever the roster is non-empty, which on THIS hex
+	# it is, because the sim excludes expeditions from fog reveal and your own party stands here. Every
+	# child of the drawer hidden at once is a blank capped area under the divider where the land's
+	# whole content belongs, and a PNG cannot tell that apart from a drawer that rendered fine — so the
+	# claim is asserted on the CONTROL, driven through the real land-row handler.
+	_hud._selectioncard._on_land_row_selected()
+	await _settle()
+	# THE PRECONDITIONS, without which the two assertions below pass on a hex that never reached the
+	# state: no terrain rows to fall back on, AND a roster that would suppress the note on its own.
+	_assert_hud("precondition: unexplored ground gives the LAND drawer no terrain rows to show",
+		not _hud.tile_detail.visible)
+	_assert_hud("precondition: your own party still lists here, so the note's roster skip is armed",
+		not _hud._selection.roster_units().is_empty())
+	_assert_hud("the LAND drawer on an UNEXPLORED hex holding your own party is not blank",
+		_hud.occupant_detail.visible and _hud.occupant_detail.text.strip_edges() != "")
+	# A needle no other copy on this card can satisfy: the roster's own out-of-sight hint and the
+	# remembered note are DIFFERENT sentences, so matching this one cannot be borrowing either.
+	_assert_hud("…stating the UNEXPLORED unknown-contents sentence, and not the remembered one",
+		_hud.occupant_detail.text.contains(HudConst.OCCUPANTS_UNKNOWN_UNEXPLORED)
+			and not _hud.occupant_detail.text.contains(HudConst.OCCUPANTS_UNKNOWN_REMEMBERED))
+	await _save("tile_panel_unexplored_own_band")
 
 	_hud.clear_selection()
 	_show_tile(_foreign_band_tile(VIS_DISCOVERED))
@@ -7306,6 +7334,93 @@ func _assert_food_layer_rows() -> void:
 		unstated.size() == 3 and not cotton_has_icon)
 	_assert_hud("…while the two roles the wire DOES state still wear theirs", icon_rows == 2)
 
+## THE FOG STOCK/CAPACITY SPLIT (issue #462), asserted over the REAL producer's lines rather than a
+## picture, because `— / 205` and a row that never rendered at all look far too alike downscaled —
+## and because the bug being guarded was two rows that DISAGREED, which needs both read at once.
+##
+## The remembered fixture is deliberately NOT redacted (it sets `visibility_state` and leaves every
+## key in place), so this drives the branch the way a leaky frame would: the rows must go capacity-only
+## because the producer DECIDED to on the visibility, never because a key happened to be missing. Feed
+## it a redacted dict instead and the whole assertion goes vacuous. Sabotage-verified.
+func _assert_fog_stock_parity() -> void:
+	var remembered := _hud._drawer._tile_terrain_lines(_floorify(
+		_sight_tile_fixture(VIS_DISCOVERED), HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	var forage_index := _detail_row_index(remembered, HudFloraVocab.FORAGING_KEY)
+	var graze_index := _detail_row_index(remembered, HudFloraVocab.GRAZING_KEY)
+	# THE ISSUE ITSELF: the remembered card used to state Grazing and no Foraging at all.
+	_assert_hud("a REMEMBERED tile states BOTH food webs, in the live card's order",
+		forage_index >= 0 and graze_index == forage_index + 1)
+	if forage_index < 0 or graze_index < 0:
+		return
+	var forage_row := remembered[forage_index]
+	var graze_row := remembered[graze_index]
+	# Each row keeps its CAPACITY (a property of the ground the sim recomputes from the tile every
+	# turn) and loses its STOCK. Matching the unknown form against the vocab const rather than a
+	# literal is what stops the em-dash drifting apart from the thing being asserted.
+	var forage_unknown := HudFloraVocab.STOCK_UNKNOWN_FORMAT % _sight_forage_capacity()
+	var graze_unknown := HudFloraVocab.STOCK_UNKNOWN_FORMAT % _sight_graze_capacity()
+	_assert_hud("…each stating its CAPACITY with the stock unknown (`%s` / `%s`)" % [
+			forage_unknown, graze_unknown],
+		forage_row.ends_with(forage_unknown) and graze_row.ends_with(graze_unknown))
+	# The phase is `classify_ecology_phase`'s reading OF the biomass, so it goes with it. Asserted
+	# against the fixture's OWN phase word — a bare "no phase" test would pass on a fixture that never
+	# had one, which is exactly the vacuous shape this file's assertion rules warn about.
+	var live_phase := DetailFormat.ecology_phase_label(
+		String(_sight_tile_fixture(VIS_DISCOVERED).get("graze_ecology_phase", "")))
+	_assert_hud("…and NEITHER carries an ecology phase, which would state the stock it just withheld",
+		live_phase != "" and not forage_row.contains(live_phase)
+			and not graze_row.contains(live_phase))
+	# The basket decomposes a STANDING stock into per-plant biomasses, so with no stock it cannot
+	# render — the free-floating "three more resources" list the layout exists to stop.
+	_assert_hud("…and the basket does not render under a Foraging row with no stock to decompose",
+		_flora_basket_rows(remembered).is_empty())
+	# THE OTHER HALF, without which the four above pass on a card that shows nothing anywhere: the
+	# SAME fixture in sight must still state both stocks in full.
+	var live := _hud._drawer._tile_terrain_lines(_floorify(
+		_sight_tile_fixture(VIS_ACTIVE), HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	var live_forage := _detail_row_index(live, HudFloraVocab.FORAGING_KEY)
+	var live_graze := _detail_row_index(live, HudFloraVocab.GRAZING_KEY)
+	_assert_hud("the SAME tile in sight states both stocks in full, phase and all",
+		live_forage >= 0 and live_graze >= 0
+			and not live[live_forage].contains(HudFloraVocab.STOCK_UNKNOWN_GLYPH)
+			and live[live_graze].contains(live_phase))
+	# AND THE HALF THE FIXTURE ALONE CANNOT REACH: that the shipped REDACTION LIST and the producer
+	# above agree about which keys survive. Everything so far runs on an unredacted dict, so a key list
+	# that erased `patch_carrying_capacity` would pass every assertion here and still ship a live card
+	# with no Foraging row on it — the row's own capacity guard would simply find 0 and emit nothing.
+	# The list is applied BY HAND rather than through `_apply_visibility_to_info`, whose discovered
+	# branch is exactly this loop plus a visibility-raster lookup this harness has no grid to seed;
+	# reading `FOW_DISCOVERED_HIDDEN_KEYS` off MapView itself is what keeps the two from drifting.
+	#
+	# **`_floorify` RUNS FIRST, THEN THE ERASURE** — the order is the whole claim. `_seed_growth_terms`
+	# fills in whatever growth terms a fixture lacks, and four of the keys it seeds
+	# (`patch_regrowth_samples` — its `capacity > 0` branch fires precisely because the capacity
+	# survives redaction — plus `patch_per_worker_biomass` and the two phase fractions) are keys the
+	# shipped list REMOVES. Floorifying afterwards therefore hands the producer a dict the real path
+	# can never produce, and a later assertion about the harvest-floor instrument (that
+	# `floor_chart_model` answers `known == false` under the real list) would read a harness-seeded
+	# growth curve and pass for the wrong reason.
+	var redacted := _floorify(
+		_sight_tile_fixture(VIS_DISCOVERED), HudComposeVocab.FORAGE_FORECAST_PREFIX)
+	for key in MAP_VIEW_SCRIPT.FOW_DISCOVERED_HIDDEN_KEYS:
+		redacted.erase(key)
+	var redacted_lines := _hud._drawer._tile_terrain_lines(redacted)
+	_assert_hud("…and a tile put through the REAL redaction list still states both capacity rows",
+		_detail_row_index(redacted_lines, HudFloraVocab.FORAGING_KEY) >= 0
+			and _detail_row_index(redacted_lines, HudFloraVocab.GRAZING_KEY) >= 0)
+	# The rows must read the SAME on a redacted tile as on the unredacted one above — that equality is
+	# what says the capacity-only form comes from the visibility DECISION and not from the erasure.
+	_assert_hud("…reading identically to the unredacted remembered tile, decision not accident",
+		redacted_lines == remembered)
+
+## The two webs' capacities on `_sight_tile_fixture`, read back OFF the fixture so the assertion above
+## cannot drift from the numbers it is asserting about.
+func _sight_forage_capacity() -> float:
+	return float(_sight_tile_fixture(VIS_DISCOVERED).get("patch_carrying_capacity", 0.0))
+
+func _sight_graze_capacity() -> float:
+	return float(_sight_tile_fixture(VIS_DISCOVERED).get("graze_capacity", 0.0))
+
 ## The index of the `Key: value` row with this key, or -1. Matches the key EXACTLY (up to the
 ## `DetailFormat` separator) so `Foraging` cannot be found by a row that merely mentions it.
 func _detail_row_index(lines: Array[String], key: String) -> int:
@@ -8683,8 +8798,8 @@ func _food_tile_fixture() -> Dictionary:
 		],
 		# The GRAZE (pasture) layer — the ANIMAL-edible twin of the forage patch above (Grazing Phase
 		# 2a). Prairie steppe is the reference pasture: capacity 240, standing full, hence Thriving.
-		# Rendered as the `Pasture` / `Pasture ecology` rows right under `Forage biomass`, so the card
-		# states the two facts side by side: what HUMANS can eat here, and what ANIMALS can eat here.
+		# Rendered as the `Grazing` row directly under `Foraging` and its basket, so the card states the
+		# two facts side by side: what HUMANS can eat here, and what ANIMALS can eat here.
 		"graze_biomass": 240.0,
 		"graze_capacity": 240.0,
 		"graze_ecology_phase": "thriving",
