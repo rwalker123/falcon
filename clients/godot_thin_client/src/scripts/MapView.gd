@@ -252,7 +252,7 @@ const FOW_EXPLORED_THRESHOLD := 0.3  # Above this a tile is at least Discovered
 # is redacted. So `graze_capacity` / `patch_carrying_capacity` are deliberately ABSENT from this list
 # while `graze_biomass` / `patch_biomass` and both phases are in it. Why a live capacity can be shown
 # on a hex the player cannot see without leaking anything is in
-# `.claude/rules/client/land-readouts.md` → "Fog splits a stock from its capacity"; the short form is
+# `.claude/rules/client/land-readouts.md` → "Fog splits a stock from its CAPACITY"; the short form is
 # that the sim recomputes `K` from the tile every turn and no player action moves it, so the value we
 # are sent for an unseen hex IS the value that hex last showed.
 const FOW_DISCOVERED_HIDDEN_KEYS := [

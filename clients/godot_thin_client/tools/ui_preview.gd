@@ -2849,6 +2849,31 @@ func _ready() -> void:
 	await _settle()
 	await _save("tile_sight_own_expedition")
 
+	# tile_panel_unexplored_own_band — THE SAME HEX with the LAND row lit instead of the auto-picked
+	# party, which is where the two FoW rules collide. UNEXPLORED ground yields NO terrain rows at all,
+	# so `_render_land_drawer` hides `%TileDetail` and the forage/herd/allocation blocks with it — and
+	# the unknown-contents note suppresses itself whenever the roster is non-empty, which on THIS hex
+	# it is, because the sim excludes expeditions from fog reveal and your own party stands here. Every
+	# child of the drawer hidden at once is a blank capped area under the divider where the land's
+	# whole content belongs, and a PNG cannot tell that apart from a drawer that rendered fine — so the
+	# claim is asserted on the CONTROL, driven through the real land-row handler.
+	_hud._selectioncard._on_land_row_selected()
+	await _settle()
+	# THE PRECONDITIONS, without which the two assertions below pass on a hex that never reached the
+	# state: no terrain rows to fall back on, AND a roster that would suppress the note on its own.
+	_assert_hud("precondition: unexplored ground gives the LAND drawer no terrain rows to show",
+		not _hud.tile_detail.visible)
+	_assert_hud("precondition: your own party still lists here, so the note's roster skip is armed",
+		not _hud._selection.roster_units().is_empty())
+	_assert_hud("the LAND drawer on an UNEXPLORED hex holding your own party is not blank",
+		_hud.occupant_detail.visible and _hud.occupant_detail.text.strip_edges() != "")
+	# A needle no other copy on this card can satisfy: the roster's own out-of-sight hint and the
+	# remembered note are DIFFERENT sentences, so matching this one cannot be borrowing either.
+	_assert_hud("…stating the UNEXPLORED unknown-contents sentence, and not the remembered one",
+		_hud.occupant_detail.text.contains(HudConst.OCCUPANTS_UNKNOWN_UNEXPLORED)
+			and not _hud.occupant_detail.text.contains(HudConst.OCCUPANTS_UNKNOWN_REMEMBERED))
+	await _save("tile_panel_unexplored_own_band")
+
 	_hud.clear_selection()
 	_show_tile(_foreign_band_tile(VIS_DISCOVERED))
 	await _settle()
@@ -7366,11 +7391,20 @@ func _assert_fog_stock_parity() -> void:
 	# The list is applied BY HAND rather than through `_apply_visibility_to_info`, whose discovered
 	# branch is exactly this loop plus a visibility-raster lookup this harness has no grid to seed;
 	# reading `FOW_DISCOVERED_HIDDEN_KEYS` off MapView itself is what keeps the two from drifting.
-	var redacted := _sight_tile_fixture(VIS_DISCOVERED)
+	#
+	# **`_floorify` RUNS FIRST, THEN THE ERASURE** — the order is the whole claim. `_seed_growth_terms`
+	# fills in whatever growth terms a fixture lacks, and four of the keys it seeds
+	# (`patch_regrowth_samples` — its `capacity > 0` branch fires precisely because the capacity
+	# survives redaction — plus `patch_per_worker_biomass` and the two phase fractions) are keys the
+	# shipped list REMOVES. Floorifying afterwards therefore hands the producer a dict the real path
+	# can never produce, and a later assertion about the harvest-floor instrument (that
+	# `floor_chart_model` answers `known == false` under the real list) would read a harness-seeded
+	# growth curve and pass for the wrong reason.
+	var redacted := _floorify(
+		_sight_tile_fixture(VIS_DISCOVERED), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	for key in MAP_VIEW_SCRIPT.FOW_DISCOVERED_HIDDEN_KEYS:
 		redacted.erase(key)
-	var redacted_lines := _hud._drawer._tile_terrain_lines(
-		_floorify(redacted, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	var redacted_lines := _hud._drawer._tile_terrain_lines(redacted)
 	_assert_hud("…and a tile put through the REAL redaction list still states both capacity rows",
 		_detail_row_index(redacted_lines, HudFloraVocab.FORAGING_KEY) >= 0
 			and _detail_row_index(redacted_lines, HudFloraVocab.GRAZING_KEY) >= 0)

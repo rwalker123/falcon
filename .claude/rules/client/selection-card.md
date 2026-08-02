@@ -91,9 +91,12 @@ paths:
     label. The drawer used to add a second one in BOTH states (`Last seen — information incomplete.
     Scout to update.` / `Not yet scouted — send a band to reveal this area.`), each immediately above
     a note saying the same thing, with the Sight chip saying it a third time; see `land-readouts.md` →
-    "The card says 'remembered' ONCE, and promises nothing". **An unexplored hex therefore produces
+    "An unseen hex says so ONCE, and promises nothing it cannot do". **An unexplored hex therefore produces
     NO rows and the label hides** (`_render_land_drawer` gates on `lines.is_empty()`) — a visible
-    empty `RichTextLabel` still claims its line height and would read as a blank gap.
+    empty `RichTextLabel` still claims its line height and would read as a blank gap. **That same
+    emptiness is passed on as `_render_unknown_contents_note(force)`**, which without it skips itself
+    on a non-empty roster and left the whole LAND drawer blank on an Unexplored hex holding your own
+    party (every child hidden at once) — see `land-readouts.md` → "An unseen hex says so ONCE".
     Sight / Habitability / Climate / Tags / Site are the CHIPS'
     and `Biome` is the land ROW's own label, so printing any of them here restated the strip
     verbatim (§8's "no restated identity"). The `TILE_SIGHT_KEY` / `Habitability` cases in

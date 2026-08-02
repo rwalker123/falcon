@@ -21,7 +21,7 @@ paths:
   — `patch_per_worker_biomass` / `patch_regrowth_samples` / `patch_collapse_fraction` /
   `patch_stressed_fraction` — all in `FOW_DISCOVERED_HIDDEN_KEYS` **except
   `patch_carrying_capacity`**, so a remembered tile redacts them but keeps the ceiling (see "Fog
-  splits a stock from its capacity" below); the cross-ref is an explicit key list, so a decoded field left
+  splits a stock from its CAPACITY" below); the cross-ref is an explicit key list, so a decoded field left
   off it is absent on the plant web alone — see `labor-ui.md` → "THE PATCH'S FORECAST FIELDS REACH THE
   SHEET THROUGH `tile_info`"). The
   card shows a **Cultivation** row: "N%" while the patch is being tended, "🌾 Tended Patch"
@@ -63,7 +63,7 @@ paths:
   Each row renders only where that web has a stock at all (`patch_carrying_capacity > 0` /
   `graze_capacity > 0`) — never a `0 / 0`, which reads as a starved stock rather than an absent one.
   **A REMEMBERED TILE STATES BOTH ROWS WITH BOTH STOCKS WITHHELD** — see "Fog splits a stock from its
-  capacity" below, which is the one home for that rule.
+  CAPACITY" below, which is the one home for that rule.
   **The `Forage:` MODULE ROW WAS DELETED OUTRIGHT.** `Riverine / Delta — River Garden` named a
   category the player can neither choose nor change, and the basket says the same thing in the terms
   a decision is actually made in. Nothing replaced it; the module still drives the land row's glyph
@@ -309,10 +309,11 @@ paths:
   ecology vocabulary), cached in `MapView.tile_graze` — **only for tiles that actually carry
   pasture**, mirroring the sim's `GrazeRegistry`, so "no pasture" is an *absent* reading — and
   cross-referenced onto `tile_info` by `_tile_info_at`. The trio **SPLITS across
-  `FOW_DISCOVERED_HIDDEN_KEYS`** — `grazeCapacity` out of it, `grazeBiomass` / `grazeEcologyPhase` in
-  it — exactly as the plant web's three do; see "Fog splits a stock from its capacity" below. How the
-  row itself reads — and why it sits directly under `Foraging` — is "The tile card's TWO FOOD-WEB
-  ROWS" above.
+  `FOW_DISCOVERED_HIDDEN_KEYS`** — and that list holds DECODED DICT KEYS, so it names
+  `graze_biomass` / `graze_ecology_phase` (in it) beside `graze_capacity` (deliberately not),
+  **not** the camelCase schema fields above. Exactly as the plant web's three split; see "Fog splits
+  a stock from its CAPACITY" below. How the row itself reads — and why it sits directly under
+  `Foraging` — is "The tile card's TWO FOOD-WEB ROWS" above.
 - **Sedentarization meter** (`Hud.gd` `update_sedentarization`, dispatched from `Main.gd`):
   the player faction's `SedentarizationState.score` (snapshot `sedentarization[]`) shows as a
   compact top-bar block-glyph meter (`▰▰▰▰▰▱▱ 62/100 · soft`, `SedentarizationLabel` in
@@ -435,6 +436,19 @@ first state in which `_tile_terrain_lines` returns empty — so `_render_land_dr
 `_tile_detail.visible` on `lines.is_empty()`. A visible empty `RichTextLabel` is not free: it still
 claims its line height and the drawer's separation, and would read as a blank gap between the land
 row and the note. Frames: `tile_sight_unexplored` / `tile_panel_unseen` / `tile_sight_remembered`.
+
+**AND THE SAME `lines.is_empty()` IS WHAT FORCES THE NOTE** — `_render_land_drawer` passes it to
+`_render_unknown_contents_note(force)`, which otherwise skips itself on a NON-empty roster (there the
+list's own `OCCUPANTS_UNSEEN_OTHERS_HINT` is the sentence, and the note would be a second copy). The
+two rules collide on one real hex: an **Unexplored** tile carrying your own party, which is routine
+because the sim excludes expeditions from fog reveal. With no rows, no compose block and the note
+suppressed, every child of the drawer is hidden at once and the LAND subject renders as a blank capped
+area under the divider — the whole card's content gone. The invariant is therefore a pair: *the LAND
+drawer on an unseen hex is never empty, and the card never states the same unseen-contents sentence
+twice.* Frame + four assertions: `tile_panel_unexplored_own_band` (two preconditions — no terrain rows,
+a non-empty roster — then the note's visibility and its text, asserted on `%OccupantDetail` itself
+because a PNG cannot tell a blank drawer from one that rendered fine). Sabotage-verified against the
+unconditional roster skip: both content assertions fail, both preconditions still pass.
 
 **The harvest-floor chart still correctly disappears**, and not because the capacity is hidden:
 `SourceForecast.floor_chart_model`'s `known` gate needs `patch_regrowth_samples` (redacted) as well as

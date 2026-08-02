@@ -5,7 +5,8 @@ extends RefCounted
 ## the last piece of the selection card to leave `Hud.gd`, after `SelectionCardController` took the
 ## identity/list half and `DrawerComposeController` took the compose half. It owns the one-drawer
 ## dispatch (`render_subject_drawer` → land vs occupant), the land-drawer content producer
-## (`_tile_terrain_lines` + its `_graze_stock_lines` / `_stock_value` leaves), the occupant/expedition/band-move `%AllocationPanel`
+## (`_tile_terrain_lines` + its `_forage_stock_lines` / `_graze_stock_lines` / `_stock_value` leaves — the
+## two webs' rows are one rule rendered twice), the occupant/expedition/band-move `%AllocationPanel`
 ## branches, and the height-capping fit path.
 ##
 ## Built on the LegendController / SelectionCardController / DrawerComposeController / BandPanelController
@@ -142,20 +143,34 @@ func _render_land_drawer() -> void:
         _allocation_panel.visible = false
     if _herd_assign_controls != null:
         _herd_assign_controls.visible = false
-    _render_unknown_contents_note()
+    # FORCED when the terrain rows came back empty — see `_render_unknown_contents_note`. With no
+    # rows, no compose block and no note, every child of the drawer is hidden and the land subject
+    # renders as a blank capped area under the divider.
+    _render_unknown_contents_note(lines.is_empty())
 
 ## An EMPTY occupant list is a claim of emptiness the client cannot back up, so on a hex the player
 ## cannot see the list carries the land row and nothing else, and the drawer says so out loud. This
 ## is the whole point of the fog gate — silence would read as "nothing here".
 ##
-## Skipped when the list DOES carry occupant rows: that only happens for your own party on an
-## unseen hex, and `_rebuild_subject_list` already appends `OCCUPANTS_UNSEEN_OTHERS_HINT` there.
-func _render_unknown_contents_note() -> void:
+## TWO INVARIANTS MEET HERE, AND `force` IS WHAT SATISFIES BOTH: the card never states the same
+## unseen-contents sentence twice, AND the LAND drawer on an unseen hex is never empty.
+##
+## Skipped when the list DOES carry occupant rows, because there the sentence is already said: that
+## only happens for your own party on an unseen hex, and `_rebuild_subject_list` appends
+## `OCCUPANTS_UNSEEN_OTHERS_HINT` to the list in exactly that case.
+##
+## **UNLESS `force`, which `_render_land_drawer` passes when the drawer produced NO terrain rows.**
+## An UNEXPLORED hex produces none at all, and it routinely carries roster rows — the sim excludes
+## expeditions from fog reveal, so your own party stands on unexplored ground as a matter of course.
+## Suppressing the note there hid the last visible child of the drawer and left a blank gap where the
+## land's whole content should be, so with nothing else to render the note renders regardless of the
+## roster; the hint on the list above is a different sentence about the OTHER occupants.
+func _render_unknown_contents_note(force: bool) -> void:
     if _occupant_detail == null:
         return
     var unseen := _selectioncard.tile_contents_unseen(_selection.tile_info())
     var roster_empty := _selection.roster_units().is_empty() and _selection.roster_herds().is_empty()
-    if not unseen or not roster_empty:
+    if not unseen or not (roster_empty or force):
         _occupant_detail.visible = false
         _occupant_detail.text = ""
         return
@@ -209,8 +224,11 @@ func fit_subject_drawer(force: bool = false) -> void:
 ## and `Biome` restated the land ROW's own label (the "no restated identity" rule,
 ## docs/plan_tile_panel_layout.md §8). The chips REPLACE those rows; what is left is the numbers and
 ## the stocks, whose subject is the land: Height · the rivers · the two food webs' stocks and the
-## basket that decomposes the human one · the committed crop and the two build meters — plus the FoW
-## sentences, which are statements, not conditions, and have no chip.
+## basket that decomposes the human one · the committed crop and the two build meters.
+##
+## **AND NO FoW SENTENCE AT ALL.** This producer emits ROWS; each unseen state's one sentence is the
+## roster's own unknown-contents note (`_render_unknown_contents_note`, rendered directly beneath
+## this label), so a sentence here would be that sentence twice — see the two branch comments below.
 ##
 ## **THE TWO FOOD WEBS READ AS A PAIR, FORAGING THEN GRAZING, WITH NOTHING BETWEEN THEM.** Each is one
 ## row named for who eats it, carrying its stock and its ecology phase; the human layer's basket hangs
