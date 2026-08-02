@@ -266,10 +266,14 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # snapshot carries a real patch (capacity > 0), so a plain food-module tile with no patch stays
     # bare rather than reading "0 / 0".
     var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
+    # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
+    # basket below decomposes it. Reading it twice is how the row and its own decomposition would
+    # start describing different stands.
+    var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
     if patch_capacity > 0.0:
         lines.append("%s: %s" % [HudFloraVocab.FORAGING_KEY, _stock_value(
-            float(tile_info.get("patch_biomass", 0.0)), patch_capacity,
+            patch_biomass, patch_capacity,
             String(tile_info.get("patch_ecology_phase", "")))])
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /
@@ -282,8 +286,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         # survives fog, but a share is only a share OF something: with no `Foraging` row above them
         # and no capacity to state each plant's biomass, these rows would be exactly the free-floating
         # "three more resources" list this layout exists to stop being.
+        # **THE STANDING STOCK, not the capacity.** These rows say what the `205 / 205` above them is
+        # MADE OF, so on a drawn-down patch reading `90 / 100` they must sum to 90 — splitting the
+        # ceiling instead would decompose a full patch nobody is looking at, and the card would hold
+        # two numbers disagreeing about which stand is under discussion.
         lines.append_array(DetailFormat.flora_composition_lines(
-            tile_info.get("patch_composition", []), crop_species, patch_capacity))
+            tile_info.get("patch_composition", []), crop_species, patch_biomass))
     # GRAZING — the animal-edible stock, directly under Foraging. Same shape, same phase-inline rule.
     # The adjacency IS the point: what HUMANS can eat here (seeds, nuts, tubers — food-module tiles
     # only) against what ANIMALS can eat here (grass and browse — cellulose people cannot digest, on

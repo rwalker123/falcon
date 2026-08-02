@@ -726,18 +726,20 @@ static func field_value_hex(value: String) -> String:
 ## row — so it covers the NAME, SHARE AND BIOMASS only, leaving the indent and the role icon outside
 ## the tag, because that branch recognizes the row by `begins_with(MORALE_BREAKDOWN_INDENT)`.
 static func flora_composition_lines(
-    composition: Variant, committed_species: String = "", capacity: float = 0.0
+    composition: Variant, committed_species: String = "", stock: float = 0.0
 ) -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
     var lines: Array[String] = []
     if entries.is_empty():
         return lines
     var committed := committed_species.strip_edges()
-    var biomass := _flora_biomass_split(entries, capacity)
+    var biomass := _flora_biomass_split(entries, stock)
     for index in entries.size():
         var entry: Dictionary = entries[index]
         var face := HudFloraVocab.FLORA_SHARE_FORMAT % [String(entry["display_name"]), int(entry["percent"])]
-        if capacity > 0.0:
+        # A STRIPPED patch prints shares alone rather than three zeros: 38% of nothing is a
+        # true statement about the stand, `(0)` three times is noise about the same fact.
+        if stock > 0.0:
             face += HudFloraVocab.FLORA_SHARE_BIOMASS_CLAUSE_FORMAT % biomass[index]
         if committed != "" and String(entry["species"]) == committed:
             face = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, face]
@@ -748,27 +750,32 @@ static func flora_composition_lines(
         lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [MORALE_BREAKDOWN_INDENT, icon, face])
     return lines
 
-## Each basket entry's standing biomass, as whole units summing EXACTLY to `round(capacity)`.
+## Each basket entry's share of the STANDING stock, as whole units summing EXACTLY to `round(stock)`.
+##
+## **It decomposes what is STANDING, not the capacity.** The row above reads `90 / 100`, and these
+## rows say what those 90 are made of — splitting the capacity instead would describe a full patch
+## the player is not looking at, and the two numbers on one card would disagree about which stand is
+## being talked about.
 ##
 ## Derived from the entries' already-rounded PERCENTS rather than the raw shares, so a row's two
 ## numbers are consistent with each other (38% of 205 really is the 78 printed beside it) — and the
 ## remainder is folded into the FIRST (largest) entry, exactly as `flora_basket_entries` folds the
 ## percentage remainder, because a decomposition that visibly fails to add up is worse than a ±1 on
-## the row where it is proportionally smallest. Returns zeros for a capacity-less surface; those rows
-## print no biomass at all.
-static func _flora_biomass_split(entries: Array[Dictionary], capacity: float) -> Array[int]:
+## the row where it is proportionally smallest. Returns zeros for a stripped or stockless surface;
+## those rows print no biomass at all.
+static func _flora_biomass_split(entries: Array[Dictionary], stock: float) -> Array[int]:
     var split: Array[int] = []
-    if capacity <= 0.0:
+    if stock <= 0.0:
         split.resize(entries.size())
         split.fill(0)
         return split
     var total := 0
     for entry in entries:
         var value := int(round(
-            float(entry["percent"]) / float(SourceForecast.FLORA_SHARE_PERCENT_TOTAL) * capacity))
+            float(entry["percent"]) / float(SourceForecast.FLORA_SHARE_PERCENT_TOTAL) * stock))
         total += value
         split.append(value)
-    split[0] = split[0] + int(round(capacity)) - total
+    split[0] = split[0] + int(round(stock)) - total
     return split
 
 ## Player-facing corral label from pen-build progress (0.0–1.0) — the herd twin of

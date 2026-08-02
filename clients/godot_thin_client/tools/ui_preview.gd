@@ -6550,9 +6550,13 @@ func _assert_food_layer_rows() -> void:
 	var basket_total := 0
 	for row in basket:
 		basket_total += _flora_row_biomass(row)
-	_assert_hud("…and the basket's biomasses sum to the Foraging ceiling (%d of %d)" % [
-			basket_total, int(THREE_ROLE_CAPACITY)],
-		basket.size() == 3 and basket_total == int(THREE_ROLE_CAPACITY))
+	# **AGAINST THE STANDING STOCK, never the ceiling.** These rows say what the `150 / 205` above
+	# them is MADE OF; summing to 205 would decompose a full patch nobody is looking at, and the card
+	# would then hold two numbers disagreeing about which stand is under discussion. The fixture is
+	# drawn down precisely so this assertion can tell the two apart.
+	_assert_hud("…and the basket's biomasses sum to the STANDING Foraging stock (%d of %d)" % [
+			basket_total, int(THREE_ROLE_STOCK)],
+		basket.size() == 3 and basket_total == int(THREE_ROLE_STOCK))
 	var unstated := _flora_basket_rows(_hud._drawer._tile_terrain_lines(_floorify(
 		_unstated_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)))
 	var icon_rows := 0
@@ -8255,6 +8259,10 @@ func _cash_variant_basket_tile_fixture() -> Dictionary:
 ## Standing at full capacity, so `Foraging 205 / 205` and the three rows sum to both numbers at once —
 ## the clearest possible reading of "these decompose the row above".
 const THREE_ROLE_CAPACITY := 205.0
+## **DELIBERATELY BELOW THE CEILING.** The basket decomposes what is STANDING, and a full patch
+## cannot tell that apart from one decomposing the capacity — the two coincide there, so the
+## assertion below would pass either way and prove nothing. 150 of 205 makes the claim testable.
+const THREE_ROLE_STOCK := 150.0
 
 const THREE_ROLE_GRAZE_CAPACITY := 130.0
 
@@ -8272,7 +8280,7 @@ func _three_role_tile_fixture() -> Dictionary:
 		"food_kind": "river_garden",
 		"site_name": "",
 		"patch_ecology_phase": "thriving",
-		"patch_biomass": THREE_ROLE_CAPACITY,
+		"patch_biomass": THREE_ROLE_STOCK,
 		"patch_carrying_capacity": THREE_ROLE_CAPACITY,
 		"patch_provisions_per_biomass": 0.012,
 		"patch_trade_per_biomass": 0.021,
