@@ -37,6 +37,7 @@ mouse_filter = 2
 
 [node name="TurnBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 1
+custom_minimum_size = Vector2(344, 0)
 mouse_filter = 2
 
 [node name="ContentRow" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
@@ -129,7 +130,7 @@ mouse_filter = 2
 [node name="RightDock" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow"]
 size_flags_horizontal = 1
 size_flags_vertical = 3
-custom_minimum_size = Vector2(320, 0)
+custom_minimum_size = Vector2(344, 0)
 mouse_filter = 2
 theme_override_constants/margin_left = 8
 theme_override_constants/margin_top = 8

@@ -98,6 +98,36 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
   never what it reserves. Conflating the two axes is the easy mistake, and it is
   the one that shipped: a `SIDE_TOP` bar spanning the raw window drew straight
   over the `SIDE_LEFT` band panel's tab bar.
+- **`Main.MAP_ONLY_RESERVERS` says WHICH SURFACES a reserver's strip insets.**
+  Every reserver used to inset both — the map so its content cannot hide under
+  the strip, the HUD so its bars and docks reflow beside it — and
+  `_apply_reservation` assumed the pair. The event dock breaks that: it lives
+  *beside* the HUD's own furniture rather than above it, so insetting the HUD as
+  well pushed `LayoutRoot` down and dragged `Turn N` / `Units` /
+  `Sedentarization` / `Pop` and the whole right dock with it. It still insets the
+  MAP. Named as a per-reserver property, not an `if` inside the fan-out: "which
+  surfaces does this reserver move?" is a fact about the reserver.
+
+### The HUD's own side columns are AUTHORED, and a horizontal panel must respect them
+
+A panel that spans the HUD's width draws over the left dock, the right dock and
+the top-bar readout block — none of which are reservers, so bounding against the
+reservation registry alone is not enough. `Hud.left_column_width()` /
+`right_column_width()` publish those widths, and they read `custom_minimum_size.x`
+off the scene's own regions rather than measuring content:
+
+| Region | Authored | Why it cannot drift |
+|---|---|---|
+| `LeftDock` | 360 | `PanelDock` zeroes the stack's horizontal minimum on construction, so no card can widen the column |
+| `RightDock` | 344 | its card minimum (320) plus its authored margins (8 + 16), authored as the outer minimum so the published number is the one it renders at |
+| `TurnBlock` | 344 | authored to match the dock beneath it — it had **no** minimum of its own and was pure text width, which is exactly the measurement that must not decide a panel's edge |
+
+**A bar whose edge tracked a MEASURED width is the flicker rule again**: it would
+jump when the player selects a tile and the selection card appears, or when a
+metric gains a digit — and worse than on the band panel, since an event arrives
+every turn. `ui_preview` asserts the live rects never exceed the authored numbers,
+so a scene edit that outgrows a column fails loudly instead of the bar quietly
+overlapping.
 - **`MapView`** applies the totals via three coordinated pieces:
   1. `_get_adjusted_viewport_size()` subtracts `left+right` on x and `top+bottom`
      on y, so fit, pan-clamp, draw extents, hit-testing and the minimap indicator

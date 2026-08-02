@@ -238,6 +238,41 @@ Also note it is not a stacking-order problem: raising or lowering `LAYER_INDEX` 
 *which* panel is hidden by the other. The band panel is a legitimate occupant of that column and the
 bar has no business in it.
 
+### …and a RESERVATION is only half the bound
+
+The first cut of that fix bounded the bar against edge **reservers**, and the HUD's own side columns
+are not reservers — so with nothing docked left or right the bar spanned the window again and sat on
+top of `Turn N` / `Units` / `Sedentarization` / `Pop`. The columns live INSIDE whatever strip the
+docks reserved, so the two terms **add**: `inset = reservation total + Hud.{left,right}_column_width()`.
+
+Both column widths are **authored, not measured** (`panel-framework.md` → "The HUD's own side columns
+are AUTHORED" has the table and the reasons). The right side is two regions in one column — the dock
+and, above it, the readout block — so `right_column_width()` is the wider authored minimum of the
+pair; the readout block had no minimum of its own and was pure text width, which is precisely the
+measurement that must not decide a panel's edge.
+
+### The bar also stops pushing the HUD down
+
+`&"event_dock"` is in `Main.MAP_ONLY_RESERVERS`, so its reservation reaches `MapView` and **not**
+`Hud`. Reported live: the bar reserved `SIDE_TOP` against the HUD, `LayoutRoot` absorbed it, and the
+readouts and the right dock all sat lower than they had before the dock existed. The map half stays —
+map content genuinely does hide behind the strip — and the HUD keeps its full height because the bar
+now lives beside its furniture rather than above it.
+
+**The layout Ray picked**, and what the two halves together produce:
+
+```
+┌──────────┬───────────────────┬──────────┐
+│ Band     │ ⚔ T47 Wolves…     │ Turn 1   │
+│ panel    │ ✦ T47 Came of age │ Units: 1 │
+│          ├───────────────────┤ Sedent…  │
+│ Work     │                   │ Pop 30   │
+│ Parties  │      MAP          ├──────────┤
+│          │                   │ AT THE   │
+│          │                   │ FIRE     │
+└──────────┴───────────────────┴──────────┘
+```
+
 `ui_preview` pins this with a real `BandCityPanel` docked LEFT — a literal would prove nothing about
 two rects actually clearing each other — across `event_dock_inset_left_panel` and
 `event_dock_inset_bottom_panel` (both edges, since the bug was about the horizontal axis and a fix
@@ -245,6 +280,15 @@ reaching only `SIDE_TOP` must fail), against a **negative control taken first on
 nodes**: at zero inset the rects genuinely do overlap, so the assertion is not satisfiable by two
 panels that happen never to meet. `event_dock_bottom` carries the zero case, so an inset hard-wired
 to a constant cannot pass either.
+
+**Each clearance claim is made where it BITES**, through `_assert_bar_clears`, which refuses to pass
+on a pair that shares no vertical band. The HUD's regions sit in different bands — a bottom bar is in
+the `BottomBar`'s (nav backing, turn orb), a top bar in the `TopBar`'s (the readout block), and only a
+bar tall enough to reach the `ContentRow` can touch the two docks — so "these rects do not overlap" is
+true for free of most pairs, and the first version of that block passed with the fix reverted. The
+"nothing moves down" assertion had the same defect for the same reason (it was taken while the dock
+was on the BOTTOM edge, where `offset_top` is not the offset at risk) and is now taken on `SIDE_TOP`
+against both offsets, with the negative control that another reserver's strip DOES move the HUD.
 
 ## Preferences live in `[events]` of `user://narrative.cfg`
 

@@ -1111,6 +1111,20 @@ const RESERVER_PRIORITY := {&"event_dock": 0, &"inspector": 1, &"band_panel": 2}
 const BAND_PANEL_RESERVER := &"band_panel"
 const EVENT_DOCK_RESERVER := &"event_dock"
 
+## **WHICH SURFACES A RESERVER'S STRIP ACTUALLY INSETS.** Until the event dock every reserver insets
+## BOTH — the map so its content cannot hide under the strip, and the HUD so its bars and docks
+## reflow beside it — and `_apply_reservation` simply assumed the pair. The event dock breaks that:
+## it is a thin bar that lives BESIDE the HUD's own furniture (it stops short of the side columns —
+## see `_update_event_dock_insets`), so insetting the HUD as well would push `LayoutRoot` down and
+## drag `Turn N` / `Units` / `Sedentarization` / `Pop` and the whole right dock with it, which is
+## exactly what was reported: the readouts sat lower the moment the bar existed. It still insets the
+## MAP, because map content genuinely does hide behind the strip.
+##
+## Named as a per-reserver property rather than an `if id == …` inside the fan-out: the question
+## "which surfaces does this reserver move?" is a fact about the reserver, and the next one that
+## answers it differently should be a row here, not a second branch.
+const MAP_ONLY_RESERVERS: Array[StringName] = [EVENT_DOCK_RESERVER]
+
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
 ## Fans a reserver's (edge, size) out to both surfaces. `edge` is a Godot Side
@@ -1122,7 +1136,9 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
         _reservations[id] = {"edge": edge, "size": size}
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, size)
-    if hud != null and hud.has_method("set_reserved_inset"):
+    # The HUD half is CONDITIONAL — see `MAP_ONLY_RESERVERS`. A map-only reserver never enters the
+    # HUD's registry at all, so there is nothing stale to release either.
+    if hud != null and hud.has_method("set_reserved_inset") and not MAP_ONLY_RESERVERS.has(id):
         hud.call("set_reserved_inset", id, edge, size)
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
@@ -1158,6 +1174,14 @@ func _update_band_panel_edge_offset() -> void:
 ## finishes to the left of whatever is docked right. Sums the per-edge totals — every reserver except
 ## the dock itself — and hands the pair over.
 ##
+## **A RESERVATION IS ONLY HALF THE BOUND.** The HUD's own side columns — the left dock, and on the
+## right the dock plus the top-bar readout block — are not reservers, so bounding against
+## reservations alone still drew the bar over `Turn N` / `Units` / `Pop`. They live INSIDE whatever
+## strip the docks reserved, so the two terms ADD rather than compete: `reservation + column`. Both
+## column widths are AUTHORED (`Hud.left_column_width` / `right_column_width` read
+## `custom_minimum_size.x` off the scene), so the bar's edges are a function of constants and cannot
+## move when the player selects a tile or a metric gains a digit.
+##
 ## **This is not `RESERVER_PRIORITY`.** That orders reservers stacked ALONG one shared edge (the dock
 ## is 0 there, so it still hugs its own edge); this is the cross axis, where there is no stacking
 ## question — a vertical column simply takes room the horizontal bar may not use. Conflating the two
@@ -1177,6 +1201,10 @@ func _update_event_dock_insets() -> void:
                 left += float(r.get("size", 0.0))
             SIDE_RIGHT:
                 right += float(r.get("size", 0.0))
+    if hud != null and hud.has_method("left_column_width"):
+        left += float(hud.call("left_column_width"))
+    if hud != null and hud.has_method("right_column_width"):
+        right += float(hud.call("right_column_width"))
     event_dock.call("set_perpendicular_insets", left, right)
 
 func _on_inspector_reserved_width_changed(width: float) -> void:

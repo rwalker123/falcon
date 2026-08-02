@@ -89,6 +89,9 @@ var _build_label: Label = null
 var _server_build: String = "?"
 
 @onready var layout_root: Control = $LayoutRoot
+@onready var left_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock
+@onready var right_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/RightDock
+@onready var turn_block: VBoxContainer = $LayoutRoot/RootColumn/TopBar/TurnBlock
 @onready var campaign_title_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignTitleLabel
 @onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
 @onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
@@ -1205,6 +1208,32 @@ func update_band_alerts(populations_variant: Variant) -> void:
     # An OPEN compose sheet re-renders IN PLACE against the fresh subject — it must not close on a
     # snapshot, or it would be unusable under autoplay (§15). It closes only if its subject is gone.
     _drawercompose.refresh_compose_sheet()
+
+## HOW WIDE THE HUD'S OWN FURNITURE IS ON EACH SIDE, inside whatever strip the docks have already
+## reserved. A horizontal panel that spans the HUD's width draws over these — the event dock's bar
+## does exactly that, reported live as a bar sitting on top of the `Turn N` / `Units` / `Pop`
+## readouts — so it asks here and stops short of them.
+##
+## **BOTH ARE AUTHORED, NOT MEASURED, and that is the whole point.** They read
+## `custom_minimum_size.x` off the scene's own regions, which no content can move: `PanelDock`
+## zeroes the dock stacks' horizontal minimum on construction, so a card cannot widen its column,
+## and the top-bar readout block carries an authored minimum of its own for the same reason. A bar
+## whose edge tracked a MEASURED width would jump every time the player selected a tile and the
+## selection card appeared, or the metrics string gained a digit — the same flicker rule that keeps
+## `BandCityPanel`'s reservation content-independent, and worse here, because an event arrives every
+## turn. `ui_preview` asserts the live rects never exceed these, so a scene edit that outgrows them
+## fails loudly instead of the bar quietly overlapping again.
+func left_column_width() -> float:
+    return left_dock_region.custom_minimum_size.x if left_dock_region != null else 0.0
+
+## The right side is TWO regions in one column — the right dock and, above it, the top-bar readout
+## block — so this is the wider authored minimum of the pair rather than either one alone. In Ray's
+## report the readouts were the wider of the two; they are authored to the dock's width now, so the
+## column is one number whichever grows first.
+func right_column_width() -> float:
+    var dock: float = right_dock_region.custom_minimum_size.x if right_dock_region != null else 0.0
+    var readouts: float = turn_block.custom_minimum_size.x if turn_block != null else 0.0
+    return maxf(dock, readouts)
 
 ## A CLIENT-SIDE note — a refusal, a nudge, a knowledge unlock. It used to land in the left-dock
 ## command feed; it is a System-channel event on the event dock now, which is `Main`'s panel, so the

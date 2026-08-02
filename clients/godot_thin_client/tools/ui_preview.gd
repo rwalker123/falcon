@@ -6043,6 +6043,7 @@ func _ready() -> void:
 	event_dock.reservation_changed.connect(_on_preview_event_dock_reservation)
 	await get_tree().process_frame
 	_on_preview_event_dock_reservation(event_dock.get_dock(), event_dock.current_reservation_size())
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 
 	# THE ROLLBACK REGRESSION. `CommandEventLog` is checkpoint state, so a rollback restores it
 	# INCLUDING its `next_seq` counter and the replayed events REUSE sequence numbers the client has
@@ -6135,11 +6136,64 @@ func _ready() -> void:
 		HudEventVocab.DETAIL_FLOOR[HudEventVocab.DEFAULT_DETAIL_LEVEL].has(
 			String(HudEventVocab.RUNG_BY_KIND["born"])))
 
-	# THE INSET IS NOT ALWAYS-ON. With nothing docked left or right the bar spans the whole window,
-	# so this frame is the zero control for the two `event_dock_inset_*` states below — without it,
-	# an inset hard-wired to some constant would satisfy them and break every ordinary session.
-	_assert_hud("no vertical reserver: the bar spans the full window (left inset 0, right inset 0)",
-		is_zero_approx(event_dock._root.offset_left) and is_zero_approx(event_dock._root.offset_right))
+	# **NOTHING DOCKED LEFT OR RIGHT, AND THE BAR STILL CLEARS THE HUD'S OWN FURNITURE.** This is the
+	# case the first inset fix got wrong: it bounded the bar against edge RESERVERS, and the left
+	# dock, the right dock and the top-bar readout block are not reservers. Reported live as a bar
+	# sitting over `Turn N` / `Units` / `Pop`.
+	#
+	# **EACH CLAIM IS MADE WHERE IT IS NON-VACUOUS, and `_assert_bar_clears` enforces that.** The
+	# HUD's regions occupy different vertical bands, so most bar/region pairs never share any y at
+	# all and "they do not overlap" is true of them for free: a BOTTOM bar sits in the BottomBar's
+	# band (nav backing + turn orb), a TOP bar in the TopBar's (the readout block), and only a bar
+	# tall enough to reach the ContentRow can touch the two docks. Asserting the wrong pair passes
+	# with the fix reverted — which is exactly what the first version of this block did.
+	_assert_bar_clears(event_dock, _hud.nav_backing, "the bottom-left nav backing (minimap + zoom rail)")
+	_assert_bar_clears(event_dock, _hud.turn_orb, "the bottom-right turn orb")
+	# THE COLUMNS ARE AUTHORED, AND THE BAR IS BOUNDED BY THE AUTHORED NUMBER. If a card or a metrics
+	# string ever outgrows its column, the live rect passes the authored width and the bar's bound is
+	# a lie — so it fails HERE rather than by overlapping in play.
+	_assert_hud("the LEFT column renders no wider than the authored width the bar is bounded by (%.0f)"
+			% _hud.left_column_width(),
+		_hud.left_dock_region.get_global_rect().size.x <= _hud.left_column_width())
+	_assert_hud("the RIGHT dock renders no wider than the authored column (%.0f)" % _hud.right_column_width(),
+		_hud.right_dock_region.get_global_rect().size.x <= _hud.right_column_width())
+	_assert_hud("…and so does the readout block, which has no authored width of its own by default",
+		_hud.turn_block.get_global_rect().size.x <= _hud.right_column_width())
+
+	# THE REPORTED CASE ITSELF: a TOP bar shares the TopBar's vertical band with the readout block,
+	# which is where `Turn N` / `Units` / `Sedentarization` / `Pop` live. Nothing is docked left or
+	# right, so a bound that only knew about reservers puts the bar straight over them.
+	event_dock.set_dock(SIDE_TOP)
+	await _settle()
+	_assert_bar_clears(event_dock, _hud.turn_block, "the top-bar readout block (Turn / Units / Pop)")
+
+	# **NOTHING MOVES DOWN**, and this is asserted HERE — with the dock actually on `SIDE_TOP` —
+	# because `offset_top` is the offset a TOP strip would move and the dock spends most of this
+	# block on the bottom edge. Made against the wrong edge the claim is true for free, which is the
+	# same vacuity `_assert_bar_clears` guards against. A picture cannot carry it either: a frame
+	# with the readouts 60px lower still looks like a HUD. `Main` keeps the dock out of the HUD's
+	# registry entirely (`MAP_ONLY_RESERVERS`), so `LayoutRoot` keeps its full height on every edge.
+	_assert_hud("the dock's SIDE_TOP reservation does NOT push the HUD down (LayoutRoot offsets stay 0)",
+		is_zero_approx(_hud.layout_root.offset_top) and is_zero_approx(_hud.layout_root.offset_bottom))
+	# THE NEGATIVE CONTROL: the mechanism works, it is the event dock that is exempt from it. The same
+	# size pushed under a DIFFERENT id does move the HUD — so the claim above is about the exemption
+	# and not about a reserved-inset path that quietly does nothing.
+	_hud.set_reserved_inset(&"preview_probe", SIDE_TOP, event_dock.current_reservation_size())
+	await _settle()
+	_assert_hud("…and that is an EXEMPTION, not a broken path: another reserver's SIDE_TOP strip does move it",
+		_hud.layout_root.offset_top > 0.0)
+	_hud.set_reserved_inset(&"preview_probe", SIDE_TOP, 0.0)
+	await _settle()
+
+	# A bar tall enough to reach the ContentRow is the only one that can touch the two DOCKS, so the
+	# expanded log on the bottom edge is where that pair is asserted.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_expanded(true)
+	await _settle()
+	_assert_bar_clears(event_dock, _hud.left_dock_region, "the HUD's LEFT dock")
+	_assert_bar_clears(event_dock, _hud.right_dock_region, "the HUD's RIGHT dock")
+	event_dock.set_expanded(false)
+	await _settle()
 
 	# event_dock_top_expanded — the OTHER edge, log open. Two claims: the bar reads as a one-line
 	# title and NOT as a second copy of the log's newest turn-group (the failure the prototype made
@@ -6198,6 +6252,9 @@ func _ready() -> void:
 	var left_reserved: float = inset_panel.current_reservation_size()
 	_hud.set_reserved_inset(&"band_panel", SIDE_LEFT, left_reserved)
 	await _settle()
+	# The band panel DOES inset the HUD, so its left dock now sits inside the reserved strip — which
+	# is why the two terms ADD rather than compete.
+	var expected_left: float = left_reserved + _hud.left_column_width()
 
 	# THE NEGATIVE CONTROL, taken FIRST and against the same two live nodes: with the insets at zero
 	# the rects really do overlap. So the assertion below is not satisfiable by two panels that
@@ -6207,14 +6264,17 @@ func _ready() -> void:
 	_assert_hud("inset control: at zero inset the bar genuinely DOES overlap a left-docked panel",
 		event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
 
-	event_dock.set_perpendicular_insets(left_reserved, 0.0)
+	_preview_push_event_dock_insets(event_dock, left_reserved, 0.0)
 	await _settle()
 	await _save("event_dock_inset_left_panel")
-	_assert_hud("inset: the top bar starts exactly at the left-docked panel's reserved width (%.0f px)"
-			% left_reserved,
-		is_equal_approx(event_dock._root.offset_left, left_reserved))
-	_assert_hud("inset: …and the two rects do not overlap at all",
-		not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
+	_assert_hud("inset: the top bar starts past the left-docked panel AND the HUD's own left dock (%.0f + %.0f)"
+			% [left_reserved, _hud.left_column_width()],
+		is_equal_approx(event_dock._root.offset_left, expected_left))
+	_assert_hud("inset: …and it overlaps neither the docked panel nor the HUD's left dock",
+		not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect())
+			and not event_dock._root.get_global_rect().intersects(_hud.left_dock_region.get_global_rect()))
+	_assert_hud("inset: …and it still clears the readout block on the far side",
+		not event_dock._root.get_global_rect().intersects(_hud.turn_block.get_global_rect()))
 	_assert_hud("inset: the reservation the bar PUBLISHES is unchanged — this moves where it is drawn, not what it claims",
 		is_equal_approx(event_dock.current_reservation_size(), event_dock._bar_height()))
 
@@ -6223,12 +6283,12 @@ func _ready() -> void:
 	event_dock.set_dock(SIDE_BOTTOM)
 	await _settle()
 	await _save("event_dock_inset_bottom_panel")
-	_assert_hud("inset: the BOTTOM bar is inset by the same left-docked panel",
-		is_equal_approx(event_dock._root.offset_left, left_reserved)
+	_assert_hud("inset: the BOTTOM bar takes the same bound",
+		is_equal_approx(event_dock._root.offset_left, expected_left)
 			and not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
 
-	event_dock.set_perpendicular_insets(0.0, 0.0)
 	_hud.set_reserved_inset(&"band_panel", SIDE_LEFT, 0.0)
+	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
 	inset_panel.queue_free()
 	await get_tree().process_frame
 	await _settle()
@@ -7571,11 +7631,23 @@ const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
 ## from `seq`. This is the number the old signature de-duplication answered 1 to.
 const EVENT_DOCK_DUPLICATE_RAIDS := 2
 
-## Push the dock's reservation into the HUD by hand. `Main._apply_reservation` does this live (plus
-## the MapView half, which this harness has no visible map for); here it is what makes the frames
-## show the HUD reflowing off the reserved strip instead of sitting under it.
+## Mirror what `Main` does with the dock's reservation — **by asking `Main`'s own table**, not by
+## restating its answer. `MAP_ONLY_RESERVERS` is a `const` on the Main script (preloaded here
+## already, for `escape_claimant`), so dropping `&"event_dock"` from it makes this harness fan the
+## reservation out to the HUD exactly as the live client would, and the "nothing moves down"
+## assertion below fails. A hard-coded `pass` here would have pinned the harness, not the client.
 func _on_preview_event_dock_reservation(edge: int, size: float) -> void:
+	if MAIN_SCRIPT.MAP_ONLY_RESERVERS.has(&"event_dock"):
+		return
 	_hud.set_reserved_inset(&"event_dock", edge, size)
+
+## The harness's stand-in for `Main._update_event_dock_insets`: the vertical reservation total on each
+## side PLUS the HUD's own authored side column. `Main` is never instanced here, so the sum is
+## restated — but every term is read live off the same nodes `Main` reads, so a change to either
+## column's authored width lands here without an edit.
+func _preview_push_event_dock_insets(dock: EventDockPanel, reserved_left: float, reserved_right: float) -> void:
+	dock.set_perpendicular_insets(
+		reserved_left + _hud.left_column_width(), reserved_right + _hud.right_column_width())
 
 ## How many retained events of one kind the dock is holding — read off its own accumulator, since the
 ## claim is about DE-DUPLICATION and a rendered row count would also be filtered by the detail floor.
@@ -7714,6 +7786,22 @@ func _event_dock_pin_fixture() -> Array:
 		{"tick": 45, "kind": "expedition_arrived", "faction": 0, "label": "Expedition reached 24,9 — awaiting orders", "detail": "", "seq": 106},
 		{"tick": 46, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame", "detail": "", "seq": 107},
 	]
+
+## Assert the event bar clears one HUD region — **and that the claim is not vacuous**.
+##
+## The HUD's regions occupy different vertical bands, so most bar/region pairs share no `y` at all
+## and "these two rects do not intersect" is trivially true of them: a BOTTOM bar cannot reach the
+## top-bar readouts however wrong its horizontal bound is. A block of such claims passes with the fix
+## reverted, which is the failure this guard exists to prevent — so the overlap on the PERPENDICULAR
+## axis is required first, and a pair that does not share one fails as VACUOUS rather than passing.
+func _assert_bar_clears(dock: EventDockPanel, region: Control, what: String) -> void:
+	var bar := dock._root.get_global_rect()
+	var box := region.get_global_rect()
+	if bar.position.y >= box.end.y or box.position.y >= bar.end.y:
+		_assert_hud("VACUOUS — the bar and %s share no vertical band, so 'they do not overlap' claims nothing" % what, false)
+		return
+	_assert_hud("the bar clears %s (they share a vertical band, so this is a real claim)" % what,
+		not bar.intersects(box))
 
 func _assert_hud(label: String, ok: bool) -> void:
 	if ok:
