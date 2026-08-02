@@ -722,17 +722,25 @@ static func build_floor_picker(
         var preset := String(preset_variant)
         var floor_value := SourceForecast.floor_for_preset(preset)
         var btn := Button.new()
-        # TWO-LINE FACE, one line per AXIS — the shape the stance picker settled on, kept because the
-        # collision it fixed is unchanged:
-        #   line 1  WHICH INTENT — `HudFormat.floor_preset_face`, the zone glyph welded to the
-        #           preset's label (`♻ Best harvest`). The same glyph the map's yield labels append,
-        #           so a floor reads identically on the picker and on the worked tile/herd.
-        #   line 2  WHAT IT PAYS — the metric with its products NAMED IN WORDS
-        #           (`0.96 food · 0.24 trade`, `SourceForecast.picker_products`), one step SMALLER and
-        #           one step quieter, so the intent leads the glance and the numbers answer it.
-        # A preset with no metric (the work inspector's picker, which passes none) is line 1 alone.
+        # **A ONE-LINE FACE: WHICH INTENT, AND NO NUMBER** — `HudFormat.floor_preset_face`, the zone
+        # glyph welded to the preset's label (`♻ Best harvest`). The same glyph the map's yield labels
+        # append, so a floor reads identically on the picker and on the worked tile/herd.
+        #
+        # **THE METRIC CAME OFF THE FACE AND KEPT ITS TOOLTIP.** Nine numbers stood across the top of
+        # the sheet and every one of them misled:
+        #   • they are the ROOM above that floor — takeable ONCE — while every number below them is a
+        #     per-turn rate, and nothing on the face said which kind it was;
+        #   • they rank the presets BACKWARDS from the decision they annotate. `Take everything` reads
+        #     twice `Best harvest` because it frees twice the standing stock, while in the long run it
+        #     pays ~nothing and `Best harvest` pays the peak forever;
+        #   • they are in FOOD/TRADE/FODDER units directly above a chart whose axis is BIOMASS, with
+        #     nothing relating the two;
+        #   • and they are worker-independent, so they alone sit still while the whole sheet under
+        #     them moves with the stepper.
+        # The readout below answers all of it — crew-aware, per-turn, and now stating the burst and
+        # the steady rate both — so the face is left saying what the button is FOR. `full` still rides
+        # the tooltip for anyone who wants the magnitude without clicking through.
         var take: Variant = takes.get(preset, null)
-        var metric := String((take as Dictionary).get("compact", "")) if take is Dictionary else ""
         var full := String((take as Dictionary).get("full", "")) if take is Dictionary else ""
         var note := String((take as Dictionary).get("note", "")) if take is Dictionary else ""
         var is_selected := preset == current_preset
@@ -760,7 +768,7 @@ static func build_floor_picker(
         var tint := HudStyle.button_font_color(variant, btn.disabled)
         if not is_selected and not btn.disabled:
             tint = HudStyle.INK_DIM
-        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), metric, tint)
+        var cell := _policy_rung_cell(btn, HudFormat.floor_preset_face(preset), "", tint)
         cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         grid.add_child(cell)
     block.add_child(grid)
@@ -954,8 +962,19 @@ static func build_readout_box(parent: Container) -> VBoxContainer:
 ## `note` is the take's own qualifier (`· renewable`, or the overdraw sentence) and `waste` the
 ## whole-animal line where one applies; both sit in the row's own flow at the unit's size in the tint
 ## the caller resolved, so a warning never has to compete with the number it is warning about.
+##
+## **THE HEADER CARRIES THE UNIT AND THE ARROW'S KEY, so neither is repeated per account.** It is a
+## `VBoxContainer` now rather than the bare flow — the flow keeps `YIELDS_ROW_META`, so everything
+## that reaches for the row by identity still finds the readings and not the caption over them.
 static func build_yields_row(rows: Array, number_tint: Color, note: String, note_tint: Color,
-        waste: String) -> HFlowContainer:
+        waste: String) -> VBoxContainer:
+    var block := VBoxContainer.new()
+    block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    block.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_V_SEPARATION)
+    var has_after := rows.any(func(row: Dictionary) -> bool:
+        return row.has(SourceForecast.YIELD_ROW_AFTER))
+    block.add_child(alloc_section_label(SourceForecast.YIELD_ROW_HEADER_WITH_AFTER if has_after \
+        else SourceForecast.YIELD_ROW_HEADER))
     var flow := HFlowContainer.new()
     flow.set_meta(YIELDS_ROW_META, true)
     flow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -967,7 +986,8 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
         flow.add_child(_readout_unit_label(note, note_tint))
     if waste != "":
         flow.add_child(_readout_unit_label(waste, HudStyle.WARN))
-    return flow
+    block.add_child(flow)
+    return block
 
 ## One account's reading: the number, then its unit. `unit` is the CALLER's none-of-my-business — a
 ## hunt states a whole-animal rate in the quarry's own name rather than in an account's — so a row
@@ -979,8 +999,24 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
     var pair := HBoxContainer.new()
     pair.add_theme_constant_override("separation", HudComposeVocab.READOUT_YIELD_PART_SEPARATION)
     var number := Label.new()
-    number.text = String(row.get(YIELD_ROW_NUMBER,
-        SourceForecast.format_magnitude(float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))))
+    # **THE TRANSITION RIDES THE NUMBER LABEL, at the number's own size.** The `after` rate is the one
+    # a long-run decision turns on, so it is not demoted to the unit's small print; and a separate
+    # Label would let an account's two halves wrap apart onto different lines, which is the one thing
+    # this reading cannot survive.
+    #
+    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the hunt's animal
+    # rate is a composed `≈0.41`, not a magnitude this widget formats, so composing its arrow here
+    # would set a raw float beside an `≈`-prefixed one AND append a second arrow to a face that
+    # already has one. Such a row still declares `YIELD_ROW_AFTER`, so the header knows to key it.
+    if row.has(YIELD_ROW_NUMBER):
+        number.text = String(row[YIELD_ROW_NUMBER])
+    elif row.has(SourceForecast.YIELD_ROW_AFTER):
+        number.text = SourceForecast.YIELD_AFTER_FORMAT % [
+            SourceForecast.format_magnitude(float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0))),
+            SourceForecast.format_magnitude(float(row[SourceForecast.YIELD_ROW_AFTER]))]
+    else:
+        number.text = SourceForecast.format_magnitude(
+            float(row.get(SourceForecast.YIELD_ROW_VALUE, 0.0)))
     number.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     number.add_theme_color_override("font_color", number_tint)
     number.add_theme_font_size_override("font_size",

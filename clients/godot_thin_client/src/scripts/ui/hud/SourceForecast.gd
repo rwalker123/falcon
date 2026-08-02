@@ -335,20 +335,42 @@ static func zero_account_of(src: Dictionary, prefix: String) -> String:
 # The two keys of one `yield_rows` entry — which account it is, and what this take pays into it.
 const YIELD_ROW_ACCOUNT := "account"
 const YIELD_ROW_VALUE := "value"
+## …and what it pays once the source is HOLDING at that floor and paying regrowth alone. Present only
+## where it DIFFERS from the take, and only where the crew reaches the floor at all.
+const YIELD_ROW_AFTER := "after"
 
-## The per-turn UNIT each account is read in — the readout's `2.34  FOOD/TURN`. One table, so the
-## three accounts are named in the same grammar wherever a rate is stated as a number beside a unit
-## rather than joined into a sentence (`yield_components`' job).
+## The UNIT each account is read in — the readout's `2.34  FOOD`. One table, so the three accounts are
+## named in the same grammar wherever a rate is stated as a number beside a unit rather than joined
+## into a sentence (`yield_components`' job).
 ##
 ## **The readout states no DESTINATION**, because since #381 moved trade goods band-local all three
 ## accounts land in the same place — the working band's own stores. A `→ camp` tail once earned its
 ## width by marking trade as the odd account out, banked to the faction-wide stockpile; with nothing
 ## left to contrast against, three identical tails only cost the readout the room it wraps in.
+##
+## **THE `/TURN` IS HOISTED OUT OF THE UNIT AND INTO THE ROW'S HEADER** (`YIELD_ROW_HEADER*`). Stated
+## per account it was three copies of one word on the sheet's widest line, and the row could not
+## afford them once each account began stating a second reading. It is hoisted rather than DELETED
+## because a preset's tooltip states bare `up to +0.60/turn` for the ROOM above that floor — a
+## quantity takeable ONCE — so with nothing marking the difference the two kinds of number would read
+## alike.
 const YIELD_ACCOUNT_UNITS := {
-    YIELD_ACCOUNT_FOOD: "food/turn",
-    YIELD_ACCOUNT_TRADE: "trade/turn",
-    YIELD_ACCOUNT_FODDER: "fodder/turn",
+    YIELD_ACCOUNT_FOOD: "food",
+    YIELD_ACCOUNT_TRADE: "trade",
+    YIELD_ACCOUNT_FODDER: "fodder",
 }
+
+## The row's header — the unit, said once, plus the KEY to the arrow when there is one to explain.
+## `NOW → AFTER` is deliberately the crew buttons' own two words (`clear it now` / `hold it after`),
+## which sit directly above it, so the mapping from a crew count to the rate it buys is both verbal
+## and spatial. Without a second reading on the row there is no arrow to key, and the header states
+## the unit alone.
+const YIELD_ROW_HEADER := "per turn"
+const YIELD_ROW_HEADER_WITH_AFTER := "per turn · now → after"
+## The transition inside ONE account's reading: `2.26 → 0.42`. The glyph is the row's second job for
+## an arrow — the retired routing suffix (`→ CAMP`) was the first — but the two never coexisted, and
+## this one is keyed by the header rather than left to be guessed.
+const YIELD_AFTER_FORMAT := "%s → %s"
 
 ## **WHICH ACCOUNTS A TAKE PAYS, AS ROWS** — the STRUCTURAL half of the render-only-when-non-zero rule,
 ## and the one definition of it. `yield_components` (a joined sentence), `picker_products` (a rung's
@@ -364,8 +386,18 @@ const YIELD_ACCOUNT_UNITS := {
 ## STRUCTURALLY pays (`zero_account_of`) — because a component that exists and paid nothing this turn
 ## is worth reading while `0.00 food` on a wolf is not empty but false. A source that pays into no
 ## account at all (`YIELD_ACCOUNT_NONE`) answers an EMPTY array, and its caller renders no line.
+## **`after` IS THE SECOND READING EACH ACCOUNT CARRIES**, keyed by account — what this crew takes once
+## the source is sitting at its floor and only regrowth is on offer. It rides the SAME row rather than
+## a second one because the three accounts are one biomass flow through a fixed per-biomass vector, so
+## a second row of three numbers would carry ONE new fact in three slots; and because the comparison
+## the player is making is per account, so the two numbers should touch.
+##
+## It is attached only where it DIFFERS from the take — a crew at or below the *hold it after* count
+## takes the same amount every turn, and an arrow from a number to itself is noise. Whether the crew
+## reaches the floor AT ALL is the caller's test: a crew that settles short never reaches the holding
+## state, so it passes no `after` and the row reads exactly as it did before this existed.
 static func yield_rows(food: float, trade: float, fodder: float = 0.0,
-        zero_account: String = YIELD_ACCOUNT_FOOD) -> Array[Dictionary]:
+        zero_account: String = YIELD_ACCOUNT_FOOD, after: Dictionary = {}) -> Array[Dictionary]:
     var rows: Array[Dictionary] = []
     var empty: bool = not (has_component(food) or has_component(trade) or has_component(fodder))
     for pair in [
@@ -374,7 +406,10 @@ static func yield_rows(food: float, trade: float, fodder: float = 0.0,
         var account := String(pair[0])
         var value := float(pair[1])
         if has_component(value) or (empty and zero_account == account):
-            rows.append({YIELD_ROW_ACCOUNT: account, YIELD_ROW_VALUE: value})
+            var row := {YIELD_ROW_ACCOUNT: account, YIELD_ROW_VALUE: value}
+            if after.has(account) and not is_equal_approx(float(after[account]), value):
+                row[YIELD_ROW_AFTER] = float(after[account])
+            rows.append(row)
     return rows
 
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
@@ -1508,6 +1543,11 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
         "axis": String(forecast["axis"]),
         "per_worker": float(forecast["axis_per_worker"]),
         "ceiling": float(forecast["axis_ceiling"]),
+        # The ceiling ONCE THE HERD IS AT ITS FLOOR — one turn's regrowth, on the same axis. Carried
+        # beside the room so the delivered take can be quantised against either without a second
+        # composition: whole-animal quantisation must run on BOTH readings or the holding rate would
+        # be a smooth number beside a bodies-per-turn one.
+        "hold_ceiling": float(forecast["axis_hold_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
     }
 
@@ -1585,6 +1625,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var ceiling := 0.0
     var ceiling_trade := 0.0
     var ceiling_fodder := 0.0
+    # …AND THE CEILING ONCE THE SOURCE IS SITTING AT THE FLOOR, which is a DIFFERENT quantity and the
+    # one the readout's `after` reading is capped by. The ceilings above are the ROOM — everything
+    # standing above the floor, takeable ONCE. What a source pays every turn thereafter is what it
+    # REGROWS at that floor, which is why a big crew's headline take is a burst and not a rate.
+    var hold_ceiling := 0.0
+    var hold_ceiling_trade := 0.0
+    var hold_ceiling_fodder := 0.0
     if source_is_managed(src, kind, prefix, improvement):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
@@ -1592,6 +1639,12 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
             ceiling_trade = float(src.get(prefix + String(FORECAST_PAYOFF_TRADE_KEYS[rung]), 0.0))
         if FORECAST_PAYOFF_FODDER_KEYS.has(rung):
             ceiling_fodder = float(src.get(prefix + String(FORECAST_PAYOFF_FODDER_KEYS[rung]), 0.0))
+        # **A RUNG-3 MANAGED SOURCE HAS NO BURST TO SPEND.** The sim never draws a Field or a built Pen
+        # down, so its payoff IS its every-turn rate: now and after are the same number, and the
+        # readout renders one reading rather than an arrow pointing at itself.
+        hold_ceiling = ceiling
+        hold_ceiling_trade = ceiling_trade
+        hold_ceiling_fodder = ceiling_fodder
     else:
         # ONE composition, both webs — the five terms it reads are published identically by
         # `HerdTelemetryState` and `ForagePatchState`, which is what collapsed two branches into none.
@@ -1599,6 +1652,15 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         ceiling = room * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
         ceiling_trade = room * float(src.get(prefix + FORECAST_TRADE_PER_BIOMASS_KEY, 0.0))
         ceiling_fodder = room * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+        # ONE turn's regrowth AT the floor, through the SAME per-biomass vector the room goes through
+        # — which is why the three accounts stay in one ratio in both readings, and why a second row
+        # of them would carry one new fact in three slots. `crew_to_hold` divides this same growth by
+        # the crew's carry, so the *hold it after* button and the `after` rate are two readings of one
+        # number and cannot disagree.
+        var growth := regrowth_at(regrowth_samples(src, prefix), clamp_floor(floor))
+        hold_ceiling = growth * float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+        hold_ceiling_trade = growth * float(src.get(prefix + FORECAST_TRADE_PER_BIOMASS_KEY, 0.0))
+        hold_ceiling_fodder = growth * float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
     # ---- THE CREW'S THROUGHPUT, PER ACCOUNT, DIPPED ---------------------------------------------
     var per_worker := float(src.get(prefix + FORECAST_PER_WORKER_KEY, 0.0))
     var per_worker_trade := float(src.get(prefix + FORECAST_PER_WORKER_TRADE_KEY, 0.0))
@@ -1627,6 +1689,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var trade_axis: bool = not has_component(per_worker) and has_component(per_worker_trade)
     var axis_per_worker := per_worker_trade if trade_axis else per_worker
     var axis_ceiling := ceiling_trade if trade_axis else ceiling
+    var axis_hold_ceiling := hold_ceiling_trade if trade_axis else hold_ceiling
     var axis_per_animal := trade_per_animal if trade_axis else food_per_animal
     var whole_animal: bool = axis_per_animal > 0.0 and not bool(src.get("corralled", false))
     return {
@@ -1639,12 +1702,18 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # every hunt-side answer is unchanged.
         "per_worker_fodder": per_worker_fodder,
         "ceiling_fodder": ceiling_fodder,
+        # The three HOLD ceilings, keyed to match their room twins so `expected_yield_account` reaches
+        # either by name and no second take function exists to drift from the first.
+        "hold_ceiling": hold_ceiling,
+        "hold_ceiling_trade": hold_ceiling_trade,
+        "hold_ceiling_fodder": hold_ceiling_fodder,
         "trade_per_animal": trade_per_animal,
         # The axis triple every divide-by-a-quantum consumer reads (`max_useful_workers` and the local
         # preview), so no caller has to know which product this species pays.
         "axis": YIELD_AXIS_TRADE if trade_axis else YIELD_AXIS_PROVISIONS,
         "axis_per_worker": axis_per_worker,
         "axis_ceiling": axis_ceiling,
+        "axis_hold_ceiling": axis_hold_ceiling,
         "axis_per_animal": axis_per_animal,
         "whole_animal": whole_animal,
         # The floor this forecast was composed at, carried so a caller can re-state it without holding

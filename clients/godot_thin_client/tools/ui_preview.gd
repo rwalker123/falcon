@@ -185,9 +185,12 @@ const BOAR_CORRAL_PAYOFF_FACE := "2.95 food · 0.74 trade"
 ## fodder) and ascending on food and fodder between them. The third is the one surviving zero: a rung
 ## whose ceiling EXISTS and is empty says so, which is the whole difference between "pays nothing this
 ## season" and "the wire never described this patch".
-const HAY_PEAK_FACE := "0.60 food · 0.01 trade · 0.20 fodder"
-const HAY_STRIP_FACE := "1.35 food · 0.02 trade · 0.45 fodder"
-const DEAD_SEASON_FACE := "0.00 food"
+# The preset metric as the TOOLTIP spells it (`SourceForecast.extractive_take_pair`'s `full`), which
+# is where it lives now that the button face states the intent alone. The face's compact spelling
+# (`0.60 food · 0.01 trade · 0.20 fodder`) has no surface left to be read from.
+const HAY_PEAK_TOOLTIP := "up to +0.60/turn · ⇄ +0.01 trade goods/turn · +0.20 fodder/turn"
+const HAY_STRIP_TOOLTIP := "up to +1.35/turn · ⇄ +0.02 trade goods/turn · +0.45 fodder/turn"
+const DEAD_SEASON_TOOLTIP := "up to +0.00/turn"
 ## The crew the hay meadow's overdraw frame is composed at — the smallest that puts the FODDER take
 ## past its Sustain ceiling (3 × 0.13 = 0.39 against 0.20) while the FOOD take (0.24) is still inside
 ## the patch's 0.60. One forager overdraws nothing at all, so a smaller crew would pass that state's
@@ -2021,15 +2024,52 @@ func _ready() -> void:
 	await _settle()
 	await _save("forage_three_accounts")
 	_assert_compose_sheet_fits("forage_three_accounts")
+	# **THE NUMBERS MOVED TO THE TOOLTIP AND THESE ASSERTIONS FOLLOWED THEM.** The claim is unchanged
+	# — a three-account patch states all three, in wire order, and every one rises as the floor drops
+	# because they are one stock through three fixed rates. What changed is where a player reads it:
+	# the face carries the intent alone now (a preset metric is the ROOM above that floor, a one-off,
+	# and it stood in food units directly over a biomass chart), so a face assertion would testify to
+	# the wrong surface. The pair below is what proves the move rather than a deletion.
 	_assert_hud("a forage rung names all three accounts, in wire order",
-		_policy_rung_metric(_hud._drawercompose._compose_sheet,
-			SourceForecast.FLOOR_PRESET_PEAK) == HAY_PEAK_FACE)
+		_policy_rung_tooltip(_hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_PEAK).contains(HAY_PEAK_TOOLTIP))
 	_assert_hud("every account rises together as the floor drops — one stock, three fixed rates",
+		_policy_rung_tooltip(_hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_STRIP).contains(HAY_STRIP_TOOLTIP))
+	_assert_hud("…and the FACE states no number at all, on any preset",
 		_policy_rung_metric(_hud._drawercompose._compose_sheet,
-			SourceForecast.FLOOR_PRESET_STRIP) == HAY_STRIP_FACE)
-	_assert_hud("a three-account picker still wraps at the shared three columns",
-		_policy_picker_columns(_hud._drawercompose._compose_sheet)
-			== HudWorkVocab.POLICY_PICKER_COLUMNS)
+			SourceForecast.FLOOR_PRESET_PEAK) == ""
+			and _policy_rung_metric(_hud._drawercompose._compose_sheet,
+				SourceForecast.FLOOR_PRESET_STRIP) == "")
+	# **THE NEGATIVE HALF OF THE `now → after` READING.** A crew that never reaches the floor never
+	# enters the holding state, so promising it a held rate is the same class of lie as the burst
+	# wearing `/TURN`.
+	#
+	# **ASKED AT A FLOOR BELOW THE GROWTH PEAK, AND THAT IS THE WHOLE ASSERTION.** Written first
+	# against this frame's own `FLOOR_FOOD_PEAK` sheet, it was VACUOUS: at the peak the floor SITS ON
+	# the fastest regrowth, so any crew that can out-carry the regrowth there can also reach it, and
+	# `now == after` suppresses the arrow whether or not the gate exists — deleting the gate changed
+	# no pixel. Below the peak the crew must cross faster regrowth than it will meet at the floor, so
+	# settling short and having a different held rate are finally possible at once. The
+	# `ungated != gated` line is what proves this crew WOULD have been shown a second number; the line
+	# after it proves it was not; and `reach_crew` above them proves it is the settling crew we mean.
+	var rows_key := _hud._drawercompose.YIELD_MODEL_ROWS
+	var settles_crew := 1
+	var gated: Dictionary = _hud._drawercompose._forage_yield_model(_hud._band_labor.player_band(),
+		hay_meadow, FLOOR_CHART_HELD_FLOOR, settles_crew, SourceForecast.IMPROVEMENT_NONE, false)
+	var ungated: Dictionary = _hud._drawercompose._forage_yield_model(_hud._band_labor.player_band(),
+		hay_meadow, FLOOR_CHART_HELD_FLOOR, settles_crew, SourceForecast.IMPROVEMENT_NONE, true)
+	_assert_hud("this crew genuinely settles SHORT of the floor it is being priced against",
+		settles_crew < SourceForecast.reach_crew(hay_meadow, SourceForecast.SOURCE_KIND_FORAGE,
+			HudComposeVocab.FORAGE_FORECAST_PREFIX, FLOOR_CHART_HELD_FLOOR,
+			SourceForecast.IMPROVEMENT_NONE))
+	_assert_hud("…and genuinely HAS a different held rate, so the gate is what hides it",
+		str(ungated.get(rows_key, [])) != str(gated.get(rows_key, [])))
+	_assert_hud("…so a crew that settles short is promised NO held rate",
+		not str(gated.get(rows_key, [])).contains(SourceForecast.YIELD_ROW_AFTER))
+	_assert_hud("…and a row with no transition is given a header with no arrow to key",
+		_yields_header(_hud._drawercompose._compose_sheet).contains("PER TURN")
+			and not _yields_header(_hud._drawercompose._compose_sheet).contains("→"))
 
 	# State forage_three_accounts_overdraw — THE SAME meadow at floor 0 with a crew big enough to bite.
 	#
@@ -2082,8 +2122,8 @@ func _ready() -> void:
 		_hud._drawercompose._local_forage_preview_bbcode(
 			_hud._band_labor.player_band(), dead_season, SourceForecast.FLOOR_FOOD_PEAK, 1) != "")
 	_assert_hud("a zero rung states its zero rather than going blank",
-		_policy_rung_metric(_hud._drawercompose._compose_sheet,
-			SourceForecast.FLOOR_PRESET_PEAK) == DEAD_SEASON_FACE)
+		_policy_rung_tooltip(_hud._drawercompose._compose_sheet,
+			SourceForecast.FLOOR_PRESET_PEAK).contains(DEAD_SEASON_TOOLTIP))
 	# The cap is the half a PNG cannot testify to: `known` is a PRESENCE test, so a described-but-empty
 	# patch is capped at `MAX_USEFUL_BARREN` (1) — NOT left UNBOUNDED, which is what an undescribed one
 	# gets and what the old rate-based `known` wrongly handed this state.
@@ -2164,6 +2204,29 @@ func _ready() -> void:
 	_assert_hud("a patch drawn toward a reachable floor states a HOLD crew, not just a clearing one",
 		_crew_target_count(_hud._drawercompose._compose_sheet, HudWidgets.CREW_TARGET_HOLD)
 			!= CREW_TARGET_ABSENT)
+	# **THE BURST AND THE STEADY RATE, ON THE SAME READING.** The headline take is capped by the ROOM
+	# above the floor, so a crew big enough to clear that room in a turn or two had its one-off burst
+	# labelled `/TURN` — the misreading this pair exists to end. Asserted as `now → after` per account
+	# rather than as a second row: the three accounts are one biomass flow through a fixed vector, so
+	# a second row would carry one new fact three times.
+	var burst_text := _yields_text(_hud._drawercompose._compose_sheet)
+	_assert_hud("a crew that reaches the floor states what it takes NOW and what it holds AFTER",
+		burst_text.contains("0.22 → 0.06") and burst_text.contains("0.07 → 0.02"))
+	# The `after` must be strictly SMALLER, or the reading would be claiming a drawdown pays less than
+	# it does — and the two numbers coming from one function with two ceilings is exactly what could
+	# silently swap them. Both parsed off the rendered face, never recomputed here.
+	_assert_hud("…and the held rate is the LOWER of the two, on every account it states",
+		_yield_now_after(burst_text, "FOOD")[1] < _yield_now_after(burst_text, "FOOD")[0]
+			and _yield_now_after(burst_text, "FODDER")[1] < _yield_now_after(burst_text, "FODDER")[0])
+	# **THE UNIT IS SAID ONCE, IN THE HEADER, AND THE HEADER KEYS THE ARROW.** Three `/TURN`s were the
+	# widest thing on the row and it could not afford them once each account stated two numbers; the
+	# header also stops `→` being a glyph the player has to guess. `NOW → AFTER` is the crew buttons'
+	# own two words, which sit directly above it.
+	var burst_header := _yields_header(_hud._drawercompose._compose_sheet)
+	_assert_hud("the row states its unit once in a header, not per account",
+		burst_header.contains("PER TURN") and not burst_text.contains("/TURN"))
+	_assert_hud("…and the header keys the arrow while there is one to key",
+		burst_header.contains("NOW → AFTER"))
 	# **THE DRAG CONTRACT, which no frame can show.** A LIVE floor change must refill the readings that
 	# follow the floor WITHOUT rebuilding the controls — because the rebuild `queue_free`s the chart,
 	# and Godot routes motion to the node that took the press, so a rebuilt chart ends the drag on the
@@ -6200,6 +6263,12 @@ func _find_crop_row(root: Node, crop_name: String) -> Button:
 ## and NEVER by button text: the face lives on a two-Label stack beside an empty-`text` Button, so
 ## `_find_button_by_text` finds nothing at all here. "" when the rung is absent from the picker or
 ## wears its name alone (no metric).
+## A preset button's TOOLTIP — where the floor's metric lives now that the face carries only the
+## intent. Reached by the rung's meta like everything else here, never by its face.
+func _policy_rung_tooltip(root: Node, policy: String) -> String:
+	var btn := _find_policy_rung(root, policy)
+	return btn.tooltip_text if btn != null else ""
+
 func _policy_rung_metric(root: Node, policy: String) -> String:
 	var btn := _find_policy_rung(root, policy)
 	if btn == null:
@@ -6424,6 +6493,31 @@ func _crew_target_count(root: Node, key: String) -> int:
 func _yields_text(root: Node) -> String:
 	var row := _find_meta_node(root, HudWidgets.YIELDS_ROW_META)
 	return " ".join(_face_lines(row)) if row != null else ""
+
+## The readout's HEADER — the caption over the yields row, carrying the unit and (when the readings
+## state one) the key to their arrow. It is the row's SIBLING, not a Label inside it, which is what
+## keeps `_yields_text` reading only the numbers: asserting "the unit is not repeated per account"
+## against a string that included the header would pass on a row that repeated nothing and a header
+## that said everything. "" when no readout rendered.
+func _yields_header(root: Node) -> String:
+	var row := _find_meta_node(root, HudWidgets.YIELDS_ROW_META)
+	if row == null or row.get_parent() == null:
+		return ""
+	var index := row.get_index()
+	if index <= 0:
+		return ""
+	var caption := row.get_parent().get_child(index - 1)
+	return (caption as Label).text if caption is Label else ""
+
+## One account's `now → after` pair, parsed off the RENDERED face — `[now, after]`, or `[0, 0]` when
+## that account states no transition. Parsed rather than recomputed: a helper that asked
+## `expected_yield_account` twice would agree with the widget by construction and testify to nothing.
+func _yield_now_after(yields_text: String, account: String) -> Array:
+	# The face reads `<now> → <after> <ACCOUNT>`, so the pair is the three tokens before the account.
+	var upto := yields_text.split(account)[0].strip_edges().split(" ", false)
+	if upto.size() < 3 or upto[upto.size() - 2] != "→":
+		return [0.0, 0.0]
+	return [float(upto[upto.size() - 3]), float(upto[upto.size() - 1])]
 
 ## The CREW ROW's label — `HUNTERS` / `HERDERS` / `FORAGERS`, the crew noun the sheet resolved off the
 ## composed improvement axis. By meta rather than by text, because the sheet's EYEBROW two rows above

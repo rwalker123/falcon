@@ -173,10 +173,13 @@ func _emit_improvement(band: Dictionary, kind: String, composed: String, standin
 ## `workers × per_worker × build_dip`, so a take priced without it quotes ~4× what the herd will hand
 ## over. It is the caller's already-live verb (`SourceForecast.live_improvement`), never a raw composed
 ## one: a rung this herd has already climbed dips nothing.
-func _hunt_take_rate(herd: Dictionary, floor: float, workers: int, improvement: String) -> Dictionary:
+## `holding` asks the same question of the steady state — the ceiling becomes one turn's regrowth at
+## this floor instead of the room above it. Same swap, same reason, as `_hunt_delivered_and_waste`'s.
+func _hunt_take_rate(herd: Dictionary, floor: float, workers: int, improvement: String,
+        holding: bool = false) -> Dictionary:
     var rates := SourceForecast.herd_axis_rates(herd, floor, improvement)
     var per_worker_rate := float(rates["per_worker"])
-    var ceiling := float(rates["ceiling"])
+    var ceiling := float(rates["hold_ceiling" if holding else "ceiling"])
     if workers <= 0 or per_worker_rate <= 0.0 or ceiling < 0.0:
         return {"available": false}
     return {
@@ -226,8 +229,14 @@ func _hunt_avg_window_turns(herd: Dictionary, floor: float, improvement: String)
 ## food/turn; `waste_pct` 0..1) or `{available=false}` when a lever/ceiling is absent (caller degrades to
 ## the old food/turn line). NEVER re-derives the ecology model — `food_per_animal` and the flow ceiling
 ## are sim exports.
+##
+## **`holding` ASKS THE SAME QUESTION OF THE STEADY STATE** — the take once the herd sits at its floor
+## and only regrowth is on offer. It swaps ONLY the ceiling (the room becomes one turn's regrowth) and
+## leaves the crew, the dip and the quantisation exactly where they are, so the burst and the steady
+## rate are the same computation asked twice. A separate steady-state formula would be free to drop
+## the whole-animal branch and print a smooth number beside a bodies-per-turn one.
 func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        improvement: String) -> Dictionary:
+        improvement: String, holding: bool = false) -> Dictionary:
     # PER COMPONENT, on the one this species pays (issue #337). The three terms must come from the SAME
     # axis or the arithmetic is nonsense: a wolf's per-animal FOOD quantum is 0 (divide by zero) while
     # its per-animal TRADE quantum is real. `herd_axis_rates` is the single place that choice is made,
@@ -246,7 +255,7 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
     var fpa := float(rates["per_animal"])
     var per_worker := float(rates["per_worker"])
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
-    var ceiling := float(rates["ceiling"])
+    var ceiling := float(rates["hold_ceiling" if holding else "ceiling"])
     if fpa <= 0.0 or per_worker <= 0.0 or ceiling < 0.0 or workers <= 0:
         return {"available": false}
     ceiling *= output
@@ -348,7 +357,7 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 ## `workers × per_worker × build_dip`, and it is the crew's collection that is then quantised into whole
 ## animals); the SUSTAIN reference below must not.
 func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers: int,
-        improvement: String) -> Dictionary:
+        improvement: String, reaches: bool = false) -> Dictionary:
     # **THE SUSTAINABILITY BAR IS THE FOOD PEAK'S CEILING**, on the SAME axis the take is measured on
     # (comparing a trade take against a food ceiling would flag every wolf hunt as an overdraw, or
     # none of them). It is the floor at which the herd settles on its most productive biomass, so a
@@ -380,11 +389,17 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
         var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
         var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
             else SourceForecast.YIELD_ACCOUNT_FOOD
+        var smooth_row := {
+            SourceForecast.YIELD_ROW_ACCOUNT: account,
+            SourceForecast.YIELD_ROW_VALUE: actual,
+        }
+        var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
+        if reaches and bool(smooth_hold.get("available", false)):
+            var held := float(smooth_hold["rate"]) * output
+            if not is_equal_approx(held, actual):
+                smooth_row[SourceForecast.YIELD_ROW_AFTER] = held
         return {
-            YIELD_MODEL_ROWS: [{
-                SourceForecast.YIELD_ROW_ACCOUNT: account,
-                SourceForecast.YIELD_ROW_VALUE: actual,
-            }],
+            YIELD_MODEL_ROWS: [smooth_row],
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
                 SourceForecast.format_trade(actual) if trade_axis \
                 else SourceForecast.format_yield(actual)),
@@ -403,13 +418,29 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
+    # THE STEADY-STATE ANIMAL RATE, composed the same way and therefore quantised the same way. It
+    # rides `YIELD_ROW_NUMBER` rather than `YIELD_ROW_AFTER` because this row's face is a COMPOSED
+    # string (`≈0.41`, not a magnitude the widget formats), so the transition has to be composed here
+    # too — the widget's own arrow would set a raw float beside an `≈`-prefixed one.
+    var animal_row := {
+        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
+        SourceForecast.YIELD_ROW_VALUE: animal_rate,
+        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
+        HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
+    }
+    var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
+    if reaches and bool(held.get("available", false)):
+        var held_fpa := float(held["per_animal"])
+        var held_rate := float(held["delivered"]) / held_fpa if held_fpa > 0.0 else 0.0
+        if not is_equal_approx(held_rate, animal_rate):
+            animal_row[HudWidgets.YIELD_ROW_NUMBER] = SourceForecast.YIELD_AFTER_FORMAT % [
+                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
+                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _format_animal_rate(held_rate)]
+            # The row must still DECLARE it carries a transition, or the header above it has no arrow
+            # to key. The value is the composed face's; nothing reads this one for the hunt row.
+            animal_row[SourceForecast.YIELD_ROW_AFTER] = held_rate
     return {
-        YIELD_MODEL_ROWS: [{
-            SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-            SourceForecast.YIELD_ROW_VALUE: animal_rate,
-            HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
-            HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
-        }],
+        YIELD_MODEL_ROWS: [animal_row],
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
             and _herd_take_draws_down(herd, floor, workers, improvement),
@@ -480,7 +511,8 @@ const YIELD_MODEL_TEXT := "text"
 const YIELD_MODEL_OVERDRAW := "overdraw"
 const YIELD_MODEL_WASTE := "waste"
 func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
-        workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE) -> Dictionary:
+        workers: int, improvement: String = SourceForecast.IMPROVEMENT_NONE,
+        reaches: bool = false) -> Dictionary:
     # The FOOD-PEAK ceiling is the patch's sustainable yield (what it will pay forever), so a take
     # above it draws the patch down — the same bar the hunt version uses, for the same reason.
     var sustain := SourceForecast.forecast_inputs(tile_info, SourceForecast.SOURCE_KIND_FORAGE,
@@ -498,7 +530,21 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
     var zero_account := String(forecast["zero_account"])
-    var rows := SourceForecast.yield_rows(actual, actual_trade, actual_fodder, zero_account)
+    # THE STEADY-STATE TAKE, one `min` against a different ceiling — the SAME `expected_yield_account`,
+    # reached by key, so the burst and the hold rate cannot be computed two ways. Composed only when
+    # the crew actually reaches the floor: a crew that settles short never enters the holding state,
+    # and promising it a rate it never attains is the failure this whole reading exists to fix.
+    var after := {}
+    if reaches:
+        after = {
+            SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
+                forecast, workers, band, "per_worker", "hold_ceiling"),
+            SourceForecast.YIELD_ACCOUNT_TRADE: SourceForecast.expected_yield_account(
+                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade"),
+            SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
+                forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
+        }
+    var rows := SourceForecast.yield_rows(actual, actual_trade, actual_fodder, zero_account, after)
     if rows.is_empty():
         # The patch pays in NO account at all — there is no line to draw rather than a zero to print.
         return {}
@@ -1019,16 +1065,22 @@ func _mount_readout(parent: VBoxContainer, hosts: Array, model: Dictionary, work
         yields_at: Callable, labor_kind: String) -> void:
     var known := bool(model.get("known", false))
     var floor_value := float(model.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR))
-    if not known and (yields_at.call(floor_value, workers) as Dictionary).is_empty():
+    if not known and (yields_at.call(floor_value, workers, false) as Dictionary).is_empty():
         return
     var column := HudWidgets.build_readout_box(parent)
     var yields_host := VBoxContainer.new()
     yields_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     column.add_child(yields_host)
+    # **THE `after` READING IS GATED ON THE SAME WALK THE VERDICT READS**, not on a closed form beside
+    # it. `reached_turn` is what the sentence one line down says out loud ("Reaches the floor in 3
+    # turns"), so a row promising a holding rate under a verdict saying the crew never gets there is
+    # not possible. A source with no chart has no walk and therefore no holding state to promise.
     _register_live(hosts, yields_host, model, workers,
         func(host: Container, live: Dictionary, crew: int) -> void:
             _fill_yields_host(host, yields_at.call(
-                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), crew), labor_kind))
+                float(live.get("floor", SourceForecast.DEFAULT_HARVEST_FLOOR)), crew,
+                int(live.get("reached_turn", SourceForecast.PROJECTION_REACHED_NONE))
+                    != SourceForecast.PROJECTION_REACHED_NONE), labor_kind))
     if known:
         var verdict_host := VBoxContainer.new()
         verdict_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1315,9 +1367,9 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
         # The take is recomposed from the LIVE floor, so the numbers the player is dragging toward
         # move while the drag runs.
         _mount_readout(target, live_hosts, chart_model, _compose.hunt_count(),
-            func(floor_value: float, crew: int) -> Dictionary:
+            func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
                 return _hunt_yield_model(band, herd, floor_value, crew,
-                    composed_improvement),
+                    composed_improvement, reaches),
             SourceForecast.LABOR_KIND_HUNT)
         # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is offered on
         # an UNASSIGN, for the reason the forage sheet already records: what abandoning costs is stated
@@ -1847,8 +1899,9 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # box at three registers (§7.1, §7.2). The take is recomposed from the LIVE floor, which is what
     # lets the numbers the player is dragging toward move while the drag runs.
     _mount_readout(target, live_hosts, chart_model, _compose.forage_count(),
-        func(floor_value: float, crew: int) -> Dictionary:
-            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement),
+        func(floor_value: float, crew: int, reaches: bool) -> Dictionary:
+            return _forage_yield_model(band, tile_info, floor_value, crew, composed_improvement,
+                reaches),
         SourceForecast.LABOR_KIND_FORAGE)
     # THE IMPROVEMENT ROW — the second axis, beneath the stance it multiplies. Nothing is forecast for
     # an UNASSIGN: what abandoning costs is already on the card in the rung's own hint ("It must stay

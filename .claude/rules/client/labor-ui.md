@@ -462,7 +462,7 @@ for either finds the other, measured at seven false failures.
 
 | register | what it answers | treatment |
 |---|---|---|
-| **yields** | what this crew brings home at this floor | 15px tabular number + 10px uppercase unit (`2.34  FOOD/TURN`) |
+| **yields** | what this crew brings home at this floor, now and once holding | a header (`PER TURN · NOW → AFTER`) over 15px tabular numbers + 10px uppercase account names (`2.26 → 0.42  FOOD`) |
 | **verdict** | which of the crew and the floor is binding | 12px + the severity dot, colour by severity |
 | **aside** | the idle-crew note and the floor's teaching line | 11px `INK_FAINT` under a dashed rule |
 
@@ -563,6 +563,37 @@ to cross, which is a closed form, with a few probe steps past it for "reaches, b
 drawn horizon". The floor-0 flavours the prototype spells out are deliberately NOT here: what
 stripping costs is already the FLOOR HINT's sentence (`FLOOR_STRIP_CONSEQUENCE`), and a verdict
 restating it says one fact twice.
+
+**THE HEADLINE TAKE IS A BURST, NOT A RATE, AND THE ROW NOW SAYS BOTH.** `expected_yield_account` is
+`min(workers × per_worker, ceiling)` where the ceiling is the ROOM above the floor — everything
+standing there, takeable ONCE. A crew big enough to clear that room in a turn or two therefore had a
+one-off quantity labelled `/TURN`, and on a full patch the headline could be 5× the rate the source
+actually sustains. Each account states `now → after`, where `after` is the same `min` against
+`hold_ceiling` (one turn's regrowth at that floor, through the same per-biomass vector).
+
+Four things follow, and each is load-bearing:
+
+- **The second reading rides the SAME row, per account.** The three accounts are one biomass flow
+  through a fixed vector — check any picker: `9.16 / 7.64 / 6.24` then `4.58 / 3.82 / 3.12`, the same
+  ratio halved — so a second ROW of three numbers would carry ONE new fact in three slots. The
+  comparison is also per account, so the two numbers touch.
+- **It renders only where the crew REACHES the floor**, gated on the walk's `reached_turn` — the same
+  walk the verdict one line down narrates ("Reaches the floor in 3 turns"). A crew that settles short
+  never enters the holding state, and promising it a held rate is the failure this reading exists to
+  fix. `yield_rows` additionally drops it where the two are equal: an arrow to itself is noise.
+- **A managed rung-3 source has no burst** — the sim never draws a Field or built Pen down, so its
+  `hold_ceiling` IS its ceiling and one reading renders.
+- **The unit is hoisted into the header.** Three `/TURN`s were the widest thing on the row and it
+  could not afford them once each account stated two numbers. Hoisted, not deleted: a preset's tooltip
+  states `up to +0.60/turn` for the ROOM, so something has to mark which kind of number this is. The
+  header doubles as the arrow's key, in the crew buttons' own two words.
+
+**THE PRESET FACES STATE NO NUMBER**, only the intent (`♻ Best harvest`); the metric kept its tooltip.
+Nine numbers stood across the top of the sheet and every one misled: they are the ROOM (one-off) over a
+row of per-turn rates; they rank the presets BACKWARDS from the decision (`Take everything` reads twice
+`Best harvest` while paying ~nothing forever); they are in food/trade/fodder units directly above a
+chart whose axis is BIOMASS; and they are worker-independent, so they alone sat still while the sheet
+under them moved with the stepper.
 
 **A STOCK IS NOT A RATE.** `SourceForecast.format_stock` prints whole biomass, matching the tile
 card's own `Foraging 35 / 100`; `format_magnitude`'s two decimals are the food-RATE rule and spending
