@@ -90,11 +90,21 @@ authored directly rather than emerging from a product of constants. Its reciproc
 form and is what the UI should show: `1 / engage_rate` = hunters per animal. A mammoth at `0.05` is
 twenty hunters to engage one; a rabbit at `4` is a quarter of a hunter.
 
-**The minimum party size falls out and needs no field of its own.** Three hunters against a mammoth
-engage `floor(3 × 0.05) = 0` animals — they cannot hunt it, and the model says so without a separate
-threshold concept. There is no accumulation toward a future kill: **the mammoth does not wait while
-you bank effort.** A party below the engagement threshold gets nothing, this turn and every turn,
-until it grows.
+**A fractional engagement is an encounter chance, never a rounded-down zero.** Three hunters against
+a mammoth come to `3 × 0.05 = 0.15` animals. Flooring that gives zero this turn and every turn, which
+says a small band can *never* take a mammoth — too strong. What is actually fractional here is
+**opportunity**: a band does not corner a mammoth every turn, it does so when it finds one under
+conditions that allow it. So a sub-unit engagement resolves as a **probability of engaging one**,
+drawn from the same per-event seed as the retreat roll (§6.2) so the hunt has one source of variance
+rather than two.
+
+**Effort within a fight still does not accumulate**, and the distinction matters: there is no bank
+of partial damage carried between turns, because the mammoth does not wait while you wear it down.
+Encounters are a rate; a single fight is not.
+
+**The minimum party size still falls out and needs no field of its own** — it is simply where the
+encounter chance becomes small enough that the species is not worth hunting, which the forecast
+reports as a range rather than the sim enforcing as a threshold.
 
 **It is not the gate.** Engagement says how many you can take on; §4's attack-vs-defense says whether
 you can hurt them. Twenty bare-handed hunters *do* engage a mammoth — and the fight resolves as
@@ -289,9 +299,12 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
   stream crept in.
 - **The gate.** A party whose attack is below the quarry's defense kills **zero** at any headcount,
   and takes casualties proportional to `ferocity`. This is §0.2, pinned.
-- **Sub-threshold parties get nothing, forever.** Three hunters against a mammoth take zero on turn
-  1 and on turn 100 — no accumulation. Paired with a liveness assertion that twenty hunters do take
-  one, since "always zero" is what a broken engagement stage also looks like.
+- **A fractional engagement never rounds to zero.** Three hunters against a mammoth engage one
+  *sometimes*, at a frequency tracking `hunters × engage_rate`, asserted across seeds — never zero on
+  every turn forever. Paired with a liveness assertion that twenty hunters take one reliably, since
+  "always zero" is what a broken engagement stage also looks like.
+- **No partial damage survives a turn.** A fight that does not kill leaves no accumulated state on
+  the herd; only the encounter *chance* is a rate.
 - **The fast path is free.** A one-sided engagement produces no casualties, no battle report, and
   costs no more than today's take path.
 - **Distribution over seeds, with liveness.** Non-zero wariness produces a spread whose mean tracks
@@ -307,10 +320,11 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 | # | Question | Notes |
 |---|---|---|
 | 1 | **`engage_rate` values.** | The roster needs a pass. The readable form (`1 / engage_rate` = hunters per animal) is what to author against — "twenty hunters to take a mammoth" is a judgement anyone can make; "0.05" is not. |
-| 2 | **Does engagement scale linearly with party size?** | Twenty hunters engaging twenty times one hunter's worth assumes no crowding and no detection penalty. A large party is easier to notice, which is an argument for sub-linearity — and it interacts with wariness rather than replacing it. |
-| 3 | **Does the escapement floor bound `engaged` or `killed`?** | Specified as `engaged`, so restraint means not starting the fight. Bounding `killed` instead would mean killing animals and letting them lie, which is denial's job, not a hunt's. |
-| 4 | **Do escaped animals become warier?** | The dynamic half of §3 exists for troops. A herd that has been hunted hard learning to flee is the same mechanic, and would give hunting pressure a memory — but it makes species values non-static and is deliberately out of this arc. |
-| 5 | **What does the client show for a fight it cannot win?** | The gate produces "you will lose people and kill nothing." That must be legible *before* committing a party, which is a stronger demand on the pre-launch readout than a yield number. |
+| 2 | **Are `engage_rate` values authored against the herd's spare stock?** | For most species the escapement floor binds long before engagement does, so a rate set too low silently becomes a *second* floor. It should bite only for megafauna, the big migratory herds, and denial. |
+| 3 | **Does engagement scale linearly with party size?** | Twenty hunters engaging twenty times one hunter's worth assumes no crowding and no detection penalty. A large party is easier to notice, which is an argument for sub-linearity — and it interacts with wariness rather than replacing it. |
+| 4 | **Does the escapement floor bound `engaged` or `killed`?** | Specified as `engaged`, so restraint means not starting the fight. Bounding `killed` instead would mean killing animals and letting them lie, which is denial's job, not a hunt's. |
+| 5 | **Do escaped animals become warier?** | The dynamic half of §3 exists for troops. A herd that has been hunted hard learning to flee is the same mechanic, and would give hunting pressure a memory — but it makes species values non-static and is deliberately out of this arc. |
+| 6 | **What does the client show for a fight it cannot win?** | The gate produces "you will lose people and kill nothing." That must be legible *before* committing a party, which is a stronger demand on the pre-launch readout than a yield number. |
 
 ---
 
