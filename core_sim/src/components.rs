@@ -1375,13 +1375,22 @@ pub fn raid_is_recurring(floor: f32) -> bool {
 /// **The IMPROVEMENT a crew is building on a source** — *what am I building here?* — the second,
 /// independent axis of a labor assignment (issue #442, `docs/plan_investment_rung_toggle.md` §2).
 ///
-/// These are the intensification ladder's **rung-transition verbs**. While one is in flight the
-/// source's take ceiling is only the rung's `yield_fraction_while_building` × the **selected
-/// stance's** ceiling — a deliberate **yield dip**, because the crew is preparing the ground /
-/// gentling the herd / building the pen instead of harvesting it — and the source's build meter
+/// These are the intensification ladder's **rung-transition verbs**. While one is in flight the crew
+/// carries only the rung's `yield_fraction_while_building ×` what a harvesting crew of the same size
+/// carries — a deliberate **yield dip**, because they are preparing the ground / gentling the herd /
+/// building the pen instead of harvesting it — and the source's build meter
 /// (`ForagePatch::cultivation_progress` / `field_progress`, `Herd::domestication_progress` /
 /// `corral_progress`) accrues the rung's `progress_per_turn`. At progress `1.0` the source becomes a
 /// **tended patch / Field / pastoral herd / penned herd** and pays the full managed yield.
+///
+/// **The dip multiplies the CREW, never the escapement ceiling** (`docs/plan_harvest_floor.md`
+/// §3.1). On the ceiling it was **floor-dependent**, so the harshest draw built for free: a deeper
+/// floor offers a bigger stock, and a fraction of a bigger stock still filled the baskets. On
+/// throughput it is floor-independent by construction — there is no floor you can pick that dodges it
+/// — and legible: at half carry it takes twice the people to clear the same standing surplus. So a
+/// build costs yield only while *hands* are the scarce thing; a crew the source's own ceiling binds
+/// pays nothing for it, and the honest answer is to hire more people.
+/// [`crate::intensification::LadderConfig::build_dip`] is the one seam both webs read it through.
 ///
 /// **At most one is ever in flight, and it is always the source's next rung** — the rungs are
 /// strictly ordered, so you cannot Sow ground you have not tended and a tended patch has nothing left
@@ -1391,10 +1400,13 @@ pub fn raid_is_recurring(floor: f32) -> bool {
 /// `Cultivate`/`Sow` are plant-only, `Tame`/`Corral` animal-only — see [`Improvement::valid_for_forage`]
 /// / [`Improvement::valid_for_hunt`].
 ///
-/// **A non-Sustain stance is LEGAL beside any of these** (§2.1). It defeats itself through the
-/// ecology rather than through a gate: the build meter accrues only while the source is Thriving, and
-/// the harsher stances are what drive it out of Thriving — amplified by the dip, which now rides
-/// *their* larger ceiling.
+/// **Any floor is LEGAL beside any of these** (§2.1), and the deep ones defeat themselves through
+/// arithmetic rather than through a gate: `build_accrual` scales the meter by
+/// [`crate::intensification::learn_multiplier`] of the floor the crew holds, so pulling hard on a
+/// source you are also improving makes the build **slow**, not impossible. **The `Thriving` gate is
+/// gone** (`docs/plan_harvest_floor.md` §3.2) — it stopped accrual outright, which under a continuous
+/// dial would have made a whole stretch of the dial silently inert, with no lapse state left to
+/// explain it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Improvement {
     /// **Plant-only.** Prepare the patch into a tended crop (plant rung 2).

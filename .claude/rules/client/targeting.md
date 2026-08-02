@@ -112,8 +112,9 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   the band; the pick resolves to a huntable herd on the clicked hex (`_huntable_herd_on_tile` reads
   `tile_info.herds`), fills the sheet's Quarry row, and the sheet's own Send then emits
   `send_hunt_expedition_requested` → `Main._on_hud_send_hunt_expedition` →
-  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [policy]` (trailing policy;
-  server defaults Sustain). No huntable herd on the hex → a command-feed nudge, stays in targeting.
+  `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor]` (a trailing `0.0..=1.0`
+  fraction of `K`; the server defaults `DEFAULT_ESCAPEMENT_FLOOR`, and a retired stance word is a hard
+  parse error rather than a default). No huntable herd on the hex → a command-feed nudge, stays in targeting.
   For `need == "herd"` `AnnotationRenderer.draw_targeting` reticles the hovered hex and glows the herds that are
   **valid quarries — those strictly BEYOND the outfitting band's `hunt_reach`**, never every huntable
   herd. A nearer herd is a LOCAL hunt (the same split `_build_herd_assign_controls` makes between

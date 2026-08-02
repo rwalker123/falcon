@@ -60,12 +60,17 @@ pub struct ExpeditionConfig {
 }
 
 /// Hunting-expedition levers (`docs/plan_exploration_and_sites.md` §2b). A hunt party follows a
-/// migratory herd, takes a **productive** hunt's worth of biomass each turn (`workers ×
-/// per_worker_biomass_capacity`, capped per policy — **Sustain** by the shared MSY *flow* ceiling
-/// (`fauna::hunt_escapement_ceiling`, the same take a resident band's Hunt arm makes), the depleting
-/// policies by their *stock* headroom down to their floor; see `hunt_expedition_ceiling`),
-/// accumulates food up to a carry cap, and delivers it. The take **policy** is chosen
-/// per-expedition at launch (on the mission), not here.
+/// migratory herd and takes the herd's **standing surplus above the floor its mission names** as
+/// fast as its own throughput (`workers × per_worker_biomass_capacity`) can carry it — one
+/// expression, `fauna::hunt_escapement_ceiling`, the same constant-escapement rule a resident band's
+/// Hunt arm resolves (`docs/plan_harvest_floor.md` §1). What still separates the two is *pace*, not
+/// shape: a raid works one herd with its whole party until the surplus is gone, a resident band a
+/// turn at a time. It accumulates food up to a carry cap and delivers it.
+///
+/// **The take axis is a FLOOR, an `f32` on `ExpeditionMission::Hunt` chosen at launch** — not a
+/// policy, and not tunable here. The per-policy split this doc once described (a Sustain *flow*
+/// ceiling against the depleting stances' *stock* headroom) went with the stances; `hunt_expedition_
+/// ceiling` and `hunt_expedition_floor` no longer exist.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HuntExpeditionConfig {
     /// Carry cap = `party_workers × this` (provisions). Tuned so a party fills a cap in ~4–6 active
@@ -83,7 +88,7 @@ pub struct HuntExpeditionConfig {
     /// estimated turns-to-fill exceeds this is flagged NOT VIABLE in the `ExpeditionSent` feed line
     /// (it still launches — the player's call). Default **20** = 4× the throughput-implied trip
     /// length, where that length is `per_worker_carry / (per_worker_biomass_capacity ×
-    /// provisions_per_biomass)` = `4.0 / (40 × 0.02)` = 5 turns — the turns any policy needs to fill
+    /// provisions_per_biomass)` = `4.0 / (40 × 0.02)` = 5 turns — the turns any floor needs to fill
     /// a pack at *full* hunter throughput. Beyond 4× that, the herd's sustainable yield (not the
     /// hunters) is the binding constraint by a wide margin, and the trip is a trap.
     pub viability_warn_turns: u32,
@@ -92,8 +97,9 @@ pub struct HuntExpeditionConfig {
     /// - *Information*: `viability_warn_turns` is 20, so a trip past ~3× that is emphatically not
     ///   viable and the exact turn count carries no information a player can act on — "won't fill"
     ///   says everything.
-    /// - *Cost*: the forecast is exported per herd × policy × party size every snapshot, so the
-    ///   horizon bounds the per-snapshot work (`policies × max_party_size × this` turn-steps/herd).
+    /// - *Cost*: the forecast is exported per herd × **sampled floor** × party size every snapshot
+    ///   (the floor is continuous, so the wire carries `RAID_FORECAST_FLOOR_SAMPLES` of it), so the
+    ///   horizon bounds the per-snapshot work (`samples × max_party_size × this` turn-steps/herd).
     pub forecast_horizon_turns: u32,
 }
 
@@ -192,7 +198,7 @@ impl ExpeditionConfig {
             MIN_COUNTED_LEVER,
         )?;
         // **The bug this validator was written for.** `simulate_hunt_trip` loops `1..=horizon`, so a
-        // `0` horizon simulates zero turns: every herd × policy × party size reports `turns_to_fill =
+        // `0` horizon simulates zero turns: every herd × sampled floor × party size reports `turns_to_fill =
         // None` + `first_turn_provisions = 0`, the launch feed says "the party will return empty" for
         // every trip, and the client's `_hunt_trip_impossible` gate disables every send button.
         // Hunting expeditions cease to exist, silently.
@@ -422,7 +428,8 @@ mod tests {
 
     /// **The regression this validator exists for.** A `0` forecast horizon used to be accepted
     /// silently and killed every hunting expedition on the map (zero simulated turns → `turns_to_fill
-    /// = None` for every herd × policy × party size → the client disables every send button). It must
+    /// = None` for every herd × sampled floor × party size → the client disables every send button).
+    /// It must
     /// now be *rejected*, not merely "not shipped".
     #[test]
     fn zero_forecast_horizon_is_rejected() {

@@ -1554,16 +1554,6 @@ fn regrow_patch(patch: &mut ForagePatch, forage: &ForageLaborConfig) {
     patch.refresh_ecology_phase(&ecology);
 }
 
-/// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
-/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal × build_dip`),
-/// clamp to the patch's remaining biomass, **subtract it from the patch**, and convert the take to
-/// provisions (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
-///
-/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1 + §3.1):
-/// `min(crew throughput × build_dip, max(0, B − floor·K))`. The **floor** is a fraction of `K` the
-/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it); the
-/// **dip** is whatever the crew is building, and it multiplies the *crew* — see
-/// [`forage_escapement_ceiling`] for why it left the ceiling.
 /// **The rung a patch stands on** — the plant ladder resolved for one patch, top-down: sown →
 /// `plant:field`, cultivated → `plant:tended`, else `plant:wild`. The exact twin of
 /// `fauna::herd_rung`, and the same seam: a system asks the patch for its rung and reads what that
@@ -1582,9 +1572,20 @@ pub(crate) fn patch_rung<'a>(patch: &ForagePatch, ladder: &'a LadderConfig) -> &
     })
 }
 
-// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so it
-// carries the tile's composition and the flora table alongside the forage config — one extra
-// reference each, not one extra model.
+/// The forage counterpart of `fauna::hunt_take`: resolve the **escapement ceiling**, cap it by the
+/// gathering crew's throughput (`workers × per_worker_biomass_capacity × seasonal × build_dip`),
+/// clamp to the patch's remaining biomass, **subtract it from the patch**, and convert the take to
+/// provisions (× the caller's productivity `output_multiplier`). Returns the provisions gathered.
+///
+/// **The two webs' take paths are the same expression** (`docs/plan_harvest_floor.md` §1 + §3.1):
+/// `min(crew throughput × build_dip, max(0, B − floor·K))`. The **floor** is a fraction of `K` the
+/// assignment carries (`0.5` holds the patch on its most productive biomass, `0` strips it); the
+/// **dip** is whatever the crew is building, and it multiplies the *crew* — see
+/// [`forage_escapement_ceiling`] for why it left the ceiling.
+///
+/// The take resolves the patch's **conversion rate** off its own basket as well as its ecology, so
+/// it carries the tile's composition and the flora table alongside the forage config — one extra
+/// reference each, not one extra model.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn forage_take(
     patch: &mut ForagePatch,

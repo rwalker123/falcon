@@ -158,7 +158,7 @@ inversion is real; the fixture stages it deterministically for the harness.
 
 ## The on-tile yield label carries ONE component (issue #337)
 
-A hunt pays food AND trade goods, but the label sits on a hex a few pixels wide beside a policy glyph
+A hunt pays food AND trade goods, but the label sits on a hex a few pixels wide beside a floor mark
 and a `⚠` — there is no room for a second rate. `BandOverlayRenderer._draw_yield_label` therefore
 shows the product the species PAYS: food when `realized_yield` is non-zero (every forage patch and
 edible quarry, so those frames are unchanged), else the assignment's `realized_trade_yield` marked
@@ -166,6 +166,24 @@ with `FoodIcons.TRADE_GOODS_GLYPH`. A hunted wolf pack reads `⇄+0.22 ⇊` inst
 `YIELD_LABEL_COMPONENT_MIN` is the map twin of `SourceForecast.FOOD_FLOW_MIN` and is the test that
 decides which. Frame: `map_preview` `map_band_work` (the wolf label beside the deer's `+0.20`); the
 general render-only-when-non-zero rule lives in `labor-ui.md`.
+
+### The floor MARK is resolved ONCE and appended verbatim
+
+The label's trailing glyph is the assignment's floor ZONE mark — `_entry_floor_glyph(entry)` =
+`FoodIcons.for_floor_zone(SourceForecast.floor_zone(entry.floor))`, the same mark the work board's
+mark column and the floor picker wear. It travels through `_queue_yield_label` → the deferred batch →
+`_draw_yield_label` as `floor_glyph`, a **resolved glyph**, and every one of those hops spends it
+as-is.
+
+**A GLYPH RESOLVED ONCE AND RE-RESOLVED IS A MARK THAT VANISHES SILENTLY, and this one did.** The
+parameter was called `policy` and `_draw_yield_label` ran it back through `FoodIcons.for_policy` — a
+table keyed on the four IMPROVEMENT verbs since #442, which a floor-zone glyph is never a key of — so
+the lookup answered `""` and **the map drew no harvest mark at all** for the life of the harvest-floor
+arc. Nothing failed: a plain `+0.48` on a pill is a perfectly plausible label, and the frames that
+would have shown it were frozen with it missing. The parameter carries its content in its NAME now
+(`floor_glyph`), which is what makes the second lookup unwritable.
+
+The guard is `map_preview._assert_work_floor_marks` — see `test-harnesses.md`.
 
 
 ---

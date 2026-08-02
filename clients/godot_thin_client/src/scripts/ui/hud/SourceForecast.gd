@@ -982,12 +982,21 @@ static func escapement_room(src: Dictionary, prefix: String, floor: float) -> fl
 
 ## Is this source RUNG-3 MANAGED — a Field, or a built Pen? Such a source is never drawn down, so it
 ## pays its managed production at EVERY floor and the escapement composition does not apply to it (see
-## `FORECAST_MANAGED_FLAG_KEYS`). The COMPOSED improvement counts too: a crew committing to the rung
-## is asking what the rung pays, and quoting a wild stand's escapement there would price the wrong
-## source. Rung 2 (a Tended Patch, a pastoral herd) is deliberately NOT managed — it is still a wild
+## `FORECAST_MANAGED_FLAG_KEYS`).
+##
+## **IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE.** The wire flag is the only
+## input, and a source the crew is merely BUILDING toward rung 3 — mid-`Sow`, mid-`Corral` — is
+## deliberately NOT managed, because until the Field or the Pen exists the crew is still drawing the
+## WILD stand down (at a dipped carry — see `build_dip`), and that drawdown is exactly what the sheet
+## has to price. Reading the composed rung here would quote a source that does not exist yet: the
+## escapement chart would blank on a stand that is still being harvested, and a pastoral herd's
+## ceiling would swap to `corral_yield` while its animals are still being hunted off the range. Rung 2
+## (a Tended Patch, a pastoral herd) is not managed either, and for the same reason — it is a wild
 ## stand and the sim keeps it floor-live.
-static func source_is_managed(src: Dictionary, kind: String, prefix: String,
-        improvement: String = IMPROVEMENT_NONE) -> bool:
+##
+## This function therefore takes NO improvement argument, and that absence is the point: it carried an
+## unused `improvement` parameter through five call sites, which read as an invitation to honour it.
+static func source_is_managed(src: Dictionary, kind: String, prefix: String) -> bool:
     if not FORECAST_MANAGED_FLAG_KEYS.has(kind):
         return false
     return bool(src.get(prefix + String(FORECAST_MANAGED_FLAG_KEYS[kind]), false))
@@ -1210,7 +1219,7 @@ static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float
 ## would staff a source against a projection it does not follow.
 static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         improvement: String) -> int:
-    if source_is_managed(src, kind, prefix, improvement):
+    if source_is_managed(src, kind, prefix):
         return 0
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
         per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement),
@@ -1233,7 +1242,7 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
 ## Field or a built Pen down, so a drawdown projection says nothing about how many hands it can use.
 static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: float,
         improvement: String) -> int:
-    if source_is_managed(src, kind, prefix, improvement):
+    if source_is_managed(src, kind, prefix):
         return 0
     var crew := crew_that_reaches(regrowth_samples(src, prefix),
         float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)),
@@ -1320,7 +1329,7 @@ static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
     if capacity <= 0.0 or not has_growth_curve(samples) \
-            or source_is_managed(src, kind, prefix, improvement):
+            or source_is_managed(src, kind, prefix):
         return true
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var carry := per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement)
@@ -1575,7 +1584,7 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
     var samples := regrowth_samples(src, prefix)
     var known: bool = capacity > 0.0 and has_growth_curve(samples) \
-        and not source_is_managed(src, kind, prefix, improvement)
+        and not source_is_managed(src, kind, prefix)
     var floor_value := clamp_floor(floor)
     if not known:
         return {"known": false, "floor": floor_value}
@@ -1757,7 +1766,7 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
     var hold_ceiling := 0.0
     var hold_ceiling_trade := 0.0
     var hold_ceiling_fodder := 0.0
-    if source_is_managed(src, kind, prefix, improvement):
+    if source_is_managed(src, kind, prefix):
         var rung := String(FORECAST_MANAGED_IMPROVEMENTS[kind])
         ceiling = float(src.get(prefix + String(FORECAST_PAYOFF_KEYS[rung]), 0.0))
         if FORECAST_PAYOFF_TRADE_KEYS.has(rung):

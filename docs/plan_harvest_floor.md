@@ -1,9 +1,10 @@
 # The Harvest Floor — one dial replaces the four-stance axis
 
-**Status:** slices 1, 2 and 3 landed (#452, #453, #454). The Sustain / Surplus / Deplete / Eradicate
-axis is **deleted on both food webs**; `FollowPolicy` no longer exists; learning and build accrual
-ride the floor, the `Thriving` gates are gone, and the build dip multiplies crew throughput rather
-than the take ceiling. Slice 4 (the client) is open — see §8.
+**Status:** ALL FOUR SLICES LANDED (#452, #453, #454, #455). The Sustain / Surplus / Deplete /
+Eradicate axis is **deleted on both food webs**; `FollowPolicy` no longer exists; learning and build
+accrual ride the floor, the `Thriving` gates are gone, and the build dip multiplies crew throughput
+rather than the take ceiling. The client ships the merged floor chart, the three presets, the two
+crew targets and the `now → after` readout — see §8.
 
 **Provenance.** The §0 measurements come from `core_sim/src/forage/stance_probe.rs`, which was an
 `#[ignore]`d harness when they were taken and is now a non-ignored property test. Re-run the
@@ -125,9 +126,11 @@ property that makes it the right shape — escapement is **`r`-independent**, un
   varies per tile and the player thinks in "half the herd"; and because the phase bands are already
   fractions of `K`, so a floor and a colour on the bar are the same object.
 - **Whole-animal quantisation is unchanged.** `quantise_animal_take(policy_ceiling, collection,
-  body_mass)` keeps its shape; the `policy_ceiling` argument simply becomes `max(0, B − floor × K)`.
-  The kill/carry/`wasted` distinction, the one-animal floor, and the `hunt_credit` bank all survive —
-  the bank is still needed for a slow breeder whose per-turn escapement is under one body mass.
+  body_mass)` keeps its shape; the ceiling argument simply becomes `max(0, B − floor × K)`.
+  The kill/carry/`wasted` distinction and the one-animal floor survive. **AS SHIPPED, the
+  `hunt_credit` bank did NOT**: banking a stock compounds it, so the resident take path stopped
+  writing the bank and a raid is now its one remaining writer (see `fauna.md` and `systems::hunt_take`).
+  The design text above proposed keeping it for a slow breeder; that is not what landed.
 - **Seasonal weight still folds into per-worker throughput**, exactly as `forage_take` does today. It
   can be `0` in a dead season, so consumers must not divide by it.
 
@@ -196,7 +199,9 @@ people are clearing ground, not gathering. Two consequences:
 
 - It is **stance-independent by construction** — there is no stance left to dodge it with, which is
   §0.3 fixed rather than patched.
-- It is legible: at 25% carry it takes four times the people to clear the same standing surplus.
+- It is legible: at the shipped 50% carry it takes twice the people to clear the same standing
+  surplus. (The design text said 25% / four times; the plant rungs were dialled to 0.50 to match the
+  animal ones, which had always been 0.50 — see `intensification.md`.)
 
 **A build is therefore free to a crew the source's own stock already binds.** If the standing room
 runs out before the throughput cap does, dipping the cap costs nothing. That is not §0.3 returning:
@@ -259,8 +264,9 @@ changes what the take converts to.
 - `forage.eradicate.take_fraction` 0.30
 - `hunt.surplus_multiplier` 1.5, `hunt.deplete_multiplier` 2.5, `hunt.surplus_escapement_fraction` 0.3
 
-Replaced by one `floor` fraction per assignment (plus, optionally, a `default_floor` for a fresh
-assignment — see §10).
+Replaced by one `floor` fraction per assignment. **A fresh assignment defaults to the CONSTANT
+`components::DEFAULT_ESCAPEMENT_FLOOR`, not a config lever** — §10 Q3 asked for "a lever or a
+constant" and the constant is what shipped, so do not go looking for a `default_floor` key.
 
 **Code:**
 
@@ -400,8 +406,10 @@ Each lands on its own PR.
    `MANAGED_SOURCE_FLOOR` rather than the assignment's, because a rung-3 managed source's take is its
    `managed_production` at every floor and there is no pressure the keeper chose: `ExtendPen`, and
    the Field/pen **earn** sites.
-4. **Client.** The merged chart, presets, single build checkbox, focus row, two crew targets, the
-   three-account readout with routing labels.
+4. **Client.** **Landed.** The merged chart, presets, single build checkbox, focus row, two crew
+   targets, and the three-account readout — which ships stating `now → after` per account and
+   **without** routing labels: all three accounts land in the working band's own stores since #381,
+   so a destination suffix carried no information.
 
 ---
 
@@ -444,7 +452,7 @@ Plus:
 |---|---|---|
 | 1 | **The learning curve's shape.** | Linear in the floor is what is specified. If knowledge should read as a commitment rather than a dividend it wants a knee — little below the food peak, steep above. Config lever either way. |
 | 2 | **Preset naming.** | *Keep it thriving / take everything* name the sim's band; the player may want the promise instead. |
-| 3 | **The default floor on a fresh assignment.** | `0.5` (the food peak) is the safe answer and makes the common case one click. Needs a config lever or a constant. |
+| 3 | **The default floor on a fresh assignment.** | **SETTLED — shipped as the constant `components::DEFAULT_ESCAPEMENT_FLOOR` (`0.5`, the food peak).** No config key exists; if one is ever wanted, that constant is the single site. |
 | 4 | **Where the market question goes.** | See §6. |
 | 5 | **The Foddering gate.** | A *wild* patch's fodder credit is gated on the faction knowing Foddering; rungs 2–3 are ungated. Does that gate survive, and if so how does the panel say so without a fourth state on the readout row? |
 

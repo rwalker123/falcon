@@ -4296,8 +4296,9 @@ fn forecast_production_and_take(
 /// - `wasted` = the uncollected signal ([`forecast_production_and_take`]): the production the crew
 ///   could not carry home,
 /// - `workers_needed` = the whole crew ([`source_crew_needed`]): the caller's `standing_crew` floored
-///   against the take-side count, itself the expected take inverted by the per-worker throughput (a
-///   ratio, so provisions-space matches the resolution path's biomass-space result),
+///   against the take-side count, itself the expected take inverted by the per-worker throughput **as
+///   the dip leaves it** (a ratio, so provisions-space matches the resolution path's biomass-space
+///   result),
 /// - `overdraws` = whether this policy draws the stock below what it sustains — the ⚠ ([`SourceYield`]).
 ///
 /// **`standing_crew` is what the source is owed whether or not it pays this turn** — a herd's
@@ -4328,6 +4329,12 @@ pub(crate) fn forecast_source_yield(
     arrivals: Vec<f32>,
 ) -> SourceYield {
     let (production, actual) = forecast_production_and_take(forecast, workers, floor, improvement);
+    // What ONE worker on this assignment actually moves — the crew's rate *after* the build dip,
+    // since §3.1 put the dip on the crew. Every staffing count below divides by this, never by the
+    // undipped `per_worker_yield`: the take it is inverting was paid at this rate.
+    let dipped_per_worker = forecast
+        .per_worker_yield
+        .scale(forecast.build_dips.of(improvement));
     SourceYield {
         actual: actual.provisions,
         // **Trade is telemetry, not larder income** — it never enters `food_income` (see
@@ -4368,20 +4375,28 @@ pub(crate) fn forecast_source_yield(
         // staffing count is a RATIO, and dividing a wolf's zero food take by its zero per-worker food
         // rate is the `0/0` the vector model exists to make impossible. Every edible species divides
         // exactly the numbers it divided before #337.
+        //
+        // **And BOTH branches divide by the DIPPED throughput** — `dipped_per_worker`, the exact term
+        // [`forecast_production_and_take`] scales the crew by. Dividing the undipped rate into a take
+        // that was paid the dip is a unit mismatch that lands on both webs at once: the plant branch
+        // reported `workers × dip` hands working out of `workers` assigned (advice that, followed,
+        // halves the take), and the animal branch sized the haul crew as if the party were harvesting
+        // when it is gentling. Seed and resolved row agreed with each other and both disagreed with
+        // the take, which is why a seed==resolved test cannot see it.
         workers_needed: match forecast.ratio_axis() {
             Some(axis) if forecast.quantises() => source_crew_needed(
                 standing_crew,
                 hunt_haul_workers(
                     forecast.ceiling_at(floor).component(axis),
                     forecast.body_mass_yield.component(axis),
-                    forecast.per_worker_yield.component(axis),
+                    dipped_per_worker.component(axis),
                 ),
             ),
             Some(axis) => source_crew_needed(
                 standing_crew,
                 workers_needed_for_take(
                     actual.component(axis),
-                    forecast.per_worker_yield.component(axis),
+                    dipped_per_worker.component(axis),
                     workers,
                 ),
             ),
@@ -4694,6 +4709,13 @@ pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32
 /// which is a big number, and it is the honest one** (`docs/plan_harvest_floor.md` §7.6): it is what
 /// makes *"this crew cannot draw the herd that low"* expressible instead of silently true. Do not
 /// clamp it.
+///
+/// **`per_worker` is the crew's EFFECTIVE throughput, dip included** — a crew gentling a herd hauls
+/// [`crate::intensification::LadderConfig::build_dip`]`×` what a hunting one does (§3.1 put the dip on
+/// the crew), so it takes proportionally more of them to clear the same room. Every caller passes
+/// `per_worker_biomass_capacity × build_dip`, which is also what the client's
+/// `SourceForecast.max_useful_workers` divides by; passing the undipped rate sizes a harvesting crew
+/// and then pays it the building take.
 ///
 /// Units are free — pass all three in biomass, or all three in provisions (the ratios
 /// are scale-invariant, so the provisions-space call in [`forecast_source_yield`] and the biomass-space

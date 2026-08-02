@@ -379,15 +379,16 @@ pub fn advance_expeditions(
                         }
 
                         // Productive take: the greedy raid (`expedition_take_biomass`) — the party
-                        // grabs the herd's standing surplus above the policy's `hunt_expedition_floor`
-                        // as fast as its throughput allows, so more hunters take more animals in
+                        // grabs the herd's standing surplus above the **mission's own floor** as fast
+                        // as its throughput allows, so more hunters take more animals in
                         // fewer-or-equal turns (a resident band's throttled per-turn rate was
                         // worker-independent — a second hunter only added pack to fill, lengthening the
                         // trip). The launch forecast SIMULATES this same helper, so the preview can't
-                        // quote a different raid than this take. Eradicate carries no food (denial).
+                        // quote a different raid than this take. An inedible quarry carries no food,
+                        // and that is a fact about the species, never about the floor.
                         let herd_biomass_before = herds.herds[idx].biomass;
                         // The surplus the raid may take — kept for the empty-pack diagnosis below
-                        // (`<= 0` → the herd is at/below the policy's floor and yields nothing).
+                        // (`<= 0` → the herd is at/below the mission's floor and yields nothing).
                         let standing_surplus =
                             (herd_biomass_before - floor * carrying_capacity.max(0.0)).max(0.0);
                         let quarry_yield = herd_hunt_yield(&herds.herds[idx], &fauna);
@@ -563,7 +564,7 @@ pub fn advance_expeditions(
                         let near_band_gate = herd_near_band && carried >= min_deliver;
 
                         // **The load-bearing completion fix.** A raid is over when the standing surplus
-                        // is spent — the herd is within one body of the policy's floor, so no whole
+                        // is spent — the herd is within one body of the mission's floor, so no whole
                         // animal is left to raid from standing stock (only the regrowth trickle the raid
                         // deliberately stops at). Without this a Sustain raid that grabs its surplus and
                         // hits K/2 would HANG, taking 0 every turn. **Every policy but Eradicate** —
@@ -796,12 +797,16 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 ///
 /// **A raid takes the standing surplus as fast as it can carry it.** Each turn the party takes as
 /// much biomass as its throughput allows off the herd's **standing surplus** — the stock above the
-/// policy's [`hunt_expedition_floor`] — so *more hunters take more animals in fewer-or-equal turns*,
-/// the whole point of the fix (the resident band's ceiling was a per-turn *rate* then, so it was
+/// `floor` its mission named — so *more hunters take more animals in fewer-or-equal turns*, the whole
+/// point of the fix (the resident band's ceiling was a per-turn *rate* then, so it was
 /// worker-independent and a second hunter only added pack to fill, making the trip *longer*). When
-/// the surplus is spent the herd sits at the floor and the raid comes home (the `hunt_trip_forecast`
-/// / `Hunting`-arm completion checks own that); Sustain leaves `K/2`, Surplus `0.30·K`, Deplete
-/// `0.15·K`.
+/// the surplus is spent the herd sits at that floor and the raid comes home (the
+/// `hunt_trip_forecast` / `Hunting`-arm completion checks own that).
+///
+/// **The floor is a continuous `f32` fraction of `K` the mission carries**, not one of four named
+/// stances — `0.50` (the food peak) settles the herd on its most productive biomass, `0` strips it
+/// bare. There is no table to look a stance up in: `hunt_expedition_floor` was deleted with the
+/// stances (`docs/plan_harvest_floor.md` §1).
 ///
 /// **The band now shares the raid's SHAPE but not its pace** (`docs/plan_harvest_floor.md` §1): both
 /// are constant escapement to the floor their orders name, and what still separates them is
@@ -841,7 +846,7 @@ fn expedition_take_biomass(
         );
         return AnimalTake::default();
     }
-    // The standing surplus above the policy's floor — everything the raid may take.
+    // The standing surplus above the mission's floor — everything the raid may take.
     let floor = floor * carrying_capacity.max(0.0);
     let standing_surplus = (biomass - floor).max(0.0);
     // Bank the party's processing throughput; the bank meters WHEN the next whole animal is ready,
@@ -989,20 +994,21 @@ pub fn hunt_take(
     take
 }
 
-/// What a hunting party can expect from a herd under a policy, computed **at launch** so the player
-/// sees the trip's economics before committing workers (`handle_send_hunt_expedition`), and exported
-/// per herd × policy × party size in the snapshot so the outfit UI can show it *before* the commit.
+/// What a hunting party can expect from a herd at a given **floor**, computed **at launch** so the
+/// player sees the trip's economics before committing workers (`handle_send_hunt_expedition`), and
+/// exported per herd × **sampled floor** × party size in the snapshot (the floor is continuous, so
+/// the wire carries marks on it) so the outfit UI can show it *before* the commit.
 /// Produced by [`hunt_trip_forecast`], a **bounded forward simulation** of the trip.
 pub struct HuntTripForecast {
     /// Turns of hunting (once in reach — travel is **not** counted) until the **raid completes**. A
     /// greedy raid ends when the pack fills **OR** the standing surplus is spent (the herd sits at the
-    /// policy's floor) **OR** the herd is lost — whichever comes first — so this is *"turns until the
+    /// mission's floor) **OR** the herd is lost — whichever comes first — so this is *"turns until the
     /// party comes home"*, **not** *"turns until the pack is full"* (a full-herd Sustain raid for a big
     /// party leaves `K/2` with a partial pack, and that is a *successful* short trip). `None` = the raid
     /// never completed within `hunt.forecast_horizon_turns`; the caller distinguishes the honest cases
     /// via the other fields: it **brings home no food** (`delivers_food == false` — an *inedible*
     /// quarry, e.g. a wolf), the herd had **no surplus to take** (`animals_taken == 0` — at/below the
-    /// policy's floor), or it only trickle-fills off regrowth (a slow breeder a big party can neither
+    /// mission's floor), or it only trickle-fills off regrowth (a slow breeder a big party can neither
     /// fill nor exhaust).
     pub turns_to_fill: Option<u32>,
     /// **Does this trip bring home FOOD?** REDEFINED by #337: it is now a fact about the **species**
@@ -1018,7 +1024,7 @@ pub struct HuntTripForecast {
     /// `animals_taken`) a "can this herd give me anything at all?" signal.
     pub first_turn_provisions: f32,
     /// **Whole animals the party KILLS over the raid** — the kill count (carried whole or partially
-    /// wasted). `0` = the herd is at/below the policy's floor and has no surplus to raid (the honest
+    /// wasted). `0` = the herd is at/below the mission's floor and has no surplus to raid (the honest
     /// non-viable case). A small party on a big animal now kills one and wastes most of it (mirroring
     /// the resident band), so this is a KILL count, not a delivered count — see `delivered_food`.
     pub animals_taken: u32,
@@ -1078,7 +1084,7 @@ const FIRST_HUNTING_TURN: u32 = 1;
 
 /// Forecast a hunting **raid** by simulating it forward turn by turn against the herd's own ecology,
 /// on the sim's arithmetic, until the party comes home — the pack fills, the **standing surplus is
-/// spent** (the herd sits at the policy's floor), or the herd is lost — or `hunt.forecast_horizon_turns`
+/// spent** (the herd sits at the mission's floor), or the herd is lost — or `hunt.forecast_horizon_turns`
 /// is hit. It does **not** divide a carry cap by a rate.
 ///
 /// *Why simulate?* A raid has **no single per-turn rate, and two completion conditions that cross over

@@ -727,8 +727,8 @@ const DEPLETED_CAP_FRACTION: f32 = 0.2;
 /// Regrowth rate for the clamp-binding pass. The **shipped** `ecology.regrowth_rate` (0.05) is far
 /// too gentle for any policy ceiling to exceed a herd's remaining biomass (MSY ≤ 0.05 × biomass,
 /// Surplus ≤ 0.08 × biomass), so the biomass clamp is inert under today's levers — but it is a
-/// *config lever*, and a designer raising it (or `surplus_multiplier` / `deplete_multiplier`) must
-/// not silently break the client's preview. At 2.0 the Surplus/Sustain ceiling on a
+/// *config lever*, and a designer raising it must not silently break the client's preview. At 2.0
+/// the Surplus/Sustain ceiling on a
 /// `DEPLETED_CAP_FRACTION` herd is ~1.6×/~0.3× its biomass, so the exported ceiling's biomass clamp
 /// (and `hunt_take`'s) genuinely binds and the two must still agree.
 const CLAMP_BINDING_REGROWTH_RATE: f32 = 2.0;

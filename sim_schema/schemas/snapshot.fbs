@@ -1307,13 +1307,20 @@ table ForagePatchState {
   sowCrewNeeded:uint = 0;
   // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
   // What ONE UNIT of this source's standing stock is worth, in each account, at the rates the sim
-  // actually pays with. With `biomass` (B), `carryingCapacity` (K) and the build-dip fractions
-  // already on this table, the client evaluates the ceiling at ANY floor:
+  // actually pays with. With `biomass` (B) and `carryingCapacity` (K) already on this table, the
+  // client evaluates the ceiling at ANY floor:
   //
-  //   ceiling(floor, rung) = max(0, B - floor*K) * <rung>BuildFraction * <account>PerBiomass
+  //   ceiling(floor) = max(0, B - floor*K) * <account>PerBiomass
   //
   // THIS IS WHY THE FLOOR IS DRAGGABLE. A fixed set of ceiling rows can answer the floors someone
   // thought to store; a player dragging a continuous dial asks a different question every frame.
+  //
+  // **NO BUILD FRACTION IN THIS EXPRESSION.** The dip rides the CREW, never the ceiling
+  // (docs/plan_harvest_floor.md §3.1) — the ground standing above a floor is there whether the crew
+  // is gathering it or clearing it. `<rung>BuildFraction` belongs on the *throughput* side, beside
+  // `perWorkerBiomass`; folding it in here too applies it twice and under-reports the ceiling of any
+  // source with a build in flight by exactly the dip (2x at the shipped 0.50). The sim's own
+  // `SourceYieldForecast::ceiling_at` takes no improvement at all, which is the same statement.
   //
   // **A deliberate, narrow exception to "the sim exports the answer."** That rule exists because a
   // hunt take is rounded to WHOLE ANIMALS — `floor(ceiling / bodyMass)` is not linear, so no client
@@ -1974,9 +1981,11 @@ table HerdTelemetryState {
   // --- THE PER-BIOMASS YIELD VECTOR (appended, docs/plan_harvest_floor.md §5) --------------------
   // What ONE UNIT of this herd's biomass is worth, in each account — the species' own `HuntYield`
   // (`FaunaConfig::hunt_yield_for`). The animal twin of `ForagePatchState`'s trio; see there for the
-  // full reasoning. With `biomass` (B) and `carryingCapacity` (K) already on this table:
+  // full reasoning, including why NO build fraction appears in this expression — the dip multiplies
+  // the crew's throughput, not the ceiling. With `biomass` (B) and `carryingCapacity` (K) already on
+  // this table:
   //
-  //   ceiling(floor, rung) = max(0, B - floor*K) * <rung>BuildFraction * <account>PerBiomass
+  //   ceiling(floor) = max(0, B - floor*K) * <account>PerBiomass
   //
   // which is what lets the compose sheet draw a continuous floor curve instead of reading a fixed
   // set of stance rows. **An inedible species (a wolf) reads `provisionsPerBiomass = 0` with

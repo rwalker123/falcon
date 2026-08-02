@@ -233,12 +233,14 @@ pays in conversion, never in concentration*. Authoritative design: `docs/plan_fl
   roster. `""` means **the wild mixed basket**, not "unknown". Note the pair is *recorded before it
   takes effect* — a patch still being prepared names its crop while still reading full `K` and the
   wild rate.
-- **The selection rides the labor assignment** — `LaborTarget::Forage { tile, policy, species }`,
-  beside the policy and for the same reason (a mutable property of the same source). It crosses the
+- **The selection rides the labor assignment** — `LaborTarget::Forage { tile, floor, species }`,
+  beside the floor and for the same reason (a mutable property of the same source). It crosses the
   wire as `AssignLaborCommand.species` (proto field 9, append-only) and the text form
-  `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>`; it round-trips through
-  `LaborAssignmentState.species`. `cultivate`/`sow` (the command forms of the policy picker) name no
-  crop and **carry over** whatever the band already selected.
+  `assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` — matching the parser's own usage
+  string; **the two optional tokens are disambiguated by "does this parse as `f32`"**, which is why
+  the stance words cannot be accepted here even positionally. It round-trips through
+  `LaborAssignmentState.species`. `cultivate`/`sow` (the command forms of the improvement picker) name
+  no crop and **carry over** whatever the band already selected.
 - **Legality** (`forage::resolve_committed_species`, the one seam the `assign_labor` rejection and the
   labor arm's commit both read): the species exists, its `cultivation_ceiling` permits the rung
   (`allows_cultivate` / `allows_sow` — **live since S1**), and it is in **this tile's** basket via
@@ -422,9 +424,10 @@ land-use tension.
   `field_provisions` is `0` (worthless as food), a grain's `field_trade_goods` is the negligible flat
   token (`biomass × field_provisions_per_biomass × 0.005/0.05`), a hay crop's is `0` — the vector does
   the routing.
-- **No `Deplete` markup.** `field_trade_goods` deliberately does **not** apply the `Deplete` policy's
-  `trade_goods_multiplier`: that markup is a `Deplete`-*policy* concept for wild commercial gathering; a
-  managed Field harvest does not carry it. The existing `Deplete`-policy wild-take arm is unchanged.
+- **No markup, anywhere.** `field_trade_goods` applies no `trade_goods_multiplier` — and neither does
+  anything else now: the whole `forage.market` block is **deleted** with the four stances (see the
+  retired-levers note at the top of this file). A deep floor still out-earns a shallow one on trade
+  **because it takes more biomass**, which is the ladder doing the work rather than a stance bonus.
 - **`provisions 0.0` is SAFE.** `patch_species_quality` divides by the **wild** `provisions_per_biomass`,
   never the species rate, so a 0-provisions cash crop yields exactly 0 food with no divide-by-zero, and
   `YieldVector::pays_something()` passes because trade `> 0`. This is the sharp "pays no calories" edge.
@@ -489,10 +492,10 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   seasonal`, so unlike the Field arm's `managed_per_worker_fodder`/`_trade` there is nothing further to
   cap: the crop the crew carries home *is* the take it made.
 - **One trade rule at every drawn-down rung** (#433). There is no committed-vs-wild branch left: every
-  `forage_take` harvest credits `take × patch_trade_per_biomass`, the basket average, and `Deplete`
-  multiplies that by `forage.market.trade_goods_multiplier` (**4.0**) at rung 1 **and** rung 2 alike.
-  The markup is a **policy** concept — *sell harder*, a markup on goods you were already producing —
-  not a rung concept, so it stops being the only way a wild patch sells and starts being one of two
+  `forage_take` harvest credits `take × patch_trade_per_biomass`, the basket average, at rung 1 **and**
+  rung 2 alike — and **nothing multiplies it**. The `forage.market.trade_goods_multiplier` (4.0) this
+  paragraph used to describe is deleted with the stance axis: it re-welded product to policy, which is
+  exactly what the harvest-floor arc removed. A deeper floor sells more because it takes more,
   settings on the same rate. The species-blind `forage.market.trade_goods_per_biomass` (0.005) is
   **retired**; the vector is the rate. Because every staple carries `trade_goods_per_biomass` 0.005,
   a staple-only basket's wild `Deplete` sale is **numerically unchanged** — only baskets holding a
@@ -523,9 +526,9 @@ down at full MSY every turn (issue #427). The same take now feeds all three acco
   - **All three rung-2 accounts ride ONE take**, `tended_msy_take` — the Sustain skim on the tended
     curve, extracted so `tended_provisions` and the two new quotes cannot describe different harvests
     (the `patch_ecology` no-second-copy rule, applied to the take). The non-food quotes are
-    **policy-blind** with no `market.trade_goods_multiplier`: the markup is a `Deplete`-policy concept
-    applied at the credit site, and a crop-picker row states what the *crop* pays on this ground — the
-    same rule `field_trade_goods` states one rung up. Under `Sustain` on a patch at `K/2` the quote and
+    **floor-blind**, and there is no `market.trade_goods_multiplier` left to be blind to — the lever is
+    deleted. A crop-picker row states what the *crop* pays on this ground — the
+    same rule `field_trade_goods` states one rung up. At the food-peak floor on a patch at `K/2` the quote and
     the credit therefore coincide exactly, which is how they are pinned:
     `forage_tended_vector::the_published_cultivate_{trade,fodder}_quote_is_the_{trade,fodder}_a_tended_patch_actually_credits`
     run a real turn and assert the published quote against what the turn credited (the §4.3 rule).

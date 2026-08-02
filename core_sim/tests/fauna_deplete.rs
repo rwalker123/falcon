@@ -1,9 +1,10 @@
-//! Deplete hunting: `0.15` takes `deplete_multiplier × MSY` (2.5×), the
-//! harshest of the four **ascending multiples of MSY** (Sustain ≤ 1× < Surplus 1.5× < Deplete 2.5× <
-//! Eradicate = everything) — constant catch this far above MSY has no equilibrium, so it drives a herd
-//! extinct. Also home to the axis's ordering invariant
-//! (`hunt_policy_takes_are_strictly_ordered_at_every_biomass`). Uses the source-centric labor
-//! allocation (a Hunt assignment) that replaced the retired persistent follow.
+//! Deep-floor hunting: a floor at `0.15` pins a herd on the Allee brink and a floor of `0` ends it.
+//! **Constant escapement, one continuous dial** (`docs/plan_harvest_floor.md`) — the four ascending
+//! multiples of MSY this file was written against are gone, and with them any config ordering to
+//! defend. Also home to the axis's ordering invariant
+//! (`hunt_policy_takes_are_strictly_ordered_at_every_biomass`), which now asserts on the **take**: a
+//! deeper floor leaves less standing, so it takes more, at every biomass. Uses the source-centric
+//! labor allocation (a Hunt assignment) that replaced the retired persistent follow.
 
 use bevy::app::App;
 use bevy::ecs::system::RunSystemOnce;

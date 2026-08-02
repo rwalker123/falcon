@@ -122,9 +122,11 @@ band + despawn (`ExpeditionReturned`, after the flush so the final findings repo
 waits.
 
 **Hunt verb (PR 2)** — `ExpeditionMission::Hunt { fauna_id, floor: f32 }` on the same party;
-the take **policy is chosen at launch** (`send_hunt_expedition <faction> <band> <party_workers>
-<fauna_id> [policy]`, default **Sustain** — not a config lever). `advance_expeditions` branches on
-mission:
+the take **floor is chosen at launch** (`send_hunt_expedition <faction> <band> <party_workers>
+<fauna_id> [floor]`, a `0.0..=1.0` fraction of `K`, default `DEFAULT_ESCAPEMENT_FLOOR` — not a config
+lever). **The trailing token is a NUMBER**: the four stance words are refused at parse with
+`CommandParseError::RetiredStanceToken`, so a `… sustain` copied from this file's older wording is a
+hard error rather than a default. `advance_expeditions` branches on mission:
 - **Hunting**: retarget `BandTravel` to the herd's live tile each turn (from `HerdRegistry`). The
   take **and the trip-completion decision both live inside the `hunt.reach_tiles` guard** — a party
   still walking to its herd never concludes the trip. Once in reach, take a **productive** hunt's
@@ -144,8 +146,9 @@ mission:
 > **Since `docs/plan_harvest_floor.md` slice 1 the resident band uses the raid's SHAPE** — both are
 > constant escapement to the **floor its orders name** — so what still separates them is pace, not
 > model: a raid works one herd with its whole party until the surplus is gone, a band works it a turn
-> at a time. **`hunt_expedition_floor` therefore delegates to that one table** and no longer reads
-> config; there is one floor table for both paths, not two that can drift.
+> at a time. **`hunt_expedition_floor` is DELETED** — it existed only to map a stance onto a number,
+> and the mission now carries the number itself. There is one floor for both paths because both read
+> the assignment's own `f32`, not because two tables were kept in step.
 >
 > - **The floor is the MISSION'S**, a fraction of `K` the launch command names — there is no table
 >   left to look it up in (`hunt_expedition_floor` is deleted; it existed only to map a stance onto a
@@ -173,14 +176,18 @@ mission:
 >     before it can bank credit for its forced partial. One hunter per herd, so sharing `hunt_credit`
 >     with the band is safe.
 
-- **Per-policy behaviour**: all four grab the standing surplus down to the floor above.
-  **Sustain/Surplus** — **one raid**, ending on a **full pack or the surplus spent**, then fold home; a
-  herd that wanders within `hunt.drop_off_within_tiles` of the band earns an opportunistic **drop-off**
-  (`Delivering`→deposit) and the party **resumes hunting** with an empty pack. **Deplete** — repeated
-  FULL-cap trips (`Delivering`→deposit→**auto-relaunch**) *while the herd still has surplus*; once
-  stripped to `0.15·K` (surplus spent) it comes home for good rather than trickle-churning at the
-  floor. **Eradicate** — no floor: grinds the herd to extinction (→ lost-herd `Returning`), **banking
-  the windfall it can carry** on the way (#337 — denial is the end state, not an empty pack).
+- **Per-FLOOR behaviour** — one rule, read off `raid_is_recurring(floor)` rather than four named
+  cases. Every raid grabs the standing surplus down to its floor.
+  **At or above the food peak** (`floor >= MSY_BIOMASS_FRACTION`) — **one raid**, ending on a **full
+  pack or the surplus spent**, then fold home; a herd that wanders within
+  `hunt.drop_off_within_tiles` of the band earns an opportunistic **drop-off** (`Delivering`→deposit)
+  and the party **resumes hunting** with an empty pack.
+  **Below the food peak** — repeated FULL-cap trips (`Delivering`→deposit→**auto-relaunch**) *while
+  the herd still has surplus*, because a floor under `K/2` leaves more standing than one pack holds;
+  once the herd sits at that floor it comes home for good rather than trickle-churning.
+  **At floor `0`** (`floor <= STRIP_IT_BARE`) — nothing to stop at: grinds the herd to extinction
+  (→ lost-herd `Returning`), **banking the windfall it can carry** on the way (#337 — denial is the
+  end state, not an empty pack).
 - **The completion fix** (`ExpeditionPhase::Hunting`, load-bearing): `done = pack full OR standing
   surplus spent (herd within one body of the floor) OR herd lost`. Without the surplus-spent branch a
   raid that grabs its surplus and hits the floor would **hang, taking 0 every turn**. That list is
@@ -228,7 +235,8 @@ mission:
     the raid: their premise "won't fill the pack ⇒ doomed trip" is inverted by a raid, where "won't fill
     the pack" is the normal successful short trip. A raid is inherently short — grab the surplus, done —
     so simulating each to completion is already cheap. `surplus_escapement_fraction` replaced the retired
-    `hunt_expedition_ceiling`/kill-credit expedition ceiling and the bound's constants.)*
+    `hunt_expedition_ceiling`/kill-credit expedition ceiling and the bound's constants — and has since
+    been retired itself: the mission's own floor is the whole ceiling now.)*
 - **Animals delivered SCALE WITH THE PACK** (`2 × workers` on a heavy-bodied herd with ample surplus,
   since the pack seats `pack ÷ food-per-animal` whole animals) until the surplus caps them — the
   plateau **is** the max-useful party size (`ceil(surplus_food / per_worker_carry)`), which the client
@@ -263,11 +271,14 @@ mission:
   gate and `hunt_expedition_floor`'s unreachable investment arm were hand-written verb lists, and both
   had rotted (the gate silently accepted `tame`, which then took a plausible pastoral-dip ceiling).
   Guarded by `server::tests::send_hunt_expedition_rejects_a_floor_outside_the_dial`.
-- **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(floor, improvement, biomass, cap,
-  ladder)`** is THE take ceiling on the animal web — `max(0, B − floor·K) × build_dip`, the stock
-  standing above the assignment's or mission's floor — and `quantise_animal_take` rounds it to
-  whole animals. It takes **no ecology and no `FaunaConfig`**, which is what makes the take
+- **Shared take helpers** (`fauna.rs`): **`hunt_escapement_ceiling(floor, biomass, carrying_capacity)`**
+  is THE take ceiling on the animal web — `max(0, B − floor·K)`, the stock standing above the
+  assignment's or mission's floor — and `quantise_animal_take` rounds it to whole animals. It takes
+  **no ecology, no `FaunaConfig`, no `improvement` and no ladder**, which is what makes the take
   `r`-independent structurally rather than by convention; see "The hunt policy axis" in `fauna.md`.
+  **The build dip is NOT a term here** — it multiplies the crew, so this signature has nowhere to put
+  it (`docs/plan_harvest_floor.md` §3.1). The `improvement`/`ladder` parameters this file used to list
+  are exactly what slice 3 removed.
   The expedition keeps its own `credit` accumulator for the *party's* processing throughput
   (`expedition_take_biomass`), which is a different quantity from the retired resident bank.
   **`HuntYield::apply(take, output_multiplier)`** (via `FaunaConfig::hunt_yield_for`, which retired the global `hunt_provisions`) is the single per-species biomass→(food, trade) conversion (an
@@ -334,7 +345,10 @@ mission:
 **Snapshot.** `PopulationCohortState` gains client discriminators `isExpedition` / `expeditionMission`
 (`"scout"`|`"hunt"`) / `expeditionPhase` (`outbound`|`awaiting`|`returning`|`hunting`|`delivering`) /
 `expeditionTargetHerd` (hunt fauna_id — a **string**, since herd ids are non-numeric) /
-`expeditionHuntPolicy` (`sustain|surplus|deplete|eradicate`) / `expeditionCarryCap` (hunt carry cap =
+**`expeditionFloor:float`** (the raid's escapement floor as a fraction of `K` — the live
+discriminator, defaulting to `1` so an absent floor reads "take nothing" rather than "take
+everything"; `expeditionHuntPolicy` is the retired `(deprecated)` slot it replaced and has no
+accessor) / `expeditionCarryCap` (hunt carry cap =
 `party × per_worker_carry`, `0` otherwise) and persistence-only `homeBandEntity` /
 `expeditionAnnounced` / `pendingRevealX` / `pendingRevealY`
 (`snapshot.fbs`, `sim_schema`). Capture fills them from `Option<&Expedition>`;
@@ -366,12 +380,12 @@ home band's live position) and exported as three **append-only** `PopulationCoho
 **`expeditionEtaTurns:uint`** (turns until the carried food reaches the home larder; `0` =
 unknown/n-a — a scout, a normal band, or a trickle-fill raid with no finite ETA),
 **`expeditionProjectedDelivery:float`** (`carried + still-to-take`, pack-capped — `0` means the herd
-is at/below the policy floor with no surplus to raid), and **`expeditionRecurring:bool`**
+is at/below the mission's floor with no surplus to raid), and **`expeditionRecurring:bool`**
 (`systems::raid_is_recurring(floor)` — the single source, `floor < MSY_BIOMASS_FRACTION`, since a
-floor below the food peak leaves more standing than one pack holds and the party is
-the only policy whose trip is a *series* of trips; Sustain/Surplus/Eradicate make **one raid** and fold
+floor below the food peak leaves more standing than one pack holds, so the trip becomes a *series* of
+trips. A floor **at or above** the peak makes **one raid** and folds
 home. Not the same question as "does it ever pass through `Delivering`": a near-band drop-off is an
-incident inside one raid, so a Sustain party that drops a load off and resumes hunting still reads
+incident inside one raid, so a peak-floor party that drops a load off and resumes hunting still reads
 `false`).
 Client-consumed only (not persisted). See the client's parties inspector strip + "Next delivery" line.
 
@@ -381,14 +395,15 @@ player commits workers, as they pick party size / herd / policy. The expedition'
 a formula** (see the forecast above: a small-herd Surplus party exhausts *stock*, so no per-turn rate
 describes the trip), so the sim exports the **answer** it simulated, and the client's job is a **table
 lookup**:
-- `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ policy:string, partyWorkers:uint,
+- `HerdTelemetryState.huntTripEstimates:[HuntTripEstimate{ floor:float, partyWorkers:uint,
   turnsToFill:uint, deliversFood:bool, animalsTaken:uint, deliveredFood:float, wastedFood:float }]` —
-  per **huntable** herd, one entry per **sampled floor** (`snapshot::RAID_FORECAST_FLOOR_SAMPLES` —
-  marks on a continuum, NOT a set of options: the launch command takes any floor) × every legal party size
-  (`1..=expedition_config.max_party_size`, so 4 × 8 = 32 rows/herd; `policy` is a free-form string like
-  `species`, so a new stance needs no schema change). **The four stances, and there is nothing else to
-  exclude** — an improvement is not a floor (issue #442), so a build-verb row is
-  unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
+  per **huntable** herd, one entry per **sampled floor** (`snapshot::RAID_FORECAST_FLOOR_SAMPLES`,
+  **5 samples** `[0.0, 0.15, 0.30, 0.50, 0.80]` — marks on a continuum, NOT a set of options: the
+  launch command takes any floor) × every legal party size
+  (`1..=expedition_config.max_party_size`, so **5 × 8 = 40 rows/herd**). The row's `policy:string` is a
+  retired `(deprecated)` slot; the live discriminator is `floor:float`, so the client interpolates
+  between marks rather than matching a name. **An improvement is not a floor** (issue #442), so a
+  build-verb row is unrepresentable rather than merely omitted. **`turnsToFill`** is turns until the raid **completes** (comes home — pack full OR
   surplus spent), **`0` = never completed** within `hunt.forecast_horizon_turns`. **`animalsTaken`**
   (append-only) is now a **KILL count** — a party too small to seat a whole animal kills one and wastes
   the rest (like the resident band), so the delivered payload is **`deliveredFood`** (`Σ
@@ -403,7 +418,9 @@ lookup**:
   number means "turns spent hunting once you arrive".
 - `HerdTelemetryState.{provisionsPerBiomass, fodderPerBiomass, tradePerBiomass}` — the **BAND /
   local-hunt** terms, from which the client composes the ceiling at **any** floor:
-  `max(0, B − floor·K) × <rung>BuildFraction × rate`. `huntPolicyCeilings` is a retired
+  `max(0, B − floor·K) × rate`. **UNDIPPED** — `<rung>BuildFraction` belongs to the CREW term, not to
+  this, and a client that folds it in here discounts a build twice (the shipped GDScript composes
+  ceilings undipped; see `labor-ui.md`). `huntPolicyCeilings` is a retired
   `(deprecated)` slot: four rows cannot answer a continuous dial (`yield-forecast.md` → "the sim
   exports the answer" and its one narrow exception). A herd below a floor composes `0` for it, which
   is the escapement rule rather than a special case. The dip still ships as

@@ -303,12 +303,13 @@ projecting the smooth `hunt_escapement_ceiling` gives the smooth average directl
 not the instantaneous rate** (the bug this replaced): the instantaneous steady rate is
 `sustainable_yield(current biomass)`, and biomass *sawtooths* every time a whole animal is killed
 (drops one body, regrows between), so an instantaneous reading tracks that sawtooth — the projection's
-N-turn average does not. **A Sustain projection sits ABOVE `sustainable` on a source standing over its
+N-turn average does not. **A food-peak projection sits ABOVE `sustainable` on a source standing over its
 floor**, because the first projected turn draws the accumulated surplus down to `K/2` and the rest of
-the horizon pays the regrowth; that is honest, not an overdraw. It **uses the assignment's actual policy**, so switching Sustain↔Deplete
-re-projects (a settled Sustain herd reads flat ≈ MSY over the full horizon; a Surplus/Deplete herd
-declines within the window and the average honestly reflects it). A **self-terminating** policy
-(Eradicate strips the herd in ~1 turn, Deplete drives it extinct) **breaks the loop early and divides by
+the horizon pays the regrowth; that is honest, not an overdraw. It **uses the assignment's actual
+floor**, so dragging the floor re-projects (a herd settled at the food peak reads flat ≈ MSY over the
+full horizon; one held below it declines within the window and the average honestly reflects it). A
+**self-terminating** floor — `0`, which strips the herd and is the ONLY extinction case
+(`fauna.md`: any floor above `0` strips to it and stops) — **breaks the loop early and divides by
 the turns ACTUALLY simulated** (not the full cap), so it reads the high strip-rate it delivers *while
 the source lasts* instead of a horizon-diluted average (`REALIZED_PROJECTION_TAKE_EPSILON` is the
 negligible-take floor that ends the loop). Reuses the shared model helpers (`regrow_biomass`,

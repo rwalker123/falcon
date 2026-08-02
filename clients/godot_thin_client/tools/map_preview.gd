@@ -48,6 +48,22 @@ const FORAGE_A_Y := 6
 const OVERLAP_HERD_ID := "game_boar_11"   # the herd parked on the worked forage tile
 const OVERLAP_MOVE_X := 10                # pending-move target; band→target dash crosses forage tile B's label
 const OVERLAP_MOVE_Y := 10
+# ---- THE WORKED BAND'S ESCAPEMENT FLOORS --------------------------------------------------------
+# Where each worked source's crew stops, as a fraction of that source's capacity
+# (`docs/plan_harvest_floor.md`). Every yield label on the map ends in the ZONE MARK of its
+# assignment's floor (`BandOverlayRenderer._entry_floor_glyph`), so these fixtures are the only thing
+# deciding which marks the frame set ever renders — and they are picked to land in TWO DIFFERENT
+# zones deliberately. A fixture set that sat entirely on one floor would draw ONE mark everywhere and
+# could not tell a working glyph from a broken one, which is exactly what these rows did while they
+# still carried the retired `policy` stance strings: nothing on the client reads `policy` any more, so
+# every row fell through to the default floor and rendered the peak mark.
+const WORK_PEAK_FLOOR := SourceForecast.FLOOR_FOOD_PEAK
+# Below the peak → the drawdown mark. 0.15 is the floor `band_panel_preview.LEGACY_STANCE_FLOORS`
+# maps the retired `deplete` stance onto, so the rows that used to say "deplete" still mean it.
+const WORK_DRAWDOWN_FLOOR := 0.15
+# How many DISTINCT floor marks the worked-band fixture must render. Two is the smallest number that
+# makes the mark falsifiable at all; the guard is `_assert_work_floor_marks`.
+const WORK_FLOOR_MARKS_MIN := 2
 # Canned settlement-stage tokens (the native bridge doesn't run here, so preview band dicts must
 # carry settlement_stage_* directly). Icons are opaque sim strings — the emoji here just mirror the
 # current config so the map token glyphs render. EMPTY exercises the neutral non-circular fallback marker (square).
@@ -494,6 +510,7 @@ func _ready() -> void:
 	_map._fit_map_to_view()
 	await _settle()
 	await _save("map_band_work")
+	_assert_work_floor_marks()
 
 	# State A-overlap — the draw-ORDER guard for the yield labels. Every layer that used to paint OVER
 	# them is forced to collide with one here: a herd parked ON a worked forage tile (its glyph lands in
@@ -1412,6 +1429,44 @@ func _assert_ladder(label: String, actual: float, expected: float) -> void:
 		print(message)
 		push_warning(message)
 
+## The general form of the above, for a claim that is already a bool. Same PASS/FAIL wording, so one
+## grep reads every assertion in this harness.
+func _assert_map(label: String, condition: bool) -> void:
+	if condition:
+		print("map_preview: PASS — %s" % label)
+	else:
+		var message := "map_preview: FAIL — %s" % label
+		print(message)
+		push_warning(message)
+
+## **THE WORKED-BAND FRAMES RENDER MORE THAN ONE HARVEST MARK.** A picture cannot carry this: every
+## zone mark is a plausible-looking glyph on a yield label, so a renderer that answered ONE mark for
+## every floor would render a perfectly reasonable frame and freeze a wrong picture into the
+## bit-identity baselines. That is the state these fixtures were actually in — they carried the
+## retired `policy` stance strings, which no client code reads, so every row fell through to the
+## default floor and every label wore the peak mark.
+##
+## It asks the RENDERER (`_entry_floor_glyph`), not the fixtures' floors, because the fixtures'
+## floors differing is the premise, not the claim — running them back through
+## `SourceForecast.floor_zone` here would only restate the fixture. An empty mark is failed
+## separately: an unknown zone answers `""`, which is a silently unmarked label rather than a wrong
+## one.
+func _assert_work_floor_marks() -> void:
+	var marks := {}
+	var floored := 0
+	for entry_variant in _snapshot_work()["populations"][0]["labor_assignments"]:
+		var entry: Dictionary = entry_variant
+		if not entry.has("floor"):
+			continue
+		floored += 1
+		var glyph: String = _map._band_overlays._entry_floor_glyph(entry)
+		marks[glyph] = int(marks.get(glyph, 0)) + 1
+	_assert_map("worked-band floor marks — %d assignments carry a floor and render %d DISTINCT marks (%s)"
+		% [floored, marks.size(), " ".join(PackedStringArray(marks.keys()))],
+		marks.size() >= WORK_FLOOR_MARKS_MIN)
+	_assert_map("worked-band floor marks — every floored assignment resolves to a mark (no blank zone)",
+		not marks.has(""))
+
 func _settle() -> void:
 	await _ensure_canvas()
 	await get_tree().process_frame
@@ -1949,21 +2004,23 @@ func _snapshot_fauna_sprites() -> Dictionary:
 
 func _snapshot_work() -> Dictionary:
 	# Per-source yields annotate the worked tiles/herd on the map. The ⚠ overhunt flag is now the
-	# sim-answered `overdraws` bool (policy-driven, false for Sustain), NOT `actual > sustainable`.
-	# The DECOUPLING this proves: the SUSTAIN hunt has `actual 0.46 > sustainable 0.20` (a banked
+	# sim-answered `overdraws` bool (it answers the crew's own floor), NOT `actual > sustainable`.
+	# The DECOUPLING this proves: the PEAK-floor hunt has `actual 0.46 > sustainable 0.20` (a banked
 	# whole animal cashed on this kill turn) yet `overdraws=false` → NO ⚠ (label reads +0.20, clean),
-	# while the DEPLETE forage genuinely overdraws → `overdraws=true` → ⚠.
+	# while the DRAWDOWN forage genuinely overdraws → `overdraws=true` → ⚠. The two flags are
+	# independent of the floor MARK beside them, which is why one frame carries both spreads.
 	var assignments := [
-		# Policies drive the yield label's trailing policy glyph (♻ sustain / ⬆ surplus / ⇊ deplete /
-		# 💀 eradicate) — two different ones here so the map read is verifiable in one frame.
-		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "policy": "sustain", "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
-		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "policy": "deplete", "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
+		# The FLOOR drives the yield label's trailing zone mark (♻ peak / ⇊ drawdown / 💀 strip /
+		# ⬆ learning / ⊘ untouched) — two different ones here so the map read is verifiable in one
+		# frame. `_assert_work_floor_marks` pins that they stay different.
+		{"kind": "forage", "workers": 5, "target_x": FORAGE_A_X, "target_y": FORAGE_A_Y, "floor": WORK_PEAK_FLOOR, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
+		{"kind": "forage", "workers": 3, "target_x": 9, "target_y": 8, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.27, "sustainable_yield": 0.20, "overdraws": true},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR, "target_x": 13, "target_y": 6, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 		# THE INEDIBLE QUARRY's label (issue #337): a hunted wolf pack pays trade goods and NO food, so
 		# every food field here is honestly 0. A one-slot map label has no room for two rates, so it
 		# shows the product the species PAYS — `⇄+0.22` — rather than the `+0.00` that said the pack
 		# was worth nothing. The deer label beside it is the control: it still reads its food rate.
-		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "policy": "deplete", "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
+		{"kind": "hunt", "workers": 2, "fauna_id": "game_wolf_03", "floor": WORK_DRAWDOWN_FLOOR, "target_x": 11, "target_y": 4, "actual_yield": 0.0, "sustainable_yield": 0.0, "realized_trade_yield": 0.22, "trade_yield": 0.22, "overdraws": false},
 		{"kind": "warrior", "workers": 2},
 	]
 	# work_range 2 (forage green), scout radius 4 (azure) → three DISTINCT nested range borders in one
@@ -1996,7 +2053,7 @@ func _snapshot_work_ready() -> Dictionary:
 	}, {
 		# The SECOND worked tile is mid-Cultivate — the state that used to render nothing at all, so
 		# a patch you were actively building looked emptier than the untouched one beside it. Its
-		# assignment's policy is switched to `cultivate` below, which is what makes it "in progress"
+		# assignment's improvement is switched to `cultivate` below, which is what makes it "in progress"
 		# (a meter alone is a standing rung, not work in flight).
 		"x": 9, "y": 8,
 		"ecology_phase": "thriving",
@@ -2009,8 +2066,8 @@ func _snapshot_work_ready() -> Dictionary:
 	for entry_variant in snap["populations"][0]["labor_assignments"]:
 		var entry: Dictionary = entry_variant
 		if String(entry.get("kind", "")) == "forage" and int(entry.get("target_x", -1)) == 9:
-			# The BUILD BADGE keys on the IMPROVEMENT axis, not the stance (issue #442): the crew holds
-			# Sustain while it cultivates, and the badge reads the second field.
+			# The BUILD BADGE keys on the IMPROVEMENT axis, not the floor (issue #442): the crew holds
+			# its floor while it cultivates, and the badge reads the second field.
 			entry["improvement"] = "cultivate"
 			entry["overdraws"] = false
 	for herd_variant in snap["herds"]:
@@ -2080,7 +2137,7 @@ func _expedition(entity: int, x: int, y: int, phase: String) -> Dictionary:
 ## already claimed" is worth knowing.
 func _snapshot_hunt_expedition() -> Dictionary:
 	var snap := _base_snapshot(_band([
-		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "policy": "sustain",
+		{"kind": "hunt", "workers": 3, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR,
 			"target_x": 13, "target_y": 6, "actual_yield": 0.20, "sustainable_yield": 0.20,
 			"overdraws": false},
 	], 2, 0), [_deer_herd(), _pelt_only_wolf_herd()])
@@ -2088,7 +2145,9 @@ func _snapshot_hunt_expedition() -> Dictionary:
 	party["id"] = "Hunt Party"
 	party["expedition_mission"] = "hunt"
 	party["expedition_target_herd"] = "game_wolf_03"
-	party["expedition_hunt_policy"] = "deplete"
+	# The party's ORDERS ride the cohort, not a labor row — and the wire field is the floor
+	# (`expedition_floor`); the retired `expeditionHuntPolicy` slot is one the sim no longer writes.
+	party["expedition_floor"] = WORK_DRAWDOWN_FLOOR
 	party["travel_target_x"] = 11
 	party["travel_target_y"] = 4
 	snap["populations"].append(party)
@@ -2209,9 +2268,9 @@ func _snapshot_mixed_worked() -> Dictionary:
 	herd["domestication"] = 1.0
 	herd["husbandry_ceiling"] = "pen"
 	snap["populations"] = [_band([
-		{"kind": "forage", "workers": 3, "target_x": BAND_X, "target_y": BAND_Y, "policy": "sustain",
+		{"kind": "forage", "workers": 3, "target_x": BAND_X, "target_y": BAND_Y, "floor": WORK_PEAK_FLOOR,
 			"actual_yield": 0.31, "sustainable_yield": 0.31, "overdraws": false},
-		{"kind": "hunt", "workers": 2, "fauna_id": String(herd.get("id", "")), "policy": "sustain",
+		{"kind": "hunt", "workers": 2, "fauna_id": String(herd.get("id", "")), "floor": WORK_PEAK_FLOOR,
 			"target_x": BAND_X, "target_y": BAND_Y,
 			"actual_yield": 0.22, "sustainable_yield": 0.22, "overdraws": false},
 	], 2, 0)]
@@ -2265,8 +2324,10 @@ func _snapshot_work_on_grid(w: int, h: int) -> Dictionary:
 	var cx := center.x
 	var cy := center.y
 	var assignments := [
-		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
-		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "policy": "sustain", "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
+		# Two DIFFERENT floors again, for the same reason the flat-grid fixture carries them: the
+		# far-zoom end of the rail must SUPPRESS both marks and the max-zoom end must draw both large.
+		{"kind": "forage", "workers": 5, "target_x": cx + 1, "target_y": cy, "floor": WORK_DRAWDOWN_FLOOR, "actual_yield": 0.48, "sustainable_yield": 0.48, "overdraws": false},
+		{"kind": "hunt", "workers": 4, "fauna_id": "game_deer_07", "floor": WORK_PEAK_FLOOR, "target_x": cx + 2, "target_y": cy, "actual_yield": 0.46, "sustainable_yield": 0.20, "overdraws": false},
 	]
 	var band := _with_stage({
 		"entity": BAND_ENTITY, "faction": 0, "current_x": cx, "current_y": cy, "size": 30,

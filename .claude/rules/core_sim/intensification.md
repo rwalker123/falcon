@@ -81,8 +81,9 @@ live in two slots:
   `hunt_expedition_floor`'s `matches!` was missing it too); **both guarantees are now type-level** —
   `ExpeditionMission::Hunt` carries a **floor** (an `f32`), which cannot *name* a build verb, so the launch
   gate rejects one through the ordinary parse and the unreachable-arm `debug_assert!` is gone.
-- **Commands.** `assign_labor … [stance] <workers>` sets the stance and **never touches the
-  improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer
+- **Commands.** `assign_labor … [floor] <workers>` sets the FLOOR — a `0.0..=1.0` fraction of `K`, not
+  a stance word (the four are refused at parse with `CommandParseError::RetiredStanceToken`) — and
+  **never touches the improvement** — which is what makes a *paused* build re-staffable (`validate_labor_policy` no longer
   sees the verb, so the `Cultivate` start gate is not re-asserted). The improvement is set by its own
   verb: `cultivate` / `sow` / `tame` / `corral`, all four routing through
   `set_improvement_on_working_bands` + `validate_improvement`.
@@ -204,7 +205,7 @@ whole reason the dials moved out of `labor_config`/`fauna_config` and into the l
   anything more on that source and the dip would be charged forever for nothing. Each of the four
   accrual arms records the completing assignment's index, and a single post-loop pass in
   `advance_labor_allocation` sets that assignment's `improvement` back to `None`, preserving the
-  source, the committed species, the worker count **and the stance**. **The completing turn still
+  source, the committed species, the worker count **and the floor**. **The completing turn still
   pays the dip** (accrual is after the take), so the undipped ceiling starts paying the next turn; the
   pass runs **before** the lapsed-assignment removal, which invalidates indices. A rung whose gate
   merely **lapses mid-build** is untouched — nothing completed, so the source keeps its verb and its

@@ -113,8 +113,15 @@ fn measure_the_lost_markup() {
 ///
 /// Slice 2b removed `forage.surplus_multiplier`, `forage.market` (whole, including the 4× markup),
 /// `forage.eradicate.take_fraction`, and `hunt.{surplus_multiplier, deplete_multiplier,
-/// surplus_escapement_fraction}`. A grep would prove nothing durable; this asserts the shape those
-/// keys lived in, so re-adding a field to the struct fails here before it can quietly grow a reader.
+/// surplus_escapement_fraction}`. A grep would prove nothing durable; this asserts the **shipped
+/// JSON** carries none of those keys.
+///
+/// **It says nothing about the Rust structs, and that gap was a live bug.** The three `hunt.*` keys
+/// were deleted from the file while `HuntConfig` kept the fields — `#[serde(default)]` filled them
+/// silently, `FaunaConfig::validate` still enforced their ordering, and a `FAUNA_CONFIG_PATH` file
+/// setting one could therefore **panic the server at boot over a lever with no reader**. This test
+/// passed throughout. The struct half is asserted where the struct is in scope, at compile time:
+/// `fauna_config::tests::the_hunt_block_carries_no_take_multiplier`.
 ///
 /// **`ecology.collapse_fraction` STAYS and is asserted present**: it is the Allee/depensation
 /// threshold `net_biomass_delta` reads, and it only ever moonlighted as one stance's floor. Deleting

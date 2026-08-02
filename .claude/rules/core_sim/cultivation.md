@@ -48,7 +48,8 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
     multiplies **crew throughput**, never the take ceiling (`docs/plan_harvest_floor.md` §3.1). The
     crew is clearing and planting, not gathering. Two consequences follow and both are intended: a
     build costs yield **only while hands are the scarce thing** (a crew big enough to saturate the
-    patch's standing stock anyway pays nothing for it — the remedy is to hire four times the people),
+    patch's standing stock anyway pays nothing for it — the remedy is to hire twice the people, at the
+    shipped 0.50 dip),
     and the dip is **floor-independent by construction**, so there is no floor a builder can pick to
     dodge it. See "The build engine" in `intensification.md` for the measurement that forced the move.
   - **Accrues `progress_per_turn × learn_multiplier(floor)`** toward `1.0` (sets `owner` on first
@@ -95,8 +96,8 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   concentration term cut a committed tile's capacity and discarded the remainder — and it pays
   `tended_conversion_gain` on the **favored species' term only**, which is the debt S2 recorded and
   left unpaid when it retired the regrowth boost with nothing in its place. It is gathered by the
-  **ordinary `forage_take` path**, exactly like rung 1: **policy-live**
-  (Sustain/Surplus/Deplete/Eradicate), **worker-capped**, and **drawn down** — so a tended patch **can
+  **ordinary `forage_take` path**, exactly like rung 1: **floor-live** (the assignment's own
+  escapement floor — there is no policy axis left to be live on), **worker-capped**, and **drawn down** — so a tended patch **can
   be over-farmed** and the overdraw ⚠ fires on it. This is the exact shape a **pastoral** herd already
   had; the plant web used to collapse a rung *earlier* than the animal web, and that asymmetry was the
   bug. **A committed crop still out-yields the same patch's wild Sustain** on good ground — the

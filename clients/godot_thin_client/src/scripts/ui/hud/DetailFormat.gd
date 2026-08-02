@@ -735,14 +735,18 @@ static func field_value_hex(value: String) -> String:
 ## 99/101 still decomposes to 100. Returns [] for a tile with no composition (a biome that carries no
 ## forage), so no row renders.
 ##
-## **`capacity` IS THE PATCH'S CARRYING CAPACITY, and it is what makes the decomposition checkable.**
-## A share is a ratio and cannot be added to anything, so each row also states the standing biomass it
-## amounts to — `percent × capacity`, off the ALREADY-ROUNDED percent so the two columns of a row can
-## never disagree, with the same largest-share remainder fold applied again so the biomasses sum to
-## the `Foraging` ceiling above them EXACTLY. Pass `0` (the default) for a surface with no capacity in
-## hand and the rows render shares alone. It is the CEILING, not the standing stock: the shares
-## describe what the ground grows, which is a property of the patch and not of how hard it has
-## lately been worked.
+## **`stock` IS THE PATCH'S STANDING BIOMASS, and it is what makes the decomposition checkable.**
+## A share is a ratio and cannot be added to anything, so each row also states the biomass it amounts
+## to — `percent × stock`, off the ALREADY-ROUNDED percent so the two columns of a row can never
+## disagree, with the same largest-share remainder fold applied again so the biomasses sum to the
+## STANDING half of the `Foraging` row above them EXACTLY. Pass `0` (the default) for a surface with
+## no stock in hand and the rows render shares alone.
+##
+## **It is the STANDING STOCK, never the carrying capacity** (`_flora_biomass_split` states the same
+## rule where the arithmetic lives, and `SubjectDrawerController` passes `patch_biomass`). On a
+## drawn-down patch reading `90 / 100` these rows sum to **90**, not 100: they say what the stand
+## the player is looking at is made of, and splitting the ceiling would decompose a full patch that
+## is not there. A reader who expects 100 is reading the wrong half of that row.
 ##
 ## `committed_species` is the patch's committed crop KEY (not its display name) — "" for an
 ## uncommitted patch. That one member's row is marked in `HudStyle.SIGNAL`, the tint this HUD already

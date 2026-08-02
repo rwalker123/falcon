@@ -179,8 +179,10 @@ paths:
   first test is what let this site through the initial sweep. Both surfaces show the **standing**
   basket, never the projected weeded one, so they cannot drift apart mid-build. It rides the existing emit path: `_emit_assign_labor` gained
   a trailing `species` (defaulted `""`, so no other caller changed) → the payload → `Main` →
-  `assign_labor <f> <b> forage <x> <y> [policy] [species] <workers>` — the **second** optional token,
-  worker count always last, omitted entirely when empty.
+  `assign_labor <f> <b> forage <x> <y> [floor] [species] <workers>` — the **second** optional token,
+  worker count always last, omitted entirely when empty. (The first is the FLOOR, an `f32`; the two
+  are disambiguated by whether the token parses as one, which is also why a retired stance word
+  cannot slip into either slot.)
   **THE PAYOFF, BESIDE THE SHARE** (`cultivateYieldRatio` / `sowYieldRatio` → `cultivate_yield_ratio` /
   `sow_yield_ratio`, read per rung by `_flora_entry_ratio`): a row reads `Wild Emmer 34% · 2.7×` —
   what committing this tile to this plant yields **relative to gathering it wild**. The sim folds the

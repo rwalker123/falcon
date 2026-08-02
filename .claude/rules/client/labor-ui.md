@@ -4,6 +4,7 @@ paths:
   - "clients/godot_thin_client/src/scripts/ui/hud/{HudBandLaborState,SourceForecast,FoodOutlookChart,ArrivalStrip}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/{hud_compose_vocab,hud_work_vocab}.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/RungGates.gd"
+  - "clients/godot_thin_client/src/scripts/ui/hud/HarvestFloorChart.gd"
 ---
 
 <!-- Extracted verbatim from lines 171-172;179-179;185-186;1776-2474 of clients/godot_thin_client/CLAUDE.md at blob 20553fb8f9b193b80338a8c06765d511b81b601e
@@ -85,6 +86,16 @@ built Pen are yours — you control their reproduction — so `SourceYieldForeca
 rates (facts about the herd or the crop), so composing an escapement ceiling on one is **silently
 wrong**; the ceiling is the rung's own payoff field (`field_yield` / `corral_yield`). Rung 2 — a
 Tended Patch, a pastoral herd — is still a wild stand being drawn down and takes the composition.
+
+**IT IS THE STANDING RUNG THAT DECIDES THIS, NEVER THE COMPOSED ONE**, and the predicate therefore
+takes NO improvement argument. A crew mid-`Sow` or mid-`Corral` is still drawing the WILD stand down
+at a dipped carry, which is precisely what the sheet has to price; reading the composed rung would
+quote a source that does not exist yet — the escapement chart would blank on a stand still being
+harvested, and a pastoral herd's ceiling would swap to `corral_yield` while its animals are still
+being hunted off the range. The function carried an **unused** `improvement` parameter through five
+call sites for a while, with a docstring claiming the opposite ("the COMPOSED improvement counts
+too"); the behaviour was right and the comment was the defect, so the parameter went with it — a dead
+argument that reads as an invitation is worse than no argument at all.
 
 ### THE CONTROL: three intent presets over a chart whose floor line IS the dial
 
@@ -2072,11 +2083,12 @@ discard is precisely what this axis split removed.
     policy costs neither kind a schema change, and `SourceForecast.FORECAST_CEILING_KEYS` (the table
     that mapped a forage policy to one of those scalars) is DELETED. **A patch's per-worker term rides
     the row too**, deliberately, and only the FOOD one survives as a patch-level scalar
-    (`perWorkerYield`): a policy-blind number cannot state a policy-dependent rate, and `Deplete`'s
-    market markup makes the trade rate exactly that.
-    `expected(workers, policy) = min(workers × per_worker_yield, ceiling[policy])` (the ceilings are
-    already biomass-clamped, so that `min` IS the take) and `max_useful_workers(policy) =
-    ceil(ceiling[policy] / per_worker_yield)`. Decoded in `native/src/lib.rs`
+    (`perWorkerYield`). **The per-policy ceiling arrays this paragraph indexes are themselves retired**
+    — a continuous floor cannot be answered by four rows — so the shape it describes is history: the
+    client composes `ceiling(floor) = max(0, B − floor·K) × rate` from the per-biomass vector, and
+    `expected(workers, floor) = min(workers × per_worker × dip, ceiling(floor))`, with
+    `max_useful_workers` dividing by the DIPPED carry. The old market markup that made a trade rate
+    policy-dependent is deleted with the stance axis. Decoded in `native/src/lib.rs`
     (`herds_to_array` bare / `forage_patches_to_array`, both the snapshot + delta paths), carried to
     the controls via the herd dict and — for the patch — via `forage_patch_lookup` → `_tile_info_at`
     as `patch_`-prefixed keys (in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile redacts them).
