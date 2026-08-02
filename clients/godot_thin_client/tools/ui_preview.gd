@@ -1515,7 +1515,9 @@ func _ready() -> void:
 	_compose_forage(_food_tile_fixture())
 	await _settle()
 	await _save("forage_unstaffed")
-	var unstaffed_btn := _find_button_by_text(_hud._drawercompose._compose_sheet, "Forage")
+	# By META — the commit verb follows the patch's rung now, and a bare "Forage" literal here would
+	# be a second, silent spelling of that rule.
+	var unstaffed_btn := _compose_commit_button(_hud._drawercompose._compose_sheet)
 	_assert_hud("0 workers on an unassigned tile disables the submit (it would be a no-op)",
 		unstaffed_btn != null and unstaffed_btn.disabled)
 	# **THE DELETED DEAL LINE, ASSERTED AS A PAIR.** Absence alone is vacuous — deleting the payoff too
@@ -1656,7 +1658,7 @@ func _ready() -> void:
 		_rect_contains(committed_sheet._card.get_global_rect(), committed_now_line))
 	_assert_hud("…and so is the Forage button it ends with",
 		_rect_contains(committed_sheet._card.get_global_rect(),
-			_find_button_by_text(committed_sheet, "Forage")))
+			_compose_commit_button(committed_sheet)))
 	# The TILE CARD's drawer is the other surface the same 4 rows pushed past its cap. Internal
 	# scrolling is BY DESIGN here (a crowded hex must scroll inside the drawer rather than drag the
 	# dock), so the assertion is not "never scrolls" — it is that THIS content, which fits the room
@@ -2102,6 +2104,37 @@ func _ready() -> void:
 		not SourceForecast.improvement_is_done(_food_tile_fixture(),
 			HudComposeVocab.FORAGE_FORECAST_PREFIX, SourceForecast.IMPROVEMENT_CULTIVATE))
 	_hud._compose.reset_forage_source()
+
+	# ---- THE PLANT WEB'S CREW NOUN FOLLOWS THE STANDING RUNG -------------------------------------
+	# Reported from play: every surface for a sown Field still said *forage* / *Foragers*. The ladder
+	# config is the authority — `wild` declares the harvest primitive `worker_take`, `tended` and
+	# `field` both declare `worker_tend` — so a managed source's crew are TENDERS and only a wild
+	# stand's are FORAGERS. `HudFormat.plant_crew_label` is the one resolver; these four states drive
+	# the four surfaces it feeds (sheet eyebrow, crew-row label, commit button, drawer open button)
+	# and, on every frame, assert the eyebrow and the stepper AGREE — the disagreement being the
+	# failure the single resolver exists to make unexpressible.
+	await _assert_plant_crew_noun("plant_crew_wild", _food_tile_fixture(),
+		HudComposeVocab.FORAGE_CREW_LABEL)
+	await _assert_plant_crew_noun("plant_crew_tended", _tended_tile_fixture(),
+		HudComposeVocab.TEND_CREW_LABEL)
+	# **BOTH UPPER RUNGS, NOT ONE.** A Tended Patch answers through `patch_is_cultivated` and a Field
+	# sown from wild ground through `patch_is_field` + `FORECAST_RETIRED_BY_HIGHER_RUNG` — two
+	# different flags reaching one noun, so a resolver that read only the first would pass above and
+	# fail here (`_wild_sown_field_tile_fixture` is the Field that was never cultivated).
+	await _assert_plant_crew_noun("plant_crew_field", _wild_sown_field_tile_fixture(),
+		HudComposeVocab.TEND_CREW_LABEL)
+	# **THE CASE A NAIVE "IS AN IMPROVEMENT COMPOSED?" TEST GETS WRONG.** These people are foraging the
+	# wild stand AND clearing ground — which is exactly what the build dip charges them for — so the
+	# noun must not move until the rung COMPLETES. `_building_patch_tile_fixture` is wild ground with
+	# `cultivation_progress` part-way and `is_cultivated` false, and the compose carries the verb.
+	await _assert_plant_crew_noun("plant_crew_wild_building", _building_patch_tile_fixture(),
+		HudComposeVocab.FORAGE_CREW_LABEL, SourceForecast.IMPROVEMENT_CULTIVATE)
+	# …and its Sow twin, on the same wild ground: `Sow` needs no prior patch, so a Sow in flight is the
+	# other half of "a build is running here" and must read identically.
+	await _assert_plant_crew_noun("plant_crew_wild_sowing", _building_patch_tile_fixture(),
+		HudComposeVocab.FORAGE_CREW_LABEL, SourceForecast.IMPROVEMENT_SOW)
+	_hud._compose.reset_forage_source()
+	_hud._compose.set_forage_improvement("")
 
 	# ---- ALL THREE ACCOUNTS ON A FORAGE FACE (issue #426, face treatment A) -----------------------
 	# State forage_three_accounts — THE FRAME THIS PASS IS JUDGED ON. Every other forage fixture pays
@@ -5660,15 +5693,20 @@ func _ready() -> void:
 	await _settle()
 	_hud._drawercompose.build_forage_drawer_actions(stale_tile_b)   # same shape → the patch path under test
 	await _settle()
-	var stale_forage_btn := _find_button_by_text(
-		_hud.forage_assign_controls, HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
-	assert(stale_forage_btn != null)
-	stale_forage_btn.pressed.emit()
+	# STRUCTURALLY, not by face: the open button's noun follows the patch's rung, and the bare `assert`
+	# this replaces BREAKS THE HEADLESS RUN INTO THE DEBUGGER rather than reporting — measured, it hung
+	# the suite the first time the noun moved under it.
+	var stale_forage_btn := _forage_open_button()
+	_assert_hud("the forage drawer's open button survives a same-shape restate", stale_forage_btn != null)
+	if stale_forage_btn != null:
+		stale_forage_btn.pressed.emit()
 	await _settle()
 	await _save("forage_assign_button_targets_selected_tile")
 	# The opened compose must be tile B (subject key "70,20"), never tile A ("66,10") it was first wired to.
-	assert(_hud._compose.kind() == ComposeState.KIND_FORAGE)
-	assert(_hud._compose.subject() == "70,20")
+	_assert_hud("the forage drawer's button opens a FORAGE compose",
+		_hud._compose.kind() == ComposeState.KIND_FORAGE)
+	_assert_hud("…on the tile now SHOWN (70,20), not the one it was first wired against",
+		_hud._compose.subject() == "70,20")
 	_hud._drawercompose.close_compose_sheet()
 	_hud._compose.reset_forage_source()
 
@@ -6755,6 +6793,94 @@ func _unit_channel(c: Color) -> Vector3:
 ##
 ## Restores the composed improvement afterwards, so the frame that just rendered is not disturbed for
 ## whatever asserts against it next.
+## The compose sheet's EYEBROW, as rendered — the header is one BBCode `RichTextLabel` holding
+## `<EYEBROW>  <subject>`, so `get_parsed_text` is what a player actually reads off it. "" when no
+## sheet is open, which fails a `begins_with` rather than satisfying it.
+func _compose_sheet_eyebrow() -> String:
+	var sheet: Control = _hud._drawercompose._compose_sheet
+	if sheet == null or sheet._header == null:
+		return ""
+	return (sheet._header as RichTextLabel).get_parsed_text().strip_edges()
+
+## A compose sheet's COMMIT button by its own meta, never by face: the face is the thing every crew-noun
+## assertion is ABOUT (`Forage` / `Tend` / `Hunt Here` / `Unassign`), so finding it by text could only
+## ever confirm the string the caller already assumed.
+func _compose_commit_button(root: Node) -> Button:
+	var node := _find_meta_node(root, HudWidgets.COMPOSE_COMMIT_META)
+	return node as Button if node is Button else null
+
+## The LAND drawer's `Assign … ▸` button. Found STRUCTURALLY — `%ForageAssignControls` holds at most a
+## standing-summary `HFlowContainer` and this one Button (`build_forage_drawer_actions`) — for the same
+## reason as above: its face carries the crew noun under test.
+func _forage_open_button() -> Button:
+	for child in _hud.forage_assign_controls.get_children():
+		if child is Button:
+			return child as Button
+	return null
+
+## **THE PLANT WEB'S CREW NOUN, ON ALL FOUR SURFACES OF ONE FRAME.** Stages a patch, builds the drawer's
+## read state and opens its sheet, then asserts the sheet's eyebrow, the crew-row label, the commit
+## button and the drawer's open button all name `want_label` — plus, independently of `want_label`,
+## that the eyebrow and the stepper AGREE. That last one is the point: the reported failure mode is a
+## header saying one noun over a stepper saying another, and it is expressible whenever the two resolve
+## separately, so it is asserted as a RELATION between two rendered strings rather than against a
+## constant either could drift from.
+##
+## `improvement` composes a build IN FLIGHT (`""` for none). It must not move the noun — a crew clearing
+## ground is still foraging the stand — which is exactly what the `plant_crew_wild_building` /
+## `plant_crew_wild_sowing` states pass it for.
+func _assert_plant_crew_noun(state_name: String, tile: Dictionary, want_label: String,
+		improvement: String = SourceForecast.IMPROVEMENT_NONE) -> void:
+	_hud._compose.reset_forage_source()
+	_show_tile(tile)
+	# Drop the previous tile's button so this state gets a FRESH drawer build rather than the
+	# same-shape patch path — the noun must be right on both, and the patch path is covered by
+	# `forage_assign_button_targets_selected_tile`.
+	_hud._drawercompose._clear_forage_drawer()
+	await _settle()
+	_hud._drawercompose.build_forage_drawer_actions(
+		_floorify(tile, HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	_compose_forage(tile)
+	if improvement != SourceForecast.IMPROVEMENT_NONE:
+		# **DIAL THE VERB AFTER THE FIRST OPEN, THEN RE-OPEN — the herd sheet's contract, and the
+		# forage sheet keeps it too.** Opening on a DIFFERENT source re-seeds the composition off the
+		# band's own standing build (`_build_forage_assign_controls`' `source_changed` branch →
+		# `seed_forage`), so a verb set BEFORE the first open is silently thrown away: measured, the
+		# Cultivate and Sow frames came back BYTE-IDENTICAL, both rendering whatever the re-seed
+		# produced rather than the build under test.
+		_hud._compose.set_forage_improvement(improvement)
+		_compose_forage(tile)
+	await _settle()
+	if improvement != SourceForecast.IMPROVEMENT_NONE:
+		# The fixture must actually REACH the state being claimed — a build the sheet quietly dropped
+		# would leave this whole state asserting the no-build case twice under two names.
+		_assert_hud("%s: the sheet really is composing a live `%s`" % [state_name, improvement],
+			_hud._compose.forage_improvement() == improvement)
+	await _save(state_name)
+	var sheet: Control = _hud._drawercompose._compose_sheet
+	var eyebrow := _compose_sheet_eyebrow()
+	var stepper_label := _crew_row_label(sheet)
+	var commit := _compose_commit_button(sheet)
+	var open_btn := _forage_open_button()
+	var want_eyebrow := (HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % want_label.to_lower()).to_upper()
+	_assert_hud("%s: the sheet's eyebrow reads `%s`" % [state_name, want_eyebrow],
+		eyebrow.begins_with(want_eyebrow))
+	_assert_hud("%s: the crew row is labelled `%s`" % [state_name, want_label.to_upper()],
+		stepper_label == want_label.to_upper())
+	_assert_hud("%s: the commit button reads `%s`" % [state_name,
+			String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(want_label, ""))],
+		commit != null and commit.text == String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(want_label, "")))
+	_assert_hud("%s: the drawer opens with `%s`" % [state_name,
+			HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower()],
+		open_btn != null
+			and open_btn.text == HudComposeVocab.COMPOSE_OPEN_BUTTON_FORMAT % want_label.to_lower())
+	# THE CONSISTENCY CLAIM, stated without naming the noun — a header and a stepper that resolve
+	# through one function cannot disagree, and a frame where they do is the defect itself.
+	_assert_hud("%s: the eyebrow and the stepper name the SAME crew on one frame" % state_name,
+		stepper_label != "" and eyebrow.begins_with("%s %s" % [
+			(HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % "").strip_edges().to_upper(),
+			stepper_label]))
+
 func _assert_abandon_emits(kind: String, improvement: String, want_line: String) -> void:
 	var sheet := _hud._drawercompose._compose_sheet
 	var box := _find_improvement_control(sheet, improvement)
@@ -6771,9 +6897,10 @@ func _assert_abandon_emits(kind: String, improvement: String, want_line: String)
 	# Pressing that one runs a closure built against the pre-uncheck composition, which emits nothing
 	# (`composed == standing`) and reads exactly like "the abandon path is not wired up".
 	await _settle()
-	var commit := _find_button_by_text(sheet, HudComposeVocab.ASSIGN_LOCAL_HUNT_BUTTON) \
-		if kind == SourceForecast.LABOR_KIND_HUNT \
-		else _find_button_by_text(sheet, HudComposeVocab.FORAGE_ASSIGN_BUTTON)
+	# By META, not by face: the forage commit's verb now follows the patch's rung (`Forage` on wild
+	# ground, `Tend` on a managed one), so a text match here would encode an assumption about the
+	# fixture's rung that has nothing to do with what this probe is testing.
+	var commit := _compose_commit_button(sheet)
 	if commit == null:
 		_hud.improvement_requested.disconnect(sink)
 		_assert_hud("abandon (%s): the sheet's commit button" % kind, false)

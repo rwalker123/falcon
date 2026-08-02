@@ -386,6 +386,17 @@ const WORK_UNASSIGN_CONFIRM_OK := "Unassign all"
 
 const WORK_ROW_FORAGE_FORMAT := "Forage (%d, %d)"
 
+# The MANAGED plant row's twin. A Tended Patch or a Field is never gather-drawn, so its crew tends it;
+# the board says so in the same two nouns the compose sheet uses. Keyed by the crew label
+# `HudFormat.plant_crew_label` resolves, so the board row and the sheet it opens cannot disagree about
+# what the people on that tile are doing. DISPLAY ONLY — the row's `kind` is still `forage`.
+const WORK_ROW_TEND_FORMAT := "Tend (%d, %d)"
+
+const WORK_ROW_PLANT_FORMATS := {
+    HudComposeVocab.FORAGE_CREW_LABEL: WORK_ROW_FORAGE_FORMAT,
+    HudComposeVocab.TEND_CREW_LABEL: WORK_ROW_TEND_FORMAT,
+}
+
 const WORK_ROW_HUNT_FORMAT := "Hunt %s"
 
 const WORK_ROW_OPEN_HINT := "Click the row for detail and actions."

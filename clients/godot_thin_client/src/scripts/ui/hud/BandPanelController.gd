@@ -985,10 +985,15 @@ func _work_source_models(band: Dictionary, idle: int) -> Array:
             # `HudFormat.source_icon_prefix`, which welds it to the label with a trailing space for the
             # single-label row this replaced.
             icon = _band_labor.food_module_icon(x, y)
-            label = HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [x, y]
             # Held in a local because the RUNG mark reads it too — `forage_patch_lookup` spells its keys
             # BARE (`is_cultivated` / `is_field`), unlike the `patch_`-prefixed `tile_info` cross-ref.
             patch = _band_labor.forage_patch_lookup().get(Vector2i(x, y), {})
+            # THE ROW'S VERB FOLLOWS THE STANDING RUNG, through the same `HudFormat.plant_crew_label`
+            # the compose sheet's noun does: a crew on a Tended Patch or a Field is TENDING, not
+            # foraging, so `Forage (27, 26)` would name an activity the sim does not run there. The
+            # rung MARK beside it answers a different question (what the source IS) and both stay.
+            label = String(HudWorkVocab.WORK_ROW_PLANT_FORMATS.get(
+                HudFormat.plant_crew_label(patch, HudComposeVocab.BARE_FORECAST_PREFIX), "")) % [x, y]
             # THE ROW'S OWN IMPROVEMENT DIPS ITS CEILING, and its rung's build crew floors the count —
             # the plant twins of the herd branch below, and the same reason: while a build runs the sim
             # caps the take at `stance ceiling × buildFraction` and asks for `max(build crew, take

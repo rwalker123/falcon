@@ -514,6 +514,12 @@ const VERDICT_META := "verdict"
 ## way to reach those two emit sites, whose payload-building lives in an inline `pressed` lambda.
 const SEND_HUNT_CONFIRM_META := "send_hunt_confirm"
 
+## A compose sheet's COMMIT button, as `Button` meta — set by both sheets' builders. Its face is the
+## thing under test whenever the crew noun moves (`Forage` / `Tend` / `Unassign` on the plant web,
+## `Hunt Here` / the raid verdict on the animal one), so a harness that found it BY text could only
+## ever confirm the string it already assumed. Identity is the only stable handle.
+const COMPOSE_COMMIT_META := "compose_commit"
+
 ## The improvement CONTROL's checkbox, as `Control` meta — the stable handle on the second axis, for
 ## the same reason `POLICY_RUNG_META` is the stable handle on a rung. Its value is the IMPROVEMENT key
 ## (`"cultivate"` / `"sow"` / `"tame"` / `"corral"`), so a harness can assert both which rung is

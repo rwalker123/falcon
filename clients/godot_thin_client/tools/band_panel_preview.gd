@@ -2146,6 +2146,20 @@ func _assert_work_row_rungs() -> void:
 		"hunt:%s" % RUNG_PASTORAL_HERD_ID: DetailFormat.pastoral_glyph(),
 		"hunt:%s" % RUNG_PENNED_HERD_ID: DetailFormat.CORRAL_GLYPH,
 	}
+	# **THE ROW'S VERB FOLLOWS THE SAME RUNG, and it is a SECOND axis off the same patch dict** — a crew
+	# on a Tended Patch or a Field is TENDING, not foraging (`labor-ui.md` → "The plant web's crew noun
+	# follows the standing rung"). Asserted beside the rung MARK rather than instead of it: the mark
+	# says what the source IS and the label says what is being DONE there, so one passing cannot stand
+	# in for the other. The hunt rows keep their own `WORK_ROW_HUNT_FORMAT` and are not in this table.
+	var expected_labels := {
+		"forage:%d,%d" % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y]:
+			HudWorkVocab.WORK_ROW_FORAGE_FORMAT % [RUNG_WILD_TILE.x, RUNG_WILD_TILE.y],
+		"forage:%d,%d" % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y]:
+			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_TENDED_TILE.x, RUNG_TENDED_TILE.y],
+		"forage:%d,%d" % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y]:
+			HudWorkVocab.WORK_ROW_TEND_FORMAT % [RUNG_FIELD_TILE.x, RUNG_FIELD_TILE.y],
+	}
+	var labels_seen := 0
 	var seen := {}
 	for model in _hud._bandpanel._work_source_models(_hud._band_labor._panel_band, 0):
 		var m: Dictionary = model
@@ -2153,6 +2167,13 @@ func _assert_work_row_rungs() -> void:
 		if not expected.has(key):
 			continue
 		seen[key] = true
+		if expected_labels.has(key):
+			var label := String(m.get("label", ""))
+			if label != String(expected_labels[key]):
+				push_error("band_panel_preview: %s expected row label '%s' but got '%s'" % [
+					key, expected_labels[key], label])
+			else:
+				labels_seen += 1
 		var glyph := String(m.get("rung_glyph", ""))
 		if glyph != String(expected[key]):
 			push_error("band_panel_preview: %s expected rung glyph '%s' but got '%s'" % [
@@ -2164,6 +2185,9 @@ func _assert_work_row_rungs() -> void:
 			push_error("band_panel_preview: no work row for %s on the rung board" % key)
 	if seen.size() == expected.size():
 		print("band_panel_preview: assert OK — %d work rows wear their standing rung (wild bare)" % seen.size())
+	if labels_seen == expected_labels.size():
+		print("band_panel_preview: assert OK — %d plant rows name the verb their rung runs (Forage/Tend)"
+			% labels_seen)
 
 ## The rung mark's TOOLTIP has to actually be reachable, and its slot must not eat the row's click —
 ## two SILENT failures a rendered frame cannot show. A `Label` defaults to `MOUSE_FILTER_IGNORE`, which

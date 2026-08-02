@@ -127,6 +127,33 @@ static func join_tooltip_lines(lines: Array) -> String:
 static func policy_face(policy: String) -> String:
     return "%s%s" % [source_icon_prefix(FoodIcons.for_policy(policy)), policy.capitalize()]
 
+## **THE PLANT WEB'S CREW NOUN, AND THE ONE PLACE IT IS DECIDED.** A wild stand is drawn down by
+## FORAGERS; a Tended Patch or a Field is kept by TENDERS. The authority is the ladder config itself
+## (`core_sim/src/data/intensification_ladder.json`), where the `wild` rung declares the harvest
+## primitive `worker_take` and both upper rungs declare `worker_tend` — a managed source is never
+## gather-drawn (the sim's `is_managed()` branch), so a crew standing on one is not foraging at all.
+##
+## **ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` carries
+## `SourceForecast.FORECAST_RETIRED_BY_HIGHER_RUNG` — a completed Field retires Cultivate even when
+## `is_cultivated` is honestly false, because `Sow` needs no prior patch — so it is true on a Tended
+## Patch AND on a Field sown straight from wild ground, and a separate `SOW` test would only be a
+## second spelling of the same answer, free to drift. That is the const relied on here.
+##
+## **A BUILD IN FLIGHT KEEPS THE WILD NOUN**, deliberately: this reads the source's DONE FLAGS and
+## never a composed improvement, so people part-way through a Cultivate or a Sow — who really are
+## foraging the stand while they clear ground, which is what the build dip charges them for — stay
+## Foragers until the rung COMPLETES. The animal web's `_herd_crew_noun` does read the composed axis,
+## because a herd being penned owes keepers before the pen exists; a patch owes nobody anything.
+##
+## **DISPLAY ONLY.** The command is still `assign_labor` with kind `forage`
+## (`SourceForecast.LABOR_KIND_FORAGE`); nothing on the wire moves with this word.
+##
+## `prefix` spells the keys, so a `patch_`-prefixed `tile_info` and a bare wire patch both work.
+static func plant_crew_label(src: Dictionary, prefix: String) -> String:
+    return HudComposeVocab.TEND_CREW_LABEL \
+        if SourceForecast.improvement_is_done(src, prefix, SourceForecast.IMPROVEMENT_CULTIVATE) \
+        else HudComposeVocab.FORAGE_CREW_LABEL
+
 # ---- The escapement floor, in words --------------------------------------------------------------
 
 ## A FLOOR PRESET's display FACE — its zone glyph welded to its label (`💀 Take everything`). The one

@@ -1376,6 +1376,7 @@ func _build_herd_assign_controls(herd: Dictionary, target: VBoxContainer) -> voi
     var is_unassign := not is_expedition and _compose.hunt_count() <= 0 and current > 0
     var is_noop := not is_expedition and _compose.hunt_count() <= 0 and current <= 0
     var assign_btn := Button.new()
+    assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
     if is_expedition:
         # **THE TRIP READOUT** — the raid's answer in the SAME bounded box the local sheet uses, so a
         # player moving between the two branches reads one layout: the payload as a yields row, the
@@ -1852,6 +1853,13 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
         HudComposeVocab.FORAGE_FORECAST_PREFIX, _compose.forage_improvement())
     if composed_improvement != _compose.forage_improvement():
         _compose.set_forage_improvement(composed_improvement)
+    # THE CREW NOUN, resolved ONCE for the whole sheet — `Foragers` on wild ground, `Tenders` on a
+    # Tended Patch or a Field. Every surface below reads THIS local (section label, verdict/idle
+    # sentences, commit button, dead-button hint), and the header two rows up reads the same
+    # `HudFormat.plant_crew_label`, so the eyebrow and the stepper cannot name two different crews on
+    # one sheet. Note it takes `tile_info`, NOT `composed_improvement`: a build in flight keeps the
+    # wild noun (see that function).
+    var crew_label := HudFormat.plant_crew_label(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
     var crop_rung := composed_improvement if composed_improvement != SourceForecast.IMPROVEMENT_NONE \
         else String(RungGates.next_rung_offered(SourceForecast.LABOR_KIND_FORAGE, tile_info,
             composed_improvement, _player_knowledge(),
@@ -1907,7 +1915,7 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     var chart_model := SourceForecast.floor_chart_model(tile_info,
         SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
         _compose.forage_floor(), _compose.forage_count(), composed_improvement,
-        HudComposeVocab.FORAGE_CREW_LABEL.to_lower(), lesson_known)
+        crew_label.to_lower(), lesson_known)
     if bool(chart_model.get("known", false)):
         target.add_child(HudWidgets.build_floor_chart(chart_model,
             func(floor: float, committed: bool) -> void:
@@ -1919,14 +1927,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
                     _refresh_floor_live(live_hosts, SourceForecast.floor_chart_model(
                         _live_tile_info(subject_key, tile_info), SourceForecast.SOURCE_KIND_FORAGE,
                         HudComposeVocab.FORAGE_FORECAST_PREFIX, floor, _compose.forage_count(),
-                        composed_improvement, HudComposeVocab.FORAGE_CREW_LABEL.to_lower(),
+                        composed_improvement, crew_label.to_lower(),
                         lesson_known),
                         _compose.forage_count())))
     # THE CREW, on ONE line with both targets (§7.6) — each clamped to the same cap the `+` obeys, so
     # a target is a shortcut to a count and never a way past the ceiling. The floor's TEACHING LINE
     # used to stand here, between the chart and the stepper; it reads in the readout's aside now,
     # where the panel's quietest information belongs.
-    _mount_crew_row(target, live_hosts, HudComposeVocab.FORAGE_CREW_LABEL, _compose.forage_count(),
+    _mount_crew_row(target, live_hosts, crew_label, _compose.forage_count(),
         _compose.forage_count() < cap,
         func(n: int) -> void:
             _compose.set_forage_count(clampi(n, 0, cap))
@@ -1999,9 +2007,14 @@ func _build_forage_assign_controls(tile_info: Dictionary, target: VBoxContainer)
     # A dead button is always explained (the `+` stepper's cap note is the precedent) — but only when
     # the cap note has not already said it, so the panel never states one fact twice.
     if is_noop and cap_note == "":
-        target.add_child(HudWidgets.alloc_hint_label(HudComposeVocab.FORAGE_NOOP_HINT))
+        target.add_child(HudWidgets.alloc_hint_label(
+            String(HudComposeVocab.PLANT_NOOP_HINTS.get(crew_label, ""))))
     var assign_btn := Button.new()
-    assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign else HudComposeVocab.FORAGE_ASSIGN_BUTTON
+    # The commit verb follows the crew noun the stepper above just asked for — `Forage` for foragers,
+    # `Tend` for tenders — keyed off the ONE resolved label, exactly as the hunt web's noop hint is.
+    assign_btn.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
+    assign_btn.text = HudComposeVocab.UNASSIGN_BUTTON if is_unassign \
+        else String(HudComposeVocab.PLANT_ASSIGN_BUTTONS.get(crew_label, ""))
     HudStyle.apply_button(assign_btn, "primary")
     # Out of range → disabled (no expedition fallback for stationary gathering).
     assign_btn.disabled = out_of_range or is_noop
@@ -2143,8 +2156,11 @@ func open_forage_compose(tile_info: Dictionary) -> void:
     var subject := String(tile_info.get("food_module_label", "")).strip_edges()
     if subject == "":
         subject = HudFormat.food_module_label(String(tile_info.get("food_module", "")))
+    # The eyebrow names the crew the sheet is about to staff, through the SAME resolver the stepper
+    # inside it uses — `ASSIGN FORAGERS` on wild ground, `ASSIGN TENDERS` on a Tended Patch or a Field.
     var content := _compose_sheet.open(
-        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudComposeVocab.FORAGE_CREW_LABEL.to_lower(),
+        HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudFormat.plant_crew_label(
+            tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX).to_lower(),
         subject, _compose.subject(), _compose_anchor_rect())
     _build_forage_assign_controls(tile_info, content)
     refresh_drawer_actions()
@@ -2207,8 +2223,10 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
     var y := int(tile_info.get("y", -1))
     var standing := _standing_assignment(SourceForecast.LABOR_KIND_FORAGE, x, y, "")
     var summary_model: Dictionary = {}
+    # The read state names the crew by the patch's own rung, exactly as the sheet it opens does.
+    var crew_label := HudFormat.plant_crew_label(tile_info, HudComposeVocab.FORAGE_FORECAST_PREFIX)
     if not standing.is_empty():
-        summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE, HudComposeVocab.FORAGE_CREW_LABEL.to_lower())
+        summary_model = _standing_summary_model(standing, SourceForecast.LABOR_KIND_FORAGE, crew_label.to_lower())
     var subject_key := _forage_source_key(tile_info)
     # THE SIGNATURE CARRIES IDENTITY ONLY, AND THE CLOSURE CARRIES NOTHING. Two halves:
     #   • The subject key LEADS the shape signature, so switching to a different tile — even one of
@@ -2230,13 +2248,13 @@ func build_forage_drawer_actions(tile_info: Dictionary) -> void:
         if not summary_model.is_empty():
             _update_standing_summary(_forage_assign_controls.get_child(idx) as HFlowContainer, summary_model)
             idx += 1
-        _update_compose_open_button(_forage_assign_controls.get_child(idx) as Button, HudComposeVocab.FORAGE_CREW_LABEL, subject_key)
+        _update_compose_open_button(_forage_assign_controls.get_child(idx) as Button, crew_label, subject_key)
         return
     _clear_forage_drawer()
     if not summary_model.is_empty():
         _forage_assign_controls.add_child(_build_standing_summary_from_model(summary_model))
     _forage_assign_controls.add_child(_build_compose_open_button(
-        HudComposeVocab.FORAGE_CREW_LABEL, subject_key,
+        crew_label, subject_key,
         func() -> void: open_forage_compose(_live_tile_info(subject_key, tile_info))))
     _forage_drawer_shape = shape
 

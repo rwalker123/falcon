@@ -2374,6 +2374,68 @@ suppressed).
 
 ---
 
+## The plant web's crew noun follows the STANDING RUNG
+
+Every surface for a sown Field said *forage* / *Foragers* — the wrong verb, not merely an awkward
+one. Reported from play.
+
+**THE LADDER CONFIG IS THE AUTHORITY, and it already drew the distinction.** Each plant rung declares
+a `harvest` primitive in `core_sim/src/data/intensification_ladder.json`: `wild` → `worker_take`,
+`tended` → `worker_tend`, `field` → `worker_tend`. A managed source is never gather-drawn (the sim's
+`is_managed()` branch), so a crew standing on one is not foraging at all. Two nouns, keyed on the
+rung:
+
+| rung | crew | commit verb | drawer button | work-board row |
+|---|---|---|---|---|
+| wild | `Foragers` | `Forage` | `Assign foragers ▸` | `Forage (x, y)` |
+| Tended Patch · Field | `Tenders` | `Tend` | `Assign tenders ▸` | `Tend (x, y)` |
+
+`Tenders` spans BOTH upper rungs deliberately. `Farmers` was considered and rejected — it reads right
+on a Field and wrong on a Tended Patch, and three nouns to learn is worse than two.
+
+**`HudFormat.plant_crew_label(src, prefix)` is the ONE resolver and every surface goes through it.**
+The failure it exists to make unexpressible is a sheet whose header says one noun over a stepper
+saying another — which is exactly what the animal web shipped once (`_herd_crew_noun`'s eyebrow
+resolved against a stale improvement). It lives in `HudFormat` rather than `SourceForecast` because
+that layer's stated invariant is that it references **no `Hud*Vocab` module at all**; `HudFormat` is
+the "how the HUD SAYS a thing" layer and already reads both `SourceForecast` and `HudComposeVocab`.
+The verb and the dead-button hint are keyed off the label it returns (`PLANT_ASSIGN_BUTTONS` /
+`PLANT_NOOP_HINTS`, the shape `HUNT_NOOP_HINTS` already had), so noun, verb and singular are three
+readings of one answer.
+
+**ONE TEST ANSWERS BOTH UPPER RUNGS.** `improvement_is_done(…, CULTIVATE)` carries
+`FORECAST_RETIRED_BY_HIGHER_RUNG`, so it is true on a Tended Patch AND on a Field sown straight from
+wild ground (where `is_cultivated` is honestly false forever). A separate `SOW` test would be a second
+spelling of the same answer, free to drift.
+
+**A BUILD IN FLIGHT KEEPS THE WILD NOUN.** The resolver reads the source's DONE FLAGS and never a
+composed improvement, so a crew part-way through a Cultivate or a Sow stays `Foragers`: those people
+really are foraging the stand *and* clearing ground, which is precisely what the build dip charges
+them for. The noun moves only when the rung COMPLETES. **This is where the plant web parts from the
+animal one** — `_herd_crew_noun` DOES read the composed axis, because a herd being penned owes keepers
+before the pen exists, while a patch owes nobody anything until it is managed. A naive "is an
+improvement composed / under way?" test gets exactly this case wrong.
+
+**DISPLAY ONLY.** The command is still `assign_labor` with kind `forage`; `LABOR_KIND_FORAGE`, the
+work filter key, the `WORKFORCE` bar's `Forage` segment and every wire name are untouched. The two
+aggregate surfaces that span mixed rungs — the workforce bar and the work-board filter chip — keep
+`Forage` for that reason: they name a category over both rungs, not a crew.
+
+**Frames + assertions.** `ui_preview` `plant_crew_wild` / `plant_crew_tended` / `plant_crew_field`
+(the wild-sown Field, so the two upper rungs answer through DIFFERENT flags) / `plant_crew_wild_building`
+/ `plant_crew_wild_sowing`, each asserting all four surfaces **and**, independently of the expected
+noun, that the eyebrow and the stepper agree on that frame. Sabotage-verified four ways: pinning the
+resolver to either noun fails exactly the other rung's states, the naive build-in-flight test fails the
+two in-flight states, and resolving the eyebrow separately fails the consistency assertion alone.
+`band_panel_preview`'s `_assert_work_row_rungs` pins the board's verb beside the rung MARK — two
+orthogonal answers off one patch dict, so one passing cannot stand in for the other.
+
+**The commit buttons carry `HudWidgets.COMPOSE_COMMIT_META`** (both sheets), because their face is the
+thing every assertion here is ABOUT: finding one by text could only confirm the string the caller
+already assumed. The three `ui_preview` sites that reached the forage commit / open button by face were
+repointed at it, and the bare `assert` beside one of them became `_assert_hud` — under sabotage it broke
+the headless run into the debugger and hung the suite, which is the hazard that rule already records.
+
 ## The work row carries TWO axes — the standing RUNG and the verb in flight
 
 A board row's mark column used to carry one glyph, `FoodIcons.for_policy(policy)`, and a policy is

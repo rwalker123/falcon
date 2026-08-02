@@ -451,6 +451,14 @@ const ASSIGN_LOCAL_HUNT_BUTTON := "Hunt Here"
 # beyond the selected band's `work_range` disables the button rather than offering an alternative.
 const FORAGE_ASSIGN_BUTTON := "Forage"
 
+# The plant web's SECOND commit verb, for a crew that is not gathering. A managed source — a Tended
+# Patch or a Field — is never gather-drawn (the sim's `is_managed()` branch), and the ladder config
+# says so in its own vocabulary: the `wild` rung's harvest primitive is `worker_take` while `tended`
+# and `field` both declare `worker_tend`. So the button follows the rung the source STANDS on, exactly
+# as the hunt web's `Hunt Here` follows its crew noun. See `PLANT_ASSIGN_BUTTONS`, which keys the pair
+# off the ONE resolved noun so a header saying `Tenders` can never sit over a button saying `Forage`.
+const TEND_ASSIGN_BUTTON := "Tend"
+
 # `workers == 0` IS THE SIM'S UNASSIGN (server.rs: "Unassigning (workers == 0) is always allowed — a
 # player must be able to abandon a source"), and the Work zone's unassign paths depend on it. So the
 # submit is gated on whether it would CHANGE anything, never on the raw count: at 0 on a source this
@@ -463,8 +471,6 @@ const FORAGE_ASSIGN_BUTTON := "Forage"
 # sheets drift apart. (The EXPEDITION branch is not in this family — a raid is a launch, not an
 # edit of a standing assignment, so a party of 0 is simply refused.)
 const UNASSIGN_BUTTON := "Unassign"
-
-const FORAGE_NOOP_HINT := "Nobody assigned yet — send at least one forager."
 
 # The hunt web's twin, per CREW NOUN — a wild herd is staffed by hunters and a managed one by herders
 # (`HERD_CREW_LABEL`), so the dead button's explanation names whoever the stepper above it just asked
@@ -479,6 +485,32 @@ const HUNT_NOOP_HINTS := {
 # in a floating sheet (`ui/hud/ComposeSheet.gd`) rather than permanently in the drawer. The drawer
 # keeps the detail rows, gains a one-line STANDING-ASSIGNMENT summary, and ends in the button below.
 const FORAGE_CREW_LABEL := "Foragers"
+
+# The plant web's MANAGED crew noun — the twin of `HERD_CREW_LABEL` on the animal side, and resolved
+# by the ONE function `SourceForecast.plant_crew_label`. A wild stand is drawn down by FORAGERS; a
+# Tended Patch or a Field is kept by TENDERS, the ladder's own `worker_tend` harvest primitive put
+# into words. `Tenders` deliberately spans BOTH upper rungs: `Farmers` reads right on a Field and
+# wrong on a Tended Patch, and two nouns to learn is better than three.
+#
+# **A BUILD IN FLIGHT DOES NOT MOVE THE NOUN** — a crew part-way through a Cultivate or a Sow is
+# foraging the wild stand *and* clearing ground (which is exactly what the build dip charges them
+# for), so the word changes only when the rung COMPLETES. This is where the plant web parts from the
+# animal one: `_herd_crew_noun` reads the composed improvement axis, because a herd being penned owes
+# keepers before the pen exists. A patch owes nobody anything until it is managed.
+const TEND_CREW_LABEL := "Tenders"
+
+# The COMMIT VERB and the dead-button hint per plant crew noun, in the hunt web's own idiom
+# (`HUNT_NOOP_HINTS`): keyed by the label the sheet has ALREADY resolved, so the stepper's noun, the
+# button's verb and the hint's singular are three readings of one answer and cannot disagree.
+const PLANT_ASSIGN_BUTTONS := {
+    FORAGE_CREW_LABEL: FORAGE_ASSIGN_BUTTON,
+    TEND_CREW_LABEL: TEND_ASSIGN_BUTTON,
+}
+
+const PLANT_NOOP_HINTS := {
+    FORAGE_CREW_LABEL: "Nobody assigned yet — send at least one forager.",
+    TEND_CREW_LABEL: "Nobody assigned yet — send at least one tender.",
+}
 
 # `Assign foragers ▸` / `Assign hunters ▸` / `Assign herders ▸` — the noun is the same one the
 # sheet's stepper uses, so the drawer and the sheet can never disagree about who is being staffed.
