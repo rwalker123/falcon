@@ -1276,7 +1276,10 @@ const VERDICT_SETTLES_FORMAT := "This crew can't draw it that low. It settles at
 const VERDICT_SETTLES_CREW_FORMAT := " — %d %s would reach the floor."
 const VERDICT_SETTLES_END := "."
 # NEITHER BINDS — there is nothing above the floor to take, so the crew's size is irrelevant until the
-# source grows back past it. The stock, not the percent: "grows past 98" is the number on the chart.
+# source grows back past it. The STOCK, not the percent, because the point is the quantity the source
+# has to reach — and in whatever unit the flag above it is flying (`stock_face`), because the two name
+# one threshold and a sheet reading "leave 50% · ≈11 Red Deer" over "grows past 1075" states it twice
+# in two currencies.
 const VERDICT_AT_FLOOR_FORMAT := "Already at or below the floor. This crew takes nothing until it grows past %s."
 # No crew at all is its own reading and must not render as "reaches the floor in 0 turns".
 const VERDICT_NO_CREW := "No one assigned. Nothing is taken and it grows back on its own."
@@ -1372,14 +1375,15 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 ## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
 ## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
-        floor: float, reaching_crew: int, crew_noun: String) -> Dictionary:
+        floor: float, reaching_crew: int, crew_noun: String,
+        body_mass: float = 0.0, quarry: String = "") -> Dictionary:
     if workers <= 0:
         return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
     var floor_stock := clamp_floor(floor) * capacity
     if not crew_is_taking(workers, biomass, capacity, floor):
         return {
             "severity": VERDICT_BLOCKED,
-            "text": VERDICT_AT_FLOOR_FORMAT % format_stock(floor_stock),
+            "text": VERDICT_AT_FLOOR_FORMAT % stock_face(floor_stock, body_mass, quarry),
         }
     var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
     if reached != PROJECTION_REACHED_NONE:
@@ -1426,6 +1430,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # drawing it down is using every hand it has.
     if hold > 0 and workers > hold and int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
         idle_note = IDLE_CREW_NOTE_FORMAT % [workers - hold, workers, crew_noun, hold]
+    # Bound once and passed BOTH to the verdict and out on the model: the flag draws from the model
+    # and the verdict is composed here, so a second read of the same two keys is how the sheet ends up
+    # naming one threshold in two units. See `stock_face`.
+    var body_mass := float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0))
+    var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
         "capacity": capacity,
@@ -1444,6 +1453,11 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "series": walk["series"],
         "reached_turn": int(walk["reached_turn"]),
         "settled_fraction": float(walk["settled_fraction"]),
+        # **THE QUARRY AND ITS BODY, so the flag can state the floor in ANIMALS.** A patch publishes
+        # no `body_mass` and gets no quarry name, so this pair is exactly the branch that leaves a
+        # FORAGE flag reading in biomass while a herd's reads in the unit the rest of its sheet uses.
+        "body_mass": body_mass,
+        "quarry": quarry,
         "learn_multiplier": learn_multiplier(floor_value),
         "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching),
         "crew_to_hold": hold,
@@ -1452,7 +1466,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # 12 biomass a turn at the rung's quarter carry, not 48 — and the only other cue is a ticked
         # box further down the sheet, which states the build without stating its price.
         "build_dip": dip,
-        "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching, crew_noun),
+        "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
+            crew_noun, body_mass, quarry),
         "idle_note": idle_note,
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
@@ -2048,6 +2063,38 @@ static func is_managed_hunt_source(herd: Dictionary, improvement: String) -> boo
 
 ## A herd's player-facing name (species → label → id). One definition, shared by the targeting banner's
 ## forecast line and the command-feed refusal, so a herd is never called two different things.
+## **BIOMASS AS WHOLE ANIMALS — the unit every other number on a hunt surface is already in** (the
+## readout's `≈0.41 Grey Wolf/turn`, the raid's `delivers ≈8 Wild Boar`, `crew_to_hold`'s divide by
+## `body_mass`). The tile card's herd row and the floor flag both read it, so a herd is counted one
+## way wherever it is counted.
+##
+## `ANIMAL_COUNT_NONE` means *no count can be stated* — a species the wire published no `body_mass`
+## for, or no biomass at all. Both callers fall back to biomass on it, which is also what keeps a
+## FORAGE patch's readouts unchanged: a patch has no body.
+##
+## **A positive biomass never counts ZERO.** Rounding alone reads `0` for a herd holding a fifth of a
+## body — visibly alive on the map, and huntable, since the sim's own kill step floors at one body
+## (`min(affordable, max(1, carryable))`). So does this.
+const ANIMAL_COUNT_NONE := -1
+static func animal_count(biomass: float, body_mass: float) -> int:
+    if body_mass <= 0.0 or biomass <= 0.0:
+        return ANIMAL_COUNT_NONE
+    return maxi(1, int(round(biomass / body_mass)))
+
+## **A STANDING QUANTITY IN THE UNIT ITS SOURCE COUNTS IN** — `98` for a patch, `≈11 Red Deer` for a
+## herd. Both surfaces that name a floor's THRESHOLD read it from here: the chart's flag and the
+## at-floor verdict under it. They are two statements of one number, and they diverged the moment the
+## flag learned to count animals while the verdict went on quoting `grows past 1075` — so the cure is
+## that there is no second place for a rendering to live, not a second place kept in step by hand.
+const STOCK_ANIMALS_FORMAT := "≈%d %s"
+static func stock_counts_animals(stock: float, body_mass: float, quarry: String) -> bool:
+    return animal_count(stock, body_mass) != ANIMAL_COUNT_NONE and quarry != ""
+
+static func stock_face(stock: float, body_mass: float, quarry: String) -> String:
+    if stock_counts_animals(stock, body_mass, quarry):
+        return STOCK_ANIMALS_FORMAT % [animal_count(stock, body_mass), quarry]
+    return format_stock(stock)
+
 static func herd_display_name(herd: Dictionary) -> String:
     return String(herd.get("species", herd.get("label", herd.get("id", "This herd"))))
 

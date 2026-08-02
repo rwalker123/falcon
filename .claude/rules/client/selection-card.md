@@ -172,8 +172,8 @@ paths:
   player the key. It stays **data**: the row's `pressed` bind and every `assign_labor` / `tame` /
   `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
   (`SourceForecast.herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
-  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Biomass / Ecology /
-  Husbandry / Corral; expedition: Mission / Target / Policy / Phase / Carried /
+  both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Herd (the stock pair, with
+  its ecology phase riding it — see `herd-readouts.md`) / Husbandry / Corral; expedition: Mission / Target / Policy / Phase / Carried /
   Position. **A herd states NO `Position`**: `herd_summary_lines` renders in this drawer and
   nowhere else, and the card's own `TILE (x, y)` header sits two rows above it, so the row was the
   same coordinate pair twice on one card. Its `Next waypoint` is a different fact — where the herd

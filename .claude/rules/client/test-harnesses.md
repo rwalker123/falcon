@@ -79,5 +79,12 @@ abandon test passed under sabotage because its fixture sat in the one state the 
 - **A fixture that cannot reach the state being claimed makes the assertion decorative** — check the
   fixture can actually produce the shape before trusting a green line.
 
+- **Use `_assert_hud`, not a bare `assert`.** A bare `assert` HALTS this harness on failure rather than
+  reporting one: the headless run breaks into the debugger and hangs until it is killed, printing only a
+  stack trace on stderr and none of the remaining states. Measured while sabotage-checking a herd stock
+  row — the run had to be timed out at ten minutes to learn which line failed. `_assert_hud` names what
+  it found, counts toward the PASS/FAIL tallies, and lets the rest of the suite finish. Some older
+  assertions are still bare; that is history, not a pattern to copy.
+
 **Sabotage-verify anything you touch**: break the behaviour and watch the assertion fail, naming what it
 found. An assertion "fixed" but never seen failing is the same bug again.

@@ -82,6 +82,21 @@ const FLOOR_ARROW_LENGTH := 7.0
 const FLOOR_ARROW_HALF_HEIGHT := 5.0
 ## The floor's flag: `leave 98 · 50%`, or the one value that has no quantity to state.
 const FLOOR_FLAG_FORMAT := "leave %s · %d%%"
+## **A HERD'S FLAG COUNTS ANIMALS, AND LEADS WITH THE PERCENT** — `leave 50% · ≈5 Wild Boar`. Two
+## separate reasons, and the ordering is the load-bearing one:
+##
+## The unit, because biomass was the LAST holdout on a hunt sheet — the readout row states
+## `≈0.41 Grey Wolf/turn`, the raid states `delivers ≈8 Wild Boar`, and `crew_to_hold` divides by
+## `body_mass` to answer at all. A floor in biomass reconciled with none of them.
+##
+## The ordering, because **a flag on a draggable control has to move when you drag it.** Biomass has
+## a value per `FLOOR_STEP`; a count over a K of ~11 animals has eleven, so an animal-first flag sits
+## on `leave 5` across a tenth of the axis and reads as a stuck control. The percent moves on every
+## step, so the percent leads and the count glosses it. That is also the honest order: the sim's
+## floor IS a K-fraction (`escapement_ceiling` = `B - floor·K`, quantised later at the kill), and
+## `classify_ecology_phase`'s cut points are fractions of the same K — so the percent is the axis and
+## the count is the rounding. `≈` says so, in the vocabulary the rest of the sheet already uses.
+const FLOOR_FLAG_ANIMALS_FORMAT := "leave %d%% · %s"
 const FLOOR_FLAG_STRIP := "leave nothing"
 const FLOOR_FLAG_FONT_SIZE := 10
 const FLOOR_FLAG_PAD := 3.0
@@ -270,8 +285,7 @@ func _draw_floor(plot: Rect2) -> void:
 	]), HudStyle.INK)
 	var capacity := float(_model.get("capacity", 0.0))
 	var text := FLOOR_FLAG_STRIP if floor_value <= SourceForecast.FLOOR_MIN \
-		else FLOOR_FLAG_FORMAT % [SourceForecast.format_stock(floor_value * capacity),
-			SourceForecast.floor_percent(floor_value)]
+		else _floor_flag_text(floor_value, floor_value * capacity)
 	var font: Font = ThemeDB.fallback_font
 	var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FLOOR_FLAG_FONT_SIZE)
 	var flag_x := plot.position.x + FLOOR_FLAG_INSET
@@ -283,6 +297,21 @@ func _draw_floor(plot: Rect2) -> void:
 		text_size.x + FLOOR_FLAG_PAD * 2.0, text_size.y), backing)
 	draw_string(font, Vector2(flag_x, flag_y), text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, FLOOR_FLAG_FONT_SIZE, HudStyle.INK)
+
+## The flag's words for a floor that leaves something standing. It branches on whether the source has
+## a BODY, not on which panel is drawing it: a herd counts animals, a patch states biomass, and the
+## model's own `body_mass` / `quarry` pair is what tells them apart. See `FLOOR_FLAG_ANIMALS_FORMAT`.
+func _floor_flag_text(floor_value: float, floor_stock: float) -> String:
+	var quarry := String(_model.get("quarry", ""))
+	var body_mass := float(_model.get("body_mass", 0.0))
+	# The QUANTITY comes from `stock_face`, which the at-floor verdict under this chart also reads —
+	# only the ORDER is decided here, and only because an animal count is too coarse to lead a flag on
+	# a drag target. What branches locally is the layout; what the number SAYS never does.
+	if SourceForecast.stock_counts_animals(floor_stock, body_mass, quarry):
+		return FLOOR_FLAG_ANIMALS_FORMAT % [SourceForecast.floor_percent(floor_value),
+			SourceForecast.stock_face(floor_stock, body_mass, quarry)]
+	return FLOOR_FLAG_FORMAT % [SourceForecast.stock_face(floor_stock, body_mass, quarry),
+		SourceForecast.floor_percent(floor_value)]
 
 ## THE LEARNING RAIL — `learn_multiplier` as a gradient, brightest where the most is left standing,
 ## with a marker at the floor. It answers "are these people, on this ground, contributing to the

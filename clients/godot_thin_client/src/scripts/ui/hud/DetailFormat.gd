@@ -218,9 +218,16 @@ const HUSBANDRY_PASTORAL_HINT := "Herdable, not pennable"
 # its live cost, and the one lever that stops it — never the retired "tameness slipping" story.
 const HERDERS_SHED_FORMAT := "Under-herded — animals are drifting off. Staff all %d herders to hold the herd."
 
+# ---- THE STANDING-STOCK ROW, AND ITS KEY NAMES ITS UNIT. `Herd: 6 / 11` counts ANIMALS — the unit
+# the hunt sheet already delivers in — so the card and the sheet finally read in one currency. It
+# falls back to `Biomass: 821 / 1442` for a species the wire published no `body_mass` for, and the
+# label switches WITH the unit rather than staying put: `Herd 821` invites reading 821 as a head
+# count, which is wrong by the body mass. The two keys are the honest labels for the two readings.
+const HERD_STOCK_ROW := "Herd"
+const HERD_STOCK_BIOMASS_ROW := "Biomass"
 # ---- Herd drawer grazing range (Grazing Phase 2b-iii): the ground the herd grazes — a SEPARATE fact
-# from the biomass/cap pair the `Biomass` row carries. Key ≤ `DETAIL_KEY_MAX_LENGTH` so it aligns as a
-# table row beside Biomass.
+# from the stock/cap pair the `Herd` row carries. Key ≤ `DETAIL_KEY_MAX_LENGTH` so it aligns as a
+# table row beside it.
 const HERD_RANGE_ROW := "Range"
 # ---- Herd drawer size class: the `<size> game` class the roster row used to carry as its meta. The
 # row's meta slot now states the herd's STAFFING, so the size class moved to the drawer.
@@ -419,12 +426,13 @@ static func _value_hex(key: String, value: String, ctx: Context) -> String:
     elif key == HudConst.TILE_SIGHT_KEY:
         # The tile's sight state: live cyan when in sight, dim when only remembered/unknown.
         return sight_value_hex(value)
-    elif key == "Ecology" or key == HudFloraVocab.FORAGING_KEY or key == HudFloraVocab.GRAZING_KEY:
-        # ONE phase tint (neutral/amber/red) for every ecology in the game — the herd drawer's own
-        # `Ecology` row, and the tile card's two food-web STOCK rows, which now carry their phase
-        # INLINE after the stock (`205 / 205 · ⚠ Stressed`) instead of on standalone rows beneath
-        # them. `ecology_value_hex` matches the phase WORD wherever it sits in the value, so folding
-        # the two rows into one forked nothing: the styling path is still the single shared one.
+    elif key == HERD_STOCK_ROW or key == HERD_STOCK_BIOMASS_ROW \
+            or key == HudFloraVocab.FORAGING_KEY or key == HudFloraVocab.GRAZING_KEY:
+        # ONE phase tint (neutral/amber/red) for every ecology in the game — the herd's own stock row
+        # and the tile card's two food-web stock rows, all of which carry their phase INLINE after the
+        # stock (`205 / 205 · ⚠ Stressed`) instead of on a standalone `Ecology` row beneath them.
+        # `ecology_value_hex` matches the phase WORD wherever it sits in the value, so folding the
+        # rows in forked nothing: the styling path is still the single shared one.
         return ecology_value_hex(value)
     elif key == "Husbandry":
         return husbandry_value_hex(value)
@@ -1107,23 +1115,41 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     if size_class != "":
         var size_format := HERD_SIZE_CLASS_PREDATOR_FORMAT if is_predator else HERD_SIZE_CLASS_FORMAT
         lines.append("%s: %s" % [HERD_SIZE_ROW, size_format % size_class.capitalize()])
-    # Biomass carries the herd's CURRENT head vs the K its range supports as a `current / max` pair
-    # (`11636 / 11636`) — the convention the forage patch ("Forage biomass: 84 / 120") and the tile
-    # card ("Pasture: 236 / 240") already use. K is derived each turn from the graze on the herd's
-    # range; an overgrazed herd has `biomass > K`, so the pair honestly reads `current > max` (e.g.
-    # `2100 / 1352`) — a FEATURE that makes the overshoot visible in the numbers (the ⚠ row below
-    # spells out the consequence). The `~` the old standalone `Carrying cap` row carried is dropped:
-    # a `current / max` pair already implies the max is the derived ceiling. Guard: a herd momentarily
-    # on barren range derives K = 0, so `carrying_capacity <= 0` falls back to the bare `Biomass: X`
-    # (never `X / 0`) and suppresses the overgrazing test below.
+    # The stock row carries what is standing vs the K its range supports as a `current / max` pair —
+    # the convention the tile card's own `Foraging` / `Grazing` rows use, and now in the same unit the
+    # hunt sheet answers in (see `HERD_STOCK_ROW`). K is derived each turn from the graze on the
+    # herd's range; an overgrazed herd has `biomass > K`, so the pair honestly reads `current > max`
+    # (e.g. `15 / 11`) — a FEATURE that makes the overshoot visible in the numbers (the ⚠ row below
+    # spells out the consequence), and the reason this is a PAIR rather than a fill percentage. Guard:
+    # a herd momentarily on barren range derives K = 0, so `carrying_capacity <= 0` falls back to the
+    # bare `X` (never `X / 0`) and suppresses the overgrazing test below.
+    #
+    # **THE ECOLOGY PHASE RIDES THIS ROW** rather than standing as one of its own, exactly as it does
+    # on the two food-web stock rows above it (`HudFloraVocab.STOCK_PHASE_CLAUSE_FORMAT`, whose
+    # comment carries the reasoning): the phase is a condition OF the stock, and `_value_hex` keys
+    # both row names to `ecology_value_hex`, which matches the phase word wherever in the value it
+    # sits. So folding costs no styling fork.
     var corralled := bool(herd_data.get("corralled", false))
     var carrying_capacity := float(herd_data.get("carrying_capacity", 0.0))
     var biomass: float = float(herd_data.get("biomass", 0.0))
+    var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
     if biomass > 0.0:
+        var body_mass := float(herd_data.get("body_mass", 0.0))
+        var head := SourceForecast.animal_count(biomass, body_mass)
+        var stock_row := HERD_STOCK_ROW if head != SourceForecast.ANIMAL_COUNT_NONE \
+            else HERD_STOCK_BIOMASS_ROW
+        var current := head if head != SourceForecast.ANIMAL_COUNT_NONE else int(round(biomass))
+        var value := str(current)
         if carrying_capacity > 0.0:
-            lines.append("Biomass: %d / %d" % [int(round(biomass)), int(round(carrying_capacity))])
-        else:
-            lines.append("Biomass: %.0f" % biomass)
+            # The ceiling counts in the SAME unit as the stock above it, or the pair states a ratio
+            # between two different things. `animal_count`'s floor-at-one applies to it too: a range
+            # that supports less than one body still supports one.
+            var ceiling := SourceForecast.animal_count(carrying_capacity, body_mass) \
+                if head != SourceForecast.ANIMAL_COUNT_NONE else int(round(carrying_capacity))
+            value = "%d / %d" % [current, ceiling]
+        if phase != "":
+            value = HudFloraVocab.STOCK_PHASE_CLAUSE_FORMAT % [value, ecology_phase_label(phase)]
+        lines.append("%s: %s" % [stock_row, value])
     # The grazing range — WHY the herd is this size (the tiles it grazes / derives K over). A CORRALLED
     # herd doesn't roam-graze a range, so its Range row + overgrazing test are meaningless (its K is a
     # frozen pen-time value); the penned herd keeps the merged `Biomass: X / Y` pair, plainly.
@@ -1135,9 +1161,6 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
     # unknown. The `X / Y` pair above already shows X > Y; this row states the consequence.
     if not corralled and carrying_capacity > 0.0 and biomass > carrying_capacity * (1.0 + OVERGRAZE_EPSILON):
         lines.append(OVERGRAZING_WARNING)
-    var phase := String(herd_data.get("ecology_phase", "")).strip_edges().to_lower()
-    if phase != "":
-        lines.append("Ecology: %s" % ecology_phase_label(phase))
     # Predators Phase 0 — the four RAW combat components (strength ≠ danger), shown for EVERY herd
     # (a rabbit reads all-empty, a mammoth reads high-attack/high-fights-back/zero-aggressive — the
     # "deadly to hunt, no camp threat" story at a glance). No verdict word; each row is a relative bar

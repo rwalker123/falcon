@@ -2679,19 +2679,48 @@ func _ready() -> void:
 	await _save("herd_collapsing")
 
 	# State 3b-graze — the ecological carrying-capacity readout (Grazing Phase 2b-iii). A HEALTHY herd:
-	# the drawer shows the merged "Biomass: 1480 / 2150" current/max pair (how many animals vs the ceiling
-	# the land sets) + a separate "Range: 7 tiles" row — with NO overgrazing warning (biomass ≤ K).
+	# the drawer shows the merged "Herd: 15 / 22 · Thriving" pair (animals standing vs the ceiling the
+	# land sets, its ecology phase riding the row) + a separate "Range: 7 tiles" row — with NO
+	# overgrazing warning (biomass ≤ K).
 	_show_herd(_grazing_healthy_herd_fixture())
 	await _settle()
 	await _save("herd_grazing_healthy")
+	# ASSERT THE UNIT, not just that a pair rendered. 1480 biomass ÷ 100 body_mass = 15 animals against
+	# 2150 ÷ 100 = 22 — so a row that silently kept counting biomass would read "1480 / 2150" and fail
+	# BOTH halves. The phase clause is asserted on the same line because folding the standalone
+	# `Ecology` row into this one is the other half of the change; if it split back out, the row would
+	# read a bare "15 / 22" and this fails while a plain contains("15 / 22") would not.
+	#
+	# **`_assert_hud`, NOT a bare `assert`, and deliberately** — the bare form the danger rows above
+	# use halts this harness on failure instead of reporting one: a headless run breaks into the
+	# debugger and hangs until it is killed, so the failing line is only findable in a stack trace on
+	# stderr. Measured while sabotage-checking this very assertion.
+	var graze_lines := DetailFormat.herd_summary_lines(
+		_grazing_healthy_herd_fixture(), _hud._band_labor.world_herds())
+	var graze_text := "\n".join(graze_lines)
+	_assert_hud("the herd's stock row counts ANIMALS against its ceiling, phase riding the row",
+		graze_text.contains("Herd: 15 / 22 · Thriving"))
+	_assert_hud("…so neither the biomass number nor its label survives anywhere on the card",
+		not graze_text.contains("1480") and not graze_text.contains("Biomass"))
+	_assert_hud("…and no standalone Ecology row does either — the phase is stated once, on the stock",
+		not graze_text.contains("Ecology:"))
 
-	# State 3b-overgraze — the same rows, but biomass (2100) > K (1352): the pair reads "Biomass: 2100 /
-	# 1352" (current > max) and the WARN-amber "⚠ Overgrazing — range can't sustain this herd" row
-	# appears beneath. It shows ONLY when biomass exceeds K — the honest sim-number comparison, not a
+	# State 3b-overgraze — the same rows, but biomass (2100) > K (1352): the pair reads "Herd: 21 / 14"
+	# (current > max) and the WARN-amber "⚠ Overgrazing — range can't sustain this herd" row appears
+	# beneath. It shows ONLY when biomass exceeds K — the honest sim-number comparison, not a
 	# re-derived ecology model.
 	_show_herd(_overgrazing_herd_fixture())
 	await _settle()
 	await _save("herd_overgrazing")
+	# ASSERT THE OVERSHOOT SURVIVES THE UNIT CHANGE. A `current > max` pair is the whole reason this is
+	# a pair and not a fill percentage, and dividing both sides by a body could have been written to
+	# clamp. 2100 ÷ 100 = 21 against 1352 ÷ 100 = 14 (13.52, rounded) — still the wrong way round.
+	var overgraze_text := "\n".join(DetailFormat.herd_summary_lines(
+		_overgrazing_herd_fixture(), _hud._band_labor.world_herds()))
+	_assert_hud("an overgrazed herd still reads current ABOVE max, in animals",
+		overgraze_text.contains("Herd: 21 / 14"))
+	_assert_hud("…with the warning that says what the inverted pair costs",
+		overgraze_text.contains(DetailFormat.OVERGRAZING_WARNING))
 
 	# State 3b-smallgame — a radius-0 herd (small game grazes only its own tile): "Range: 1 tile"
 	# (singular), and the map draws a single-hex highlight rather than a ring.
@@ -3755,6 +3784,49 @@ func _ready() -> void:
 	_assert_hud("…while the plant curve never is, at the same fraction of its own capacity",
 		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(drawn_patch,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
+
+	# **THE FLOOR FLAG'S UNIT AND ITS ORDER**, which no PNG can testify to at 10px. Asserted against
+	# hand-built models rather than the live sheet so both branches are reachable from one place and
+	# the expected strings are computable by eye: 1075 ÷ 100 = 10.75 → 11 animals at floor 0.50.
+	#
+	# The ORDER is the assertion that matters. An animal count over a K of ~21 animals has ~21 states
+	# where biomass had one per FLOOR_STEP, so an animal-FIRST flag would sit unmoved across a tenth of
+	# the drag and read as a stuck control. Leading with the percent is what keeps the flag responsive,
+	# and `==` (not `contains`) is what pins the order.
+	var flag_probe := HarvestFloorChart.new()
+	flag_probe.set_model({"known": true, "floor": SourceForecast.FLOOR_FOOD_PEAK,
+		"capacity": 2150.0, "body_mass": 100.0, "quarry": "Red Deer"})
+	_assert_hud("a HERD's floor flag counts animals and leads with the percent",
+		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 1075.0)
+			== "leave 50% · ≈11 Red Deer")
+	# THE OTHER HALF OF THE BRANCH, and the reason it is a branch at all: a patch has no body, so a
+	# forage flag is byte-for-byte what it was — biomass first, no `≈`, no species. Without this the
+	# suite could not tell "fauna converted" from "everything converted".
+	flag_probe.set_model({"known": true, "floor": SourceForecast.FLOOR_FOOD_PEAK, "capacity": 195.0})
+	_assert_hud("…while a PATCH's flag is unchanged: biomass first, no animal count",
+		flag_probe._floor_flag_text(SourceForecast.FLOOR_FOOD_PEAK, 97.5) == "leave 98 · 50%")
+	flag_probe.free()
+	# The conversion itself, on literals. `animal_count` is the ONE place biomass becomes a head count
+	# (the drawer row and the flag both read it), so its two edges are worth stating outright: a
+	# species with no `body_mass` on the wire yields no count at all, and a herd holding a FIFTH of a
+	# body counts ONE, never the rounded zero — it is alive on the map and the sim's kill step floors
+	# at one body too.
+	_assert_hud("body mass turns biomass into animals",
+		SourceForecast.animal_count(820.0, 100.0) == 8)
+	_assert_hud("…a herd under one body still counts one, never zero",
+		SourceForecast.animal_count(19.0, 100.0) == 1)
+	_assert_hud("…and a species with no body mass has no count to state",
+		SourceForecast.animal_count(820.0, 0.0) == SourceForecast.ANIMAL_COUNT_NONE)
+	# **THE FLAG AND THE VERDICT NAME ONE THRESHOLD, so they must name it in one unit.** Caught in a
+	# frame, not in review: this sheet read `leave 50% · ≈11 Red Deer` over "grows past 1075". Both now
+	# render the quantity through `stock_face`, and this is the assertion that says so — the verdict's
+	# sentence must CONTAIN what the flag flies, on the same model.
+	var at_floor := SourceForecast.harvest_verdict({"reached_turn": SourceForecast.PROJECTION_REACHED_NONE,
+		"settled_fraction": 0.0, "series": []}, FLOOR_CHART_CREW, 96.0, 2150.0,
+		SourceForecast.FLOOR_FOOD_PEAK, 0, "hunters", 100.0, "Red Deer")
+	_assert_hud("the at-floor verdict quotes the threshold in the SAME unit the flag flies",
+		String(at_floor.get("text", "")).contains("≈11 Red Deer")
+			and not String(at_floor.get("text", "")).contains("1075"))
 
 	# 3x — the same wolf as an EXPEDITION target (band 27 tiles off). `delivers_food = false` on every
 	# cell now means THE QUARRY IS INEDIBLE, not "a denial mission", so the raid line must read a real
@@ -9025,9 +9097,14 @@ func _herd_fixture() -> Dictionary:
 		"biomass": 820.0,
 		# Ecological carrying capacity + grazing range (Grazing Phase 2b-iii): the numbers that explain
 		# the herd's size. Big game roams a radius-1 range (7 tiles); on good steppe it caps ~2150, well
-		# above this herd's 820 biomass, so the drawer reads the healthy "Biomass: 820 / 2150" pair with
-		# no overgrazing warning. The dedicated grazing states below dial in overgrazed / small-game.
+		# above this herd's 820 biomass, so the drawer reads the healthy "Herd: 8 / 22" pair with no
+		# overgrazing warning. The dedicated grazing states below dial in overgrazed / small-game.
 		"carrying_capacity": 2150.0,
+		# ONE animal's biomass — what turns both numbers above into the ANIMAL counts the drawer and the
+		# floor flag state. **Pinned to the fixture's own `food_per_animal`**, not chosen freely: the
+		# sim's identity is `food_per_animal = body_mass × provisions_per_biomass`, so at the deer's
+		# 0.02 this must be 2.0 / 0.02 = 100 or the fixture asserts against a herd that could not exist.
+		"body_mass": 100.0,
 		"graze_range_radius": 1,
 		"route_length": 3,
 		# One animal's worth of FOOD (provisions) — `HerdTelemetryState.foodPerAnimal`, the exact key the

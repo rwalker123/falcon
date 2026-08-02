@@ -554,7 +554,7 @@ binding**, in the raid verdict's own ok/slow/blocked severity vocabulary:
 |---|---|---|
 | the crew reaches the floor | `ok` | *Reaches the floor in 9 turns, then holds it — taking only what grows back.* |
 | the crew settles short of it | `slow` | *This crew can't draw it that low. It settles at 62% and holds there — 11 gatherers would reach the floor.* |
-| nothing stands above the floor | `blocked` | *Already at or below the floor. This crew takes nothing until it grows past 98.* |
+| nothing stands above the floor | `blocked` | *Already at or below the floor. This crew takes nothing until it grows past 98.* (a herd: *…past ≈11 Red Deer*) |
 | no crew at all | `blocked` | *No one assigned. Nothing is taken and it grows back on its own.* |
 
 The settle point and the reach turn both come off the SAME projection the chart draws.
@@ -564,9 +564,29 @@ drawn horizon". The floor-0 flavours the prototype spells out are deliberately N
 stripping costs is already the FLOOR HINT's sentence (`FLOOR_STRIP_CONSEQUENCE`), and a verdict
 restating it says one fact twice.
 
-**A STOCK IS NOT A RATE.** `SourceForecast.format_stock` prints whole biomass (`grows past 1075`),
-matching the drawer's own `Forage biomass 35 / 100`; `format_magnitude`'s two decimals are the
-food-RATE rule and spending them on a stock prints `1075.00`, claiming precision the number lacks.
+**A STOCK IS NOT A RATE.** `SourceForecast.format_stock` prints whole biomass, matching the tile
+card's own `Foraging 35 / 100`; `format_magnitude`'s two decimals are the food-RATE rule and spending
+them on a stock prints `1075.00`, claiming precision the number lacks.
+
+**A HERD'S STOCK IS COUNTED IN ANIMALS, AND ONE FUNCTION SAYS SO.** `SourceForecast.stock_face`
+renders a standing quantity in the unit its source counts in — `98` for a patch, `≈11 Red Deer` for a
+herd (`animal_count`, floored at one body). **Both surfaces that name the floor's THRESHOLD read it
+from there**: the chart's flag and the at-floor verdict beneath it. They are two statements of one
+number and they diverged the moment the flag learned to count animals while the verdict went on
+quoting `grows past 1075` — caught in a rendered frame, not in review — so the cure is that no second
+rendering exists, not two kept in step by hand. `floor_chart_model` binds `body_mass` / `quarry` once
+and passes them BOTH to `harvest_verdict` and out on the model, for the same reason.
+
+**THE FLAG LEADS WITH THE PERCENT WHERE IT COUNTS ANIMALS** (`FLOOR_FLAG_ANIMALS_FORMAT`,
+`leave 50% · ≈11 Red Deer`) — the one thing the chart decides locally, and it decides LAYOUT, never
+what the number says. Biomass has a value per `FLOOR_STEP`; a count over a K of ~21 animals has ~21,
+so an animal-first flag sits unmoved across a tenth of the drag and reads as a stuck control. **A flag
+on a draggable control has to move when you drag it**, so the continuous term leads and the count
+glosses it — which is also the honest order, since the sim's floor IS a K-fraction (`B − floor·K`,
+quantised later at the kill) and `classify_ecology_phase`'s cut points are fractions of the same K.
+`≈` is the vocabulary the rest of the sheet already uses for a rounded animal count. A PATCH has no
+body, so its flag is unchanged (biomass first, no `≈`, no species) — asserted alongside the herd's,
+or the suite could not tell "fauna converted" from "everything converted".
 
 ### §7.2: THE HOLD NUMBER IS THE CEILING ON USEFULNESS, AND IDLE CREW IS REPORTED, NEVER RELEASED
 
