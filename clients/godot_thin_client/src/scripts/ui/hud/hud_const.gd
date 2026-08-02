@@ -89,7 +89,12 @@ const TILE_SIGHT_UNEXPLORED := "Unexplored"
 # empty roster there — an absent list is a claim of emptiness the client cannot back up.
 const OCCUPANTS_UNKNOWN_TITLE := "out of sight"
 
-const OCCUPANTS_UNKNOWN_REMEMBERED := "You remember the ground here, but not what's on it now — bands and herds move. Scout it to see."
+# **IT PROMISES NOTHING, AND THAT IS DELIBERATE.** It used to close with "Scout it to see", which is
+# a promise scouting cannot keep: scouting makes a hex DISCOVERED, and this sentence is what a
+# Discovered hex says — current contents need SIGHT, i.e. a band standing there now. Reported from
+# play by a player who scouted the hex and found it already back to `Remembered` by the time they
+# reached camp. The unexplored twin below still names the verb, because there the verb does work.
+const OCCUPANTS_UNKNOWN_REMEMBERED := "You remember the ground here, but not what's on it now."
 
 const OCCUPANTS_UNKNOWN_UNEXPLORED := "Nobody has been here. Send a band to reveal what's on this ground."
 

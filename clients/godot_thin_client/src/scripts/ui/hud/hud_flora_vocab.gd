@@ -353,7 +353,7 @@ const STOCK_FORMAT := "%.0f / %.0f"
 # on ground the player cannot see. The em-dash holds the numerator's place rather than the row being
 # dropped, so the pair stays positionally parallel with the live card — and it is the one glyph that
 # cannot be misread as a quantity, which is the entire failure this form exists to prevent: the
-# tile-level "Remembered" chip and "Last seen" sentence were both already on screen when a reader
+# tile-level "Remembered" chip and unknown-contents note were both already on screen when a reader
 # last carried a fogged `130 / 130` into their model of the forage patch. A label on the tile does
 # not label the number; this does.
 #

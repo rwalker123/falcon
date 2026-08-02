@@ -405,8 +405,26 @@ at all — it was that turn's live value, arriving through a hole in the redacti
   `STOCK_UNKNOWN_GLYPH` so the row and the harness searching it cannot drift. The em-dash holds the
   numerator's place rather than the row being dropped, which keeps the pair parallel with the live
   card — and it is the one glyph that cannot be misread as a quantity. **That is the whole point of
-  the form**: the `Remembered` chip, the `Last seen …` sentence and the map's mist tint were all
+  the form**: the `Remembered` chip, the unknown-contents note and the map's mist tint were all
   already on screen when the confusion happened. They label the TILE; nothing labelled the NUMBER.
+
+### The card says "remembered" ONCE, and promises nothing
+
+A remembered hex used to carry **three** statements of the same fact — the pinned `Remembered` chip,
+the drawer's `Last seen — information incomplete. Scout to update.`, and the roster's
+`OCCUPANTS_UNKNOWN_REMEMBERED` note, which itself closed `… Scout it to see.` The middle one is
+**deleted** and the note is trimmed to `You remember the ground here, but not what's on it now.`
+
+**Both closing clauses were a promise the verb cannot keep.** Scouting makes a hex **Discovered** —
+which is precisely the state the sentence is describing — so it can never take a hex out of it.
+Current contents need **sight**: a band standing there now. Reported from play by a player who
+scouted a hex and found it already back to `Remembered` by the time they reached camp, i.e. the copy
+was instructing them to redo the thing they had just done.
+
+**`OCCUPANTS_UNKNOWN_UNEXPLORED` keeps its verb** (`Nobody has been here. Send a band to reveal
+what's on this ground.`), as does the drawer's `Not yet scouted — send a band to reveal this area.`
+There the verb genuinely does the thing: an unexplored hex becomes discovered. The rule is that
+FoW copy names a verb only where the verb changes the state being described.
 
 **The harvest-floor chart still correctly disappears**, and not because the capacity is hidden:
 `SourceForecast.floor_chart_model`'s `known` gate needs `patch_regrowth_samples` (redacted) as well as

@@ -86,8 +86,12 @@ paths:
     river lines · **`Foraging` and its indented basket, then `Grazing`** (the two food webs, named
     for who eats them and rendered adjacent — `land-readouts.md` → "The tile card's TWO FOOD-WEB
     ROWS"; the `Forage:` module row is deleted, and each web's ecology phase now rides its own stock
-    row) · Crop / Cultivation / Field · plus the two FoW sentences (`Last seen …` / `Not yet
-    scouted …`), which are statements, not conditions, and have no chip. Sight / Habitability / Climate / Tags / Site are the CHIPS'
+    row) · Crop / Cultivation / Field · plus the ONE FoW sentence, `Not yet scouted …` on an
+    unexplored hex, which is a statement rather than a condition and has no chip. **A remembered hex
+    adds no sentence here** — it used to append `Last seen — information incomplete. Scout to update.`,
+    which was the second of three things on the card saying the hex is remembered (the chip, this, and
+    the drawer's `OCCUPANTS_UNKNOWN_REMEMBERED` note) and made a promise scouting cannot keep; see
+    `land-readouts.md` → "Fog splits a stock from its capacity". Sight / Habitability / Climate / Tags / Site are the CHIPS'
     and `Biome` is the land ROW's own label, so printing any of them here restated the strip
     verbatim (§8's "no restated identity"). The `TILE_SIGHT_KEY` / `Habitability` cases in
     `DetailFormat.detail_bbcode` stay — it is a shared key→tint registry every detail surface consults.

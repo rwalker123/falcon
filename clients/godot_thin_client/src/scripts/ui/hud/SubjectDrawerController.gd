@@ -258,12 +258,19 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # It renders WITHOUT the basket, and that follows from the same fact. Each basket row states the
     # biomass its share amounts to, so with no stock to decompose the rows would be the free-floating
     # "three more resources" list the layout exists to stop (`land-readouts.md` → the basket).
+    #
+    # IT ENDS AT THE ROWS — there is no "Last seen — information incomplete. Scout to update." line
+    # any more. It was the SECOND sentence on the card saying the hex is remembered (the drawer's own
+    # `OCCUPANTS_UNKNOWN_REMEMBERED` note says it below, and the pinned `Remembered` chip says it a
+    # third time above), and both sentences closed with a promise scouting cannot keep: scouting makes
+    # a hex DISCOVERED, which is the state being described — seeing current contents needs SIGHT, a
+    # band standing there now. The `— / K` rows carry "this number is unknown" on the datum itself,
+    # which is the job that line was failing to do.
     var stock_known := visibility_state != HudConst.VISIBILITY_DISCOVERED
     var graze_lines := _graze_stock_lines(tile_info, stock_known)
     if not stock_known:
         lines.append_array(_forage_stock_lines(tile_info, false))
         lines.append_array(graze_lines)
-        lines.append("Last seen — information incomplete. Scout to update.")
         return lines
     # FORAGING — the HUMAN-edible stock, and the first of the pair. Standing biomass over the patch's
     # ceiling, with the ecology phase inline: the phase is a condition OF this stock and gates whether
