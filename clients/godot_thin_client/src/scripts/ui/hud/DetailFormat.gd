@@ -1214,10 +1214,10 @@ static func herd_summary_lines(herd_data: Dictionary, world_herds: Array, assign
                 lines.append("Corral: %s" % corral_label(corral_progress, false, PenStatus.FULLY_FED))
         elif ceiling == SourceForecast.HUSBANDRY_CEILING_PASTORAL:
             lines.append(HUSBANDRY_PASTORAL_HINT)
-    var x := int(herd_data.get("x", -1))
-    var y := int(herd_data.get("y", -1))
-    if x >= 0 and y >= 0:
-        lines.append("Position: (%d, %d)" % [x, y])
+    # **NO `Position` ROW.** These lines render in ONE place — the tile card's subject drawer — and
+    # the card's own header states the hex two rows above them (`TILE (34, 24)`), so a herd stating
+    # it again was the same coordinate pair twice on one card. `Next waypoint` below is a different
+    # fact — where it is HEADING, which nothing else on the card says — and stays.
     var next_x := int(herd_data.get("next_x", -1))
     var next_y := int(herd_data.get("next_y", -1))
     if next_x >= 0 and next_y >= 0:

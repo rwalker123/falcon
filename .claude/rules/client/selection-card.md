@@ -173,8 +173,12 @@ paths:
   `send_hunt_expedition` address the herd by it. Renders of it elsewhere are **fallbacks only**
   (`SourceForecast.herd_display_name` / `_herd_label_for_id` reach for `id` only when species AND label are
   both missing) — never the normal path. What's left in a drawer is only what the row can't show — herd: Size / Biomass / Ecology /
-  Husbandry / Corral / Position; expedition: Mission / Target / Policy / Phase / Carried /
-  Position. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
+  Husbandry / Corral; expedition: Mission / Target / Policy / Phase / Carried /
+  Position. **A herd states NO `Position`**: `herd_summary_lines` renders in this drawer and
+  nowhere else, and the card's own `TILE (x, y)` header sits two rows above it, so the row was the
+  same coordinate pair twice on one card. Its `Next waypoint` is a different fact — where the herd
+  is HEADING — and stays. The expedition's `Position` is NOT the same row: a party is somewhere
+  other than the tile whose card you are reading. **Expedition `Policy` / `Phase` keep their WORDS** — the compact
   Active-expeditions row is where the glyph vocabulary belongs; the drawer IS the
   disclosure. In the drawer,
   `%OccupantDetail` is the selected occupant's
