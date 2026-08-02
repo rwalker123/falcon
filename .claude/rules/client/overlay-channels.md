@@ -60,7 +60,25 @@ word can't survive the roster (a mammoth and later mech-infantry can't both be "
 relative bar + raw value, Elevation-style — **Attack** / **Defense** bar against the max across
 `_world_herds` (falling back to the bare value with no reference), **Fights back** / **Aggressive** as a
 0..1 bar + %, plus a compact derived `Danger: Hunt X · Threat Y` summary. No `DetailFormat.detail_bbcode` tint
-case — the component rows carry no verdict word. Verify via `map_preview` states **"hunt_danger"**
+case — the component rows carry no verdict word.
+
+**THE DERIVED ROW LEADS, AND THE THREE ROWS IT IS MADE OF INDENT UNDER IT.** `Hunt` is
+`attack × ferocity` and `Threat` is `attack × aggression`, so exactly three of the four components
+compose it — **`Defense` is in NEITHER**, and it rises above `Danger` to sit flat with Size / Herd /
+Range, the other facts about what the herd IS. Indenting all four would assert a contribution Defense
+does not make; it answers a different question (how hard the herd is to kill, and on the predator side
+whether something else eats it), and pairing it with Attack by convention is what made it read as a
+fourth input. Grouping also makes the arithmetic nearly readable off the page — attack is in both
+terms, the other two split them.
+
+> **`DANGER_COMPONENT_INDENT` (3 spaces) must NOT begin with `MORALE_BREAKDOWN_INDENT` (4).**
+> `detail_bbcode` routes any line starting with that prefix to the FULL-WIDTH sub-line branch, and
+> these rows have to stay KV table rows or their bars stop sharing a column — which is the entire
+> point of a bar. Both halves are asserted in `ui_preview` (the prefixes cannot collide, AND an
+> indented factor really did render inside a `[cell]`), because the collision is silent: the rows
+> still appear, just unaligned.
+
+Verify via `map_preview` states **"hunt_danger"**
 (`map_hunt_danger.png` — mammoth + wolf glow orange) / **"threat"** (`map_threat.png` — only the
 aggressive wolf glows red) + the printed legends, and `ui_preview` `herd_verbs` (harmless deer, all-empty
 bars) / `herd_danger` (mammoth: high Attack/Fights-back, empty Aggressive), whose behavioural assertions

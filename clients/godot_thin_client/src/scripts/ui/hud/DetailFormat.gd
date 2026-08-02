@@ -160,6 +160,19 @@ const DANGER_BAR_CELLS := 5
 ## The compact derived line the player reasons about: hunt cost vs unprovoked menace.
 const DANGER_DERIVED_ROW := "Danger"
 const DANGER_DERIVED_FORMAT := "Hunt %s · Threat %s"
+## **THE THREE ROWS `Danger` IS MADE OF SIT UNDER IT; `Defense` DOES NOT.** `Hunt` is
+## `attack × ferocity` and `Threat` is `attack × aggression` — three of the four components, and
+## Defense appears in neither. It answers a different question (how hard the herd is to kill, and on
+## the predator side whether something else eats it), so indenting it under Danger would assert a
+## contribution it does not make. It rises to sit with Size / Herd / Range, the other facts about what
+## this herd IS, where it also stops reading as Attack's natural pair — which is what made it look
+## like a fourth input in the first place.
+##
+## **THE INDENT MUST NOT BEGIN WITH `MORALE_BREAKDOWN_INDENT`.** `detail_bbcode` routes any line
+## starting with that 4-space prefix to the FULL-WIDTH sub-line branch, and these rows have to stay
+## KV table rows or their bars stop sharing a column — which is the whole point of a bar. Three spaces
+## indents inside the key cell and still falls through to `_split_kv`. Guarded in `ui_preview`.
+const DANGER_COMPONENT_INDENT := "   "
 
 # ---- Herder staffing. The row KEY is read by the herd-lines producer below AND by this file's tint
 # registry; `FULLY_HERDED` is the `herded_fraction` wire default (1.0 = fully staffed, also
@@ -555,14 +568,21 @@ static func append_danger_component_lines(lines: Array[String], herd_data: Dicti
     var defense := float(herd_data.get("defense", 0.0))
     var ferocity := clampf(float(herd_data.get("ferocity", 0.0)), 0.0, 1.0)
     var aggression := clampf(float(herd_data.get("aggression", 0.0)), 0.0, 1.0)
-    lines.append("%s: %s" % [DANGER_ATTACK_ROW, _danger_open_row(attack, "attack", world_herds)])
+    # Defense LEADS and stands flat: it is not in either product below. See `DANGER_COMPONENT_INDENT`.
     lines.append("%s: %s" % [DANGER_DEFENSE_ROW, _danger_open_row(defense, "defense", world_herds)])
-    lines.append("%s: %s" % [DANGER_FEROCITY_ROW, _danger_unit_row(ferocity)])
-    lines.append("%s: %s" % [DANGER_AGGRESSION_ROW, _danger_unit_row(aggression)])
-    # The compact derived line the player actually reasons about: hunt cost vs unprovoked menace.
+    # THE ANSWER, THEN ITS WORKING. The derived line used to sit LAST, under four rows of equal
+    # weight, so a card stated four inputs and a conclusion in one undifferentiated column. Leading
+    # with it and indenting its factors also makes the arithmetic nearly readable off the page: attack
+    # is in both terms, and the other two split them.
     lines.append("%s: %s" % [DANGER_DERIVED_ROW, DANGER_DERIVED_FORMAT % [
         _format_danger_scalar(attack * ferocity), _format_danger_scalar(attack * aggression),
     ]])
+    lines.append("%s%s: %s" % [DANGER_COMPONENT_INDENT, DANGER_ATTACK_ROW,
+        _danger_open_row(attack, "attack", world_herds)])
+    lines.append("%s%s: %s" % [DANGER_COMPONENT_INDENT, DANGER_FEROCITY_ROW,
+        _danger_unit_row(ferocity)])
+    lines.append("%s%s: %s" % [DANGER_COMPONENT_INDENT, DANGER_AGGRESSION_ROW,
+        _danger_unit_row(aggression)])
 
 ## An OPEN-ENDED component (attack/defense): a bar relative to the roster max + the raw value. The bar
 ## normalizes against the biggest value of that component across `world_herds`; with no reference (max

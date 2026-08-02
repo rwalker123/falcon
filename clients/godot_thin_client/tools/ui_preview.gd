@@ -2743,6 +2743,33 @@ func _ready() -> void:
 	# Fights back 90%, Aggressive 0% — the split that proves strength ≠ danger.
 	assert(_danger_row_value(mammoth_lines, "Fights back").ends_with("90%"))
 	assert(_danger_row_value(mammoth_lines, "Aggressive").ends_with("0%"))
+	# **THE ANSWER LEADS AND ITS THREE FACTORS INDENT UNDER IT.** `Hunt` is `attack × ferocity` and
+	# `Threat` is `attack × aggression`, so exactly three of the four components compose the derived
+	# row — Defense is in neither and stays FLAT, above it, with the other facts about what this herd
+	# is. Asserting the indent per row rather than the block's order alone: the claim is "Defense does
+	# not contribute", and a reordering that indented all four would satisfy any pure ordering test.
+	var mammoth_text := "\n".join(mammoth_lines)
+	var indent := DetailFormat.DANGER_COMPONENT_INDENT
+	_assert_hud("Danger's three factors are indented under it",
+		mammoth_text.contains("%s%s: " % [indent, DetailFormat.DANGER_ATTACK_ROW])
+			and mammoth_text.contains("%s%s: " % [indent, DetailFormat.DANGER_FEROCITY_ROW])
+			and mammoth_text.contains("%s%s: " % [indent, DetailFormat.DANGER_AGGRESSION_ROW]))
+	_assert_hud("…while Defense stays flat, being in neither product",
+		mammoth_text.contains("\n%s: " % DetailFormat.DANGER_DEFENSE_ROW)
+			and not mammoth_text.contains("%s%s: " % [indent, DetailFormat.DANGER_DEFENSE_ROW]))
+	_assert_hud("…and the derived row LEADS them rather than trailing four equal-weight inputs",
+		mammoth_text.find("%s: " % DetailFormat.DANGER_DERIVED_ROW)
+			< mammoth_text.find("%s%s: " % [indent, DetailFormat.DANGER_ATTACK_ROW]))
+	# **THE INDENT MUST NOT COLLIDE WITH THE FULL-WIDTH SUB-LINE PREFIX.** `detail_bbcode` routes any
+	# line beginning with `MORALE_BREAKDOWN_INDENT` out of the KV table and into a full-width branch,
+	# which would leave these bars starting at three different x positions — and a bar that shares no
+	# column measures nothing. Both halves asserted: the prefixes cannot collide, AND the row really
+	# did render as a table cell, which is the fact the first half exists to protect.
+	_assert_hud("the danger indent cannot be swallowed by the full-width sub-line branch",
+		not indent.begins_with(DetailFormat.MORALE_BREAKDOWN_INDENT))
+	_assert_hud("…so an indented factor still renders as a KV table cell, bars in one column",
+		DetailFormat.detail_bbcode(mammoth_lines, DetailFormat.Context.new()).contains(
+			"[cell][color=#%s]%s%s" % [HudStyle.INK_DIM_HEX, indent, DetailFormat.DANGER_ATTACK_ROW]))
 
 	# State 3b-predator (Predators Phase 1a) — a carnivore (Grey Wolf Pack, prey_sense_radius 4): a
 	# predator is a HUNTER, not quarry, so the Size row reads "Big predator" (not "Big game") and the
@@ -9404,11 +9431,14 @@ func _danger_verdict_word_present(lines: Array) -> bool:
 	return false
 
 func _danger_row_value(lines: Array, key: String) -> String:
-	var prefix := "%s: " % key
-	for line in lines:
-		var text := String(line)
-		if text.begins_with(prefix):
-			return text.substr(prefix.length())
+	# The three components `Danger` is made of are INDENTED under it, so a row is matched on its key
+	# with the indent stripped rather than on a bare `begins_with`. `Defense` is not one of them and
+	# stands flat, which the empty prefix still finds.
+	for prefix in ["%s%s: " % [DetailFormat.DANGER_COMPONENT_INDENT, key], "%s: " % key]:
+		for line in lines:
+			var text := String(line)
+			if text.begins_with(prefix):
+				return text.substr(prefix.length())
 	return ""
 
 ## A WILD-ceiling herd (Grazing 2d-δ): hunt-only. The drawer shows NO husbandry track (no
