@@ -1127,6 +1127,10 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
     _update_band_panel_edge_offset()
+    # The PERPENDICULAR axis: pull the horizontal event bar in from whatever is docked left/right.
+    # Recomputed on EVERY reservation change, not just the dock's own — the band panel changing edge
+    # or collapsing has to move the bar.
+    _update_event_dock_insets()
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed
@@ -1146,6 +1150,34 @@ func _update_band_panel_edge_offset() -> void:
         if int(RESERVER_PRIORITY.get(other_id, 0)) < band_priority:
             offset += float(r.get("size", 0.0))
     band_city_panel.call("set_edge_offset", offset)
+
+## The event dock's counterpart to `_update_band_panel_edge_offset`, on the OTHER axis.
+##
+## The bar is top/bottom only, so every `SIDE_LEFT` / `SIDE_RIGHT` reserver is a full-height column
+## the bar must live BESIDE rather than across: it starts to the right of whatever is docked left and
+## finishes to the left of whatever is docked right. Sums the per-edge totals — every reserver except
+## the dock itself — and hands the pair over.
+##
+## **This is not `RESERVER_PRIORITY`.** That orders reservers stacked ALONG one shared edge (the dock
+## is 0 there, so it still hugs its own edge); this is the cross axis, where there is no stacking
+## question — a vertical column simply takes room the horizontal bar may not use. Conflating the two
+## is the easy mistake: priority would never have fixed this, because TOP and LEFT are not co-edge and
+## `_update_band_panel_edge_offset` correctly ignores each other's edges.
+func _update_event_dock_insets() -> void:
+    if event_dock == null or not event_dock.has_method("set_perpendicular_insets"):
+        return
+    var left: float = 0.0
+    var right: float = 0.0
+    for other_id in _reservations:
+        if other_id == EVENT_DOCK_RESERVER:
+            continue
+        var r: Dictionary = _reservations[other_id]
+        match int(r.get("edge", -1)):
+            SIDE_LEFT:
+                left += float(r.get("size", 0.0))
+            SIDE_RIGHT:
+                right += float(r.get("size", 0.0))
+    event_dock.call("set_perpendicular_insets", left, right)
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
@@ -1214,6 +1246,11 @@ func _connect_event_dock() -> void:
     if event_dock.has_method("get_dock") and event_dock.has_method("current_reservation_size"):
         _apply_reservation(EVENT_DOCK_RESERVER, int(event_dock.call("get_dock")),
             float(event_dock.call("current_reservation_size")))
+    # Seed the perpendicular insets too. `_apply_reservation` above already does it, but only if the
+    # dock reserves something — a session that boots with the bar suppressed would otherwise have a
+    # full-width strip waiting behind the `R` toggle. Wiring runs after `_connect_band_city_panel`,
+    # so the vertical reservers are already in `_reservations` by now.
+    _update_event_dock_insets()
 
 func _on_event_dock_reservation_changed(edge: int, size: float) -> void:
     _apply_reservation(EVENT_DOCK_RESERVER, edge, size)

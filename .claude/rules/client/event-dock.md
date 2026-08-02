@@ -41,8 +41,17 @@ the bar — the precise failure the three-rung ladder exists to prevent. A death
 whole band starving out) announces itself through the starvation and morale channels that already
 exist. Alert is kept for violence, for an investment going feral, and for the client's own faults.
 
-`born` is Routine while `came_of_age` is Notable for the same kind of reason: a birth is a mouth, a
-coming-of-age is a new pair of hands, and only the second changes what the player can do this turn.
+**`born` is NOTABLE too, and it shipped Routine — which was wrong at the play-test.** Routine sits
+below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared at all unless the player switched to
+"Everything", where it arrived buried among forage receipts. Ray hit exactly that at population 31:
+the counter ticked up and the bar said nothing, which is the failure this whole arc exists to remove.
+
+The reasoning that put it there ("a birth is a mouth, a coming-of-age is a new pair of hands") was
+describing a real difference on the wrong axis. **The rung is not a measure of how much a turn's
+LABOUR changed** — it is whether the world changed in a way worth knowing. `born`, `came_of_age` and
+`died` are one family by that test: the settlement visibly changing size is the plainest such change
+there is, and the most legible sign it is alive at all. Routine keeps what it is actually for —
+receipts for verbs the player asked for.
 
 ## A row's accent is resolved most-specific-first
 
@@ -203,6 +212,39 @@ dock itself needs no `set_edge_offset` because priority 0 always hugs.
 
 (The Inspector is always `SIDE_LEFT`, so it never actually shares an edge with a top/bottom-only
 dock; its number is there to keep the order total.)
+
+## …and it lives BETWEEN the vertical docks, which is a different axis entirely
+
+Priority does not help here, and expecting it to is what shipped the bug: a `SIDE_TOP` bar spanning
+the raw window, drawn at layer 104 over the `SIDE_LEFT` band panel at 103, covering its tab bar.
+TOP and LEFT are not co-edge, so `_update_band_panel_edge_offset` correctly ignored the pairing and
+no amount of renumbering would have moved either one.
+
+The fix is on the **perpendicular** axis: `Main._update_event_dock_insets()` sums the live
+`SIDE_LEFT` and `SIDE_RIGHT` reservation totals (every reserver except the dock itself, so the
+Inspector counts too) and pushes them to `EventDockPanel.set_perpendicular_insets`, which applies
+them as `offset_left` / `offset_right` on its root. The bar starts right of whatever is docked left
+and stops left of whatever is docked right. A left/right panel owns its full-height column; the
+horizontal strip lives in the band between them.
+
+- **Recomputed on EVERY `_apply_reservation`, not just the dock's own** — the band panel changing
+  edge, collapsing or hiding has to move the bar — and seeded once at connect time so a session that
+  boots already docked is right on frame one (including one that boots with the bar suppressed, which
+  reserves nothing and would otherwise leave a full-width strip waiting behind `R`).
+- **It moves where the strip is DRAWN, never what it RESERVES.** `current_reservation_size()` is
+  untouched, so the content-independence rule above still holds.
+
+Also note it is not a stacking-order problem: raising or lowering `LAYER_INDEX` would only decide
+*which* panel is hidden by the other. The band panel is a legitimate occupant of that column and the
+bar has no business in it.
+
+`ui_preview` pins this with a real `BandCityPanel` docked LEFT — a literal would prove nothing about
+two rects actually clearing each other — across `event_dock_inset_left_panel` and
+`event_dock_inset_bottom_panel` (both edges, since the bug was about the horizontal axis and a fix
+reaching only `SIDE_TOP` must fail), against a **negative control taken first on the same two live
+nodes**: at zero inset the rects genuinely do overlap, so the assertion is not satisfiable by two
+panels that happen never to meet. `event_dock_bottom` carries the zero case, so an inset hard-wired
+to a constant cannot pass either.
 
 ## Preferences live in `[events]` of `user://narrative.cfg`
 

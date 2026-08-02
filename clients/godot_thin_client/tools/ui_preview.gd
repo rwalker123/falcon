@@ -6127,6 +6127,19 @@ func _ready() -> void:
 	event_dock.set_expanded(false)
 	await _settle()
 	await _save("event_dock_bottom")
+	# A BIRTH IS VISIBLE AT THE DEFAULT FLOOR. `born` shipped Routine, which is BELOW
+	# `DEFAULT_DETAIL_LEVEL`, so it never appeared unless the player chose "Everything" — reported
+	# live as a population counter ticking up while the bar said nothing. A rung table is one dict
+	# entry away from that regression at any time, so it is asserted rather than eyeballed.
+	_assert_hud("a birth passes the DEFAULT detail floor (`born` is Notable, not Routine)",
+		HudEventVocab.DETAIL_FLOOR[HudEventVocab.DEFAULT_DETAIL_LEVEL].has(
+			String(HudEventVocab.RUNG_BY_KIND["born"])))
+
+	# THE INSET IS NOT ALWAYS-ON. With nothing docked left or right the bar spans the whole window,
+	# so this frame is the zero control for the two `event_dock_inset_*` states below — without it,
+	# an inset hard-wired to some constant would satisfy them and break every ordinary session.
+	_assert_hud("no vertical reserver: the bar spans the full window (left inset 0, right inset 0)",
+		is_zero_approx(event_dock._root.offset_left) and is_zero_approx(event_dock._root.offset_right))
 
 	# event_dock_top_expanded — the OTHER edge, log open. Two claims: the bar reads as a one-line
 	# title and NOT as a second copy of the log's newest turn-group (the failure the prototype made
@@ -6166,6 +6179,59 @@ func _ready() -> void:
 	await _save("event_dock_pinned_alert")
 	_assert_hud("pinned alert: the unread raid holds the LEADING slot",
 		event_dock._pinned_order >= 0)
+
+	# ---- THE BAR LIVES BETWEEN THE VERTICAL DOCKS -------------------------------------------
+	# Reported live: a `SIDE_TOP` bar spanning the full window, drawn at layer 104 over the
+	# `SIDE_LEFT` band panel at 103, covering its tab bar. `RESERVER_PRIORITY` cannot fix that —
+	# it orders reservers stacked ALONG one edge, and TOP and LEFT are not co-edge — so the bar's
+	# own EXTENT is pulled in by the live left/right reservation totals instead.
+	#
+	# A REAL `BandCityPanel` supplies the number. A literal would prove nothing about the two
+	# rects actually clearing each other, which is the whole claim.
+	event_dock.set_expanded(false)
+	event_dock.set_recent_count(EVENT_DOCK_MAX_ROWS)
+	event_dock.set_dock(SIDE_TOP)
+	var inset_panel: BandCityPanel = BAND_CITY_PANEL_SCENE.instantiate()
+	add_child(inset_panel)
+	await get_tree().process_frame
+	inset_panel.set_dock(SIDE_LEFT)
+	var left_reserved: float = inset_panel.current_reservation_size()
+	_hud.set_reserved_inset(&"band_panel", SIDE_LEFT, left_reserved)
+	await _settle()
+
+	# THE NEGATIVE CONTROL, taken FIRST and against the same two live nodes: with the insets at zero
+	# the rects really do overlap. So the assertion below is not satisfiable by two panels that
+	# happen never to meet, and the state it describes is reachable rather than hypothetical.
+	event_dock.set_perpendicular_insets(0.0, 0.0)
+	await _settle()
+	_assert_hud("inset control: at zero inset the bar genuinely DOES overlap a left-docked panel",
+		event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
+
+	event_dock.set_perpendicular_insets(left_reserved, 0.0)
+	await _settle()
+	await _save("event_dock_inset_left_panel")
+	_assert_hud("inset: the top bar starts exactly at the left-docked panel's reserved width (%.0f px)"
+			% left_reserved,
+		is_equal_approx(event_dock._root.offset_left, left_reserved))
+	_assert_hud("inset: …and the two rects do not overlap at all",
+		not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
+	_assert_hud("inset: the reservation the bar PUBLISHES is unchanged — this moves where it is drawn, not what it claims",
+		is_equal_approx(event_dock.current_reservation_size(), event_dock._bar_height()))
+
+	# The BOTTOM edge takes the same inset — the bug was about the horizontal axis, so both edges
+	# must be fixed and a fix that only reached `SIDE_TOP` has to fail here.
+	event_dock.set_dock(SIDE_BOTTOM)
+	await _settle()
+	await _save("event_dock_inset_bottom_panel")
+	_assert_hud("inset: the BOTTOM bar is inset by the same left-docked panel",
+		is_equal_approx(event_dock._root.offset_left, left_reserved)
+			and not event_dock._root.get_global_rect().intersects(inset_panel._root.get_global_rect()))
+
+	event_dock.set_perpendicular_insets(0.0, 0.0)
+	_hud.set_reserved_inset(&"band_panel", SIDE_LEFT, 0.0)
+	inset_panel.queue_free()
+	await get_tree().process_frame
+	await _settle()
 
 	# THE STRIP YIELDS TO THE MAP. Both ways the dock can grow — the widest BAR (`RECENT_COUNT_MAX`
 	# rows, log closed) and the LOG open (which collapses the bar to one title line) — must leave the

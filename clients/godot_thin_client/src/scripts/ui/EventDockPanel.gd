@@ -137,6 +137,11 @@ var _recent_count: int = DEFAULT_RECENT_COUNT
 var _detail_level: String = HudEventVocab.DEFAULT_DETAIL_LEVEL
 var _channels: Dictionary = {}
 var _log_window_turns: int = LOG_WINDOW_TURNS
+## How far the strip is pulled in from the LEFT and RIGHT screen edges — the current totals of every
+## OTHER reserver on those two edges, pushed by `Main` (`set_perpendicular_insets`). See that method
+## for why the bar does not span the raw window.
+var _inset_left: float = 0.0
+var _inset_right: float = 0.0
 ## An unread Alert pins to the leading slot. Opening the log is what marks alerts read — the pin
 ## exists to survive until the player has actually had a chance to look.
 var _alert_seen: bool = true
@@ -477,6 +482,30 @@ func set_dock(edge: int) -> void:
 
 func get_dock() -> int:
 	return _dock_edge
+
+## **THE BAR LIVES BETWEEN THE VERTICAL DOCKS, NOT ACROSS THEM.**
+##
+## A left- or right-docked panel owns its full-height column; a top/bottom strip that spanned the raw
+## window would be drawn straight over the top of it. That is not a stacking-order problem to solve
+## with `layer` — the band panel is a genuine occupant of that column and the bar has no business
+## there — so the strip's own EXTENT is pulled in by the live `SIDE_LEFT` / `SIDE_RIGHT` reservation
+## totals instead. (Reported live: a `SIDE_TOP` bar covering the `SIDE_LEFT` band panel's tab bar.)
+##
+## **This is the PERPENDICULAR axis and it is NOT `RESERVER_PRIORITY`.** Priority orders reservers
+## stacked ALONG one shared edge — the dock stays 0 there, so it still hugs its own edge — while this
+## is the cross axis, where no stacking question arises: every vertical reserver simply takes room
+## the horizontal bar may not use. The two are easy to conflate and neither substitutes for the other.
+##
+## **It moves where the strip is DRAWN, never what it RESERVES.** `current_reservation_size()` is
+## untouched, so the content-independence rule that keeps the map from flickering still holds.
+func set_perpendicular_insets(left: float, right: float) -> void:
+	var new_left := maxf(left, 0.0)
+	var new_right := maxf(right, 0.0)
+	if is_equal_approx(new_left, _inset_left) and is_equal_approx(new_right, _inset_right):
+		return
+	_inset_left = new_left
+	_inset_right = new_right
+	_apply_dock_layout()
 
 ## Hide/show the whole strip — the `R` hotkey, and the successor to the retired feed's own suppress
 ## flag (whose persisted value migrates onto this one). A hidden strip reserves nothing.
@@ -960,8 +989,9 @@ func _apply_dock_layout() -> void:
 	var cross := _cross_axis_size()
 	_root.anchor_left = 0.0
 	_root.anchor_right = 1.0
-	_root.offset_left = 0.0
-	_root.offset_right = 0.0
+	# The strip stops short of whatever is docked left/right — see `set_perpendicular_insets`.
+	_root.offset_left = _inset_left
+	_root.offset_right = -_inset_right
 	if _dock_edge == SIDE_TOP:
 		_root.anchor_top = 0.0
 		_root.anchor_bottom = 0.0

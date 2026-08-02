@@ -691,7 +691,7 @@
         <p class="says">The world changed in a way worth knowing.</p>
         <p>Signal cyan. The default floor — this is what most players will see most of the time.</p>
         <p class="kinds">
-          died · migrated · came_of_age<br>
+          born · died · migrated · came_of_age<br>
           site_discovered · found_settlement<br>
           campaign_milestone · campaign_victory<br>
           expedition_arrived · expedition_returned · tame
@@ -702,7 +702,7 @@
         <p class="says">A receipt for a thing you asked for.</p>
         <p>Dim ink, no accent rail. Off by default — this is the current feed's entire contents.</p>
         <p class="kinds">
-          born · forage · hunt · sow<br>
+          forage · hunt · sow<br>
           cultivate · corral · scout<br>
           cancel_order · expedition_sent
         </p>
@@ -943,8 +943,16 @@
         <tbody>
           <tr>
             <td class="k">born <span class="pill new">new</span></td>
-            <td class="d"><span class="pill routine">Routine</span></td>
-            <td class="d">The birth accumulator crosses a whole person.</td>
+            <td class="d"><span class="pill notable">Notable</span></td>
+            <td class="d">
+              The birth accumulator crosses a whole person. <b>Notable, not Routine</b> — it shipped
+              Routine, i.e. below the default floor, so a birth never appeared at all unless the
+              player chose &ldquo;Everything&rdquo;, where it arrived buried among forage receipts.
+              A population counter ticking up while the bar says nothing is the failure this whole
+              proposal exists to remove. The rung is not a measure of how much a turn&rsquo;s labour
+              changed; it is whether the world changed in a way worth knowing, and the settlement
+              gaining a person is the plainest such change there is.
+            </td>
             <td class="k">band= count=</td>
           </tr>
           <tr>
@@ -1128,7 +1136,7 @@
 
     { turn: 46, kind: "hunt_danger",       rung: "warnish", channel: "world",  glyph: "⚠", label: "The aurochs hunt cost the party three lives",    detail: "losses=3" },
     { turn: 46, kind: "site_discovered",   rung: "notable", channel: "world",  glyph: "✦", label: "The Weeping Arch",                               detail: "at 18,31" },
-    { turn: 46, kind: "born",              rung: "routine", channel: "world",  glyph: "◦", label: "A child was born in Ashfoot",                    detail: "count=1" },
+    { turn: 46, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Ashfoot",                    detail: "count=1" },
     { turn: 46, kind: "hunt",              rung: "routine", channel: "world",  glyph: "◦", label: "Hunters brought back red deer",                  detail: "" },
 
     { turn: 45, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "An elder died of cold in Windhollow",            detail: "cause=cold" },
@@ -1143,7 +1151,7 @@
 
     { turn: 43, kind: "system",            rung: "routine", channel: "system", glyph: "◦", label: "Connected to simulation on 127.0.0.1:41002",     detail: "" },
     { turn: 43, kind: "found_settlement",  rung: "notable", channel: "world",  glyph: "✦", label: "Windhollow was settled",                         detail: "" },
-    { turn: 43, kind: "born",              rung: "routine", channel: "world",  glyph: "◦", label: "A child was born in Windhollow",                 detail: "count=1" },
+    { turn: 43, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Windhollow",                 detail: "count=1" },
 
     { turn: 42, kind: "tame",              rung: "notable", channel: "world",  glyph: "✦", label: "The aurochs herd has grown tame",                detail: "" },
     { turn: 42, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 9 provisions",            detail: "" },

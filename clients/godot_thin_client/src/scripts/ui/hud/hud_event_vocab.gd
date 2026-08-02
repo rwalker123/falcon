@@ -56,8 +56,15 @@ const KIND_SYSTEM := "system"
 ##     that interrupts for every one of them trains the player to stop reading the bar — the precise
 ##     failure the three-rung ladder exists to prevent. A death that MATTERS (a band starving out)
 ##     announces itself through the starvation and morale channels that already exist.
-##   • `born` is ROUTINE while `came_of_age` is NOTABLE: a birth is a mouth, a coming-of-age is a
-##     new pair of hands, and only the second changes what the player can do this turn.
+##   • `born` is NOTABLE, beside `came_of_age` and `died`. **It shipped Routine and that was wrong at
+##     the play-test**: Routine is below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared at all
+##     unless the player switched to "Everything", where it arrived buried among forage receipts —
+##     a population counter ticking up while the bar said nothing, which is precisely the failure
+##     this arc exists to remove. The retired reasoning ("a birth is a mouth, a coming-of-age is a
+##     pair of hands") described a real difference but the wrong axis: the rung is not a measure of
+##     how much a turn's LABOUR changed, it is whether the world changed in a way worth knowing, and
+##     the settlement visibly gaining or losing a person is the plainest such change there is.
+##     Routine keeps what it is actually for — receipts for verbs the player asked for.
 const RUNG_BY_KIND := {
 	# Alert — violence, an investment lost, and the client's own faults.
 	"predator_raid": RUNG_ALERT,
@@ -74,8 +81,8 @@ const RUNG_BY_KIND := {
 	"expedition_arrived": RUNG_NOTABLE,
 	"expedition_returned": RUNG_NOTABLE,
 	"tame": RUNG_NOTABLE,
+	"born": RUNG_NOTABLE,
 	# Routine — receipts for things the player asked for.
-	"born": RUNG_ROUTINE,
 	"forage": RUNG_ROUTINE,
 	"hunt": RUNG_ROUTINE,
 	"sow": RUNG_ROUTINE,

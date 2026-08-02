@@ -87,6 +87,17 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
   therefore only has to pick a number; the offset falls out. The event dock is 0
   because a thin strip on the rim reads as chrome and it keeps the band panel's
   position relative to the map fixed when the bar grows a row.
+- **`Main._update_event_dock_insets()` is the PERPENDICULAR axis, and it is NOT
+  priority.** `RESERVER_PRIORITY` orders reservers stacked ALONG one shared edge;
+  a top/bottom strip and a left/right column are never co-edge, so priority has
+  nothing to say about them and `_update_band_panel_edge_offset` correctly ignores
+  the pairing. What the horizontal bar needs instead is to be pulled IN from the
+  vertical columns — it starts right of whatever is docked left and stops left of
+  whatever is docked right. Recomputed on every `_apply_reservation`, so a panel
+  changing edge or collapsing moves the bar. It changes where the strip is DRAWN,
+  never what it reserves. Conflating the two axes is the easy mistake, and it is
+  the one that shipped: a `SIDE_TOP` bar spanning the raw window drew straight
+  over the `SIDE_LEFT` band panel's tab bar.
 - **`MapView`** applies the totals via three coordinated pieces:
   1. `_get_adjusted_viewport_size()` subtracts `left+right` on x and `top+bottom`
      on y, so fit, pan-clamp, draw extents, hit-testing and the minimap indicator
