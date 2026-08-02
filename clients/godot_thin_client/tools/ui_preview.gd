@@ -3848,6 +3848,44 @@ func _ready() -> void:
 		SourceForecast.regrowth_at(SourceForecast.regrowth_samples(drawn_patch,
 			HudComposeVocab.FORAGE_FORECAST_PREFIX), FLOOR_CHART_ALLEE_STOCK_FRACTION) >= 0.0)
 
+	# **A VERDICT MAY NOT PROMISE AN AFTERMATH THE SOURCE HAS NO WAY TO REACH.** Reported from play: a
+	# Rabbit Warren at `Take everything` read `0 hold it after` beside "Reaches the floor in 2 turns,
+	# then holds it — taking only what grows back". The herd is GONE at floor 0; there is nothing to
+	# hold and nothing that grows back, and the panel was contradicting its own crew target.
+	#
+	# **The discriminator is the REGROWTH at that floor, not the web and not floor 0**, and this pair
+	# is what pins that: the same floor on a PATCH keeps the full sentence, because a stripped patch
+	# reseeds from bare ground and genuinely does hold at 0 paying what grows back. A fix that branched
+	# on "fauna" or on "floor == 0" would pass the herd line below and fail the patch line under it.
+	var strip_crew := 64
+	var stripped_herd := SourceForecast.floor_chart_model(allee_herd, SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_MIN, strip_crew,
+		SourceForecast.IMPROVEMENT_NONE, "hunters")
+	var stripped_patch := SourceForecast.floor_chart_model(drawn_patch,
+		SourceForecast.SOURCE_KIND_FORAGE, HudComposeVocab.FORAGE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_MIN, strip_crew, SourceForecast.IMPROVEMENT_NONE, "foragers")
+	var stripped_herd_text := String((stripped_herd.get("verdict", {}) as Dictionary).get("text", ""))
+	var stripped_patch_text := String((stripped_patch.get("verdict", {}) as Dictionary).get("text", ""))
+	_assert_hud("both stripped sources REACH their floor, so both are stating the reaching verdict",
+		stripped_herd_text.contains("Reaches the floor")
+			and stripped_patch_text.contains("Reaches the floor"))
+	_assert_hud("a herd taken to nothing is not promised that it holds what grows back",
+		not stripped_herd_text.contains("grows back"))
+	_assert_hud("…while a patch at the same floor still is — it reseeds, so the clause is TRUE there",
+		stripped_patch_text.contains("grows back"))
+	# **THE LINE THAT RULES OUT THE PLAUSIBLE WRONG FIX.** Branching on `kind != SOURCE_KIND_HERD`
+	# passes both assertions above — the two fixtures there make "is a herd" and "cannot regrow"
+	# coincide, so the sabotage changed no output and the pair testified to nothing. A HEALTHY herd
+	# above its floor regrows at that floor like anything else and must KEEP the clause; that is the
+	# case a web branch gets wrong, and the only one of the three that can see the difference.
+	var held_herd := SourceForecast.floor_chart_model(
+		_floorify(_grazing_healthy_herd_fixture()), SourceForecast.SOURCE_KIND_HERD,
+		HudComposeVocab.BARE_FORECAST_PREFIX, SourceForecast.FLOOR_FOOD_PEAK, strip_crew,
+		SourceForecast.IMPROVEMENT_NONE, "hunters")
+	var held_herd_text := String((held_herd.get("verdict", {}) as Dictionary).get("text", ""))
+	_assert_hud("a HERD that still regrows at its floor keeps the clause — it is the growth, not the web",
+		held_herd_text.contains("Reaches the floor") and held_herd_text.contains("grows back"))
+
 	# **THE FLOOR FLAG'S UNIT AND ITS ORDER**, which no PNG can testify to at 10px. Asserted against
 	# hand-built models rather than the live sheet so both webs are reachable from one place and the
 	# expected strings are computable by eye: 1075 ÷ 100 = 10.75 → 11 animals at floor 0.50.

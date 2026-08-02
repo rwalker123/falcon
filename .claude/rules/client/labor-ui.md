@@ -554,8 +554,25 @@ binding**, in the raid verdict's own ok/slow/blocked severity vocabulary:
 |---|---|---|
 | the crew reaches the floor | `ok` | *Reaches the floor in 9 turns, then holds it — taking only what grows back.* |
 | the crew settles short of it | `slow` | *This crew can't draw it that low. It settles at 62% and holds there — 11 gatherers would reach the floor.* |
+| the crew reaches a floor NOTHING GROWS AT | `ok` | *Reaches the floor in 2 turns.* — no second clause |
 | nothing stands above the floor | `blocked` | *Already at or below the floor. This crew takes nothing until it grows past 98.* (a herd: *…past ≈11 Red Deer*) |
 | no crew at all | `blocked` | *No one assigned. Nothing is taken and it grows back on its own.* |
+
+**A VERDICT MAY NOT PROMISE AN AFTERMATH THE SOURCE CANNOT REACH.** Reported from play: a Rabbit
+Warren at `Take everything` read `0 hold it after` beside *"…then holds it — taking only what grows
+back"*. At floor 0 a herd is gone; there is nothing to hold and nothing regrows, so the panel was
+contradicting its own crew target. The clause is DROPPED rather than reworded — what stripping costs
+is already the aside's `FLOOR_STRIP_CONSEQUENCE` sentence, and a verdict restating it says one fact
+twice. **The discriminator is `regrowth_at(samples, floor) > 0`, NOT the web and NOT floor 0**: a
+patch stripped to 0 reseeds from bare ground, so it genuinely holds at 0 paying what grows back and
+keeps the full sentence. `floor_chart_model` resolves it from the same samples the projection walks
+and `crew_to_hold` divides, so the verdict's promise, the *hold it after* count and the readout's
+`after` reading are three consequences of one number.
+
+> The web branch (`kind != SOURCE_KIND_HERD`) is the plausible wrong fix and it **passes both obvious
+> assertions** — on a stripped herd and a stripped patch, "is a herd" and "cannot regrow" coincide.
+> The case that separates them is a HEALTHY herd at a floor it still regrows at, which must KEEP the
+> clause; sabotage found the pair vacuous without it.
 
 The settle point and the reach turn both come off the SAME projection the chart draws.
 `crew_that_reaches` names the remedy — a crew must out-carry the largest regrowth in the band it has

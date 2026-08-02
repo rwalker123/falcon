@@ -1304,6 +1304,19 @@ const VERDICT_REACHES_FORMAT := "Reaches the floor in %d turns, then holds it �
 # A crew big enough to clear the source in one turn is common (it is the `clear it now` target), so
 # "1 turns" is a reading the panel would print often rather than an edge case worth tolerating.
 const VERDICT_REACHES_ONE_TURN := "Reaches the floor next turn, then holds it — taking only what grows back."
+# **…AND THE SAME TWO WITH NO SECOND CLAUSE, because at some floors there is nothing to hold.** A HERD
+# taken to floor 0 is gone for good: nothing regrows, so "then holds it — taking only what grows back"
+# promised an aftermath the sheet's own `0 hold it after` was simultaneously denying. The clause is
+# dropped rather than reworded — what stripping costs is already the aside's `FLOOR_STRIP_CONSEQUENCE`
+# sentence ("the herd is gone for good, for you and for everyone else"), and a verdict restating it
+# would say one fact twice.
+#
+# **The test is the REGROWTH at this floor, not the web and not floor 0.** A patch stripped to 0
+# reseeds from bare ground, so it genuinely does hold at 0 and pay what grows back — the full sentence
+# is true there. Branching on "fauna at floor 0" would get that case wrong in the direction of saying
+# less than is true, and would miss any other floor a source cannot grow at.
+const VERDICT_REACHES_STRIPPED_FORMAT := "Reaches the floor in %d turns."
+const VERDICT_REACHES_ONE_TURN_STRIPPED := "Reaches the floor next turn."
 # THE CREW BINDS — the take equals the regrowth somewhere ABOVE the floor, and that is where it stops.
 # The crew that WOULD reach it is named, because "add hands" is the remedy and a verdict that
 # withholds the number is a puzzle rather than an answer.
@@ -1409,9 +1422,14 @@ static func teaching_note(lesson: String, floor: float, taking: bool,
 
 ## The verdict for a crew at a floor, as `{severity, text}`. `crew_noun` is the sheet's own word for
 ## these workers (foragers / hunters / herders), lower-cased by the caller that owns it.
+##
+## `regrows` is whether this floor is one the source can grow AT — false for a herd taken to 0, which
+## is gone rather than held. It defaults TRUE so a caller that has no curve to ask keeps the sentence
+## it had; the one caller that composes a projection resolves it from the same samples the projection
+## walks. See `VERDICT_REACHES_STRIPPED_FORMAT`.
 static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capacity: float,
         floor: float, reaching_crew: int, crew_noun: String,
-        body_mass: float = 0.0, quarry: String = "") -> Dictionary:
+        body_mass: float = 0.0, quarry: String = "", regrows: bool = true) -> Dictionary:
     if workers <= 0:
         return {"severity": VERDICT_BLOCKED, "text": VERDICT_NO_CREW}
     var floor_stock := clamp_floor(floor) * capacity
@@ -1422,9 +1440,11 @@ static func harvest_verdict(walk: Dictionary, workers: int, biomass: float, capa
         }
     var reached := int(walk.get("reached_turn", PROJECTION_REACHED_NONE))
     if reached != PROJECTION_REACHED_NONE:
+        var one_turn := VERDICT_REACHES_ONE_TURN if regrows else VERDICT_REACHES_ONE_TURN_STRIPPED
+        var many := VERDICT_REACHES_FORMAT if regrows else VERDICT_REACHES_STRIPPED_FORMAT
         return {
             "severity": VERDICT_OK,
-            "text": VERDICT_REACHES_ONE_TURN if reached == 1 else VERDICT_REACHES_FORMAT % reached,
+            "text": one_turn if reached == 1 else many % reached,
         }
     var settled := int(round(float(walk.get("settled_fraction", 0.0)) * FLOOR_PERCENT_SCALE))
     var text := VERDICT_SETTLES_FORMAT % settled
@@ -1501,8 +1521,12 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         # 12 biomass a turn at the rung's quarter carry, not 48 — and the only other cue is a ticked
         # box further down the sheet, which states the build without stating its price.
         "build_dip": dip,
+        # `regrows` from the SAME samples the projection walks and `crew_to_hold` divides — so the
+        # verdict's promise of an aftermath, the `hold it after` count and the readout's `after`
+        # reading are three consequences of one number and cannot contradict each other. They did:
+        # this sheet read `0 hold it after` beside "then holds it — taking only what grows back".
         "verdict": harvest_verdict(walk, workers, biomass, capacity, floor_value, reaching,
-            crew_noun, body_mass, quarry),
+            crew_noun, body_mass, quarry, regrowth_at(samples, floor_value) > 0.0),
         "idle_note": idle_note,
         # THE ASIDE'S SECOND LINE, composed HERE rather than at the render site for the same reason
         # the verdict and the idle note are: it is a function of the floor, so it has to be recomposed
