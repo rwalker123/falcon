@@ -227,6 +227,18 @@ pub enum CommandPayload {
         seed: u64,
         profile_id: String,
     },
+    /// Stage a config-tuning override, applied at the **next** `new_game`. Proto field 47.
+    ///
+    /// `patch_json` is carried as an opaque string on purpose: it is a *sparse* patch whose shape is
+    /// that of the target config, which `sim_runtime` deliberately knows nothing about. The server
+    /// merges, validates and installs it.
+    SetConfigOverride {
+        kind: ConfigOverrideKind,
+        patch_json: String,
+    },
+    /// Drop every staged config override; the next `new_game` boots on the shipped configs.
+    /// Proto field 48.
+    ClearConfigOverrides,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,6 +303,53 @@ pub enum ReloadConfigKind {
     CrisisArchetypes,
     CrisisModifiers,
     CrisisTelemetry,
+}
+
+/// Which boot config a staged tuning override applies to.
+///
+/// Deliberately **not** [`ReloadConfigKind`]: that names the configs the running world can
+/// hot-reload, this names the ones the client's tuning manifest can stage for the next `new_game`.
+/// The two sets barely overlap and answer different questions, so folding them together would make
+/// half of each list nonsense.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigOverrideKind {
+    Simulation,
+    Labor,
+    Demographics,
+    Expedition,
+    Combat,
+}
+
+impl ConfigOverrideKind {
+    /// Every kind, in manifest order. Iterating this is what lets a reader (the manifest drift
+    /// test, the help text) stay exhaustive without a second hand-maintained list.
+    pub const ALL: &'static [ConfigOverrideKind] = &[
+        ConfigOverrideKind::Simulation,
+        ConfigOverrideKind::Labor,
+        ConfigOverrideKind::Demographics,
+        ConfigOverrideKind::Expedition,
+        ConfigOverrideKind::Combat,
+    ];
+
+    /// The wire spelling, shared with the client's `tuning_manifest.json` `kind` field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConfigOverrideKind::Simulation => "simulation",
+            ConfigOverrideKind::Labor => "labor",
+            ConfigOverrideKind::Demographics => "demographics",
+            ConfigOverrideKind::Expedition => "expedition",
+            ConfigOverrideKind::Combat => "combat",
+        }
+    }
+
+    /// Parse a wire spelling. `None` for anything else — an unknown kind is rejected, never
+    /// defaulted, because guessing which config a designer meant to retune is the wrong answer.
+    pub fn from_wire_str(value: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|kind| kind.as_str() == value)
+    }
 }
 
 /// Counter-intelligence security posture controls.
@@ -676,6 +735,17 @@ impl CommandEnvelope {
                 seed: *seed,
                 profile_id: profile_id.clone(),
             }),
+            CommandPayload::SetConfigOverride { kind, patch_json } => {
+                pb::command_envelope::Command::SetConfigOverride(pb::SetConfigOverrideCommand {
+                    kind: config_override_kind_to_proto(*kind) as i32,
+                    patch_json: patch_json.clone(),
+                })
+            }
+            CommandPayload::ClearConfigOverrides => {
+                pb::command_envelope::Command::ClearConfigOverrides(
+                    pb::ClearConfigOverridesCommand {},
+                )
+            }
         });
 
         pb::CommandEnvelope {
@@ -932,6 +1002,15 @@ impl CommandEnvelope {
                 seed: cmd.seed,
                 profile_id: cmd.profile_id,
             },
+            pb::command_envelope::Command::SetConfigOverride(cmd) => {
+                CommandPayload::SetConfigOverride {
+                    kind: config_override_kind_from_proto(cmd.kind)?,
+                    patch_json: cmd.patch_json,
+                }
+            }
+            pb::command_envelope::Command::ClearConfigOverrides(_) => {
+                CommandPayload::ClearConfigOverrides
+            }
         };
 
         Ok(CommandEnvelope {
@@ -987,6 +1066,30 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
     }
 }
 
+fn config_override_kind_to_proto(kind: ConfigOverrideKind) -> pb::ConfigOverrideKind {
+    match kind {
+        ConfigOverrideKind::Simulation => pb::ConfigOverrideKind::Simulation,
+        ConfigOverrideKind::Labor => pb::ConfigOverrideKind::Labor,
+        ConfigOverrideKind::Demographics => pb::ConfigOverrideKind::Demographics,
+        ConfigOverrideKind::Expedition => pb::ConfigOverrideKind::Expedition,
+        ConfigOverrideKind::Combat => pb::ConfigOverrideKind::Combat,
+    }
+}
+
+fn config_override_kind_from_proto(value: i32) -> Result<ConfigOverrideKind, CommandDecodeError> {
+    match pb::ConfigOverrideKind::try_from(value) {
+        Ok(pb::ConfigOverrideKind::Simulation) => Ok(ConfigOverrideKind::Simulation),
+        Ok(pb::ConfigOverrideKind::Labor) => Ok(ConfigOverrideKind::Labor),
+        Ok(pb::ConfigOverrideKind::Demographics) => Ok(ConfigOverrideKind::Demographics),
+        Ok(pb::ConfigOverrideKind::Expedition) => Ok(ConfigOverrideKind::Expedition),
+        Ok(pb::ConfigOverrideKind::Combat) => Ok(ConfigOverrideKind::Combat),
+        Ok(pb::ConfigOverrideKind::Unspecified) | Err(_) => Err(CommandDecodeError::InvalidEnum {
+            field: "ConfigOverrideKind",
+            value,
+        }),
+    }
+}
+
 fn security_policy_kind_from_proto(value: i32) -> Result<SecurityPolicyKind, CommandDecodeError> {
     match pb::SecurityPolicyKind::try_from(value) {
         Ok(pb::SecurityPolicyKind::Lenient) => Ok(SecurityPolicyKind::Lenient),
@@ -1012,5 +1115,55 @@ fn reload_config_kind_from_proto(value: i32) -> Result<ReloadConfigKind, Command
             field: "ReloadConfigKind",
             value,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The patch rides the wire as an opaque string, so the only thing that can break it is the
+    /// envelope plumbing — which this covers for the whole staged-override pair.
+    #[test]
+    fn config_override_commands_round_trip_through_the_envelope() {
+        for payload in [
+            CommandPayload::SetConfigOverride {
+                kind: ConfigOverrideKind::Combat,
+                patch_json: r#"{"lethality": 1.5}"#.to_string(),
+            },
+            CommandPayload::ClearConfigOverrides,
+        ] {
+            let envelope = CommandEnvelope {
+                payload: payload.clone(),
+                correlation_id: None,
+            };
+            let bytes = envelope.encode_to_vec().expect("encode");
+            let decoded = CommandEnvelope::decode(&bytes).expect("decode");
+            assert_eq!(decoded.payload, payload);
+        }
+    }
+
+    /// `0` is the protobuf default, so an unset `kind` field decodes as UNSPECIFIED. Accepting it
+    /// would silently retune whichever config happened to be first in the table.
+    #[test]
+    fn an_unspecified_config_override_kind_is_rejected() {
+        let envelope = pb::CommandEnvelope {
+            correlation_id: None,
+            command: Some(pb::command_envelope::Command::SetConfigOverride(
+                pb::SetConfigOverrideCommand {
+                    kind: pb::ConfigOverrideKind::Unspecified as i32,
+                    patch_json: "{}".to_string(),
+                },
+            )),
+        };
+        let mut bytes = Vec::new();
+        prost::Message::encode(&envelope, &mut bytes).expect("encode");
+        assert!(matches!(
+            CommandEnvelope::decode(&bytes),
+            Err(CommandDecodeError::InvalidEnum {
+                field: "ConfigOverrideKind",
+                ..
+            })
+        ));
     }
 }

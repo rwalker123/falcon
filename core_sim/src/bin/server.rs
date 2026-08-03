@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::io::{self, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -27,34 +27,38 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
-    resolve_committed_species, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
-    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
+    resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
+    tile_is_fresh_watered, ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError, LaborAllocation,
+    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
+    SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
-    build_headless_app, hunt_trip_forecast, recapture_snapshot_in_place, run_turn, scalar_from_f32,
-    AgentAssignment, BandId, BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog,
-    CounterIntelBudgets, CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle,
-    CrisisArchetypeCatalogMetadata, CrisisModifierCatalog, CrisisModifierCatalogHandle,
-    CrisisModifierCatalogMetadata, CrisisTelemetry, CrisisTelemetryConfig,
-    CrisisTelemetryConfigHandle, CrisisTelemetryConfigMetadata, DiscoveryProgressLedger,
-    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
-    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
-    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
-    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
-    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
-    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
-    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
-    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
-    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
+    recapture_snapshot_in_place, run_turn, scalar_from_f32, AgentAssignment, BandId,
+    BandIdAllocator, CommandEventEntry, CommandEventKind, CommandEventLog, CounterIntelBudgets,
+    CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
+    CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
+    CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EspionageAgentHandle, EspionageCatalog,
+    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
+    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
+    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
+    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
+    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
+    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
+    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
+    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
+    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
-    commands::{EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind},
+    commands::{
+        ConfigOverrideKind, EspionageGeneratorUpdate as CommandGeneratorUpdate, ReloadConfigKind,
+    },
     CancelScope, CommandEnvelope as ProtoCommandEnvelope, CommandPayload as ProtoCommandPayload,
     OrdersDirective as ProtoOrdersDirective, SecurityPolicyKind, TerrainTags,
 };
@@ -63,6 +67,12 @@ use sim_schema::{encode_map_export_json, MapExport};
 /// Gitignored scratch directory that `export_map` writes into when the command
 /// is invoked without an explicit path.
 const DEFAULT_EXPORT_DIR: &str = "exports";
+
+/// Gitignored scratch directory holding the merged configs that `set_config_override` stages,
+/// one `<kind>.json` per config. Alongside `exports/` and for the same reason: it is a per-run
+/// artifact of a dev tool, not a source file, but it is worth being able to open and read while
+/// explaining a playtest.
+const DEFAULT_CONFIG_OVERRIDE_DIR: &str = "config_overrides";
 
 const SETTLEMENT_PROVISION_COST: i64 = 80;
 const SETTLEMENT_CONSTRUCTION_RADIUS: u32 = 3;
@@ -553,6 +563,14 @@ enum Command {
         seed: u64,
         profile_id: String,
     },
+    /// Stage a sparse config patch for the **next** `new_game`. Validated and installed by
+    /// `core_sim::install_config_override`; the running world is never touched.
+    SetConfigOverride {
+        kind: ConfigOverrideKind,
+        patch_json: String,
+    },
+    /// Drop every staged override, so the next `new_game` boots on the shipped configs.
+    ClearConfigOverrides,
 }
 
 #[derive(Resource, Clone)]
@@ -1053,6 +1071,35 @@ fn write_map_export(app: &bevy::prelude::App, requested_path: Option<String>) {
     }
 }
 
+/// Stage a config-tuning override for the next `new_game`.
+///
+/// **Rejection is the interesting case, and it is not defensive coding.** `load_config_from_env`
+/// panics on a present-but-broken file *by design* (`.claude/rules/core_sim/config-loading.md`), so
+/// an override installed without validating it would not fail here — it would kill the server at
+/// the next New Game, arbitrarily far from the edit that caused it. `install_config_override`
+/// therefore parses the merged config through the kind's own `from_json_str` (where `validate` runs)
+/// **before** anything is written or registered, and a failure changes nothing at all: no file, no
+/// registry entry, and — since this handler never touches `app` — no effect on the running world.
+///
+/// Hence `warn!` rather than a panic or an error!: the operator is sitting at a UI that will show
+/// them the refusal, and the world they are playing is fine.
+fn handle_set_config_override(kind: ConfigOverrideKind, patch_json: &str) {
+    match install_config_override(kind, patch_json, Path::new(DEFAULT_CONFIG_OVERRIDE_DIR)) {
+        Ok(installed) => info!(
+            target: "shadow_scale::server",
+            kind = kind.as_str(),
+            path = %installed.path.display(),
+            "config_override.installed"
+        ),
+        Err(err) => warn!(
+            target: "shadow_scale::server",
+            kind = kind.as_str(),
+            error = %err,
+            "config_override.rejected"
+        ),
+    }
+}
+
 /// The config-file watch paths carried across a world rebuild, so the fresh app keeps watching the
 /// same files the old one did. Gathered once from the live app by [`collect_watch_paths`].
 struct WatchPaths {
@@ -1128,10 +1175,17 @@ fn rebuild_world_from_config(
     configure: impl FnOnce(&mut bevy::prelude::App),
 ) -> bevy::prelude::App {
     let mut new_app = build_headless_app();
+    // The base this process actually bound travels with the config — `new_game` carries the binds
+    // over from the outgoing world and `ResetMap` clones them — but the resource does not:
+    // `build_headless_app` never inserts it, so without this line the first rebuild dropped it and a
+    // later `reload_config` re-applied the *file's* base, leaving the in-world config naming sockets
+    // nothing is listening on (the exact thing `ResolvedPortBase` exists to prevent).
+    let resolved_port_base = ResolvedPortBase(config.port_base_bind.port());
     {
         let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
         *config_res = config;
     }
+    new_app.insert_resource(resolved_port_base);
     new_app.insert_resource(SimulationMetrics::default());
     new_app.insert_resource(CommandSenderResource(command_sender.clone()));
     new_app.insert_resource(ConfigWatcherRegistry::default());
@@ -1256,7 +1310,16 @@ fn handle_new_game(
     };
     let watch_paths = collect_watch_paths(app);
 
-    let mut new_config = app.world.resource::<SimulationConfig>().clone();
+    // Start from the config that would load RIGHT NOW, not from a clone of the outgoing world's:
+    // a `simulation` override staged by the tuning panel reaches a world only because New Game
+    // re-reads every config, and cloning skipped that read (see
+    // `load_simulation_config_for_new_world`, which also carries back the narrow set of fields the
+    // file cannot know).
+    // The *watched* path is deliberately left alone — `rebuild_world_from_config` keeps this
+    // server's `SimulationConfigMetadata` path, so a staged override never becomes the file the
+    // watcher hot-reloads into a running world.
+    let mut new_config =
+        load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
     new_config.grid_size = UVec2::new(width, height);
     new_config.map_preset_id = preset_id.clone();
     // `seed == 0` randomizes: worldgen resolves a `map_seed` of 0 to a fresh entropy seed, exactly the
@@ -4697,6 +4760,10 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             scope,
         }),
         ProtoCommandPayload::ExportMap { path } => Some(Command::ExportMap { path }),
+        ProtoCommandPayload::SetConfigOverride { kind, patch_json } => {
+            Some(Command::SetConfigOverride { kind, patch_json })
+        }
+        ProtoCommandPayload::ClearConfigOverrides => Some(Command::ClearConfigOverrides),
         ProtoCommandPayload::Resync => Some(Command::Resync),
         ProtoCommandPayload::NewGame {
             preset_id,
@@ -5204,13 +5271,19 @@ impl CommandLog {
 /// `Rollback` is excluded because logging it would make a replay re-enter the rollback it is
 /// serving. A config reload is excluded because it is not replayable at all — a `SimState` carries
 /// no config by design, so replaying across one would run turns under whatever tuning is live rather
-/// than that tick's; it re-bases the origin instead.
+/// than that tick's; it re-bases the origin instead. The staged config overrides are excluded for
+/// the *same* reason from the other end: they only ever change what the **next** `new_game` boots
+/// on, so a replay of this timeline that re-installed them would re-do file writes to change
+/// nothing about the world being replayed.
 fn log_dispatched_command(log: &mut CommandLog, command: &Command) {
-    let rebases_origin_or_reenters = matches!(
+    let unreplayable = matches!(
         command,
-        Command::ReloadConfig { .. } | Command::Rollback { .. }
+        Command::ReloadConfig { .. }
+            | Command::Rollback { .. }
+            | Command::SetConfigOverride { .. }
+            | Command::ClearConfigOverrides
     );
-    if !rebases_origin_or_reenters {
+    if !unreplayable {
         log.push(LogEntry::Command(command.clone()));
     }
 }
@@ -5219,6 +5292,19 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
     match command {
         Command::ExportMap { path } => {
             write_map_export(app, path);
+        }
+        // Staged config tuning. Takes NO `app`: it changes what the next `new_game` boots on and
+        // nothing about the world running now — which is also why the client states the
+        // next-New-Game contract on the panel itself.
+        Command::SetConfigOverride { kind, patch_json } => {
+            handle_set_config_override(kind, &patch_json);
+        }
+        Command::ClearConfigOverrides => {
+            clear_config_overrides();
+            info!(
+                target: "shadow_scale::server",
+                "config_override.cleared"
+            );
         }
         // Republish the world as a FULL frame. The client asks for this when it cannot apply a
         // delta (`docs/plan_delta_streaming.md` §3.3), so the answer must be a complete world

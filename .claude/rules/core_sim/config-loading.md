@@ -1,6 +1,8 @@
 ---
 paths:
   - "core_sim/src/config_load.rs"
+  - "core_sim/src/config_override.rs"
+  - "core_sim/tests/tuning_manifest_drift.rs"
   - "core_sim/src/*_config.rs"
   - "core_sim/src/{resources,map_preset,start_profile,victory,intensification}.rs"
   - "core_sim/src/telling/{catalog,config}.rs"
@@ -16,6 +18,10 @@ each of the ~26 `load_*_from_env` entry points hand-rolled its own `warn!`-and-f
 file is the rationale for the shared seam that replaced them (`config_load.rs`, issue #361).
 
 ## The rule: only an absent DEFAULT path falls back
+
+Precedence is **staged override → `*_CONFIG_PATH` → default file → builtin** (the first rung is the
+in-process registry described under "Staged overrides" below; before that arc there were only the
+last three). "Override named" in the table means *either* of the first two.
 
 | Situation | Outcome |
 |---|---|
@@ -74,6 +80,84 @@ anything outside `bin/server.rs`, a loader has drifted back off the seam.
 
 So the two paths answer opposite questions and correctly reach opposite conclusions. **Do not
 "unify" them.**
+
+## Staged overrides — the client's tuning panel, and the third path
+
+The Config Tuning panel edits numbers in the client and starts a run on them without restarting the
+server (`docs/plan_config_tuning_panel.md`). Two existing facts carry it:
+
+- **`load_config_from_env` is the one place that decides which file loads**, so the override is an
+  **in-process registry consulted ahead of the env var** (`OVERRIDE_PATHS` in `config_load.rs`;
+  `set_override_path` / `clear_override_paths`). Deliberately **not** `std::env::set_var` — the
+  server is multithreaded and live, and mutating the process environment to hand a value between two
+  parts of the *same* process is the wrong tool for a decision that already has a home.
+- **`new_game` already re-reads every config** (`handle_new_game` → `rebuild_world_from_config` →
+  `build_headless_app`, a wall of `load_*_from_env` calls), so "restart the sim on new tuning" needs
+  no process restart.
+
+**The `simulation` kind needs one extra step, and it is not optional.** The other four kinds are
+installed as their own resources inside `build_headless_app` and are simply whatever loaded. The
+`SimulationConfig` is not: the rebuild overwrites it with a config the *caller* supplies, and
+`handle_new_game` used to supply a clone of the outgoing world's — which discarded the fresh load
+and made every `simulation` lever on the tuning panel inert. It now starts from
+`load_simulation_config_for_new_world` (`resources.rs`), which loads afresh and then carries back a
+deliberately narrow set.
+
+**The file is the authority at world start; only what the file CANNOT know gets carried.** Anything
+the file *could* have said is a tunable, and a carried tunable is permanently un-overridable — a
+staged override for it would install, log, and do nothing, re-creating the very bug this function
+fixed. Two things qualify:
+
+- **`fog_enabled`** — not a tunable at all. It is a *player preference* with its own persisted home
+  in the client (`.claude/rules/client/fog-of-war.md`), pushed over as a `set_fog` command; it would
+  never appear on the tuning panel, and resetting it every New Game would be a visible regression.
+- **the four bind addresses** — port allocation auto-bumps on a collision, and a fresh load can only
+  reproduce an explicit `SIM_PORT_BASE`, never a bump. The in-world config must describe the ports
+  the process actually holds.
+
+**`crisis_auto_seed` does not qualify**, though `set_crisis_auto_seed` writes it at runtime: it sits
+in `simulation_config.json` among exactly the levers the panel exists to change, so it comes from the
+fresh load like any other tunable. The cost is re-issuing one debug command after a New Game.
+`start_profile_id`/`start_profile_overrides` are runtime-owned too but likewise not carried —
+`apply_start_profile` re-applies the profile the command names right after. `ResetMap` keeps cloning
+the running config: it is a map reroll, not a retune.
+
+**The staged file is never the watched file.** The rebuild keeps the outgoing world's
+`SimulationConfigMetadata` path, so the config watcher still watches the shipped
+`simulation_config.json`. Pointing it at `config_overrides/simulation.json` would make each staged
+edit hot-reload into the *running* world, which is the opposite of the "applies at the next New
+Game" contract. The consequence to know: a `reload_config` after a New Game booted on an override
+reloads the shipped file, dropping the override from the live world until the next New Game.
+
+`resolve_config` stays **pure** — the registry lookup lives in `load_config_from_env` only, so the
+rule above is still unit-testable without touching any process-global state.
+
+`config_override.rs` is the seam the `set_config_override` command lands on. Per kind it holds the
+env var, the shipped path, the builtin, and a `validate` fn that runs the kind's **own
+`from_json_str`** — a `match`, not a table lookup, so a new `ConfigOverrideKind` cannot compile
+until it names a config. Installing means: resolve the kind's *current effective* JSON (same
+precedence as above, so successive edits accumulate rather than each starting from the shipped
+file), deep-merge the sparse patch (RFC 7386 minus null-deletion), **validate**, and only then write
+`config_overrides/<kind>.json` and register it.
+
+**Validating before installing is the whole safety argument, not defensive coding.** The boot path
+panics on a present-but-broken file *on purpose*; an override staged without validation would
+therefore not fail at the edit, it would kill the server at the **next New Game**, arbitrarily far
+from the edit that caused it. Do not weaken the boot path to compensate — the third path answers by
+**rejecting at the edit**, where a human is watching and the UI can say so. A rejected patch writes
+no file, registers nothing, and leaves the running world untouched; it logs
+`config_override.rejected` at `warn!`.
+
+The `set_config_override` / `clear_config_overrides` commands are **not** written to the replay log
+for the same reason `reload_config` is not: they change what the *next* world boots on, and a
+`SimState` carries no config.
+
+**One manifest, two readers.** The client's curated lever list
+(`clients/godot_thin_client/src/config/tuning_manifest.json`) carries its own `default`/`min`/`max`,
+because the command channel is one-way and it cannot ask. `core_sim/tests/tuning_manifest_drift.rs`
+loads that same file and asserts every pointer resolves in the shipped config, the type matches, and
+**the declared default equals the shipped value** — so a retune or a renamed key fails CI instead of
+silently rendering a wrong hint.
 
 ## What is deliberately NOT covered
 

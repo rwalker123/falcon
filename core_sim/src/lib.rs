@@ -21,6 +21,7 @@ pub mod combat;
 mod combat_config;
 mod components;
 mod config_load;
+pub mod config_override;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -105,6 +106,10 @@ pub use components::{
     TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
+pub use config_override::{
+    clear_config_overrides, install_config_override, spec_for as config_override_spec_for,
+    ConfigKindSpec, ConfigOverrideError, InstalledOverride,
+};
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,
@@ -285,13 +290,13 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
-    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
-    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology,
-    MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-    TradeTelemetry, WorldEpoch,
+    apply_port_base, apply_port_base_override, load_simulation_config_for_new_world,
+    port_base_override, BandIdAllocator, CapabilityFlags, CommandEventEntry, CommandEventKind,
+    CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
+    DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry,
+    FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology, MoistureRaster, PendingCrisisSeeds,
+    PendingCrisisSpawns, SentimentAxisBias, SimulationConfig, SimulationConfigMetadata,
+    SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{

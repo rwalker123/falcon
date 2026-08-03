@@ -13,10 +13,57 @@
 //! at boot there is no world to keep.
 
 use std::{
+    collections::HashMap,
     env,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock, RwLock},
 };
+
+/// Staged in-process config overrides: `*_CONFIG_PATH` name → the file to load instead.
+///
+/// Consulted **ahead of** the environment variable by [`load_config_from_env`], so the precedence
+/// is registry → `*_CONFIG_PATH` → default file → builtin. The client's tuning panel writes a
+/// merged config to a scratch file and registers it here; because `new_game` rebuilds the app and
+/// re-runs every `load_*_from_env`, that is all it takes for the next world to boot on it.
+///
+/// **Deliberately not `std::env::set_var`.** The server is multithreaded and live, so mutating the
+/// process environment is both racy against any concurrent `getenv` and the wrong tool for handing
+/// a value between two parts of the *same* process — this decision already has a home, and it is
+/// this map.
+static OVERRIDE_PATHS: OnceLock<RwLock<HashMap<String, PathBuf>>> = OnceLock::new();
+
+fn override_paths() -> &'static RwLock<HashMap<String, PathBuf>> {
+    OVERRIDE_PATHS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// A poisoned registry lock means some thread panicked mid-update, not that the map is unusable —
+/// every entry is an independently-written `PathBuf`. Recovering the inner guard keeps a
+/// config-panel mishap from bricking every later config load in the process.
+fn recover<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
+    result.unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Stage `path` as the file `env_var` names, from the next load of that config onward.
+///
+/// The caller is responsible for having **validated** the file first: this seam feeds the boot
+/// loader, which panics on a present-but-broken file by design (see [`resolve_config`]).
+pub fn set_override_path(env_var: &str, path: PathBuf) {
+    recover(override_paths().write()).insert(env_var.to_string(), path);
+}
+
+/// Drop every staged override, so the next load falls back to `*_CONFIG_PATH` and the shipped
+/// files again.
+pub fn clear_override_paths() {
+    recover(override_paths().write()).clear();
+}
+
+/// The staged path for `env_var`, if one was set. Crate-private on purpose: [`load_config_from_env`]
+/// stays the single place the registry can change *what loads*, exactly as `env::var` was, and the
+/// only other reader (`config_override`) uses it to answer "what would load right now?" before
+/// merging a patch into it.
+pub(crate) fn override_path_for(env_var: &str) -> Option<PathBuf> {
+    recover(override_paths().read()).get(env_var).cloned()
+}
 
 /// Implemented by every boot-time config error enum. The NotFound-vs-broken split is the ONE
 /// distinction the fallback rule turns on — see [`resolve_config`].
@@ -58,16 +105,23 @@ pub fn resolve_config<T, E: ConfigLoadError>(
 
 /// Appended to the boot panic so the message says what to do, not just what broke. Covers both
 /// fatal shapes (a broken file, and an override naming one that isn't there), since only an absent
-/// *default* path is benign.
+/// *default* path is benign. It names both override sources because either can be the one at
+/// fault — a staged path (whose scratch file may have been deleted under the running server) or the
+/// environment variable.
 fn load_failure_remedy(env_var: &str) -> String {
     format!(
         "the sim will NOT fall back to the builtin here — only an absent default path is benign. \
-         Fix the file, or the {env_var} that names it"
+         Fix the file, or the staged config override / {env_var} that names it"
     )
 }
 
-/// Boot-load a config from `env_var` or the default data path, emitting the
+/// Boot-load a config from the staged override, `env_var`, or the default data path, emitting the
 /// `shadow_scale::config` load event.
+///
+/// Precedence is **registry → `*_CONFIG_PATH` → default file → builtin**: a path staged with
+/// [`set_override_path`] wins over the environment, because it was set by a human at the client's
+/// tuning panel *during this run* while the env var was fixed at launch. Both are "an override the
+/// operator named", so both take the same strict failure handling below.
 ///
 /// `default_rel_path` is resolved against this crate's `CARGO_MANIFEST_DIR` — every boot config
 /// ships from `core_sim/src/data/`, so the manifest dir is the same for all callers and computing
@@ -89,7 +143,8 @@ pub fn load_config_from_env<T, E: ConfigLoadError + std::fmt::Display>(
     builtin: impl FnOnce() -> Arc<T>,
     from_file: impl FnOnce(&Path) -> Result<T, E>,
 ) -> (Arc<T>, Option<PathBuf>) {
-    let override_path = env::var(env_var).ok().map(PathBuf::from);
+    let override_path =
+        override_path_for(env_var).or_else(|| env::var(env_var).ok().map(PathBuf::from));
     let default_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(default_rel_path);
 
     let (config, source) =
@@ -115,6 +170,18 @@ pub fn load_config_from_env<T, E: ConfigLoadError + std::fmt::Display>(
     }
 
     (config, source)
+}
+
+/// Serializes every test that touches the process-global override registry (or a `*_CONFIG_PATH`
+/// env var, which is just as global). [`clear_override_paths`] wipes **all** entries, so two such
+/// tests on cargo's thread pool would tear down each other's setup. Shared with `config_override`'s
+/// tests, which install into the same map.
+#[cfg(test)]
+pub(crate) fn lock_config_registry_for_test() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // A poisoned lock only means some earlier test panicked; the guarded state is rebuilt by each
+    // test anyway, so recovering keeps one failure from cascading into every other case.
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -262,5 +329,99 @@ mod tests {
             resolve(Some(&override_path), &default_path).expect("override loads");
         assert_eq!(config.value, 11, "the override must win over the default");
         assert_eq!(source.as_deref(), Some(override_path.as_path()));
+    }
+
+    /// The staged-override ladder, as `load_config_from_env` sees it: **registry beats
+    /// `*_CONFIG_PATH`, which beats the shipped file.** The registry wins because it was set by a
+    /// human during this run, while the env var was fixed at launch.
+    ///
+    /// Driven through `load_config_from_env` rather than `resolve_config` on purpose —
+    /// `resolve_config` stays pure and knows nothing of either source, so the ladder itself only
+    /// exists in the wrapper and only the wrapper can be wrong about it.
+    #[test]
+    fn a_staged_override_outranks_the_env_var_which_outranks_the_builtin() {
+        let _guard = lock_config_registry_for_test();
+
+        const ENV_VAR: &str = "SHADOW_SCALE_CONFIG_LOAD_PRECEDENCE_TEST_PATH";
+        const STAGED_VALUE: u32 = 31;
+        const ENV_VALUE: u32 = 41;
+        // Never written, so the "no override at all" rung resolves to the builtin.
+        const ABSENT_DEFAULT_REL_PATH: &str = "src/data/__config_load_precedence_test_absent.json";
+
+        let dir = scratch_dir("precedence");
+        let staged = dir.join("staged.json");
+        let from_env = dir.join("from_env.json");
+        fs::write(&staged, STAGED_VALUE.to_string()).expect("write the staged override");
+        fs::write(&from_env, ENV_VALUE.to_string()).expect("write the env override");
+
+        let load = || {
+            load_config_from_env(
+                ENV_VAR,
+                "precedence_test_config",
+                ABSENT_DEFAULT_REL_PATH,
+                builtin,
+                from_file,
+            )
+        };
+
+        env::set_var(ENV_VAR, &from_env);
+        set_override_path(ENV_VAR, staged.clone());
+        let (config, source) = load();
+        assert_eq!(
+            config.value, STAGED_VALUE,
+            "the staged override must beat the env var"
+        );
+        assert_eq!(source.as_deref(), Some(staged.as_path()));
+
+        clear_override_paths();
+        let (config, source) = load();
+        assert_eq!(
+            config.value, ENV_VALUE,
+            "with nothing staged the env var must load again"
+        );
+        assert_eq!(source.as_deref(), Some(from_env.as_path()));
+
+        env::remove_var(ENV_VAR);
+        let (config, source) = load();
+        assert_eq!(
+            config.value, BUILTIN_VALUE,
+            "with neither source and an absent default, the builtin is the benign fallback"
+        );
+        assert!(source.is_none());
+    }
+
+    /// Overrides are keyed by env-var name, so staging one config cannot move another. The registry
+    /// is process-global; a leak across keys would retune a config nobody touched.
+    #[test]
+    fn a_staged_override_only_affects_its_own_env_var() {
+        let _guard = lock_config_registry_for_test();
+
+        const STAGED_VAR: &str = "SHADOW_SCALE_CONFIG_LOAD_ISOLATION_TEST_STAGED_PATH";
+        const OTHER_VAR: &str = "SHADOW_SCALE_CONFIG_LOAD_ISOLATION_TEST_OTHER_PATH";
+        const STAGED_VALUE: u32 = 55;
+        const ABSENT_DEFAULT_REL_PATH: &str = "src/data/__config_load_isolation_test_absent.json";
+
+        let dir = scratch_dir("isolation");
+        let staged = dir.join("staged.json");
+        fs::write(&staged, STAGED_VALUE.to_string()).expect("write the staged override");
+
+        clear_override_paths();
+        env::remove_var(OTHER_VAR);
+        set_override_path(STAGED_VAR, staged);
+
+        let (config, source) = load_config_from_env(
+            OTHER_VAR,
+            "isolation_test_config",
+            ABSENT_DEFAULT_REL_PATH,
+            builtin,
+            from_file,
+        );
+        assert_eq!(
+            config.value, BUILTIN_VALUE,
+            "the other config must not move"
+        );
+        assert!(source.is_none());
+
+        clear_override_paths();
     }
 }

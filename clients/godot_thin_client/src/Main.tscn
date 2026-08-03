@@ -28,6 +28,9 @@ script = ExtResource("2")
 
 [node name="BandCityPanel" parent="." instance=ExtResource("10")]
 
+[node name="Workbench" type="CanvasLayer" parent="."]
+layer = 103
+
 [node name="EventDockPanel" parent="." instance=ExtResource("12")]
 
 [node name="PauseLayer" type="CanvasLayer" parent="."]
