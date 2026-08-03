@@ -765,6 +765,10 @@ func _ready() -> void:
 	_assert_zones_within_bounds()
 	_assert_work_zone_readable()
 	_assert_zone_content_fits()
+	# The board renders in NAME order now (issue #460), so this is where both halves of that change are
+	# judged: the sorts themselves, and the `⋯` menu saying which one is running.
+	_assert_work_sort_stable()
+	_assert_work_menu_marks_active_sort("band_panel_work_page")
 
 	# The same 34 sources in the WIDE (bottom dock) shell: multi-column, column-major, hairlines.
 	_panel.set_dock(SIDE_BOTTOM)
@@ -1783,6 +1787,148 @@ func _assert_band_panel(label: String, ok: bool) -> void:
 		print("band_panel_preview: PASS — ", label)
 	else:
 		push_error("band_panel_preview: FAIL — %s" % label)
+
+## THE BOARD MUST NOT RE-ORDER UNDER THE PLAYER'S OWN EDIT (issue #460), and both comparators must be
+## TOTAL ORDERS. Neither claim is visible in a PNG — a re-sorted board is a perfectly plausible board —
+## so the sorts are driven directly, over models shaped like `_work_source_models`' output.
+##
+## Four claims, and the second is what stops the first being satisfied by a comparator that ignores
+## `rate` altogether:
+##   1. under the DEFAULT sort a worker step (a `rate` change) leaves the key order identical;
+##   2. under `WORK_SORT_YIELD` the SAME step DOES reorder — the opt-in sort still ranks live;
+##   3. both sorts answer the same key sequence from two different starting permutations, which is the
+##      only thing that can see a missing `key` tiebreak (`sort_custom` is not stable in Godot);
+##   4. the DEFAULT sort groups by KIND — every `forage` row above every `hunt` row — which the label
+##      order alone does NOT give, since a managed plant row reads "Tend (…)" and sorts after "Hunt".
+##      Asserted on `kind`, never on the label: testing the label would re-enact the assumption that
+##      the prefix identifies the kind, which is exactly what is false.
+func _assert_work_sort_stable() -> void:
+	var controller = _hud._bandpanel
+	# THE FIRST CLAIM IS ABOUT THE LIVE DEFAULT, so it does NOT set the sort — nothing in this harness
+	# has picked one, so `_work_sort` is exactly what a fresh session boots with. Pinning it to
+	# `WORK_SORT_NAME` here would assert that the name sort is stable and say nothing about which sort
+	# the board actually uses, which is the whole of issue #460.
+	var restore_sort: StringName = controller._work_sort
+	var models := _work_sort_fixture_models()
+	var name_before := _sorted_work_keys(controller, models)
+	_bump_work_sort_fixture_rate(models)
+	var name_after := _sorted_work_keys(controller, models)
+	_assert_band_panel("work sort — a worker step leaves the DEFAULT (`%s`) order untouched (%s)"
+		% [String(restore_sort), ", ".join(name_after)], name_after == name_before)
+	# 4 — still on the live default: the kind blocks the filter chips name must be the board's blocks.
+	var kinds := _sorted_work_kinds(controller, _work_sort_fixture_models())
+	var last_forage := kinds.rfind(SourceForecast.LABOR_KIND_FORAGE)
+	var first_hunt := kinds.find(SourceForecast.LABOR_KIND_HUNT)
+	_assert_band_panel("work sort — the DEFAULT (`%s`) puts every forage row above every hunt row (%s)"
+		% [String(restore_sort), ", ".join(kinds)], last_forage < first_hunt)
+	# 2 — the counter-check: the opt-in yield sort must genuinely track the same edit.
+	controller._work_sort = HudWorkVocab.WORK_SORT_YIELD
+	var yield_models := _work_sort_fixture_models()
+	var yield_before := _sorted_work_keys(controller, yield_models)
+	_bump_work_sort_fixture_rate(yield_models)
+	var yield_after := _sorted_work_keys(controller, yield_models)
+	_assert_band_panel("work sort — the same worker step DOES re-rank `Sort by yield` (%s → %s)"
+		% [", ".join(yield_before), ", ".join(yield_after)], yield_after != yield_before)
+	# 3 — total order, both modes, from two different starting permutations.
+	for sort in HudWorkVocab.WORK_SORTS:
+		controller._work_sort = sort
+		var forward := _sorted_work_keys(controller, _work_sort_fixture_models())
+		var reversed_models := _work_sort_fixture_models()
+		reversed_models.reverse()
+		var backward := _sorted_work_keys(controller, reversed_models)
+		_assert_band_panel("work sort — `%s` is a total order (same keys from a reversed input: %s)"
+			% [String(sort), ", ".join(forward)], forward == backward)
+	controller._work_sort = restore_sort
+
+## The sort fixture, carrying BOTH reachable ties: two herds sharing a label (`WORK_ROW_HUNT_FORMAT`
+## renders one string per species, so two Wild Boar herds collide) and two sources sharing a rate.
+## Only the keys the two comparators read are populated — this exercises the sort, not the board.
+##
+## The TEND row is what makes claim 4 bite: its label is built from `WORK_ROW_TEND_FORMAT`, so it
+## sorts alphabetically AFTER every "Hunt …" row while its `kind` is still `forage`. Composing the
+## label from the format const rather than a literal means renaming the format cannot silently leave
+## this case uncovered.
+func _work_sort_fixture_models() -> Array:
+	return [
+		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt",
+			"rate": 0.40, "trade_rate": 0.10},
+		{"key": WORK_SORT_STEPPED_KEY, "label": "Hunt Wild Boar", "kind": "hunt",
+			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.10},
+		{"key": "forage:12,7", "label": "Forage (12, 7)", "kind": "forage",
+			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.0},
+		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage",
+			"rate": 0.60, "trade_rate": 0.0},
+		{"key": "forage:8,4", "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
+			"rate": 0.30, "trade_rate": 0.0},
+		{"key": "hunt:wolf", "label": "Hunt Grey Wolf", "kind": "hunt",
+			"rate": 0.0, "trade_rate": 0.22},
+	]
+
+## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
+const WORK_SORT_TEND_TILE := Vector2i(8, 4)
+
+## The source whose crew the assertion "steps", and the rate two sources start tied on. The stepped
+## source is one of the tied pair, so the step both breaks a tie and moves the row to the TOP of the
+## yield order — an edit the name sort must ignore and the yield sort must not.
+const WORK_SORT_STEPPED_KEY := "hunt:boar_a"
+const WORK_SORT_TIED_RATE := 0.25
+## Where the stepped source lands after its "+" press — above every other row's rate.
+const WORK_SORT_STEPPED_RATE := 0.90
+
+func _bump_work_sort_fixture_rate(models: Array) -> void:
+	for m in models:
+		if String((m as Dictionary).get("key", "")) == WORK_SORT_STEPPED_KEY:
+			(m as Dictionary)["rate"] = WORK_SORT_STEPPED_RATE
+
+## Sort a COPY through the controller's own comparator and report the resulting key order.
+func _sorted_work_keys(controller, models: Array) -> Array:
+	var copy := models.duplicate()
+	controller._sort_work_models(copy)
+	var keys: Array = []
+	for m in copy:
+		keys.append(String((m as Dictionary).get("key", "")))
+	return keys
+
+## The same, reporting each row's `kind` instead of its key — the field the filter chips select on.
+func _sorted_work_kinds(controller, models: Array) -> Array:
+	var copy := models.duplicate()
+	controller._sort_work_models(copy)
+	var kinds: Array = []
+	for m in copy:
+		kinds.append(String((m as Dictionary).get("kind", "")))
+	return kinds
+
+## The `⋯` menu must SAY which sort is active — without the mark the board's order is unexplained, the
+## menu offering two sorts and stating neither. Asserted on the popup rather than in a frame: the popup
+## is a Window and never renders into the capture.
+func _assert_work_menu_marks_active_sort(state_name: String) -> void:
+	var popup := _find_work_menu_popup(_panel)
+	if popup == null:
+		_assert_band_panel("%s — the work zone's `⋯` menu was not found" % state_name, false)
+		return
+	var checked: Array = []
+	for i in range(popup.item_count):
+		if popup.is_item_checked(i):
+			checked.append(popup.get_item_text(i))
+	var want := HudWorkVocab.WORK_MENU_SORT_NAME if _hud._bandpanel._work_sort == HudWorkVocab.WORK_SORT_NAME \
+		else HudWorkVocab.WORK_MENU_SORT_YIELD
+	_assert_band_panel("%s — the work menu marks exactly the active sort (checked: %s, active: %s)"
+		% [state_name, str(checked), want], checked == [want])
+
+## The work zone's section menu, found by the SORT ENTRY its popup carries — the parties zone builds a
+## `⋯` menu too, and both are plain `MenuButton`s, so the node type alone cannot tell them apart.
+func _find_work_menu_popup(node: Node) -> PopupMenu:
+	if node is MenuButton:
+		var popup: PopupMenu = (node as MenuButton).get_popup()
+		for i in range(popup.item_count):
+			if popup.get_item_text(i) == HudWorkVocab.WORK_MENU_SORT_NAME:
+				return popup
+	for child in node.get_children():
+		var found := _find_work_menu_popup(child)
+		if found != null:
+			return found
+	return null
 
 ## The rung-ready board fixture: three sources, exactly one of each answer the mark can give.
 func _ready_band_fixture() -> Dictionary:
