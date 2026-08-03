@@ -2,6 +2,8 @@
 **/target/
 # Scratch directory for `export_map` command output (map JSON dumps).
 /exports/
+# Scratch directory for `set_config_override` output (merged per-kind configs).
+/config_overrides/
 # Cross-compiled Windows playtest packages (scripts/build_windows.sh output).
 /dist/
 **/*.rs.bk

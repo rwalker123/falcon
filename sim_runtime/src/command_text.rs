@@ -253,11 +253,23 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         summary: "Republish the world as a full snapshot (delta-streaming recovery).",
         usage: "resync",
     },
+    CommandVerbHelp {
+        verb: "set_config_override",
+        aliases: &[],
+        summary: "Stage a sparse config patch, validated now and applied at the next new_game.",
+        usage: "set_config_override <simulation|labor|demographics|expedition|combat> <json>",
+    },
+    CommandVerbHelp {
+        verb: "clear_config_overrides",
+        aliases: &[],
+        summary: "Drop every staged config override; the next new_game uses the shipped configs.",
+        usage: "clear_config_overrides",
+    },
 ];
 
 use crate::{
-    CancelScope, CommandPayload, CorruptionSubsystem, InfluenceScopeKind, OrdersDirective,
-    ReloadConfigKind, SecurityPolicyKind, SupportChannel,
+    commands::ConfigOverrideKind, CancelScope, CommandPayload, CorruptionSubsystem,
+    InfluenceScopeKind, OrdersDirective, ReloadConfigKind, SecurityPolicyKind, SupportChannel,
 };
 
 #[derive(Debug, Error)]
@@ -301,6 +313,8 @@ pub enum CommandParseError {
     InvalidDirective(String),
     #[error("invalid security policy '{0}'")]
     InvalidSecurityPolicy(String),
+    #[error("invalid config override kind '{0}'")]
+    InvalidConfigOverrideKind(String),
     #[error("unexpected token '{0}'")]
     UnexpectedToken(String),
 }
@@ -1205,6 +1219,38 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
             };
             Ok(CommandPayload::ExportMap { path })
         }
+        "set_config_override" => {
+            // The patch is the remainder of the line **verbatim**. A compact JSON object contains
+            // spaces (inside string values, if nowhere else), and re-joining whitespace-split
+            // tokens would silently corrupt them — so the two head tokens are re-split off the
+            // original line rather than taken from `parts`.
+            let after_verb = trimmed
+                .split_once(char::is_whitespace)
+                .map(|(_, rest)| rest.trim_start())
+                .unwrap_or("");
+            let (kind_token, patch_json) = after_verb.split_once(char::is_whitespace).ok_or(
+                CommandParseError::MissingArgument(if after_verb.is_empty() {
+                    "config override kind"
+                } else {
+                    "config override patch json"
+                }),
+            )?;
+            let kind = ConfigOverrideKind::from_wire_str(&kind_token.to_ascii_lowercase())
+                .ok_or_else(|| {
+                    CommandParseError::InvalidConfigOverrideKind(kind_token.to_string())
+                })?;
+            let patch_json = patch_json.trim();
+            if patch_json.is_empty() {
+                return Err(CommandParseError::MissingArgument(
+                    "config override patch json",
+                ));
+            }
+            Ok(CommandPayload::SetConfigOverride {
+                kind,
+                patch_json: patch_json.to_string(),
+            })
+        }
+        "clear_config_overrides" => Ok(CommandPayload::ClearConfigOverrides),
         other => Err(CommandParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -2029,5 +2075,48 @@ mod tests {
             parse_command_line("abandon_improvement 1 foo 4 7"),
             Err(CommandParseError::UnexpectedToken(token)) if token == "foo"
         ));
+    }
+
+    /// The patch is the **rest of the line**, verbatim: a compact JSON object carries spaces inside
+    /// its string values, and whitespace-tokenizing then re-joining would corrupt them (and any
+    /// deliberate formatting). Only the verb and the kind are tokens.
+    #[test]
+    fn parse_set_config_override_takes_the_rest_of_the_line_verbatim() {
+        let json = r#"{"forage": {"per_worker_biomass_capacity": 12.0}, "note": "a b  c"}"#;
+        assert_eq!(
+            parse_command_line(&format!("set_config_override labor {json}")).unwrap(),
+            CommandPayload::SetConfigOverride {
+                kind: ConfigOverrideKind::Labor,
+                patch_json: json.to_string(),
+            }
+        );
+    }
+
+    /// An unknown kind is rejected, never defaulted — guessing which config a designer meant to
+    /// retune would install numbers nobody asked for.
+    #[test]
+    fn parse_set_config_override_rejects_an_unknown_kind() {
+        assert!(matches!(
+            parse_command_line("set_config_override flora {}"),
+            Err(CommandParseError::InvalidConfigOverrideKind(kind)) if kind == "flora"
+        ));
+        assert!(matches!(
+            parse_command_line("set_config_override labor"),
+            Err(CommandParseError::MissingArgument(
+                "config override patch json"
+            ))
+        ));
+        assert!(matches!(
+            parse_command_line("set_config_override"),
+            Err(CommandParseError::MissingArgument("config override kind"))
+        ));
+    }
+
+    #[test]
+    fn parse_clear_config_overrides() {
+        assert_eq!(
+            parse_command_line("clear_config_overrides").unwrap(),
+            CommandPayload::ClearConfigOverrides
+        );
     }
 }

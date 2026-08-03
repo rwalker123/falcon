@@ -21,6 +21,7 @@ pub mod combat;
 mod combat_config;
 mod components;
 mod config_load;
+pub mod config_override;
 mod creatures_config;
 mod crisis;
 mod crisis_config;
@@ -104,6 +105,10 @@ pub use components::{
     NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
+pub use config_override::{
+    clear_config_overrides, install_config_override, spec_for as config_override_spec_for,
+    ConfigKindSpec, ConfigOverrideError, InstalledOverride,
+};
 pub use creatures_config::{
     load_creatures_config_from_env, CreatureDef, CreaturesConfig, CreaturesConfigHandle,
     CreaturesConfigMetadata, BUILTIN_CREATURES_CONFIG, PERSON_ID,

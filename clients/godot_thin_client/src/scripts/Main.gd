@@ -12,8 +12,14 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 @onready var camera: Camera2D = $Camera2D
 @onready var inspector: CanvasLayer = $Inspector
 @onready var band_city_panel: CanvasLayer = $BandCityPanel
+## The Workbench's host layer. The surface itself is BUILT (not instanced) into it — see
+## `_connect_workbench`.
+@onready var workbench_layer: CanvasLayer = $Workbench
 @onready var pause_layer: CanvasLayer = $PauseLayer
 @onready var pause_menu: MenuShell = $PauseLayer/MenuShell
+
+## The designer surface, built into `workbench_layer` at `_connect_workbench` and hidden until `` ` ``.
+var workbench: WorkbenchShell = null
 
 var snapshot_loader: SnapshotLoader
 var streaming_mode: bool = false
@@ -92,6 +98,19 @@ const HUD_CALL_REPORT_MIN_MSEC := 0.5
 # Loading overlay: a CanvasLayer above HUD (101) and Inspector (102), so it fully covers the blank
 # map/HUD until the new world reveals.
 const LOADING_OVERLAY_LAYER = 150
+## The Workbench sits one layer above the Inspector (102) and well under the loading overlay: the two
+## dev surfaces are never usefully stacked, and whichever was opened last should be the readable one.
+const WORKBENCH_LAYER = 103
+## Toggle action for the designer surface. **Backquote**, which nothing else in the client binds (the
+## hotkey table in `clients/godot_thin_client/CLAUDE.md` is the roster) and which costs the game no
+## letter it may still want.
+const WORKBENCH_TOGGLE_ACTION := "toggle_workbench"
+const WORKBENCH_RESERVER := &"workbench"
+## Receipt the command log shows for a Workbench-issued command; `%s` is the command's verb. The verb
+## alone, because the argument is a JSON patch that would swamp the feed.
+const WORKBENCH_COMMAND_MESSAGE := "Workbench: %s sent."
+## Label the Workbench's status lines wear in the command feed.
+const WORKBENCH_LOG_LABEL := "Workbench"
 const LOADING_OVERLAY_TEXT = "Generating world…"
 const LOADING_OVERLAY_FONT_SIZE = 28
 const COMMAND_HOST = "127.0.0.1"
@@ -301,10 +320,12 @@ func _ready() -> void:
     _ensure_action_binding("toggle_victory", Key.KEY_V)
     _ensure_action_binding("toggle_command_feed", Key.KEY_R)
     _ensure_action_binding("toggle_fow", Key.KEY_F)
+    _ensure_action_binding(WORKBENCH_TOGGLE_ACTION, Key.KEY_QUOTELEFT)
     if inspector != null and inspector.has_signal("reserved_width_changed") and not inspector.is_connected("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed")):
         inspector.connect("reserved_width_changed", Callable(self, "_on_inspector_reserved_width_changed"))
     if inspector != null and inspector.has_method("reserved_width"):
         _apply_reservation(&"inspector", SIDE_LEFT, float(inspector.call("reserved_width")))
+    _connect_workbench()
     _connect_band_city_panel()
     _connect_pause_menu()
 
@@ -560,6 +581,10 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
         if inspector.has_method("set_streaming_active"):
             inspector.call("set_streaming_active", streaming_mode)
     profile.end(PROFILE_INSPECTOR, t_inspector)
+    # The Workbench takes both frame kinds through ONE entry point and gates on its own visibility,
+    # so a hidden surface costs a cached reference and nothing else.
+    if workbench != null:
+        workbench.update_snapshot(snapshot, not is_delta)
     var t_selection: int = profile.begin(PROFILE_SELECTION)
     _refresh_hud_selection()
     profile.end(PROFILE_SELECTION, t_selection)
@@ -1077,8 +1102,10 @@ func _toggle_inspector_visibility() -> void:
     # The inset update arrives via the inspector's reserved_width_changed signal.
 
 ## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
-## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
-const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+## edge). The Inspector and the Workbench are screen-edge reservers; the Band panel stacks outboard
+## of either. The two dev surfaces share a priority because they are never usefully open together —
+## what matters is that the Band panel offsets past whichever one is showing.
+const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
@@ -1119,6 +1146,75 @@ func _update_band_panel_edge_offset() -> void:
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
+
+## THE WORKBENCH — the designer surface (`.claude/rules/client/workbench.md`), hosted on its own
+## CanvasLayer above the Inspector's and hidden at startup exactly like it: a dev surface that opened
+## itself on every launch would cost the player half the map to close.
+##
+## It is BUILT HERE rather than instanced from a scene because `WorkbenchShell` has no `.tscn` — the
+## surface assembles its own chrome, which is what lets a page arrive without a scene edit.
+func _connect_workbench() -> void:
+    if workbench_layer == null or workbench != null:
+        return
+    workbench_layer.layer = WORKBENCH_LAYER
+    workbench = WorkbenchShell.new()
+    workbench.set_anchors_and_offsets_preset(Control.PRESET_LEFT_WIDE)
+    workbench.offset_right = WorkbenchVocab.SURFACE_WIDTH
+    workbench_layer.add_child(workbench)
+    workbench.reserved_width_changed.connect(_on_workbench_reserved_width_changed)
+    workbench.set_services(_workbench_services())
+    workbench.set_command_connected(command_client != null)
+    # Hidden at startup — and the reservation seeded from what a hidden surface reserves (0), so the
+    # map starts with the whole viewport rather than a strip it can never reclaim.
+    workbench.set_panel_visible(false)
+    _apply_reservation(WORKBENCH_RESERVER, SIDE_LEFT, workbench.reserved_width())
+
+## The capabilities the Workbench's pages are lent, by name (`WorkbenchVocab.SERVICE_*`).
+##
+## **A new page needing a new capability adds a row HERE and reads it by name there** — the shell
+## carries this dictionary without reading a single entry, so nothing in between has to change. That
+## is the property the whole services indirection exists for; passing these as positional arguments
+## is what made the previous version need a shell edit per capability.
+func _workbench_services() -> Dictionary:
+    return {
+        WorkbenchVocab.SERVICE_SEND_COMMAND: Callable(self, "_workbench_send_command"),
+        WorkbenchVocab.SERVICE_APPEND_LOG: Callable(self, "_workbench_append_log"),
+        WorkbenchVocab.SERVICE_NEW_GAME: Callable(self, "_workbench_new_game"),
+    }
+
+## Send one Workbench command down the SAME transport every other client command uses. Answers
+## whether it went, so a page can tell "sent" from "no server" — `_send_runtime_command` only warns.
+func _workbench_send_command(line: String) -> bool:
+    if inspector == null or not inspector.has_method("send_runtime_command"):
+        return false
+    var verb := line.get_slice(" ", 0)
+    var result: Variant = inspector.call("send_runtime_command", line,
+        WORKBENCH_COMMAND_MESSAGE % verb)
+    return result is bool and result
+
+## The surface's status log goes to the HUD's COMMAND FEED (`R`) — the client's existing "what just
+## happened" surface, reached through the same reflective `_hud_invoke` probe as every other HUD
+## call, so a HUD without the delegator simply drops the line instead of erroring. The Workbench's
+## own Logs page is registered but unbuilt; when it is built, this is the one row that moves.
+func _workbench_append_log(text: String) -> void:
+    _hud_invoke("_note_command_feed", [WORKBENCH_LOG_LABEL, text])
+
+## Re-issue the CURRENT world's `new_game` line — the same preset/size/seed/profile this session
+## launched with, so an override applies to a world the designer can compare against the last one.
+## The reveal gate is not disturbed: the rebuild arrives as a higher world epoch like any other.
+func _workbench_new_game() -> void:
+    if _new_game_command.is_empty():
+        return
+    _send_runtime_command(_new_game_command["line"], _new_game_command["message"])
+
+func _on_workbench_reserved_width_changed(width: float) -> void:
+    _apply_reservation(WORKBENCH_RESERVER, SIDE_LEFT, width)
+
+func _toggle_workbench_visibility() -> void:
+    if workbench == null:
+        return
+    workbench.set_panel_visible(not workbench.is_panel_visible())
+    # The inset update arrives via the surface's reserved_width_changed signal.
 
 ## Wire the dockable Band/City panel onto the slice-1 reservation fan-out and seed
 ## its initial reservation (mirrors the inspector: children _ready before us, so the
@@ -1281,6 +1377,8 @@ func _process(delta: float) -> void:
         _toggle_command_feed_visibility()
     if Input.is_action_just_pressed("toggle_fow"):
         _toggle_fow_overlay()
+    if Input.is_action_just_pressed(WORKBENCH_TOGGLE_ACTION):
+        _toggle_workbench_visibility()
     if command_client != null:
         command_client.poll()
         command_client.ensure_connected()

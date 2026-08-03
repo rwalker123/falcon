@@ -141,6 +141,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `map-markers.md` | The layered hex-icon stack UX | `BandMarkerRenderer.gd`, `SecondaryMarkerRenderer.gd` |
 | `overlay-channels.md` | Selected-band/herd overlays, annotations, trade links | `BandOverlayRenderer.gd`, `AnnotationRenderer.gd` |
 | `inspector-panels.md` | Every `ui/inspector/` panel | `Inspector.gd`, `ui/inspector/**` |
+| `workbench.md` | The designer surface replacing the Inspector: shell, page registry, config tuning | `ui/workbench/**`, `tools/workbench_*` |
 | `telling-panel.md` | The Telling book UX and the narrative fork | `TellingPanel.gd`, `NarrativeForkPanel.gd` |
 | `sprites-widgets.md` | Sprites, icons, `HudStyle`, small widgets | `*Sprites.gd`, `HudStyle.gd`, `IconSprites.gd` |
 | `test-harnesses.md` | `ui_preview`, `map_preview`, `blend_probe`, `decode_guard`, `marker_field_guard`, `inspector_hidden_guard` | `tools/**` |
@@ -222,6 +223,7 @@ shown build can never go stale.
 | `F` | Toggle fog of war (server-owned — see `.claude/rules/client/fog-of-war.md`) |
 | `T` | Toggle terrain textures |
 | `I` | Hide/show inspector |
+| `` ` `` | Hide/show the Workbench, the designer surface (**hidden by default**) — see `.claude/rules/client/workbench.md` |
 | `L` | Show/hide the Terrain Types legend (**hidden by default**, persisted) |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
 | `R` | Show/hide the Command Feed (**hidden by default**, persisted) |
