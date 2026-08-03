@@ -352,6 +352,59 @@ stated, so the disagreement is no longer expressible.)
   gate's verb load-bearing rather than decorative — and the no-build twin is what proves the fix is
   not simply every number scaled down.
 
+### A HUNT TAKE HAS A THIRD BOUND: WHAT THE PARTY CAN REACH (`docs/plan_hunt_through_combat.md` §2)
+
+`HerdTelemetryState.engageRate` — how many animals ONE hunter brings into contact per turn — is the
+third arm of the take beside the stock above the floor and the party's carry, and the client had
+neither the field nor the arm. Measured in play on a Wild Fowl herd with **one** hunter: the compose
+sheet read **≈307 birds/turn** where the sim pays **ten** (`1 × engage_rate 10`), and said *"max 2
+workers useful here — more would be idle"* while ~470 birds stood above the floor and each hunter
+reached ten. The number was 30× out and **the advice was backwards** — the very hands the take was
+short of were the ones being called idle.
+
+The two halves land in `SourceForecast` and are the client mirror of three `core_sim/src/fauna.rs`
+functions, named for them so the pairing is legible: `animals_engaged` (the sim's own), `engage_workers`
+(`hunt_engage_workers`), and `max_useful_workers`' `max(haul, engage)` (`hunt_take_workers`).
+
+```text
+reach(workers)  = floor(workers × engageRate × dip) × <account>PerAnimal
+engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
+```
+
+- **`engageRate <= 0` MEANS UNBOUNDED, never "reaches nothing"** (`NO_ENGAGEMENT_STAGE`). It is the
+  wire's finite reading of the sim's `f32::INFINITY` — a **pen** publishes it (a penned animal is not
+  stalked) and the whole **plant web** gets it by never publishing the field — so both consumers drop
+  the term and forage and corrals are byte-identical to before the arm existed. Getting that backwards
+  regresses two whole webs, which is why the frames are an A/B on ONE herd with only this field moving.
+- **The dip rides engagement exactly as it rides carry.** Omitting it re-opens the closed defect where
+  a building crew and a harvesting crew reach the same count and the build is free.
+- **THE TAKE'S ARM IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`.** `_hunt_delivered_and_waste`
+  mins `animals_engaged` into its `carryable`; `floor(min(carry, engaged × fpa) / fpa)` is the same
+  arithmetic but divides a product of `fpa` BY `fpa` and can land a whole engagement one animal short
+  on a rounding. It also leaves the partial-body branch reading the RAW carry, which is right —
+  engagement is never binding there, a party that exists reaching at least one animal.
+- **The reach arm had to reach BOTH producers, and only one of them is `expected_yield`.** The hunt
+  sheet's per-turn row comes from `_hunt_delivered_and_waste` (which composes its own `collection` so
+  it can quantise), not from `expected_yield_account` — so an arm added to the shared layer alone would
+  have left the *rendered* number carry-bound while the cap beside it moved. `herd_axis_rates` carries
+  the `engage_rate`/`dip` pair for exactly that reason.
+- **`expected_yield_account` takes the account's own per-animal quantum as a third KEY**, the same
+  passed-in-not-switched-on convention its per-worker/ceiling pair already follows. An account with no
+  whole-animal quantum (fodder; a source the wire states none for) has **no** engagement arm rather
+  than a zero one.
+- **Frames: `herd_hunt_engagement_bound` / `herd_hunt_engagement_unbounded`** — one Wild Fowl, one
+  hunter, one floor, `engage_rate` the only difference. Bound reads `0.03 FOOD` under *"26 of 47
+  useful — free up idle workers to send more"*; unbounded reads `0.80 → 0.05 FOOD` under *"max 2
+  workers useful here"*, which is the honest advice for a pen. Both takes are stated by the harness's
+  own `_hunt_take_oracle` (the sim's `quantise_animal_take` restated in food, now taking `engaged`),
+  never by asking the sheet what it thinks.
+
+> **The CHART's crew targets are still carry-only.** `crew_to_clear` / `crew_to_hold` /
+> `crew_that_reaches` divide biomass by carry and know nothing about reach, so the bound frame offers
+> *"2 clear it now"* for a herd two hunters would take 47 turns to clear. §7.6's rule still holds (the
+> cap is the `max`, so no target names a crew the stepper refuses to reach) — what is wrong is the
+> target, and the verdict written off the same projection with it.
+
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
 **THE PEAK ZONE STATES NOTHING, AND THE ENTRY IS EMPTY IN THE VOCABULARY.** *"The food peak — the most
@@ -549,13 +602,44 @@ component and all three iterate it. So a cash crop still shows no food row and a
 either, and the single surviving zero is still `zero_account`'s. A widget that synthesised a row would
 put the false `0.00 food` straight back on the loudest line of the panel.
 
-**The hunt web's row is an ANIMAL RATE, not an account** — `≈0.41 Grey Wolf/turn`, unit-free by
-construction, so it overrides the account table with its own unit: a body is not an account.
-`HUNT_DELIVERED_FORMAT` is now composed from the two halves the readout needs separately
-(`HUNT_ANIMAL_RATE_FACE_FORMAT` + `_UNIT_FORMAT`), so the sentence and the split row cannot name the
-quarry two different ways. Both preview producers were split the same way: a `_*_yield_model` states
-the rows, the joined text, the overdraw flag and the waste note, and `_local_*_preview_bbcode` is a
-thin formatter over it — one derivation, two surfaces.
+**THE HUNT WEB'S PER-TURN ROW IS AN ACCOUNT, LIKE EVERY OTHER RATE ON THIS READOUT** — `0.58 → 0.02
+TRADE` on a wolf, `1.23 → 0.07  FOOD   0.18 → 0.01  TRADE` on a deer, through
+`SourceForecast.yield_rows` and `YIELD_ACCOUNT_UNITS`. **The
+whole-animal reading belongs to the CHART above it** — the escapement curve and its `leave 50% · ≈1
+Grey Wolf` handle — and to the raid's whole-trip payload, which has no `/turn` and no `now → after`;
+a per-turn row wearing `WILD FOWL/TURN` states a rate in a currency the band's stores do not keep,
+and the `per turn · now → after` header over it then keys a number that cannot be spent.
+`HUNT_DELIVERED_FORMAT` stays composed from the two halves (`HUNT_ANIMAL_RATE_FACE_FORMAT` +
+`_UNIT_FORMAT`) for the one-line preview SENTENCE, where the animal rhythm is the point. Both preview
+producers are split the same way: a `_*_yield_model` states the rows, the joined text, the overdraw
+flag and the waste note, and `_local_*_preview_bbcode` is a thin formatter over it — one derivation,
+two surfaces.
+
+**A HUNT IS COUNTED ON ONE AXIS AND CREDITED IN EVERY ACCOUNT IT PAYS, and the two halves of that
+sentence belong to different functions.** `herd_axis_rates` mirrors the sim's `ratio_axis` and
+resolves ONE component (provisions preferred, trade for an inedible quarry) — it has to, because the
+whole-animal quantiser divides by a per-animal quantum and a wolf's food quantum is `0`. But that
+constrains the **count**, not the credit: a ratio is unit-free, so the sim values one quantised take
+in both currencies through `YieldPair::rescaled_to`, and `SourceForecast.rescaled_accounts` is that
+crossing client-side — the per-biomass vector as the reference mix, the counted axis coming back
+bit-identical. A Wild Boar's local sheet therefore reads `FOOD` **and** `TRADE`, exactly as the same
+species raided by an expedition always did (`_trip_yield_rows`), rather than the axis alone.
+
+- **`yield_rows` still decides which rows EXIST**, so this is not "credit every account": a wolf's
+  provisions rate is a structural `0`, the crossing answers a structural zero, and no `0.00 FOOD`
+  appears. `herd_hunt_pelts_only` is the frame that pins it and `herd_hunt_both_products` its
+  positive twin — asserted as a pair, since the negative alone passes on a readout that lost both.
+- **The `after` reading rescales the same way**, or an arrowed row would key one account's holding
+  rate beside another account with none.
+- **BOTH branches of `_hunt_yield_model` cross the same way** — the quantised take and the smoothed
+  degrade path differ in whether the take is quantised, never in what a take pays, and the degrade
+  path's sentence goes through `yield_components` for the same reason.
+- **The assertion is a CROSS-CHECK, not a restatement**: `ui_preview` recomposes the pair from the
+  sim's own two steps — `_hunt_take_oracle` for the count, then the species' whole-animal quanta
+  (`body_mass_yield`) for the crossing — while the client rescales through the per-biomass vector, so
+  the two arrive at one answer by different routes. Sabotage-verified in both directions: dropping
+  the crossing fails the both-products pair, crediting both accounts naively fails the wolf's
+  no-food-row line.
 
 **THE DASHED RULE IS DRAWN, AND A WIDTH-1 `draw_line` IS INVISIBLE HERE.** Godot has no dashed border
 on any `StyleBox`, so `HudWidgets.build_dashed_rule` draws it — but a `draw_line` with an explicit

@@ -282,6 +282,60 @@ mod tests {
         );
     }
 
+    /// **The ENGAGEMENT throughput crosses the wire, and a source with no engagement stage is
+    /// distinguishable from one that has not stated it.**
+    ///
+    /// It is the third arm of the client's `min()` (`docs/plan_hunt_through_combat.md` §2): without it
+    /// a compose sheet bounds a hunt by carry and stock alone and quotes a take the sim will never pay
+    /// — measured at ~30× on a light-bodied species. The two readings are pinned **together** because
+    /// they are the same number on the wire: a hunted herd's real rate, and the `0` a **pen** publishes
+    /// for *"a penned animal is not stalked, drop this term"*.
+    #[test]
+    fn the_engagement_throughput_rides_the_wire_and_a_pen_states_it_has_none() {
+        /// The shipped Wild Fowl rate — one hunter reaches ten birds a turn.
+        const STALKED_ENGAGE_RATE: f32 = 10.0;
+        /// The wire's finite reading of the sim's `f32::INFINITY`: no engagement stage at all.
+        const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
+        let snapshot = WorldSnapshot {
+            herds: vec![
+                HerdTelemetryState {
+                    id: "herd_wild".to_string(),
+                    engage_rate: STALKED_ENGAGE_RATE,
+                    ..Default::default()
+                },
+                HerdTelemetryState {
+                    id: "herd_pen".to_string(),
+                    corralled: true,
+                    engage_rate: NO_ENGAGEMENT_STAGE,
+                    ..Default::default()
+                },
+            ],
+            ..WorldSnapshot::default()
+        };
+
+        let bytes = encode_snapshot_flatbuffer(&snapshot);
+        let envelope = fb::root_as_envelope(&bytes).expect("snapshot decodes");
+        let herds = envelope
+            .payload_as_snapshot()
+            .expect("snapshot payload")
+            .subsistence()
+            .expect("subsistence section present")
+            .herds()
+            .expect("herds present");
+
+        assert!(
+            (herds.get(0).engageRate() - STALKED_ENGAGE_RATE).abs() < 1e-6,
+            "a hunted herd publishes its real reach: {}",
+            herds.get(0).engageRate()
+        );
+        assert_eq!(
+            herds.get(1).engageRate(),
+            NO_ENGAGEMENT_STAGE,
+            "…and a pen publishes none, which a reader treats as unbounded"
+        );
+    }
+
     /// **The sampled regrowth curve crosses the wire on both webs, and the two webs are NOT the same
     /// function.** That asymmetry is the load-bearing part: a patch is pure logistic with a reseed
     /// floor and no Allee term, so **no sample is negative**; a herd has critical depensation below

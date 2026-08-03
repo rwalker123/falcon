@@ -16,17 +16,18 @@ use bevy::MinimalPlugins;
 
 use core_sim::{
     advance_band_movement, advance_expeditions, advance_herds, advance_labor_allocation,
-    build_headless_app, hunt_source_yield_preview, recapture_snapshot_in_place, scalar_from_f32,
-    scalar_one, scalar_zero, spawn_initial_forage, spawn_initial_herds, spawn_initial_world,
-    CombatConfigHandle, CommandEventLog, CreaturesConfigHandle, CultureManager, Diet,
-    DiscoveryProgressLedger, Expedition, ExpeditionMission, ExpeditionPhase, FactionId,
-    FactionInventory, FaunaConfig, FaunaConfigHandle, FloraConfigHandle, ForageRegistry,
-    GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield,
-    Improvement, LaborAllocation, LaborAssignment, LaborConfigHandle, LaborTarget,
-    LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause, PopulationCohort,
-    ResidentBand, SimulationConfig, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry, WellbeingConfigHandle, FOOD,
+    build_headless_app, hunt_engage_workers, hunt_haul_workers, hunt_source_yield_preview,
+    recapture_snapshot_in_place, scalar_from_f32, scalar_one, scalar_zero, spawn_initial_forage,
+    spawn_initial_herds, spawn_initial_world, CombatConfigHandle, CommandEventLog,
+    CreaturesConfigHandle, CultureManager, Diet, DiscoveryProgressLedger, Expedition,
+    ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory, FaunaConfig,
+    FaunaConfigHandle, FloraConfigHandle, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntYield, Improvement, LaborAllocation,
+    LaborAssignment, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, ResidentBand, SimulationConfig,
+    SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, WellbeingConfigHandle, FOOD, MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP,
     NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 
@@ -508,6 +509,12 @@ fn headless_with_species(display_name: &str) -> (App, String, UVec2) {
         herd.hunt_credit = 0.0;
         herd.position()
     };
+    // **Re-emit the display telemetry, or the WIRE describes the herd this fixture replaced.**
+    // `WorldSnapshot.herds` is built from `HerdTelemetry`, which `app.update()` filled *before* the
+    // reshape above — so a test reading the exported `biomass` would compose a ceiling against the
+    // pre-reshape stock while the take reads the registry. `spawn_initial_herds` early-returns on a
+    // non-empty registry and refreshes exactly the telemetry + density the turn loop would.
+    app.world.run_system_once(spawn_initial_herds);
     (app, id, pos)
 }
 
@@ -655,6 +662,26 @@ fn exported_pair(app: &App, band: bevy::prelude::Entity) -> (f32, f32) {
         .first()
         .expect("its one Hunt assignment is exported");
     (row.actual_yield, row.trade_yield)
+}
+
+/// The **exported** telemetry row for a band's single assignment — the whole shipped record, for the
+/// staffing signals (`workersNeeded` / `wastedYield`) [`exported_pair`] does not carry.
+fn exported_row(app: &App, band: bevy::prelude::Entity) -> sim_runtime::LaborAssignmentState {
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == band.to_bits())
+        .expect("the hunting band is in the snapshot")
+        .labor_assignments
+        .first()
+        .expect("its one Hunt assignment is exported")
+        .clone()
 }
 
 /// The **exported** herd row — the terms a client composes any floor's ceiling from
@@ -1330,5 +1357,217 @@ fn an_inedible_raid_comes_home_with_pelts_and_no_food() {
     assert!(
         (banked_trade - promised_trade).abs() <= RAID_PAYLOAD_EPSILON,
         "and it banks exactly what the outfit UI promised"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// B4 — the ENGAGEMENT bound reaches the WIRE (`docs/plan_hunt_through_combat.md` §2)
+// ---------------------------------------------------------------------------------------------------
+
+/// The lightest-bodied huntable species in the shipped roster (`body_mass` 0.13, `engage_rate` 10) —
+/// the regime where **reach** is the binding bound by a wide margin: one hunter's 40 biomass of carry
+/// is 307 birds, and one hunter reaches ten.
+const SMALL_BODIED_SPECIES: &str = "Wild Fowl";
+
+/// The heaviest (`body_mass` 800, `engage_rate` 0.05) — the other end of the same authoring rule
+/// (`engage_rate × body_mass ≤ per_worker_biomass_capacity`), where the two bounds meet.
+const HEAVY_BODIED_SPECIES: &str = "Thunder Mammoths";
+
+/// **One hunter**, because that is the staffing the defect was measured at and the one where the two
+/// bounds are furthest apart.
+const LONE_HUNTER: u32 = 1;
+
+/// **12. The wire carries the ENGAGEMENT term, and without it a client's composed take is ~30× the
+/// take the sim pays.**
+///
+/// The escapement ceiling and the per-worker carry ship as **terms** because the composition
+/// `min(workers × carry, ceiling)` is linear and exact (`.claude/rules/core_sim/yield-forecast.md`,
+/// "THE BOUNDARY"). Engagement is the **third** bound and is linear in the same way — but it was not
+/// on the wire, so a compose sheet built the `min()` out of two of the three and quoted a carry-bound
+/// number. Measured on a Wild Fowl herd with one hunter: 307 birds/turn against a take of 10.
+///
+/// Asserted on the **exported snapshot** — the herd row's terms and the assignment row's
+/// `actualYield` — because the whole point is that the client cannot re-derive the answer from
+/// anything it does not ship: an in-process check would pass on a wire missing the field entirely.
+///
+/// The pair is **carry-only overstates** (the defect) beside **carry+reach reproduces exactly** (the
+/// fix), so a term that silently went dead could not satisfy both.
+#[test]
+fn the_exported_terms_reproduce_the_engagement_bounded_take() {
+    let (mut app, id, pos) = headless_with_species(SMALL_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    let floor = MSY_BIOMASS_FRACTION;
+    let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+    app.world.run_system_once(advance_labor_allocation);
+    recapture_snapshot_in_place(&mut app.world);
+
+    let herd = exported_herd(&app, &id);
+    let paid = exported_pair(&app, band).0;
+
+    assert!(
+        herd.engage_rate > 0.0,
+        "the herd row must publish a real engagement throughput, got {}",
+        herd.engage_rate
+    );
+    assert!(
+        herd.body_mass > 0.0 && herd.per_worker_biomass > 0.0 && herd.provisions_per_biomass > 0.0,
+        "liveness: the three terms this composition already had must be on the row too ({herd:?})"
+    );
+
+    // THE CLIENT'S OWN COMPOSITION, from exported terms alone. `engaged` mirrors the sim's
+    // `animals_engaged` (floor to whole animals, never below one for a party that exists) and the
+    // rest is the documented whole-animal quantiser.
+    let room = (herd.biomass - floor * herd.carrying_capacity).max(0.0);
+    let carry = LONE_HUNTER as f32 * herd.per_worker_biomass;
+    let compose = |reachable: f32| -> f32 {
+        let affordable = (room / herd.body_mass).floor();
+        let carryable = (carry / herd.body_mass).floor();
+        let killed = affordable.min(carryable.max(1.0)).min(reachable);
+        (killed * herd.body_mass).min(carry) * herd.provisions_per_biomass
+    };
+    let engaged = (LONE_HUNTER as f32 * herd.engage_rate).floor().max(1.0);
+    let with_reach = compose(engaged);
+    let carry_only = compose(f32::INFINITY);
+
+    assert!(
+        (with_reach - paid).abs() <= YIELD_EPSILON,
+        "composed WITH the engagement term ({with_reach}) must equal the exported take ({paid})"
+    );
+    assert!(
+        carry_only > with_reach * 2.0,
+        "…and composing without it must be the overstatement this field exists to close: \
+         {carry_only} vs {with_reach}"
+    );
+    assert!(
+        paid > 0.0,
+        "liveness: the harness must actually take something, or both readings are zero"
+    );
+}
+
+/// **13. A PEN publishes no engagement stage — a penned animal is not stalked.**
+///
+/// The no-regress half of the pair above, and the one case where `0` on the wire is the *correct*
+/// reading rather than a missing field: a reader must treat `<= 0` as unbounded and drop the term,
+/// exactly as `fauna::hunt_engage_workers` does. Asserted beside a wild herd of the same species so
+/// the `0` is demonstrably the pen's answer and not the field being dead.
+#[test]
+fn a_penned_herd_publishes_no_engagement_stage() {
+    let (mut app, id, _pos) = headless_with_species(SMALL_BODIED_SPECIES);
+    reveal_herd(&mut app, &id);
+    recapture_snapshot_in_place(&mut app.world);
+    let wild = exported_herd(&app, &id).engage_rate;
+    assert!(
+        wild > 0.0,
+        "liveness: the same species reads a real rate while it is wild, got {wild}"
+    );
+
+    {
+        // `headless_with_species` re-speciates the herd's yield terms, not its husbandry ceiling, so
+        // the fixture states the roster's ceiling for the species under test before penning it —
+        // `corral_at` gates on `can_pen()` and refuses (loudly) otherwise.
+        let ceiling = app
+            .world
+            .resource::<FaunaConfigHandle>()
+            .get()
+            .species_by_display(SMALL_BODIED_SPECIES)
+            .expect("the species is in the shipped roster")
+            .husbandry_ceiling;
+        let pos = {
+            let registry = app.world.resource::<HerdRegistry>();
+            registry
+                .find(&id)
+                .expect("the herd is on the map")
+                .position()
+        };
+        let mut registry = app.world.resource_mut::<HerdRegistry>();
+        let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+        herd.husbandry_ceiling = ceiling;
+        assert!(herd.corral_at(pos), "the fixture herd pens");
+    }
+    app.world.run_system_once(spawn_initial_herds);
+    recapture_snapshot_in_place(&mut app.world);
+
+    assert_eq!(
+        exported_herd(&app, &id).engage_rate,
+        0.0,
+        "a pen has no engagement stage — the wire's finite reading of unbounded"
+    );
+}
+
+/// **14. `workersNeeded` counts the hands that can REACH the animals, not only the ones that can
+/// carry them.**
+///
+/// The mirror defect of #12, in the opposite direction and on the same panel: `hunt_haul_workers`
+/// sized the crew as a pure carry question, so a Wild Fowl herd with hundreds of head standing above
+/// its floor reported a crew of two — *"more workers would be idle"* about the very hands the take
+/// was short of. Engagement is a **third unit** (animals reachable per hunter, beside biomass carried
+/// and heads minded) and belongs in the same `max()`.
+///
+/// Asserted on the **exported** assignment row, and paired both ways: the light-bodied herd's count
+/// must exceed its own haul crew (the new term is live and binding), while the heavy-bodied one must
+/// still be its haul crew (the old term is not dead). Plus the standing invariant — a row may not
+/// report *overstaffed* and *understaffed* at once.
+#[test]
+fn the_exported_crew_counts_the_hands_that_can_reach_the_herd() {
+    let mut saw_reach_bound = false;
+    let mut saw_carry_bound = false;
+    for species in [SMALL_BODIED_SPECIES, HEAVY_BODIED_SPECIES] {
+        let (mut app, id, pos) = headless_with_species(species);
+        reveal_herd(&mut app, &id);
+        let floor = MSY_BIOMASS_FRACTION;
+        let (haul, reach) = {
+            let fauna = app.world.resource::<FaunaConfigHandle>().get();
+            let labor = app.world.resource::<LaborConfigHandle>().get();
+            let registry = app.world.resource::<HerdRegistry>();
+            let herd = registry.find(&id).expect("the herd is on the map");
+            let ceiling = core_sim::hunt_escapement_ceiling(
+                floor,
+                herd.biomass,
+                core_sim::herd_capacity(herd, &fauna),
+            );
+            (
+                hunt_haul_workers(
+                    ceiling,
+                    herd.body_mass,
+                    labor.hunt.per_worker_biomass_capacity,
+                ),
+                hunt_engage_workers(
+                    ceiling,
+                    herd.body_mass,
+                    fauna.engage_rate_for(&herd.species),
+                    NO_BUILD_UNDERWAY_DIP,
+                ),
+            )
+        };
+        let band = spawn_resident_hunters(&mut app, pos, &id, floor, LONE_HUNTER);
+        app.world.run_system_once(advance_labor_allocation);
+        recapture_snapshot_in_place(&mut app.world);
+        let row = exported_row(&app, band);
+
+        assert!(
+            haul > 0 && reach > 0,
+            "{species}: liveness — both crew terms must be real counts ({haul} haul, {reach} reach)"
+        );
+        assert_eq!(
+            row.workers_needed,
+            haul.max(reach),
+            "{species}: the exported crew is the larger of the two jobs"
+        );
+        if reach > haul {
+            saw_reach_bound = true;
+        } else {
+            saw_carry_bound = true;
+        }
+        // **The two staffing signals may not contradict each other** — the invariant the haul term
+        // was sized off the ceiling to preserve, restated with the third term in the `max()`.
+        assert!(
+            !(LONE_HUNTER > row.workers_needed && row.wasted_yield > 0.0),
+            "{species}: a row cannot say drop workers and add workers at once ({row:?})"
+        );
+    }
+    assert!(
+        saw_reach_bound && saw_carry_bound,
+        "both units must bind somewhere in the roster: reach={saw_reach_bound} \
+         carry={saw_carry_bound}"
     );
 }

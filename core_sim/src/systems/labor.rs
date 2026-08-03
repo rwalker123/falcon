@@ -1316,6 +1316,11 @@ pub fn advance_labor_allocation(
                             // per-turn `production`, NOT this turn's lumpy `take.carried` — a slow-
                             // breeding pen (the aurochs pulses) drops 0 animals on a wait turn, which
                             // would collapse the crew to the herder count and contradict `wasted`.
+                            //
+                            // **No engagement term here, deliberately** — a penned animal is not
+                            // stalked, so there is no reach to invert (the same exemption this branch
+                            // states by passing `f32::INFINITY` to the quantiser). `hunt_haul_workers`
+                            // rather than `hunt_take_workers` says that in the signature.
                             workers_needed: source_crew_needed(
                                 herders_needed,
                                 fauna::hunt_haul_workers(
@@ -1552,7 +1557,8 @@ pub fn advance_labor_allocation(
                     // `herders_needed` is `0` (it isn't yours to maintain), so the `max` collapses to
                     // the haul-side count.
                     //
-                    // The haul side is the **peak-drop carry crew** ([`fauna::hunt_haul_workers`]) off
+                    // The take side is [`fauna::hunt_take_workers`] — the crew that can both **reach**
+                    // and **carry** the peak animal drop off
                     // the SAME escapement ceiling the take was bounded by — NOT this turn's lumpy
                     // `take.carried`. A slow breeder whose room is lighter than one body carries `0` on
                     // a wait turn, which would collapse `workers_needed` and contradict `wasted_yield`;
@@ -1571,10 +1577,19 @@ pub fn advance_labor_allocation(
                     // cap (`SourceForecast.max_useful_workers`, which divides by `carry × dip`) by
                     // exactly the dip. Read through the one [`LadderConfig::build_dip`] seam so the
                     // two webs cannot dip differently.
-                    let take_workers = fauna::hunt_haul_workers(
+                    //
+                    // **The ENGAGEMENT side is the third unit** ([`fauna::hunt_engage_workers`],
+                    // `docs/plan_hunt_through_combat.md` §2): a hunter reaches `engage_rate` animals a
+                    // turn whatever they can carry, so the crew that clears the ceiling needs
+                    // `ceil(peak drop / (engage_rate × dip))` hands. Sizing on carry alone reported
+                    // "more hands would be idle" about small-bodied game — 470 fowl above the floor is
+                    // 61 biomass, two haulers' worth, and 47 hunters' worth of reach.
+                    let take_workers = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
                         labor.hunt.per_worker_biomass_capacity * ladder.build_dip(improvement),
+                        fauna.engage_rate_for(&herd.species),
+                        ladder.build_dip(improvement),
                     );
                     let workers_needed = source_crew_needed(herders_needed, take_workers);
                     // **The arrival schedule — computed POST-take, unlike `realized`.** It

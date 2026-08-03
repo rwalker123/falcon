@@ -24,6 +24,14 @@ const NO_NEGLECT_REMAINING: u32 = 0;
 /// a number nobody chose.
 const NO_RUNG_CREW: u32 = 0;
 
+/// **The wire's finite reading of "this source has no engagement stage"** — a **pen** (a penned animal
+/// is not stalked) and a species the roster cannot resolve, both of which
+/// [`crate::fauna_config::FaunaConfig::engage_rate_for`] / [`crate::SourceYieldForecast`] answer with
+/// [`f32::INFINITY`] sim-side. FlatBuffers floats carry an infinity fine; a *client* dividing by one
+/// does not, so the seam converts once, here, and the schema documents `<= 0` as *unbounded* — the
+/// same reading `fauna::hunt_engage_workers` gives it.
+const NO_ENGAGEMENT_STAGE: f32 = 0.0;
+
 /// The compact per-tile pasture-phase code the client reads off `TileState` (`GRAZE_PHASE_*`).
 /// A tile with **no patch** (a biome that carries no pasture: water, ice, bare rock) is
 /// [`GRAZE_PHASE_NONE`] — the zero/default, so an absent pasture can never be misread as a healthy one.
@@ -384,6 +392,22 @@ pub(crate) fn herd_snapshot_entries(inputs: HerdSnapshotInputs<'_>) -> Vec<HerdT
                     .as_ref()
                     .map(|ecology| ecology.stressed_fraction)
                     .unwrap_or(0.0),
+                // **The THIRD bound on a take** (`docs/plan_hunt_through_combat.md` §2): how many
+                // animals one hunter can bring into contact per turn. The escapement ceiling and the
+                // per-worker carry already ship as terms, and a client composing `min()` from those
+                // two alone quotes a carry-bound take the sim will never pay — ~30× over on a Wild
+                // Fowl herd with one hunter, whose 40 biomass of carry is 307 birds against 10 of
+                // reach. It is exact and linear in the crew, so it ships as a term like its two
+                // siblings; the whole-animal `floor()` stays the sim's answer in `SourceYield.actual`.
+                //
+                // **A PEN publishes `NO_ENGAGEMENT_STAGE`** — `engage_rate_for` answers `INFINITY` for
+                // an unresolvable species and a penned animal is not stalked either, so the wire's
+                // finite "unbounded" reading covers both and no reader has to carry an infinity.
+                engage_rate: herd
+                    .filter(|herd| !herd.is_corralled())
+                    .map(|herd| fauna.engage_rate_for(&herd.species))
+                    .filter(|rate| rate.is_finite())
+                    .unwrap_or(NO_ENGAGEMENT_STAGE),
                 // Only a huntable herd can be the target of a trip — don't pay for the rest.
                 hunt_trip_estimates: herd
                     .filter(|_| entry.huntable)

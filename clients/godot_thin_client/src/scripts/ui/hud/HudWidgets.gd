@@ -1002,8 +1002,10 @@ static func build_yields_row(rows: Array, number_tint: Color, note: String, note
     return block
 
 ## One account's reading: the number, then its unit. `unit` is the CALLER's none-of-my-business — a
-## hunt states a whole-animal rate in the quarry's own name rather than in an account's — so a row
-## may carry it as its own override of the account table.
+## raid's trip payload leads with the BODIES it brings back, stated in the quarry's own name rather
+## than in an account's — so a row may carry it as its own override of the account table. **A
+## per-turn RATE is not such a caller**: what a turn of work pays is an account, so both webs' live
+## readouts take the table's unit and the whole-animal reading is the chart's above them.
 const YIELD_ROW_UNIT := "unit"
 const YIELD_ROW_NUMBER := "number"
 static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer:
@@ -1016,10 +1018,12 @@ static func _yield_reading(row: Dictionary, number_tint: Color) -> HBoxContainer
     # Label would let an account's two halves wrap apart onto different lines, which is the one thing
     # this reading cannot survive.
     #
-    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the hunt's animal
-    # rate is a composed `≈0.41`, not a magnitude this widget formats, so composing its arrow here
+    # **A CALLER THAT SUPPLIES ITS OWN FACE OWNS ALL OF IT**, transition included — the raid payload's
+    # animal count is a composed `≈8`, not a magnitude this widget formats, so composing an arrow here
     # would set a raw float beside an `≈`-prefixed one AND append a second arrow to a face that
     # already has one. Such a row still declares `YIELD_ROW_AFTER`, so the header knows to key it.
+    # (The trip states no transition at all, so nothing currently exercises that pairing; the rule
+    # holds for the next composed face rather than describing a live one.)
     if row.has(YIELD_ROW_NUMBER):
         number.text = String(row[YIELD_ROW_NUMBER])
     elif row.has(SourceForecast.YIELD_ROW_AFTER):

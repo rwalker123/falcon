@@ -368,6 +368,18 @@ pub(crate) fn herds_to_array(
             "neglect_grace_remaining",
             i64::from(herd.neglectGraceRemaining()),
         );
+        // THE ENGAGEMENT THROUGHPUT (`docs/plan_hunt_through_combat.md` §2) — how many animals ONE
+        // hunter brings into contact per turn, and the THIRD bound on a take beside the stock above
+        // the floor and the party's carry. Without it `SourceForecast`'s pre-commit curve is
+        // carry-bound only and overstates a light-bodied species by the ratio of the two (~30× on a
+        // Wild Fowl herd with one hunter: 40 biomass of carry is 307 birds against 10 of reach).
+        // **`<= 0` MEANS "NO ENGAGEMENT STAGE", not "reaches nothing"** — the wire's finite stand-in
+        // for the sim's `f32::INFINITY`, published for a PEN (a penned animal is not stalked) and for
+        // a species the roster cannot resolve. The client reads it as unbounded and drops the term,
+        // which is also what leaves the plant web (which never publishes this field) untouched. This
+        // decoder has a history of silently dropping appended fields; it is the newest slot on
+        // `HerdTelemetryState`, decoded beside the neglect pair it follows.
+        let _ = dict.insert("engage_rate", herd.engageRate());
         array.push(&dict.to_variant());
     }
     array

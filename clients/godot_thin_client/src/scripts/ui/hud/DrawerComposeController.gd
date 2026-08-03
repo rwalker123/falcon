@@ -260,7 +260,25 @@ func _hunt_delivered_and_waste(band: Dictionary, herd: Dictionary, floor: float,
         return {"available": false}
     ceiling *= output
     var collection := float(workers) * per_worker * output   # crew's raw food throughput /turn
-    var carryable := floorf(collection / fpa)                # whole animals /turn the crew can carry
+    # WHOLE ANIMALS /TURN THE CREW CAN CARRY — **AND NEVER MORE THAN IT CAN REACH**
+    # (`docs/plan_hunt_through_combat.md` §2). The sim's take is
+    # `min(stock above the floor, collection, engaged × body_mass)` with the quantiser running on that
+    # min, and the engagement arm was the one this sheet had never had: one hunter's 40 biomass of
+    # carry read **307 Wild Fowl a turn** against a take of ten — the sheet promising 30× what the sim
+    # pays, for the whole life of the wire field's absence.
+    #
+    # **THE BOUND IS APPLIED TO THE ANIMAL COUNT, NOT TO `collection`**, and the two are the same
+    # arithmetic taken in different orders: `floor(min(carry, engaged × fpa) / fpa)` is
+    # `min(floor(carry / fpa), engaged)` — but the first divides a product of `fpa` BY `fpa` and can
+    # land a whole engagement one animal short on a rounding, while the second is exact. It also keeps
+    # the partial-body branch below reading the RAW carry, which is right: engagement is never the
+    # binding arm there (a party that exists reaches at least one animal), so the waste it reports
+    # stays a carry story.
+    #
+    # `animals_engaged` answers UNBOUNDED for a pen and for a species with no engagement stage, so the
+    # `min` is a no-op on every managed-herd and plant-web frame.
+    var carryable := minf(floorf(collection / fpa),
+        SourceForecast.animals_engaged(workers, float(rates["engage_rate"]), float(rates["dip"])))
     var delivered := 0.0
     var waste := 0.0
     if carryable >= 1.0:
@@ -346,11 +364,16 @@ func _local_hunt_preview_bbcode(band: Dictionary, herd: Dictionary, floor: float
 
 ## The hunt web's yield model — the animal twin of `_forage_yield_model`, in the same shape.
 ##
-## **ITS ROW IS AN ANIMAL RATE, NOT AN ACCOUNT.** A hunt delivers whole bodies, so the honest reading
-## is the quarry's own name per turn (`≈0.41 Grey Wolf/turn`) — a ratio of a take to one animal's
-## worth of the same product, and therefore UNIT-FREE: it reads identically for a deer and a wolf
-## without naming either currency, which is the whole reason it is stated that way. So the row carries
-## its own `unit` and NO route: a body is not an account, and it has nowhere to be sent.
+## **ITS ROWS ARE ACCOUNTS, LIKE EVERY OTHER PER-TURN READING — one per account the take PAYS.** The
+## readout answers what a turn of this hunt puts in the band's stores, so it is stated in every
+## account the take credits (an edible species that also sells its hide pays food AND trade; a wolf
+## pays trade alone) through `SourceForecast.rescaled_accounts` → `yield_rows` and the account
+## table's units, exactly as the plant web's is and exactly as the raid's payload
+## (`_trip_yield_rows`) already was. **The WHOLE-ANIMAL reading belongs to the CHART above it** (the
+## escapement curve and its handle, which count bodies) and to the whole-trip payload of a raid; a
+## per-turn row wearing the quarry's name in place of an account states a rate in a currency the
+## stores do not keep, and the header over it (`per turn · now → after`) then keys nothing the
+## number beside it can be spent as.
 ##
 ## **`improvement` IS THE CREW'S OWN DIP, and the two forecasts here take it DIFFERENTLY** — the plant
 ## twin's rule, on the animal web. The TAKE carries it (the sim pays a building crew
@@ -379,37 +402,47 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
     var dw := _hunt_delivered_and_waste(band, herd, floor, workers, improvement)
     if not bool(dw.get("available", false)):
         # Graceful degrade — the per-animal quantum (or a lever) is unknown on BOTH components, so fall
-        # back to the smoothed per-turn line rather than regress the readout. It is stated in whichever
-        # currency the take is actually in: a trade take never reads as food, so THIS path's row is a
-        # real account and wears the account table's unit and route.
+        # back to the smoothed per-turn line rather than regress the readout. **It credits the SAME
+        # account set the quantised path does**, through the same rescale: the two paths differ in
+        # whether the take is quantised, never in what a take pays, and a model whose two branches
+        # stated different currencies for one herd is the defect one branch above records.
         var take := _hunt_take_rate(herd, floor, workers, improvement)
         if not bool(take.get("available", false)):
             return {}
         var actual := float(take["rate"]) * output
+        var smooth := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            String(take["axis"]), actual)
         var trade_axis: bool = String(take["axis"]) == SourceForecast.YIELD_AXIS_TRADE
         var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
             else SourceForecast.YIELD_ACCOUNT_FOOD
-        var smooth_row := {
-            SourceForecast.YIELD_ROW_ACCOUNT: account,
-            SourceForecast.YIELD_ROW_VALUE: actual,
-        }
+        var smooth_after := {}
         var smooth_hold := _hunt_take_rate(herd, floor, workers, improvement, true)
         if reaches and bool(smooth_hold.get("available", false)):
-            var held := float(smooth_hold["rate"]) * output
-            if not is_equal_approx(held, actual):
-                smooth_row[SourceForecast.YIELD_ROW_AFTER] = held
+            smooth_after = SourceForecast.rescaled_accounts(herd,
+                HudComposeVocab.BARE_FORECAST_PREFIX, String(smooth_hold["axis"]),
+                float(smooth_hold["rate"]) * output)
         return {
-            YIELD_MODEL_ROWS: [smooth_row],
+            YIELD_MODEL_ROWS: SourceForecast.yield_rows(
+                float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
+                float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
+                float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]),
+                account, smooth_after),
+            # The SENTENCE states the same vector the rows do — `yield_components` is the joiner the
+            # plant twin already uses, and it obeys the same render-only-when-non-zero rule, so this
+            # line cannot quote one account beside a row set carrying two.
             YIELD_MODEL_TEXT: HudComposeVocab.LOCAL_HUNT_YIELD_FORMAT % (
-                SourceForecast.format_trade(actual) if trade_axis \
-                else SourceForecast.format_yield(actual)),
+                SourceForecast.yield_components(
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_FOOD]),
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_TRADE]),
+                    float(smooth[SourceForecast.YIELD_ACCOUNT_FODDER]), account)),
             YIELD_MODEL_OVERDRAW: _is_overdraw(actual, sustainable) \
                 and _herd_take_draws_down(herd, floor, workers, improvement),
             YIELD_MODEL_WASTE: "",
         }
-    # ANIMALS-FIRST: the crew's honest carry-aware delivered take, as a per-turn animal rate (one
-    # consistent format — no fast/slow flip). `delivered` is already carry-quantized, so this credits no
-    # throughput the crew can't haul home.
+    # The crew's honest carry-aware delivered take. `delivered` is already carry-quantized, so this
+    # credits no throughput the crew can't haul home — and it is a take in an ACCOUNT, which is what
+    # the readout row states. The animal RATE derived beside it is the SENTENCE's (`YIELD_MODEL_TEXT`,
+    # the one-line preview), where the whole-animal rhythm is the whole point of the line.
     var fpa := float(dw["per_animal"])
     var delivered := float(dw["delivered"])
     var animal_rate := delivered / fpa if fpa > 0.0 else 0.0
@@ -418,29 +451,37 @@ func _hunt_yield_model(band: Dictionary, herd: Dictionary, floor: float, workers
     # Overdraw and waste are DIFFERENT flags and may co-occur — render both. Overdraw = the delivered take
     # exceeds the herd's food-peak ceiling; waste = a kill the crew couldn't carry.
     var waste_pct := float(dw["waste_pct"])
-    # THE STEADY-STATE ANIMAL RATE, composed the same way and therefore quantised the same way. It
-    # rides `YIELD_ROW_NUMBER` rather than `YIELD_ROW_AFTER` because this row's face is a COMPOSED
-    # string (`≈0.41`, not a magnitude the widget formats), so the transition has to be composed here
-    # too — the widget's own arrow would set a raw float beside an `≈`-prefixed one.
-    var animal_row := {
-        SourceForecast.YIELD_ROW_ACCOUNT: SourceForecast.YIELD_ACCOUNT_NONE,
-        SourceForecast.YIELD_ROW_VALUE: animal_rate,
-        HudWidgets.YIELD_ROW_NUMBER: HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
-        HudWidgets.YIELD_ROW_UNIT: HudComposeVocab.HUNT_ANIMAL_RATE_UNIT_FORMAT % quarry,
-    }
+    # **THE COUNT IS TAKEN ON ONE AXIS AND VALUED IN EVERY ACCOUNT** — the sim's own order
+    # (`forecast_production_and_take`: quantise on `ratio_axis()`, then `YieldPair::rescaled_to`), and
+    # the half this readout used to drop. A boar's take genuinely credits meat AND hide; stopping at
+    # the axis the quantiser happened to divide by rendered its `PER TURN` row as food alone, while
+    # the very same species raided by an expedition (`_trip_yield_rows`) stated both. `yield_rows` is
+    # still the one place the "render only where the vector pays" rule lives, so a wolf — whose
+    # provisions rate is a structural 0 — rescales to a zero food component that renders NO row, and
+    # the zero account below keeps that answer for an all-zero take.
+    var take := SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+        String(dw["axis"]), delivered)
+    # THE ZERO ACCOUNT IS THE AXIS THE TAKE WAS MEASURED ON — the same choice the degrade branch above
+    # makes, so one model's two paths can never state an empty take in two different currencies.
+    var trade_axis: bool = String(dw["axis"]) == SourceForecast.YIELD_AXIS_TRADE
+    var account := SourceForecast.YIELD_ACCOUNT_TRADE if trade_axis \
+        else SourceForecast.YIELD_ACCOUNT_FOOD
+    # THE STEADY STATE RIDES EACH ACCOUNT'S OWN `after`, so `build_yields_row` composes the arrow from
+    # the two magnitudes it formats itself and its header keys them. It RESCALES THE SAME WAY the take
+    # does — an arrowed row must key both accounts consistently, and a hold rate credited on one axis
+    # beside a take credited on two would arrow only half the reading. `yield_rows` drops an `after`
+    # equal to its take, which is the same "an arrow to itself is noise" test this used to make here.
+    var after := {}
     var held := _hunt_delivered_and_waste(band, herd, floor, workers, improvement, true)
     if reaches and bool(held.get("available", false)):
-        var held_fpa := float(held["per_animal"])
-        var held_rate := float(held["delivered"]) / held_fpa if held_fpa > 0.0 else 0.0
-        if not is_equal_approx(held_rate, animal_rate):
-            animal_row[HudWidgets.YIELD_ROW_NUMBER] = SourceForecast.YIELD_AFTER_FORMAT % [
-                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % rate_text,
-                HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT % _format_animal_rate(held_rate)]
-            # The row must still DECLARE it carries a transition, or the header above it has no arrow
-            # to key. The value is the composed face's; nothing reads this one for the hunt row.
-            animal_row[SourceForecast.YIELD_ROW_AFTER] = held_rate
+        after = SourceForecast.rescaled_accounts(herd, HudComposeVocab.BARE_FORECAST_PREFIX,
+            String(held["axis"]), float(held["delivered"]))
     return {
-        YIELD_MODEL_ROWS: [animal_row],
+        YIELD_MODEL_ROWS: SourceForecast.yield_rows(
+            float(take[SourceForecast.YIELD_ACCOUNT_FOOD]),
+            float(take[SourceForecast.YIELD_ACCOUNT_TRADE]),
+            float(take[SourceForecast.YIELD_ACCOUNT_FODDER]),
+            account, after),
         YIELD_MODEL_TEXT: HudComposeVocab.HUNT_DELIVERED_FORMAT % [rate_text, quarry],
         YIELD_MODEL_OVERDRAW: _is_overdraw(delivered, sustainable) \
             and _herd_take_draws_down(herd, floor, workers, improvement),
@@ -525,8 +566,12 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
         return {}
     var output := float(band.get("output_multiplier", SourceForecast.OUTPUT_FULL))
     var actual := SourceForecast.expected_yield(forecast, workers, band)
+    # The trade account names its own whole-animal quantum so the engagement arm can price it; a PATCH
+    # publishes none, so the arm drops out and the plant web reads exactly as it did. Fodder names
+    # none anywhere — no animal pays it — which is why those two calls leave the key defaulted.
     var actual_trade := SourceForecast.expected_yield_account(
-        forecast, workers, band, "per_worker_trade", "ceiling_trade")
+        forecast, workers, band, "per_worker_trade", "ceiling_trade",
+        SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY)
     var actual_fodder := SourceForecast.expected_yield_account(
         forecast, workers, band, "per_worker_fodder", "ceiling_fodder")
     var zero_account := String(forecast["zero_account"])
@@ -538,9 +583,11 @@ func _forage_yield_model(band: Dictionary, tile_info: Dictionary, floor: float,
     if reaches:
         after = {
             SourceForecast.YIELD_ACCOUNT_FOOD: SourceForecast.expected_yield_account(
-                forecast, workers, band, "per_worker", "hold_ceiling"),
+                forecast, workers, band, "per_worker", "hold_ceiling",
+                SourceForecast.FORECAST_FOOD_PER_ANIMAL_KEY),
             SourceForecast.YIELD_ACCOUNT_TRADE: SourceForecast.expected_yield_account(
-                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade"),
+                forecast, workers, band, "per_worker_trade", "hold_ceiling_trade",
+                SourceForecast.FORECAST_TRADE_PER_ANIMAL_KEY),
             SourceForecast.YIELD_ACCOUNT_FODDER: SourceForecast.expected_yield_account(
                 forecast, workers, band, "per_worker_fodder", "hold_ceiling_fodder"),
         }

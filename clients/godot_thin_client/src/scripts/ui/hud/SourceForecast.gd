@@ -412,6 +412,45 @@ static func yield_rows(food: float, trade: float, fodder: float = 0.0,
             rows.append(row)
     return rows
 
+## **ONE TAKE, COUNTED ON ONE AXIS AND VALUED IN EVERY ACCOUNT** — the client mirror of the sim's
+## `YieldPair::rescaled_to` (`core_sim/src/fauna_config.rs`), and the companion `yield_rows` needs on
+## the animal web.
+##
+## A quantised take must be counted on ONE axis, because the quantiser divides by a per-animal quantum
+## and a wolf's food quantum is honestly `0` (`herd_yield_axis` is where that choice is made, and it
+## must stay a single choice). **But that constraint governs the COUNT, not the CREDIT.** A ratio is
+## unit-free, so the same count values in every currency the species pays — which is why the sim runs
+## `quantise_animal_take` on `ratio_axis()` and then credits BOTH components of the species'
+## `HuntYield` through this rescale. A client that stops at the axis it quantised on reports a boar's
+## meat and silently drops the hide it sells beside it.
+##
+## The reference mix is the source's own PER-BIOMASS vector — the same structural witness
+## `zero_account_of` reads. Every term a take is composed from is that vector times one biomass (the
+## per-worker rates, the ceilings, and the per-animal quanta, which are `body_mass ×
+## <account>PerBiomass`), so the proportion is identical whichever of them is used, and this one is
+## the only one still present on a source standing at its floor. `value` comes back BIT-IDENTICAL on
+## its own axis: no divide-then-multiply round trip on the component that was actually computed.
+##
+## A source with no positive rate on `axis` pays nothing anywhere — the degenerate case the sim's
+## `rescaled_to` answers `ZERO` for — so it answers zeros rather than dividing by it.
+static func rescaled_accounts(src: Dictionary, prefix: String, axis: String,
+        value: float) -> Dictionary:
+    var food_rate := float(src.get(prefix + FORECAST_PROVISIONS_PER_BIOMASS_KEY, 0.0))
+    var trade_rate := float(src.get(prefix + FORECAST_TRADE_PER_BIOMASS_KEY, 0.0))
+    var fodder_rate := float(src.get(prefix + FORECAST_FODDER_PER_BIOMASS_KEY, 0.0))
+    var on_trade: bool = axis == YIELD_AXIS_TRADE
+    var reference := trade_rate if on_trade else food_rate
+    if reference <= 0.0:
+        return {YIELD_ACCOUNT_FOOD: 0.0, YIELD_ACCOUNT_TRADE: 0.0, YIELD_ACCOUNT_FODDER: 0.0}
+    var share := value / reference
+    return {
+        YIELD_ACCOUNT_FOOD: food_rate * share if on_trade else value,
+        YIELD_ACCOUNT_TRADE: value if on_trade else trade_rate * share,
+        # No animal pays fodder, so a herd's third account rescales to a structural zero and renders
+        # no row — the same answer the account had before this existed.
+        YIELD_ACCOUNT_FODDER: fodder_rate * share,
+    }
+
 # WHICH COMPONENT A SPECIES ACTUALLY PAYS — the client mirror of the sim's `ratio_axis()`: the first
 # component with a POSITIVE rate, provisions preferred so every edible species divides exactly as it
 # did before this arc, trade for an inedible one. Everything that would otherwise DIVIDE BY A
@@ -460,6 +499,25 @@ const FORECAST_REGROWTH_SAMPLES_KEY := "regrowth_samples"
 # target rounds up to, and it is in the same units as the curve and the throughput above — unlike
 # `food_per_animal`, which is that quantum already converted into provisions.
 const FORECAST_BODY_MASS_KEY := "body_mass"
+# **THE ENGAGEMENT THROUGHPUT — the THIRD bound on a hunt take** (`docs/plan_hunt_through_combat.md`
+# §2, `HerdTelemetryState.engageRate`): how many animals ONE hunter can bring into contact per turn,
+# beside the stock standing above the floor and the party's carry. A `min()` composed from those two
+# alone quotes a take the sim will never pay — measured at ~30× on a Wild Fowl herd with one hunter,
+# whose 40 biomass of carry is 307 birds against 10 of reach.
+const FORECAST_ENGAGE_RATE_KEY := "engage_rate"
+# **`<= 0` MEANS "NO ENGAGEMENT STAGE", never "reaches nothing".** It is the wire's finite stand-in for
+# the sim's `f32::INFINITY` — a PEN (a penned animal is not stalked), a species the roster cannot
+# resolve, and the whole PLANT web, which never publishes the field at all. Read it as UNBOUNDED and
+# drop the term: that is what leaves forage and corrals byte-identical to before this arm existed.
+const NO_ENGAGEMENT_STAGE := 0.0
+# The value the dropped term contributes to a `min()` / the crew `max()` — an unbounded reach cannot
+# be the binding arm, and `INF` says so without a branch at every call site.
+const ENGAGEMENT_UNBOUNDED := INF
+# **A PARTY THAT EXISTS REACHES AT LEAST ONE ANIMAL** — the sim's `fauna::animals_engaged` `max(1.0)`.
+# A fractional engagement means a small band cannot corner the quarry EFFICIENTLY, not that it cannot
+# walk up to it: three hunters do reach a mammoth and then fail at the FIGHT, which is where the gate
+# lives. Flooring to zero would put a headcount threshold in front of the attack-vs-defense one.
+const ENGAGED_AT_LEAST := 1.0
 # **THE PHASE, AND WHERE ITS BOUNDARIES ARE — both on the wire now.** `ecology_phase` is the source's
 # CURRENT band as a word (Thriving / Stressed / Collapsing); the two fractions below are the cut points
 # `classify_ecology_phase` used to reach it, **in the same units the floor is in** (fractions of `K`).
@@ -1165,8 +1223,54 @@ static func learn_multiplier(floor: float) -> float:
 static func haul_workers(ceiling: float, body: float, per_worker: float) -> int:
     if body <= 0.0 or not can_price_crew(per_worker):
         return 0
-    var animals := floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
-    return ceili(float(animals) * body / per_worker)
+    return ceili(float(peak_animal_drop(ceiling, body)) * body / per_worker)
+
+## **THE MOST WHOLE ANIMALS A `ceiling` CAN DROP IN ONE TURN** — `floor(ceiling / body) + 1`, the
+## client mirror of the sim's `fauna::peak_animal_drop`, and shared by BOTH crew terms below for the
+## reason the sim shares it: two terms sized against different drops can never be reconciled.
+## `body` is assumed positive — every caller checks it first.
+static func peak_animal_drop(ceiling: float, body: float) -> int:
+    return floori(maxf(ceiling, 0.0) / body) + HUNT_PEAK_DROP_BANK_BONUS
+
+## **THE WHOLE-ANIMAL ENGAGEMENT CREW**, mirroring the sim's `fauna::hunt_engage_workers` exactly: how
+## many hunters it takes to bring the peak animal drop *into contact* in one turn. It is the exact
+## inverse of `animals_engaged` — that floors `workers × engage_rate × dip` to whole animals, so the
+## crew reaching `n` of them is `ceil(n / (engage_rate × dip))`.
+##
+## **IT CANNOT BE FOLDED INTO `haul_workers`, because the two scale on DIFFERENT UNITS** — hauling is
+## per biomass (one hauler carries 40), engaging is per animal (one hunter reaches 10 fowl or 0.05
+## mammoths) — so neither dominates across the roster. A Wild Fowl herd with ~470 head above its floor
+## is ~61 biomass: **two** haulers clear it and **47** hunters are needed to reach it, so a cap sized
+## on carry alone said "more hands would be idle" about the very hands the take was short of. The
+## mammoth inverts it (one hunter reaches the peak drop; twenty are needed to carry it home).
+##
+## **THE DIP RIDES THIS CREW TOO** (`docs/plan_harvest_floor.md` §3.1) — hands gentling a herd are
+## hands not stalking it, so it takes proportionally more of them to corner the same drop.
+##
+## `0` where the term has nothing to say: a source with no engagement stage (`NO_ENGAGEMENT_STAGE` —
+## a pen, the plant web) or a degenerate body/dip. The `max()` then keeps the haul crew and neither
+## web regresses. Units on `ceiling`/`body` are free, exactly as they are for `haul_workers`.
+static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float) -> int:
+    if body <= 0.0:
+        return 0
+    var reach := maxf(engage_rate, 0.0) * maxf(dip, 0.0)
+    if reach <= NO_ENGAGEMENT_STAGE or is_inf(reach):
+        return 0
+    return ceili(float(peak_animal_drop(ceiling, body)) / reach)
+
+## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
+## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
+## about how many it could reach. `floor(workers × engage_rate × dip)`, never below one for a party
+## that exists (`ENGAGED_AT_LEAST`); a party of no workers engages nothing, which is a different
+## statement and is why the worker test comes first.
+##
+## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage, so the caller's `min()` drops the arm.
+static func animals_engaged(workers: int, engage_rate: float, dip: float) -> float:
+    if workers <= 0:
+        return 0.0
+    if engage_rate <= NO_ENGAGEMENT_STAGE:
+        return ENGAGEMENT_UNBOUNDED
+    return maxf(floorf(float(workers) * engage_rate * maxf(dip, 0.0)), ENGAGED_AT_LEAST)
 
 ## ***CLEAR IT NOW*** — the crew that takes everything standing above the floor in ONE turn:
 ## `room ÷ (perWorkerBiomass × dip)`, a closed form in terms already on the wire. Deliberately NOT
@@ -1683,6 +1787,14 @@ static func herd_axis_rates(herd: Dictionary, floor: float, improvement: String)
         # be a smooth number beside a bodies-per-turn one.
         "hold_ceiling": float(forecast["axis_hold_ceiling"]),
         "per_animal": float(forecast["axis_per_animal"]),
+        # **THE ENGAGEMENT PAIR, so the delivered take can bound itself on the party's REACH.** The
+        # quantised take (`DrawerComposeController._hunt_delivered_and_waste`) composes its own
+        # `collection` rather than calling `expected_yield_account`, so the third arm has to reach it
+        # here or the sheet's headline stays carry-bound while the worker cap beside it is not. It
+        # bounds the whole-animal COUNT with `animals_engaged`, which is why the pair travels raw and
+        # undipped: that function applies the dip, and it is the ONE mirror of the sim's arithmetic.
+        "engage_rate": float(forecast["engage_rate"]),
+        "dip": float(forecast["dip"]),
     }
 
 ## Does the wire describe this source's forecast **at all**? A PRESENCE test, not a rate test — the
@@ -1862,6 +1974,13 @@ static func forecast_inputs(src: Dictionary, kind: String, prefix: String, floor
         # (`crew_to_clear` / `crew_to_hold` apply the dip themselves, from the same `dip` above).
         "per_worker_biomass": per_worker_biomass(src, prefix),
         "dip": dip,
+        # **THE ENGAGEMENT THROUGHPUT, RAW** (`docs/plan_hunt_through_combat.md` §2) — carried
+        # undipped beside the `dip` above for the reason `per_worker_biomass` is: the two consumers
+        # (`expected_yield_account`'s reach arm and `max_useful_workers`' engagement crew) apply the
+        # dip themselves, through `animals_engaged` / `engage_workers`, which are the client's ONE
+        # mirror of the sim's arithmetic. A forage patch publishes no such field, so it reads
+        # `NO_ENGAGEMENT_STAGE` and both consumers drop the term.
+        "engage_rate": float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)),
         # **THE *HOLD IT AFTER* CREW, CARRIED SO THE WORKER CAP CAN FLOOR ITSELF ON IT** (§7.2). It is
         # the same number the chart's second crew target offers — the hands that take exactly what
         # grows back at this floor — and `max_useful_workers` takes the max of it and the one-turn
@@ -2056,7 +2175,17 @@ static func max_useful_workers(forecast: Dictionary) -> int:
     var hold := maxi(maxi(int(forecast.get("hold_crew", 0)), 0),
         maxi(int(forecast.get("reach_crew", 0)), 0))
     if bool(forecast.get("whole_animal", false)) and per_animal > 0.0:
-        return maxi(haul_workers(ceiling, per_animal, per_worker), hold)
+        # **TWO JOBS, ONE CREW, TWO UNITS** — reach the animals, then carry them home. This is the
+        # sim's `fauna::hunt_take_workers`, `max(haul, engage)` and never `+`: one crew covering its
+        # busiest job. Sizing it on carry alone told a Wild Fowl player "max 2 workers useful here"
+        # while ~470 birds stood above the floor and each hunter reached ten of them — the advice was
+        # backwards, and it was backwards for the whole life of the engagement field's absence.
+        # `engage_workers` answers 0 for a pen and for a species with no engagement stage, so the
+        # `max()` collapses to the haul crew exactly as it always did.
+        return maxi(maxi(haul_workers(ceiling, per_animal, per_worker),
+            engage_workers(ceiling, per_animal,
+                float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+                float(forecast.get("dip", NO_BUILD_DIP)))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
 ## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
@@ -2135,10 +2264,27 @@ static func source_worker_cap_state(forecast: Dictionary, workers: int, idle: in
         note = MAX_USEFUL_CAPPED_TOOLTIP % [useful, noun]
     return {"can_add": false, "note": note}
 
-## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling), scaled by the
-## acting band's output multiplier (the sim exports the forecast at 1.0).
+## The take `workers` would ACTUALLY produce here: min(workers × per_worker, ceiling, the party's
+## reach), scaled by the acting band's output multiplier (the sim exports the forecast at 1.0).
 static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary) -> float:
-    return expected_yield_account(forecast, workers, band, "per_worker", "ceiling")
+    return expected_yield_account(forecast, workers, band, "per_worker", "ceiling",
+        FORECAST_FOOD_PER_ANIMAL_KEY)
+
+## **THE ENGAGEMENT ARM OF THE TAKE, IN ONE ACCOUNT'S UNITS** — `floor(workers × engageRate × dip)`
+## whole animals, each worth this account's per-animal quantum. That quantum IS `bodyMass ×
+## <account>PerBiomass` (the wire publishes the product as `food_per_animal` / `trade_per_animal`), so
+## this is the schema's `reach(workers, rung)` with no second derivation of the body.
+##
+## `ENGAGEMENT_UNBOUNDED` — i.e. the arm drops out of the caller's `min()` — in the two cases where it
+## has nothing to say: a source with **no engagement stage** (a pen, the plant web), and an account
+## with **no whole-animal quantum** at all (fodder, which no animal pays). Neither is "reaches
+## nothing", and treating either as zero would collapse a take the sim pays in full.
+static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key: String) -> float:
+    var per_animal := float(forecast.get(per_animal_key, 0.0))
+    if per_animal <= 0.0:
+        return ENGAGEMENT_UNBOUNDED
+    return animals_engaged(workers, float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+        float(forecast.get("dip", NO_BUILD_DIP))) * per_animal
 
 ## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
 ## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose
@@ -2159,10 +2305,19 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 ## there), so the account quoted the SOURCE's whole ceiling rather than report `0.00` of a rung that
 ## really pays trade. `perWorkerBiomass` states that throughput directly on both webs, so every
 ## account is priced by the crew that works it and the `min` is honest everywhere.
+##
+## **THE `min` HAS A THIRD ARM ON THE ANIMAL WEB** (`docs/plan_hunt_through_combat.md` §2). Engagement
+## caps how many animals a party can *reach at all*, and the two arms above it cannot express that: a
+## crew's carry and the stock above the floor both say a lone hunter takes 307 Wild Fowl a turn where
+## the sim pays ten. `per_animal_key` is the account's own whole-animal quantum
+## (`food_per_animal` / `trade_per_animal`), and it defaults to **empty on purpose** — an account with
+## no quantum (fodder; a source the wire states none for) has no engagement arm rather than a zero
+## one, which is the same "unbounded, not nothing" reading `NO_ENGAGEMENT_STAGE` gets.
 static func expected_yield_account(forecast: Dictionary, workers: int, band: Dictionary,
-        per_worker_key: String, ceiling_key: String) -> float:
+        per_worker_key: String, ceiling_key: String, per_animal_key: String = "") -> float:
     var ceiling := float(forecast.get(ceiling_key, 0.0))
-    var raw := minf(float(workers) * float(forecast.get(per_worker_key, 0.0)), ceiling)
+    var raw := minf(minf(float(workers) * float(forecast.get(per_worker_key, 0.0)), ceiling),
+        engagement_reach(forecast, workers, per_animal_key))
     return raw * float(band.get("output_multiplier", OUTPUT_FULL))
 
 ## Resolve a worked source's row readout. Two INDEPENDENT signals ride the same row:

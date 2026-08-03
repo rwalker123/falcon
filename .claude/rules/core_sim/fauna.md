@@ -511,16 +511,39 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
 >   pure artifact of the unit (4,560 biomass of Steppe Runner is **86 animals** ⇒ ~6 herders).
-> - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
->   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
+> - **ONE need, not three — but "one need" means one CREW, not one formula.** The herders mind the herd,
+>   *reach* it and *butcher* it, so a managed rung reports **one** number and staffs **one** team
 >   (`intensification::source_crew_needed`, shared with the plant web, where the standing half is the
->   building rung's crew instead) — but that team must be big enough for **both** jobs, which
->   scale on **different units**: herding is per **head** (one herder minds 12 aurochs), hauling is per
->   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
->   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
->   one crew covering its busiest job. **Neither term dominates across the roster** (measured, settled
->   radius-1 pens): small-bodied species are **herder-bound**, big-bodied ones are **haul-bound**. Do
->   not "simplify" the `max()` away.
+>   building rung's crew instead) — but that team must be big enough for **all three** jobs, which
+>   scale on **three different units**:
+>
+>   | term | unit | rate |
+>   |---|---|---|
+>   | `herd_herders_needed` | **heads** minded | `animals_per_herder` (one herder minds 12 aurochs) |
+>   | `fauna::hunt_engage_workers` | **animals reachable** | `engage_rate` (one hunter reaches 10 fowl, 0.05 mammoths) |
+>   | `fauna::hunt_haul_workers` | **biomass** carried | `per_worker_biomass_capacity` (one hauler carries 40) |
+>
+>   A shepherd minds ~300 sheep and could not carry three. So
+>   `workersNeeded = max(herders_needed, hunt_engage_workers, hunt_haul_workers)` — `+` would be three
+>   teams; `max` is one crew covering its busiest job. The take side's two are bound together in
+>   **`fauna::hunt_take_workers`**, the single seam both the resolved Hunt arm and the assign-time seed
+>   (`forecast_source_yield`) size their take half with. Do not "simplify" the `max()` away.
+>
+>   **Which term binds, measured against the shipped roster:**
+>   - **The engagement term dominates the haul term for every huntable species**, and that is an
+>     *authoring* fact rather than a coincidence: `SpeciesDef::engage_rate` is authored against
+>     `engage_rate × body_mass` — the most biomass one hunter can take per turn — with the mammoth's
+>     **40** as the roster's top. The two crews are `peak/rate` and `peak × body / 40`, so reach binds
+>     wherever `engage_rate × body_mass ≤ per_worker_biomass_capacity`, which is the whole roster, and
+>     the mammoth's `0.05 × 800 = 40` is the one exact tie. Retune either dial past that and the
+>     haul term takes over — which is why it stays in the `max()` rather than being folded away.
+>   - **The herder term dominates at a SHALLOW draw.** It counts the whole herd's heads; the other two
+>     count only the drop standing above the floor. A fowl herd worked at floor `0.9` owes its full
+>     keeper crew while the drop it can pay is a fraction of it.
+>   - **A PEN and the plant web have no engagement stage at all** — `engage_rate_for` /
+>     `SourceYieldForecast::managed` answer `f32::INFINITY`, `hunt_engage_workers` returns `0` for it,
+>     and the `max()` collapses to the two terms those sources always had. A penned animal is not
+>     stalked.
 >
 >   **The per-species figures that used to sit here were measured against the PRE-CORRECTION body
 >   masses and are deleted rather than restated** (`docs/plan_hunt_through_combat.md` §4.3). Nineteen
@@ -575,6 +598,22 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   wild herd's `workers_needed` is the client max-useful too. **Forage is untouched** — a gather is
 >   continuous (`body_mass_yield == 0`, no lumpiness), so it keeps the ordinary `workers_needed_for_take`
 >   overstaffing inversion.
+> - **The ENGAGEMENT term is sized off the SAME peak drop, and it is the one that binds on light game**
+>   (`fauna::hunt_engage_workers`, `docs/plan_hunt_through_combat.md` §2) — `ceil(peak_animal_drop /
+>   (engage_rate × build_dip))`, the exact inverse of `fauna::animals_engaged`, sharing
+>   `peak_animal_drop` with the haul term so the two crews can never be sized against different drops.
+>   The dip rides it for the reason it rides carry (§3.1): hands spent gentling a herd are hands not
+>   stalking it.
+>
+>   Its absence was the same defect as the haul term's `carried` inversion, in the opposite direction
+>   and on the same panel: a Wild Fowl herd standing ~470 head above its floor is **61 biomass**, so the
+>   carry-only count read **2** — *"more workers would be idle"* — about a take each additional hunter
+>   would have grown, because one hunter reaches 10 birds and 47 are needed to clear the drop. Adding it
+>   can only *raise* `workers_needed`, so the invariant above tightens rather than bending: the
+>   overstaffed region shrinks and `workers > workers_needed` still cannot coexist with
+>   `wasted_yield > 0`. Pinned on the exported row by
+>   `hunt_yield_vector::the_exported_crew_counts_the_hands_that_can_reach_the_herd` (both units, with
+>   the pen's no-engagement-stage reading as the liveness half).
 > - **Wild hunting is untouched, deliberately.** No maintenance (the herd isn't yours), but it keeps
 >   its carry cap. **The models differ because the products differ: hunt = reach + carry; harvest =
 >   maintain + take.**

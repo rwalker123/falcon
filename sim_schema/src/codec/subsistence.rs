@@ -220,6 +220,9 @@ fn create_herds<'a>(
                 // The phase bands this herd's own rung cuts on — appended last (append-only wire).
                 collapseFraction: herd.collapse_fraction,
                 stressedFraction: herd.stressed_fraction,
+                // The engagement throughput — appended last (append-only wire). `0` = no engagement
+                // stage (a pen, an unresolvable species), which a reader treats as unbounded.
+                engageRate: herd.engage_rate,
             },
         );
         entries.push(entry);

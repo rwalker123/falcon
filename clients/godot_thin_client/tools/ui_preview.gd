@@ -3610,10 +3610,12 @@ func _ready() -> void:
 	var built_collection := bare_collection * dip_fraction
 	var bare_take := _hunt_take_oracle(bare_collection, dip_ceiling, dip_fpa)
 	var built_take := _hunt_take_oracle(built_collection, dip_ceiling, dip_fpa)
-	var bare_face: String = HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT \
-		% _hud._drawercompose._format_animal_rate(float(bare_take["delivered"]) / dip_fpa)
-	var built_face: String = HudComposeVocab.HUNT_ANIMAL_RATE_FACE_FORMAT \
-		% _hud._drawercompose._format_animal_rate(float(built_take["delivered"]) / dip_fpa)
+	# THE NEEDLE IS THE ACCOUNT MAGNITUDE THE ROW STATES. The readout's per-turn readings are food and
+	# trade like every other web's — the whole-animal count is the CHART's business above it, and the
+	# raid's whole-trip payload's — so the needle is spelled through `format_magnitude`, exactly as
+	# `HudWidgets._yield_reading` spells the number it is aimed at.
+	var bare_face := SourceForecast.format_magnitude(float(bare_take["delivered"]))
+	var built_face := SourceForecast.format_magnitude(float(built_take["delivered"]))
 	var built_killed: float = float(built_take["delivered"]) + float(built_take["wasted"])
 	var built_waste_pct := int(round(float(built_take["wasted"]) / built_killed * 100.0))
 	_hud._compose.reset_hunt_source()
@@ -3641,7 +3643,7 @@ func _ready() -> void:
 	# terms and as a RELATION to the undipped take — never as a literal — so a config retune moves the
 	# fixture rather than the claim. Undipped this crew lands a whole animal a turn; it must not say so
 	# while it is gentling the herd instead.
-	_assert_hud("the take is the sim's DIPPED one (%s/turn), not the undipped %s/turn"
+	_assert_hud("the take is the sim's DIPPED one (%s food/turn), not the undipped %s food/turn"
 		% [built_face, bare_face],
 		_yields_text(dip_sheet).contains(built_face)
 			and not _yields_text(dip_sheet).contains(bare_face))
@@ -3709,7 +3711,7 @@ func _ready() -> void:
 	var bare_sheet := _hud._drawercompose._compose_sheet
 	_assert_hud("no build in flight, no dip claimed on the crew row",
 		_crew_row_dip_note(bare_sheet) == "")
-	_assert_hud("…the same crew lands the whole body again (%s/turn)" % bare_face,
+	_assert_hud("…the same crew lands the whole body again (%s food/turn)" % bare_face,
 		_yields_text(bare_sheet).contains(bare_face)
 			and not _yields_text(bare_sheet).contains(built_face))
 	_assert_hud("…wasting nothing, so the waste note is a claim about the BUILD and not about the herd",
@@ -4136,6 +4138,89 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_whole_animal_cap_deplete")
 
+	# States 3r-a / 3r-b — THE ENGAGEMENT BOUND, AS AN A/B ON ONE HERD
+	# (`docs/plan_hunt_through_combat.md` §2). A party can only kill what it can get NEAR, and until
+	# `engageRate` reached the wire this sheet composed its preview from the crew's CARRY and the stock
+	# above the floor alone. Measured in play on a live Wild Fowl herd with ONE hunter: the sheet read
+	# **≈307 birds/turn** where the sim pays **ten**, and told the player "max 2 workers useful here —
+	# more would be idle" while ~470 birds stood above the floor and each hunter reached ten of them.
+	# The number was 30× out and the advice was exactly backwards.
+	#
+	# **THE PAIR IS THE CLAIM.** One herd, one crew, one floor; the ONLY thing that moves between the
+	# two frames is `engage_rate`, and the second publishes `NO_ENGAGEMENT_STAGE` — a pen's own wire
+	# value, and what the plant web gets by never publishing the field — so it pins that the arm DROPS
+	# rather than merely shrinking, and that forage and corrals are untouched. A lone bounded frame
+	# would pass just as well on a sheet that had simply got quieter.
+	#
+	# Both takes are stated by the harness's own oracle (`_hunt_take_oracle`, the sim's
+	# `quantise_animal_take` restated in food), never by asking the sheet what it thinks — a check
+	# written out of `SourceForecast` would agree with the sheet by construction.
+	_hud._band_labor._player_bands = [_delivered_oracle_band()]
+	_hud._band_labor._player_band = _hud._band_labor._player_bands[0]
+	var fowl_fpa := FOWL_BODY_MASS * FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_room := FOWL_BIOMASS - SourceForecast.FLOOR_FOOD_PEAK * FOWL_CAPACITY
+	var fowl_ceiling := fowl_room * FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_collection := float(FOWL_HUNTERS) * FOWL_PER_WORKER_YIELD
+	var reach_take := _hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa,
+		float(FOWL_HUNTERS) * FOWL_ENGAGE_RATE)
+	var carry_take := _hunt_take_oracle(fowl_collection, fowl_ceiling, fowl_fpa)
+	var reach_face := SourceForecast.format_magnitude(float(reach_take["delivered"]))
+	var carry_face := SourceForecast.format_magnitude(float(carry_take["delivered"]))
+	# THE TWO CREW TERMS, restated from the sim's own `hunt_haul_workers` / `hunt_engage_workers`: the
+	# peak animal drop a ceiling allows is `floor(ceiling / body) + 1`, and the crew is that drop
+	# divided by what ONE worker carries / reaches. Composed here, not asked of `SourceForecast`, for
+	# the reason the take oracle is.
+	var fowl_peak_drop := floorf(fowl_ceiling / fowl_fpa) + 1.0
+	var fowl_haul_crew := int(ceilf(fowl_peak_drop * fowl_fpa / FOWL_PER_WORKER_YIELD))
+	var fowl_engage_crew := int(ceilf(fowl_peak_drop / FOWL_ENGAGE_RATE))
+	var fowl_assignable := int(_delivered_oracle_band()["idle_workers"])
+	# The two notes, spelled through the SHIPPED formats so a reworded note fails loudly here rather
+	# than silently matching nothing.
+	var idle_advice: String = SourceForecast.MAX_USEFUL_NOTE_FORMAT % [fowl_haul_crew,
+		SourceForecast.MAX_USEFUL_NOUN_ONE if fowl_haul_crew == 1 \
+			else SourceForecast.MAX_USEFUL_NOUN_MANY]
+	var wanted_advice: String = SourceForecast.LABOR_BOUND_NOTE_FORMAT % [fowl_assignable,
+		fowl_engage_crew]
+
+	var fowl_reaching := _engagement_fowl_herd(FOWL_ENGAGE_RATE)
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_band(-1)
+	_show_herd(fowl_reaching)
+	_compose_herd(fowl_reaching, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await _settle()
+	await _save("herd_hunt_engagement_bound")
+	var reaching_sheet: Control = _hud._drawercompose._compose_sheet
+	_assert_hud("the take is what one hunter can REACH (%s food/turn), not what it could carry (%s)"
+		% [reach_face, carry_face],
+		_yields_text(reaching_sheet).contains(reach_face)
+			and not _yields_text(reaching_sheet).contains(carry_face))
+	# THE ADVICE, WHICH IS THE OTHER HALF OF THE DEFECT. With the reach bound live the herd can use far
+	# more hunters than this band HAS, so the stepper is labor-bound and says so — and the sentence
+	# claiming more hands would be idle must be nowhere on the sheet.
+	_assert_hud("more hunters are wanted, not idle — the cap reads \"%s\"" % wanted_advice,
+		_has_label_containing(reaching_sheet, wanted_advice)
+			and not _has_label_containing(reaching_sheet, idle_advice))
+
+	# 3r-b — THE SAME BIRD WITH NO ENGAGEMENT STAGE. This is the pen's wire value and the plant web's
+	# silence, and it must read exactly as the sheet always did: carry-bound, and capped at the two
+	# haulers who can carry the peak drop.
+	var fowl_unreached := _engagement_fowl_herd(SourceForecast.NO_ENGAGEMENT_STAGE)
+	_hud._compose.reset_hunt_source()
+	_hud._compose.set_hunt_band(-1)
+	_show_herd(fowl_unreached)
+	_compose_herd(fowl_unreached, FOWL_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
+	await _settle()
+	await _save("herd_hunt_engagement_unbounded")
+	var unreached_sheet: Control = _hud._drawercompose._compose_sheet
+	_assert_hud("no engagement stage → the take is carry-bound (%s food/turn) as it always was"
+		% carry_face,
+		_yields_text(unreached_sheet).contains(carry_face)
+			and not _yields_text(unreached_sheet).contains(reach_face))
+	_assert_hud("…and the cap is the haul crew again, so \"%s\" is the honest advice here"
+		% idle_advice,
+		_has_label_containing(unreached_sheet, idle_advice)
+			and not _has_label_containing(unreached_sheet, wanted_advice))
+
 	# States 3s–3v — the CARRY-AWARE ANIMALS-FIRST local-hunt preview (spec oracle: deer fpa 1.23, band
 	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST
 	# delivered take in animals, not the unquantized food rate the crew could never carry; the policy
@@ -4206,6 +4291,20 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_pelts_only")
 	_assert_compose_sheet_fits("herd_hunt_pelts_only")
+	# **THE REGRESSION THAT MATTERS MOST once the readout credits every account a take pays.** The
+	# rule is render-only-where-the-vector-PAYS, not "render every account": a wolf's provisions rate
+	# is a structural 0, so the crossing into food answers a structural zero and `yield_rows` emits NO
+	# food row — never the `0.00 FOOD` that says its pelts are worth no meat. Asserted as a PAIR, since
+	# the negative alone is satisfied by a readout that lost both accounts.
+	var wolf_yields := _yields_text(_hud._drawercompose._compose_sheet)
+	_assert_hud("an inedible quarry's PER TURN row states the TRADE it pays…",
+		wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_TRADE].to_upper())
+			and _yield_take(wolf_yields, SourceForecast.YIELD_ACCOUNT_UNITS[
+				SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()) > 0.0)
+	_assert_hud("…and NO food row beside it — a wolf pays pelts and no meat, ever",
+		not wolf_yields.contains(SourceForecast.YIELD_ACCOUNT_UNITS[
+			SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()))
 	# **THE CHART ON AN INEDIBLE QUARRY** (the wolf half of the five chart cases). The readout above it
 	# carries no food line at all, and the chart must not care: a floor is a fraction of BIOMASS, and
 	# the crew targets divide by `perWorkerBiomass`, which is positive on a wolf where both the food
@@ -4366,6 +4465,37 @@ func _ready() -> void:
 	_compose_herd(oracle_pair, PELT_FRAME_HUNTERS, SourceForecast.FLOOR_FOOD_PEAK)
 	await _settle()
 	await _save("herd_hunt_both_products")
+	# **THE READOUT'S HALF OF THE PAIR — one animal count, valued in BOTH accounts.** The picker faces
+	# above have named the pair since #337; the `PER TURN` row beneath them did not, and reported from
+	# play a Wild Boar's compose sheet read `0.00 FOOD` with no trade row while an expedition on the
+	# same species read `20.00 FOOD  2.50 TRADE`. A quantised take must be COUNTED on one axis (a
+	# wolf's food quantum is honestly 0, so nothing else may divide), but the count is unit-free: the
+	# sim quantises on `ratio_axis()` and then values that count in every currency the species pays
+	# (`YieldPair::rescaled_to`). The client stopped at the axis it had quantised on.
+	var pair_yields := _yields_text(_hud._drawercompose._compose_sheet)
+	var food_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
+		SourceForecast.YIELD_ACCOUNT_FOOD].to_upper()
+	var trade_unit: String = SourceForecast.YIELD_ACCOUNT_UNITS[
+		SourceForecast.YIELD_ACCOUNT_TRADE].to_upper()
+	_assert_hud("a local hunt's PER TURN row names BOTH accounts this take pays",
+		pair_yields.contains(food_unit) and pair_yields.contains(trade_unit))
+	# THE MAGNITUDES, recomposed from the sim's own two steps: `quantise_animal_take` for the count
+	# (the harness's `_hunt_take_oracle`, in food), then the species' whole-animal quanta for the
+	# crossing into trade. The client rescales through the per-biomass VECTOR instead, so the two
+	# arrive at the same pair by different routes rather than by construction — and a fix that valued
+	# the second account off the per-worker rates (0.12 / 0.80, a mix the crew's carry has no business
+	# supplying) misses it.
+	var pair_food := float(_hunt_take_oracle(PELT_FRAME_HUNTERS * ORACLE_DEER_PER_WORKER,
+		ORACLE_DEER_SUSTAIN_CEILING, ORACLE_DEER_FOOD_PER_ANIMAL)["delivered"])
+	var pair_trade := pair_food * ORACLE_DEER_TRADE_PER_ANIMAL / ORACLE_DEER_FOOD_PER_ANIMAL
+	_assert_hud("…the FOOD reading is the crew's quantised take (%s)"
+		% SourceForecast.format_magnitude(pair_food),
+		is_equal_approx(_yield_take(pair_yields, food_unit),
+			float(SourceForecast.format_magnitude(pair_food))))
+	_assert_hud("…and the TRADE reading is that SAME take in the other currency (%s)"
+		% SourceForecast.format_magnitude(pair_trade),
+		is_equal_approx(_yield_take(pair_yields, trade_unit),
+			float(SourceForecast.format_magnitude(pair_trade))))
 
 	# 3z — THE INVESTMENT-RUNG TWIN of 3y (issue #397). The extractive rungs above have paid a pair since
 	# #337, but Tame and Corral rendered a FOOD-ONLY payoff face — a Wild Boar read `→ 1.48 food` beside
@@ -7674,6 +7804,21 @@ func _yield_now_after(yields_text: String, account: String) -> Array:
 		return [0.0, 0.0]
 	return [float(upto[upto.size() - 3]), float(upto[upto.size() - 1])]
 
+## One account's take — the `now` magnitude, whether or not the row also states a holding rate. The
+## face reads `<now> → <after> <ACCOUNT>` when it arrows and `<now> <ACCOUNT>` when it does not, so
+## the token to read is three back past an arrow and one back without one. Asked so an assertion
+## about WHAT A TAKE PAYS is independent of whether this particular crew also reaches the floor —
+## which is a different claim, and one `_yield_now_after` above already carries.
+## Callers test the account's PRESENCE separately (the unit word), since an account with no row leaves
+## no number to parse and the fall-through would read whatever token precedes it.
+func _yield_take(yields_text: String, account: String) -> float:
+	var upto := yields_text.split(account)[0].strip_edges().split(" ", false)
+	if upto.is_empty():
+		return 0.0
+	if upto.size() >= 3 and upto[upto.size() - 2] == "→":
+		return float(upto[upto.size() - 3])
+	return float(upto[upto.size() - 1])
+
 ## The CREW ROW's label — `HUNTERS` / `HERDERS` / `FORAGERS`, the crew noun the sheet resolved off the
 ## composed improvement axis. By meta rather than by text, because the sheet's EYEBROW two rows above
 ## carries the same noun in the same case (`ASSIGN HUNTERS`), so a search would match it and pass
@@ -9462,14 +9607,72 @@ func _building_herd_band_fixture() -> Dictionary:
 ## comparison the sim makes — `collection / body_mass` is `collection_food / food_per_animal` — so this
 ## is the same arithmetic in cheaper units. `max(1.0, carryable)` is the load-bearing line: a crew that
 ## cannot carry one whole animal still kills one and wastes the difference.
-func _hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float) -> Dictionary:
+##
+## **`engaged` IS THE THIRD BOUND** (`docs/plan_hunt_through_combat.md` §2) — the whole animals the
+## party can bring into CONTACT, which `quantise_animal_take` mins in beside the affordable and the
+## carryable. It defaults to `INF`, the reading the sim itself passes for a pen and the one the wire's
+## `NO_ENGAGEMENT_STAGE` stands for, so every caller that predates the engagement stage is unchanged.
+func _hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float,
+		engaged: float = INF) -> Dictionary:
 	var affordable := floorf(ceiling / food_per_animal)
 	if affordable < 1.0:
 		return {"delivered": 0.0, "wasted": 0.0}
-	var killed := minf(affordable, maxf(1.0, floorf(collection / food_per_animal)))
+	var killed := minf(minf(affordable, maxf(1.0, floorf(collection / food_per_animal))), engaged)
 	var killed_food := killed * food_per_animal
 	var carried := minf(killed_food, collection)
 	return {"delivered": carried, "wasted": killed_food - carried}
+
+# ---- THE ENGAGEMENT-BOUND FOWL (docs/plan_hunt_through_combat.md §2) ----------------------------
+# A LIGHT-BODIED quarry at the shipped hunt conversion, dialed so the two bounds on a take are an
+# order of magnitude apart and neither frame can be passed by the wrong one. Every number below is a
+# term the wire really carries; the derived ones are composed in the builder from these rather than
+# restated, so the fixture cannot describe a bird that could not exist.
+#   room above the food peak = 161 − 0.5 × 200 = 61 biomass = ~470 birds
+#   one hunter's CARRY        = 0.80 food = 40 biomass = 307 birds
+#   one hunter's REACH        = 10 birds
+const FOWL_PROVISIONS_PER_BIOMASS := 0.02
+const FOWL_BODY_MASS := 0.13
+const FOWL_CAPACITY := 200.0
+const FOWL_BIOMASS := 161.0
+const FOWL_PER_WORKER_YIELD := 0.80
+const FOWL_ENGAGE_RATE := 10.0
+## ONE hunter, which is the party the defect was reported on: the two bounds are furthest apart there,
+## and it is the smallest crew that can hold `animals_engaged`'s "a party that exists reaches one".
+const FOWL_HUNTERS := 1
+
+## The engagement A/B's herd. `engage_rate` is the ONLY field that moves between the pair, and its
+## absent half publishes `NO_ENGAGEMENT_STAGE` — the literal wire value a PEN carries, and the reading
+## the whole plant web gets by never publishing the field at all — so the twin pins that the arm DROPS
+## rather than merely shrinking, and that forage and corrals are untouched by this arc.
+func _engagement_fowl_herd(engage_rate: float) -> Dictionary:
+	return {
+		"id": "game_fowl_11", "label": "Wild Fowl (game_fowl_11)", "species": "Wild Fowl",
+		"size_class": "small", "huntable": true, "ecology_phase": "thriving",
+		"x": 66, "y": 10,
+		"husbandry_ceiling": "wild",
+		"biomass": FOWL_BIOMASS,
+		"carrying_capacity": FOWL_CAPACITY,
+		"body_mass": FOWL_BODY_MASS,
+		# The sim's own identity, composed rather than restated: `food_per_animal = body_mass ×
+		# provisions_per_biomass`. A fixture that states both freely can claim a bird whose meat and
+		# whose mass disagree, which is precisely the arithmetic these frames are judging.
+		"food_per_animal": FOWL_BODY_MASS * FOWL_PROVISIONS_PER_BIOMASS,
+		"provisions_per_biomass": FOWL_PROVISIONS_PER_BIOMASS,
+		"per_worker_yield": FOWL_PER_WORKER_YIELD,
+		"engage_rate": engage_rate,
+		"tile_info": _compact_herd_tile_fixture(),
+	}
+
+## ---- THE SPEC-ORACLE DEER'S OWN TERMS ----------------------------------------------------------
+## The four wire numbers the both-products assertion recomposes this herd's take from, named here and
+## spent in the fixture below so the expectation and the fixture cannot drift into two stories. The
+## two per-animal quanta are the SIM's own reference mix (`SourceYieldForecast::body_mass_yield`), so
+## an assertion that scales one account into the other through them is arriving at the answer by a
+## different route than the client, which rescales through the per-biomass vector.
+const ORACLE_DEER_FOOD_PER_ANIMAL := 1.23
+const ORACLE_DEER_TRADE_PER_ANIMAL := 0.18
+const ORACLE_DEER_PER_WORKER := 0.8
+const ORACLE_DEER_SUSTAIN_CEILING := 2.33
 
 ## The spec oracle deer: food_per_animal 1.23, Sustain flow ceiling 2.33, per-worker 0.8, output 1.0.
 ##   1 worker  → can't carry one whole 1.23 deer → delivered 0.80, ≈0.65 deer/turn · ⚠ 35% wasted
@@ -9483,15 +9686,16 @@ func _delivered_oracle_herd() -> Dictionary:
 		"size_class": "big", "huntable": true, "ecology_phase": "thriving",
 		"x": 66, "y": 10, "biomass": 820.0,
 		"husbandry_ceiling": "wild",
-		"food_per_animal": 1.23,
-		"per_worker_yield": 0.8,
+		"food_per_animal": ORACLE_DEER_FOOD_PER_ANIMAL,
+		"per_worker_yield": ORACLE_DEER_PER_WORKER,
 		"hunt_policy_ceilings": {
-			"sustain": 2.33, "surplus": 3.5, "deplete": 5.0, "eradicate": 7.0,
+			"sustain": ORACLE_DEER_SUSTAIN_CEILING,
+			"surplus": 3.5, "deplete": 5.0, "eradicate": 7.0,
 		},
 		# THE SECOND PRODUCT (issue #337). A deer is edible AND its hide sells, so it pays BOTH: the
 		# picker's four rungs must read food-then-trade (food leading), never food alone. The trade
 		# ceilings are the food ones times the species' hide-to-meat ratio, so they ascend together.
-		"trade_per_animal": 0.18,
+		"trade_per_animal": ORACLE_DEER_TRADE_PER_ANIMAL,
 		"per_worker_trade": 0.12,
 		"hunt_policy_trade_ceilings": {
 			"sustain": 0.34, "surplus": 0.51, "deplete": 0.73, "eradicate": 1.02,

@@ -4431,10 +4431,11 @@ pub(crate) fn forecast_source_yield(
         // the take side.
         //
         // The take side differs by whether the source is lumpy. A **whole-animal** (hunt) source uses
-        // the peak-drop carry crew ([`hunt_haul_workers`], off the assignment's own escapement
-        // ceiling, which equals the client's `_max_useful_workers`): `actual` is the quantised take —
-        // `0` on a wait turn for a slow breeder whose room is lighter than one body — so inverting it
-        // collapses the count and contradicts `wasted`. A **continuous** source (every plant patch/Field,
+        // [`hunt_take_workers`] — the peak-drop crew that can both **reach** and **carry** the drop
+        // the assignment's own escapement ceiling allows, which equals the client's
+        // `_max_useful_workers`: `actual` is the quantised take — `0` on a wait turn for a slow
+        // breeder whose room is lighter than one body — so inverting it collapses the count and
+        // contradicts `wasted`. A **continuous** source (every plant patch/Field,
         // `body_mass_yield == 0`) is un-lumpy, so it keeps the ordinary overstaffing inversion.
         //
         // Both branches count on [`SourceYieldForecast::ratio_axis`] rather than on provisions: a
@@ -4452,10 +4453,16 @@ pub(crate) fn forecast_source_yield(
         workers_needed: match forecast.ratio_axis() {
             Some(axis) if forecast.quantises() => source_crew_needed(
                 standing_crew,
-                hunt_haul_workers(
+                hunt_take_workers(
                     forecast.ceiling_at(floor).component(axis),
                     forecast.body_mass_yield.component(axis),
                     dipped_per_worker.component(axis),
+                    // **The engagement term is UNDIPPED here and dipped by the argument beside it** —
+                    // `hunt_engage_workers` multiplies the two exactly as `animals_engaged` does, so
+                    // the crew inverts the bound the take was actually paid. A pen forecasts
+                    // `f32::INFINITY` and contributes no engagement crew at all.
+                    forecast.engage_rate,
+                    forecast.build_dips.of(improvement),
                 ),
             ),
             Some(axis) => source_crew_needed(
@@ -4876,9 +4883,92 @@ pub fn hunt_haul_workers(ceiling: f32, body: f32, per_worker: f32) -> u32 {
     if !body.is_finite() || body <= 0.0 || !per_worker.is_finite() || per_worker <= 0.0 {
         return 0;
     }
-    let peak_animals = (ceiling.max(0.0) / body).floor() + 1.0;
-    let peak_biomass = peak_animals * body;
+    let peak_biomass = peak_animal_drop(ceiling, body) * body;
     (peak_biomass / per_worker).ceil() as u32
+}
+
+/// **The most whole animals a `ceiling` can drop in one turn** — `floor(ceiling / body) + 1`, the one
+/// definition of the peak drop, shared by [`hunt_haul_workers`] and [`hunt_engage_workers`] so the
+/// two crew terms can never be sized against different drops.
+///
+/// The `+1` is the partial body still standing: on the turn regrowth tips it over the room covers one
+/// more animal than `floor` sees. `body` is assumed finite-positive — every caller checks it first.
+fn peak_animal_drop(ceiling: f32, body: f32) -> f32 {
+    (ceiling.max(0.0) / body).floor() + 1.0
+}
+
+/// **The ENGAGEMENT crew for a whole-animal (hunt) source** — how many hunters it takes to bring the
+/// ceiling's peak animal drop *into contact* in one turn, the third unit in `workers_needed`'s
+/// `max()` (`docs/plan_hunt_through_combat.md` §2).
+///
+/// It is the exact inverse of [`animals_engaged`]: that floors `workers × engage_rate × build_dip` to
+/// whole animals, so the crew reaching `n` of them is `ceil(n / (engage_rate × build_dip))`.
+///
+/// ```text
+/// crew = ceil(peak_animal_drop(ceiling, body) / (engage_rate × build_dip))
+/// ```
+///
+/// # Why it cannot be folded into the haul crew
+///
+/// The two terms scale on **different units** — hauling is per *biomass* (one hauler carries 40),
+/// engaging is per *animal* (one hunter reaches 10 fowl or 0.05 mammoths) — so neither dominates
+/// across the roster, exactly as the herder term does not. A Wild Fowl herd with ~470 head above its
+/// floor is 61 biomass: **two** haulers clear it and **47** hunters are needed to reach it, so sizing
+/// the crew on carry alone told the player *"more hands would be idle"* about the very hands the take
+/// was short of. The mammoth inverts it (one hunter reaches the peak drop; twenty are needed to carry
+/// it home).
+///
+/// # The dip rides the crew here too
+///
+/// `build_dip` is the rung's `yield_fraction_while_building`, the same term [`animals_engaged`] and
+/// [`hunt_haul_workers`] apply (`docs/plan_harvest_floor.md` §3.1): hands spent gentling a herd are
+/// hands not stalking it, so it takes proportionally more of them to corner the same drop. Pass
+/// [`crate::intensification::NO_BUILD_UNDERWAY_DIP`] where nothing is being built.
+///
+/// # A source with no engagement stage reports no engagement crew
+///
+/// `0` for a **pen** and for the plant web, whose `engage_rate` is [`f32::INFINITY`]
+/// ([`FaunaConfig::engage_rate_for`], [`SourceYieldForecast::managed`]) — a penned animal is not
+/// stalked and a plant is not either — so the `max()` collapses to the haul term and neither web
+/// regresses. Same for a degenerate `body`/rate.
+///
+/// Units on `ceiling`/`body` are free, exactly as they are for [`hunt_haul_workers`]: an animal count
+/// is a ratio, so a provisions-space call and a biomass-space one give the same crew.
+pub fn hunt_engage_workers(ceiling: f32, body: f32, engage_rate: f32, build_dip: f32) -> u32 {
+    if !body.is_finite() || body <= 0.0 {
+        return 0;
+    }
+    let reach = engage_rate.max(0.0) * build_dip.max(0.0);
+    if !reach.is_finite() || reach <= 0.0 {
+        // No engagement stage (a pen, a plant) — or a dip of zero, which is not a crew size but the
+        // absence of one. Either way this term has nothing to say and the `max()` keeps the others.
+        return 0;
+    }
+    (peak_animal_drop(ceiling, body) / reach).ceil() as u32
+}
+
+/// **THE take-side crew for a whole-animal (hunt) source** — `max(`[`hunt_haul_workers`]`,
+/// `[`hunt_engage_workers`]`)`, and the single seam every `workers_needed` on the animal web sizes
+/// its take half with (the assign-time seed in [`forecast_source_yield`] and the resolved Hunt arm of
+/// `advance_labor_allocation`), so the two cannot answer differently.
+///
+/// **Two jobs, one crew, two units** — reach the animals, then carry them home. It is the take-side
+/// half of [`crate::intensification::source_crew_needed`]'s `max(standing, take)`, which adds the
+/// third: the herders who mind a managed herd whether or not it is killed from this turn.
+/// `max()`, never `+`: one crew covering its busiest job.
+pub fn hunt_take_workers(
+    ceiling: f32,
+    body: f32,
+    per_worker: f32,
+    engage_rate: f32,
+    build_dip: f32,
+) -> u32 {
+    hunt_haul_workers(ceiling, body, per_worker).max(hunt_engage_workers(
+        ceiling,
+        body,
+        engage_rate,
+        build_dip,
+    ))
 }
 
 /// **RETIRED: `hunt_provisions(biomass, &FaunaConfig, mult)`** — the single global biomass→provisions
@@ -6093,6 +6183,160 @@ mod tests {
         );
         // Liveness: the bound reduces the take, it does not switch it off.
         assert!(bounded.killed > 0 && bounded.carried > 0.0);
+    }
+
+    // ---- The engagement CREW (the third term of `workers_needed`) -------------------------------
+
+    /// A ceiling with room for many whole bodies, so the peak drop is a real number rather than the
+    /// `+1` a nearly-empty room degenerates to.
+    const ROOMY_CEILING: f32 = 1_000.0;
+    /// A light body against [`ROOMY_CEILING`] — many animals, little biomass, which is the regime
+    /// where reach binds and carry does not.
+    const LIGHT_BODY: f32 = 1.0;
+    /// The shipped `hunt.per_worker_biomass_capacity`.
+    const HUNTER_CARRY: f32 = 40.0;
+
+    /// **The engagement crew is the exact inverse of [`animals_engaged`]** — the smallest party that
+    /// reaches the whole peak drop, and one hunter short of it does not. That exactness is the
+    /// property: a crew count that merely correlated with reach would let the panel name a number the
+    /// stepper's own take does not clear.
+    #[test]
+    fn the_engagement_crew_is_the_smallest_party_that_reaches_the_peak_drop() {
+        for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, 10.0] {
+            for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
+                let peak = peak_animal_drop(ROOMY_CEILING, LIGHT_BODY);
+                let crew = hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, rate, dip);
+                assert!(
+                    crew > 1,
+                    "rate {rate} dip {dip}: fixture must need a real crew"
+                );
+                assert!(
+                    animals_engaged(crew, rate, dip) >= peak,
+                    "rate {rate} dip {dip}: {crew} hunters must reach the whole {peak}-animal drop, \
+                     they reach {}",
+                    animals_engaged(crew, rate, dip)
+                );
+                assert!(
+                    animals_engaged(crew - 1, rate, dip) < peak,
+                    "rate {rate} dip {dip}: …and {} must not — the count has to be the SMALLEST such \
+                     crew, not merely a sufficient one",
+                    crew - 1
+                );
+            }
+        }
+    }
+
+    /// **The dip raises the engagement crew, exactly as it raises the haul crew** (§3.1) — hands
+    /// gentling a herd are hands not stalking it, so it takes proportionally more of them to corner
+    /// the same drop. Without this the *crew* would price a harvesting party while the *take* pays
+    /// the building one, which is the unit mismatch the haul term already had once.
+    #[test]
+    fn a_building_crew_needs_more_hands_to_reach_the_same_drop() {
+        let harvesting = hunt_engage_workers(
+            ROOMY_CEILING,
+            LIGHT_BODY,
+            EASY_ENGAGE_RATE,
+            NO_BUILD_UNDERWAY_DIP,
+        );
+        let building = hunt_engage_workers(
+            ROOMY_CEILING,
+            LIGHT_BODY,
+            EASY_ENGAGE_RATE,
+            HALF_CREW_BUILD_DIP,
+        );
+        assert!(
+            harvesting > 0,
+            "liveness: the harvesting crew is a real count"
+        );
+        assert!(
+            building > harvesting,
+            "a gentling crew must be the larger: {building} vs {harvesting}"
+        );
+        // The sharp form: the crew sized for HARVESTING cannot reach the drop once it is dipped —
+        // which is precisely the advice a dip-blind count would give.
+        let peak = peak_animal_drop(ROOMY_CEILING, LIGHT_BODY);
+        assert!(
+            animals_engaged(harvesting, EASY_ENGAGE_RATE, HALF_CREW_BUILD_DIP) < peak,
+            "the undipped count must be too small once the crew is building"
+        );
+        assert!(
+            animals_engaged(building, EASY_ENGAGE_RATE, HALF_CREW_BUILD_DIP) >= peak,
+            "…and the dipped count must clear it"
+        );
+    }
+
+    /// **A source with NO ENGAGEMENT STAGE reports no engagement crew** — a pen and the plant web
+    /// both forecast `f32::INFINITY` ([`SourceYieldForecast::managed`],
+    /// [`FaunaConfig::engage_rate_for`]), so the `max()` collapses to the haul term and neither
+    /// regresses. This is the no-regress half of the pair below.
+    #[test]
+    fn a_source_with_no_engagement_stage_keeps_exactly_its_haul_crew() {
+        let haul = hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY);
+        assert!(haul > 0, "liveness: the haul crew is a real count");
+        for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
+            assert_eq!(
+                hunt_engage_workers(ROOMY_CEILING, LIGHT_BODY, f32::INFINITY, dip),
+                0,
+                "an unstalked source owes no engagement crew (dip {dip})"
+            );
+        }
+        assert_eq!(
+            hunt_take_workers(
+                ROOMY_CEILING,
+                LIGHT_BODY,
+                HUNTER_CARRY,
+                f32::INFINITY,
+                NO_BUILD_UNDERWAY_DIP
+            ),
+            haul,
+            "…so the take crew is the haul crew, unchanged"
+        );
+    }
+
+    /// **The take crew takes whichever of REACH and CARRY binds — and both directions are live.**
+    /// The two scale on different units (animals reachable vs biomass carried), so a `max()` that
+    /// had quietly collapsed to one of them would still look plausible; this pins that each side
+    /// wins somewhere.
+    #[test]
+    fn the_take_crew_is_bound_by_reach_on_light_game_and_by_carry_on_heavy() {
+        // Light body, slow reach: many animals to get near, almost nothing to carry.
+        const SLOW_REACH: f32 = 0.5;
+        let reach_bound = hunt_take_workers(
+            ROOMY_CEILING,
+            LIGHT_BODY,
+            HUNTER_CARRY,
+            SLOW_REACH,
+            NO_BUILD_UNDERWAY_DIP,
+        );
+        let reach_haul = hunt_haul_workers(ROOMY_CEILING, LIGHT_BODY, HUNTER_CARRY);
+        assert!(
+            reach_bound > reach_haul && reach_haul > 0,
+            "light game is reach-bound: take crew {reach_bound} must exceed the live haul crew \
+             {reach_haul}"
+        );
+
+        // Heavy body, fast reach: one hunter gets near the whole drop and twenty carry it home.
+        const HEAVY_BODY: f32 = 800.0;
+        const FAST_REACH: f32 = 100.0;
+        let carry_bound = hunt_take_workers(
+            ROOMY_CEILING,
+            HEAVY_BODY,
+            HUNTER_CARRY,
+            FAST_REACH,
+            NO_BUILD_UNDERWAY_DIP,
+        );
+        let carry_haul = hunt_haul_workers(ROOMY_CEILING, HEAVY_BODY, HUNTER_CARRY);
+        let carry_reach =
+            hunt_engage_workers(ROOMY_CEILING, HEAVY_BODY, FAST_REACH, NO_BUILD_UNDERWAY_DIP);
+        assert!(
+            carry_reach > 0,
+            "liveness: the engagement term is computed here too, it is simply the smaller"
+        );
+        assert!(
+            carry_bound == carry_haul && carry_haul > carry_reach,
+            "heavy game is carry-bound: take crew {carry_bound} is the haul crew {carry_haul}, \
+             above the reach crew {carry_reach}"
+        );
     }
 
     /// A zero deadband restores the raw stateless behaviour (the flicker) — the lever genuinely

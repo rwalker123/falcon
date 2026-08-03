@@ -139,6 +139,24 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > expected(workers, rung) = min(workers × perWorkerYield × <rung>BuildFraction, ceiling(floor))
 > ```
 >
+> **ON THE ANIMAL WEB THAT `min()` HAS A THIRD ARM, and leaving it out overstates a light-bodied
+> species' take by ~30×** (`docs/plan_hunt_through_combat.md` §2). Engagement caps how many animals a
+> party can *reach* at all — `HerdTelemetryState.engageRate`, appended for exactly this:
+>
+> ```text
+> reach(workers, rung) = floor(workers × engageRate × <rung>BuildFraction) × bodyMass × <account>PerBiomass
+> expected(workers, rung) = min(crew term, ceiling(floor), reach(workers, rung))
+> ```
+>
+> It is a term rather than an answer for the same reason the two beside it are: linear in the crew and
+> exact. **`engageRate <= 0` means "no engagement stage" and the term is dropped** — the wire's finite
+> reading of the sim's `f32::INFINITY` for a **pen** (a penned animal is not stalked) and for the plant
+> web, which never publishes the field. Measured before it shipped: a Wild Fowl herd with one hunter
+> read **307 birds/turn** on the compose sheet (one hunter's 40 biomass of carry) against a take of
+> **10** — the sheet promising 30× what the sim would pay, for the whole life of the field's absence.
+> Pinned on the exported wire by
+> `hunt_yield_vector::the_exported_terms_reproduce_the_engagement_bounded_take`.
+>
 > **THE BUILD FRACTION MULTIPLIES THE CREW, NOT THE CEILING** (`docs/plan_harvest_floor.md` §3.1).
 > It moved there because dipping the ceiling made a deeper floor build for free — a fraction of a
 > bigger standing stock still filled the crew's baskets, so every stance completed a 25-turn Cultivate
@@ -168,6 +186,7 @@ floor — see "THE CEILING LISTS ARE RETIRED" below.
 > |---|---|---|
 > | escapement ceiling | **terms** — `biomass`, `carryingCapacity`, `*PerBiomass` | `max(0, B − f·K) × rate` is linear and exact; this is what retired the four stance rows |
 > | build dip | **terms** — the four `*BuildFraction` fields | a factor on the crew term, likewise exact |
+> | engagement bound | **term** — `HerdTelemetryState.engageRate` | `workers × engageRate × dip × bodyMass` is linear in the crew, exactly like the carry term beside it |
 > | the take | **the answer** — `SourceYield.actual` | `floor(ceiling / bodyMass)` is not linear; no client can re-derive it |
 > | raid trip length | **sampled answers** — `huntTripEstimates` × `RAID_FORECAST_FLOOR_SAMPLES` | a bounded forward simulation; there is no expression to hand over |
 > | the growth curve | **sampled answers** — `regrowthSamples` × `REGROWTH_CURVE_SAMPLES` | see below |

@@ -2071,6 +2071,33 @@ table HerdTelemetryState {
   // fields describe the same cliff from either side and must be read together.
   collapseFraction:float = 0;
   stressedFraction:float = 0;
+  // --- THE ENGAGEMENT THROUGHPUT (appended, docs/plan_hunt_through_combat.md §2) -----------------
+  // **How many animals ONE hunter can bring into contact per turn** (`SpeciesDef.engage_rate`) — the
+  // THIRD bound on a hunt take, beside the herd's spare stock and the party's carry. The composition
+  // above is incomplete without it:
+  //
+  //   reach(workers, rung) = floor(workers * engageRate * <rung>BuildFraction) * bodyMass * <account>PerBiomass
+  //   expected(workers, rung) = min(workers * perWorkerYield * <rung>BuildFraction, ceiling(floor), reach(workers, rung))
+  //
+  // It ships as a TERM for the reason the escapement ceiling does — the expression is **linear and
+  // exact**, so a client evaluating it lands on the number the sim would (see "THE BOUNDARY" in
+  // `.claude/rules/core_sim/yield-forecast.md`). The `floor()` and the whole-animal quantiser are
+  // still the sim's answer in `SourceYield.actual`; this is what makes the pre-commit CURVE honest,
+  // and it is the same term the crew count inverts:
+  //
+  //   engageCrew(floor, rung) = ceil((floor(ceiling_biomass / bodyMass) + 1) / (engageRate * <rung>BuildFraction))
+  //
+  // which belongs in the same `max()` as the haul crew and the herder count — the three scale on
+  // three different units (animals reachable, biomass carried, heads minded) and none dominates
+  // across the roster. A Wild Fowl herd holding ~470 head above its floor is ~61 biomass: **two**
+  // haulers can carry that and **47** hunters are needed to reach it.
+  //
+  // **`0` MEANS "NO ENGAGEMENT STAGE", not "cannot reach anything"** — the wire's finite stand-in for
+  // the sim's `f32::INFINITY` (a species the roster cannot resolve; a plant, which never publishes
+  // this field at all). A reader must treat `<= 0` as *unbounded* and drop the term, exactly as the
+  // sim's `hunt_engage_workers` returns no crew for it. A **pen** is the other unbounded case and
+  // publishes `0` for the same reason: a penned animal is not stalked.
+  engageRate:float = 0;
 }
 
 table CommandEventState {

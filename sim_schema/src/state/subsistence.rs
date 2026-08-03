@@ -378,6 +378,20 @@ pub struct HerdTelemetryState {
     /// `thriving`) — see [`Self::collapse_fraction`].
     #[serde(default)]
     pub stressed_fraction: f32,
+    /// **How many animals ONE hunter can bring into contact per turn** (`SpeciesDef::engage_rate`,
+    /// `docs/plan_hunt_through_combat.md` §2) — the **third** bound on a hunt take, beside the stock
+    /// standing above the floor and the party's carry. Without it the pre-commit curve a client
+    /// composes from [`Self::per_worker_biomass`] and the per-biomass vector is carry-bound only, and
+    /// overstates a small-bodied species' take by the ratio of the two (measured: ~30× on a Wild Fowl
+    /// herd with one hunter). It ships as a **term** rather than an answer because the expression is
+    /// linear and exact — see the schema comment for the composition and for the crew count that
+    /// inverts it.
+    ///
+    /// **`0` means "no engagement stage", not "reaches nothing"** — the wire's finite stand-in for the
+    /// sim's [`f32::INFINITY`]: a **pen** (a penned animal is not stalked) and a species the roster
+    /// cannot resolve. Read `<= 0` as *unbounded* and drop the term. Appended (append-only).
+    #[serde(default)]
+    pub engage_rate: f32,
 }
 
 impl Default for HerdTelemetryState {
@@ -439,6 +453,9 @@ impl Default for HerdTelemetryState {
             regrowth_samples: Vec::new(),
             collapse_fraction: 0.0,
             stressed_fraction: 0.0,
+            // `0` is the "no engagement stage" reading, which is the honest default for a herd
+            // nothing has described.
+            engage_rate: 0.0,
         }
     }
 }
