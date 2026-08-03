@@ -63,17 +63,28 @@ fn death_fraction(
     )
 }
 
-/// Which term did more of this bracket's killing. Ties go to [`DeathCause::Hunger`] — a band
-/// starving *and* freezing is a food problem the player can act on.
+/// Which term did most of this bracket's killing. The terms are compared as **per-capita
+/// fractions**, which is the only form in which they are commensurable — each is the share of the
+/// bracket that term removes this turn. Ties go to [`DeathCause::Hunger`] — a band starving *and*
+/// freezing is a food problem the player can act on.
+///
+/// `age` is the flat `elder_mortality_rate`, and is `0` for every bracket but the elders: children
+/// and workers have no old-age term at all. It is passed rather than looked up so this stays the
+/// one place a cause is decided.
 ///
 /// Resolved on the turn the deaths happen, because nothing afterwards can answer it: the post-turn
 /// brackets carry no record of which term emptied them.
-fn dominant_death_cause(starvation: Scalar, cold: Scalar) -> DeathCause {
-    if cold > starvation {
-        DeathCause::Cold
-    } else {
-        DeathCause::Hunger
+fn dominant_death_cause(starvation: Scalar, cold: Scalar, age: Scalar) -> DeathCause {
+    let mut cause = DeathCause::Hunger;
+    let mut worst = starvation;
+    if cold > worst {
+        cause = DeathCause::Cold;
+        worst = cold;
     }
+    if age > worst {
+        cause = DeathCause::Age;
+    }
+    cause
 }
 
 /// A band's per-turn food **flow**, as of last turn's resolution — the input to the `trend`
@@ -104,17 +115,26 @@ struct DemographicOutcome {
 
 /// The per-turn **flows** the bracket update is made of, returned instead of discarded.
 ///
-/// `advance_demographics` applies births, maturation and three death terms and hands back only the
+/// `advance_demographics` applies births, maturation and the death terms and hands back only the
 /// resulting brackets, so a band that lost two elders to cold and gained a child looks exactly like
 /// a band that did neither — the demographic events the player reads are precisely these numbers.
 /// Each is a `Scalar` because a band of thirty earns fractions of a person per turn; the whole
 /// people are extracted by [`DemographicFlowAccumulator`], not here.
+///
+/// **Every term that removes a person from a bracket is here.** A death the model resolves but does
+/// not route through this struct is a person the game never mentions losing — which is exactly what
+/// `elder_mortality` was until it joined `elder_deaths`. `demographic_events`' ledger guard is what
+/// makes that class of omission fail rather than ship: it closes over births, deaths, migration and
+/// the carries, so an unrouted term shows up as residue no per-case assertion would catch.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 struct DemographicFlows {
     pub births: Scalar,
     pub maturations: Scalar,
     pub child_deaths: Scalar,
     pub working_deaths: Scalar,
+    /// Starvation + cold **plus** the flat old-age term (`elder_mortality_rate`). One number,
+    /// because they are one thing to the player: elders the band lost this turn. Which of them did
+    /// the most killing is `elder_death_cause`'s job, not a second flow's.
     pub elder_deaths: Scalar,
     /// The dominant cause behind each bracket's deaths **this turn**, meaningful only where the
     /// matching flow is positive.
@@ -306,10 +326,14 @@ fn advance_demographics(
     let fertility = scalar_from_f32(births_cfg.birth_rate) * factors.multiplier();
     let births = working0 * fertility;
 
-    // 4. Aging flows.
+    // 4. Aging flows. `elder_mortality` is a **death**, not a transition — it is the flat rate at
+    // which elders simply grow too old, and it is reported alongside the elders' starvation/cold
+    // term in `flows.elder_deaths`. In a fed band in fair weather it is the only mortality there
+    // is, so leaving it out of the flows made a healthy band shrink in total silence.
     let maturation = children0 * scalar_from_f32(demo.maturation_rate);
     let aging = working0 * scalar_from_f32(demo.aging_rate);
-    let elder_mortality = elders0 * scalar_from_f32(demo.elder_mortality_rate);
+    let elder_mortality_rate = scalar_from_f32(demo.elder_mortality_rate);
+    let elder_mortality = elders0 * elder_mortality_rate;
 
     // Apply all flows simultaneously, flooring each bracket at zero.
     let mut children = max(
@@ -349,10 +373,20 @@ fn advance_demographics(
             maturations: maturation,
             child_deaths,
             working_deaths,
-            elder_deaths,
-            child_death_cause: dominant_death_cause(child_starvation, cold_fraction),
-            working_death_cause: dominant_death_cause(working_starvation, cold_fraction),
-            elder_death_cause: dominant_death_cause(elder_starvation, cold_fraction),
+            // Old age is one of the ways an elder dies, so it rides in the same flow rather than a
+            // parallel one the accumulator would have to learn about.
+            elder_deaths: elder_deaths + elder_mortality,
+            child_death_cause: dominant_death_cause(child_starvation, cold_fraction, scalar_zero()),
+            working_death_cause: dominant_death_cause(
+                working_starvation,
+                cold_fraction,
+                scalar_zero(),
+            ),
+            elder_death_cause: dominant_death_cause(
+                elder_starvation,
+                cold_fraction,
+                elder_mortality_rate,
+            ),
         },
     }
 }
@@ -497,7 +531,9 @@ const ELDER_BRACKET: DeathBracket = DeathBracket {
 /// Accrue one turn's demographic flows and push a feed event for each that crossed a whole person.
 ///
 /// Every event names a **count** rather than firing once per person: three elders lost to one cold
-/// snap are one line, not three.
+/// snap are one line, not three. Deaths pool onto a single carry, so the **count is exact** across
+/// brackets while `bracket=`/`cause=` name the dominant contributor to that crossing — an
+/// attribution, not a claim that every one of them was an elder.
 fn push_demographic_events(
     event_log: &mut CommandEventLog,
     tick: u64,
@@ -541,64 +577,93 @@ fn push_demographic_events(
         ));
     }
 
-    // The cause is stamped on the carry whenever this turn killed anyone, and read at the crossing.
-    // A turn with no deaths leaves the stored cause alone, so a crossing reports the term that
-    // actually did the killing rather than whatever the last (quiet) turn happened to compute.
+    // Deaths accrue on ONE carry across all three brackets, so every whole person the band loses is
+    // announced exactly once however the loss was spread — see `DemographicFlowAccumulator::deaths`
+    // for why three carries strand a remainder the moment a bracket's flow stops.
+    //
+    // The per-bracket contribution and cause are stamped whenever this turn killed anyone in that
+    // bracket, and read at the crossing to LABEL the event. A turn with no deaths in a bracket
+    // leaves both alone, so a crossing names the term that actually did the killing rather than
+    // whatever the last (quiet) turn happened to compute.
     let brackets = [
         (
             CHILD_BRACKET,
             flows.child_deaths,
             flows.child_death_cause,
-            &mut accumulator.child_deaths,
+            &mut accumulator.child_death_contribution,
             &mut accumulator.child_death_cause,
         ),
         (
             WORKING_BRACKET,
             flows.working_deaths,
             flows.working_death_cause,
-            &mut accumulator.working_deaths,
+            &mut accumulator.working_death_contribution,
             &mut accumulator.working_death_cause,
         ),
         (
             ELDER_BRACKET,
             flows.elder_deaths,
             flows.elder_death_cause,
-            &mut accumulator.elder_deaths,
+            &mut accumulator.elder_death_contribution,
             &mut accumulator.elder_death_cause,
         ),
     ];
-    for (bracket, flow, turn_cause, carry, stored_cause) in brackets {
+    let mut turn_deaths = scalar_zero();
+    // The dominant contributor since the last crossing: `(bracket, cause)`, first-max so ties
+    // resolve in the declared child ≥ working ≥ elder order.
+    let mut dominant: Option<(DeathBracket, DeathCause)> = None;
+    let mut dominant_contribution = scalar_zero();
+    for (bracket, flow, turn_cause, contribution, stored_cause) in brackets {
         if flow > scalar_zero() {
             *stored_cause = turn_cause;
+            *contribution += flow;
         }
-        let died = DemographicFlowAccumulator::accrue(carry, flow);
-        if died == 0 {
-            continue;
+        turn_deaths += flow;
+        if *contribution > dominant_contribution {
+            dominant_contribution = *contribution;
+            dominant = Some((bracket, *stored_cause));
         }
-        let cause = *stored_cause;
-        let label = if died == 1 {
-            format!("{} died of {} in {name}", bracket.singular, cause.as_str())
-        } else {
-            format!(
-                "{died} {} died of {} in {name}",
-                bracket.plural,
-                cause.as_str()
-            )
-        };
-        event_log.push(CommandEventEntry::new(
-            tick,
-            CommandEventKind::Died,
-            faction,
-            label,
-            Some(format!(
-                "band={} count={} bracket={} cause={}",
-                band.0,
-                died,
-                bracket.token,
-                cause.as_str()
-            )),
-        ));
     }
+
+    let died = DemographicFlowAccumulator::accrue(&mut accumulator.deaths, turn_deaths);
+    if died == 0 {
+        return;
+    }
+    // A crossing needs a positive flow this turn (the carry is always < 1 afterwards), and a
+    // positive flow always stamps a contribution — so there is always a dominant bracket to name.
+    let Some((bracket, cause)) = dominant else {
+        return;
+    };
+    accumulator.child_death_contribution = scalar_zero();
+    accumulator.working_death_contribution = scalar_zero();
+    accumulator.elder_death_contribution = scalar_zero();
+
+    let label = if died == 1 {
+        format!(
+            "{} died of {} in {name}",
+            bracket.singular,
+            cause.label_phrase()
+        )
+    } else {
+        format!(
+            "{died} {} died of {} in {name}",
+            bracket.plural,
+            cause.label_phrase()
+        )
+    };
+    event_log.push(CommandEventEntry::new(
+        tick,
+        CommandEventKind::Died,
+        faction,
+        label,
+        Some(format!(
+            "band={} count={} bracket={} cause={}",
+            band.0,
+            died,
+            bracket.token,
+            cause.as_str()
+        )),
+    ));
 }
 
 /// The migration half of the demographic feed: `last_emigrated` / `last_immigrated` are already
@@ -1410,6 +1475,147 @@ mod food_flow_tests {
             flow.steady_income.to_f32()
         );
         assert!((flow.pen_feed_upkeep.to_f32() - 1.5).abs() < 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod death_event_tests {
+    //! The pooled death carry: one carry across three brackets, labelled by the dominant
+    //! contributor. These drive `push_demographic_events` directly, because the property at stake
+    //! is about *how the carries combine* and a full turn would hide it behind the model's own
+    //! rates.
+    use super::push_demographic_events;
+    use crate::components::{DeathCause, DemographicFlowAccumulator};
+    use crate::orders::FactionId;
+    use crate::resources::CommandEventLog;
+    use crate::scalar::{scalar_from_f32, scalar_zero};
+    use crate::systems::population::DemographicFlows;
+    use crate::BandId;
+
+    const TICK: u64 = 7;
+    const FACTION: FactionId = FactionId(1);
+    const BAND: BandId = BandId(3);
+
+    fn deaths(child: f32, working: f32, elder: f32) -> DemographicFlows {
+        DemographicFlows {
+            births: scalar_zero(),
+            maturations: scalar_zero(),
+            child_deaths: scalar_from_f32(child),
+            working_deaths: scalar_from_f32(working),
+            elder_deaths: scalar_from_f32(elder),
+            child_death_cause: DeathCause::Cold,
+            working_death_cause: DeathCause::Cold,
+            elder_death_cause: DeathCause::Age,
+        }
+    }
+
+    fn push(
+        log: &mut CommandEventLog,
+        carry: &mut DemographicFlowAccumulator,
+        flows: &DemographicFlows,
+    ) {
+        push_demographic_events(log, TICK, FACTION, BAND, carry, flows);
+    }
+
+    fn died_details(log: &CommandEventLog) -> Vec<String> {
+        log.iter()
+            .filter(|entry| entry.kind == crate::resources::CommandEventKind::Died)
+            .filter_map(|entry| entry.detail.clone())
+            .collect()
+    }
+
+    /// **A loss spread across all three brackets is announced when the BAND loses a person**, not
+    /// when one bracket alone does. 0.4 + 0.4 + 0.3 is 1.1 people gone; three separate carries each
+    /// sit below 1 and say nothing.
+    #[test]
+    fn a_loss_spread_across_brackets_still_reports_a_whole_person() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        push(&mut log, &mut carry, &deaths(0.4, 0.4, 0.3));
+
+        let details = died_details(&log);
+        assert_eq!(
+            details.len(),
+            1,
+            "1.1 people lost is one event: {details:?}"
+        );
+        assert!(
+            details[0].contains("count=1"),
+            "the count is the whole people the band lost: {details:?}"
+        );
+        assert!(
+            carry.deaths.to_f32() > 0.09 && carry.deaths.to_f32() < 0.11,
+            "and the 0.1 remainder rides on: {}",
+            carry.deaths.to_f32()
+        );
+    }
+
+    /// **A remainder is never stranded by a flow that stops.** The cold snap kills 0.6 of a person
+    /// and ends; months later hunger takes 0.5 more. Pooled, that is a person and it is reported.
+    /// With a carry per bracket the cold 0.6 would sit unreported forever, because nothing further
+    /// ever accrues to that bracket to push it over.
+    #[test]
+    fn a_remainder_left_by_a_stopped_flow_is_paid_off_by_a_later_one() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        push(&mut log, &mut carry, &deaths(0.0, 0.0, 0.6));
+        assert!(
+            died_details(&log).is_empty(),
+            "0.6 of a person is still nobody"
+        );
+
+        // The cold term is gone for good; a different bracket starves much later.
+        push(&mut log, &mut carry, &deaths(0.5, 0.0, 0.0));
+
+        let details = died_details(&log);
+        assert_eq!(
+            details.len(),
+            1,
+            "the stranded 0.6 is paid off by the later 0.5: {details:?}"
+        );
+        assert!(details[0].contains("count=1"), "{details:?}");
+    }
+
+    /// **The dominant contributor since the last crossing names the row.** The count is exact
+    /// across brackets; `bracket=`/`cause=` are an attribution, and they name the bracket that
+    /// actually did most of the dying — with the cause recorded on the turn it happened.
+    #[test]
+    fn the_largest_contributor_names_the_row_and_supplies_the_cause() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        push(&mut log, &mut carry, &deaths(0.1, 0.2, 0.8));
+
+        let details = died_details(&log);
+        assert_eq!(details.len(), 1);
+        assert!(
+            details[0].contains("bracket=elder") && details[0].contains("cause=age"),
+            "the elders contributed most and their recorded cause was old age: {details:?}"
+        );
+    }
+
+    /// **Contributions reset at the crossing**, so the next event describes the deaths *it* is
+    /// announcing rather than every death since the band was founded.
+    #[test]
+    fn the_contributions_reset_when_a_crossing_reports() {
+        let mut log = CommandEventLog::default();
+        let mut carry = DemographicFlowAccumulator::default();
+
+        // Elders dominate the first crossing.
+        push(&mut log, &mut carry, &deaths(0.0, 0.0, 1.0));
+        // Then a starving winter takes children, in less total than the elders ever lost.
+        push(&mut log, &mut carry, &deaths(0.6, 0.0, 0.0));
+        push(&mut log, &mut carry, &deaths(0.6, 0.0, 0.0));
+
+        let details = died_details(&log);
+        assert_eq!(details.len(), 2, "{details:?}");
+        assert!(
+            details[1].contains("bracket=child"),
+            "the second event is about the children it announced, not the elders of the first: \
+             {details:?}"
+        );
     }
 }
 

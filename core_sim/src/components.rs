@@ -440,29 +440,45 @@ pub enum MoraleCause {
     Unrest,
 }
 
-/// Which of the two mortality terms did most of the killing in one age bracket on one turn.
+/// Which mortality term did most of the killing in one age bracket on one turn.
 ///
 /// The demographic model kills through a starvation term (scaled by the food deficit and the
-/// bracket's vulnerability) and a uniform cold term. Once a death is *reported*, the turn that
+/// bracket's vulnerability), a uniform cold term, and — for elders only — the flat
+/// `elder_mortality_rate` of simply growing old. Once a death is *reported*, the turn that
 /// produced it is gone — post-turn brackets and a refilled larder cannot say what emptied them —
 /// so the cause is recorded when the deaths accrue and carried on
 /// [`DemographicFlowAccumulator`] until the whole-person event fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DeathCause {
-    /// The food deficit dominated (or the two tied — a starving band is the louder reading).
+    /// The food deficit dominated (or the terms tied — a starving band is the louder reading).
     #[default]
     Hunger,
     /// The cold term dominated.
     Cold,
+    /// Old age dominated — the `elder_mortality_rate` term, which only the elder bracket carries.
+    /// A band with a full larder in fair weather still buries its elders, and reporting that as
+    /// `Hunger` would tell the player a falsehood about their food every few turns.
+    Age,
 }
 
 impl DeathCause {
-    /// The `cause=` token on a `died` event's detail string — and, unchanged, the word inside
-    /// "died of …" in its label.
+    /// The `cause=` token on a `died` event's detail string. One word, lowercase, stable — the
+    /// client keys off it, so it is a wire contract and not prose.
     pub fn as_str(self) -> &'static str {
         match self {
             DeathCause::Hunger => "hunger",
             DeathCause::Cold => "cold",
+            DeathCause::Age => "age",
+        }
+    }
+
+    /// The phrase inside "died of …" in the event's **label**, which is prose and free to read
+    /// better than the token: "died of old age", not "died of age".
+    pub fn label_phrase(self) -> &'static str {
+        match self {
+            DeathCause::Hunger => "hunger",
+            DeathCause::Cold => "cold",
+            DeathCause::Age => "old age",
         }
     }
 }
@@ -483,11 +499,23 @@ pub struct DemographicFlowAccumulator {
     pub births: Scalar,
     /// Fractional children→working transitions not yet reported.
     pub maturations: Scalar,
-    /// Fractional deaths per bracket, each with the cause recorded on the last turn that killed
-    /// anyone in it — read when the carry crosses, never re-derived afterwards.
-    pub child_deaths: Scalar,
-    pub working_deaths: Scalar,
-    pub elder_deaths: Scalar,
+    /// Fractional deaths not yet reported — **one carry for all three brackets**, so every whole
+    /// person the band loses is announced exactly once however the loss was spread.
+    ///
+    /// Three per-bracket carries is the intuitive shape and it is wrong: each one keeps its own
+    /// sub-person remainder, and **a remainder is stranded the moment its flow stops**. A cold snap
+    /// that kills 0.4 of a bracket and then ends leaves 0.4 of a person carried forever, with
+    /// nothing further accruing to push it over — three brackets, three permanent leaks. Pooled,
+    /// any later death from any bracket pays the remainder off.
+    pub deaths: Scalar,
+    /// Each bracket's share of the deaths accrued **since the last crossing**. Pure labelling: the
+    /// largest contributor names the row (`bracket=`) and supplies its `cause=`. Reset when a
+    /// crossing reports, so the label describes the deaths that event is actually announcing.
+    pub child_death_contribution: Scalar,
+    pub working_death_contribution: Scalar,
+    pub elder_death_contribution: Scalar,
+    /// The cause recorded on the last turn that killed anyone in each bracket — read at the
+    /// crossing, never re-derived afterwards.
     pub child_death_cause: DeathCause,
     pub working_death_cause: DeathCause,
     pub elder_death_cause: DeathCause,

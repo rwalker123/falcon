@@ -8,7 +8,7 @@
 use core_sim::{
     build_headless_app, run_turn, scalar_zero, BandId, CommandEventEntry, CommandEventKind,
     CommandEventLog, DemographicFlowAccumulator, PopulationCohort, ResidentBand, SimulationConfig,
-    FOOD,
+    SimulationTick, FOOD,
 };
 
 use bevy::prelude::{Entity, With};
@@ -277,5 +277,152 @@ fn the_retention_window_is_published_from_config() {
     assert_eq!(
         snapshot.command_events_retention_turns as u64, configured,
         "and the snapshot publishes the same number the log is running"
+    );
+}
+
+/// The number of turns the ledger guard closes over. Inside the retention window, and long enough
+/// for the shipped band to lose more than one whole person to old age.
+const LEDGER_TURNS: usize = 12;
+
+/// **Every person a band gains or loses is announced.** This is the guard the arc was missing, and
+/// the one that caught `elder_mortality`: a band's head-count moves by exactly
+///
+/// ```text
+/// (births reported + births still carried) − (deaths reported + deaths still carried) + migration
+/// ```
+///
+/// because the carry holds precisely the sub-person remainder the events have not yet claimed. It
+/// closes over births, deaths, migration **and** the carries at once, so a term the model resolves
+/// but never routes into a carry shows up here as unexplained residue — which no per-case assertion
+/// can catch, because a per-case assertion only ever checks the terms someone thought of.
+///
+/// `elder_mortality` was such a term for the whole of issue #272: elders × 0.06 per turn, applied to
+/// the bracket and reported nowhere, which is why a fed 30-person band shrank to 29 with the feed
+/// completely silent. Before the fix this guard failed by 3.78 people over these 12 turns.
+#[test]
+fn the_reported_flows_account_for_every_person_a_band_gains_or_loses() {
+    let mut app = world();
+
+    // The first turn generates the world; the ledger opens on the band it produced.
+    run_turn(&mut app);
+    let baseline_tick = app.world.resource::<SimulationTick>().0;
+    let (band, before_total, before_births_carry, before_deaths_carry) = ledger_reading(&mut app);
+
+    let mut emigrated = 0u32;
+    let mut immigrated = 0u32;
+    for _ in 0..LEDGER_TURNS {
+        run_turn(&mut app);
+        let mut cohorts = app
+            .world
+            .query_filtered::<&PopulationCohort, With<ResidentBand>>();
+        for cohort in cohorts.iter(&app.world) {
+            emigrated += cohort.last_emigrated;
+            immigrated += cohort.last_immigrated;
+        }
+    }
+    let (_, after_total, after_births_carry, after_deaths_carry) = ledger_reading(&mut app);
+
+    let reported = |kind: CommandEventKind| -> i64 {
+        events_of(&app, kind)
+            .iter()
+            .filter(|entry| entry.tick > baseline_tick)
+            .filter_map(|entry| token(entry, "count"))
+            .filter_map(|count| count.parse::<i64>().ok())
+            .sum()
+    };
+    let born = reported(CommandEventKind::Born);
+    let died = reported(CommandEventKind::Died);
+
+    // Combat casualties (`PopulationCohort::apply_combat_casualties`) move the working bracket
+    // WITHOUT going through `DemographicFlows` — they narrate as their own `HuntDanger` /
+    // `PredatorRaid` rows instead. That is a deliberate second path, not an omission, but it means
+    // a run that takes casualties cannot balance this ledger. On the pinned seed none fire; if that
+    // ever changes, this is the assertion that says so instead of the arithmetic failing mutely.
+    for kind in [CommandEventKind::HuntDanger, CommandEventKind::PredatorRaid] {
+        assert!(
+            events_of(&app, kind).is_empty(),
+            "{kind:?} fired on the pinned seed — combat casualties bypass `DemographicFlows`, so \
+             the ledger below cannot balance across them. Re-pin the seed or exclude the term."
+        );
+    }
+
+    let observed = after_total - before_total;
+    let accounted = (born - died + i64::from(immigrated) - i64::from(emigrated)) as f32
+        + (after_births_carry - before_births_carry)
+        - (after_deaths_carry - before_deaths_carry);
+
+    assert!(
+        observed < -1.0,
+        "the run has to actually lose more than one whole person, or the guard proves nothing: \
+         {observed:+.4}"
+    );
+    assert!(
+        (observed - accounted).abs() < LEDGER_TOLERANCE,
+        "band {band} moved {observed:+.4} people but the feed and its carries account for only \
+         {accounted:+.4} — {:.4} people changed hands with nothing announcing them (born {born}, \
+         died {died}, emigrated {emigrated}, immigrated {immigrated})",
+        (observed - accounted).abs()
+    );
+}
+
+/// Fixed-point rounding across ~12 turns of bracket arithmetic, well under the whole person the
+/// guard exists to catch.
+const LEDGER_TOLERANCE: f32 = 1e-3;
+
+/// `(band id, bracket total, births carry, pooled deaths carry)` for the single shipped band.
+fn ledger_reading(app: &mut bevy::app::App) -> (u64, f32, f32, f32) {
+    let mut query = app
+        .world
+        .query_filtered::<(&BandId, &PopulationCohort, &DemographicFlowAccumulator), With<ResidentBand>>();
+    let rows: Vec<(u64, f32, f32, f32)> = query
+        .iter(&app.world)
+        .map(|(band, cohort, carry)| {
+            (
+                band.0,
+                cohort.children.to_f32() + cohort.working.to_f32() + cohort.elders.to_f32(),
+                carry.births.to_f32(),
+                carry.deaths.to_f32(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows.len(),
+        1,
+        "the shipped start profile is one band; the ledger's migration term assumes it"
+    );
+    rows[0]
+}
+
+/// **A fed band still buries its elders, and the feed says so — naming old age, not hunger.**
+///
+/// The reported bug: a well-fed band in fair weather has no starvation and no cold term at all, so
+/// its *only* mortality is the flat `elder_mortality_rate`. Attributing that to `Hunger` (the
+/// default cause) would tell the player their food is killing people while their larder is full,
+/// which is why old age is its own `DeathCause` rather than a fold-in.
+#[test]
+fn a_fed_band_buries_its_elders_and_names_old_age() {
+    let mut app = world();
+    for _ in 0..GROWTH_TURNS {
+        run_turn(&mut app);
+    }
+
+    let deaths = events_of(&app, CommandEventKind::Died);
+    assert!(
+        !deaths.is_empty(),
+        "a fed band still loses elders to age; the feed must not be silent about it"
+    );
+    let aged = deaths
+        .iter()
+        .find(|entry| token(entry, "cause").as_deref() == Some("age"))
+        .expect("with a full larder and no cold, old age is the only term that can be dominant");
+    assert_eq!(
+        token(aged, "bracket").as_deref(),
+        Some("elder"),
+        "only the elder bracket carries an old-age term"
+    );
+    assert!(
+        aged.label.contains("died of old age"),
+        "the label reads as prose even though the token does not: {:?}",
+        aged.label
     );
 }

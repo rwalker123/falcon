@@ -88,7 +88,7 @@ mirror reason: a cursor left ahead of a rewound world suppresses the re-send.
 
 ## The demographic flows: a rate becomes an event
 
-`advance_demographics` resolved `births`, `maturation` and three death terms as locals and dropped
+`advance_demographics` resolved `births`, `maturation` and its death terms as locals and dropped
 them, so a band that lost two elders to cold and gained a child looked exactly like a band that did
 neither. `DemographicOutcome::flows` returns them; `DemographicFlowAccumulator` turns them into
 events.
@@ -102,9 +102,9 @@ pinned directly (`components::tests::the_remainder_survives_the_crossing`).
 
 - **One event names a COUNT**, never one event per person: three elders lost to one cold snap is one
   line.
-- **The death cause is recorded on the turn it happens** (`DeathCause`, the dominant of the
-  starvation and cold terms, ties to `Hunger`), and read at the crossing. Nothing afterwards can
-  answer it — post-turn brackets carry no record of which term emptied them.
+- **The death cause is recorded on the turn it happens** (`DeathCause`, the dominant per-capita
+  fraction among starvation, cold and old age, ties to `Hunger`), and read at the crossing. Nothing
+  afterwards can answer it — post-turn brackets carry no record of which term emptied them.
 - **Migration needs no accumulator.** `last_emigrated` / `last_immigrated` are whole people already,
   so `push_migration_events` fires from `advance_population_migration` — where those counts are
   resolved — rather than from `simulate_population`, which would report the *previous* turn's moves
@@ -114,13 +114,68 @@ pinned directly (`components::tests::the_remainder_survives_the_crossing`).
   birth was two-thirds of the way there, and dropping the remainder re-times every event after a
   restore.
 
+### Deaths pool onto ONE carry — not one per bracket
+
+`DemographicFlowAccumulator::deaths` is a single `Scalar` fed by the sum of the three bracket flows.
+Per-bracket carries is the intuitive shape, it was the shipped shape, and it is wrong for a reason
+worth writing down because it will be proposed again:
+
+> **A per-bracket remainder is stranded the moment that bracket's flow stops.** A cold snap kills
+> 0.4 of the children and ends; nothing further ever accrues to the child carry, so that 0.4 of a
+> person sits unreported for the rest of the game. Three brackets, three permanent leaks — and the
+> band's head-count has moved by people the feed will never mention. Pooled, any later death from
+> any bracket pays the remainder off, and the *most* the feed can ever be behind is the one
+> sub-person remainder every carry has by construction.
+
+The secondary win is latency: a loss spread thin across brackets (0.4 + 0.4 + 0.3 = 1.1 people) is
+announced when the **band** loses a person rather than when one bracket alone does.
+
+**What the pooling costs is attribution, and only attribution.** The `count` stays exact — `accrue`
+still subtracts precisely what it reported — but a single crossing may span brackets, so
+`bracket=` / `cause=` name the **dominant contributor since the last crossing** rather than
+asserting every one of those people was an elder. The per-bracket `*_death_contribution` fields
+exist purely for that labelling and are reset at each crossing, so an event describes the deaths it
+is announcing and not every death since the band was founded. `population::death_event_tests` pins
+all four properties.
+
+### Every term that removes a person must be in `DemographicFlows`
+
+`elder_mortality` (elders × `elder_mortality_rate`) was computed, applied to the elder bracket, and
+**routed nowhere** — so the one death a fed band in fair weather actually experiences was invisible.
+A 30-person band lost ~0.3 people/turn to old age with the feed completely silent; the reported
+symptom was a population going 30 → 29 by turn 5 with no `died` row at any detail level. It now
+rides in `flows.elder_deaths` alongside that bracket's starvation/cold term — one number, because
+they are one thing to the player — with `DeathCause::Age` to name it.
+
+**`cause=age` is its own value and not a fold-in**: a peaceful old-age death reported as `hunger`
+tells the player something false about their larder every few turns, and a wrong cause is worse than
+a coarse one. The token is `age`; the *label* reads "died of old age" (`DeathCause::label_phrase`),
+because the token is a wire contract and the label is prose.
+
+> **The guard that catches this class of bug is a LEDGER, not a case.**
+> `demographic_events::the_reported_flows_account_for_every_person_a_band_gains_or_loses` closes over
+> births, deaths, migration **and** the carries at once: a band's head-count moves by exactly
+> `(born reported + births carried) − (died reported + deaths carried) + migration`, because the
+> carry holds precisely the sub-person remainder the events have not claimed. A term nobody routed
+> shows up as residue. It failed by **3.78 people over 12 turns** before the fix — a per-case
+> assertion could not have found it, because a per-case assertion only checks the terms someone
+> thought of.
+
+**Combat casualties are the deliberate exception.** `PopulationCohort::apply_combat_casualties`
+(hunt danger, predator raids) takes people out of the working bracket without passing through
+`DemographicFlows`; those deaths narrate as `HuntDanger` / `PredatorRaid` rows carrying their own
+`killed=` detail, so the player is told — just not as a `died` row. That means the ledger identity
+**does not hold across a raid turn** (measured: the residue is exactly the casualties). The ledger
+guard asserts no casualty event fired on its pinned seed, so a seed change that starts raiding fails
+with that sentence rather than mutely breaking the arithmetic.
+
 **Detail tokens are space-delimited `key=value`**, the form the client's feed already parses:
 
 | Kind | Detail |
 |---|---|
 | `born` | `band= count=` |
 | `came_of_age` | `band= count=` |
-| `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold}` |
+| `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
 | `migrated` | `band= count= direction={out\|in}` |
 
 **The label names `Band {id}`**, because the snapshot carries no band *name* — the client renders a

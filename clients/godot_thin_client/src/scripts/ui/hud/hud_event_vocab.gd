@@ -239,6 +239,11 @@ const DETAIL_VALUE_LABELS := {
 	"in": "arrived",
 	"hunger": "hunger",
 	"cold": "cold",
+	# `age` is the death every fed band in fair weather actually experiences. Its label is TWO words
+	# where the token is one — the wire spells it `age` because a token is a contract, the row says
+	# "old age" because the row is prose. Without this entry the generic fallback would render it as
+	# `Age`, which is legible but not English in the sentence it lands in.
+	"age": "old age",
 	"child": "child",
 	"working": "worker",
 	"elder": "elder",
