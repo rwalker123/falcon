@@ -1739,7 +1739,9 @@ discard is precisely what this axis split removed.
     themed one read one table. **`ui_preview._assert_two_line_face_states` (issue #383) is what fails when
     they drift**: it renders this cell enabled and DISABLED into an offscreen SubViewport and reads back
     each line's peak luminance, so line 2 left bright beside a faded box is caught in pixels — the state no
-    live caller reaches today, and the reason nothing else could see it.
+    live caller reaches today, and the reason nothing else could see it. **The `modulate` refusal is a
+    SEPARATE claim in that block** (`_face_modulate_is_identity`), because a luminance reading cannot tell
+    the double-dim shape from a properly tinted one — it dims the pixels just as convincingly.
     **The rung Button carries its policy as `HudWidgets.POLICY_RUNG_META`**, the one stable handle on a
     rung: `band_panel_preview._picker_rung_buttons` finds them by that meta and recurses past the cells,
     because a face match on `btn.text` would now find an empty string and pass every assertion vacuously.

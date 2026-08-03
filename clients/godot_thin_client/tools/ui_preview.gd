@@ -8472,12 +8472,17 @@ func _assert_bar_clears(dock: EventDockPanel, region: Control, what: String) -> 
 # screenshot renders fine either way.
 #
 # **THE CLAIM IS MADE ON PIXELS, NOT ON "AN OVERRIDE IS SET"** — the checkbox-indicator lesson
-# (`_checkbox_indicator_contrast`): an override-shaped assertion passes on a control that renders
-# nothing, and here it would equally pass on a face dimmed by the `modulate` that `_policy_rung_cell`'s
-# own note rejects (it multiplies the box the disabled stylebox has already faded, so the rung comes
-# out double-dimmed). Each face is therefore RENDERED — into an offscreen `SubViewport`, so the shipped
+# (`_checkbox_indicator_contrast`): an override-shaped assertion passes on a control whose override
+# reaches nothing the widget actually draws with, so what is asserted here is that the tint reaches the
+# RENDERED GLYPHS. Each face is therefore RENDERED — into an offscreen `SubViewport`, so the shipped
 # frame set keeps its count and its byte-for-byte identity — and the PEAK LUMINANCE inside each line's
 # own rect is read back, enabled against disabled.
+#
+# **PIXELS CANNOT SAY HOW A LINE GOT DIM, and that is why the modulate claim sits beside them rather
+# than inside them.** A face dimmed by `modulate` — the double-dim `_policy_rung_cell`'s own note
+# rejects, since it multiplies the BOX the disabled stylebox has already faded — reads to a luminance
+# measure exactly like a properly tinted one, and would pass every reading below. So the rejected shape
+# is refused by its own assertion (`_face_modulate_is_identity`), not by the fade.
 
 ## How many lines a two-line face has. Named so the size guard reads as the claim it is — "the probe
 ## measured BOTH lines" — rather than as an index that happens to be 2.
@@ -8541,14 +8546,13 @@ func _assert_two_line_face_states() -> void:
 	# its second line is built but unused today). Both pills are asked for at once because the pair IS
 	# the claim: the selected one must wear the `primary` answer and the resting one the `ghost` answer,
 	# so a face that hard-coded either colour fails on the other.
-	var picked: Array[int] = []
 	var targets := HudWidgets.build_crew_targets({
 			"crew_to_clear": TWO_LINE_FACE_PROBE_CLEAR_CREW,
 			"crew_to_hold": TWO_LINE_FACE_PROBE_HOLD_CREW,
 		}, TWO_LINE_FACE_PROBE_HOLD_CREW,
-		func(count: int) -> void: picked.append(count))
+		func(_count: int) -> void: pass)
 	host.add_child(targets)
-	await _settle()
+	await _settle(false)
 	for spec in [
 		[HudWidgets.CREW_TARGET_HOLD, "primary", "the target the crew is ON"],
 		[HudWidgets.CREW_TARGET_CLEAR, "ghost", "a target the crew is NOT on"],
@@ -8567,7 +8571,8 @@ func _assert_two_line_face_states() -> void:
 		_assert_hud("…and its LEAD line is the shared table's `%s` answer, not a colour of its own"
 				% String(spec[1]),
 			lines[0].is_equal_approx(want))
-		_assert_hud("…and its second line is that SAME answer at the metric alpha — one tint, derived",
+		_assert_hud("…and %s's second line is that SAME answer at the metric alpha — one tint, derived"
+				% what,
 			lines[1].is_equal_approx(
 				Color(want, want.a * HudWorkVocab.POLICY_PICKER_METRIC_ALPHA)))
 	host.remove_child(targets)
@@ -8582,8 +8587,14 @@ func _assert_two_line_face_states() -> void:
 	]:
 		var what := String(spec[0])
 		var make: Callable = spec[1]
-		var lit: PackedFloat32Array = await _two_line_face_luma(probe, host, make.call(false))
-		var dim: PackedFloat32Array = await _two_line_face_luma(probe, host, make.call(true))
+		var lit_face: Control = make.call(false)
+		var dim_face: Control = make.call(true)
+		# **THE HALF THE PIXELS CANNOT MAKE** — see the banner. A cell dimmed through `modulate` passes
+		# every luminance reading below and is the double-dim the invariant forbids.
+		_assert_hud("%s dims through its TINT, not through `modulate` — no double-dim on the box" % what,
+			_face_modulate_is_identity(lit_face) and _face_modulate_is_identity(dim_face))
+		var lit: PackedFloat32Array = await _two_line_face_luma(probe, host, lit_face)
+		var dim: PackedFloat32Array = await _two_line_face_luma(probe, host, dim_face)
 		_assert_hud("%s: the probe read BOTH lines in BOTH states" % what,
 			lit.size() == TWO_LINE_FACE_LINES and dim.size() == TWO_LINE_FACE_LINES)
 		if lit.size() != TWO_LINE_FACE_LINES or dim.size() != TWO_LINE_FACE_LINES:
@@ -8633,7 +8644,7 @@ func _two_line_face_luma(probe: SubViewport, host: Control, face: Control) -> Pa
 		host.remove_child(child)
 		child.queue_free()
 	host.add_child(face)
-	await _settle()
+	await _settle(false)
 	var out := PackedFloat32Array()
 	var texture := probe.get_texture()
 	var image: Image = texture.get_image() if texture != null else null
@@ -8668,6 +8679,24 @@ func _face_label_nodes(root: Node) -> Array[Label]:
 	for child in root.get_children():
 		found.append_array(_face_label_nodes(child))
 	return found
+
+## Is every `CanvasItem` in this face at modulate IDENTITY? **The claim the luminance readings cannot
+## make.** `modulate` inherits to children, so dimming a whole cell with it looks right in a pixel
+## measure and is the shape `_policy_rung_cell`'s note rejects: it multiplies the BOX too, which the
+## disabled stylebox has already faded, so the rung comes out dimmed twice. Asked of both states, since
+## a face that dims this way does it only when disabled.
+func _face_modulate_is_identity(root: Node) -> bool:
+	if root == null:
+		return true
+	if root is CanvasItem:
+		var item := root as CanvasItem
+		if not item.modulate.is_equal_approx(Color.WHITE) \
+				or not item.self_modulate.is_equal_approx(Color.WHITE):
+			return false
+	for child in root.get_children():
+		if not _face_modulate_is_identity(child):
+			return false
+	return true
 
 ## The colour each line of a face will DRAW with, resolved through the theme chain rather than read as
 ## an override — the question a `Label` actually answers when it rasterises its glyphs.
