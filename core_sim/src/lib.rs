@@ -287,8 +287,8 @@ pub use resources::{
     apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
     CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
     CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster,
-    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
+    FoodSiteEntry, FoodSiteRegistry, FoodSiteWaterBiasReport, HydrologyOverrides, MapTopology,
+    MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
     SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
     TradeTelemetry, WorldEpoch,
 };
@@ -589,6 +589,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(GrazeRegistry::default())
         .insert_resource(CommandEventLog::default())
         .insert_resource(FoodSiteRegistry::default())
+        .init_resource::<FoodSiteWaterBiasReport>()
         .insert_resource(snapshot_history)
         .insert_resource(snapshot::SnapshotCaptureMode::default())
         .insert_resource(generation_registry)

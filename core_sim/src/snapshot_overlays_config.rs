@@ -293,9 +293,15 @@ impl FoodOverlayConfig {
     /// **The site budget for a map with this much land.** One seam, so the curation and anything that
     /// reports the budget cannot disagree about it. Clamped to `land_tiles` because a map cannot carry
     /// more markers than it has ground.
+    ///
+    /// **At least one marker, always.** `site_land_fraction` explicitly permits `0.0` and `min_sites`
+    /// is the raw field, so a config of `{"site_land_fraction": 0.0, "min_sites": 0}` would otherwise
+    /// budget **zero** markers on any map — and since `food_modules` is the only source the client's
+    /// Forage gate reads, that is a world where no band can ever Forage, therefore never Sow, with no
+    /// boot warning to say why. The `max_total_sites` this replaced carried the same `.max(1)`.
     pub fn site_budget(&self, land_tiles: usize) -> usize {
         let scaled = (self.site_land_fraction() * land_tiles as f32).round() as usize;
-        scaled.max(self.min_sites()).min(land_tiles.max(1))
+        scaled.max(self.min_sites()).max(1).min(land_tiles.max(1))
     }
 
     pub fn default_radius(&self) -> u32 {
@@ -335,8 +341,12 @@ impl FoodOverlayConfig {
     /// comparable: at the shipped value a watered tile outranks a dry one carrying up to this much
     /// more forage, and richer watered ground still outranks poorer watered ground.
     ///
-    /// **`0.0` reproduces the pre-#466 map exactly** — every marker's own tile is in its own
-    /// candidate set, so with no bonus nothing ever scores higher than where it already is.
+    /// **`0.0` reproduces the pre-#466 map exactly, because the pass early-returns on it.** Note that
+    /// the early return is what does it, *not* the scoring: with the bonus off the score is bare
+    /// forage capacity, and curation did not pick the highest-capacity hex in each bucket, so a pass
+    /// that ran anyway would still relocate (measured: 82 of ~130 markers on one seed). The kill
+    /// switch is an explicit branch, and `FoodSiteWaterBiasReport::moved` is the test's evidence
+    /// that it fires.
     pub fn fresh_water_site_weight(&self) -> f32 {
         self.fresh_water_site_weight.max(0.0)
     }

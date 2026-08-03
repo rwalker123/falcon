@@ -1071,6 +1071,29 @@ pub struct FoodSiteRegistry {
     sites: Vec<FoodSiteEntry>,
 }
 
+/// **What the fresh-water bias pass actually did to the curated marker list** (issue #466).
+///
+/// The pass is a relocation, so its effect is invisible in any single map: "the markers are where
+/// they are" is true whether the pass ran, was switched off, or silently stopped working. This
+/// resource is the pass's own report, which is what lets a test assert the *kill switch* rather than
+/// mere reproducibility — at `fresh_water_site_weight = 0.0` the claim is `moved == 0`, and there is
+/// no "build the world without the pass" arm available to compare against instead.
+///
+/// Every field is written on **every** run of the pass, including the zero-weight early return: a
+/// stale count left over from a previous build would defeat the assertion it exists to support.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FoodSiteWaterBiasReport {
+    /// Markers relocated to a higher-scoring hex in their own bucket.
+    pub moved: usize,
+    /// Relocated markers whose destination classified to a different food module than their origin,
+    /// so the entry's `module`/`kind` were re-authored by the terrain.
+    pub relabelled: usize,
+    /// Markers sitting on or beside fresh water **after** the pass — the outcome the bias is for.
+    pub watered: usize,
+    /// Markers in the registry. Constant across the pass by construction (it never adds or drops).
+    pub total: usize,
+}
+
 impl FoodSiteRegistry {
     pub fn new(entries: Vec<FoodSiteEntry>) -> Self {
         Self { sites: entries }
