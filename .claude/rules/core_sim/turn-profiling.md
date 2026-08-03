@@ -542,6 +542,40 @@ never stored it. In-place mutation has nothing to withhold, so the intent is now
 threaded through every diff helper, decided once at the top of `publish` from `Publication`. A
 `Hold` diff produces exactly the same delta and writes nothing.
 
+#### A HELD section must be restated when it comes back — `Whole<T>`'s `held` flag
+
+Diffing against the last *turn* rather than the last *publication* leaves a hole, and it is the kind
+that never errors: **if one command changes a section and a later command in the same tick changes it
+back**, the second diff finds the section equal to the turn baseline and sends nothing — while the
+client is still holding the intermediate value the first command published. The client is stale
+against a baseline it agrees with, which is why nothing anywhere reports it.
+
+So every whole-section baseline is a **`Whole<T>` — the value plus a `held` bool** meaning *published
+on a held frame since the last Advance*. `diff_whole` sends an unchanged section **anyway** when the
+flag is set, and clears it (the client is back on the baseline); a `Hold` that sends a *changed*
+section sets it. `Advance` clears it either way.
+
+**The cumulative property survives, which is the reason this shape and not a second baseline set.**
+Every recapture frame is still exactly `baseline(last turn) → now`, plus at most one redundant
+restatement — so applying them in order is still idempotent and losing an intermediate one is still
+harmless. Advancing the baseline on recapture would fix the staleness too, and would trade that
+property for a `resync` round trip every time the bounded frame queue drops a frame.
+
+**The bug this was found through is the shape to recognise, not the fog toggle.** `set_fog off` then
+`set_fog on` with no turn between left the client rendering an all-`Active` visibility raster
+indefinitely, while `fogEnabled` — carried on every delta and never diffed — correctly said fog was
+on. The panels redacted and the map did not. What made fog the one that got *reported* is that the
+visibility raster is **byte-identical turn over turn whenever nothing moved**, so it never healed;
+every other client-reachable revert lands in `populations`, which `age_turns` alone moves every turn,
+so those ghosts last one turn and go unnoticed. **A section that can be identical across consecutive
+turns is where this class does lasting damage** — that is the property to check when adding a
+command that toggles one.
+
+**The keyed per-row sections (`diff_indexed` and friends) are deliberately NOT covered.** The
+equivalent guard there is a set of ids published on held frames rather than one bool, and the cases
+it would buy all self-heal on the next turn for the reason above. If a future section is both
+row-keyed *and* stable across turns, that is when it needs building.
+
 ### ECS change detection is the WRONG tool here — do not re-propose it
 
 Bevy's `Changed<T>` marks on mutable **access**, which is a superset of "the value changed", which
