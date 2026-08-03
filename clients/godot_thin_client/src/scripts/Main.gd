@@ -1134,10 +1134,14 @@ func _inspector_visible() -> bool:
 ## either closes the other (`_toggle_workbench_visibility`) — so what matters is that the Band panel
 ## offsets past whichever one is showing.
 ##
-## **The event dock is deliberately absent.** It reserves nothing from any of them — it OVERLAYS
-## the map (see `EventDockPanel`'s header) — so it has no place in a stacking order and no entry in
-## `_reservations`. Its horizontal bound comes from `_update_event_dock_insets`, which reads the
-## OTHER reservers; that is the perpendicular axis and a different question from this one.
+## **The event dock is deliberately absent — but that does not mean it is unmoved.** It reserves
+## nothing from any of them (it OVERLAYS the map; see `EventDockPanel`'s header), so it takes no
+## space, has no entry in `_reservations` and has no priority to be ranked at. What it DOES have is a
+## displacement: it is always the innermost thing on its own edge, so `_update_event_dock_edge_offset`
+## pushes it past every reserver already there — the band panel keeps the screen edge and the bar
+## sits inboard of it. That is a one-way offset off this table, not a row in it: nothing ever stacks
+## against the dock, because the dock occupies nothing. Its perpendicular bound is a third question
+## again — `_update_event_dock_insets`, which reads the left/right reservers.
 const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
 
@@ -1161,6 +1165,9 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
     # Recomputed on EVERY reservation change, not just the dock's own — the band panel changing edge
     # or collapsing has to move the bar.
     _update_event_dock_insets()
+    # The bar's OWN axis: push it past whatever reserves the edge it is DOCKED to, so a co-edge band
+    # panel is not drawn over. Same "recompute on every change" reason as the line above.
+    _update_event_dock_edge_offset()
 
 ## The Band panel's leading offset = Σ sizes of all lower-priority reservers currently on the SAME
 ## edge as the Band panel (today just the Inspector when both dock left; 0 otherwise). Recomputed
@@ -1218,6 +1225,33 @@ func _update_event_dock_insets() -> void:
     if hud != null and hud.has_method("right_column_width"):
         right += float(hud.call("right_column_width"))
     event_dock.call("set_perpendicular_insets", left, right)
+
+## The event dock's counterpart to `_update_band_panel_edge_offset`, on the bar's OWN axis: Σ sizes of
+## every reserver currently on the SAME edge the bar is docked to (in practice the Band panel when
+## both are top or both are bottom; 0 otherwise). The bar is then drawn just past them, so the panel
+## keeps the screen edge and the strip sits BELOW it on a top dock / ABOVE it on a bottom one.
+##
+## **EVERY reserver on that edge counts — there is no priority test here, and that is deliberate.**
+## `_update_band_panel_edge_offset` needs one because the Band panel is itself a reserver and has to
+## know which co-edge reservers sit inboard of it. The dock is not a reserver at all: it occupies no
+## strip, so nothing can ever stack against it and it is by construction the INNERMOST thing on its
+## edge. Adding it to `RESERVER_PRIORITY` would be the reflex mistake — it would reintroduce the
+## full-width reservation that shipped black bars either side of a centre-bounded strip.
+##
+## Fed from two places, and it needs both: `_apply_reservation` (a co-edge panel arriving, moving,
+## collapsing or hiding) and `dock_changed` (the bar itself moving to the other edge, which changes
+## which reservers it must clear).
+func _update_event_dock_edge_offset() -> void:
+    if event_dock == null or not event_dock.has_method("set_edge_offset") or not event_dock.has_method("get_dock"):
+        return
+    var dock_edge: int = int(event_dock.call("get_dock"))
+    var offset: float = 0.0
+    for other_id in _reservations:
+        var r: Dictionary = _reservations[other_id]
+        if int(r.get("edge", -1)) != dock_edge:
+            continue
+        offset += float(r.get("size", 0.0))
+    event_dock.call("set_edge_offset", offset)
 
 func _on_inspector_reserved_width_changed(width: float) -> void:
     _apply_reservation(&"inspector", SIDE_LEFT, width)
@@ -1343,8 +1377,11 @@ func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
 ## **THERE IS NO RESERVATION TO FAN OUT.** Unlike the Band/City panel, the dock overlays the map and
 ## reserves nothing: it has no entry in `_reservations`, no row in `RESERVER_PRIORITY` (whose `0` is
 ## the Inspector's), and publishes neither `reservation_changed` nor `current_reservation_size()`, so
-## nothing here touches `_apply_reservation`. It is bounded on the OTHER axis instead — see
-## `_update_event_dock_insets`.
+## nothing here touches `_apply_reservation`. What it does publish is `dock_changed` — which is the
+## opposite direction and must not be mistaken for a reservation: it says where the bar WENT, so this
+## side can re-measure what displaces it there. Both bounds are read FROM the reservers, never
+## contributed to them — `_update_event_dock_insets` on the perpendicular axis,
+## `_update_event_dock_edge_offset` on the bar's own.
 func _connect_event_dock() -> void:
     if event_dock == null:
         return
@@ -1368,10 +1405,22 @@ func _connect_event_dock() -> void:
     if inspector != null and inspector.has_signal("system_event") and not inspector.is_connected(
             "system_event", Callable(self, "_on_inspector_system_event")):
         inspector.connect("system_event", Callable(self, "_on_inspector_system_event"))
-    # Seed the perpendicular insets: nothing else will, since the dock never enters
-    # `_apply_reservation`'s fan-out. Wiring runs after `_connect_band_city_panel`, so the vertical
-    # reservers are already in `_reservations` by now.
+    # A dock chip moves the bar to the other horizontal edge, which changes WHICH reservers it has to
+    # clear — so the offset has to be re-measured there. Nothing in `_apply_reservation` can see this:
+    # no reservation changed, only the bar's own edge.
+    if event_dock.has_signal("dock_changed") and not event_dock.is_connected(
+            "dock_changed", Callable(self, "_on_event_dock_dock_changed")):
+        event_dock.connect("dock_changed", Callable(self, "_on_event_dock_dock_changed"))
+    # Seed BOTH bounds: nothing else will, since the dock never enters `_apply_reservation`'s fan-out.
+    # Wiring runs after `_connect_band_city_panel`, so the reservers are already in `_reservations`.
     _update_event_dock_insets()
+    _update_event_dock_edge_offset()
+
+## The bar changed edge; re-measure what displaces it on the new one. The edge is carried on the
+## signal for legibility, but `_update_event_dock_edge_offset` re-reads it from the panel — one
+## reader of `get_dock()`, so the offset can never be computed against a stale edge.
+func _on_event_dock_dock_changed(_edge: int) -> void:
+    _update_event_dock_edge_offset()
 
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])
