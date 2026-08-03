@@ -100,11 +100,18 @@ paths:
     the CEILING, not the standing stock: the shares describe what the ground GROWS, a property of the
     patch rather than of how hard it has lately been worked.
   - **EACH ROW LEADS WITH ITS CROP ROLE** (`FoodIcons.for_crop_role`, from `FloraShareInfo.role`):
-    🌾 staple / 🐄 fodder / ⇄ cash. All three marks are BORROWED from vocabulary this HUD already
-    proved at row size rather than invented — see `sprites-widgets.md` → the FoodIcons row.
-    **`""` MEANS UNSTATED, NOT "staple"**: the row renders `FLORA_ROLE_ICON_UNSTATED`, a blank slot
-    that holds its width, because defaulting a missing tag into a real category would invent a fact
-    about the plant. **Never re-derive a role from the payoff fields** — they are rung-2/rung-3
+    staple / fodder / cash. The marks are **BUNDLED ART** (`CropRoleSprites`, issue #463) rendered as
+    `[img]` BBCode, with the three borrowed emoji (🌾 / 🐄 / ⇄) as a live fallback — see
+    `sprites-widgets.md` → the `CropRoleSprites` row for why the art replaced them (COLLISION: two of
+    the three still mean something else elsewhere in this HUD) and for the sub-style ~13px forced.
+    **The BOX SIZE is threaded in from the host label's own font size** — `flora_composition_lines`
+    takes an `icon_px`, resolved by `SubjectDrawerController._role_icon_px()` off `%TileDetail`,
+    because a static producer cannot ask a label how big its text is and a literal would be the
+    hardcoded pixel size the discoveries strip already refuses to write. `0` means "text only".
+    **`""` MEANS UNSTATED, NOT "staple"**: the row renders a blank slot that holds its width —
+    `FoodIcons.crop_role_spacer` (a transparent image boxed exactly like a mark), falling back to
+    `FLORA_ROLE_ICON_UNSTATED` — because defaulting a missing tag into a real category would invent a
+    fact about the plant, and dropping the slot would shift every name in the list out of column. **Never re-derive a role from the payoff fields** — they are rung-2/rung-3
     numbers folding in the weeding and conversion gains, and they read all-zero for a species that
     cannot climb on this ground, which is exactly where the role is still true and useful.
   - **The rows are tinted NEUTRAL ink**, not the ▲/▼ two-tone — a share is descriptive, not a
@@ -129,9 +136,20 @@ paths:
   to 101%, so those frames ARE the percentage rounding test), `tile_growing_here` +
   `tile_growing_here_variant` (TWO Alluvial Plain tiles with DIFFERENT baskets — the visible
   per-tile-realization proof on the card), and `tile_panel_no_forage` (no list → no rows).
-  Four `_assert_food_layer_rows` assertions carry what a frame cannot — that the biomasses sum to the
-  ceiling, that an unstated role renders no icon while its neighbours keep theirs, and that `Grazing`
-  follows `Foraging`'s basket with nothing between — each sabotage-verified.
+  Six `_assert_food_layer_rows` assertions carry what a frame cannot — that the biomasses sum to the
+  ceiling, that an unstated role renders no icon while its neighbours keep theirs, that `Grazing`
+  follows `Foraging`'s basket with nothing between, that the unstated row **still holds its slot's
+  width**, and that the marks are **bundled art rather than the emoji fallback** — each
+  sabotage-verified. The last two are #463's, and each exists because of a way the others pass
+  vacuously: every assertion in the group survives all three PNGs failing to load (`for_crop_role`
+  then answers the emoji and any needle built from it falls back in step), so ONE assertion has to
+  name `CropRoleSprites.SPRITE_DIR` directly; and "no icon" does not distinguish a blank slot from no
+  slot at all, which is the difference between a tidy column and one untagged plant shifting every
+  name in the list. **The slot assertion is POSITIONAL (`begins_with`), never a `contains`** — its
+  first cut asked `row.contains(FoodIcons.crop_role_spacer(px))` and PASSED with the spacer file
+  deleted, because that helper answers `""` when there is no art and `contains("")` is true of every
+  string. An empty needle is this repo's easiest vacuity trap and a helper that degrades to `""` is
+  how you walk into it.
   **TWO ROWS, TWO QUESTIONS — the COMMITTED crop BESIDE the standing basket** (`docs/plan_flora_roster.md`
   §4.3, issue #433; `ForagePatchState.committedSpecies` / `committedDisplayName` → decoded in the same
   `forage_patches_to_array` as `committed_species` / `committed_display_name`, cross-refed by

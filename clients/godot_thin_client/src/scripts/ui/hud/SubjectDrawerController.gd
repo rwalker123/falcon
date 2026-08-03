@@ -243,6 +243,25 @@ func fit_subject_drawer(force: bool = false) -> void:
 ##
 ## `_render_land_drawer` is the ONE caller (the map hover tooltip builds its own text in
 ## `show_tooltip`), so the trim is local to the drawer.
+
+
+## The box the basket rows' crop-role art is drawn in — the HOST LABEL's own resolved font size, so
+## a mark is the size of the text it leads and tracks it if that size ever changes.
+##
+## **DERIVED, NEVER A CONSTANT** — the same rule the discoveries strip follows when it boxes a
+## `WonderSprites` texture ("boxed to the label's derived `get_theme_font_size`, never a hardcoded
+## pixel size"). `%TileDetail` sets no font-size override, so this reads the stock theme value;
+## writing that number here instead would silently stop tracking the day one is added, and it is
+## also the figure the art's own legibility was judged at.
+##
+## `0` when there is no label yet, which `FoodIcons.for_crop_role` reads as "text only" — the
+## honest answer, since with no label there is no size to match and the emoji still renders.
+func _role_icon_px() -> int:
+    if _tile_detail == null:
+        return 0
+    return _tile_detail.get_theme_font_size("normal_font_size")
+
+
 func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     var lines: Array[String] = []
     if tile_info.is_empty():
@@ -351,7 +370,7 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
         # ceiling instead would decompose a full patch nobody is looking at, and the card would hold
         # two numbers disagreeing about which stand is under discussion.
         lines.append_array(DetailFormat.flora_composition_lines(
-            tile_info.get("patch_composition", []), crop_species, patch_biomass))
+            tile_info.get("patch_composition", []), crop_species, patch_biomass, _role_icon_px()))
     # GRAZING — the animal-edible stock, directly under Foraging. Same shape, same phase-inline rule.
     # The adjacency IS the point: what HUMANS can eat here (seeds, nuts, tubers — food-module tiles
     # only) against what ANIMALS can eat here (grass and browse — cellulose people cannot digest, on

@@ -1,15 +1,18 @@
 # Bundled Icon Generation Prompts
 #
 # The icon twin of assets/terrain/texture_prompts.txt. These prompts generate the
-# bundled PNG art behind the four icon families:
+# bundled PNG art behind the five icon families:
 #
 #   assets/icons/fauna/    herd map markers      (ui/FaunaSprites.gd)
 #   assets/icons/sites/    food-site markers     (ui/SiteSprites.gd)
 #   assets/icons/wonders/  Wondrous Site markers (ui/WonderSprites.gd)
 #   assets/icons/stages/   settlement tokens     (ui/StageSprites.gd)
+#   assets/icons/crops/    crop-ROLE row marks   (ui/CropRoleSprites.gd)
 #
-# All four share ONE pipeline and ONE house style, so both are documented once here
-# rather than per family.
+# The first four share ONE pipeline and ONE house style, so both are documented once
+# here rather than per family. THE FIFTH DOES NOT — `crops/` is not a map marker, it
+# is an inline mark inside a text ROW, and it overrides several of the clauses below.
+# Read its own section before generating one; do not start from the house style.
 #
 # NOTE: prompts predating this file were never committed — only the shipped PNGs
 # survive. The house style below is reconstructed from that art plus the wild-fowl
@@ -304,3 +307,93 @@ camp: Flat vector game icon of a single round thatched hut with a domed straw ro
 
 # village.png — stage id village (🏘️ Village)
 village: Flat vector game icon of a small cluster of three simple houses with pitched roofs at differing heights standing close together, shown from the side, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire group, flat limited color palette in muted terracotta roofs above pale clay walls, simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+
+# ============================================================================
+# CROP ROLES  ->  assets/icons/crops/  (ui/CropRoleSprites.gd)
+# ============================================================================
+#
+# Keyed by the sim's `FloraShareInfo.role` tag verbatim (`staple` / `fodder` /
+# `cash`) — the server sends the key, so there is no client-side resolver. The
+# `StageSprites` degenerate case.
+#
+# THIS FAMILY IS NOT A MAP MARKER, AND THREE OF THE HOUSE STYLE'S CLAUSES INVERT.
+# These are inline marks leading each row of the tile card's basket
+# (`DetailFormat.flora_composition_lines`), drawn inside a RichTextLabel over
+# `HudStyle.PANEL_SOLID`. Everything below follows from those two facts.
+#
+#   1. THEY RENDER AT ~13px, NOT 24-41. `%TileDetail` sets no font-size override,
+#      so it takes the stock 16 through `project.godot`'s `canvas_items` stretch
+#      (1920 authored). That is ROUGHLY HALF the size the entire house style above
+#      is written for, and `sites/reeds.png` already blurs into a mass at ~36px.
+#      Nothing with interior detail survives here. Budget ONE silhouette and AT
+#      MOST ONE interior division; anything narrower than ~1/6 of the icon's width
+#      is gone.
+#
+#   2. THE GROUND IS ONE KNOWN NEAR-BLACK PANEL, SO DROP THE THICK DARK OUTLINE.
+#      `HudStyle.PANEL_SOLID` is Color(0.067, 0.102, 0.118) = #111A1E, Rec.709 luma
+#      ~24 — darker than any terrain a marker sits on (the catfish note measures
+#      its host grounds at 53-89). Two consequences, and the second is the one that
+#      bites: contrast against the ground is nearly FREE here, so the catfish's
+#      "look up the host biomes first" rule collapses to a single fixed target; but
+#      a THICK DARK CHARCOAL OUTLINE — the one clause every shipped icon carries —
+#      is CAMOUFLAGE against a luma-24 panel. It draws nothing and it eats the fill
+#      from both sides at 13px, which is precisely the budget there is none of. The
+#      FILL ITSELF carries the silhouette here. Ask for no outline at all.
+#
+#   3. THE TEST IS THE THREE AGAINST EACH OTHER, NOT EACH AGAINST THE GROUND. They
+#      render stacked vertically, three rows apart, and the question a player asks
+#      is "which of the three is this row" — never "is something there". So the set
+#      is separated on TWO axes that both survive downscaling, because at 13px
+#      either one alone can fail:
+#         SILHOUETTE   staple TALL+NARROW · fodder LOW+WIDE · cash SQUARE+COMPACT
+#         HUE          staple gold ~45deg · fodder green ~110deg · cash rose ~5deg
+#      Keep both splits when regenerating any one of them. Changing a single icon's
+#      colour is a change to the SET.
+#
+# PIPELINE DELTAS from the top of this file:
+#   * Key as normal, at `--size 256`. These are pale subjects, so expect to widen
+#     the ramp per the catfish note (`--lo 85 --hi 240`) and count the residual.
+#   * `.import`: `process/size_limit=64` as everywhere else (headroom for HiDPI and
+#     the `expand` stretch), but MIPMAPS ARE LIVE HERE — `mipmaps/generate=true` is
+#     inert in all four marker families because `MapView` pins
+#     `TEXTURE_FILTER_NEAREST` on itself, and a RichTextLabel does NOT inherit that.
+#     `project.godot` sets no `default_texture_filter`, so this family draws through
+#     Godot's Linear default and genuinely uses the mip chain. Do not copy a fauna
+#     sidecar and assume the flag is decorative.
+#   * JUDGE AT ~13px OVER #111A1E, and judge all three TOGETHER — a contact sheet of
+#     the three stacked as they render in the basket, not one icon at a time. The
+#     shipped frames are ui_preview's `tile_food_layers` (all three roles) and
+#     `tile_food_layers_unstated` (the blank-slot row).
+#
+# WHAT EACH MARK HAS TO SAY (from `FoodIcons.CROP_ROLE_ICONS`, and the reason the
+# borrowed emoji are being retired): staple = food for PEOPLE; fodder = feed for
+# PENNED ANIMALS, not food for people; cash = goods to TRADE. The retired glyphs
+# were the wheat ear / the cow / the exchange arrow, and the last two both still
+# mean something else elsewhere in the HUD (a penned herd on the work board; trade
+# goods on every yield readout) — so DO NOT DRAW AN ANIMAL FOR `fodder` AND DO NOT
+# DRAW AN ARROW, COIN OR SCALE FOR `cash`. Re-introducing either subject
+# re-introduces the collision this art exists to remove. Each mark names the
+# PRODUCT, not the account it pays into.
+
+
+# staple.png — role `staple` (food for people; retires the wheat-ear emoji)
+# TALL + NARROW, warm gold. Deliberately NOT `sites/grain.png`, which is a TIED
+# SHEAF of several stalks shown from the side and dissolves into a mass at this
+# size — this is ONE ear, which is what leaves enough width per grain to read.
+staple: Flat vector game icon of a single upright ear of ripe wheat, one fat seed head of plump overlapping grains on a very short stubby stalk with no leaves, tall and narrow in overall shape, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright warm golden amber tone with at most one slightly darker gold division separating the grains, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# fodder.png — role `fodder` (feed for penned animals; retires the cow emoji)
+# LOW + WIDE, fresh green. NO ANIMAL — the retired cow is `POLICY_CORRAL`'s penned-
+# livestock mark and still means that on the work board and the map. A bound bale of
+# cut green forage says "feed" by the product instead, and its squat horizontal
+# block is the strongest silhouette of the three at 13px.
+fodder: Flat vector game icon of a bound bale of cut green forage, a squat low wide rectangular block of stacked hay with slightly ragged ends and one simple horizontal binding band across its middle, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green tone with at most one slightly darker green band for the binding, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no individual straws, no fine texture, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+
+# cash.png — role `cash` (goods to trade; retires the exchange arrow)
+# SQUARE + COMPACT, dusty rose. NO ARROW, COIN OR SCALE — the exchange arrow is
+# `FoodIcons.TRADE_GOODS_GLYPH` on every yield readout in the game, and the coin /
+# money-bag / scales emoji are separately measured and rejected at these sizes. The
+# cash crops here are fibre (cotton, flax), so a wrapped bolt of dyed cloth names
+# the PRODUCT rather than the account. The rose hue is the far side of the wheel
+# from both siblings.
+cash: Flat vector game icon of a compact upright bolt of folded dyed cloth, a roughly square blocky bundle of neatly folded fabric with one simple diagonal binding cord across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm dusty rose terracotta tone with at most one slightly darker rose line for the cord, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fabric texture, no fine details, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon

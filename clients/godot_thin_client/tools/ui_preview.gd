@@ -7934,19 +7934,52 @@ func _assert_food_layer_rows() -> void:
 	_assert_hud("…and the basket's biomasses sum to the STANDING Foraging stock (%d of %d)" % [
 			basket_total, int(THREE_ROLE_STOCK)],
 		basket.size() == 3 and basket_total == int(THREE_ROLE_STOCK))
+	# The SAME box size the drawer just rendered with, read from the same place it reads it — a
+	# literal here would pass against a drawer that had stopped tracking the label's font size.
+	var role_px := _hud._drawer._role_icon_px()
 	var unstated := _flora_basket_rows(_hud._drawer._tile_terrain_lines(_floorify(
 		_unstated_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)))
 	var icon_rows := 0
 	var cotton_has_icon := true
+	var cotton_holds_slot := false
 	for row in unstated:
-		var has_icon := _flora_row_has_role_icon(row)
+		var has_icon := _flora_row_has_role_icon(row, role_px)
 		if has_icon:
 			icon_rows += 1
 		if row.contains("Cotton"):
 			cotton_has_icon = has_icon
+			cotton_holds_slot = row.begins_with(
+				DetailFormat.MORALE_BREAKDOWN_INDENT + _expected_blank_slot(role_px) + " ")
 	_assert_hud("a species whose role the wire leaves UNSTATED renders no role icon",
 		unstated.size() == 3 and not cotton_has_icon)
 	_assert_hud("…while the two roles the wire DOES state still wear theirs", icon_rows == 2)
+	# **AND THE UNSTATED ROW STILL HOLDS ITS WIDTH** (#463). "No icon" and "no slot" are one glance
+	# apart in a PNG and one character apart in the producer, and the difference is whether one
+	# untagged plant shifts every name in the list out of column.
+	#
+	# **STATED AS A PREFIX, NOT A `contains`, AND THAT IS THE WHOLE ASSERTION.** The first cut asked
+	# `row.contains(FoodIcons.crop_role_spacer(role_px))` and PASSED WITH THE SPACER FILE DELETED —
+	# that helper answers `""` when there is no art, and `contains("")` is true of every string. An
+	# empty needle is the vacuity trap this harness's own rule names ("a needle must be one no other
+	# copy can satisfy"), and it is easiest to walk into with a helper that degrades to `""`.
+	# `_expected_blank_slot` therefore never returns empty, and the claim is POSITIONAL: the slot
+	# sits between the indent and the space before the name. That is what makes deleting the spacer
+	# a MODE CHANGE this still passes (the text spacer holds the column just as honestly) while a
+	# producer that emitted no slot at all — the actual regression — fails.
+	_assert_hud("…and the UNSTATED row still holds the slot's width", cotton_holds_slot)
+	# **THE ART IS LIVE, NOT THE EMOJI FALLBACK.** Every assertion above passes unchanged if every
+	# PNG fails to load, because `for_crop_role` then answers the emoji and the needles fall back with
+	# it — the whole point of the change would be gone with nothing red. So this one names the
+	# BUNDLED path directly: it is the only claim here that can tell art from fallback, and the only
+	# one a missing/misnamed file breaks. (`role_px > 0` is asserted with it because a zero box would
+	# route every row to the emoji for a completely different reason and read identically.)
+	var art_rows := 0
+	for row in _flora_basket_rows(lines):
+		if row.contains(CropRoleSprites.SPRITE_DIR):
+			art_rows += 1
+	_assert_hud("the three-role tile's marks are BUNDLED ART, not the emoji fallback (%d of 3, box %dpx)" % [
+			art_rows, role_px],
+		role_px > 0 and art_rows == 3)
 
 ## **THE STAND IS SILENT WHERE THE VERB IS UNAVAILABLE** (issue #464), asserted over the REAL line
 ## producer rather than a picture: a `Foraging` row that never rendered and one that rendered off the
@@ -8089,9 +8122,31 @@ func _flora_row_biomass(row: String) -> int:
 		return 0
 	return int(row.substr(open_paren + 1, close_paren - open_paren - 1))
 
-func _flora_row_has_role_icon(row: String) -> bool:
+## Does this basket row lead with a real ROLE MARK — as opposed to the blank slot an UNSTATED role
+## renders, which since #463 is ALSO an `[img]` and would satisfy any test phrased as "does the row
+## carry art"?
+##
+## **The needles are built through the PRODUCTION resolver at the drawer's own box size**, never
+## written as literals. The mark is bundled art now (`CropRoleSprites`) with the emoji as a LIVE
+## fallback, so a test pinned to either form alone goes quietly vacuous the moment the other is what
+## renders — and it is the emoji form that a failed PNG load produces, i.e. exactly the regression
+## worth catching. Asking `FoodIcons.for_crop_role` means this matches whatever the row was actually
+## rendered from, and it excludes the spacer by construction (a different file).
+## The blank slot an UNSTATED role SHOULD render at this box size — the spacer image where there is
+## art to match the width of, else the text spacer, mirroring `DetailFormat.flora_composition_lines`'
+## own fallback chain. **Never `""`**, which is the point: the helper it wraps degrades to empty, and
+## an empty needle silently satisfies every string test there is.
+func _expected_blank_slot(icon_px: int) -> String:
+	var spacer := FoodIcons.crop_role_spacer(icon_px)
+	if spacer != "":
+		return spacer
+	return HudFloraVocab.FLORA_ROLE_ICON_UNSTATED
+
+
+func _flora_row_has_role_icon(row: String, icon_px: int) -> bool:
 	for role in FoodIcons.CROP_ROLE_ICONS:
-		if row.contains(String(FoodIcons.CROP_ROLE_ICONS[role])):
+		var mark := FoodIcons.for_crop_role(String(role), icon_px)
+		if mark != "" and row.contains(mark):
 			return true
 	return false
 
