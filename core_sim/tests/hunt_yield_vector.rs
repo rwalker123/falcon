@@ -28,7 +28,7 @@ use core_sim::{
     SimulationTick, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
     StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
     TileRegistry, WellbeingConfigHandle, FOOD, MSY_BIOMASS_FRACTION, NO_BUILD_UNDERWAY_DIP,
-    NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
+    NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, TRADE_GOODS,
 };
 
 /// Four depths on the intensity dial. Every one of them must pay the species' product vector; none
@@ -1193,6 +1193,9 @@ fn spawn_raid_party(
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
                     floor,
+                    // This suite measures the raid's PRODUCTS, not its length, so the party fills
+                    // its pack exactly as it did before the fill target existed.
+                    fill_target: NO_FILL_TARGET,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,

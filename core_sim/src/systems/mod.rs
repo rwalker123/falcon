@@ -26,7 +26,7 @@ use crate::{
         LaborAllocation, LaborAssignment, LaborTarget, LocalStore, LogisticsLink, MoraleCause,
         MoraleContributions, MountainMetadata, PendingMigration, PopulationCohort, PowerNode,
         ResidentBand, SourceYield, StartingUnit, Tile, TradeLink, DEFAULT_ESCAPEMENT_FLOOR, FODDER,
-        FOOD, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE, TRADE_GOODS,
+        FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE, TRADE_GOODS,
     },
     creatures_config::CreaturesConfigHandle,
     culture::{

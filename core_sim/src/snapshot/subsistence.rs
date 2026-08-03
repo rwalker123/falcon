@@ -159,6 +159,12 @@ fn herd_regrowth_samples(herd: &Herd, fauna: &FaunaConfig) -> Vec<f32> {
 /// A species that **pays nothing** ([`crate::fauna::species_requires_denial`]) is estimated at the
 /// one floor it can legally be worked at: there is no point quoting a sustainable raid on a quarry
 /// with no product.
+///
+/// **Every row is the UNTARGETED raid** ([`NO_FILL_TARGET`]) — the party fills its pack. The fill
+/// target is a *launch* parameter, so quoting it here would need a third sampled axis on a table
+/// that is already `floors × party sizes` per herd; the in-flight
+/// `PopulationCohortState.expeditionTripBound` answers for a party's real orders once it is sent,
+/// and the launch feed line answers at the moment of the commit.
 pub(crate) fn hunt_trip_estimate_entries(
     herd: &Herd,
     fauna: &FaunaConfig,
@@ -174,12 +180,21 @@ pub(crate) fn hunt_trip_estimate_entries(
     let mut entries = Vec::with_capacity(sampled.len() * expedition.max_party_size as usize);
     for &floor in sampled {
         for party_workers in 1..=expedition.max_party_size {
-            let forecast = hunt_trip_forecast(party_workers, herd, floor, fauna, labor, expedition);
+            let forecast = hunt_trip_forecast(
+                party_workers,
+                herd,
+                floor,
+                NO_FILL_TARGET,
+                fauna,
+                labor,
+                expedition,
+            );
             entries.push(HuntTripEstimateState {
                 floor,
                 party_workers,
                 // `0` = the raid never completes within `hunt.forecast_horizon_turns`.
                 turns_to_fill: forecast.turns_to_fill.unwrap_or(0),
+                bound: forecast.bound.as_str().to_string(),
                 delivers_food: forecast.delivers_food,
                 delivers_trade: forecast.delivers_trade,
                 animals_taken: forecast.animals_taken,

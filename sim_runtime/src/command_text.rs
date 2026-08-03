@@ -197,7 +197,9 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         verb: "send_hunt_expedition",
         aliases: &[],
         summary: "Outfit a detached hunting party that follows a herd, harvests food, and delivers it.",
-        usage: "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor]",
+        usage:
+            "send_hunt_expedition <faction_id> <band_id> <party_workers> <fauna_id> [floor] \
+             [fill_target]",
     },
     CommandVerbHelp {
         verb: "export_map",
@@ -1051,12 +1053,21 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 .next()
                 .map(|token| parse_f32(token, "send_hunt_expedition floor"))
                 .transpose()?;
+            // Optional trailing FILL TARGET — whole animals to wait for, the party-side twin of the
+            // floor. Absent = `NO_FILL_TARGET` ("fill the pack"). It follows the floor rather than
+            // preceding it because the floor shipped first and a positional grammar is append-only
+            // for the same reason a wire is.
+            let fill_target = parts
+                .next()
+                .map(|token| parse_u32(token, "send_hunt_expedition fill_target"))
+                .transpose()?;
             Ok(CommandPayload::SendHuntExpedition {
                 faction_id: parse_u32(faction_str, "send_hunt_expedition faction")?,
                 band_id: Some(parse_u64(band_str, "send_hunt_expedition band_id")?),
                 party_workers: parse_u32(workers_str, "send_hunt_expedition party_workers")?,
                 fauna_id: fauna_id.to_string(),
                 floor,
+                fill_target,
             })
         }
         "resync" => Ok(CommandPayload::Resync),
@@ -1234,6 +1245,37 @@ mod tests {
                 policy: Some("eradicate".to_string()),
                 band_id: Some(904),
             }
+        );
+    }
+
+    /// **The fill target is a positional token AFTER the floor**, and both are optional
+    /// (`docs/plan_hunt_through_combat.md` §5.2). All three arities are pinned together, because the
+    /// failure a positional grammar invites is a target silently read as a floor — which would be a
+    /// *valid* command naming a different raid, not a parse error.
+    #[test]
+    fn parse_send_hunt_expedition_reads_the_floor_then_the_fill_target() {
+        let expected = |floor, fill_target| CommandPayload::SendHuntExpedition {
+            faction_id: 0,
+            band_id: Some(7),
+            party_workers: 4,
+            fauna_id: "game_fowl_03".to_string(),
+            floor,
+            fill_target,
+        };
+        // Neither: the sim's own defaults on both axes.
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03").unwrap(),
+            expected(None, None)
+        );
+        // Floor only — the grammar as it shipped before the fill target existed.
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42").unwrap(),
+            expected(Some(0.42), None)
+        );
+        // Both.
+        assert_eq!(
+            parse_command_line("send_hunt_expedition 0 7 4 game_fowl_03 0.42 100").unwrap(),
+            expected(Some(0.42), Some(100))
         );
     }
 

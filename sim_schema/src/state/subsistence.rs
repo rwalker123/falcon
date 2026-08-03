@@ -69,6 +69,18 @@ pub struct HuntTripEstimateState {
     /// `delivers_food == false`.
     #[serde(default)]
     pub delivered_trade: f32,
+    /// **WHICH stop ends this trip** (appended, `docs/plan_hunt_through_combat.md` §5.2) — the
+    /// `core_sim::HuntTripBound` key: `"pack_full"`, `"fill_target"`, `"floor"`, `"herd_lost"` or
+    /// `"horizon"`. A trip length alone cannot tell the player's two levers apart — *"you come home
+    /// on your fill target in 4 turns"* and *"you reach the floor in 2 turns with the pack a third
+    /// full"* are different decisions and the same kind of number — so the sim names the bound and
+    /// the client composes nothing.
+    ///
+    /// **Every row here is the UNTARGETED raid**, so it reads `"fill_target"` for no row: a fill
+    /// target is chosen at launch, and this band-agnostic table samples floor × party size only.
+    /// A launched party's own bound is `PopulationCohortState::expedition_trip_bound`.
+    #[serde(default)]
+    pub bound: String,
 }
 
 /// A fully-fed pen — the neutral value of [`HerdTelemetryState::pen_fed_fraction`], so an un-penned

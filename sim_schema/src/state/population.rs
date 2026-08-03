@@ -468,6 +468,27 @@ pub struct PopulationCohortState {
     /// (append-only).
     #[serde(default)]
     pub expedition_floor: f32,
+    /// **How many whole ANIMALS this hunt party will wait for** before turning for camp — the
+    /// party-side twin of [`Self::expedition_floor`] (`docs/plan_hunt_through_combat.md` §5.2),
+    /// chosen at launch. **`0` = no target**: fill the pack, which is the pre-target behaviour and
+    /// the value a Scout party and a resident band report.
+    ///
+    /// It *replaces* the pack's capacity in the raid's existing completion rather than adding a stop,
+    /// so a target at or above what the pack holds is exactly the untargeted raid. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub expedition_fill_target: u32,
+    /// **Which stop will end this party's raid** — the `core_sim::HuntTripBound` key
+    /// (`"pack_full"` / `"fill_target"` / `"floor"` / `"herd_lost"` / `"horizon"`), read off the same
+    /// in-flight forward simulation [`Self::expedition_eta_turns`] comes from, so it answers for the
+    /// party's *real* orders (its own floor and fill target) rather than for the band-agnostic
+    /// pre-launch table.
+    ///
+    /// **`""` = not raiding** — a resident band, a scout, or a party already walking a load home.
+    /// That is a different statement from `"horizon"`, which means the projection ran and found no
+    /// stop inside `hunt.forecast_horizon_turns`. Appended (append-only).
+    #[serde(default)]
+    pub expedition_trip_bound: String,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

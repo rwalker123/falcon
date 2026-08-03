@@ -20,6 +20,14 @@ const CAPTURED_FLOOR: f32 = 0.42;
 /// neither end of the comparison can be reached by a fallback.
 const DRAGGED_FLOOR: f32 = 0.07;
 
+/// The raid's **fill target** at capture, in whole animals — the party-side twin of
+/// [`CAPTURED_FLOOR`]. A count no default produces ([`core_sim::NO_FILL_TARGET`] is `0`), so a value
+/// surviving to the far end cannot have come from anywhere but the checkpoint.
+const CAPTURED_FILL_TARGET: u32 = 37;
+
+/// The fill target dragged to AFTER the checkpoint — the value the rollback must throw away.
+const DRAGGED_FILL_TARGET: u32 = 4;
+
 /// **A rollback rewinds the FLOOR** (`docs/plan_harvest_floor.md` §4).
 ///
 /// The floor is the whole of what the player decides about harvest pressure, so a rewind that
@@ -204,11 +212,13 @@ fn the_default_floor_is_the_food_peak() {
     );
 }
 
-/// **A hunt expedition's floor round-trips through the command, the mission and the rollback.**
+/// **A hunt expedition's floor AND fill target round-trip through the mission and the rollback.**
 ///
-/// The raid's floor is the whole of what its orders say about pressure, so it has to survive the
-/// same three hops the assignment's does. Pinned at a floor **no retired stance named** (`0.42`), so
-/// a value that appears at the far end cannot have come from a default or from a label.
+/// The two numbers are the whole of what a raid's orders say — the floor how deep to draw the herd,
+/// the fill target how long the party will wait (`docs/plan_hunt_through_combat.md` §5.2) — so both
+/// have to survive the same hops the assignment's floor does. Pinned at a floor **no retired stance
+/// named** (`0.42`) and a target no default could produce, so a value that appears at the far end
+/// cannot have come from a default or from a label.
 #[test]
 fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
     use core_sim::{Expedition, ExpeditionMission, ExpeditionPhase};
@@ -260,6 +270,7 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
                 mission: ExpeditionMission::Hunt {
                     fauna_id: "game_raid_probe".to_string(),
                     floor: CAPTURED_FLOOR,
+                    fill_target: CAPTURED_FILL_TARGET,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -280,11 +291,16 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
             .world
             .get_mut::<Expedition>(party)
             .expect("the party carries its mission");
-        if let ExpeditionMission::Hunt { floor, .. } = &mut expedition.mission {
+        if let ExpeditionMission::Hunt {
+            floor, fill_target, ..
+        } = &mut expedition.mission
+        {
             *floor = DRAGGED_FLOOR;
+            *fill_target = DRAGGED_FILL_TARGET;
         }
     }
     assert_eq!(raid_floor_of(&app, party), DRAGGED_FLOOR);
+    assert_eq!(raid_fill_target_of(&app, party), DRAGGED_FILL_TARGET);
 
     restore_sim_state(&mut app.world, &checkpoint);
 
@@ -293,13 +309,16 @@ fn an_expedition_floor_round_trips_through_the_mission_and_the_rollback() {
     let restored = query
         .iter(&app.world)
         .find_map(|expedition| match &expedition.mission {
-            ExpeditionMission::Hunt { floor, .. } => Some(*floor),
+            ExpeditionMission::Hunt {
+                floor, fill_target, ..
+            } => Some((*floor, *fill_target)),
             _ => None,
         })
         .expect("the restored world carries the hunt mission");
     assert_eq!(
-        restored, CAPTURED_FLOOR,
-        "a rollback restores the raid's floor, not a re-picked one"
+        restored,
+        (CAPTURED_FLOOR, CAPTURED_FILL_TARGET),
+        "a rollback restores BOTH halves of the raid's orders, not re-picked ones"
     );
 }
 
@@ -311,6 +330,18 @@ fn raid_floor_of(app: &bevy::prelude::App, party: Entity) -> f32 {
         .mission
     {
         core_sim::ExpeditionMission::Hunt { floor, .. } => *floor,
+        other => panic!("expected a hunt mission, got {other:?}"),
+    }
+}
+
+fn raid_fill_target_of(app: &bevy::prelude::App, party: Entity) -> u32 {
+    match &app
+        .world
+        .get::<core_sim::Expedition>(party)
+        .expect("the party carries its mission")
+        .mission
+    {
+        core_sim::ExpeditionMission::Hunt { fill_target, .. } => *fill_target,
         other => panic!("expected a hunt mission, got {other:?}"),
     }
 }

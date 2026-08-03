@@ -106,11 +106,14 @@ fn create_herds<'a>(
                 .hunt_trip_estimates
                 .iter()
                 .map(|estimate| {
+                    let bound = builder.create_string(estimate.bound.as_str());
                     fb::HuntTripEstimate::create(
                         builder,
                         &fb::HuntTripEstimateArgs {
                             // THE SAMPLED FLOOR — replaces the retired `policy` string.
                             floor: estimate.floor,
+                            // WHICH STOP ENDS THE TRIP — a `HuntTripBound` key.
+                            bound: Some(bound),
                             partyWorkers: estimate.party_workers,
                             turnsToFill: estimate.turns_to_fill,
                             deliversFood: estimate.delivers_food,

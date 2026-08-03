@@ -102,8 +102,8 @@ pub use components::{
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
     LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
-    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR, STRIP_IT_BARE,
-    TRADE_GOODS,
+    DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY, NO_RAID_FLOOR,
+    STRIP_IT_BARE, TRADE_GOODS,
 };
 pub use config_load::ConfigLoadError;
 pub use config_override::{
@@ -308,8 +308,8 @@ pub use systems::spawn_initial_world;
 pub use systems::{
     advance_band_movement, advance_expeditions, advance_labor_allocation, advance_predator_raids,
     expedition_take_provisions, hunt_per_worker_provisions, hunt_take, hunt_trip_forecast,
-    output_multiplier, simulate_power, HuntTripForecast, MigrationKnowledgeEvent, PowerSimParams,
-    TradeDiffusionEvent,
+    output_multiplier, simulate_power, HuntTripBound, HuntTripForecast, MigrationKnowledgeEvent,
+    PowerSimParams, TradeDiffusionEvent,
 };
 pub use systems::{
     apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,

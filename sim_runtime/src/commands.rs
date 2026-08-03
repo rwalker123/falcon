@@ -213,6 +213,11 @@ pub enum CommandPayload {
         /// sim's default (`components::DEFAULT_ESCAPEMENT_FLOOR`); validated `0.0..=1.0` at the
         /// server boundary and **rejected**, never clamped.
         floor: Option<f32>,
+        /// **How many whole ANIMALS the party waits for** before turning for camp — the party-side
+        /// twin of `floor`. `None` (or `0`) = `components::NO_FILL_TARGET`, "fill the pack", which is
+        /// what the raid did before this field existed. Every count is legal, so unlike `floor` there
+        /// is nothing to reject: a target above what the pack holds is simply the untargeted raid.
+        fill_target: Option<u32>,
     },
     ExportMap {
         path: Option<String>,
@@ -708,6 +713,7 @@ impl CommandEnvelope {
                 party_workers,
                 fauna_id,
                 floor,
+                fill_target,
             } => pb::command_envelope::Command::SendHuntExpedition(pb::SendHuntExpeditionCommand {
                 faction_id: *faction_id,
                 band_id: *band_id,
@@ -716,6 +722,7 @@ impl CommandEnvelope {
                 // Retired by the harvest floor arc; the number is immutable, the value unread.
                 policy: None,
                 floor: *floor,
+                fill_target: *fill_target,
             }),
             CommandPayload::ExportMap { path } => {
                 pb::command_envelope::Command::ExportMap(pb::ExportMapCommand {
@@ -990,6 +997,7 @@ impl CommandEnvelope {
                     party_workers: cmd.party_workers,
                     fauna_id: cmd.fauna_id,
                     floor: cmd.floor,
+                    fill_target: cmd.fill_target,
                 }
             }
             pb::command_envelope::Command::ExportMap(cmd) => {

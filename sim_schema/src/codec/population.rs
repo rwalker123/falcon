@@ -244,6 +244,13 @@ fn create_populations<'a>(
             } else {
                 Some(builder.create_string(&cohort.expedition_target_herd))
             };
+            // `""` = "not raiding" (a resident band, a scout, a party walking a load home) — absent
+            // rather than an empty string, the convention every discriminator above follows.
+            let expedition_trip_bound = if cohort.expedition_trip_bound.is_empty() {
+                None
+            } else {
+                Some(builder.create_string(&cohort.expedition_trip_bound))
+            };
             let pending_reveal_x = if cohort.pending_reveal_x.is_empty() {
                 None
             } else {
@@ -277,6 +284,10 @@ fn create_populations<'a>(
                     bandId: cohort.band_id,
                     // THE RAID'S FLOOR — replaces the retired `expeditionHuntPolicy`.
                     expeditionFloor: cohort.expedition_floor,
+                    // THE RAID'S FILL TARGET, in whole animals (`0` = fill the pack), and which stop
+                    // the in-flight projection says will end this party's raid.
+                    expeditionFillTarget: cohort.expedition_fill_target,
+                    expeditionTripBound: expedition_trip_bound,
                     entity: cohort.entity,
                     home: cohort.home,
                     currentX: cohort.current_x,

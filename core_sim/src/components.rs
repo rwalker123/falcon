@@ -790,8 +790,31 @@ pub enum ExpeditionMission {
         /// slow and as crew-hungry as eating it. Denial is a mission of its own with the carry bound
         /// removed, at which point this field means only "how deep a harvest".
         floor: f32,
+        /// **HOW MUCH THE PARTY WILL WAIT FOR, in whole ANIMALS** — the party-side twin of `floor`,
+        /// chosen at launch (`docs/plan_hunt_through_combat.md` §5.2). The floor says how deep to
+        /// draw the herd; this says how long you will wait for the load.
+        ///
+        /// It **replaces the pack's capacity** in the completion the raid already evaluates rather
+        /// than adding a stop of its own — see `systems::expeditions::raid_load`. A target at or
+        /// above what the pack can hold is therefore *exactly* the untargeted raid.
+        ///
+        /// **[`NO_FILL_TARGET`] (`0`) means "fill the pack"** — the pre-target behaviour, and the
+        /// default when the player names none.
+        ///
+        /// It exists because a raid's length was otherwise a **species constant with no lever**
+        /// (§5.1): the pack is measured in carry and the take in reach, so
+        /// `turns_to_fill = per_worker_carry / (engage_rate × body_mass)` and party size cancels
+        /// out. Eight hunters on a Wild Fowl flock took 31 hunting turns, and so did four, and so
+        /// did sixteen.
+        fill_target: u32,
     },
 }
+
+/// **No fill target — "fill the pack."** The `0` sentinel on
+/// [`ExpeditionMission::Hunt::fill_target`], matching the `NO_ENGAGEMENT_STAGE` convention this arc
+/// already put on the wire: a count of `0` is not a raid anyone could order, so it is free to mean
+/// *unset*. Named because a bare `0` at a comparison site reads as "come home with nothing".
+pub const NO_FILL_TARGET: u32 = 0;
 
 impl ExpeditionMission {
     /// Stable wire/snapshot key for the mission (client discriminator).
@@ -803,12 +826,14 @@ impl ExpeditionMission {
     }
 
     /// Parse a mission from its wire keys (snapshot restore). `"hunt"` reconstructs
-    /// `Hunt { fauna_id, floor }` from `target_herd` + `floor`; anything else is `Scout`.
-    pub fn from_wire(kind: &str, target_herd: &str, floor: f32) -> Self {
+    /// `Hunt { fauna_id, floor, fill_target }` from `target_herd` + `floor` + `fill_target`;
+    /// anything else is `Scout`.
+    pub fn from_wire(kind: &str, target_herd: &str, floor: f32, fill_target: u32) -> Self {
         match kind {
             "hunt" => ExpeditionMission::Hunt {
                 fauna_id: target_herd.to_string(),
                 floor,
+                fill_target,
             },
             _ => ExpeditionMission::Scout,
         }
@@ -828,6 +853,15 @@ impl ExpeditionMission {
         match self {
             ExpeditionMission::Hunt { floor, .. } => *floor,
             ExpeditionMission::Scout => NO_RAID_FLOOR,
+        }
+    }
+
+    /// The raid's **fill target** in whole animals for a `Hunt` mission — the snapshot
+    /// `expeditionFillTarget`. A `Scout` party fills no pack, so it reports [`NO_FILL_TARGET`].
+    pub fn hunt_fill_target(&self) -> u32 {
+        match self {
+            ExpeditionMission::Hunt { fill_target, .. } => *fill_target,
+            ExpeditionMission::Scout => NO_FILL_TARGET,
         }
     }
 }

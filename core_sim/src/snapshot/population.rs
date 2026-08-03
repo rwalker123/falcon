@@ -283,6 +283,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         expedition_phase,
         expedition_target_herd,
         expedition_floor,
+        expedition_fill_target,
         home_band_entity,
         expedition_announced,
         pending_reveal_x,
@@ -295,6 +296,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             exp.phase.as_str().to_string(),
             exp.mission.target_herd().to_string(),
             exp.mission.hunt_floor(),
+            exp.mission.hunt_fill_target(),
             exp.home_band.to_bits(),
             exp.announced,
             exp.pending_reveal.iter().map(|p| p.x).collect(),
@@ -309,6 +311,9 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             // A resident band raids nothing, so it reports the floor that takes nothing — never `0`,
             // which would read as "take everything" if anything ever acted on it.
             NO_RAID_FLOOR,
+            // A band that raids nothing waits for no animals — `NO_FILL_TARGET` is "fill the pack",
+            // which is also the honest reading for a party that has no pack.
+            NO_FILL_TARGET,
             0,
             false,
             Vec::new(),
@@ -377,6 +382,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         pending_reveal_y,
         expedition_carried_trade,
         expedition_floor,
+        expedition_fill_target,
         max_expedition_party_size: expedition_levers.max_party_size,
         expedition_carry_cap,
         // Appended after every earlier-shipped field (append-only wire discipline; matches the
@@ -436,6 +442,14 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
             .as_ref()
             .map(|d| d.recurring)
             .unwrap_or(false),
+        // Which stop will end THIS party's raid. `""` = not raiding at all (a resident band, a
+        // scout, or a party already walking a load home) — never confused with `"horizon"`, which is
+        // a projection that ran and found no stop.
+        expedition_trip_bound: expedition_delivery
+            .as_ref()
+            .and_then(|d| d.trip_bound)
+            .map(|bound| bound.as_str().to_string())
+            .unwrap_or_default(),
         // The band's hay reserve (Flora Roster F3) — the FODDER key of the same `LocalStore` its
         // provisions ride, surfaced as a scalar so the client can show it beside the food reserve. It
         // also rides the full `stores` list above, but a named scalar spares the client a key lookup.

@@ -284,6 +284,12 @@ message SendHuntExpeditionCommand {
   // (0.5, the food peak). Rejected with a command failure unless finite and within 0.0..=1.0 —
   // never clamped. Appended (append-only).
   optional float floor = 6;
+  // HOW MANY WHOLE ANIMALS the party waits for before turning for camp — the party-side twin of
+  // `floor` (docs/plan_hunt_through_combat.md §5.2). Absent, or 0, = NO TARGET: fill the pack, which
+  // is what the raid did before this field existed. It replaces the pack's capacity in the raid's
+  // existing completion, so a target at or above what the pack holds is exactly the untargeted raid.
+  // Appended (append-only).
+  optional uint32 fill_target = 7;
 }
 
 // Ask the server to republish the world as a FULL snapshot.

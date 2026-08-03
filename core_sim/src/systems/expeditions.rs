@@ -365,15 +365,32 @@ pub fn advance_expeditions(
                 // carry cap. Then, per policy, decide whether the trip is complete. The
                 // trip-completion decision lives INSIDE the in-reach guard: a party still walking to
                 // its herd must never conclude the trip.
-                if let ExpeditionMission::Hunt { fauna_id, floor } = &mission {
+                if let ExpeditionMission::Hunt {
+                    fauna_id,
+                    floor,
+                    fill_target,
+                } = &mission
+                {
                     if let Some(idx) = herds.herds.iter().position(|herd| herd.id == *fauna_id) {
                         let floor = *floor;
+                        let fill_target = *fill_target;
                         let herd_pos = herds.herds[idx].position();
                         // The herd's OWN capacity — the single source of the husbandry ladder's
                         // rung → `K` mapping (`herd_capacity`); a party hunting a tamed or penned herd
                         // raids *its* stock, not a wild counterfactual's.
                         let carrying_capacity = herd_capacity(&herds.herds[idx], &fauna);
-                        let cap = scalar_from_f32(workers as f32 * cfg.hunt.per_worker_carry);
+                        // **The party-side stop**: the pack, or the mission's fill target where the
+                        // player set one below it (`raid_load` — the same resolution the forecast
+                        // runs, so the raid comes home on the load it was quoted). It replaces the
+                        // pack in the completion below rather than adding a stop beside it.
+                        let cap = raid_load(
+                            scalar_from_f32(workers as f32 * cfg.hunt.per_worker_carry),
+                            fill_target,
+                            floor,
+                            herds.herds[idx].body_mass,
+                            &herd_hunt_yield(&herds.herds[idx], &fauna),
+                        )
+                        .cap;
                         let in_reach = crate::grid_utils::hex_distance_wrapped(
                             exp_pos,
                             herd_pos,
@@ -1050,6 +1067,114 @@ pub fn hunt_take(
     take
 }
 
+/// **WHICH of the raid's four stops actually ended the trip.** A trip length alone cannot tell the
+/// two levers apart — *"you come home on your fill target in 4 turns; the herd never reaches the
+/// floor"* and *"you reach the floor in 2 turns with the pack a third full"* are different
+/// decisions, and the number is the same kind of number in both
+/// (`docs/plan_hunt_through_combat.md` §5.2). The forecast names the bound so the client composes
+/// nothing.
+///
+/// The variants are the raid's existing completion terms, not new ones: the party-side stop
+/// ([`Self::PackFull`] / [`Self::FillTarget`] — see [`raid_load`], which decides which of the two
+/// binds), the herd-side stop ([`Self::Floor`]), the herd's death ([`Self::HerdLost`]), and running
+/// out of horizon ([`Self::Horizon`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HuntTripBound {
+    /// The **pack** filled — no room left, and no fill target bound before it did.
+    PackFull,
+    /// The mission's **fill target** was reached: the player asked for fewer animals than the pack
+    /// holds and got them.
+    FillTarget,
+    /// The herd reached the mission's **floor** — the standing surplus is spent, and the party comes
+    /// home with whatever it has.
+    Floor,
+    /// The herd was driven under its `extinction_floor` and is **gone**; there is nothing left to
+    /// raid.
+    HerdLost,
+    /// **None of the above within `hunt.forecast_horizon_turns`** — the raid was still going when the
+    /// projection ran out, which is what a `turns_to_fill` of `None` means.
+    Horizon,
+}
+
+impl HuntTripBound {
+    /// Stable wire/snapshot key (client discriminator), the `as_str` convention every wire enum in
+    /// this crate uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HuntTripBound::PackFull => "pack_full",
+            HuntTripBound::FillTarget => "fill_target",
+            HuntTripBound::Floor => "floor",
+            HuntTripBound::HerdLost => "herd_lost",
+            HuntTripBound::Horizon => "horizon",
+        }
+    }
+}
+
+/// **The party-side stop of one load** — how much the party will bring home before it turns for
+/// camp, and which of the two party-side bounds set it.
+pub(crate) struct RaidLoad {
+    /// The load, in the **pack's own units** (provisions on the party's `LocalStore`).
+    pub(crate) cap: Scalar,
+    /// [`HuntTripBound::PackFull`] or [`HuntTripBound::FillTarget`] — whichever produced `cap`.
+    pub(crate) bound: HuntTripBound,
+}
+
+/// **The fill target REPLACES the pack's capacity; it does not add a stop.** The raid already ends
+/// on *pack full OR herd at the floor OR herd lost* — this resolves the first of those three, so a
+/// target below capacity shortens the trip and a target at or above capacity is *exactly* the
+/// untargeted raid (`docs/plan_hunt_through_combat.md` §5.2).
+///
+/// **The animals → pack conversion happens HERE and nowhere else.** The target is a count of whole
+/// animals; the pack holds provisions, so the target is `fill_target × body_mass` of biomass put
+/// through the species' own `HuntYield` — the *same* call the completion's `food_per_animal` uses,
+/// so `fill_target` animals of room and the target cap are the same number by construction rather
+/// than by two roundings agreeing.
+///
+/// **Wherever the pack is ignored, so is the target** — it is the same stop under a player's name,
+/// so it cannot bind where the thing it replaces does not. Two cases, and they are different kinds
+/// of fact:
+/// - an **INEDIBLE** quarry (a *product* fact): its `provisions_per_biomass` is `0`, so the converted
+///   target would be `0` and every raid on it would come home on turn 1 — while the pack is already
+///   inert there for the same reason (a wolf never fills a *food* pack; its raid ends on the floor).
+///   This is `YieldAccounts::ratio_axis`'s rule restated for a *cap*: never convert through a
+///   component you have not established is positive.
+/// - **[`STRIP_IT_BARE`]** (an *intensity* fact): a floor-`0` raid grinds the herd to extinction and
+///   the `Hunting` arm never consults the pack at all (`done`/`relaunch` are both `false` there), so
+///   a target would stop a raid the live path does not stop.
+///
+/// A fill target is therefore inert on both, and **denial** — the mission with the carry bound
+/// removed (`docs/plan_denial_raid.md`) — is where it will need a meaning of its own.
+pub(crate) fn raid_load(
+    pack_cap: Scalar,
+    fill_target: u32,
+    floor: f32,
+    body_mass: f32,
+    hunt_yield: &HuntYield,
+) -> RaidLoad {
+    if fill_target == NO_FILL_TARGET || !hunt_yield.edible() || floor <= STRIP_IT_BARE {
+        return RaidLoad {
+            cap: pack_cap,
+            bound: HuntTripBound::PackFull,
+        };
+    }
+    let target_cap = scalar_from_f32(
+        hunt_yield
+            .apply(fill_target as f32 * body_mass, EXPEDITION_OUTPUT_MULTIPLIER)
+            .provisions,
+    );
+    if target_cap < pack_cap {
+        RaidLoad {
+            cap: target_cap,
+            bound: HuntTripBound::FillTarget,
+        }
+    } else {
+        RaidLoad {
+            cap: pack_cap,
+            bound: HuntTripBound::PackFull,
+        }
+    }
+}
+
 /// What a hunting party can expect from a herd at a given **floor**, computed **at launch** so the
 /// player sees the trip's economics before committing workers (`handle_send_hunt_expedition`), and
 /// exported per herd × **sampled floor** × party size in the snapshot (the floor is continuous, so
@@ -1098,6 +1223,15 @@ pub struct HuntTripForecast {
     /// **inedible** quarry this is the whole payload: `delivered_food` is `0` and `delivers_food`
     /// false, while this is what comes home.
     pub delivered_trade: f32,
+    /// **Which stop ended the trip** — see [`HuntTripBound`]. Paired with `turns_to_fill`, which says
+    /// *when*: the two together are the readout the fill target turns on, because the same "4 turns"
+    /// means "you got the animals you asked for" or "the herd ran out" depending on this.
+    ///
+    /// [`HuntTripBound::Horizon`] is exactly the `turns_to_fill == None` case, save for
+    /// [`HuntTripBound::HerdLost`], which also reports no completion turn: the projection stops where
+    /// `advance_herds` would despawn the herd, and claims no homecoming turn the live path does not
+    /// produce either.
+    pub bound: HuntTripBound,
 }
 
 /// One hunter's per-turn **provisions** throughput at the **global** `hunt.provisions_per_biomass`
@@ -1201,6 +1335,7 @@ pub fn hunt_trip_forecast(
     workers: u32,
     herd: &Herd,
     floor: f32,
+    fill_target: u32,
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
@@ -1211,6 +1346,7 @@ pub fn hunt_trip_forecast(
         workers,
         herd,
         floor,
+        fill_target,
         fauna,
         labor,
         expedition,
@@ -1228,6 +1364,7 @@ fn hunt_trip_forecast_seeded(
     workers: u32,
     herd: &Herd,
     floor: f32,
+    fill_target: u32,
     fauna: &FaunaConfig,
     labor: &LaborConfig,
     expedition: &ExpeditionConfig,
@@ -1237,7 +1374,17 @@ fn hunt_trip_forecast_seeded(
     let hunt_yield = fauna::herd_hunt_yield(herd, fauna);
     let delivers_food = hunt_yield.edible();
     let delivers_trade = hunt_yield.tradeable();
-    let cap = scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry);
+    // The party-side stop: the pack, or the mission's fill target where it binds first — resolved
+    // ONCE, exactly as the `ExpeditionPhase::Hunting` arm resolves it, so the projection cannot quote
+    // a different load than the raid brings home.
+    let load = raid_load(
+        scalar_from_f32(workers as f32 * expedition.hunt.per_worker_carry),
+        fill_target,
+        floor,
+        herd.body_mass,
+        &hunt_yield,
+    );
+    let cap = load.cap;
     // **An empty party has no pack**, so nothing about its trip can be projected. That is the only
     // case that short-circuits.
     //
@@ -1258,6 +1405,8 @@ fn hunt_trip_forecast_seeded(
             delivered_food: 0.0,
             wasted_food: 0.0,
             delivered_trade: 0.0,
+            // No party, no projection — the raid does not end, it never starts.
+            bound: HuntTripBound::Horizon,
         };
     }
 
@@ -1281,6 +1430,9 @@ fn hunt_trip_forecast_seeded(
     let mut delivered_food = 0.0_f32;
     let mut delivered_trade = 0.0_f32;
     let mut wasted_food = 0.0_f32;
+    // Which stop the projection ran into. It starts at the honest "still going when the projection
+    // ran out" and is overwritten by whichever of the raid's stops fires first.
+    let mut bound = HuntTripBound::Horizon;
 
     for turn in 1..=horizon {
         // Logistics: the herd's ecology moves first (regrowth, or the depensation decline), exactly
@@ -1288,6 +1440,7 @@ fn hunt_trip_forecast_seeded(
         fauna::regrow_biomass(&mut quarry, fauna);
         if quarry.biomass <= ecology.extinction_floor * capacity {
             // `advance_herds` would despawn it here — a lost herd ends the raid.
+            bound = HuntTripBound::HerdLost;
             break;
         }
 
@@ -1378,6 +1531,16 @@ fn hunt_trip_forecast_seeded(
                 delivered_food,
                 wasted_food,
                 delivered_trade,
+                // **The herd-side stop wins a tie**, mirroring the live arm testing `done` before
+                // `relaunch`: when the load fills on the very turn the surplus runs out, the fact
+                // that decides whether to send the party back is that there is nothing left to send
+                // it for. Otherwise it is the party-side stop `raid_load` resolved — the pack, or
+                // the fill target where the player set one below it.
+                bound: if surplus_spent {
+                    HuntTripBound::Floor
+                } else {
+                    load.bound
+                },
             };
         }
     }
@@ -1391,6 +1554,9 @@ fn hunt_trip_forecast_seeded(
         delivered_food,
         wasted_food,
         delivered_trade,
+        // Either the loop ran out of horizon, or it broke on a lost herd — both leave
+        // `turns_to_fill` at `None`, and the bound is what tells them apart.
+        bound,
     }
 }
 
@@ -1406,6 +1572,14 @@ pub struct ExpeditionDelivery {
     pub eta_turns: Option<u32>,
     pub projected_food: f32,
     pub recurring: bool,
+    /// **Which stop will end THIS party's raid** — [`HuntTripBound`], read off the same seeded
+    /// forward simulation the ETA comes from, so it answers for the party's *actual* orders (its own
+    /// floor and its own fill target) rather than for the band-agnostic pre-launch table.
+    ///
+    /// `None` for a party that is no longer raiding — already `Delivering`/`Returning`, or its herd
+    /// is gone — where there is no forward projection to name a stop in. That is a different
+    /// statement from [`HuntTripBound::Horizon`], which means the projection ran and found no stop.
+    pub trip_bound: Option<HuntTripBound>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1422,10 +1596,16 @@ pub fn expedition_delivery(
     grid_width: u32,
     wrap_horizontal: bool,
 ) -> Option<ExpeditionDelivery> {
-    let ExpeditionMission::Hunt { fauna_id, floor } = &expedition.mission else {
+    let ExpeditionMission::Hunt {
+        fauna_id,
+        floor,
+        fill_target,
+    } = &expedition.mission
+    else {
         return None; // Scouts deliver map data, not food.
     };
     let floor = *floor;
+    let fill_target = *fill_target;
 
     let speed = labor.band_move_tiles_per_turn.max(1);
     let travel = |a: UVec2, b: UVec2| {
@@ -1439,6 +1619,8 @@ pub fn expedition_delivery(
             eta_turns: home_pos.map(|h| travel(party_pos, h)),
             projected_food: carried,
             recurring,
+            // Nothing is being raided — this leg is a walk, so there is no stop to name.
+            trip_bound: None,
         }),
         // Still working toward the kill.
         ExpeditionPhase::Hunting | ExpeditionPhase::Outbound | ExpeditionPhase::AwaitingOrders => {
@@ -1448,6 +1630,8 @@ pub fn expedition_delivery(
                     eta_turns: home_pos.map(|h| travel(party_pos, h)),
                     projected_food: carried,
                     recurring: false,
+                    // The raid is already over — the herd it named is gone.
+                    trip_bound: Some(HuntTripBound::HerdLost),
                 });
             };
             let herd_pos = herd.position();
@@ -1466,6 +1650,7 @@ pub fn expedition_delivery(
                 workers,
                 herd,
                 floor,
+                fill_target,
                 fauna,
                 labor,
                 expedition_cfg,
@@ -1481,6 +1666,7 @@ pub fn expedition_delivery(
                 eta_turns,
                 projected_food,
                 recurring,
+                trip_bound: Some(fc.bound),
             })
         }
     }

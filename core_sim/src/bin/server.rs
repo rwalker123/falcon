@@ -34,7 +34,7 @@ use core_sim::{
     ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError, LaborAllocation,
     LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
     SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
-    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
@@ -498,6 +498,7 @@ enum Command {
         party_workers: u32,
         fauna_id: String,
         floor: Option<f32>,
+        fill_target: Option<u32>,
     },
     FoundSettlement {
         faction: FactionId,
@@ -2638,7 +2639,7 @@ fn handle_send_expedition(
 /// and send a detached party to follow the herd `fauna_id` under `policy` (Sustain when omitted).
 /// Unlike the scouting expedition it draws **no** provisions (it lives off its kills) and starts in
 /// the `Hunting` phase heading for the herd's live tile. Text form:
-/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [policy]`.
+/// `send_hunt_expedition <faction> <band> <party_workers> <fauna_id> [floor] [fill_target]`.
 fn handle_send_hunt_expedition(
     app: &mut bevy::prelude::App,
     faction: FactionId,
@@ -2646,6 +2647,7 @@ fn handle_send_hunt_expedition(
     party_workers: u32,
     fauna_id: String,
     floor: Option<f32>,
+    fill_target: Option<u32>,
 ) {
     // **The raid's floor FAILS CLOSED**, exactly as `assign_labor`'s does: absent means the default
     // (the food peak, the conservative reading), and a value outside `0.0..=1.0` is refused with its
@@ -2667,6 +2669,11 @@ fn handle_send_hunt_expedition(
             return;
         }
     };
+    // **The fill target does NOT fail closed, because it cannot fail.** Unlike the floor, every count
+    // is a legal order: a target at or above what the pack holds is simply the untargeted raid
+    // (`raid_load` takes the smaller of the two), and [`NO_FILL_TARGET`] is the honest reading of
+    // "the player named none". There is nothing to reject here, so there is no rejection path.
+    let fill_target = fill_target.unwrap_or(NO_FILL_TARGET);
     let Some(band) = select_starting_band(
         app,
         faction,
@@ -2739,9 +2746,17 @@ fn handle_send_hunt_expedition(
         let fauna = app.world.resource::<FaunaConfigHandle>().get();
         let labor = app.world.resource::<LaborConfigHandle>().get();
         let registry = app.world.resource::<HerdRegistry>();
-        registry
-            .find(&fauna_id)
-            .map(|herd| hunt_trip_forecast(party_workers, herd, floor, &fauna, &labor, &cfg))
+        registry.find(&fauna_id).map(|herd| {
+            hunt_trip_forecast(
+                party_workers,
+                herd,
+                floor,
+                fill_target,
+                &fauna,
+                &labor,
+                &cfg,
+            )
+        })
     };
     // Round-trip TRAVEL is part of the honest trip length — the party walks out to the herd and back.
     // `hunt_trip_forecast` counts only the HUNTING turns (once in reach), so add the walk here, where
@@ -2824,8 +2839,14 @@ fn handle_send_hunt_expedition(
                         ),
                         format!(
                             " eta_turns={} hunt_turns={} travel_turns={} animals={} food={:.2} \
-                             wasted={:.2}",
-                            total, hunt_turns, travel_turns, animals, food, wasted
+                             wasted={:.2} bound={}",
+                            total,
+                            hunt_turns,
+                            travel_turns,
+                            animals,
+                            food,
+                            wasted,
+                            f.bound.as_str()
                         ),
                     )
                 }
@@ -2836,8 +2857,12 @@ fn handle_send_hunt_expedition(
                         food, animals, wasted, cfg.hunt.forecast_horizon_turns, travel_turns
                     ),
                     format!(
-                        " eta_turns=none travel_turns={} animals={} food={:.2} wasted={:.2}",
-                        travel_turns, animals, food, wasted
+                        " eta_turns=none travel_turns={} animals={} food={:.2} wasted={:.2} bound={}",
+                        travel_turns,
+                        animals,
+                        food,
+                        wasted,
+                        f.bound.as_str()
                     ),
                 ),
             }
@@ -2879,6 +2904,7 @@ fn handle_send_hunt_expedition(
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.clone(),
                     floor,
+                    fill_target,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -2900,8 +2926,9 @@ fn handle_send_hunt_expedition(
             band.label, floor, fauna_id, viability_note
         ),
         Some(format!(
-            "status=applied mission=hunt floor={} workers={} herd={} expedition={}{}",
+            "status=applied mission=hunt floor={} fill_target={} workers={} herd={} expedition={}{}",
             floor,
+            fill_target,
             party_workers,
             fauna_id,
             expedition_entity.to_bits(),
@@ -4656,12 +4683,14 @@ fn command_from_payload(payload: ProtoCommandPayload) -> Option<Command> {
             party_workers,
             fauna_id,
             floor,
+            fill_target,
         } => Some(Command::SendHuntExpedition {
             faction: FactionId(faction_id),
             band_id,
             party_workers,
             fauna_id,
             floor,
+            fill_target,
         }),
         ProtoCommandPayload::FoundSettlement {
             faction_id,
@@ -5451,8 +5480,17 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command, flat_server: &S
             party_workers,
             fauna_id,
             floor,
+            fill_target,
         } => {
-            handle_send_hunt_expedition(app, faction, band_id, party_workers, fauna_id, floor);
+            handle_send_hunt_expedition(
+                app,
+                faction,
+                band_id,
+                party_workers,
+                fauna_id,
+                floor,
+                fill_target,
+            );
         }
         Command::FoundSettlement {
             faction,
@@ -8415,7 +8453,7 @@ mod tests {
             let faction = FactionId(0);
             let herd_id = seed_herd(&mut app, UVec2::new(1, 1), Some(faction));
 
-            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad));
+            handle_send_hunt_expedition(&mut app, faction, None, 1, herd_id, Some(bad), None);
 
             let rejected = app.world.resource::<CommandEventLog>().iter().any(|entry| {
                 matches!(entry.kind, CommandEventKind::ExpeditionSent)

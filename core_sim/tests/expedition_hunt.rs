@@ -27,13 +27,13 @@ use core_sim::{
     CommandEventLog, CultureManager, DiscoveryProgressLedger, Expedition, ExpeditionConfig,
     ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FactionId, FactionInventory,
     FaunaConfig, FaunaConfigHandle, ForageRegistry, GenerationId, GenerationRegistry, Herd,
-    HerdDensityMap, HerdRegistry, HerdTelemetry, LaborAllocation, LaborConfig, LaborConfigHandle,
-    LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick, SizeClass,
-    SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
-    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, TileRegistry,
-    VisibilityConfig, VisibilityConfigHandle, VisibilityLedger, WellbeingConfigHandle, FOOD,
-    NO_IMPROVEMENT_UNDERWAY,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, HuntTripBound, LaborAllocation, LaborConfig,
+    LaborConfigHandle, LadderConfig, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle,
+    MoraleCause, PopulationCohort, ResidentBand, Scalar, SimulationConfig, SimulationTick,
+    SizeClass, SnapshotHistory, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
+    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit,
+    TileRegistry, VisibilityConfig, VisibilityConfigHandle, VisibilityLedger,
+    WellbeingConfigHandle, FOOD, NO_FILL_TARGET, NO_IMPROVEMENT_UNDERWAY,
 };
 
 /// Party size used by every trip test: 4 hunters (the design's reference party).
@@ -233,6 +233,28 @@ fn spawn_hunt_party_of(
     floor: f32,
     workers: u32,
 ) -> bevy::prelude::Entity {
+    spawn_hunt_party_targeting(
+        app,
+        home_band,
+        pos,
+        fauna_id,
+        floor,
+        workers,
+        NO_FILL_TARGET,
+    )
+}
+
+/// A hunting party carrying a **fill target** — the party-side twin of the floor, in whole animals
+/// (`docs/plan_hunt_through_combat.md` §5.2). [`NO_FILL_TARGET`] reproduces `spawn_hunt_party_of`.
+fn spawn_hunt_party_targeting(
+    app: &mut App,
+    home_band: bevy::prelude::Entity,
+    pos: UVec2,
+    fauna_id: &str,
+    floor: f32,
+    workers: u32,
+    fill_target: u32,
+) -> bevy::prelude::Entity {
     let tile = tile_at(app, pos);
     app.world
         .spawn((
@@ -244,6 +266,7 @@ fn spawn_hunt_party_of(
                 mission: ExpeditionMission::Hunt {
                     fauna_id: fauna_id.to_string(),
                     floor,
+                    fill_target,
                 },
                 phase: ExpeditionPhase::Hunting,
                 announced: false,
@@ -353,7 +376,15 @@ fn a_raid_and_a_resident_band_reach_the_same_animals() {
         .killed
     };
 
-    let raid = hunt_trip_forecast(PARITY_PARTY, &herd, PEAK_FLOOR, &fauna, &labor, &cfg);
+    let raid = hunt_trip_forecast(
+        PARITY_PARTY,
+        &herd,
+        PEAK_FLOOR,
+        NO_FILL_TARGET,
+        &fauna,
+        &labor,
+        &cfg,
+    );
     let food_per_animal = herd_hunt_yield(&herd, &fauna)
         .apply(DEER_BODY, 1.0)
         .provisions;
@@ -400,7 +431,7 @@ fn more_hunters_raid_the_surplus_faster() {
 
     let mut prev_turns = u32::MAX;
     for workers in 1..=4u32 {
-        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
         let turns = f
             .turns_to_fill
             .expect("a surplus-bound boar raid completes");
@@ -414,8 +445,8 @@ fn more_hunters_raid_the_surplus_faster() {
         );
         prev_turns = turns;
     }
-    let one = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
-    let four = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
+    let one = hunt_trip_forecast(1, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
+    let four = hunt_trip_forecast(4, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     assert!(
         four.turns_to_fill.unwrap() < one.turns_to_fill.unwrap(),
         "four hunters must raid the surplus strictly faster than one ({} vs {} turns)",
@@ -435,15 +466,15 @@ fn a_second_hunter_raids_more_animals_no_slower() {
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
 
     for workers in 1..=3u32 {
-        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
         println!(
             "[pack=4/worker] Sustain raid, {workers} hunter(s): {} animals over {} turns",
             f.animals_taken,
             f.turns_to_fill.expect("a boar raid completes")
         );
     }
-    let one = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
-    let two = hunt_trip_forecast(2, &herd, 0.5, &fauna, &labor, &cfg);
+    let one = hunt_trip_forecast(1, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
+    let two = hunt_trip_forecast(2, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     assert!(
         two.animals_taken >= one.animals_taken,
         "a second hunter must never raid FEWER animals ({} vs {})",
@@ -480,7 +511,7 @@ fn animals_delivered_scale_with_the_pack_and_never_over_kill() {
     // workers before the pack seats one whole, so a 1–2 worker party force-partials instead (its own
     // regime). Here the pack seats 1,1,2,2,2,3 whole animals for 3..=8 hunters — scaling, no over-kill.
     for workers in 3..=8u32 {
-        let f = hunt_trip_forecast(workers, &herd, 0.5, &fauna, &labor, &cfg);
+        let f = hunt_trip_forecast(workers, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
         let pack_animals =
             (workers as f32 * cfg.hunt.per_worker_carry / food_per_animal).floor() as u32;
         println!(
@@ -506,7 +537,7 @@ fn a_sustain_raid_leaves_about_half_k() {
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let f = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(4, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     let taken_biomass = f.animals_taken as f32 * BOAR_BODY;
     let floor = BOAR_K * 0.5;
     let turns = f
@@ -549,7 +580,8 @@ fn deeper_policies_raid_deeper() {
     let cfg = unbounded_carry_config();
     let herd = wild_herd(BOAR_K, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let animals = |p| hunt_trip_forecast(4, &herd, p, &fauna, &labor, &cfg).animals_taken;
+    let animals =
+        |p| hunt_trip_forecast(4, &herd, p, NO_FILL_TARGET, &fauna, &labor, &cfg).animals_taken;
     let sustain = animals(0.5);
     let surplus = animals(0.3);
     let deplete = animals(0.15);
@@ -579,8 +611,8 @@ fn the_standing_surplus_caps_the_raid() {
     let cfg = unbounded_carry_config();
     let herd = wild_herd(1010.0, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let four = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
-    let eight = hunt_trip_forecast(8, &herd, 0.5, &fauna, &labor, &cfg);
+    let four = hunt_trip_forecast(4, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
+    let eight = hunt_trip_forecast(8, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     // Liveness: both parties genuinely raid, so the ordering below is not two zeroes agreeing.
     assert!(
         four.animals_taken > 0 && eight.animals_taken > 0,
@@ -606,7 +638,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
     // Exactly at Sustain's K/2 floor → no surplus.
     let herd = wild_herd(BOAR_K * 0.5, BOAR_K, BOAR_BODY, BOAR_R);
 
-    let f = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(4, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     assert_eq!(
         f.animals_taken, 0,
         "a herd at its floor spares no whole animal to a Sustain raid"
@@ -618,7 +650,7 @@ fn a_herd_at_its_floor_has_no_surplus() {
         BOAR_BODY,
         BOAR_R,
     );
-    let g = hunt_trip_forecast(4, &collapsing, 0.5, &fauna, &labor, &cfg);
+    let g = hunt_trip_forecast(4, &collapsing, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     assert_eq!(
         g.animals_taken, 0,
         "a collapsing herd has no Sustain surplus either"
@@ -645,7 +677,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
 
     // Standing surplus above K/2 ≈ 3213 biomass ≈ 4 whole mammoths — NOT lean.
     let herd = wild_herd(11013.0, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
-    let f = hunt_trip_forecast(1, &herd, 0.5, &fauna, &labor, &cfg);
+    let f = hunt_trip_forecast(1, &herd, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     println!(
         "[partial] 1-worker mammoth: killed {} animals, delivered {:.2} / wasted {:.2} food over {:?} turns",
         f.animals_taken, f.delivered_food, f.wasted_food, f.turns_to_fill
@@ -675,7 +707,7 @@ fn a_small_party_on_a_big_animal_delivers_a_partial_with_waste() {
 
     // A genuinely at-floor herd (surplus < one body) still delivers NOTHING — the true too-lean case.
     let at_floor = wild_herd(MAMMOTH_K * 0.5, MAMMOTH_K, MAMMOTH_BODY, MAMMOTH_R);
-    let lean = hunt_trip_forecast(1, &at_floor, 0.5, &fauna, &labor, &cfg);
+    let lean = hunt_trip_forecast(1, &at_floor, 0.5, NO_FILL_TARGET, &fauna, &labor, &cfg);
     assert_eq!(
         lean.animals_taken, 0,
         "a herd at K/2 has no surplus to raid — kills nothing"
@@ -750,7 +782,15 @@ fn the_raid_forecast_matches_a_real_party_run() {
             );
             let forecast = {
                 let herd = app.world.resource::<HerdRegistry>().find(&id).unwrap();
-                hunt_trip_forecast(PARTY_WORKERS, herd, policy, &fauna, &labor, &cfg)
+                hunt_trip_forecast(
+                    PARTY_WORKERS,
+                    herd,
+                    policy,
+                    NO_FILL_TARGET,
+                    &fauna,
+                    &labor,
+                    &cfg,
+                )
             };
             let context = format!("{policy:?} @ {cap_fraction}·K");
 
@@ -1738,4 +1778,442 @@ fn a_raid_keeps_hunting_when_the_herd_wanders_near_the_band() {
         dropped_off,
         "a near-band drop-off pushes the Delivering feed line (status=delivered)"
     );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// THE FILL TARGET (`docs/plan_hunt_through_combat.md` §5.2) — the party-side twin of the floor.
+//
+// The defect it exists to fix (§5.1) is precisely a number that LOOKED like a lever and was not: the
+// pack is measured in carry and the take in reach, so `turns_to_fill = per_worker_carry /
+// (engage_rate × body_mass × provisions_per_biomass)` and party size cancels out of it entirely.
+// Every test below is therefore paired — a lever that moves the trip, beside the invariance it exists
+// to escape, beside the identity that makes it safe to land.
+// ---------------------------------------------------------------------------------------------------
+
+/// §5.1's own fixture, and the shape of the playtest report: a **Wild Fowl** flock (body `0.13`,
+/// `engage_rate` `10`). Its ceiling is the roster's lowest, so an untargeted raid on it takes
+/// `0.8 / (10 × 0.13 × 0.02)` ≈ **31 hunting turns at every legal party size** — the "away ≈43 turns,
+/// 31 hunting + 12 travel" a player reported with no control that moved it.
+const FOWL_BODY: f32 = 0.13;
+/// A flock standing far above what any legal party can clear, so the **herd** side never binds and
+/// what is measured is purely the party's own stop.
+const FOWL_K: f32 = 4000.0;
+/// The flock's regrowth while it is not meant to be the binding term.
+const FOWL_R: f32 = 0.10;
+/// A fill target well under the pack — 100 fowl of the ~307 a single hunter's pack seats.
+const SHORT_FILL_TARGET: u32 = 100;
+/// A second, larger target: the pair is what pins that the number is a **dial**, not a switch.
+const LONGER_FILL_TARGET: u32 = 200;
+/// A target far above what any pack here can hold, so `raid_load` must hand the pack's capacity back
+/// unchanged — the identity half.
+const FILL_TARGET_ABOVE_ANY_PACK: u32 = 10_000;
+
+/// **A target below capacity shortens the trip; a target at or above it is an EXACT identity.**
+///
+/// Both halves are the assertion (§10). The first alone would pass for a target that silently
+/// shortened *every* raid; the second is what makes the slice safe to land, and it is asserted
+/// field-for-field rather than on `turns_to_fill` alone — an identity that holds on the turn count
+/// while the payload moved would be no identity at all.
+#[test]
+fn a_fill_target_below_capacity_shortens_the_trip_and_above_it_is_an_identity() {
+    let fauna = FaunaConfig::builtin();
+    let labor = LaborConfig::builtin();
+    let cfg = ExpeditionConfig::builtin();
+    let flock = wild_herd_of("Wild Fowl", FOWL_K, FOWL_K, FOWL_BODY, FOWL_R);
+
+    let untargeted = hunt_trip_forecast(
+        PARTY_WORKERS,
+        &flock,
+        PEAK_FLOOR,
+        NO_FILL_TARGET,
+        &fauna,
+        &labor,
+        &cfg,
+    );
+    let baseline_turns = untargeted
+        .turns_to_fill
+        .expect("an untargeted fowl raid fills its pack inside the horizon");
+    // **Liveness**: the raid this is measured against actually delivers. A dead raid would satisfy
+    // every ordering below by taking nothing at all.
+    assert!(
+        untargeted.delivered_food > 0.0 && untargeted.animals_taken > 0,
+        "the untargeted baseline must be a real raid ({} food, {} animals)",
+        untargeted.delivered_food,
+        untargeted.animals_taken
+    );
+    assert_eq!(
+        untargeted.bound,
+        HuntTripBound::PackFull,
+        "with no target the party-side stop is the pack itself"
+    );
+
+    let targeted = hunt_trip_forecast(
+        PARTY_WORKERS,
+        &flock,
+        PEAK_FLOOR,
+        SHORT_FILL_TARGET,
+        &fauna,
+        &labor,
+        &cfg,
+    );
+    let targeted_turns = targeted.turns_to_fill.expect("a targeted raid comes home");
+    assert!(
+        targeted_turns < baseline_turns,
+        "a fill target of {SHORT_FILL_TARGET} must shorten the trip ({targeted_turns} vs \
+         {baseline_turns} turns)"
+    );
+    assert_eq!(
+        targeted.bound,
+        HuntTripBound::FillTarget,
+        "…and the forecast must name the target as what ended it"
+    );
+    assert_eq!(
+        targeted.animals_taken, SHORT_FILL_TARGET,
+        "…and the party comes home with the animals it was sent for"
+    );
+
+    // The identity half: a target no pack could reach leaves the raid byte-for-byte as it was.
+    let over_target = hunt_trip_forecast(
+        PARTY_WORKERS,
+        &flock,
+        PEAK_FLOOR,
+        FILL_TARGET_ABOVE_ANY_PACK,
+        &fauna,
+        &labor,
+        &cfg,
+    );
+    assert_eq!(
+        (
+            over_target.turns_to_fill,
+            over_target.animals_taken,
+            over_target.delivered_food,
+            over_target.wasted_food,
+            over_target.delivered_trade,
+            over_target.first_turn_provisions,
+            over_target.bound,
+        ),
+        (
+            untargeted.turns_to_fill,
+            untargeted.animals_taken,
+            untargeted.delivered_food,
+            untargeted.wasted_food,
+            untargeted.delivered_trade,
+            untargeted.first_turn_provisions,
+            untargeted.bound,
+        ),
+        "a target at or above the pack's capacity must be EXACTLY the untargeted raid"
+    );
+}
+
+/// **Trip length responds to the target — and, with no target, does NOT respond to party size.**
+///
+/// The pair is the whole point (§10). Two different targets must give two different trip lengths,
+/// because the defect being fixed is a number that looked like a lever and was not; and the
+/// invariance that *caused* that defect is still true, which is what the target exists to escape.
+/// Party size is not inert in general — it moves the **payload** — so that is asserted too, or the
+/// invariance half would read as "party size does nothing".
+#[test]
+fn trip_length_responds_to_the_fill_target_but_not_to_party_size_without_one() {
+    let fauna = FaunaConfig::builtin();
+    let labor = LaborConfig::builtin();
+    let cfg = ExpeditionConfig::builtin();
+    let flock = wild_herd_of("Wild Fowl", FOWL_K, FOWL_K, FOWL_BODY, FOWL_R);
+    let turns_for = |workers: u32, target: u32| {
+        hunt_trip_forecast(workers, &flock, PEAK_FLOOR, target, &fauna, &labor, &cfg)
+    };
+
+    // (a) The lever: two targets, two trip lengths.
+    let short = turns_for(PARTY_WORKERS, SHORT_FILL_TARGET);
+    let longer = turns_for(PARTY_WORKERS, LONGER_FILL_TARGET);
+    let short_turns = short.turns_to_fill.expect("the shorter target comes home");
+    let longer_turns = longer.turns_to_fill.expect("the longer target comes home");
+    assert!(
+        short_turns < longer_turns,
+        "asking for {LONGER_FILL_TARGET} fowl must take strictly longer than asking for \
+         {SHORT_FILL_TARGET} ({short_turns} vs {longer_turns} turns)"
+    );
+    assert!(
+        short.animals_taken > 0 && longer.animals_taken > short.animals_taken,
+        "…and the longer trip must actually bring back more ({} then {})",
+        short.animals_taken,
+        longer.animals_taken
+    );
+
+    // (b) The invariance that caused the bug: with NO target, every legal party size spends the same
+    // number of turns, because the pack and the take both scale with the crew.
+    let mut baseline: Option<u32> = None;
+    let mut smallest_payload = 0u32;
+    let mut largest_payload = 0u32;
+    for workers in 2..=cfg.max_party_size {
+        let f = turns_for(workers, NO_FILL_TARGET);
+        let turns = f
+            .turns_to_fill
+            .expect("an untargeted fowl raid fills its pack");
+        match baseline {
+            None => {
+                baseline = Some(turns);
+                smallest_payload = f.animals_taken;
+            }
+            Some(first) => assert_eq!(
+                turns, first,
+                "party size must NOT move an untargeted raid's length ({workers} hunters took \
+                 {turns} turns, 2 took {first}) — that is §5.1's defect, and the fill target is the \
+                 escape from it, not a repair of it"
+            ),
+        }
+        largest_payload = f.animals_taken;
+    }
+    // **Liveness**: party size is not inert — it moves the payload, just never the trip length.
+    assert!(
+        largest_payload > smallest_payload && smallest_payload > 0,
+        "a bigger party must bring back more fowl ({smallest_payload} then {largest_payload})"
+    );
+}
+
+/// A stationary herd pinned to a chosen species, capacity, stock and regrowth, with **`K` frozen**
+/// (`fodder_per_biomass = 0` → a non-grazing herd keeps its constant `carrying_capacity`) so the
+/// live run and the forecast's clone cannot drift apart. Returns `(id, position)`.
+///
+/// The generalisation of [`pin_frozen_full_big_herd`], which pins one particular full herd; the bound
+/// tests need three *different* ecologies off the same seam.
+fn pin_frozen_herd(
+    app: &mut App,
+    species: &str,
+    body_mass: f32,
+    cap: f32,
+    biomass: f32,
+    regrowth_rate: f32,
+) -> (String, UVec2) {
+    let id = pinned_game_herd(app, "big");
+    let mut registry = app.world.resource_mut::<HerdRegistry>();
+    let herd = registry.herds.iter_mut().find(|h| h.id == id).unwrap();
+    herd.fodder_per_biomass = 0.0;
+    herd.species = species.to_string();
+    // **The body mass has to move with the species.** The two are read from different places — the
+    // engagement rate off the species' display name, the body off the herd's own field — so a retag
+    // that left the seeded big-game body behind would quote a fill target in *mammoth* biomass and
+    // the target would never bind.
+    herd.body_mass = body_mass;
+    herd.carrying_capacity = cap;
+    herd.biomass = biomass;
+    herd.regrowth_rate = regrowth_rate;
+    let pos = herd.position();
+    (id, pos)
+}
+
+/// The bound the wire reports for a live party, read off the **exported snapshot** — never off the
+/// in-process forecast, which is the value the client cannot see.
+fn exported_trip_bound(app: &mut App, party: bevy::prelude::Entity) -> String {
+    recapture_snapshot_in_place(&mut app.world);
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let pstate = snapshot
+        .populations
+        .iter()
+        .find(|p| p.entity == party.to_bits())
+        .expect("the party is in the snapshot");
+    assert!(pstate.is_expedition, "the party is an expedition");
+    pstate.expedition_trip_bound.clone()
+}
+
+/// The herd's live biomass and the floor it is being raided to, so a test can say which side of the
+/// completion actually fired.
+fn floor_biomass_of(app: &App, id: &str, floor: f32) -> f32 {
+    let registry = app.world.resource::<HerdRegistry>();
+    let herd = registry.find(id).expect("the herd is alive");
+    floor * herd.carrying_capacity
+}
+
+/// Drive the real systems until the party stops `Hunting`, returning the turn it left on.
+/// `None` = it was still hunting after `limit` turns.
+fn drive_until_hunt_ends(app: &mut App, party: bevy::prelude::Entity, limit: u32) -> Option<u32> {
+    for turn in 1..=limit {
+        drive_expedition_turn(app);
+        if phase(app, party) != ExpeditionPhase::Hunting {
+            return Some(turn);
+        }
+    }
+    None
+}
+
+/// **The exported bound names the stop that ACTUALLY ended the raid** — a fill-target raid, a
+/// floor-bound raid, and one that reaches neither inside the horizon.
+///
+/// This is the readout the design turns on (§5.2): *"you come home on your fill target in 4 turns;
+/// the herd never reaches the floor"* against *"you reach the floor in 2 turns with the pack a third
+/// full"*. A turn count alone cannot distinguish them, so each case asserts the **name** on the wire
+/// **and** the world state the named stop implies once the real systems have run.
+#[test]
+fn the_exported_bound_names_the_stop_that_ends_the_raid() {
+    // (a) FILL-TARGET bound: a full flock the party could raid for 31 turns, told to come home with
+    // `SHORT_FILL_TARGET` fowl.
+    {
+        let mut app = build_headless_app();
+        app.update();
+        let (id, herd_pos) =
+            pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
+        let home = spawn_home_band_same_row(&mut app, herd_pos);
+        let party = spawn_hunt_party_targeting(
+            &mut app,
+            home,
+            herd_pos,
+            &id,
+            PEAK_FLOOR,
+            PARTY_WORKERS,
+            SHORT_FILL_TARGET,
+        );
+        assert_eq!(
+            exported_trip_bound(&mut app, party),
+            "fill_target",
+            "a raid told to stop at {SHORT_FILL_TARGET} fowl comes home on its target"
+        );
+        let left_on = drive_until_hunt_ends(&mut app, party, 31)
+            .expect("a target-bound raid comes home well inside the untargeted 31 turns");
+        assert!(
+            left_on < 31,
+            "…and does so before the untargeted raid would have (left on turn {left_on})"
+        );
+        // The named bound's world-state consequence: the herd never came near its floor, so nothing
+        // but the target can have ended this trip.
+        let floor_biomass = floor_biomass_of(&app, &id, PEAK_FLOOR);
+        let biomass = herd_biomass(&app, &id);
+        assert!(
+            biomass > floor_biomass * 1.5,
+            "the flock must be nowhere near its floor ({biomass} vs floor {floor_biomass})"
+        );
+    }
+
+    // (b) FLOOR bound: the same flock standing barely above its floor, with regrowth off, so the
+    // standing surplus is spent long before any pack fills.
+    {
+        const NO_REGROWTH: f32 = 0.0;
+        let mut app = build_headless_app();
+        app.update();
+        let lean = FOWL_K * PEAK_FLOOR * 1.02;
+        let (id, herd_pos) =
+            pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, lean, NO_REGROWTH);
+        let home = spawn_home_band_same_row(&mut app, herd_pos);
+        let party = spawn_hunt_party_targeting(
+            &mut app,
+            home,
+            herd_pos,
+            &id,
+            PEAK_FLOOR,
+            PARTY_WORKERS,
+            FILL_TARGET_ABOVE_ANY_PACK,
+        );
+        assert_eq!(
+            exported_trip_bound(&mut app, party),
+            "floor",
+            "a raid on a flock at its floor comes home because the herd ran out, not the pack"
+        );
+        drive_until_hunt_ends(&mut app, party, 31).expect("a floor-bound raid comes home");
+        let floor_biomass = floor_biomass_of(&app, &id, PEAK_FLOOR);
+        let biomass = herd_biomass(&app, &id);
+        assert!(
+            biomass - floor_biomass < FOWL_BODY,
+            "the flock must be drawn to within one body of its floor ({biomass} vs floor \
+             {floor_biomass})"
+        );
+        // Liveness — it really raided; a raid that took nothing would also sit at the floor.
+        assert!(
+            carried(&app, party) > 0.0 || carried(&app, home) > 0.0,
+            "a floor-bound raid still brings its partial load home"
+        );
+    }
+
+    // (c) HORIZON: a lone hunter with an effectively unbounded pack on a fast-breeding warren whose
+    // regrowth outruns what one party can reach. Neither stop is ever hit.
+    {
+        const WARREN_BODY: f32 = 0.27;
+        const WARREN_K: f32 = 2000.0;
+        const WARREN_R: f32 = 0.05;
+        const LONE_HUNTER: u32 = 1;
+        let mut app = build_headless_app();
+        app.update();
+        app.world
+            .insert_resource(ExpeditionConfigHandle::new(unbounded_carry_config()));
+        let (id, herd_pos) = pin_frozen_herd(
+            &mut app,
+            "Rabbit Warren",
+            WARREN_BODY,
+            WARREN_K,
+            WARREN_K,
+            WARREN_R,
+        );
+        let home = spawn_home_band_same_row(&mut app, herd_pos);
+        let party = spawn_hunt_party_targeting(
+            &mut app,
+            home,
+            herd_pos,
+            &id,
+            PEAK_FLOOR,
+            LONE_HUNTER,
+            NO_FILL_TARGET,
+        );
+        assert_eq!(
+            exported_trip_bound(&mut app, party),
+            "horizon",
+            "a raid that can neither fill nor exhaust must say so, not name a stop"
+        );
+        let horizon = expedition_config(&app).hunt.forecast_horizon_turns;
+        assert!(
+            drive_until_hunt_ends(&mut app, party, horizon).is_none(),
+            "…and the real party must still be hunting when the horizon runs out"
+        );
+        // Liveness — it is hunting, not stalled: the warren has really been drawn on.
+        assert!(
+            herd_biomass(&app, &id) < WARREN_K,
+            "a party that hunts for {horizon} turns must have taken something"
+        );
+    }
+}
+
+/// **Every pre-launch estimate row names its bound, and none of them names the fill target.**
+///
+/// The table is **band-agnostic and untargeted** — it samples floor × party size, and a fill target
+/// is chosen at launch — so `"fill_target"` is unreachable here by construction. Pinned both ways:
+/// the field is populated on every row (an empty string would be a silently unwritten column that no
+/// client could branch on), and it never claims a target the row was not simulated with.
+#[test]
+fn every_pre_launch_estimate_row_names_an_untargeted_bound() {
+    let mut app = build_headless_app();
+    app.update();
+    let (id, _) = pin_frozen_herd(&mut app, "Wild Fowl", FOWL_BODY, FOWL_K, FOWL_K, FOWL_R);
+    reveal_herds(&mut app, std::slice::from_ref(&id));
+    recapture_snapshot_in_place(&mut app.world);
+
+    let snapshot = app
+        .world
+        .resource::<SnapshotHistory>()
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let herd_state = snapshot
+        .herds
+        .iter()
+        .find(|h| h.id == id)
+        .expect("the flock is in the snapshot");
+    assert!(
+        !herd_state.hunt_trip_estimates.is_empty(),
+        "a huntable flock publishes a trip table — otherwise this test asserts nothing"
+    );
+    for row in &herd_state.hunt_trip_estimates {
+        assert!(
+            !row.bound.is_empty(),
+            "every row must name the stop that ended it (floor {}, {} workers)",
+            row.floor,
+            row.party_workers
+        );
+        assert_ne!(
+            row.bound, "fill_target",
+            "the pre-launch table is UNTARGETED — no row may claim a fill target it was not \
+             simulated with (floor {}, {} workers)",
+            row.floor, row.party_workers
+        );
+    }
 }

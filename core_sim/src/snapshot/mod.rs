@@ -39,7 +39,7 @@ use crate::{
         available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
         ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
         PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
-        NO_RAID_FLOOR,
+        NO_FILL_TARGET, NO_RAID_FLOOR,
     },
     culture::{
         CultureLayer, CultureLayerScope as SimCultureLayerScope, CultureManager, CultureOwner,
