@@ -80,36 +80,31 @@ floor. It is a decision about restraint, not about capability, and it stays exac
 
 ---
 
-## 2. Engagement — how many animals you can take on
+## 2. Engagement — how many animals are in contact
 
-`SpeciesDef::engage_rate`: **animals of this species one hunter can take on per turn.** Three hunters
-against a species with `engage_rate 4` engage twelve.
+`SpeciesDef::engage_rate`: **how many animals of this species one hunter can have in contact at
+once.** Twenty hunters can surround one mammoth; one hunter can work a line of snares. It is a
+**spatial** constraint and nothing else.
 
-**This is the number that answers "how many people does it take to hunt one of these,"** and it is
-authored directly rather than emerging from a product of constants. Its reciprocal is the readable
-form and is what the UI should show: `1 / engage_rate` = hunters per animal. A mammoth at `0.05` is
-twenty hunters to engage one; a rabbit at `4` is a quarter of a hunter.
+**It says nothing about how fast they die.** That is §4's job, and keeping the two apart is the whole
+correction: an engagement rate that also encoded lethality would be a kill model outside the
+resolver, which is what §0 exists to delete. `engage_rate` bounds the size of the fight; the fight
+decides its outcome and its duration.
 
-**A fractional engagement is an encounter chance, never a rounded-down zero.** Three hunters against
-a mammoth come to `3 × 0.05 = 0.15` animals. Flooring that gives zero this turn and every turn, which
-says a small band can *never* take a mammoth — too strong. What is actually fractional here is
-**opportunity**: a band does not corner a mammoth every turn, it does so when it finds one under
-conditions that allow it. So a sub-unit engagement resolves as a **probability of engaging one**,
-drawn from the same per-event seed as the retreat roll (§6.2) so the hunt has one source of variance
-rather than two.
+**Turns-to-kill is therefore an OUTPUT, never authored.** It is
+`durability / (hunters × effective_attack)` — see §4.2. Any per-species "this takes N turns" table is
+the bespoke hunt formula wearing a different hat: it hard-codes an answer that must respond to
+equipment, party size and the quarry's defense, and it will silently stop tracking all three the
+moment any of them changes.
 
-**Effort within a fight still does not accumulate**, and the distinction matters: there is no bank
-of partial damage carried between turns, because the mammoth does not wait while you wear it down.
-Encounters are a rate; a single fight is not.
+**A fractional engagement rounds up to one, not down to zero.** Three hunters against a mammoth come
+to `3 × 0.05 = 0.15`; flooring says a small band can never *reach* a mammoth, which is not what the
+rate means — they can walk up to it. What stops them is that they cannot hurt it fast enough to
+matter, which the fight already reports. Contact is not the gate.
 
-**The minimum party size still falls out and needs no field of its own** — it is simply where the
-encounter chance becomes small enough that the species is not worth hunting, which the forecast
-reports as a range rather than the sim enforcing as a threshold.
-
-**It is not the gate.** Engagement says how many you can take on; §4's attack-vs-defense says whether
-you can hurt them. Twenty bare-handed hunters *do* engage a mammoth — and the fight resolves as
-casualties with no kills. That is deliberately better than a disabled button: the sim teaches the
-lesson instead of a tooltip.
+**The gate is §4.2's attack-vs-defense.** Twenty bare-handed hunters *do* engage a mammoth — the
+fight then resolves as casualties with no kills, because their effective attack is zero. That is
+deliberately better than a disabled button: the sim teaches the lesson instead of a tooltip.
 
 ---
 
@@ -151,9 +146,29 @@ body_mass`, derived as it is today. A herd of `stayed` animals maps to a `Force`
 the species' `CombatProfile`, and the resolver's enemy losses map back to biomass on the way out.
 Nothing about `AnimalTake { killed, carried, wasted }` changes.
 
-### 4.2 The gate: attack versus defense
+### 4.2 Durability, damage, and the gate
 
-Whether a hunter can hurt the animal at all is settled per hunter, before headcount:
+A fight resolves by attrition, and the shape is the same for a mammoth, a wolf pack or a rival
+warband:
+
+```text
+effective_attack = max(0, attack − defense)          // per hunter — THE GATE
+damage_per_turn  = hunters × effective_attack
+turns_to_kill    = durability / damage_per_turn      // an OUTPUT
+```
+
+**`durability` is the one genuinely new authored quantity**, and it should be *derived* rather than
+authored per species: `durability ∝ body_mass^(2/3)`. Wounds scale with cross-section, not volume, so
+a mammoth is ~3,000 rabbits by mass but only ~200 rabbits of durability. Deriving it makes the
+exponent one tunable knob instead of twenty hand-picked numbers, and it keeps durability honest when
+`body_mass` is re-tuned.
+
+**Excess damage spills to the next animal in the engagement.** This is what makes "many small animals
+per turn" fall out instead of being authored: a hunter doing 20 damage against 5-durability rabbits
+kills four, because that is what 20 damage does — and the number rises on its own when the party gets
+better weapons. No species carries a "how many of these per turn" figure.
+
+Whether a hunter can hurt the animal *at all* is settled per hunter, before headcount:
 
 - **bare hands vs mammoth** — attack below defense. No kills at any headcount, and `ferocity` means
   the mammoth is landing real blows. Engaging it is a way to lose people.
@@ -299,12 +314,13 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
   stream crept in.
 - **The gate.** A party whose attack is below the quarry's defense kills **zero** at any headcount,
   and takes casualties proportional to `ferocity`. This is §0.2, pinned.
-- **A fractional engagement never rounds to zero.** Three hunters against a mammoth engage one
-  *sometimes*, at a frequency tracking `hunters × engage_rate`, asserted across seeds — never zero on
-  every turn forever. Paired with a liveness assertion that twenty hunters take one reliably, since
-  "always zero" is what a broken engagement stage also looks like.
-- **No partial damage survives a turn.** A fight that does not kill leaves no accumulated state on
-  the herd; only the encounter *chance* is a rate.
+- **Turns-to-kill responds to all three of its inputs.** Doubling the party, upgrading the weapon,
+  or facing a tougher quarry each move it in the right direction — the assertion that no per-species
+  turn count was baked in anywhere.
+- **Damage spillover is exact.** One hunter against a line of rabbits kills `floor(damage /
+  durability)` of them, not an authored count, and the number rises when the weapon improves.
+- **A fractional engagement reaches one animal**, not zero — contact is not the gate, and a
+  three-hunter mammoth party fails at the *fight*, with casualties, rather than failing to find it.
 - **The fast path is free.** A one-sided engagement produces no casualties, no battle report, and
   costs no more than today's take path.
 - **Distribution over seeds, with liveness.** Non-zero wariness produces a spread whose mean tracks
