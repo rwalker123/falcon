@@ -11,8 +11,9 @@
 
 ### Brand & Campaign Labels
 - Working marketing label: "Trail Sovereigns" for the late-forager nomadic campaign described in the manual (§2a). Engineering keeps `ShadowScale` identifiers in code/assets until a rename decision lands.
-- UI copy: surface "Trail Sovereigns" in client shells, campaign selection, and marketing strings loaded from localization tables; treat as data so alternating labels are possible without rebuilds.
-- Implementation status: `core_sim` now loads `core_sim/src/data/start_profiles.json`, stores campaign label text/keys in a `CampaignLabel` resource, and serializes them via the new `SnapshotHeader.campaignLabel` FlatBuffer field consumed by `clients/godot_thin_client`.
+- UI copy: campaign and marketing strings are loaded from localization tables and treated as data, so alternating labels are possible without rebuilds.
+- Implementation status: `core_sim` loads `core_sim/src/data/start_profiles.json`, stores campaign label text/keys in a `CampaignLabel` resource, and serializes them via the `SnapshotHeader.campaignLabel` FlatBuffer field.
+- **The HUD does not display the campaign label.** Its one client-side reader is the Inspector's Map tab (`ui/inspector/MapPanel.gd`), beside the start-profile controls the label belongs to. The top-left title block the game shell used to carry was retired: it restated a fixed string on every frame of play and earned none of the screen it took.
 
 ---
 
@@ -64,7 +65,7 @@ What was intentionally kept (it is simulation/2D data, not 3D rendering):
 - **Snapshots**: Length-prefixed FlatBuffers frames — a full snapshot for a world's first frame, a delta every turn after it. The parallel `bincode` snapshot socket was retired in #388.
 - **FlatBuffers**: Schema mirrors Rust structs for alternate clients.
 - **Logs**: Length-prefixed JSON frames carrying `tracing` events published via the log stream socket (default `tcp://127.0.0.1:41003`).
-- **Commands**: Length-prefixed Protobuf `CommandEnvelope` messages covering verbs such as turn stepping, axis bias, influencer directives, spawning, and corruption injection. `sim_runtime::command_bus` exposes builder/decoder helpers, and the Godot tooling issues structured payloads via the native `CommandBridge` instead of raw strings.
+- **Commands**: Length-prefixed Protobuf `CommandEnvelope` messages covering verbs such as turn stepping, world setup, band orders and labor assignment, the intensification verbs, espionage and counter-intel, and config hot reload. `sim_runtime::commands` exposes builder/decoder helpers and `sim_runtime::command_text` the text parser behind `cargo xtask command`; the Godot client issues structured payloads via the native `CommandBridge` instead of raw strings. **The envelope carries no debug pokes**: axis bias, influencer support/suppress/spawn, corruption injection and tile heat were hand-injection entry points for systems the sim runs on its own, and went with the Inspector tab that was their only caller — their proto field numbers are `reserved`, never reused.
 - **Metrics**: `SimulationMetrics` resource updated every turn; logged via `tracing` (`turn.completed` now emits `duration_ms` alongside grid metrics for client consumption).
 
 ---

@@ -14,9 +14,19 @@ extends Node
 ##   1. CATCH-UP — after being shown, the panels hold the data from the LATEST snapshot, not
 ##      whatever they had when they were hidden. (Break it by dropping `_catch_up_hidden_snapshot`
 ##      or the `_cached_snapshot` write.)
-##   2. ACCUMULATORS STILL RUN — `_ingest_command_events` builds a running log out of per-turn
-##      EVENT arrays, which no later snapshot carries. Skipping it while hidden would silently lose
-##      command-feed history. (Break it by moving the visibility gate above that call.)
+##   2. THE HIDDEN SKIP DOES NOT SWALLOW A FRAME. The Inspector used to hold one ACCUMULATOR above
+##      the visibility gate — `_ingest_command_events`, a running log built out of per-turn EVENT
+##      arrays that no later snapshot carries — and case 2 asserted it kept running while hidden.
+##      **That accumulator is gone**: `command_events` belongs to the event dock now
+##      (`Main._apply_snapshot` feeds `EventDockPanel.ingest_events` directly, never through here),
+##      and the Inspector's Commands tab is the debug console it always was. Nothing on this path
+##      is unreconstructible any more, so the assertion it replaced would be asserting about a
+##      member that does not exist. What survives is the CHEAP-PREFIX invariant it protected:
+##      `_cached_snapshot` and `_last_turn` are written ABOVE the gate on every frame, hidden or
+##      not, which is exactly what makes the catch-up in (1) and (3) able to replay the newest
+##      frame. `_last_turn` is the witness, because it is written above the gate and read nowhere
+##      else — a gate that crept upward freezes it. **If an accumulator is ever added back to this
+##      method, it goes above the gate and gets its own assertion here.**
 ##
 ##   3. A HIDDEN DELTA DOES NOT DISCHARGE THE CATCH-UP, AND THE CATCH-UP REPLAYS THE NEWEST FRAME —
 ##      whichever kind that is. The original bug: clearing `_hidden_snapshot_pending` on the delta
@@ -27,7 +37,7 @@ extends Node
 ##      replaces the old assertion.
 ##
 ## It also asserts the skip actually happens (4) — otherwise the guard would keep passing after the
-## optimization was reverted — and that replaying a snapshot does not double-log its events (5).
+## optimization was reverted.
 ##
 ## Run as a scene (NOT --script: the Inspector's panels reach autoloads that only register when the
 ## project is loaded). No GPU needed — this is state plumbing, not rendering:
@@ -39,17 +49,16 @@ const INSPECTOR_LAYER := preload("res://src/ui/InspectorLayer.tscn")
 ## Snapshot fixtures. `influencers` is the observable: it is full-snapshot-driven, rebuilt wholesale
 ## by `InfluencerPanel._rebuild_influencers`, and readable through the panel's public
 ## `get_influencers()` — so its size is a direct, un-mocked witness of whether the fan-out ran.
-## `command_events` is the accumulator witness (one NEW event per snapshot; the coordinator dedupes
-## on tick|kind|label|detail, which is what makes the catch-up replay safe).
+## `turn` is the CHEAP-PREFIX witness: it is written into `_last_turn` above the visibility gate and
+## read nowhere else on this path, so a gate that crept upward over the prefix freezes it. Each
+## fixture carries a distinct one.
 const SNAPSHOT_HIDDEN_FIRST := {
 	"turn": 1,
 	"influencers": [{"id": 1, "name": "A", "scope": "Global"}],
-	"command_events": [{"tick": 1, "kind": "order", "label": "first", "detail": ""}],
 }
 const SNAPSHOT_HIDDEN_SECOND := {
 	"turn": 2,
 	"influencers": [{"id": 1, "name": "A", "scope": "Global"}, {"id": 2, "name": "B", "scope": "Local"}],
-	"command_events": [{"tick": 2, "kind": "order", "label": "second", "detail": ""}],
 }
 const SNAPSHOT_WHILE_VISIBLE := {
 	"turn": 3,
@@ -58,7 +67,6 @@ const SNAPSHOT_WHILE_VISIBLE := {
 		{"id": 2, "name": "B", "scope": "Local"},
 		{"id": 3, "name": "C", "scope": "Regional"},
 	],
-	"command_events": [{"tick": 3, "kind": "order", "label": "third", "detail": ""}],
 }
 ## Case 5 fixtures — a full snapshot skipped while hidden, then a DELTA while still hidden.
 ##
@@ -75,7 +83,6 @@ const SNAPSHOT_HIDDEN_BEFORE_DELTA := {
 		{"id": 4, "name": "D", "scope": "Global"},
 		{"id": 5, "name": "E", "scope": "Regional"},
 	],
-	"command_events": [{"tick": 4, "kind": "order", "label": "fourth", "detail": ""}],
 }
 ## A **MERGED, COMPLETE** delta frame — the only kind the live client can now produce, and the
 ## reason this fixture's shape changed.
@@ -95,8 +102,8 @@ const SNAPSHOT_HIDDEN_BEFORE_DELTA := {
 ## longer producible**, so if a code path ever starts handing `update_delta` a partial dict again,
 ## the hidden skip in `Inspector._apply_update` must be reverted with it, not worked around here.
 ##
-## `command_events` stays per-frame history (an accumulator, never reconstructible), so it is
-## ingested while hidden whatever else is skipped — that is what cases 2 and 5's event counts pin.
+## `command_events` is no longer read on this path at all — it is per-frame history, never
+## reconstructible, and it belongs to the event dock, which `Main` feeds directly.
 const DELTA_WHILE_HIDDEN := {
 	"turn": 4,
 	"influencers": [
@@ -108,7 +115,6 @@ const DELTA_WHILE_HIDDEN := {
 		{"id": 6, "name": "F", "scope": "Local"},
 	],
 	"influencer_updates": [{"id": 6, "name": "F", "scope": "Local"}],
-	"command_events": [{"tick": 4, "kind": "order", "label": "fifth", "detail": ""}],
 }
 
 ## Expected roster sizes at each checkpoint, named so an assertion reads as its intent.
@@ -124,13 +130,12 @@ const ROSTER_UNCHANGED_WHILE_HIDDEN := ROSTER_WHILE_VISIBLE
 ## snapshot before it. Distinct from both `ROSTER_UNCHANGED_WHILE_HIDDEN` (catch-up never ran) and
 ## the full snapshot's 5 (catch-up replayed the older frame).
 const ROSTER_AFTER_DELTA_CATCH_UP := 6
-## Distinct command events the coordinator must have logged at each checkpoint.
-const EVENTS_AFTER_FIRST_HIDDEN := 1
-const EVENTS_AFTER_CATCH_UP := 2
-const EVENTS_AFTER_VISIBLE := 3
-## The hidden full snapshot's event, then the hidden delta's; the replay on show re-presents the
-## former and must dedupe it.
-const EVENTS_AFTER_HIDDEN_DELTA := 5
+## The turn each fixture carries. The prefix above the visibility gate must record it whether the
+## panel is hidden or shown — it is what the catch-up replays from.
+const TURN_AFTER_FIRST_HIDDEN := 1
+const TURN_AFTER_SECOND_HIDDEN := 2
+const TURN_WHILE_VISIBLE := 3
+const TURN_AFTER_HIDDEN_DELTA := 4
 
 var _failures: Array[String] = []
 
@@ -150,8 +155,8 @@ func _ready() -> void:
 	inspector.update_snapshot(SNAPSHOT_HIDDEN_FIRST.duplicate(true))
 	_expect_size(roster.get_influencers(), ROSTER_EMPTY,
 		"the tab-panel fan-out RAN while the Inspector was hidden — the per-turn skip is gone")
-	_expect_size(inspector._seen_command_events, EVENTS_AFTER_FIRST_HIDDEN,
-		"a command event that arrived while hidden was NOT ingested — the accumulator is behind the visibility gate, and that history is unrecoverable")
+	_expect_turn(inspector, TURN_AFTER_FIRST_HIDDEN,
+		"a snapshot that arrived while hidden did not reach the CHEAP PREFIX above the visibility gate — everything up there runs hidden or not, and `_cached_snapshot` is written beside it, so a gate that crept upward breaks the catch-up in cases 1 and 3")
 
 	# A second hidden snapshot: catch-up must land on the LATEST one, not the first.
 	inspector.update_snapshot(SNAPSHOT_HIDDEN_SECOND.duplicate(true))
@@ -162,15 +167,15 @@ func _ready() -> void:
 	inspector.set_panel_visible(true)
 	_expect_size(roster.get_influencers(), ROSTER_AFTER_CATCH_UP,
 		"showing the Inspector did NOT catch it up to the latest snapshot — the panel is displaying stale data")
-	_expect_size(inspector._seen_command_events, EVENTS_AFTER_CATCH_UP,
-		"the catch-up replay double-logged (or dropped) command events — the _seen_command_events dedupe is what makes replay safe")
+	_expect_turn(inspector, TURN_AFTER_SECOND_HIDDEN,
+		"the catch-up replayed a frame older than the newest one seen while hidden")
 
 	# --- Visible: the ordinary path is untouched -------------------------------------------------
 	inspector.update_snapshot(SNAPSHOT_WHILE_VISIBLE.duplicate(true))
 	_expect_size(roster.get_influencers(), ROSTER_WHILE_VISIBLE,
 		"a snapshot applied while VISIBLE did not reach the panels — the gate is firing when it must not")
-	_expect_size(inspector._seen_command_events, EVENTS_AFTER_VISIBLE,
-		"a command event applied while visible was not ingested")
+	_expect_turn(inspector, TURN_WHILE_VISIBLE,
+		"a snapshot applied while VISIBLE did not reach the prefix")
 
 	# --- Hidden, full THEN delta: skip both, then catch up to the NEWEST -------------------------
 	# `_hidden_snapshot_pending` means "a frame has arrived that the panels have not ingested". The
@@ -187,16 +192,21 @@ func _ready() -> void:
 	inspector.update_delta(DELTA_WHILE_HIDDEN.duplicate(true))
 	_expect_size(roster.get_influencers(), ROSTER_UNCHANGED_WHILE_HIDDEN,
 		"the tab-panel fan-out RAN for a DELTA received while the Inspector was hidden — since delta streaming a merged delta frame is a complete world and is skippable exactly like a full snapshot, and that skip is ~60% of the client's per-turn apply cost")
-	_expect_size(inspector._seen_command_events, EVENTS_AFTER_HIDDEN_DELTA,
-		"a command event carried by a hidden full snapshot or delta was not ingested — that history is unrecoverable, so the accumulator must run whatever else is skipped")
+	_expect_turn(inspector, TURN_AFTER_HIDDEN_DELTA,
+		"a hidden DELTA did not reach the prefix — both frame kinds are skipped at the gate, but the prefix above it still runs for both, and `_cached_snapshot` is written there")
 
 	inspector.set_panel_visible(true)
 	_expect_size(roster.get_influencers(), ROSTER_AFTER_DELTA_CATCH_UP,
 		"showing the Inspector after a hidden full snapshot AND a hidden delta did not leave the panels holding the NEWEST frame — a roster of %d means the catch-up never ran (a hidden delta wrongly discharged `_hidden_snapshot_pending`), and one of %d means it replayed the older full snapshot instead of the delta after it (`_cached_snapshot` is not being written on the delta path)" % [ROSTER_UNCHANGED_WHILE_HIDDEN, SNAPSHOT_HIDDEN_BEFORE_DELTA["influencers"].size()])
-	_expect_size(inspector._seen_command_events, EVENTS_AFTER_HIDDEN_DELTA,
-		"the catch-up replay after a hidden delta double-logged (or dropped) command events")
-
 	_finish(inspector)
+
+## The prefix witness. `_last_turn` is written ABOVE `_apply_update`'s visibility gate and read
+## nowhere else on this path, which is what makes it a witness rather than a restatement: it can only
+## be current if the prefix ran, and the prefix running is what the skip's safety rests on.
+func _expect_turn(inspector: Node, want: int, why: String) -> void:
+	var got: int = int(inspector._last_turn)
+	if got != want:
+		_fail("%s (turn %d, expected %d)" % [why, got, want])
 
 func _expect_size(collection: Variant, want: int, why: String) -> void:
 	var got: int = -1
@@ -216,7 +226,7 @@ func _fail(msg: String) -> void:
 func _finish(inspector: Node) -> void:
 	inspector.queue_free()
 	if _failures.is_empty():
-		print("inspector_hidden_guard: PASS — a hidden Inspector skips the fan-out, keeps ingesting command events, and shows current data when re-opened")
+		print("inspector_hidden_guard: PASS — a hidden Inspector skips the fan-out, keeps running the cheap prefix above the gate, and shows current data when re-opened")
 		get_tree().quit(0)
 	else:
 		printerr("inspector_hidden_guard: FAIL — %d problem(s):" % _failures.size())

@@ -2079,6 +2079,11 @@ table CommandEventState {
   faction:uint;
   label:string;
   detail:string;
+  // Monotonic per world, assigned by `CommandEventLog::push` and never reused. A DELTA carries only
+  // the rows whose seq is above the client's cursor (`snapshot::diff_appended`), so this is what
+  // makes the event feed append-only on the wire instead of re-shipping the whole retained ring
+  // every turn. Appended last — field slots are positional.
+  seq:ulong;
 }
 
 table CampaignStartingUnit {
@@ -2365,6 +2370,10 @@ table CampaignSection {
   pendingForks:[PendingForksState];
   stanceAxes:[StanceState];
   voiceMedium:[VoiceMediumState];
+  // How many turns of `commandEvents` the sim retains (`simulation_config.json`
+  // `command_events_retention_turns`). The client shows how far back the dock can read, and knows
+  // that anything older has been evicted rather than lost in transit. Appended at the END.
+  commandEventsRetentionTurns:uint;
 }
 
 table WorldSnapshot {

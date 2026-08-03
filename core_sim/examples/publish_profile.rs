@@ -394,7 +394,7 @@ fn denominators_of(grid: (u32, u32)) -> Denominators {
 ///
 /// Each of these costs an unconditional clone of the whole section before the comparison that
 /// usually finds it unchanged, which is what makes the count worth having.
-fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 37] {
+fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 38] {
     [
         ("power_metrics", delta.power_metrics.is_some()),
         (
@@ -411,6 +411,10 @@ fn changed_sections_of(delta: &WorldDelta) -> [(&'static str, bool); 37] {
         ("capability_flags", delta.capability_flags.is_some()),
         ("campaign_profiles", delta.campaign_profiles.is_some()),
         ("command_events", delta.command_events.is_some()),
+        (
+            "command_events_retention_turns",
+            delta.command_events_retention_turns.is_some(),
+        ),
         ("pending_forks", delta.pending_forks.is_some()),
         ("stance_axes", delta.stance_axes.is_some()),
         ("voice_medium", delta.voice_medium.is_some()),

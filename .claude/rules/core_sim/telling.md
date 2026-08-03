@@ -172,10 +172,13 @@ generically. `label` = the rendered line; `detail` = the **gloss**: each `gloss`
 it must show the actual numbers. Analytics mirror:
 `info!(target: "shadow_scale::analytics", event = "telling_beat", beat, wardrobe, tier)`.
 
-> `CommandEventLog`'s bound is **32 entries, drop-oldest**, unchanged in PR-A. Measured on a
-> 40-turn probe the engine emits ~8 beats, so ambient narration is **not** the thing that will
-> overrun the feed — but it now shares that budget with every command echo, and if the feed starts
-> churning, this bound is the first lever to look at.
+> `CommandEventLog`'s bound is a **turn window** — `command_events_retention_turns` (20), dropping
+> whole turns off the back — not the 32-entry drop-oldest ring it was through PR-A. Measured on a
+> 40-turn probe the engine emits ~8 beats, so ambient narration is **not** what will overrun the
+> feed. The change that matters to this suite is that **a long run legitimately ages a beat out of
+> the log**: a test asserting "this line fired exactly once" must key on the entry's `tick`, not on
+> a count of surviving rows, or it fails the moment the run outlasts the window. See
+> `event-feed.md`.
 
 ### Validation — content typos fail at LOAD, not at render
 

@@ -27,16 +27,13 @@ size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 96)
 mouse_filter = 2
 
-[node name="CampaignBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
-size_flags_horizontal = 1
-mouse_filter = 2
-
 [node name="TopSpacer" type="Control" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 3
 mouse_filter = 2
 
 [node name="TurnBlock" type="VBoxContainer" parent="LayoutRoot/RootColumn/TopBar"]
 size_flags_horizontal = 1
+custom_minimum_size = Vector2(344, 0)
 mouse_filter = 2
 
 [node name="ContentRow" type="HBoxContainer" parent="LayoutRoot/RootColumn"]
@@ -129,7 +126,7 @@ mouse_filter = 2
 [node name="RightDock" type="MarginContainer" parent="LayoutRoot/RootColumn/ContentRow"]
 size_flags_horizontal = 1
 size_flags_vertical = 3
-custom_minimum_size = Vector2(320, 0)
+custom_minimum_size = Vector2(344, 0)
 mouse_filter = 2
 theme_override_constants/margin_left = 8
 theme_override_constants/margin_top = 8
@@ -180,14 +177,6 @@ unique_name_in_owner = true
 unique_name_in_owner = true
 theme_override_colors/font_color = Color(0.616, 0.69, 0.678, 1)
 visible = false
-
-[node name="CampaignTitleLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/CampaignBlock"]
-theme_override_colors/font_color = Color(0.95, 0.9, 0.75, 1)
-text = "Trail Sovereigns"
-
-[node name="CampaignSubtitleLabel" type="Label" parent="LayoutRoot/RootColumn/TopBar/CampaignBlock"]
-theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
-text = "Nomadic strategy saga"
 
 [node name="TellingPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
 script = ExtResource("4")
@@ -296,30 +285,6 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 visible = false
 
-
-[node name="CommandFeedPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack"]
-script = ExtResource("4")
-card_title = "Command Feed"
-hotkey_hint = "R"
-custom_minimum_size = Vector2(320, 0)
-
-[node name="CardContent" type="VBoxContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel"]
-size_flags_horizontal = 3
-
-[node name="CommandFeedScroll" type="ScrollContainer" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-horizontal_scroll_mode = 0
-vertical_scroll_mode = 1
-
-[node name="CommandFeedLabel" type="RichTextLabel" parent="LayoutRoot/RootColumn/ContentRow/LeftDock/LeftScroll/LeftStack/CommandFeedPanel/CardContent/CommandFeedScroll"]
-unique_name_in_owner = true
-size_flags_horizontal = 3
-bbcode_enabled = true
-scroll_active = false
-fit_content = true
-autowrap_mode = 2
-text = "[i]No command activity yet.[/i]"
 
 [node name="TerrainLegendPanel" type="PanelContainer" parent="LayoutRoot/RootColumn/ContentRow/RightDock/RightScroll/RightStack"]
 script = ExtResource("4")

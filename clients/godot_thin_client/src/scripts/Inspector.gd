@@ -6,6 +6,20 @@ class_name InspectorLayer
 ## amount so the Inspector never overlaps other panels.
 signal reserved_width_changed(width: float)
 
+## One line of the client's own console chatter, re-broadcast for the EVENT DOCK's System channel
+## (`Main._on_inspector_system_event` -> `EventDockPanel.note_system`). The Inspector's log widget
+## keeps every one of these — it is the debug console and it stays one — but a dropped command
+## socket or a refused command is something the PLAYER must be told, and that console is not where
+## they will see it. `alert` is stated by the emitting site rather than derived from the text: this
+## file knows which of its own lines is bad news, and a string match on its own log strings would
+## only pretend to.
+##
+## `kind` is the dock's own vocabulary (`HudEventVocab`): `KIND_SYSTEM` for a fault or a state
+## change, `KIND_COMMAND_ECHO` for the receipt of a command this client just accepted for sending.
+## The dock ignores the latter — it restates an action the player took a moment ago through the UI —
+## while this file's log widget goes on printing every one of them, because it is the debug console.
+signal system_event(label: String, detail: String, alert: bool, kind: String)
+
 const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
 # TerrainDefinitions moved to TerrainPanel.
@@ -45,7 +59,6 @@ var _tab_panels: Array = []
 @onready var logs_panel: LogsInspectorPanel = $RootPanel/TabContainer/Logs
 @onready var root_panel: Panel = $RootPanel
 @onready var tab_container: TabContainer = $RootPanel/TabContainer
-@onready var commands_panel: CommandsInspectorPanel = $RootPanel/TabContainer/Commands
 @onready var fauna_panel: FaunaInspectorPanel = $RootPanel/TabContainer/Fauna
 @onready var rollback_ten_button: Button = $RootPanel/CommandToolbar/RollbackTenButton
 @onready var rollback_button: Button = $RootPanel/CommandToolbar/RollbackButton
@@ -54,6 +67,8 @@ var _tab_panels: Array = []
 @onready var step_ten_button: Button = $RootPanel/CommandToolbar/StepTenButton
 @onready var scripts_panel: ScriptManagerPanel = $RootPanel/TabContainer/Scripts
 
+## Snapshot-carried axis bias, held here because SentimentPanel renders it (`set_axis_bias`) and
+## the coordinator is what sees the snapshot key.
 var _axis_bias: Dictionary = {}
 # Terrain tile/biome/food state moved to TerrainPanel.
 # Culture layer/tension state moved to CulturePanel.
@@ -65,7 +80,6 @@ var _panel_visible: bool = true
 ## skip in `_apply_update` safe — see its header.
 var _cached_snapshot: Dictionary = {}
 var _hidden_snapshot_pending: bool = false
-var _seen_command_events: Dictionary = {}
 var _resolved_font_size: int = Typography.DEFAULT_FONT_SIZE
 var _last_turn: int = 0
 var command_client: Object = null
@@ -80,10 +94,11 @@ const PANEL_MIN_TOP_OFFSET = 48.0
 const PANEL_MARGIN = 16.0
 const PANEL_HANDLE_WIDTH = 12.0
 const PANEL_TAB_PADDING = 16.0
-const AXIS_NAMES: Array[String] = ["Knowledge", "Trust", "Equity", "Agency"]
-const AXIS_KEYS: Array[String] = ["knowledge", "trust", "equity", "agency"]
+## Seconds between auto-played turns. Autoplay is a DEV loop driven by the toolbar Play/Pause
+## button; this is the interval the retired Commands tab's spin box shipped with, now the single
+## rate because nothing in the UI sets one any more.
+const AUTOPLAY_INTERVAL_SECONDS := 0.5
 # CULTURE_* constants moved to CulturePanel.
-# CHANNEL_OPTIONS / SPAWN_SCOPE_OPTIONS / CORRUPTION_OPTIONS moved to CommandsPanel.
 var _viewport: Viewport = null
 var _panel_width: float = PANEL_WIDTH_DEFAULT
 var _is_resizing = false
@@ -100,8 +115,7 @@ func _ready() -> void:
 	if root_panel != null:
 		root_panel.gui_input.connect(_on_root_panel_gui_input)
 		root_panel.focus_mode = Control.FOCUS_CLICK
-	# Axis/influencer/corruption/heat/config controls are owned by CommandsPanel; the
-	# map-size/scenario/rivers controls are owned by MapPanel.
+	# The map-size/scenario/rivers controls are owned by MapPanel.
 	_apply_capability_gating()
 	apply_typography()
 	_tab_panels = [power_panel, crisis_panel, knowledge_panel, sentiment_panel, victory_panel, fauna_panel, great_discoveries_panel, logs_panel, influencer_panel, corruption_panel, map_panel, culture_panel, terrain_panel]
@@ -124,14 +138,6 @@ func _ready() -> void:
 	# Fauna is now display-only telemetry (herd list + detail). The follow-herd command it
 	# used to emit was retired with the single-task fauna commands (Early-Game Labor slice 3a);
 	# hunting is now labor allocation via the HUD.
-	# Commands tab owns the runtime command controls; the hub (_send_command / autoplay
-	# timer / command_client) stays here. Axis bias apply routes back so _axis_bias stays
-	# coordinator-owned (Sentiment depends on it); autoplay relays to the coordinator timer.
-	if commands_panel != null:
-		commands_panel.set_command_hooks(Callable(self, "_send_command"), Callable(self, "_append_command_log"))
-		commands_panel.axis_bias_apply_requested.connect(_on_axis_bias_apply_requested)
-		commands_panel.autoplay_toggled.connect(_on_autoplay_toggled)
-		commands_panel.autoplay_interval_changed.connect(_on_autoplay_interval_changed)
 	_update_panel_layout()
 	_render_static_sections()
 	_setup_command_controls()
@@ -157,8 +163,9 @@ func set_panel_visible(visible: bool) -> void:
 ## empties the panels while they are already visible.
 ##
 ## Safe to re-run against a snapshot already partly consumed: every panel rebuilds its state from
-## the snapshot's keys, and the one accumulator on this path (`_ingest_command_events`) dedupes on
-## `_seen_command_events`, so the events ingested while hidden are not logged twice.
+## the snapshot's keys. **There is no accumulator on this path any more** — `command_events` used to
+## be one, appending to a running log nothing later could reconstruct; it belongs to the event dock
+## now (`Main` feeds it directly), so a replay here cannot double-log anything.
 func _catch_up_hidden_snapshot() -> void:
 	if not _hidden_snapshot_pending or _cached_snapshot.is_empty():
 		return
@@ -218,10 +225,12 @@ func update_delta(delta: Dictionary) -> void:
 ## once per world.
 ##
 ## **The prefix below runs hidden or not**, and the dividing line is not "cheap" but
-## *reconstructible*: `_ingest_command_events` consumes a per-turn EVENT array and appends to a
-## running log — history no later snapshot carries — so skipping it would silently lose command
-## feed entries. Everything after the gate rebuilds panel state from snapshot keys and is therefore
-## recoverable. Anything added to this method must be classified the same way before it is placed.
+## *reconstructible*: anything consuming per-turn history no later snapshot carries must run whatever
+## else is skipped, while everything after the gate rebuilds panel state from snapshot keys and is
+## therefore recoverable. The prefix's one ACCUMULATOR — `command_events` — moved out to the event
+## dock, so what is left above the gate is the cheap per-frame scalars. **Anything added to this
+## method must be classified the same way before it is placed**, and an accumulator added back here
+## has to sit above the gate.
 func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	# Held by REFERENCE, not deep-copied: the native decoder builds a fresh Dictionary tree per
 	# frame and no consumer mutates it in place (MapView duplicates the sub-dicts it keeps), so
@@ -234,9 +243,9 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 
 	# campaign_profiles / campaign_label / faction_inventory / grid are consumed by
 	# MapPanel via the _tab_panels fan-out at the end of this method.
-	# ACCUMULATOR — see the header: a running log, not reconstructible state, so it runs while hidden.
-	if data.has("command_events"):
-		_ingest_command_events(data["command_events"])
+	# `command_events` is NOT read here. It was the one accumulator on this path — the reason the
+	# prefix above the visibility gate exists at all — and it belongs to the event dock now, which
+	# `Main` feeds directly. The Commands tab is a debug console, never a notification surface.
 	# food_modules + tiles/tile_updates/tile_removed are consumed by TerrainPanel via the
 	# _tab_panels fan-out at the end of this method.
 
@@ -253,8 +262,6 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 		_axis_bias = axis_dict.duplicate(true)
 		if sentiment_panel != null:
 			sentiment_panel.set_axis_bias(_axis_bias)
-		if commands_panel != null:
-			commands_panel.set_axis_bias(_axis_bias)
 
 	# Influencer roster + corruption ledger are owned by InfluencerPanel / CorruptionPanel
 	# and ingested via the _tab_panels fan-out at the end of this method.
@@ -272,13 +279,6 @@ func _apply_update(data: Dictionary, full_snapshot: bool) -> void:
 	for panel in _tab_panels:
 		if panel != null:
 			panel.apply_update(data, full_snapshot)
-
-	# InfluencerPanel owns the roster; feed it to the Commands tab's influencer dropdown
-	# after the panel has ingested this delta (panels stay decoupled — coordinator mediates).
-	if (full_snapshot and data.has("influencers")) \
-			or data.has("influencer_updates") or data.has("influencer_removed"):
-		if commands_panel != null and influencer_panel != null:
-			commands_panel.set_influencer_roster(influencer_panel.get_influencers())
 
 func _render_dynamic_sections() -> void:
 	# Second half of the hidden-panel skip (see `_apply_update`): this is the coordinator's own
@@ -310,13 +310,10 @@ func _render_static_sections() -> void:
 		great_discoveries_panel.reset()
 	if logs_panel != null:
 		logs_panel.reset()
-	_seen_command_events.clear()
 	if terrain_panel != null:
 		terrain_panel.reset()
 	if culture_panel != null:
 		culture_panel.reset()
-	if commands_panel != null:
-		commands_panel.reset()
 	if overlay_panel != null:
 		overlay_panel.reset()
 	if map_panel != null:
@@ -366,7 +363,6 @@ func apply_typography() -> void:
 		tab_container.tab_alignment = 0
 
 	# Terrain widgets are styled by TerrainPanel.apply_typography().
-	# The Commands-tab controls are styled by CommandsPanel.apply_typography().
 	var control_nodes: Array = [
 		rollback_ten_button,
 		rollback_button,
@@ -390,8 +386,6 @@ func apply_typography() -> void:
 		influencer_panel.apply_typography()
 	if corruption_panel != null:
 		corruption_panel.apply_typography()
-	if commands_panel != null:
-		commands_panel.apply_typography()
 	if overlay_panel != null:
 		overlay_panel.apply_typography()
 	if map_panel != null:
@@ -415,11 +409,11 @@ func _setup_command_controls() -> void:
 		step_one_button.pressed.connect(_on_step_one_button_pressed)
 	if step_ten_button != null:
 		step_ten_button.pressed.connect(_on_step_ten_button_pressed)
-	# Autoplay toggle/interval + scenario buttons are owned by CommandsPanel; the timer
-	# (which drives turn-stepping) stays here and is relayed via the panel's signals.
+	# Autoplay's only control is the toolbar Play/Pause button above; the timer that steps the
+	# turns lives here with the rest of the command hub.
 	autoplay_timer = Timer.new()
 	autoplay_timer.one_shot = false
-	autoplay_timer.wait_time = 0.5
+	autoplay_timer.wait_time = AUTOPLAY_INTERVAL_SECONDS
 	add_child(autoplay_timer)
 	autoplay_timer.timeout.connect(_on_autoplay_timeout)
 	# Terrain-tab command buttons (export/scout/found) are owned by TerrainPanel.
@@ -460,7 +454,7 @@ func set_command_client(client: Object, connected: bool) -> void:
 				port_value = int(port_variant)
 		_append_command_log("Connected to command endpoint %s:%d." % [host_value, port_value])
 	elif not command_connected and was_connected:
-		_append_command_log("Command endpoint disconnected.")
+		_append_command_log("Command endpoint disconnected.", true)
 	elif not command_connected and not was_connected:
 		if command_client != null:
 			var host_unavailable: String = "?"
@@ -473,9 +467,9 @@ func set_command_client(client: Object, connected: bool) -> void:
 				var port_unavailable_variant = command_client.call("get", "port")
 				if typeof(port_unavailable_variant) in [TYPE_INT, TYPE_FLOAT]:
 					port_unavailable = int(port_unavailable_variant)
-			_append_command_log("Command endpoint unavailable (%s:%d)." % [host_unavailable, port_unavailable])
+			_append_command_log("Command endpoint unavailable (%s:%d)." % [host_unavailable, port_unavailable], true)
 		else:
-			_append_command_log("Command endpoint unavailable.")
+			_append_command_log("Command endpoint unavailable.", true)
 
 func set_streaming_active(active: bool) -> void:
 	if stream_active == active:
@@ -484,53 +478,45 @@ func set_streaming_active(active: bool) -> void:
 	if stream_active:
 		_append_command_log("Streaming snapshots active.")
 	else:
-		_append_command_log("Streaming unavailable.")
+		_append_command_log("Streaming unavailable.", true)
 		if autoplay_timer != null and not autoplay_timer.is_stopped():
 			_disable_autoplay(true)
 	_update_command_status()
 
+## Re-read the command socket's state into `command_connected` and re-gate every panel that
+## enables its controls on it. It used to also format a human-readable status line, but the only
+## reader of that line was the retired Commands tab's status label — the state itself has many
+## readers, so the resolution stays and the prose goes. Transitions the PLAYER must hear are
+## logged by `set_command_client` / `set_streaming_active`, which reach the event dock.
 func _update_command_status() -> void:
-	var status_text: String = "Commands:"
 	if command_client == null or not command_client.has_method("status"):
-		status_text += " disabled."
 		command_connected = false
 	else:
 		var st_variant = command_client.call("status")
 		var st: int = st_variant if typeof(st_variant) == TYPE_INT else StreamPeerTCP.STATUS_NONE
-		var host_value: String = "?"
-		var port_value: int = 0
-		if command_client.has_method("get"):
-			var maybe_host = command_client.call("get", "host")
-			var maybe_port = command_client.call("get", "port")
-			if typeof(maybe_host) == TYPE_STRING:
-				host_value = maybe_host
-			if typeof(maybe_port) in [TYPE_INT, TYPE_FLOAT]:
-				port_value = int(maybe_port)
-		match st:
-			StreamPeerTCP.STATUS_CONNECTED:
-				status_text += " connected (%s:%d)." % [host_value, port_value]
-				command_connected = true
-			StreamPeerTCP.STATUS_CONNECTING:
-				status_text += " connecting..."
-				command_connected = false
-			StreamPeerTCP.STATUS_ERROR:
-				status_text += " error."
-				command_connected = false
-			_:
-				status_text += " disconnected."
-				command_connected = false
-	if stream_active:
-		status_text += " Streaming: active."
-	else:
-		status_text += " Streaming: paused."
-	if commands_panel != null:
-		commands_panel.set_status(status_text)
+		command_connected = st == StreamPeerTCP.STATUS_CONNECTED
 	_update_command_controls_enabled()
 
-func _append_command_log(entry: String) -> void:
-	if commands_panel != null:
-		commands_panel.append_log(entry)
+## One line of client-side console chatter. It goes to the Logs tab's buffer, AND out on
+## `system_event` so the event dock can put it on the System channel — **which is now the only
+## surface a player sees it on**, the Commands tab that mirrored every line having been retired.
+##
+## `alert` defaults to `false`, which is what keeps the five panel-injected `Callable`s (Map /
+## Terrain / Crisis / Knowledge / Victory) working unchanged: a panel's own command receipt is a
+## Routine note. The FAILURE sites in this file pass `true` explicitly.
+##
+## `kind` defaults to `KIND_SYSTEM` for the same reason: every existing site keeps meaning "the
+## player should hear this", and only `_send_command`'s ACCEPTED-send line opts into
+## `KIND_COMMAND_ECHO`, which the dock ignores. The Logs buffer records every line regardless of
+## kind — it is the debug console now.
+func _append_command_log(entry: String, alert: bool = false,
+		kind: String = HudEventVocab.KIND_SYSTEM) -> void:
 	_append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
+	# THE LINE IS THE LABEL, not a detail beside one. A dock row renders its label at full size on
+	# the leading edge and its detail as small faint text on the TRAILING one — so passing a fixed
+	# "Command" label and the message as detail strands the only words that matter at the far end
+	# of a screen-wide bar. The channel chip already says where the line came from.
+	system_event.emit(entry, "", alert, kind)
 
 func _update_command_controls_enabled() -> void:
 	var connected = command_connected
@@ -540,10 +526,6 @@ func _update_command_controls_enabled() -> void:
 	# selection + construction capability).
 	if terrain_panel != null:
 		terrain_panel.set_command_connected(connected)
-	# The Commands-tab controls (axis/influencer/corruption/heat/scenario/config) are
-	# gated inside CommandsPanel.
-	if commands_panel != null:
-		commands_panel.set_command_connected(connected)
 	if fauna_panel != null:
 		fauna_panel.set_command_connected(connected)
 	if knowledge_panel != null:
@@ -571,11 +553,21 @@ func _ensure_command_connection() -> bool:
 			return false
 		_:
 			command_connected = false
-			_append_command_log("Command unavailable (%s)." % error_string(ensure_err))
+			_append_command_log("Command unavailable (%s)." % error_string(ensure_err), true)
 			_update_command_status()
 			return false
 
-func _send_command(line: String, success_message: String) -> bool:
+## **THE ACCEPTED-SEND LINE IS THE ONE ACKNOWLEDGEMENT PATH IN THE CLIENT**, so it is the one place
+## `KIND_COMMAND_ECHO` is stated. That is the boundary in code: `success_message` restates an action
+## the player just took and rides the echo kind the dock ignores, while both failure exits — no
+## connection, and a refused write — stay `KIND_SYSTEM` (the second as an Alert), because a command
+## that did NOT go is exactly what the System channel is for.
+##
+## `ack_kind` exists for the caller whose "success message" is not a receipt at all: `Main`'s
+## `resync` is sent by the CLIENT after it drops an unapplicable delta, so its line reports a fault
+## the player never asked for and it passes `KIND_SYSTEM` back in.
+func _send_command(line: String, success_message: String,
+		ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:
 	if not _ensure_command_connection():
 		return false
 	var err: Error = command_client.call("send_line", line)
@@ -583,15 +575,16 @@ func _send_command(line: String, success_message: String) -> bool:
 		command_client.call("poll")
 		err = command_client.call("send_line", line)
 	if err != OK:
-		_append_command_log("Command failed (%s): %s" % [line, error_string(err)])
+		_append_command_log("Command failed (%s): %s" % [line, error_string(err)], true)
 		_update_command_status()
 		return false
-	_append_command_log(success_message)
+	_append_command_log(success_message, false, ack_kind)
 	_update_command_status()
 	return true
 
-func send_runtime_command(line: String, success_message: String) -> bool:
-	return _send_command(line, success_message)
+func send_runtime_command(line: String, success_message: String,
+		ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:
+	return _send_command(line, success_message, ack_kind)
 
 ## Optional observer invoked after a turn is advanced through THIS coordinator — i.e. the dev
 ## toolbar and autoplay, which are DELIBERATELY NOT gated by the client-side end-turn gate the
@@ -633,47 +626,44 @@ func _on_rollback_button_pressed() -> void:
 	_request_rollback(1)
 
 func _on_play_pause_button_pressed() -> void:
-	# The toolbar Play/Pause and the Commands-tab autoplay toggle drive the same timer;
-	# _on_autoplay_toggled mirrors the state into both.
+	# The toolbar Play/Pause is autoplay's ONLY control now that the Commands tab (which carried a
+	# second, mirrored toggle) is gone; _on_autoplay_toggled is still the one entry point so the
+	# button, the timer and the log line can never disagree.
 	_on_autoplay_toggled(play_pause_button.button_pressed)
 
+## Start/stop the autoplay timer and keep the toolbar button showing the truth. Assigning
+## `button_pressed` fires `toggled`, not `pressed`, and the button is wired on `pressed` — so
+## writing the mirror here cannot re-enter this method.
 func _on_autoplay_toggled(pressed: bool) -> void:
 	if play_pause_button != null and play_pause_button.button_pressed != pressed:
 		play_pause_button.button_pressed = pressed
-	if commands_panel != null:
-		commands_panel.set_autoplay_active(pressed)
 	if pressed:
 		if not _ensure_command_connection():
-			if commands_panel != null:
-				commands_panel.set_autoplay_active(false)
 			if play_pause_button != null:
 				play_pause_button.button_pressed = false
 			_append_command_log("Auto-play requires an active command connection.")
 			return
-		var interval := commands_panel.get_autoplay_interval() if commands_panel != null else 0.5
 		if autoplay_timer != null:
-			autoplay_timer.wait_time = interval
+			autoplay_timer.wait_time = AUTOPLAY_INTERVAL_SECONDS
 			autoplay_timer.start()
-		_append_command_log("Auto-play enabled (%.2fs)." % interval)
+		_append_command_log("Auto-play enabled (%.2fs)." % AUTOPLAY_INTERVAL_SECONDS)
 	else:
 		_disable_autoplay(false)
-
-func _on_autoplay_interval_changed(value: float) -> void:
-	if autoplay_timer != null and not autoplay_timer.is_stopped():
-		autoplay_timer.wait_time = value
-		_append_command_log("Auto-play interval set to %.2fs." % value)
 
 func _on_autoplay_timeout() -> void:
 	if not _send_turn(1):
 		_disable_autoplay(true)
 
+## Stop autoplay from any cause — the toggle, a failed advance, a lost stream. The button un-presses
+## with the timer: it is the only autoplay affordance left, so a stopped timer under a still-lit
+## button would be a lie the player has no way to correct except by clicking twice.
 func _disable_autoplay(log_message: bool) -> void:
 	if autoplay_timer != null and not autoplay_timer.is_stopped():
 		autoplay_timer.stop()
 		if log_message:
 			_append_command_log("Auto-play paused.")
-	if commands_panel != null:
-		commands_panel.set_autoplay_active(false)
+	if play_pause_button != null:
+		play_pause_button.button_pressed = false
 
 func attach_map_view(view: Node) -> void:
 	_map_view = view
@@ -798,45 +788,6 @@ func _ingest_overlays(overlays: Variant) -> void:
 	if overlay_panel != null:
 		var tag_labels: Dictionary = terrain_panel.get_terrain_tag_labels() if terrain_panel != null else {}
 		overlay_panel.ingest(overlay_dict, tag_labels)
-
-# CommandsPanel owns the axis widgets and requests an apply via axis_bias_apply_requested.
-# _axis_bias stays coordinator-owned here (Sentiment depends on it); on a successful send we
-# update the mirror and push it to both the Sentiment view and the Commands axis spin.
-func _on_axis_bias_apply_requested(axis_idx: int, value: float) -> void:
-	if axis_idx < 0 or axis_idx >= AXIS_NAMES.size():
-		_append_command_log("Invalid axis selection.")
-		return
-	var clamped: float = clamp(value, -1.0, 1.0)
-	var message: String = "Axis %s set to %.3f" % [AXIS_NAMES[axis_idx], clamped]
-	if _send_command("bias %d %.6f" % [axis_idx, clamped], message):
-		var key: String = String(AXIS_KEYS[axis_idx])
-		_axis_bias[key] = clamped
-		if sentiment_panel != null:
-			sentiment_panel.set_axis_bias(_axis_bias)
-		if commands_panel != null:
-			commands_panel.set_axis_bias(_axis_bias)
-
-func _ingest_command_events(events_variant: Variant) -> void:
-	if not (events_variant is Array):
-		return
-	var events_array: Array = events_variant
-	for entry_variant in events_array:
-		if not (entry_variant is Dictionary):
-			continue
-		var entry: Dictionary = entry_variant
-		var tick: int = int(entry.get("tick", -1))
-		var kind: String = String(entry.get("kind", "")).strip_edges()
-		var label: String = String(entry.get("label", "")).strip_edges()
-		var detail: String = String(entry.get("detail", "")).strip_edges()
-		var signature := "%d|%s|%s|%s" % [tick, kind, label, detail]
-		if _seen_command_events.has(signature):
-			continue
-		_seen_command_events[signature] = true
-		var prefix := kind.capitalize() if kind != "" else "Command"
-		var message := "[SIM] %s: %s" % [prefix, label]
-		if detail != "":
-			message += " (%s)" % detail
-		_append_command_log(message)
 
 func _on_script_log_from_package(script_id: int, level: String, message: String) -> void:
 	var prefix: String = "[SCRIPT %d]" % script_id if script_id >= 0 else "[SCRIPT]"

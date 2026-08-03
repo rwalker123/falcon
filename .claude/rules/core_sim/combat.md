@@ -302,7 +302,7 @@ costs a fraction of **that turn's food income** — a real larder debit, capped 
 - Tests: `core_sim/tests/predator_raid.rs` gains the working-band-forfeits / idle-band-forfeits-nothing /
   forfeit-capped-at-larder cases; the config rejection rides `fauna_config.rs`'s unit tests.
 - **Client half — LANDED (this PR).** The native reader (`native/src/dict/population.rs`) decodes
-  `raidRadius`/`raidForfeit` into the cohort dict; `CommandFeedController`'s new extensible `KIND_STYLE`
+  `raidRadius`/`raidForfeit` into the cohort dict; the client's extensible `KIND_STYLE` (then on `CommandFeedController`, now `HudEventVocab`)
   table styles the threat/casualty feed events (`predator_raid` → ⚔ crimson, `hunt_danger` → ⚠ amber,
   reusing the `HudStyle` palette so the accent matches the map-overlay hues); the Warrior card shows a
   live **"⚠ Predator nearby — N on guard"** warning (a visible camp-threat predator within `raidRadius`

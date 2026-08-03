@@ -1383,6 +1383,18 @@ pub(crate) fn snapshot_to_dict(
             .map(food_modules_to_array),
     );
 
+    // How far back the sim retains `commandEvents`, in TURNS. `0` is the FlatBuffers default and
+    // means "not stated", so it is withheld rather than published as a retention window of zero —
+    // the client's own default has to stand in that case. It is hot-reloadable server-side, so the
+    // client reads it per snapshot rather than latching it at boot.
+    let retention_turns = snapshot
+        .campaign()
+        .map(|s| s.commandEventsRetentionTurns())
+        .unwrap_or(0);
+    if retention_turns > 0 {
+        let _ = dict.insert("command_events_retention_turns", retention_turns as i64);
+    }
+
     if let Some(pending_forks) = snapshot.campaign().and_then(|s| s.pendingForks()) {
         let _ = dict.insert("pending_forks", &pending_forks_to_array(pending_forks));
     }

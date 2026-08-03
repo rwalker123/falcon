@@ -161,6 +161,10 @@ pub struct WorldSnapshot {
     pub campaign_profiles: Vec<CampaignProfileState>,
     #[serde(default)]
     pub command_events: Vec<CommandEventState>,
+    /// How many turns of `command_events` the sim keeps — the depth of the event dock's history.
+    /// Anything older was evicted by the window, not lost on the wire.
+    #[serde(default)]
+    pub command_events_retention_turns: u32,
     /// The Telling's fork tier, per faction: what is on the table right now.
     #[serde(default)]
     pub pending_forks: Vec<PendingForksState>,
@@ -242,7 +246,12 @@ pub struct WorldDelta {
     pub knowledge_metrics: Option<KnowledgeMetricsState>,
     pub victory: Option<VictorySnapshotState>,
     pub capability_flags: Option<u32>,
+    /// **Append-only**: the rows appended since the client's cursor, not the whole retained ring.
+    /// `None` means nothing new fired this frame. See `core_sim::snapshot::diff_appended` for why
+    /// a dropped delta is still safe (`WorldCache::accepts` → `resync_needed` → full snapshot).
     pub command_events: Option<Vec<CommandEventState>>,
+    /// `None` means unchanged — an ordinary whole-section diff, unlike the events themselves.
+    pub command_events_retention_turns: Option<u32>,
     /// The campaign profile roster. `None` means unchanged.
     ///
     /// This was absent from `WorldDelta` entirely until delta streaming — harmless while the

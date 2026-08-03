@@ -28,7 +28,7 @@ Launch the Godot thin client inspector (requires Godot 4.7 or newer) to view liv
 godot4 --path clients/godot_thin_client src/Main.tscn
 ```
 
-The scene connects to the default localhost sockets exposed by `core_sim`. Override the connection targets by exporting `STREAM_HOST`, `STREAM_PORT`, `COMMAND_HOST`, or `COMMAND_PORT` before starting Godot. The Terrain, Sentiment, Influencers, Corruption, Logs, and Commands tabs mirror the full debug surface; see `docs/godot_inspector_plan.md` for a guided tour.
+The scene connects to the default localhost sockets exposed by `core_sim`. Override the connection targets by exporting `STREAM_HOST`, `STREAM_PORT`, `COMMAND_HOST`, or `COMMAND_PORT` before starting Godot. The Terrain, Sentiment, Influencers, Corruption, and Logs tabs mirror the full debug surface; see `docs/godot_inspector_plan.md` for a guided tour.
 
 Enable structured logs/metrics on the server (uses `tracing` with `RUST_LOG`):
 

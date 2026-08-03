@@ -223,7 +223,15 @@ pub(crate) struct PublishState {
     forage_patches: Whole<Vec<ForagePatchState>>,
     intensification_knowledge: Whole<Vec<IntensificationKnowledgeState>>,
     campaign_profiles: Whole<Vec<CampaignProfileState>>,
-    command_events: Whole<Vec<CommandEventState>>,
+    /// The event log's baseline is a **cursor**, not a copy of the ring: the highest `seq` the
+    /// client has been sent. See `snapshot::diff_appended`.
+    ///
+    /// It carries no [`Whole`] flag, and cannot want one: `held` exists for a section that can be
+    /// changed and changed *back* within a tick, and an append-only log has no "back". A held frame
+    /// leaves the cursor where the turn left it, so every later frame in the tick re-ships every row
+    /// since that turn — the restatement is structural, not a flag.
+    command_events: u64,
+    command_events_retention_turns: Whole<u32>,
     pending_forks: Whole<Vec<PendingForksState>>,
     stance_axes: Whole<Vec<StanceState>>,
     voice_medium: Whole<Vec<VoiceMediumState>>,
@@ -513,6 +521,7 @@ fn diff_crisis(
 struct CampaignParts {
     profiles: Option<Vec<CampaignProfileState>>,
     command_events: Option<Vec<CommandEventState>>,
+    command_events_retention_turns: Option<u32>,
     pending_forks: Option<Vec<PendingForksState>>,
     stance_axes: Option<Vec<StanceState>>,
     voice_medium: Option<Vec<VoiceMediumState>>,
@@ -527,7 +536,8 @@ struct CampaignParts {
 /// The baselines the campaign section owns.
 struct CampaignBaselines<'a> {
     profiles: &'a mut Whole<Vec<CampaignProfileState>>,
-    command_events: &'a mut Whole<Vec<CommandEventState>>,
+    command_events: &'a mut u64,
+    command_events_retention_turns: &'a mut Whole<u32>,
     pending_forks: &'a mut Whole<Vec<PendingForksState>>,
     stance_axes: &'a mut Whole<Vec<StanceState>>,
     voice_medium: &'a mut Whole<Vec<VoiceMediumState>>,
@@ -548,7 +558,13 @@ fn diff_campaign(
 ) -> CampaignParts {
     CampaignParts {
         profiles: diff_whole(baseline.profiles, &snapshot.campaign_profiles, write),
-        command_events: diff_whole(baseline.command_events, &snapshot.command_events, write),
+        // The one append-only section: rows above the cursor, never the whole ring.
+        command_events: diff_appended(baseline.command_events, &snapshot.command_events, write),
+        command_events_retention_turns: diff_whole(
+            baseline.command_events_retention_turns,
+            &snapshot.command_events_retention_turns,
+            write,
+        ),
         pending_forks: diff_whole(baseline.pending_forks, &snapshot.pending_forks, write),
         stance_axes: diff_whole(baseline.stance_axes, &snapshot.stance_axes, write),
         voice_medium: diff_whole(baseline.voice_medium, &snapshot.voice_medium, write),
@@ -735,7 +751,9 @@ impl PublishState {
             forage_patches: Whole::default(),
             intensification_knowledge: Whole::default(),
             campaign_profiles: Whole::default(),
-            command_events: Whole::default(),
+            // A fresh world has sent nothing, so every event ever pushed is "appended since".
+            command_events: 0,
+            command_events_retention_turns: Whole::default(),
             pending_forks: Whole::default(),
             stance_axes: Whole::default(),
             voice_medium: Whole::default(),
@@ -845,6 +863,7 @@ impl PublishState {
             victory,
             campaign_profiles,
             command_events,
+            command_events_retention_turns,
             pending_forks,
             stance_axes,
             voice_medium,
@@ -942,6 +961,7 @@ impl PublishState {
                         CampaignBaselines {
                             profiles: campaign_profiles,
                             command_events,
+                            command_events_retention_turns,
                             pending_forks,
                             stance_axes,
                             voice_medium,
@@ -1023,6 +1043,7 @@ impl PublishState {
             victory: crisis_parts.victory,
             campaign_profiles: campaign_parts.profiles,
             command_events: campaign_parts.command_events,
+            command_events_retention_turns: campaign_parts.command_events_retention_turns,
             pending_forks: campaign_parts.pending_forks,
             stance_axes: campaign_parts.stance_axes,
             voice_medium: campaign_parts.voice_medium,
@@ -1202,8 +1223,17 @@ impl PublishState {
             .reset(entry.snapshot.intensification_knowledge.clone());
         self.campaign_profiles
             .reset(entry.snapshot.campaign_profiles.clone());
-        self.command_events
-            .reset(entry.snapshot.command_events.clone());
+        // Rewind the cursor to the newest event the restored frame carries — a rollback un-sends
+        // everything after it, and a cursor left ahead would suppress the re-send.
+        self.command_events = entry
+            .snapshot
+            .command_events
+            .iter()
+            .map(|state| state.seq)
+            .max()
+            .unwrap_or(0);
+        self.command_events_retention_turns
+            .reset(entry.snapshot.command_events_retention_turns);
         self.pending_forks
             .reset(entry.snapshot.pending_forks.clone());
         self.stance_axes.reset(entry.snapshot.stance_axes.clone());
@@ -1351,6 +1381,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1479,6 +1510,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -1591,6 +1623,7 @@ impl PublishState {
             capability_flags: None,
             campaign_profiles: None,
             command_events: None,
+            command_events_retention_turns: None,
             pending_forks: None,
             stance_axes: None,
             voice_medium: None,
@@ -2414,6 +2447,7 @@ pub fn capture_snapshot(
         forage_patches: forage_patches_state.clone(),
         intensification_knowledge: intensification_knowledge_state.clone(),
         command_events: command_events_state.clone(),
+        command_events_retention_turns: command_events.retention_turns() as u32,
         pending_forks: pending_forks_state.clone(),
         stance_axes: stance_axes_state.clone(),
         voice_medium: voice_medium_state.clone(),

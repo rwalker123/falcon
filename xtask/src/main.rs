@@ -374,13 +374,6 @@ fn build_command_pieces(
             parts.push(width);
             parts.push(height);
         }
-        "heat" => {
-            let entity = parser.flag_or_pos_required(&["entity", "id"], "entity id")?;
-            parts.push(entity);
-            if let Some(delta) = parser.flag_or_pos(&["delta", "amount"])? {
-                parts.push(delta);
-            }
-        }
         "order" => {
             let faction = parser.flag_or_pos_required(&["faction", "id"], "faction id")?;
             parts.push(faction);
@@ -391,48 +384,6 @@ fn build_command_pieces(
         "rollback" => {
             let tick = parser.flag_or_pos_required(&["tick"], "tick")?;
             parts.push(tick);
-        }
-        "bias" => {
-            let axis = parser.flag_or_pos_required(&["axis"], "axis")?;
-            let value = parser.flag_or_pos_required(&["value"], "value")?;
-            parts.push(axis);
-            parts.push(value);
-        }
-        "support" | "suppress" => {
-            let id = parser.flag_or_pos_required(&["id"], "influencer id")?;
-            parts.push(id);
-            if let Some(magnitude) = parser.flag_or_pos(&["magnitude", "value"])? {
-                parts.push(magnitude);
-            }
-        }
-        "support_channel" => {
-            let id = parser.flag_or_pos_required(&["id"], "influencer id")?;
-            let channel = parser.flag_or_pos_required(&["channel"], "support channel")?;
-            parts.push(id);
-            parts.push(channel);
-            if let Some(magnitude) = parser.flag_or_pos(&["magnitude", "value"])? {
-                parts.push(magnitude);
-            }
-        }
-        "spawn_influencer" => {
-            let mut scope_provided = false;
-            let mut scope_is_generation = false;
-            if let Some(scope) = parser.flag_or_pos(&["scope"])? {
-                scope_provided = true;
-                scope_is_generation =
-                    matches!(scope.to_ascii_lowercase().as_str(), "generation" | "gen");
-                parts.push(scope);
-            }
-            if scope_is_generation {
-                if let Some(generation) = parser.flag_or_pos(&["generation", "gen"])? {
-                    parts.push(generation);
-                }
-            } else if !scope_provided {
-                if let Some(generation) = parser.flag_or_pos(&["generation", "gen"])? {
-                    parts.push("generation".to_string());
-                    parts.push(generation);
-                }
-            }
         }
         "counterintel_policy" => {
             let faction = parser.flag_or_pos_required(&["faction", "id"], "faction id")?;
@@ -462,22 +413,6 @@ fn build_command_pieces(
         "queue_espionage_mission" | "queue_mission" => {
             let mission = parser.flag_or_pos_required(&["mission", "mission_id"], "mission id")?;
             parts.push(mission);
-        }
-        "corruption" => {
-            let subsystem = parser.flag_or_pos(&["subsystem"])?;
-            let intensity = parser.flag_or_pos(&["intensity"])?;
-            let exposure = parser.flag_or_pos(&["exposure", "exposure_ticks", "timer"])?;
-            if let Some(subsystem) = subsystem {
-                parts.push(subsystem);
-            } else if intensity.is_some() || exposure.is_some() {
-                parts.push("logistics".to_string());
-            }
-            if let Some(intensity) = intensity {
-                parts.push(intensity);
-            }
-            if let Some(exposure) = exposure {
-                parts.push(exposure);
-            }
         }
         "reload_config" | "reload_sim_config" => {
             if let Some(kind) = parser.flag_or_pos(&["kind"])? {

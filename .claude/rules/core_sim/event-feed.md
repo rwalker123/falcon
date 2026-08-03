@@ -1,0 +1,238 @@
+---
+paths:
+  - "core_sim/src/resources.rs"
+  - "core_sim/src/systems/population.rs"
+  - "core_sim/src/systems/labor.rs"
+  - "core_sim/src/snapshot/mod.rs"
+  - "core_sim/src/snapshot/campaign.rs"
+  - "core_sim/tests/demographic_events.rs"
+  - "core_sim/tests/delta_streaming.rs"
+  - "xtask/src/decode_fixture.rs"
+---
+
+# The event feed: a turn window, a sequence, and an append-only delta
+
+`CommandEventLog` is the one player-facing stream of *things that happened* — command echoes, the
+Telling's beats, a pen lost, a predator raid, and (issue #272) the demographic flows the sim had
+always resolved and discarded. This file is the engineering rationale for the three changes that
+made it a feed a player can actually read: the bound, the sequence, and the delta.
+
+Design of record: `docs/event_dock_ux_proposal.html`. The client half — the dock, the rungs, the
+grouped log — is `.claude/rules/client/`.
+
+## Config files
+
+| File | Key | Purpose |
+|---|---|---|
+| `src/data/simulation_config.json` | `command_events_retention_turns` (**20**) | How many turns of world events the log keeps — **N means N distinct turns**, the newest included. Long enough to answer *"what happened while I was away"*, short enough to bound a full snapshot. Read into `SimulationConfig`, applied to the log at `build_headless_app` and re-applied on a `reload_config` (`set_retention_turns` prunes immediately, so the published window and the published rows cannot disagree). Published as `CampaignSection.commandEventsRetentionTurns`. **`0` is rejected at parse time** (`SimulationConfigError::ZeroCommandEventsRetentionTurns`) |
+
+## The bound is a TURN WINDOW, not a count
+
+The log used to keep the newest **32 entries**. That was fine while it carried only command echoes.
+Once births, deaths and coming-of-age report per band per turn, a count-bounded ring evicts a wolf
+raid inside two turns — the cap eats exactly what it exists to preserve.
+
+So `push` drops whole turns off the back: everything older than
+`newest_tick − (retention_turns − 1)` goes. A turn is the unit the player thinks in, the unit the
+client groups by, and the unit *"earlier turns"* walks backwards through.
+
+- **The newest entry's tick is the window's anchor.** Pushes are monotonic in tick (a turn resolves
+  before the next begins; a rollback replaces the log whole), so the row just pushed is the latest
+  turn the log knows about.
+- **The anchor turn counts toward the window** — ticks `anchor − (N − 1) ..= anchor`, exactly **N**
+  distinct turns. The `− 1` is the whole content of the rule: the key is named for a *count of
+  turns*, and the client's dock prunes to exactly that count, so reaching back N turns *past* the
+  anchor (as `evict` originally did) ships an N+1st turn the dock discards on ingest and makes the
+  expanded log's *"showing N of M retained turns"* foot describe a frame that carried M+1.
+- **A zero-turn window cannot be configured**, which is what lets `evict` subtract 1 without a
+  second underflow guard. `0` is also the FlatBuffers default for
+  `CampaignSection.commandEventsRetentionTurns`, and both client decoders read it as *"the sim did
+  not state a window"* and fall back to their own default — so a configured `0` would be a silent
+  divergence rather than a narrow window. `SimulationConfigData::into_config` rejects it for both
+  the boot and hot-reload paths (see `config-loading.md`).
+- **`MAX_RETAINED_EVENTS` (512) is a backstop, not the bound.** It exists so one pathological turn
+  cannot grow the log — and therefore the resync snapshot — without limit. Reaching it drops events
+  from *inside* the window, which is why it sits well above a normal turn's traffic rather than at
+  it.
+
+> **A test that counts rows in this log across a long run is now measuring the window.** Several
+> already did. `telling_memory`'s medium-advance guard drove 25 turns of collapse and then asserted
+> the log still held exactly one advance line; the honest form is *"nothing fired **after** the
+> advance"*, keyed on `tick`, because the original legitimately ages out while a re-fire would be
+> inside the window and still visible. Same for the demographic guards: they run 15 turns, not 40.
+
+## The sequence is ONE-BASED, and that is load-bearing
+
+Every entry carries a `seq`, stamped by `push` and never reused. A delta ships the rows whose `seq`
+exceeds the client's cursor, and **a fresh cursor is `0`** — so a zeroth event would be permanently
+unsendable to every new client. `FIRST_COMMAND_EVENT_SEQ` is therefore `1`, and `0` survives as the
+*never-pushed* value `CommandEventEntry::new` leaves behind (the log is the only writer).
+
+`next_seq` is monotonic **across eviction**: the cursor is a statement about what the client has
+seen, not an index into the ring, so a reissued number would silently suppress a real event.
+
+## `diff_appended` — the third diff shape
+
+Beside `diff_whole` / `diff_indexed` in `snapshot/mod.rs`, and the only one whose baseline is a
+single `u64`. `command_events` is a *log*: rows are appended, never edited, and the oldest fall out
+of the window. `diff_whole` re-serialised the whole retained ring every turn any event fired — at a
+20-turn window, ~200 rows to say that three are new, and the cost grows with the very feature being
+added.
+
+**A dropped delta permanently loses the events it carried**, where the old whole-vector resend was
+self-healing. That is safe for exactly one reason, and the pairing is not optional:
+
+> the client applies a delta only when it holds the named base frame (`WorldCache::accepts`), and a
+> mismatch raises `resync_needed`, whose answer is a **full snapshot** carrying the entire retained
+> ring.
+
+`delta_streaming::a_dropped_delta_is_detectable_and_the_resync_answer_re_backfills_every_event`
+pins both halves — that the gap is detectable, and that the resync answer really does re-backfill.
+
+**`Baseline::Hold` must NOT advance the cursor.** A mid-tick recapture diffs from the *turn's*
+baseline, so advancing the cursor there would consume the rows: the recapture frame would carry
+them and the committed turn delta — which the client may be the only recipient of — would never
+send them at all. It is the same cumulativity property every other section already has for
+recaptures, and here it is the difference between a lost frame being free and being unrecoverable.
+A rollback rewinds the cursor to the highest `seq` in the restored entry (`0` when empty), for the
+mirror reason: a cursor left ahead of a rewound world suppresses the re-send.
+
+**And it carries no `Whole::held` flag, which is not an omission.** Every other whole section now
+does (`turn-profiling.md` → "A HELD section must be restated when it comes back"), because a command
+can change a section and a later command in the same tick change it *back*, leaving the client on an
+intermediate value no diff reports. **An append-only log has no "back".** The cursor stays at the
+turn's value across every held frame, so each one re-ships *every* row since that turn — the second
+recapture restates the first's rows by construction, which is exactly what the flag buys elsewhere.
+The cost is a double-send, and the client de-duplicates on `seq`;
+`delta_streaming::a_recapture_delta_carries_every_event_since_the_turn_baseline` pins it. The window
+scalar beside it (`command_events_retention_turns`) is an ordinary `Whole<u32>` and *does* take the
+flag — a `reload_config` issued and reverted within one tick is precisely the reverting section that
+guard exists for.
+
+## The demographic flows: a rate becomes an event
+
+`advance_demographics` resolved `births`, `maturation` and its death terms as locals and dropped
+them, so a band that lost two elders to cold and gained a child looked exactly like a band that did
+neither. `DemographicOutcome::flows` returns them; `DemographicFlowAccumulator` turns them into
+events.
+
+**Births are a rate.** `births = working × fertility` on a thirty-person band is a fraction of a
+person per turn. Rounding per turn either invents a birth in a band too small to have had one, or
+reports none all game. So each flow accrues on a per-band carry, and an event fires only when the
+carry crosses a whole person, `accrue` subtracting exactly the count it reported and keeping the
+remainder. That remainder is what makes a small band's births *late* rather than *absent*, and it is
+pinned directly (`components::tests::the_remainder_survives_the_crossing`).
+
+- **One event names a COUNT**, never one event per person: three elders lost to one cold snap is one
+  line.
+- **The death cause is recorded on the turn it happens** (`DeathCause`, the dominant per-capita
+  fraction among starvation, cold and old age, ties to `Hunger`), and read at the crossing. Nothing
+  afterwards can answer it — post-turn brackets carry no record of which term emptied them.
+- **Migration needs no accumulator.** `last_emigrated` / `last_immigrated` are whole people already,
+  so `push_migration_events` fires from `advance_population_migration` — where those counts are
+  resolved — rather than from `simulate_population`, which would report the *previous* turn's moves
+  under the current tick.
+- **The carry is checkpoint state** (`sim_state::BandRecord::flow_accumulator`, classified in
+  `SIM_STATE_COMPONENTS`), for the same reason `BandTravel` is: a band two-thirds of the way to a
+  birth was two-thirds of the way there, and dropping the remainder re-times every event after a
+  restore.
+
+### Deaths pool onto ONE carry — not one per bracket
+
+`DemographicFlowAccumulator::deaths` is a single `Scalar` fed by the sum of the three bracket flows.
+Per-bracket carries is the intuitive shape, it was the shipped shape, and it is wrong for a reason
+worth writing down because it will be proposed again:
+
+> **A per-bracket remainder is stranded the moment that bracket's flow stops.** A cold snap kills
+> 0.4 of the children and ends; nothing further ever accrues to the child carry, so that 0.4 of a
+> person sits unreported for the rest of the game. Three brackets, three permanent leaks — and the
+> band's head-count has moved by people the feed will never mention. Pooled, any later death from
+> any bracket pays the remainder off, and the *most* the feed can ever be behind is the one
+> sub-person remainder every carry has by construction.
+
+The secondary win is latency: a loss spread thin across brackets (0.4 + 0.4 + 0.3 = 1.1 people) is
+announced when the **band** loses a person rather than when one bracket alone does.
+
+**What the pooling costs is attribution, and only attribution.** The `count` stays exact — `accrue`
+still subtracts precisely what it reported — but a single crossing may span brackets, so
+`bracket=` / `cause=` name the **dominant contributor since the last crossing** rather than
+asserting every one of those people was an elder. The per-bracket `*_death_contribution` fields
+exist purely for that labelling and are reset at each crossing, so an event describes the deaths it
+is announcing and not every death since the band was founded. `population::death_event_tests` pins
+all four properties.
+
+### Every term that removes a person must be in `DemographicFlows`
+
+`elder_mortality` (elders × `elder_mortality_rate`) was computed, applied to the elder bracket, and
+**routed nowhere** — so the one death a fed band in fair weather actually experiences was invisible.
+A 30-person band lost ~0.3 people/turn to old age with the feed completely silent; the reported
+symptom was a population going 30 → 29 by turn 5 with no `died` row at any detail level. It now
+rides in `flows.elder_deaths` alongside that bracket's starvation/cold term — one number, because
+they are one thing to the player — with `DeathCause::Age` to name it.
+
+**`cause=age` is its own value and not a fold-in**: a peaceful old-age death reported as `hunger`
+tells the player something false about their larder every few turns, and a wrong cause is worse than
+a coarse one. The token is `age`; the *label* reads "died of old age" (`DeathCause::label_phrase`),
+because the token is a wire contract and the label is prose.
+
+> **The guard that catches this class of bug is a LEDGER, not a case.**
+> `demographic_events::the_reported_flows_account_for_every_person_a_band_gains_or_loses` closes over
+> births, deaths, migration **and** the carries at once: a band's head-count moves by exactly
+> `(born reported + births carried) − (died reported + deaths carried) + migration`, because the
+> carry holds precisely the sub-person remainder the events have not claimed. A term nobody routed
+> shows up as residue. It failed by **3.78 people over 12 turns** before the fix — a per-case
+> assertion could not have found it, because a per-case assertion only checks the terms someone
+> thought of.
+
+### A bracket TRANSITION is an event, and is outside the ledger
+
+`maturations` (children→working) and `agings` (working→elders) are carried and reported exactly like
+births and deaths — `came_of_age` and `aged`, one carry each on `DemographicFlowAccumulator`, same
+crossing arithmetic — but they are a different kind of fact. **They move a person between brackets;
+the band's head-count does not change.** `aging` was the second silent transition: computed in
+`advance_demographics`, applied to the working bracket, and announced nowhere, so a band's workforce
+drained into elderhood with the feed saying only that people were being born and dying. It reports
+now, and it is deliberately **not** a notable — losing a pair of hands is worth a line, not an
+interrupt.
+
+> **They must NOT join the ledger's identity.**
+> `the_reported_flows_account_for_every_person_a_band_gains_or_loses` closes over *head-count*:
+> `births − deaths + migration`, carries included. A transition contributes zero to that total, so
+> counting either side of it would create residue against a number that never moved — the guard
+> would fail on a correct sim. Their honesty is pinned by their own carry guards
+> (`population::aging_event_tests`, `demographic_events::a_band_reports_workers_joining_the_elders`),
+> which assert the crossing reports whole people and the remainder survives. The rule *"every term
+> that removes a person must be in `DemographicFlows`"* is about people leaving the **band**; a
+> transition is in `DemographicFlows` for the different reason that the feed must speak it.
+
+**Combat casualties are the deliberate exception.** `PopulationCohort::apply_combat_casualties`
+(hunt danger, predator raids) takes people out of the working bracket without passing through
+`DemographicFlows`; those deaths narrate as `HuntDanger` / `PredatorRaid` rows carrying their own
+`killed=` detail, so the player is told — just not as a `died` row. That means the ledger identity
+**does not hold across a raid turn** (measured: the residue is exactly the casualties). The ledger
+guard asserts no casualty event fired on its pinned seed, so a seed change that starts raiding fails
+with that sentence rather than mutely breaking the arithmetic.
+
+**Detail tokens are space-delimited `key=value`**, the form the client's feed already parses:
+
+| Kind | Detail |
+|---|---|
+| `born` | `band= count=` |
+| `came_of_age` | `band= count=` |
+| `aged` | `band= count=` |
+| `died` | `band= count= bracket={child\|working\|elder} cause={hunger\|cold\|age}` |
+| `migrated` | `band= count= direction={out\|in}` |
+
+**The label names `Band {id}`**, because the snapshot carries no band *name* — the client renders a
+positional "Band N" (`HudFormat.band_display_name`). Every event also carries the id as a `band=`
+token, which is what lets the client re-label the row with whatever it calls that band.
+
+`Option<&BandId>` / `Option<&mut DemographicFlowAccumulator>` on the query: worldgen gives every
+real band both, and `demographic_events::every_resident_band_carries_a_flow_accumulator` fails if a
+spawn seam forgets — a band that silently never narrates is the failure mode that would otherwise
+ship unnoticed.
+
+## What is NOT here
+
+There is **no `System` event kind**. System/console lines are synthesized client-side; the sim
+publishes only things that happened in the world.

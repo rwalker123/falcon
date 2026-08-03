@@ -8,8 +8,9 @@ extends RefCounted
 ## entirely and pushed ordinary command receipts off screen. A command receipt is a TRANSACTIONAL
 ## ACKNOWLEDGEMENT (worthless after seconds); a narrative beat is THE STORY SO FAR. Opposite retention,
 ## density and reading behaviour, so the narrative kinds moved here and the command feed went back to
-## being a command log. `CommandFeedController` SKIPS whatever `handles_kind()` claims, so the split has
-## exactly one definition (below) and the two surfaces can never both render — or drop — a kind.
+## being a command log. That log is the EVENT DOCK now (`ui/EventDockPanel.gd`), and it SKIPS whatever
+## `handles_kind()` claims, so the split has exactly one definition (below) and the two surfaces can
+## never both render — or drop — a kind.
 ##
 ## THE BOOK MODEL. The controller keeps its full retention buffer (`_entries`, cap 40 — the
 ## backfill/dedup source of truth) and DERIVES the display from it every render. A **page = one speaking
@@ -45,8 +46,8 @@ const HudStyle := preload("res://src/scripts/ui/HudStyle.gd")
 const KIND_NARRATIVE_BEAT := "narrative_beat"
 const KIND_NARRATIVE_FORK := "narrative_fork"
 
-## The single definition of the feed/telling split. `CommandFeedController` asks this rather than
-## keeping its own list, so a kind can never land in both surfaces or in neither.
+## The single definition of the dock/telling split. `EventDockPanel` asks this rather than keeping
+## its own list, so a kind can never land in both surfaces or in neither.
 static func handles_kind(kind: String) -> bool:
 	return kind == KIND_NARRATIVE_BEAT or kind == KIND_NARRATIVE_FORK
 

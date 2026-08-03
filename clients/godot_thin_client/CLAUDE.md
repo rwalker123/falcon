@@ -133,6 +133,7 @@ for the scripts it covers. The boot/menu/settings rows stay above.
 | `turn-orb.md` | Band alerts and the attention model | `AttentionController.gd`, `TurnOrbController.gd` |
 | `targeting.md` | Move-band and the scouting/hunting expeditions | `TargetingController.gd` |
 | `band-city-panel.md` | The 4-edge dockable command centre | `BandCityPanel.gd`, `BandPanelController.gd` |
+| `event-dock.md` | The notification bar: importance rungs, channels, the pinned alert, `seq` de-dup | `EventDockPanel.gd`, `hud_event_vocab.gd` |
 | `panel-framework.md` | Docked `PanelCard`s, `DockScrollFit`, `AutoSizingPanel` | `PanelCard.gd`, `PanelDock.gd` |
 | `terrain-blend-shader.md` | The per-pixel biome-blend shader: blend, shore, canopy, peaks, rivers | `*.gdshader`, `TerrainRenderer.gd` |
 | `terrain-textures.md` | Atlas assets, `terrain_config.json`, loading, the 2D pipeline | `TerrainTextureManager.gd` |
@@ -224,7 +225,7 @@ shown build can never go stale.
 | `I` | Hide/show inspector |
 | `L` | Show/hide the Terrain Types legend (**hidden by default**, persisted) |
 | `V` | Show/hide the Victory panel (**hidden by default**, persisted) |
-| `R` | Show/hide the Command Feed (**hidden by default**, persisted) |
+| `R` | Show/hide the **event dock** (the notification bar; **shown by default**, persisted) |
 | Double-click herd | Quick-assign the player band's idle workers to hunt it (Sustain) |
 | `Esc` | Close the compose sheet, else cancel targeting, else open/close the pause menu (`Main.escape_claimant`) |
 
