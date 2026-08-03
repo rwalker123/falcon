@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs, io,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -1101,18 +1101,66 @@ pub struct FoodSiteEntry {
     pub seasonal_weight: f32,
 }
 
+/// **THE GATHERING SITES — the ground a people can actually work.**
+///
+/// Curated once during worldgen against a latitude-band + spatial-bucket quota with a minimum
+/// spacing, sized as a **share of land** and biased toward fresh water (`spawn_initial_world`,
+/// #466) — 130–134 markers on a standard map — and thereafter only *reconciled* against repainted
+/// terrain, never re-curated. So the set is fixed for the life of a world.
+///
+/// **This is the plant branch's scarcity, and since the ladder's site rule it is a live gameplay
+/// rule rather than a map decoration** (`RungSiteRequirement::requires_gathering_site`): rungs 1–3
+/// may only stand on a site, so *which* site a band can reach is the early game's real decision.
+/// Do not confuse it with `FoodModuleTag`, which sits on ~every land tile and says only which food
+/// web the ground belongs to.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct FoodSiteRegistry {
     sites: Vec<FoodSiteEntry>,
+    /// The positions of `sites`, for the per-command `is_site` test. Rebuilt with the vec by the two
+    /// writers below, so it cannot drift out of step with the list it indexes.
+    positions: HashSet<UVec2>,
+}
+
+/// **What the fresh-water bias pass actually did to the curated marker list** (issue #466).
+///
+/// The pass is a relocation, so its effect is invisible in any single map: "the markers are where
+/// they are" is true whether the pass ran, was switched off, or silently stopped working. This
+/// resource is the pass's own report, which is what lets a test assert the *kill switch* rather than
+/// mere reproducibility — at `fresh_water_site_weight = 0.0` the claim is `moved == 0`, and there is
+/// no "build the world without the pass" arm available to compare against instead.
+///
+/// Every field is written on **every** run of the pass, including the zero-weight early return: a
+/// stale count left over from a previous build would defeat the assertion it exists to support.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FoodSiteWaterBiasReport {
+    /// Markers relocated to a higher-scoring hex in their own bucket.
+    pub moved: usize,
+    /// Relocated markers whose destination classified to a different food module than their origin,
+    /// so the entry's `module`/`kind` were re-authored by the terrain.
+    pub relabelled: usize,
+    /// Markers sitting on or beside fresh water **after** the pass — the outcome the bias is for.
+    pub watered: usize,
+    /// Markers in the registry. Constant across the pass by construction (it never adds or drops).
+    pub total: usize,
 }
 
 impl FoodSiteRegistry {
     pub fn new(entries: Vec<FoodSiteEntry>) -> Self {
-        Self { sites: entries }
+        let positions = entries.iter().map(|entry| entry.position).collect();
+        Self {
+            sites: entries,
+            positions,
+        }
     }
 
     pub fn set_sites(&mut self, entries: Vec<FoodSiteEntry>) {
+        self.positions = entries.iter().map(|entry| entry.position).collect();
         self.sites = entries;
+    }
+
+    /// **Is this tile a gathering site?** The one test the plant ladder's site rule asks of the map.
+    pub fn is_site(&self, position: UVec2) -> bool {
+        self.positions.contains(&position)
     }
 
     pub fn sites(&self) -> &[FoodSiteEntry] {

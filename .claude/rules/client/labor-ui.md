@@ -1897,10 +1897,19 @@ discard is precisely what this axis split removed.
     - **The Sow SITE gate — the refusal is an ANSWER, not a bool.** Only ~**46 of 4160** tiles (1.1%)
       will take seed, so "why can't I sow here?" is *the* question rung 3 provokes — and the client
       **cannot re-derive** it (no per-biome capacity table, no hydrology). The sim ships the verdict
-      as a stable key on `ForagePatchState.sowSiteRefusal` (`""` / `too_poor` / `too_dry` /
-      `too_poor_and_too_dry`), resolved through the same `RungSiteRequirement::refusal` seam the `sow`
-      command gates on, and `_sow_site_refusal_reason` maps it to `SOW_REFUSAL_REASONS` — each naming
-      the fault AND pointing at rung 4 (Worked Land — irrigation/the plough), in the manual's voice.
+      as a stable key on `ForagePatchState.sowSiteRefusal` (`""` / `not_gathering_site` / `too_poor` /
+      `too_dry` / `too_poor_and_too_dry`), resolved through the same `RungSiteRequirement::refusal` seam
+      the `sow` command gates on, and `_sow_site_refusal_reason` maps it to `SOW_REFUSAL_REASONS` — each
+      naming the fault AND what to do about it, in the manual's voice: the two GROUND readings point at
+      rung 4 (Worked Land — irrigation/the plough), so their promise is a "not yet".
+      **`not_gathering_site` is neither of those things.** It SUPERSEDES the ground readings rather than
+      joining them (the sim short-circuits on it, so a thin AND dry non-site still ships this verdict
+      alone — a refusal naming three faults teaches two the player cannot act on), and no rung below
+      Farm relaxes it, so its line points at other GROUND instead of at a later turn. It is **latent but
+      not dead** on the client: `DrawerComposeController._forage_compose_available` gates on the same
+      `DetailFormat.tile_is_gathering_site` test, so the sheet never opens on ground that would earn it
+      — while it is the verdict the sim ships for the large majority of patch tiles, and it becomes
+      reachable the moment rung 4 drops `requires_gathering_site`.
       An **unknown key still refuses** (fail closed: the sim gates the command regardless, so a button
       offered here would only fail unreadably). This is the only gate reason on either ladder a player
       answers by **moving** rather than by working. ui_preview `forage_sow_too_dry` /

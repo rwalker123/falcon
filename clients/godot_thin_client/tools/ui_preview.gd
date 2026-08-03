@@ -4448,6 +4448,16 @@ func _ready() -> void:
 	await _settle()
 	await _save("tile_panel_no_forage")
 
+	# tile_panel_ungathered — issue #464: a RICH stand on ground nobody gathers. Distinct from
+	# `tile_panel_no_forage` in the only way that matters: there the ground truly carries nothing,
+	# here it carries a full patch and a named basket the player can never touch. The card must state
+	# `Grazing` and NOT `Foraging` — the plant stand is a verb that is unavailable, the pasture is a
+	# fact about ground that feeds herds with no action at all.
+	_show_tile(_ungathered_tile_fixture())
+	await _settle()
+	await _save("tile_panel_ungathered")
+	_assert_ungathered_stand_is_silent()
+
 	# tile_panel_herd — a herd row lit: the land row is STILL in the list above it (the land never
 	# leaves), and the hunt compose block fills the one drawer.
 	_hud._band_labor._player_band = _hunt_preview_local_band()
@@ -7334,6 +7344,34 @@ func _assert_food_layer_rows() -> void:
 		unstated.size() == 3 and not cotton_has_icon)
 	_assert_hud("…while the two roles the wire DOES state still wear theirs", icon_rows == 2)
 
+## **THE STAND IS SILENT WHERE THE VERB IS UNAVAILABLE** (issue #464), asserted over the REAL line
+## producer rather than a picture: a `Foraging` row that never rendered and one that rendered off the
+## bottom of a scrolled drawer look identical in a PNG, and the claim being made is about which rows
+## exist.
+##
+## **The control half is what makes the rest mean anything.** The two fixtures differ in exactly one
+## key (`food_module`), so asserting only the silence would pass just as happily against a producer
+## that had stopped emitting food-web rows at all — which is the regression this is most likely to be
+## asked to catch. Sabotage-verified: dropping the gate fails the first two, and gating on
+## `patch_carrying_capacity` instead of the site fails the fourth.
+func _assert_ungathered_stand_is_silent() -> void:
+	var ungathered := _hud._drawer._tile_terrain_lines(_floorify(
+		_ungathered_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	_assert_hud("ground nobody gathers states NO Foraging row",
+		_detail_row_index(ungathered, HudFloraVocab.FORAGING_KEY) < 0)
+	_assert_hud("…and no basket, since a share is only a share OF a stand you can work",
+		_flora_basket_rows(ungathered).is_empty())
+	# The animal web is untouched, and this is the half that keeps the card from going blank on ground
+	# that genuinely feeds herds. Fodder needs no forage action.
+	_assert_hud("…while Grazing still states its stock, because animals eat here regardless",
+		_detail_row_index(ungathered, HudFloraVocab.GRAZING_KEY) >= 0)
+	# THE CONTROL: the same tile, one key different.
+	var gathered := _hud._drawer._tile_terrain_lines(_floorify(
+		_three_role_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX))
+	_assert_hud("…and the SAME tile as a gathering site states Foraging and its whole basket",
+		_detail_row_index(gathered, HudFloraVocab.FORAGING_KEY) >= 0
+			and _flora_basket_rows(gathered).size() == 3)
+
 ## THE FOG STOCK/CAPACITY SPLIT (issue #462), asserted over the REAL producer's lines rather than a
 ## picture, because `— / 205` and a row that never rendered at all look far too alike downscaled —
 ## and because the bug being guarded was two rows that DISAGREED, which needs both read at once.
@@ -10111,6 +10149,30 @@ func _pastoral_herd_fixture() -> Dictionary:
 	fixture["domestication"] = 0.6
 	fixture["tile_info"] = _compact_herd_tile_fixture()
 	return fixture
+
+## **THE #464 TILE — a full stand on ground nobody gathers.** Rich alluvial plain, a 205-capacity
+## patch at Thriving, a three-plant basket led by a staple, pasture beside it — and **no gathering
+## site**, so the sim's plant rungs 1–3 all refuse it and no crew can ever be put on it.
+##
+## It is the `_three_role_tile_fixture` with its SITE keys cleared together — `food_module` plus the
+## two that merely describe that same site (`food_module_label`, `food_kind`), which is one change and
+## not three — on its own coordinates, so the saved frame is identifiable and the two fixtures stay
+## distinguishable. (`x`/`y` are not inert: `_tile_terrain_lines` resolves the meters' `building_rung`
+## through `_band_labor.forage_effort_at`. Neither coordinate carries an assignment in this harness,
+## so both resolve to none.) **Every patch, graze and composition key is identical**, and THAT is what
+## makes the pair a controlled comparison: everything the food-web rows are built out of is still
+## present and still the same, so a `Foraging` row that disappears here disappeared because of the
+## site test and not because the fixture went thin. **This is the state the card used to argue with itself in** —
+## `Foraging 205 / 205 · Thriving` over a Wild Tubers basket, with `No forage` in the land row two
+## rows above and no way to work any of it.
+func _ungathered_tile_fixture() -> Dictionary:
+	var tile := _three_role_tile_fixture()
+	tile["x"] = 66
+	tile["y"] = 9
+	tile["food_module"] = ""
+	tile["food_module_label"] = ""
+	tile.erase("food_kind")
+	return tile
 
 ## Ground that offers NOTHING to gather: no food module, no patch. The land row's meta must read
 ## "No forage" (not a blank), and the drawer must carry terrain rows with no compose block.

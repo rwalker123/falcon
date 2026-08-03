@@ -68,18 +68,36 @@ const GATE_REASON_PATCH_THRIVING_FORMAT := "Patch is %s — ease workers off and
 # client cannot re-derive this — it holds neither the per-biome capacity table nor the hydrology — so
 # the sim ships the VERDICT as a stable key and these turn it into the manual's voice. Never show a
 # Sow button that just fails, and never answer with a bare "you can't": each line names the fault AND
-# points at the rung that lifts it (Worked Land — irrigation and the plough — is a future arc, so the
-# promise is deliberately "not yet", not a date).
+# what the player can do about it. For the two GROUND readings that is the rung that lifts it (Worked
+# Land — irrigation and the plough — is a future arc, so the promise is deliberately "not yet", not a
+# date); for the gathering-site verdict below there is no such rung, so it points at other GROUND.
 #
 # Rung 3 moves seed but cannot FERTILIZE, so the land itself must do it: the ground has to be rich
 # already and near fresh water. Salt coast does not count.
 const SOW_REFUSAL_TOO_POOR := "too_poor"
+
+# Nobody gathers here — the tile is not one of the curated gathering sites, so no plant rung below 4
+# can stand on it whatever the soil says. It **supersedes** the two ground readings rather than
+# joining them: the sim short-circuits on it, so a tile that is also thin and dry still ships THIS
+# verdict alone, and its line names one fault because the other two are moot while there is no way to
+# work the ground at all. It is also the one refusal that is NOT a "not yet" — no rung below Farm
+# relaxes the requirement, so the answer is a different tile, not a later turn.
+#
+# LATENT BUT NOT DEAD: today the compose sheet never opens on such ground
+# (`DrawerComposeController._forage_compose_available` gates on the same `tile_is_gathering_site`
+# test), so this reason is unreachable through the sheet — while being the verdict the sim ships for
+# the large majority of patch tiles. It becomes reachable the moment rung 4 (Farm) drops
+# `requires_gathering_site` and the compose block returns on the ground that rung unlocks. Deleting
+# it as unreachable would hand that ground `SOW_REFUSAL_FALLBACK`, which is written for a key we do
+# not recognize.
+const SOW_REFUSAL_NOT_GATHERING_SITE := "not_gathering_site"
 
 const SOW_REFUSAL_TOO_DRY := "too_dry"
 
 const SOW_REFUSAL_TOO_POOR_AND_TOO_DRY := "too_poor_and_too_dry"
 
 const SOW_REFUSAL_REASONS := {
+    "not_gathering_site": "Nobody gathers this ground — your people cannot sow land they do not already work. Sow where they gather, or move a band to ground they can.",
     "too_poor": "This ground is too thin to take a crop — your people can carry seed, but not yet feed the soil. Look to the river valleys, until they learn to work poorer land.",
     "too_dry": "This ground is rich but too dry to farm — your people can carry seed, but not yet carry water to it. Sow beside fresh water, until they learn to bring it here.",
     "too_poor_and_too_dry": "This ground is both too thin and too dry to take a crop — your people can carry seed, but neither feed the soil nor water it yet. The river valleys will take it; this ground will not, until they learn to work the land.",

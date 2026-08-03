@@ -126,13 +126,14 @@ const DERIVED_RESOURCES: [(&str, &str); 4] = [
 /// day a checkpoint becomes a **save file** loaded into a fresh process — at which point every
 /// entry here has to be either serialized or regenerated from `WorldGenSeed`. Do not read this
 /// table as "these can never matter".
-const WORLD_STATIC_RESOURCES: [&str; 16] = [
+const WORLD_STATIC_RESOURCES: [&str; 17] = [
     "ActiveStartProfile",
     "BiomePalette",
     "CampaignLabel",
     "ElevationField",
     "FactionRegistry",
     "FoodSiteRegistry",
+    "FoodSiteWaterBiasReport",
     "GenerationRegistry",
     "GreatDiscoveryRegistry",
     "HydrologyState",

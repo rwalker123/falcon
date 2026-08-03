@@ -203,3 +203,52 @@ fn every_river_delta_has_a_forage_patch() {
         CENSUS_GRID.y
     );
 }
+
+/// **EVERY GATHERING SITE IS WORKABLE — the invariant the plant ladder's site rule now rests on.**
+///
+/// Since issue #464 the curated `FoodSiteRegistry` is a live gameplay rule, not map decoration:
+/// plant rungs 1–3 all carry `requires_gathering_site`, so a site is *the* ground a band may work.
+/// A site with no `ForagePatch` under it would therefore be the exact contradiction #464 was filed
+/// against, one layer down — the card would offer the ground and the crew would carry nothing.
+///
+/// **MEASURED: it does not happen, and the mechanism that could produce one is only STATISTICALLY
+/// excluded — which is exactly why this is a standing guard and not a comment.**
+///
+/// Zero-capacity ground carrying a `FoodModuleTag` is common (measured on earthlike 80x52 over the
+/// census seeds: 3-80 `Glacier`, 1-4 `ActiveVolcanoSlope`, and `SaltFlat` on one seed), and
+/// `spawn_initial_forage` skips every one of them — so a site curated onto one would be a gathering
+/// site with nothing to gather. Two things keep it from happening rather than one hard rule:
+/// candidates are curated from the **pre-hydrology, pre-solver, pre-palette** terrain (so a tile that
+/// ends up Glacier was usually something workable when it was judged), and `compare_food_site` ties on
+/// every candidate's `seasonal_weight`, leaving a **stable** row-major order that the quota + minimum
+/// spacing then thin to ~50 of ~2300. Nothing in that chain *forbids* the case.
+///
+/// **This test was written because the case was claimed from a code read and then doubted.** Across
+/// both grids and all six census seeds — ~600 curated sites — the count is **0**. So the claim was
+/// wrong as a description of shipped maps, and this is the tripwire that keeps it wrong. If it ever
+/// fires, the fix belongs in curation (exclude zero-capacity candidates), not here.
+#[test]
+fn every_gathering_site_carries_a_forage_patch() {
+    for grid in [CENSUS_GRID, NAVIGABLE_FIXTURE_GRID] {
+        for seed in CENSUS_SEEDS {
+            let app = generated_world(seed, grid);
+            let forage = app.world.resource::<ForageRegistry>();
+            let sites = app.world.resource::<core_sim::FoodSiteRegistry>();
+            let workless: Vec<(UVec2, FoodModule)> = sites
+                .iter()
+                .filter(|site| forage.patch(site.position).is_none())
+                .map(|site| (site.position, site.module))
+                .collect();
+            assert!(
+                workless.is_empty(),
+                "seed {seed} at {}x{}: {} of {} gathering site(s) carry no ForagePatch, so the \
+                 plant ladder's site rule would admit ground no crew can work: {:?}",
+                grid.x,
+                grid.y,
+                workless.len(),
+                sites.sites().len(),
+                &workless[..workless.len().min(10)]
+            );
+        }
+    }
+}

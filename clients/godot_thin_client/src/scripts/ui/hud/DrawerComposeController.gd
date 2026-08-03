@@ -2080,7 +2080,7 @@ func _compose_anchor_rect() -> Rect2:
 ## the button can never open an empty sheet. (A workable patch is live state — redacted on a
 ## remembered hex like its occupants — and there must be a player band to staff it.)
 func _forage_compose_available(tile_info: Dictionary) -> bool:
-    return String(tile_info.get("food_module", "")).strip_edges() != "" \
+    return DetailFormat.tile_is_gathering_site(tile_info) \
         and not _resolve_assign_band().is_empty() \
         and not _selectioncard.tile_contents_unseen(tile_info)
 
