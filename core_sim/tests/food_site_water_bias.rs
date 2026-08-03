@@ -111,8 +111,15 @@ fn is_fresh_watered(app: &App, pos: UVec2) -> bool {
     })
 }
 
-/// **Will `plant:field` take seed here?** — rich enough ground, on fresh water, resolved against the
-/// rung's own `site_requirement` so a retune of either dial moves this fixture with the game.
+/// **Will `plant:field` take seed on this GROUND?** — resolved against the rung's own
+/// `site_requirement` so a retune of its dials moves this fixture with the game.
+///
+/// **The gathering-site term is deliberately answered `true` here, and that is not a shortcut.**
+/// Since issue #464 the rung also requires a curated marker, and this file's whole subject is how the
+/// marker set relates to the sowable set — it counts them separately and intersects them
+/// (`markers ∩ sowable`). Feeding the real `is_site` in would fold one set into the other, collapsing
+/// that intersection to the marker count and making every census below a tautology. So this asks the
+/// ground half alone, and `marker_positions` asks the site half.
 fn is_sowable(app: &App, pos: UVec2) -> bool {
     let Some(tile) = app
         .world
@@ -128,6 +135,7 @@ fn is_sowable(app: &App, pos: UVec2) -> bool {
         ladder.rung(RungKey::PlantField),
         tile,
         &labor.forage,
+        true,
         is_fresh_watered(app, pos),
     )
     .is_none()

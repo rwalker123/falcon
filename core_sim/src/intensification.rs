@@ -438,25 +438,41 @@ pub struct RungBehavior {
 /// [`RungDef::ceiling_required`], keyed on the ground rather than on the species
 /// (`docs/plan_intensification_ladder.md` §2).
 ///
-/// It exists because rung 3 is *"I know how to take seed from a plant and put it somewhere else — but
-/// I do not know fertilization, so the land must already be very fertile, and near fresh water"*.
-/// **Scarcity is the point, not a side effect**: few sowable tiles ⇒ *which* tile matters ⇒ a band may
-/// have to **move** to farm at all. That friction is the design pillar the requirement exists to
-/// create, so both dials are levers rather than constants.
+/// **THE WHOLE PLANT BRANCH IS SITE-BOUND UNTIL RUNG 4.** Rungs 1–3 (gather, Cultivate, Sow) all
+/// require a **gathering site** — the curated `FoodSiteRegistry` entry — and differ only in what they
+/// add on top: Cultivate adds nothing (it improves the output of a site you already work), Sow adds
+/// fresh water (you may move seed, but not water). **Rung 4 (Farm) is the first rung that drops the
+/// site requirement**, which is precisely what it is *for*: planting one of the things that grows on
+/// fertile ground you are not already gathering from. Rung 5 (Irrigation) then relaxes the water term
+/// to "fresh water, or connected to it".
 ///
-/// **And they are exactly the dials rung 4 relaxes.** Worked Land (plows, irrigation, terracing — a
-/// future arc) is *"now I can make lesser ground farmable"*, which on this record is a **looser
-/// `site_requirement`** and nothing else: a lower floor, `requires_fresh_water: false`. That is the
-/// arc's config-driven thesis paying out — a rung whose *placement rule* differs is a config edit.
+/// **Scarcity is the point, not a side effect**: few gathering sites ⇒ *which* tile matters ⇒ a band
+/// may have to **move** to eat at all, and the early game's real decision is which site to sit on.
+/// That friction is the design pillar the requirement exists to create, so every dial is a lever
+/// rather than a constant — and rung 4's identity is a **config edit** to this record, which is the
+/// arc's config-driven thesis paying out.
 ///
-/// `None` on a rung that may be built anywhere its source already is — i.e. every rung but this one
-/// today. The animal rungs need no such record: a herd carries its own site with it.
+/// `None` on a rung that may be built anywhere its source already is — i.e. every animal rung, which
+/// needs no such record because a herd carries its own site with it.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct RungSiteRequirement {
+    /// **The site rule**: the tile must be a curated **gathering site** (`FoodSiteRegistry`), the
+    /// ground the player can actually work. `false` on rung 4 and above — that is the whole of what
+    /// Farm unlocks.
+    ///
+    /// It is deliberately NOT "the tile has a food module": a `FoodModuleTag` sits on ~every land
+    /// tile, so a module test admits nearly the whole map and would make this rule vacuous.
+    pub requires_gathering_site: bool,
     /// **The fertility floor**: the tile's own human-food carrying capacity
     /// (`forage.capacity_by_biome`, via `forage::tile_forage_capacity` — the *same* number that sizes
     /// a wild patch, never a rung-specific table) must reach this for the rung to be placed there.
     /// `0` = no floor.
+    ///
+    /// **`0` on every rung today.** It carried rung 3's scarcity (a floor of 195, admitting only the
+    /// river-deposit class) until the gathering-site rule above took that job: stacking both made Sow
+    /// need a curated site that *also* landed on one of three biomes, which is scarcity twice over.
+    /// It stays a live dial because rung 4 is where it earns its keep — Farm has no site rule, so
+    /// fertility is the only thing standing between it and planting a glacier.
     pub min_forage_capacity: f32,
     /// **The water rule**: the tile must be on or beside **fresh** water — a river along one of its
     /// sides, fresh-water ground, or a lake/channel/marsh next door (`forage::tile_is_fresh_watered`).
@@ -465,10 +481,16 @@ pub struct RungSiteRequirement {
 }
 
 /// **Why the land refuses a rung** — the shape of [`RungSiteRequirement::refusal`], so the *rung*
-/// says what is wrong with the ground and the caller only phrases it. Both failures are real and
-/// distinct (rich-but-dry upland vs. watered-but-thin scrub), and a tile can fail both at once.
+/// says what is wrong with the ground and the caller only phrases it. The fertility and water
+/// failures are real and distinct (rich-but-dry upland vs. watered-but-thin scrub), and a tile can
+/// fail both at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SiteRefusal {
+    /// **Nobody gathers here** — the tile is not a curated gathering site, so no plant rung below 4
+    /// can stand on it. It **supersedes** the two ground readings rather than joining them: whether
+    /// such a tile is also thin or dry is moot while there is no way to work it at all, and a refusal
+    /// naming three faults teaches the player two they cannot act on.
+    NotGatheringSite,
     /// The ground is watered, but too thin to take a crop without fertilization.
     TooPoor,
     /// The ground is rich, but too dry to farm without irrigation.
@@ -484,6 +506,7 @@ impl SiteRefusal {
     /// "this ground takes seed", i.e. `Option::None`.
     pub fn as_str(self) -> &'static str {
         match self {
+            SiteRefusal::NotGatheringSite => "not_gathering_site",
             SiteRefusal::TooPoor => "too_poor",
             SiteRefusal::TooDry => "too_dry",
             SiteRefusal::TooPoorAndTooDry => "too_poor_and_too_dry",
@@ -503,7 +526,17 @@ impl RungSiteRequirement {
     /// rule and can never drift into disagreeing about which ground is farmable.
     ///
     /// `None` = the land permits it.
-    pub fn refusal(&self, forage_capacity: f32, fresh_water: bool) -> Option<SiteRefusal> {
+    ///
+    /// **The gathering-site test short-circuits** — see [`SiteRefusal::NotGatheringSite`].
+    pub fn refusal(
+        &self,
+        gathering_site: bool,
+        forage_capacity: f32,
+        fresh_water: bool,
+    ) -> Option<SiteRefusal> {
+        if self.requires_gathering_site && !gathering_site {
+            return Some(SiteRefusal::NotGatheringSite);
+        }
         let too_poor = forage_capacity < self.min_forage_capacity;
         let too_dry = self.requires_fresh_water && !fresh_water;
         match (too_poor, too_dry) {
@@ -614,18 +647,30 @@ pub struct RungDef {
     /// *this* source may start *this* rung is a coded gate the rung's own verb owns (`corral` refuses
     /// a herd that isn't pastoral; `cultivate` refuses a patch that is already tended), because the
     /// rule genuinely differs per branch: `Corral` needs a herd you already tamed, while **`Sow`
-    /// needs no prior patch at all** — seed travels, so rung 3 of the plant ladder can create a
-    /// source where none existed (`docs/plan_intensification_ladder.md` §2, "where the two webs
-    /// legitimately differ"). Both facts are true at once: `plant:field` still sits directly above
-    /// `plant:tended` on the ladder, and sowing bare ground still skips no *step of the ladder* — it
-    /// starts from a tile, not from a source.
+    /// needs no prior *patch*** — it places a source on a tile that grew none, so it starts from
+    /// ground rather than from a source. Both facts are true at once: `plant:field` still sits
+    /// directly above `plant:tended` on the ladder, and sowing an unpatched tile skips no *step of
+    /// the ladder*.
+    ///
+    /// **§2's "seed travels, so rung 3 can create a source where none existed" was reversed by the
+    /// gathering-site arc** and now belongs to rung 4 (Farm). Rung 3 may still sow a tile carrying no
+    /// patch, but only a tile its people already **gather** — see
+    /// [`RungSiteRequirement::requires_gathering_site`]. That is a `site_requirement` fact, not a
+    /// `requires_rung` one, which is exactly why the two fields stay separate.
     pub requires_rung: Option<String>,
     /// The per-species `husbandry_ceiling` a herd needs to reach this rung (Grazing 2d-δ). Animal
     /// branch only — a plant has no species ceiling.
     pub ceiling_required: Option<HusbandryCeiling>,
     /// **What the LAND must be** for this rung to be placed on a tile ([`RungSiteRequirement`]) — the
     /// plant twin of `ceiling_required`, keyed on the ground instead of the species. `None` = the rung
-    /// asks nothing of the site (every rung but `plant:field` today).
+    /// asks nothing of the site.
+    ///
+    /// **Today that is the animal rungs only: all three plant rungs state one**, each requiring a
+    /// gathering site (`every_plant_rung_is_bound_to_a_gathering_site` asserts it). It used to read
+    /// "every rung but `plant:field`" — the gathering-site arc pushed the requirement down the whole
+    /// plant branch, so a new plant rung without a `site_requirement` is now the anomaly rather than
+    /// the norm. **Rung 4 (Farm) differs from rungs 1–3, not from rung 3 alone**: it is the first to
+    /// set `requires_gathering_site: false`, and puts a fertility floor back in its place.
     pub site_requirement: Option<RungSiteRequirement>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,
@@ -1180,12 +1225,17 @@ fn validate_site_requirement(rung: &RungDef, where_: &str) -> Result<(), LadderC
             value: format!("min_forage_capacity = {}", site.min_forage_capacity),
         });
     }
-    if site.min_forage_capacity <= NO_FORAGE_CAPACITY && !site.requires_fresh_water {
+    if site.min_forage_capacity <= NO_FORAGE_CAPACITY
+        && !site.requires_fresh_water
+        && !site.requires_gathering_site
+    {
         return Err(LadderConfigError::Invalid {
             field: where_.to_string(),
             constraint: "require SOMETHING of the site, or state `site_requirement: null` — a                          requirement that admits every tile reads as a placement rule while being                          none, which is how a rung's scarcity silently evaporates"
                 .to_string(),
-            value: "min_forage_capacity = 0 with requires_fresh_water = false".to_string(),
+            value: "min_forage_capacity = 0 with requires_fresh_water = false and \
+                    requires_gathering_site = false"
+                .to_string(),
         });
     }
     Ok(())
@@ -2258,78 +2308,117 @@ mod tests {
         assert_eq!(learn_multiplier(-1.0), 0.0);
     }
 
-    // --- The `plant:field` rung's SITE requirement (the twin of `ceiling_required`, keyed on the
-    // land): the scarcity dial that makes rung 3 a decision rather than "tended but 2x".
+    // --- The plant branch's SITE requirement (the twin of `ceiling_required`, keyed on the land):
+    // the scarcity that makes *which ground you can reach* the early game's real decision.
 
-    /// The shipped rule, pinned: rung 3 asks for **very fertile ground near fresh water**, and it is
-    /// the **only** rung that asks anything of the site (a herd carries its own site with it).
+    /// The shipped rule, pinned: **every plant rung is site-bound and no animal rung is** (a herd
+    /// carries its own site with it), and rung 3 adds fresh water on top of what rungs 1–2 ask.
     #[test]
-    fn only_the_field_rung_asks_anything_of_the_land() {
+    fn every_plant_rung_is_bound_to_a_gathering_site() {
         let ladder = LadderConfig::builtin();
-        let site = ladder
-            .rung(RungKey::PlantField)
-            .site_requirement
-            .expect("rung 3 must be choosy about the land — that IS the rung");
+        for key in [
+            RungKey::PlantWild,
+            RungKey::PlantTended,
+            RungKey::PlantField,
+        ] {
+            let site = ladder
+                .rung(key)
+                .site_requirement
+                .unwrap_or_else(|| panic!("{key:?} must state its site rule"));
+            assert!(
+                site.requires_gathering_site,
+                "{key:?} must stand on ground the people already work — that is the plant \
+                 branch's scarcity, and rung 4 is the first rung to drop it"
+            );
+        }
         assert!(
-            site.min_forage_capacity > 0.0,
-            "the fertility floor is what 'already very fertile' means"
-        );
-        assert!(
-            site.requires_fresh_water,
+            ladder
+                .rung(RungKey::PlantField)
+                .site_requirement
+                .expect("rung 3 has a site requirement")
+                .requires_fresh_water,
             "rung 3 can carry seed but not water — the field must be near fresh water"
         );
-        for key in RungKey::ALL {
-            if key == RungKey::PlantField {
-                continue;
-            }
+        for key in [
+            RungKey::AnimalWild,
+            RungKey::AnimalPastoral,
+            RungKey::AnimalPen,
+        ] {
             assert!(
                 ladder.rung(key).site_requirement.is_none(),
-                "{key:?} must ask nothing of the site — only rung 3 chooses its ground"
+                "{key:?} must ask nothing of the site — a herd carries its own"
             );
         }
     }
 
-    /// **The site seam**, asserted at the rung: the rung judges the two readings and names *which* way
-    /// the ground fell short, so the caller only phrases it. Too poor and too dry are different
-    /// problems with different answers.
+    /// **The site seam**, asserted at the rung: the rung judges the three readings and names *which*
+    /// way the ground fell short, so the caller only phrases it. They are different problems with
+    /// different answers, and the gathering-site fault **supersedes** rather than joining the others
+    /// — teaching a player two faults they cannot act on is worse than teaching them the one they can.
     #[test]
     fn the_site_requirement_names_which_way_the_land_refuses() {
         let site = LadderConfig::builtin()
             .rung(RungKey::PlantField)
             .site_requirement
             .expect("rung 3 has a site requirement");
-        let rich = site.min_forage_capacity;
-        let thin = site.min_forage_capacity - 1.0;
 
-        assert_eq!(site.refusal(rich, true), None, "rich + watered takes seed");
-        assert_eq!(site.refusal(thin, true), Some(SiteRefusal::TooPoor));
-        assert_eq!(site.refusal(rich, false), Some(SiteRefusal::TooDry));
         assert_eq!(
-            site.refusal(thin, false),
-            Some(SiteRefusal::TooPoorAndTooDry),
-            "a tile that fails both must say so once, not one fault at a time"
+            site.refusal(true, 0.0, true),
+            None,
+            "a watered gathering site takes seed"
+        );
+        assert_eq!(
+            site.refusal(true, 0.0, false),
+            Some(SiteRefusal::TooDry),
+            "a dry gathering site is refused on water alone"
+        );
+        assert_eq!(
+            site.refusal(false, 0.0, true),
+            Some(SiteRefusal::NotGatheringSite),
+            "ground nobody gathers is refused before anything else is asked of it"
+        );
+        assert_eq!(
+            site.refusal(false, 0.0, false),
+            Some(SiteRefusal::NotGatheringSite),
+            "the gathering-site fault SUPERSEDES the others — a tile that is also dry must not be \
+             told two things it cannot act on"
+        );
+
+        // The fertility floor still works where a rung sets one — it is rung 4's dial, parked at 0
+        // on every shipped rung.
+        let farm = RungSiteRequirement {
+            requires_gathering_site: false,
+            min_forage_capacity: 40.0,
+            requires_fresh_water: true,
+        };
+        assert_eq!(farm.refusal(false, 39.0, true), Some(SiteRefusal::TooPoor));
+        assert_eq!(
+            farm.refusal(false, 39.0, false),
+            Some(SiteRefusal::TooPoorAndTooDry)
         );
     }
 
-    /// **Rung 4 (Worked Land) is a LOOSER COPY of this record** — the arc's config-driven thesis, and
-    /// the reason both dials are levers rather than constants. Irrigation and the plow relax exactly
-    /// these two, and nothing else has to change.
+    /// **Rung 4 (Farm) is THIS RECORD with the site rule dropped and the fertility floor put back** —
+    /// the arc's config-driven thesis, and the reason every dial is a lever rather than a constant.
+    /// Nothing but this record has to change to add it.
     #[test]
     fn a_looser_site_requirement_is_a_pure_config_edit() {
-        let worked_land = RungSiteRequirement {
+        let farm = RungSiteRequirement {
+            requires_gathering_site: false,
             min_forage_capacity: 40.0,
-            requires_fresh_water: false,
+            requires_fresh_water: true,
         };
-        // Ground rung 3 refuses on both counts — thin scrub, far from water — is farmable at rung 4.
+        // Fertile, watered ground that simply is not a gathering site: refused at rung 3, farmable
+        // at rung 4. That difference IS what Farm unlocks.
         assert_eq!(
             LadderConfig::builtin()
                 .rung(RungKey::PlantField)
                 .site_requirement
                 .expect("rung 3 has a site requirement")
-                .refusal(40.0, false),
-            Some(SiteRefusal::TooPoorAndTooDry)
+                .refusal(false, 195.0, true),
+            Some(SiteRefusal::NotGatheringSite)
         );
-        assert_eq!(worked_land.refusal(40.0, false), None);
+        assert_eq!(farm.refusal(false, 195.0, true), None);
     }
 
     #[test]
@@ -2347,6 +2436,7 @@ mod tests {
     fn rejects_a_site_requirement_that_requires_nothing() {
         let err = reject(|json| {
             let idx = rung_index(json, "plant", "field");
+            json["rungs"][idx]["site_requirement"]["requires_gathering_site"] = false.into();
             json["rungs"][idx]["site_requirement"]["min_forage_capacity"] = (0.0).into();
             json["rungs"][idx]["site_requirement"]["requires_fresh_water"] = false.into();
         });

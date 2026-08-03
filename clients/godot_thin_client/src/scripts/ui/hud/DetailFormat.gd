@@ -508,6 +508,22 @@ static func _split_kv(line: String) -> Array:
 #  tint guard can never drift apart.
 # =====================================================================================
 
+## **IS THIS GROUND A GATHERING SITE — i.e. can anyone work it at all?** The sim's plant rungs 1–3
+## all carry `requires_gathering_site` (`intensification_ladder.json`), so this one predicate answers
+## whether Forage, Cultivate and Sow are available here, and therefore whether the card may speak in
+## the human-food vocabulary at all.
+##
+## **Gated on the module KEY, never its label** — a tile with no site still ships the label `"None"`,
+## which would read as a site called "None". Same test `SelectionCardController._land_row_meta` uses
+## for its `No forage` meta and `DrawerComposeController._forage_compose_available` for the Assign
+## button; it lives here so the three cannot drift, which is exactly how issue #464 happened — the
+## drawer rendered a full stand on ground the other two had already declared unworkable.
+##
+## **The wire only ever carries the curated sites** (`foodModules` ← `FoodSiteRegistry`), so presence
+## IS the answer; there is no "has a module but is not a site" case to distinguish client-side.
+static func tile_is_gathering_site(tile_info: Dictionary) -> bool:
+    return String(tile_info.get("food_module", "")).strip_edges() != ""
+
 ## In-sight reads LIVE, both unseen states read remembered. The one test behind both the row's BBCode
 ## hex and the chip's Color, so the two forms cannot drift apart.
 static func sight_is_live(value: String) -> bool:
