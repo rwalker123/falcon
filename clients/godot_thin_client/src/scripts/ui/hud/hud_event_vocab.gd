@@ -84,15 +84,23 @@ const IGNORED_KINDS := {
 ##     that interrupts for every one of them trains the player to stop reading the bar — the precise
 ##     failure the three-rung ladder exists to prevent. A death that MATTERS (a band starving out)
 ##     announces itself through the starvation and morale channels that already exist.
-##   • `born` is NOTABLE, beside `came_of_age` and `died`. **It shipped Routine and that was wrong at
-##     the play-test**: Routine is below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared at all
-##     unless the player switched to "Everything", where it arrived buried among forage receipts —
-##     a population counter ticking up while the bar said nothing, which is precisely the failure
-##     this arc exists to remove. The retired reasoning ("a birth is a mouth, a coming-of-age is a
-##     pair of hands") described a real difference but the wrong axis: the rung is not a measure of
-##     how much a turn's LABOUR changed, it is whether the world changed in a way worth knowing, and
-##     the settlement visibly gaining or losing a person is the plainest such change there is.
-##     Routine keeps what it is actually for — receipts for verbs the player asked for.
+##   • **The demographic kinds split on HEAD-COUNT, and that one line settles all five of them.**
+##     `born` / `died` / `migrated` change how many people the band HAS, so they are Notable.
+##     `came_of_age` and `aged` move one person between brackets and leave the total untouched, so
+##     they are Routine.
+##
+##     Both halves were learned the hard way, in opposite directions. `born` shipped ROUTINE, i.e.
+##     below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared unless the player chose "Everything" —
+##     a population counter ticking up while the bar said nothing. `came_of_age` shipped NOTABLE and
+##     was reported from a playthrough as **too much noise**: it fires constantly and the population
+##     never moves, so it filled the default floor with rows that answered no question.
+##
+##     Two retired framings, both describing something real on the wrong axis. "A birth is a mouth, a
+##     coming-of-age is a pair of hands" measured how much a turn's LABOUR changed; "anything that
+##     touches the working-age population" measured which BRACKET moved. Neither is what a rung is
+##     for. The rung asks whether the world changed in a way worth knowing, and a settlement gaining
+##     or losing a person is the plainest such change there is — while a person having a birthday is
+##     not, however consequential the bracket it moves them into.
 const RUNG_BY_KIND := {
 	# Alert — violence, an investment lost, and the client's own faults.
 	"predator_raid": RUNG_ALERT,
@@ -101,7 +109,6 @@ const RUNG_BY_KIND := {
 	# Notable — the world changed in a way worth knowing.
 	"died": RUNG_NOTABLE,
 	"migrated": RUNG_NOTABLE,
-	"came_of_age": RUNG_NOTABLE,
 	"site_discovered": RUNG_NOTABLE,
 	"found_settlement": RUNG_NOTABLE,
 	"campaign_milestone": RUNG_NOTABLE,
@@ -110,7 +117,9 @@ const RUNG_BY_KIND := {
 	"expedition_returned": RUNG_NOTABLE,
 	"tame": RUNG_NOTABLE,
 	"born": RUNG_NOTABLE,
-	# Routine — receipts for things the player asked for.
+	# Routine — bracket transitions, and receipts for things the player asked for.
+	"came_of_age": RUNG_ROUTINE,
+	"aged": RUNG_ROUTINE,
 	"forage": RUNG_ROUTINE,
 	"hunt": RUNG_ROUTINE,
 	"sow": RUNG_ROUTINE,

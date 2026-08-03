@@ -6200,13 +6200,23 @@ func _ready() -> void:
 	event_dock.set_expanded(false)
 	await _settle()
 	await _save("event_dock_bottom")
-	# A BIRTH IS VISIBLE AT THE DEFAULT FLOOR. `born` shipped Routine, which is BELOW
-	# `DEFAULT_DETAIL_LEVEL`, so it never appeared unless the player chose "Everything" — reported
-	# live as a population counter ticking up while the bar said nothing. A rung table is one dict
-	# entry away from that regression at any time, so it is asserted rather than eyeballed.
-	_assert_hud("a birth passes the DEFAULT detail floor (`born` is Notable, not Routine)",
-		HudEventVocab.DETAIL_FLOOR[HudEventVocab.DEFAULT_DETAIL_LEVEL].has(
-			String(HudEventVocab.RUNG_BY_KIND["born"])))
+	# **THE DEMOGRAPHIC RUNGS SPLIT ON HEAD-COUNT**, and both directions were reported live, so both
+	# are pinned. A rung table is one dict entry away from either regression at any time.
+	#   • A change to how many people the band HAS must reach the default floor. `born` shipped
+	#     Routine — below `DEFAULT_DETAIL_LEVEL` — so a birth never appeared unless the player chose
+	#     "Everything": a population counter ticking up while the bar said nothing.
+	#   • A bracket TRANSITION must not. `came_of_age` shipped Notable and was reported as too much
+	#     noise — it fires constantly while the population never moves, filling the default floor
+	#     with rows that answer no question.
+	# Asserted as a PAIR: either one alone passes on a table that has collapsed every demographic
+	# kind onto the same rung, which is exactly the state both reports were complaining about.
+	var default_floor: Array = HudEventVocab.DETAIL_FLOOR[HudEventVocab.DEFAULT_DETAIL_LEVEL]
+	for kind in ["born", "died", "migrated"]:
+		_assert_hud("head-count change `%s` passes the DEFAULT detail floor" % kind,
+			default_floor.has(String(HudEventVocab.RUNG_BY_KIND[kind])))
+	for kind in ["came_of_age", "aged"]:
+		_assert_hud("bracket transition `%s` is BELOW the default floor — it is not news" % kind,
+			not default_floor.has(String(HudEventVocab.RUNG_BY_KIND[kind])))
 
 	# **NOTHING DOCKED LEFT OR RIGHT, AND THE BAR STILL CLEARS THE HUD'S OWN FURNITURE.** This is the
 	# case the first inset fix got wrong: it bounded the bar against edge RESERVERS, and the left

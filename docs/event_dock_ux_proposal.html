@@ -708,9 +708,9 @@
       <div class="rung notable">
         <h4>Notable</h4>
         <p class="says">The world changed in a way worth knowing.</p>
-        <p>Signal cyan. The default floor — this is what most players will see most of the time.</p>
+        <p>Signal cyan. The default floor. The demographic kinds here are the ones that change how many people the band <em>has</em>.</p>
         <p class="kinds">
-          born · died · migrated · came_of_age<br>
+          born · died · migrated<br>
           site_discovered · found_settlement<br>
           campaign_milestone · campaign_victory<br>
           expedition_arrived · expedition_returned · tame
@@ -718,9 +718,10 @@
       </div>
       <div class="rung routine">
         <h4>Routine</h4>
-        <p class="says">A receipt for a thing you asked for.</p>
-        <p>Dim ink, no accent rail. Off by default — this is the current feed's entire contents.</p>
+        <p class="says">A receipt, or a birthday.</p>
+        <p>Dim ink, no accent rail. Off by default. A bracket transition lives here: it moves one person between brackets and leaves the total untouched.</p>
         <p class="kinds">
+          came_of_age · aged<br>
           forage · hunt · sow<br>
           cultivate · corral · scout<br>
           cancel_order · expedition_sent
@@ -995,8 +996,8 @@
           </tr>
           <tr>
             <td class="k">came_of_age <span class="pill new">new</span></td>
-            <td class="d"><span class="pill notable">Notable</span></td>
-            <td class="d">The maturation accumulator crosses a whole person — a new pair of hands.</td>
+            <td class="d"><span class="pill routine">Routine</span></td>
+            <td class="d">The maturation accumulator crosses a whole person. <b>Routine, not Notable</b> — it fires constantly while the head-count never moves, and at the default floor it drowned the events that did.</td>
             <td class="k">band= count=</td>
           </tr>
           <tr>
@@ -1182,7 +1183,7 @@
   // said twice.
   var EVENTS = [
     { turn: 47, kind: "predator_raid",     rung: "alert",   channel: "world",  glyph: "⚔", label: "Grey wolves took two from Ashfoot",              detail: "Wounded 1 · Warriors 3 · Grey Wolf" },
-    { turn: 47, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "Two children came of age in Ashfoot",            detail: "" },
+    { turn: 47, kind: "came_of_age",       rung: "routine", channel: "world",  glyph: "◦", label: "Two children came of age in Ashfoot",            detail: "" },
     { turn: 47, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 12 provisions",           detail: "" },
     { turn: 47, kind: "sow",               rung: "routine", channel: "world",  glyph: "◦", label: "Barley sown on the river terrace",               detail: "" },
 
@@ -1198,7 +1199,7 @@
 
     { turn: 44, kind: "system",            rung: "alert",   channel: "system", glyph: "⚠", label: "Command socket lost — reconnecting",             detail: "Eof" },
     { turn: 44, kind: "campaign_milestone",rung: "notable", channel: "world",  glyph: "✦", label: "Ashfoot has become a hamlet",                    detail: "" },
-    { turn: 44, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "A child came of age in Windhollow",              detail: "" },
+    { turn: 44, kind: "came_of_age",       rung: "routine", channel: "world",  glyph: "◦", label: "A child came of age in Windhollow",              detail: "" },
     { turn: 44, kind: "scout",             rung: "routine", channel: "world",  glyph: "◦", label: "Two workers sent to scout the northern ridge",   detail: "" },
 
     { turn: 43, kind: "system",            rung: "routine", channel: "system", glyph: "◦", label: "Connected to simulation on 127.0.0.1:41002",     detail: "" },

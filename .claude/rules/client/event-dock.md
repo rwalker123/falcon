@@ -35,23 +35,38 @@ options rather than a checklist of twenty-seven kinds, and it is why the channel
 *alongside* it: a player who wants world events but not socket chatter says so without touching the
 floor.
 
-**`died`, `migrated` and `came_of_age` are NOTABLE, not Alert.** Bands lose elders to cold as a
-matter of course, and a rung that interrupts for every one of them trains the player to stop reading
-the bar — the precise failure the three-rung ladder exists to prevent. A death that *matters* (a
-whole band starving out) announces itself through the starvation and morale channels that already
-exist. Alert is kept for violence, for an investment going feral, and for the client's own faults.
+**`died` and `migrated` are NOTABLE, not Alert.** Bands lose elders to cold as a matter of course,
+and a rung that interrupts for every one of them trains the player to stop reading the bar — the
+precise failure the three-rung ladder exists to prevent. A death that *matters* (a whole band
+starving out) announces itself through the starvation and morale channels that already exist. Alert
+is kept for violence, for an investment going feral, and for the client's own faults.
 
-**`born` is NOTABLE too, and it shipped Routine — which was wrong at the play-test.** Routine sits
-below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared at all unless the player switched to
-"Everything", where it arrived buried among forage receipts. Ray hit exactly that at population 31:
-the counter ticked up and the bar said nothing, which is the failure this whole arc exists to remove.
+## The demographic kinds split on HEAD-COUNT
 
-The reasoning that put it there ("a birth is a mouth, a coming-of-age is a new pair of hands") was
-describing a real difference on the wrong axis. **The rung is not a measure of how much a turn's
-LABOUR changed** — it is whether the world changed in a way worth knowing. `born`, `came_of_age` and
-`died` are one family by that test: the settlement visibly changing size is the plainest such change
-there is, and the most legible sign it is alive at all. Routine keeps what it is actually for —
-receipts for verbs the player asked for.
+One line settles all five:
+
+> **`born` / `died` / `migrated` change how many people the band HAS — Notable. `came_of_age` and
+> `aged` move one person between brackets and leave the total untouched — Routine.**
+
+**Both halves were learned from play, in opposite directions**, which is why the rule is written as a
+rule rather than five table rows:
+
+- `born` shipped **Routine**, i.e. below `DEFAULT_DETAIL_LEVEL`, so a birth never appeared unless the
+  player chose "Everything", where it arrived buried among forage receipts. Reported at population
+  31: the counter ticked up and the bar said nothing — the failure this whole arc exists to remove.
+- `came_of_age` shipped **Notable** and was reported from a playthrough as **too much noise**. It
+  fires constantly while the population never moves, so it filled the default floor with rows that
+  answered no question — the same "stop reading the bar" failure, reached from the other side.
+
+**Two retired framings, both real but on the wrong axis.** "A birth is a mouth, a coming-of-age is a
+new pair of hands" measured how much a turn's LABOUR changed. "Anything that touches the working-age
+population" measured which BRACKET moved. A rung is neither: it asks whether the world changed in a
+way worth knowing. A settlement gaining or losing a person is the plainest such change there is; a
+person having a birthday is not, however consequential the bracket it moves them into.
+
+`ui_preview` pins **both directions as a pair** — every head-count kind above the default floor,
+every transition below it. Either assertion alone passes on a table that has collapsed all five onto
+one rung, which is precisely the state both reports were complaining about.
 
 ## A kind the dock IGNORES is dropped at INGEST, in both inlets
 
