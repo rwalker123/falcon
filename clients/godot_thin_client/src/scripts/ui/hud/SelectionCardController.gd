@@ -403,7 +403,7 @@ func _land_row_meta(tile_info: Dictionary) -> String:
 	var workers := _forage_workers_on_tile(int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
 	# Gated on the module KEY, never on its label: a tile with no module still ships the label
 	# `"None"`, which would render as a source called "None" instead of the honest "No forage".
-	if workers > 0 or String(tile_info.get("food_module", "")).strip_edges() != "":
+	if workers > 0 or DetailFormat.tile_is_gathering_site(tile_info):
 		# An UNWORKED patch reads `0 🌾`, not its module label. The row already LEADS with that
 		# module's own glyph, so the label restated it — and at dock width the row was the ONE
 		# place the name truncated (`Savanna Gras…`) while the drawer's `Forage:` row and the

@@ -62,6 +62,16 @@ paths:
     still read identically.
   Each row renders only where that web has a stock at all (`patch_carrying_capacity > 0` /
   `graze_capacity > 0`) — never a `0 / 0`, which reads as a starved stock rather than an absent one.
+  **AND THE `Foraging` ROW HAS A SECOND GATE THE `Grazing` ROW DOES NOT: the ground must be a
+  GATHERING SITE** (`DetailFormat.tile_is_gathering_site`, issue #464). The row's label is a **VERB**,
+  and the sim's plant rungs 1–3 all carry `requires_gathering_site`, so on ground that is not one the
+  verb is impossible and the row is a property readout for a capability the player does not have.
+  It rendered `Foraging 205 / 205 · Thriving` over a Wild Emmer basket on ground no crew could ever be
+  put on, while the land row two rows above said `No forage` and the drawer offered no compose block —
+  every signal in the block reading *go here*, the card arguing with itself, and the stand being the
+  half that was lying. **The asymmetry with `Grazing` is the point, not an oversight**: pasture feeds
+  herds with no player action at all, so it is a fact about the ground rather than an offer, and it
+  keeps its row on ground nobody gathers. See "The row is an AFFORDANCE" below.
   **A REMEMBERED TILE STATES BOTH ROWS WITH BOTH STOCKS WITHHELD** — see "Fog splits a stock from its
   CAPACITY" below, which is the one home for that rule.
   **The `Forage:` MODULE ROW WAS DELETED OUTRIGHT.** `Riverine / Delta — River Garden` named a
@@ -357,6 +367,52 @@ paths:
     transition (player faction only). Note `herding`'s note now names **Tame**, not Corral — see the
     gate reshuffle below.
   See `core_sim` intensification ladder — knowledge.
+
+## The row is an AFFORDANCE, not a property — one predicate, three surfaces
+
+**`DetailFormat.tile_is_gathering_site(tile_info)` is the ONE test** behind all three of the tile
+card's answers to *"can anyone work this ground?"*, and it exists because they used to disagree:
+
+| Surface | What it does on ground that is not a gathering site |
+|---|---|
+| `SelectionCardController._land_row_meta` | reads `No forage` |
+| `DrawerComposeController._forage_compose_available` | offers no **Assign foragers** button |
+| `SubjectDrawerController._tile_terrain_lines` | **states no `Foraging` row and no basket** (#464) |
+
+The third disagreed with the other two for as long as the block existed. Each had open-coded the same
+`String(tile_info.get("food_module", "")).strip_edges() != ""` — except the drawer, which had never
+asked the question at all.
+
+**It is the module KEY, never its label** — a tile with no site still ships the label `"None"`, which
+would render as a site called "None". And **the wire only ever carries the curated sites**
+(`foodModules` ← the sim's `FoodSiteRegistry`, a latitude/bucket-quota'd ~24–60 entries per map), so
+presence *is* the answer; there is no "carries a food module but is not a site" case to distinguish
+client-side, even though that describes most land tiles in the sim.
+
+**THE SIM OWNS THIS RULE NOW, AND DID NOT BEFORE.** Until #464 the gathering-site requirement existed
+in *one GDScript predicate* — `_forage_compose_available` — and nowhere else in the game: the sim
+accepted `assign_labor … forage` on any patch, so the client was refusing a command the server would
+have honoured, and the rule lived where the sim could not see it. It is now
+`RungSiteRequirement::requires_gathering_site` on plant rungs 1–3, enforced in the command validators
+(`.claude/rules/core_sim/cultivation.md`). The client half is a **reflection** of that rule, not the
+rule itself.
+
+**WHAT IS DELIBERATELY NOT GATED.** The remembered (Discovered) branch of `_tile_terrain_lines` takes
+no site test and cannot: `food_module` is in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile has no
+reading to gate on, and inferring "not a site" from the redacted key would drop the `Foraging: — / K`
+row from **every** remembered hex — the exact card `_assert_fog_stock_parity` exists to prevent. A
+remembered card states each web's capacity and withholds its stock; whether the ground can be worked
+*now* is a question about the present, which is what a remembered tile does not know. The build meters
+(`Crop` / `Cultivation` / `Field`) are likewise ungated — they state a standing INVESTMENT, and hiding
+one would hide work already paid for.
+
+**When rung 4 (Farm) drops `requires_gathering_site`, the block returns on the ground it unlocks**, and
+that reappearance is the discovery the rung is made of. ui_preview: `tile_panel_ungathered` (the #464
+tile — the `tile_food_layers` fixture with `food_module` cleared and **nothing else changed**, so the
+pair is a controlled comparison) with four assertions: no `Foraging` row, no basket, `Grazing` still
+stated, and — the half without which the rest pass against a producer that stopped emitting food-web
+rows entirely — the SAME tile as a gathering site still stating both. Sabotage-verified: dropping the
+gate fails the first two and leaves the last two green.
 
 ## Fog splits a stock from its CAPACITY, never one web from the other
 

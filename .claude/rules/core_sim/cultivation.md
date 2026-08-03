@@ -293,6 +293,37 @@ into an **explicit policy with an investment cost**. A patch carries `cultivatio
   indicator) is the **final Phase-1 slice** and remains a client-dev follow-up; the sim/schema data is
   now all on the wire (fields above).
 
+## Gathering is SITE-BOUND — the plant branch's rung-1 site rule (issue #464)
+
+**A crew may only be put on a curated gathering site**, and until #464 that rule lived nowhere in the
+sim. `plant:wild` now carries a `site_requirement` of its own (`requires_gathering_site: true`),
+enforced in `validate_labor_policy`'s `Forage` arm through `server::plant_rung_site_refusal` — the one
+seam `validate_cultivate`, `validate_sow`, the labor arm's `Sow` placement gate and the wire's
+`sowSiteRefusal` all resolve, so no two of them can disagree about which ground may be worked.
+
+**Why it is not "the tile has a `FoodModuleTag`".** `classify_food_module` tags essentially every land
+biome and `spawn_initial_forage` seeds a patch on every tagged tile with capacity, so a module test
+admits ~2,300 of 4,160 tiles and the rule would be vacuous. The **gathering sites** are the curated
+`FoodSiteRegistry` — a latitude-band + spatial-bucket quota with minimum spacing,
+`max(land_tiles / 120, 24)` of them, fixed for the life of a world. That scarcity is what makes *which
+site a band can reach* the early game's real decision, and it is the pillar the whole design rests on.
+
+**It was a CLIENT-SIDE rule.** The tile card simply declined to offer the compose sheet off-site
+(`DrawerComposeController._forage_compose_available`), so the sim accepted a command no player could
+send, and any other path — a script, a future AI, `cargo xtask command` — bypassed the game's central
+scarcity entirely. The card meanwhile rendered a full stand with a named basket on that same ground,
+which is the contradiction #464 was filed against.
+
+**`FoodSiteRegistry` gained a positional `is_site`** (a `HashSet` rebuilt with the vec by both writers,
+so it cannot drift from the list it indexes) — it was a bare `Vec` read only by the snapshot capture
+before this, i.e. map decoration rather than a live rule.
+
+**Test fixtures must now STATE their sites.** A patch seeded on bare nothing describes a world the sim
+cannot produce, and a fixture that omits the site makes its one worked tile unworkable and silently
+zeroes every yield under measurement. `server::tests::seed_gathering_site` and the `labor.rs` /
+`forage_field.rs` harnesses each declare theirs explicitly; an empty registry is a *valid* map (all
+barren), so no fallback could tell "no sites here" from "the fixture forgot".
+
 ## The `Sow` verb + the Field (Intensification rung 3) — the plant twin of the pen
 
 **Rung 3 places a food source where you want it** (`docs/plan_intensification_ladder.md` §2, slice 5).
@@ -304,45 +335,53 @@ exactly as a `Herd` carries `corral_progress` beside `domestication_progress`. T
 the field"**: each tile is its own patch, so you sow another field (the pen extends only because one
 herd has one appetite).
 
-- **Placed, not conjured — and SCARCITY IS THE POINT.** Rung 3 is *"I know how to take seed from a
-  plant and put it somewhere else — but I do not know fertilization, so the land must already be very
-  fertile, and near fresh water"*. That rule is the rung's **`site_requirement`** on the ladder record
-  (`RungSiteRequirement` — the plant twin of `ceiling_required`, keyed on the **land** instead of the
-  species), and both dials are levers:
-  - **`min_forage_capacity: 195`** — a floor on the tile's own `tile_forage_capacity` (the *same*
-    helper that sizes a wild patch and the wire's `forageCapacity`, never a Field-specific table). It
-    admits exactly the **river-deposit class** — RiverDelta 210, Floodplain 205, AlluvialPlain 195 —
-    and stops just above ordinary MixedWoodland (190).
+- **Sown on ground your people already work — and SCARCITY IS THE POINT.** Rung 3 is *"I know how to
+  take seed from a plant and put it somewhere else — but I do not know fertilization or water-carrying,
+  so I sow ground we already gather, near fresh water"*. That rule is the rung's **`site_requirement`**
+  on the ladder record (`RungSiteRequirement` — the plant twin of `ceiling_required`, keyed on the
+  **land** instead of the species), and every dial is a lever:
+  - **`requires_gathering_site: true`** — the tile must be a curated `FoodSiteRegistry` entry
+    (`FoodSiteRegistry::is_site`). **Inherited from rungs 1–2, not invented here**: gathering itself is
+    site-bound, so rung 3 narrows an already-scarce set rather than starting a second scarcity.
   - **`requires_fresh_water: true`** — the tile must be on or beside **fresh** water
     (`forage::tile_is_fresh_watered`): `TerrainTags::FRESHWATER` on the tile, **or** a river along one
     of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
     hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
     `hex_neighbors_wrapped`). A **salt coast is not water** for this — you do not farm sea spray.
-  - **Measured on the standard map** (earthlike 80×52, seed 119304647): **49 sowable tiles of 4160
-    (1.2%)** post the "divides, not valleys" arc — **35** on the pre-arc dome — against **2328** tiles
-    that merely bear food. (The historical **46** figure predates that arc.) **The measurement only
-    means anything with `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are
-    hydrology's, so a fixture that skips it measures 0 at every grid size and every seed. The
-    **conjunction is still doing the work** (pre-arc measurement: 337 tiles cleared the fertility
-    floor and the water rule cut 291 of them, 86%). Few sowable tiles ⇒ *which* tile matters ⇒ a band may have to **move** to
-    farm at all. That friction is the design pillar, not a side effect.
-  - **The refusal names the fault** (`SiteRefusal::{TooPoor, TooDry, TooPoorAndTooDry}` — the rung
-    judges, the caller phrases) and points at **rung 4, Worked Land** (plows/irrigation, a future arc):
-    *"Your people can carry seed, but not yet water or feed the land…until they learn to work the land
-    itself."* Too poor and too dry are different problems with different answers (move, or wait).
-  - **Rung 4 will be a LOOSER COPY of this record and nothing else** — a lower floor,
-    `requires_fresh_water: false`. That is the arc's config-driven thesis paying out: a rung whose
-    *placement rule* differs is a config edit (pinned by
+  - **`min_forage_capacity: 0`** — parked. It was **195** (admitting exactly the river-deposit class:
+    RiverDelta 210, Floodplain 205, AlluvialPlain 195) while this rung had no site rule, and stacking
+    the two demanded a curated site that ALSO landed on one of three biomes AND had water — scarcity
+    three times over on a set already ~1% of the map. **The dial stays live because rung 4 needs it**:
+    Farm has no site rule, so fertility is the only thing between it and planting a glacier.
+  - **A GATHERING SITE ADMITS BASKETS RUNG 3 CANNOT COMMIT TO, and that is new.** The 195 floor used
+    to imply a rich basket, so "the ground takes seed" implied "something here can be sown". It no
+    longer does: a site on a fishery or an alpine shelf passes the site rule and grows nothing with a
+    `field` cultivation ceiling. The labor arm already handles it (`default_species_for_rung` answers
+    `None` → no commit, no accrual) and the client's crop picker already renders every illegal entry
+    disabled with its reason, but the two questions are now genuinely separate — see the follow-up in
+    the PR for #464.
+  - **The refusal names the fault** (`SiteRefusal::{NotGatheringSite, TooPoor, TooDry,
+    TooPoorAndTooDry}` — the rung judges, the caller phrases through the shared
+    `server::site_refusal_message`). **`NotGatheringSite` supersedes the ground readings** rather than
+    joining them: whether such a tile is also thin or dry is moot while there is no way to work it, and
+    a refusal naming three faults teaches two the player cannot act on.
+  - **Rung 4 (Farm) IS A LOOSER COPY OF THIS RECORD and nothing else** —
+    `requires_gathering_site: false` plus a fertility floor put back. That is the arc's config-driven
+    thesis paying out: a rung whose *placement rule* differs is a config edit (pinned by
     `a_looser_site_requirement_is_a_pure_config_edit`).
-- **It needs no source below it** — the one place the two webs legitimately differ (§2). Seed travels:
-  qualifying ground carrying *no forage site at all* is a legal target, and sowing it **creates** the
-  patch (`ForagePatch::sown` — the tile's own biome capacity, biomass at the reseed floor, normal
-  logistic regrowth). `Corral`, by contrast, needs a herd you already tamed. *(Reachability caveat,
-  measured: worldgen seeds a patch on **every** food-bearing tile — `classify_food_module` tags
-  essentially every biome — so on a generated map `Sow` always **upgrades an existing wild patch**. The
-  create-from-nothing path is live and tested against constructed bare ground, but its input does not
-  occur today. This is also the claim that the stale "~95% of tiles carry no `ForagePatch`" note above
-  had made look true.)*
+- **"IT NEEDS NO SOURCE BELOW IT" IS RETIRED — that was §2's claim and issue #464 reversed it.** The
+  rule read *"seed travels, so qualifying ground carrying no forage site at all is a legal — indeed the
+  interesting — target"*, and `Sow` on bare ground still **creates** the patch (`ForagePatch::sown` —
+  the tile's own biome capacity, biomass at the reseed floor, normal logistic regrowth). What it missed
+  is that a band could never *reach* such ground: gathering is site-bound, so the only tiles a crew
+  works are gathering sites, and a rung that could leap off them existed on paper only. **"Seed
+  travels" moves up to rung 4 (Farm)**, where dropping `requires_gathering_site` is the whole of what
+  the rung unlocks. `Corral` needing a herd you already tamed is therefore no longer the asymmetry it
+  was — both webs' rung 3 now stands on something rung 2 established. *(The create-from-nothing branch
+  survives in code but is near-dead: a gathering site is curated onto a tile carrying a food module,
+  which is exactly the tile `spawn_initial_forage` seeds a patch on. The one gap left is a site curated
+  onto a **zero-capacity** biome — `SaltFlat`, `HydrothermalVentField` — which `spawn_initial_forage`
+  skips; that is a worldgen question, filed rather than fixed.)*
 - **Never gated on the ground's health** — load-bearing, not a relaxation: sown ground starts at the
   reseed floor, i.e. *Collapsing* by construction, so a health gate would forbid the case the rung
   exists for. Rung 2 has since lost its own (`docs/plan_harvest_floor.md` §3.2), so this is now true
@@ -388,7 +427,7 @@ herd has one appetite).
   the command form of the client's checkbox (issue #442: the stance beside it is left alone). It sows nothing outright; the seed goes in when the crew
   works the ground, so the improvement need only be checked once. Rejections, each
   distinct (`validate_sow`, shared with the `assign_labor` path): no such tile / **the land will not
-  take seed** — *too thin*, *too dry*, or both, each naming the fault and pointing at rung 4 / faction
+  take seed** — *nobody gathers here* or *too dry*, each naming the fault and what to do about it / faction
   hasn't learned **Seed Selection** ("Work tended patches to learn it") / already a Field / another
   people's ground / **no band is foraging it**. The site rule gates the **labor arm** too (both the
   seed placement and the build accrual), so the labor arm cannot farm ground the command refuses.

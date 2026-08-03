@@ -125,6 +125,9 @@ pub fn advance_labor_allocation(
     mut event_log: ResMut<CommandEventLog>,
     tick: Res<SimulationTick>,
     tile_registry: Res<TileRegistry>,
+    // The gathering sites — the plant ladder's site rule reads this, so `Sow`'s placement gate here
+    // and the `sow` command's own rejection resolve the same ground (`rung_site_refusal`).
+    food_sites: Res<FoodSiteRegistry>,
     sim_config: Res<SimulationConfig>,
     configs: LaborConfigs,
     tiles: Query<&Tile>,
@@ -320,11 +323,12 @@ pub fn advance_labor_allocation(
                     // two things below: the seed going into the ground at all, and the build meter it
                     // then fills.
                     //  - **the knowledge**: does the faction know Seed Selection?
-                    //  - **the SITE** (`site_requirement`): is the land already very fertile, and near
-                    //    fresh water? Rung 3 knows how to move seed, not how to fertilize — so it can
-                    //    only place a Field where the land does the fertilizing itself. That is the
-                    //    scarcity the rung is *made of*, and the ground the `sow` command refuses up
-                    //    front with the reason (too poor / too dry / both).
+                    //  - **the SITE** (`site_requirement`): is this a gathering site, and is it near
+                    //    fresh water? Rung 3 knows how to move seed, not how to carry water or
+                    //    fertilize — so it can only place a Field on ground the people already work,
+                    //    where the land waters itself. That is the scarcity the rung is *made of*, and
+                    //    the ground the `sow` command refuses up front with the reason (not a
+                    //    gathering site / too dry).
                     let sow_permitted = improvement == Some(Improvement::Sow)
                         && field_rung.unlock_discovery_id().is_none_or(|knowledge| {
                             knows(&discovery, faction, knowledge, knowledge_threshold)
@@ -342,8 +346,14 @@ pub fn advance_labor_allocation(
                                         .map(|neighbor| neighbor.terrain_tags)
                                 },
                             );
-                            rung_site_refusal(field_rung, ground, &labor.forage, fresh_water)
-                                .is_none()
+                            rung_site_refusal(
+                                field_rung,
+                                ground,
+                                &labor.forage,
+                                food_sites.is_site(ground.position),
+                                fresh_water,
+                            )
+                            .is_none()
                         });
                     // **WHICH NAMED PLANT this ground would be committed to** (Flora Roster S1,
                     // `docs/plan_flora_roster.md` §4.3). Resolved through the *same*
@@ -2359,6 +2369,7 @@ mod labor_yield_tests {
     //! is no longer the overdraw question — `SourceYield::overdraws` answers it from the policy's own
     //! escapement floor. See `SourceYield`.
     use super::advance_labor_allocation;
+    use crate::{FoodSiteEntry, FoodSiteRegistry};
 
     /// **The floor at which `intensification::learn_multiplier` is exactly ×1.0** — the food peak.
     /// Every accrual assertion below that is *not about the floor* passes it, so the call reads the
@@ -2467,6 +2478,17 @@ mod labor_yield_tests {
             width: 3,
             height: 1,
         });
+        // **The source tile is a GATHERING SITE.** Every plant rung carries
+        // `requires_gathering_site`, so a fixture that omits this makes the one worked tile
+        // unworkable and quietly zeroes every yield these tests measure. It is stated rather than
+        // defaulted for exactly that reason — an empty registry is a valid map (all barren), so no
+        // fallback can tell "no sites here" from "the fixture forgot".
+        world.insert_resource(FoodSiteRegistry::new(vec![FoodSiteEntry {
+            position: UVec2::new(0, 0),
+            module: FoodModule::SavannaGrassland,
+            kind: FoodSiteKind::SavannaTrack,
+            seasonal_weight: 1.0,
+        }]));
 
         let fauna = world.resource::<FaunaConfigHandle>().get();
         let mut herd = Herd::new(

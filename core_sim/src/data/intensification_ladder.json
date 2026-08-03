@@ -20,7 +20,12 @@
       "earns_knowledge": "cultivation",
       "requires_rung": null,
       "ceiling_required": null,
-      "site_requirement": null,
+      "_comment_site_requirement": "THE PLANT BRANCH'S SCARCITY, and it starts at rung 1 because gathering itself is the scarce thing. `requires_gathering_site` means the tile must be a curated FoodSiteRegistry entry — the ~24-60 sites worldgen lays down under a latitude/bucket quota with minimum spacing — NOT merely a tile carrying a FoodModuleTag, which ~every land tile does and which would make the rule vacuous. So a band cannot gather just anywhere: which site it can reach is the early game's real decision, and the move/stay/fork choice the whole design rests on. It sits on rung 1 rather than being an unwritten property of the Forage verb so that rungs 2-4 inherit or drop it BY CONFIG. No fertility floor and no water rule: a site is workable by definition, which is what being a site means.",
+      "site_requirement": {
+        "requires_gathering_site": true,
+        "min_forage_capacity": 0.0,
+        "requires_fresh_water": false
+      },
       "build": null,
       "behavior": {
         "movement": "fixed",
@@ -38,7 +43,12 @@
       "earns_knowledge": "seed_selection",
       "requires_rung": "wild",
       "ceiling_required": null,
-      "site_requirement": null,
+      "_comment_site_requirement": "Rung 2 asks exactly what rung 1 asks and nothing more — Cultivate IMPROVES THE OUTPUT of ground you already gather, so it can only stand where gathering can. Stated explicitly rather than left null: an inherited-by-silence rule is one nobody can find, and rung 4 dropping the site term has to read as a deliberate difference from the rungs below it.",
+      "site_requirement": {
+        "requires_gathering_site": true,
+        "min_forage_capacity": 0.0,
+        "requires_fresh_water": false
+      },
       "_comment_build": "Today's shipped values, moved here verbatim from labor_config.json `forage.cultivation` (progress_per_turn 0.04 -> 25 turns to prepare AT FULL CREW; decay_per_turn 0.01 -> a patch nobody works goes feral and fully lapses over ~100 turns). **yield_fraction_while_building is 0.50, and that is the ONE dip on the whole ladder now**: it arrived here as 0.25, the old `cultivating_yield_fraction` carried through the move verbatim, while BOTH animal rungs were deliberately dialled to 0.50 and the `pastoral` rung's own note calls that 'the animal-side corral dip precedent'. So the plant web was paying twice the animal web's price for the same claim, on a number nobody had chosen -- 0.25 carry means FOUR times the people to clear the same standing surplus, and a Cultivate that wanted 2 hands to hold a patch wanted 7 while building it. At 0.50 it wants 4, and one number means one thing on both webs. grace_turns 2: cleared, weeded ground keeps its clearing a couple of turns after the crew stops — volunteers close in within a season, not overnight. crew_needed 2: the SAME two hands the reference tile's wild Sustain gather wants (AlluvialPlain K 195 -> 2 gatherers, see cultivation.md), because 'preparing this patch needs fewer people than gathering it' was the bug. At 1 worker a Cultivate takes 50 turns, not 25.",
       "build": {
         "progress_per_turn": 0.04,
@@ -66,9 +76,10 @@
       "requires_rung": "tended",
       "_comment_ceiling_required": "Null — the husbandry ceiling is a per-SPECIES gate on the animal branch (`Herd::can_pen`). A plant has no species, so there is no species ceiling here; the LAND is what this rung is choosy about, and that is `site_requirement` below — the plant twin of the same idea.",
       "ceiling_required": null,
-      "_comment_site_requirement": "THE SCARCITY DIAL, and the reason rung 3 is a decision rather than 'tended but 2x'. Rung 3 is: I know how to take seed from a plant and put it somewhere else — but I do NOT know fertilization, so the land must ALREADY be very fertile, and near fresh water. `min_forage_capacity` 195 is a floor on the tile's own `forage.capacity_by_biome`: it admits exactly the river-deposit class (RiverDelta 210, Floodplain 205, AlluvialPlain 195) and stops just above ordinary MixedWoodland (190) — the naturally rich, watered ground of every real first agriculture. `requires_fresh_water` demands a river along one of the hex's sides, fresh-water ground, or a lake/channel/marsh next door (a SALT coast does not count — you do not plant a field in the sea spray). MEASURED on earthlike 80x52 seed 119304647: 2328 tiles bear food at all, 337 clear the fertility floor, and only 46 clear BOTH — ~1.1% of the map, in the river valleys and deltas. The conjunction is doing the work: the floor alone would leave 337, so the water rule cuts 86% of it. BOTH ARE PLAYTEST DIALS — raise the floor or drop the water rule to make farmland commoner. RUNG 4 (Worked Land: plows, irrigation, terracing) IS A LOOSER COPY OF THIS RECORD and nothing else — a lower floor and `requires_fresh_water: false`.",
+      "_comment_site_requirement": "Rung 3 is: I know how to take seed from a plant and put it somewhere else — but I do NOT know fertilization or water-carrying, so I must sow ground my people already gather, and it must be near fresh water. `requires_fresh_water` demands a river along one of the hex's sides, fresh-water ground, or a lake/channel/marsh next door (a SALT coast does not count — you do not plant a field in the sea spray). THE GATHERING-SITE RULE IS INHERITED FROM RUNGS 1-2 AND IS WHERE THE SCARCITY NOW LIVES: sites are already few and already the thing a band organises itself around, so rung 3 narrows that set by water rather than starting a second scarcity of its own. `min_forage_capacity` is therefore 0 here — it was 195 (the river-deposit class: RiverDelta 210, Floodplain 205, AlluvialPlain 195) while this rung had no site rule, and stacking both demanded a curated site that ALSO landed on one of three biomes AND had water, which is scarcity three times over on a set that was already ~1% of the map. It stays a live dial for RUNG 4, which is the rung that actually needs it. PLAYTEST DIAL: drop the water rule to make farmland commoner. RUNG 4 (Farm) IS THIS RECORD WITH `requires_gathering_site: false` AND A FERTILITY FLOOR PUT BACK — that is the whole of what it unlocks.",
       "site_requirement": {
-        "min_forage_capacity": 195.0,
+        "requires_gathering_site": true,
+        "min_forage_capacity": 0.0,
         "requires_fresh_water": true
       },
       "_comment_build": "PLAYTEST DIALS, mirroring the plant `tended` rung's dips verbatim (0.04 -> 25 turns to sow a field; 0.01 -> an abandoned field goes feral, reverting to a wild patch after ONE untended turn and fully lapsing over ~100; 0.50 = the same investment dip a Cultivate pays, and it MOVED WITH IT -- leaving Sow at 0.25 would have re-created one rung up the exact plant/animal split the tended rung's note describes). Note what the dip means on BARE ground: there is no standing crop for the crew to carry a fraction of, so a bare-ground sow honestly pays ~0 while it builds — pure investment. On ground that already carries a patch it takes half of what the same crew would gather, and only while the crew is the binding term (see _comment_build at the top of this file). grace_turns 1: a standing crop is the most perishable thing on the ladder and wants hands every turn — one missed turn is forgiven, two is not. That it is SHORTER than the tended rung's is the point: the newest improvement is the most fragile, which is the same claim the newest-first unwind order makes. crew_needed 3: sowing PLACES a source rather than tidying one, so it is the heavier job, and the Field it buys wants ~10 gatherers anyway. At 2 workers a Sow takes ~38 turns, at 1 it takes 75.",

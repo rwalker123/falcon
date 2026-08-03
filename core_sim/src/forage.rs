@@ -471,23 +471,30 @@ pub fn tile_is_fresh_watered(
     })
 }
 
-/// **Does `rung`'s site requirement admit this tile?** — the one place the two readings a
-/// [`RungSiteRequirement`] judges (the tile's own forage capacity, and whether it is fresh-watered)
-/// are gathered, so the `sow` command's rejection and the labor arm's placement gate cannot drift into
-/// disagreeing about which ground is farmable.
+/// **Does `rung`'s site requirement admit this tile?** — the one place the three readings a
+/// [`RungSiteRequirement`] judges (whether the tile is a gathering site, its own forage capacity, and
+/// whether it is fresh-watered) are gathered, so every gate on the plant branch — the `assign_labor`
+/// Forage arm, `cultivate`, `sow`, and the wire's own refusal — resolves the *same* rule and they
+/// cannot drift into disagreeing about which ground may be worked.
+///
+/// `gathering_site` is the caller's `FoodSiteRegistry::is_site` reading; it is passed IN rather than
+/// looked up here so this stays a pure function of the rung and the ground, like the other two.
 ///
 /// `None` = the rung asks nothing of the site, or the land permits it. `Some(refusal)` says **which**
-/// way the ground fell short, so the caller can phrase *too poor* and *too dry* distinctly (they are
-/// different problems with different answers — move, or wait for rung 4).
+/// way the ground fell short, so the caller can phrase each distinctly — they are different problems
+/// with different answers (work a site instead, move, or wait for a rung that relaxes the dial).
 pub fn rung_site_refusal(
     rung: &RungDef,
     tile: &Tile,
     forage: &ForageLaborConfig,
+    gathering_site: bool,
     fresh_water: bool,
 ) -> Option<SiteRefusal> {
-    rung.site_requirement
-        .as_ref()?
-        .refusal(tile_forage_capacity(forage, tile), fresh_water)
+    rung.site_requirement.as_ref()?.refusal(
+        gathering_site,
+        tile_forage_capacity(forage, tile),
+        fresh_water,
+    )
 }
 
 /// THE forage-capacity of a tile — the single source the seeding path and the wire path both read,

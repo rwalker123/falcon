@@ -5,13 +5,17 @@
 //! it), a crew working a tile under `Improvement::Sow` builds a Field on it over ~25 turns, and the
 //! completed Field pays a *higher* managed harvest than the tended patch below it.
 //!
-//! Two things separate it from every other rung, and both are tested here:
-//! - **It needs no source below it.** Seed travels, so hospitable ground with *no forage site at all*
-//!   is a legal target and sowing it **creates** a patch. (`Corral`, by contrast, needs a herd you
-//!   already tamed.)
-//! - **It places, it does not conjure.** Only naturally food-bearing ground takes seed; rock, ice and
-//!   desert need rung 4 (Worked Land). That gate lives in the command layer — see
-//!   `server::tests::sow_rejected_on_ground_that_bears_no_food`.
+//! What separates it from the rung below is **what it commits to, not where it may stand**:
+//! - **It commits the ground to ONE crop**, where `Cultivate` merely weeds the basket in the tile's
+//!   favour. Both stand on a **gathering site**; rung 3 adds fresh water on top, because seed travels
+//!   and water does not.
+//! - **It is still site-bound.** Ground nobody gathers needs rung 4 (Farm) — that is the first rung
+//!   to drop `requires_gathering_site`, and dropping it is the whole of what Farm unlocks. The gate
+//!   lives in the command layer — see `server::tests::sow_rejected_on_ground_nobody_gathers`.
+//!
+//! **§2 used to say the opposite** — *"`Sow` needs nothing … qualifying ground with no forage site is
+//! a legal, indeed the interesting, target"* — and that was reversed deliberately: gathering itself is
+//! site-bound, so ground a band could sow but never work existed on paper only. See `validate_sow`.
 //!
 //! Harness mirrors `forage_cultivation.rs` (its rung-2 sibling) verbatim.
 
@@ -26,13 +30,13 @@ use core_sim::{
     scalar_zero, spawn_initial_forage, spawn_initial_world, tile_flora_composition,
     tile_forage_capacity, tile_is_fresh_watered, CommandEventLog, CultureManager,
     DiscoveryProgressLedger, EcologyPhase, FactionId, FactionInventory, FaunaConfigHandle,
-    ForagePatch, ForageRegistry, GenerationId, GenerationRegistry, HerdDensityMap, HerdRegistry,
-    HerdTelemetry, Improvement, LaborAllocation, LaborAssignment, LaborConfig, LaborConfigHandle,
-    LaborTarget, LadderConfigHandle, LocalStore, MapPresets, MapPresetsHandle, MoraleCause,
-    PopulationCohort, RungKey, SimulationConfig, SimulationTick, SiteRefusal,
-    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
-    StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry, WellbeingConfigHandle, FOOD,
-    RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
+    FoodSiteRegistry, ForagePatch, ForageRegistry, GenerationId, GenerationRegistry,
+    HerdDensityMap, HerdRegistry, HerdTelemetry, Improvement, LaborAllocation, LaborAssignment,
+    LaborConfig, LaborConfigHandle, LaborTarget, LadderConfigHandle, LocalStore, MapPresets,
+    MapPresetsHandle, MoraleCause, PopulationCohort, RungKey, SimulationConfig, SimulationTick,
+    SiteRefusal, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, StartLocation,
+    StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartingUnit, Tile, TileRegistry,
+    WellbeingConfigHandle, FOOD, RUNG_TIMESCALE_UNSCALED, SEED_SELECTION_DISCOVERY_ID,
 };
 
 /// Grant faction-level **Seed Selection** directly via the ledger — the gate the `Sow` policy checks.
@@ -184,13 +188,24 @@ fn site_verdict(app: &App, coord: UVec2) -> Option<SiteRefusal> {
         ladder.rung(RungKey::PlantField),
         ground,
         &labor.forage,
+        app.world.resource::<FoodSiteRegistry>().is_site(coord),
         fresh_water,
     )
 }
 
-/// **The ground the ladder will take seed on** — rich *and* watered — scanned in a totally-ordered
-/// `(y, x)` sweep (never map iteration order, the lesson of `7c09c7e`). Scarce by design: this is the
-/// river-valley set, which is exactly why *which* tile a band can farm is a decision.
+/// **The ground the ladder will take seed on** — a **watered gathering site that grows something
+/// sowable** — scanned in a totally-ordered `(y, x)` sweep (never map iteration order, the lesson of
+/// `7c09c7e`). Scarce by design: sites are few, and rung 3 narrows them to the watered ones, which is
+/// exactly why *which* tile a band can farm is a decision.
+///
+/// **THE CROP TERM IS NOT PART OF THE SITE RULE, AND IS IN THIS FIXTURE ON PURPOSE.** `site_verdict`
+/// answers about the GROUND; whether any plant in the tile's realized basket can climb to `field` is
+/// a separate question the labor arm asks (`default_species_for_rung` → no commit, no accrual). The
+/// two came apart when rung 3 swapped its 195 fertility floor for the gathering-site rule: the floor
+/// used to admit only the river-deposit class, whose baskets are full of `field`-ceiling staples, so
+/// "the ground takes seed" implied "something here can be sown". A site on a fishery or an alpine
+/// shelf satisfies the site rule and grows nothing sowable. Every test below is about what a Sow
+/// DOES once underway, so each needs ground where it can actually get underway.
 fn find_sowable_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
     let (width, height) = {
         let registry = app.world.resource::<TileRegistry>();
@@ -202,7 +217,10 @@ fn find_sowable_tile(app: &App) -> (bevy::prelude::Entity, UVec2) {
             let Some(entity) = app.world.resource::<TileRegistry>().index(x, y) else {
                 continue;
             };
-            if app.world.get::<Tile>(entity).is_some() && site_verdict(app, coord).is_none() {
+            if app.world.get::<Tile>(entity).is_some()
+                && site_verdict(app, coord).is_none()
+                && default_sowable_species(app, coord).is_some()
+            {
                 return (entity, coord);
             }
         }
@@ -264,15 +282,24 @@ fn default_sowable_species(app: &App, coord: UVec2) -> Option<String> {
     default_species_for_rung(&composition, &flora, RungKey::PlantField)
 }
 
-/// **Sowable ground with NO forage site** — the create-from-nothing target, *constructed*.
+/// **A sowable site with NO forage patch on it** — the create-from-nothing target, *constructed*.
 ///
-/// **Read this before using it.** `Sow`'s headline case is qualifying ground carrying no forage site
-/// at all (§2 — seed travels). **No such tile exists on a generated map today**: `classify_food_module`
-/// tags essentially every biome, and `spawn_initial_forage` seeds a patch on every module tile with a
-/// positive capacity — measured on the standard map: **2328 food-bearing tiles, 2328 patches, zero
-/// bare**. So the state is built here by taking a real sowable tile and *removing* its patch, which is
-/// exactly the world the code path is written for. The path is real and correct; only worldgen
-/// currently never produces its input. See `docs/plan_intensification_ladder.md` §2.
+/// **Read this before using it.** `Sow` creating a patch out of nothing was once the rung's headline
+/// case: §2 read "seed travels", so any qualifying ground was a legal target whether or not anything
+/// grew there. **That is no longer what rung 3 is for.** It now requires a gathering site, and a
+/// gathering site is curated onto a tile that carries a food module — which is exactly the tile
+/// `spawn_initial_forage` seeds a patch on. Moving "seed travels" up to rung 4 (Farm) is what gives
+/// that rung its identity; see `validate_sow`.
+///
+/// So the create-from-nothing branch is now **near-dead rather than merely unexercised**, and the
+/// tests below assert a code path the shipped game reaches only through one narrow gap: curation
+/// admits any tile with a module, including the handful whose biome has **zero** forage capacity
+/// (`SaltFlat` → SemiAridScrub, `HydrothermalVentField` → WetlandSwamp), and `spawn_initial_forage`
+/// skips those. A site there is a gathering site with nothing to gather. That gap is a worldgen
+/// question, not this rung's, and it is filed rather than fixed here.
+///
+/// The state is built by taking a real sowable site and *removing* its patch, which is the world the
+/// code path is written for. See `docs/plan_intensification_ladder.md` §2.
 fn find_bare_sowable_tile(app: &mut App) -> (bevy::prelude::Entity, UVec2) {
     let (entity, coord) = find_sowable_tile(app);
     app.world
