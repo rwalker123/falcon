@@ -157,11 +157,23 @@ damage_per_turn  = hunters × effective_attack
 turns_to_kill    = durability / damage_per_turn      // an OUTPUT
 ```
 
-**`durability` is the one genuinely new authored quantity**, and it should be *derived* rather than
-authored per species: `durability ∝ body_mass^(2/3)`. Wounds scale with cross-section, not volume, so
-a mammoth is ~3,000 rabbits by mass but only ~200 rabbits of durability. Deriving it makes the
-exponent one tunable knob instead of twenty hand-picked numbers, and it keeps durability honest when
-`body_mass` is re-tuned.
+**`durability` is authored per species, NOT derived from `body_mass`.** Deriving it was tempting and
+is wrong: durability is a defensive *strategy*, and plenty of animals do not use it. A gazelle is not
+one-third of a deer's toughness — it is not tough at all, and survives by not being there. Armour and
+bulk are not the same axis, and neither tracks mass reliably.
+
+That makes four independent ways a species survives being hunted, and a species is characterised by
+**which** it leans on:
+
+| strategy | field | exemplar |
+|---|---|---|
+| do not be there | `wariness` | gazelle — gone before contact, nothing else |
+| cannot be penetrated | `defense` | mammoth — hide stops what you are throwing |
+| soak it | `durability` | aurochs — hits land, it keeps coming |
+| hurt you back | `ferocity` | boar — small and frail, still costs you people |
+
+`defense` and `durability` blur easily and must not: **defense is whether a hit counts at all,
+durability is how many counting hits it takes.**
 
 **Excess damage spills to the next animal in the engagement.** This is what makes "many small animals
 per turn" fall out instead of being authored: a hunter doing 20 damage against 5-durability rabbits
@@ -178,10 +190,10 @@ Whether a hunter can hurt the animal *at all* is settled per hunter, before head
 The gate is not a new rule to write. It is what a combat resolver comparing attack to defense already
 does; §0.2's failure only arises when the comparison is *outside* the resolver.
 
-### 4.3 The body masses durability derives from were wrong — SETTLED
+### 4.3 The body masses were wrong — SETTLED
 
-Deriving `durability` from `body_mass` makes the roster's masses load-bearing, and several were off
-by multiples. The clearest: **a reindeer is heavier than a typical deer** (reindeer 120–300 kg,
+`body_mass` no longer sets durability (§4.2), but it still sets the food a carcass yields, and
+several values were off by multiples. The clearest: **a reindeer is heavier than a typical deer** (reindeer 120–300 kg,
 white-tailed deer 45–135 kg, red deer 82–240 kg), while the config had reindeer `18` against deer
 `60` — inverted, by more than 3×. Boar and wolf were inflated the same way.
 
@@ -203,10 +215,11 @@ unchanged:
 | alpine ibex | 50–100 | 15 | **10** | | | | | |
 | crag goat | ~45 | 10 | **6** | | | | | |
 
-**This is a balance change, not a free correction.** The real mammoth-to-deer mass ratio is ~40:1;
-the old config compressed it to 13:1. Restoring it cuts mid-game hunting yield to roughly a third
-while leaving megafauna untouched — the direction the design wants (a mammoth should be a windfall),
-but it moves the food economy and the change belongs in the same slice as the values.
+**This is a balance change, not a free correction** — the real mammoth-to-deer mass ratio is ~40:1
+against the old config's 13:1, so mid-game hunting yield falls to roughly a third while megafauna is
+untouched. Deliberately **not** compensated for elsewhere: the food economy is expected to settle
+once the underlying data is right, and pre-emptively tuning around numbers that are still moving
+would bake in a correction for a problem that may not survive them.
 
 ### 4.3 Ferocity is already the right hinge
 
@@ -222,6 +235,43 @@ models: when the animal side contributes no attack and its defense is at floor, 
 to *"everything that stayed dies, nobody is hurt"* without ceremony, cost or a battle report. A
 second code path for small game would recreate exactly the parallel-model problem §0 exists to
 delete.
+
+### 4.5 Randomness lives in the attack, and never in the gate
+
+A pure attrition formula is a spreadsheet. Variance belongs **in the resolver**, so hunts, raids and
+battles share one source of it rather than growing three.
+
+**It attaches to the individual attack landing**, not to a percentage fudge on the damage total. That
+buys a property a flat ±X% cannot:
+
+> **Variance shrinks as the force grows.** Three hunters are a gamble; thirty are reliable. It is
+> binomial, and it makes party size a real decision rather than a threshold to clear.
+
+**The gate stays hard, and this is the trap.** Replacing `max(0, attack − defense)` with a smooth hit
+probability is the tempting next step and it silently breaks §0.2. Bare hands (`attack 1`) against a
+mammoth (`defense 12`) under a naive `p = a/(a+d) = 0.077` gives eight hundred hunters ~61 damage a
+turn — a dead mammoth in **sixteen turns**. Enough dice always roll through a soft gate.
+
+So: **below the gate the probability is exactly zero, not merely small**; above it, every attack is a
+roll. Three requirements on the resolver, which owns the choice of model:
+
+1. Variance is **binomial in force size**, never a flat percentage.
+2. Below the gate, probability is **exactly zero** — asymptotic is not good enough.
+3. Seeded per event (§6.2), the same seeding the retreat roll needs.
+
+### 4.6 A minimal TOE is in scope
+
+Without equipment a hunter's `attack` is `1`, which is below every megafauna's `defense` — so **no
+band can hunt a mammoth until spears exist**, and the progression stops being a note and starts being
+load-bearing. That makes a minimal TOE part of this arc rather than a dependency beside it:
+
+- **the hunting kit** — spears, raising `attack` above `1`, which is what opens the gate;
+- **the carry kit** — baskets, raising the carry side (§5), the other half of `plan_early_game_labor`'s
+  role table;
+- consumable with the durability cliff, start-stocked, **not craftable**.
+
+The crafting economy that replenishes kit stays deferred. What ships is enough to make `attack` a
+real number and the equipped/unequipped distinction visible.
 
 ---
 
@@ -302,8 +352,8 @@ hard and does not clamp to carry.**
 - **The resolver's own model.** `plan_predators.md` shipped the seam with a placeholder — *"the seam
   is the deliverable"* — and this arc rides that same bet. Improving the resolver is its own work,
   and it improves hunting for free when it lands.
-- **TOE.** Equipment enters through `CombatProfile`; this arc consumes the seam and does not build
-  it (`docs/plan_early_game_labor.md` slice 5).
+- **The crafting economy.** A *minimal* TOE is in scope (§4.6); replenishing or upgrading kit is not
+  (`docs/plan_early_game_labor.md`, deferred M2+).
 - **Dynamic morale for troops.** §3 says wariness is static for animals and dynamic for troops; only
   the static half ships here. The field is shaped for both.
 - **Technique as a substitute for weaponry.** Driving a herd off a cliff is a real third path to
@@ -349,6 +399,9 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
   turn count was baked in anywhere.
 - **Damage spillover is exact.** One hunter against a line of rabbits kills `floor(damage /
   durability)` of them, not an authored count, and the number rises when the weapon improves.
+- **No quantity of attackers rolls through the gate.** A large bare-handed party against megafauna
+  kills zero over any horizon — pinned, because it is the one property a probabilistic gate would
+  silently break (see §4.5).
 - **A fractional engagement reaches one animal**, not zero — contact is not the gate, and a
   three-hunter mammoth party fails at the *fight*, with casualties, rather than failing to find it.
 - **The fast path is free.** A one-sided engagement produces no casualties, no battle report, and
