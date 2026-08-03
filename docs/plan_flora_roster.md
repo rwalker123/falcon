@@ -346,8 +346,11 @@ unchanged; only baskets holding a cash crop move.
 realizing `hay_grass` pays hay on any harvest — but crediting it to a band with nowhere to put it
 would hand out animal feed nobody bid for. So the **uncommitted** patch's fodder credit is gated on
 the faction knowing **Foddering**, the same gate the pen's draw already reads, at the credit site
-rather than in the rate seam. Rungs 2 and 3 stay ungated: committing a patch to `hay_grass` *is* the
-bid.
+rather than in the rate seam. A **committed** patch is ungated — and the predicate is the
+**commitment** (`patch.species`), not the rung, so the gate lifts on the first turn of a
+`Cultivate`/`Sow` build, while the patch still stands at rung 1 and still converts at the wild
+basket's rate: committing a patch to `hay_grass` *is* the bid, and the bid is placed when the crew
+starts, not when the meter fills.
 
 **Where Tended and Field coincide, they are allowed to.** On a tile whose favored crop is already
 dominant, weeding reaches 1.0 and the two rungs' compositions become identical. What still separates
