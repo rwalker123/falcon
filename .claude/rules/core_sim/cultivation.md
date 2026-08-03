@@ -318,14 +318,29 @@ herd has one appetite).
     of its six sides (`Tile::has_any_river_edge` — the hydrology edge primitive, set on *both* flanking
     hexes, so the riverbank needs no neighbour lookup), **or** a fresh-water hex next door (odd-r
     `hex_neighbors_wrapped`). A **salt coast is not water** for this — you do not farm sea spray.
-  - **Measured on the standard map** (earthlike 80×52, seed 119304647): **49 sowable tiles of 4160
-    (1.2%)** post the "divides, not valleys" arc — **35** on the pre-arc dome — against **2328** tiles
-    that merely bear food. (The historical **46** figure predates that arc.) **The measurement only
-    means anything with `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are
-    hydrology's, so a fixture that skips it measures 0 at every grid size and every seed. The
-    **conjunction is still doing the work** (pre-arc measurement: 337 tiles cleared the fertility
-    floor and the water rule cut 291 of them, 86%). Few sowable tiles ⇒ *which* tile matters ⇒ a band may have to **move** to
-    farm at all. That friction is the design pillar, not a side effect.
+  - **Measured on the standard map** (earthlike 80×52, seed 119304647, through the **real Startup
+    chain**): **174 sowable tiles of 4160 (4.2%)**, against **2113** that merely bear food; over six
+    seeds the mean is **197**. **The measurement only means anything with `generate_hydrology` run**:
+    the rule wants fresh water, and rivers/deltas are hydrology's, so a fixture that skips it measures
+    0 at every grid size and every seed. Of the tiles clearing the fertility floor, the water rule cuts
+    about **40%** — the conjunction still bites, but far less hard than the fertility floor does.
+    > **The "49 sowable tiles (1.2%)" this line carried until #466 was wrong, and the way it was wrong
+    > is the lesson.** Both counters that produced it — `relief_sweep::sowable_and_deltas` and
+    > `forage_field`'s own `spawn_world_on` — stop after `spawn_initial_world` + `generate_hydrology`,
+    > skipping `apply_tag_budget_solver`, `apply_biome_palette_clamp`, `reconcile_coastal_shelf` and
+    > `reconcile_food_modules`. That is an **intermediate** map: four later stages repaint terrain, and
+    > they add sowable ground. Measured on the same seed the short harness reads 136 and the real chain
+    > 174. **Count worldgen outcomes through `build_headless_app`**, never through a partial chain — the
+    > figure was quoted in two rule files and used to argue that sowable ground was desperately scarce,
+    > which it is not.
+  - **Scarcity is real, but it lives in the MARKER list, not the tile count.** A player can only Forage
+    where there is a curated `FoodSiteRegistry` marker (the client's `_forage_compose_available` reads
+    `food_module`, which comes only from the wire's `food_modules`), and `sow` needs a band already
+    foraging the tile. So the ground rung 3 can actually be built on is `markers ∩ sowable` — **130–134
+    markers** per map (8% of land since #466; a flat 90 before), of which **73.8** are sowable once
+    curation is biased toward fresh water, against **33.8** on pre-#466 main. See "Gathering markers
+    follow the fresh water" in `worldgen.md`. *Which* tile matters ⇒ a
+    band may have to **move** to farm at all. That friction is the design pillar, not a side effect.
   - **The refusal names the fault** (`SiteRefusal::{TooPoor, TooDry, TooPoorAndTooDry}` — the rung
     judges, the caller phrases) and points at **rung 4, Worked Land** (plows/irrigation, a future arc):
     *"Your people can carry seed, but not yet water or feed the land…until they learn to work the land
