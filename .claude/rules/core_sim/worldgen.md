@@ -130,11 +130,13 @@ the list.
 - **`fresh_water_site_weight = 0.0` is a provable no-op** — a marker's own tile is in its own candidate
   set, so nothing can outscore staying put. That is the A/B control every measurement here is taken
   against.
-- **Measured** (6 seeds, 80×52 earthlike, through `build_headless_app`): sowable markers
-  **33.8 → 58.7 (1.73×)**, marker count unchanged at 90 on every seed. Nearest sowable marker to the
-  start tile is 0–4 hexes both before and after — the bias is about *how much* farmable ground a player
-  meets, not about rescuing a start that had none. **One seed regressed** on that distance (777777777,
-  1 → 4 hexes): a re-rank optimises marker quality, not proximity to spawn, and nothing pins the latter.
+- **Measured** (6 seeds, 80×52 earthlike, through `build_headless_app`): at the shipped budget of
+  **130–134 markers**, sowable markers **43.2 → 73.8 (1.71×)** across the re-rank, and **33.8 → 73.8
+  (2.18×)** against pre-#466 main, which combines the re-rank with the budget going from a flat 90 to
+  8% of land. Marker count is identical between the bias-off and bias-on arms of every seed — the pass
+  relocates only. Nearest sowable marker to the start tile is 0–4 hexes before and after: the bias is
+  about *how much* farmable ground a player meets, not about rescuing a start that had none, and
+  nothing pins that distance.
 - Guarded by `core_sim/tests/food_site_water_bias.rs` — the A/B relation (never a literal count), the
   count-is-unchanged invariant, legality + spacing of relocated markers, the zero-weight no-op, and
   build-to-build determinism. Plus an `#[ignore]`d `gathering_marker_census`.
@@ -143,15 +145,27 @@ the list.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `fresh_water_site_weight` | **60.0** | What fresh water is worth to a marker, in forage-capacity units. `0.0` disables the pass entirely. |
-| `land_tiles_per_site` | 120 | Land tiles per marker once the area scaling binds. Was a bare literal in `spawn_initial_world`. |
-| `min_scaled_sites` | 24 | Floor under the area-scaled budget. Was a bare literal. |
+| `site_land_fraction` | **0.08** | **The whole site budget**: what share of the map's LAND carries a gathering marker. |
+| `min_sites` | 24 | Floor under that budget, so a very small map still carries somewhere to gather. A floor only — it does not bind at Standard size. |
+| `fresh_water_site_weight` | **60.0** | What fresh water is worth to a marker, in forage-capacity units. `0.0` disables the re-rank pass entirely. |
 
-> **The site budget is a hybrid, and on the standard map the area scaling is DEAD.**
-> `target_total = max(max_total_sites, max(land_tiles / land_tiles_per_site, min_scaled_sites))`. At
-> 80×52 there are ~1,580 land tiles → `max(13, 24) = 24`, so the flat **`max_total_sites` (90)** wins.
-> The ratio only takes over past ~10,800 land tiles (roughly a 192×148 grid). So "markers scale with
-> map size" is true only of large maps; below that it is a flat number.
+> **The budget is a share of LAND, and it scales in BOTH directions.**
+> `sites = clamp(site_land_fraction × land_tiles, min_sites, land_tiles)`, resolved through the one
+> seam `FoodOverlayConfig::site_budget`.
+>
+> **Of land, not of the grid**, because a marker can only sit on ground and `target_land_pct` differs
+> per preset (earthlike 0.38, polar_contrast 0.42) — a fraction of the whole grid would hand the two
+> presets different marker density on the land a player actually walks, for free.
+>
+> **What this replaced, and the bug in it.** The budget was
+> `max(max_total_sites, max(land_tiles / 120, 24))` with `max_total_sites = 90`. The flat count was a
+> **floor**, so the budget grew on maps past ~10,800 land tiles and **never shrank**: a 56×36 "Tiny"
+> map carried the same 90 markers as the 80×52 Standard. Three numbers, scaling one way. Pinned now
+> by `the_site_budget_scales_with_the_map_in_both_directions`, which a flat-count regression fails.
+>
+> **A consequence, intended:** the marker count is no longer a constant. Realized land is 37.7–38.0%
+> depending on seed, so the Standard map lands at **130–134** rather than exactly 90 — the count
+> follows the map, which is what a fraction means.
 
 ## Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `game_density: u8` (the square-8 hex `flow_dir` / `flow_accum` rasters are **deleted** — hydrology routes on the corner graph, see "Rivers")

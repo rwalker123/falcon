@@ -336,9 +336,10 @@ herd has one appetite).
   - **Scarcity is real, but it lives in the MARKER list, not the tile count.** A player can only Forage
     where there is a curated `FoodSiteRegistry` marker (the client's `_forage_compose_available` reads
     `food_module`, which comes only from the wire's `food_modules`), and `sow` needs a band already
-    foraging the tile. So the ground rung 3 can actually be built on is `markers ∩ sowable` — **~90
-    markers** per map, of which **58.7** are sowable since #466 biased curation toward fresh water (33.8
-    before). See "Gathering markers follow the fresh water" in `worldgen.md`. *Which* tile matters ⇒ a
+    foraging the tile. So the ground rung 3 can actually be built on is `markers ∩ sowable` — **130–134
+    markers** per map (8% of land since #466; a flat 90 before), of which **73.8** are sowable once
+    curation is biased toward fresh water, against **33.8** on pre-#466 main. See "Gathering markers
+    follow the fresh water" in `worldgen.md`. *Which* tile matters ⇒ a
     band may have to **move** to farm at all. That friction is the design pillar, not a side effect.
   - **The refusal names the fault** (`SiteRefusal::{TooPoor, TooDry, TooPoorAndTooDry}` — the rung
     judges, the caller phrases) and points at **rung 4, Worked Land** (plows/irrigation, a future arc):

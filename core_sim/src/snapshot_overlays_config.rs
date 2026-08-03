@@ -257,21 +257,45 @@ impl Default for MilitaryOverlayConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FoodOverlayConfig {
-    max_total_sites: usize,
+    site_land_fraction: f32,
+    min_sites: usize,
     default_radius: u32,
     radius_padding: u32,
     min_site_spacing: u32,
     provisions_per_weight: f32,
     trade_goods_per_weight: f32,
     trade_bonus_modules: HashMap<String, f32>,
-    land_tiles_per_site: usize,
-    min_scaled_sites: usize,
     fresh_water_site_weight: f32,
 }
 
 impl FoodOverlayConfig {
-    pub fn max_total_sites(&self) -> usize {
-        self.max_total_sites.max(1)
+    /// **What share of a map's LAND carries a gathering marker** — the whole site budget, in one
+    /// number: `sites = clamp(site_land_fraction × land_tiles, min_sites, land_tiles)`.
+    ///
+    /// **Of land, not of the grid**, because a marker can only sit on ground and `target_land_pct`
+    /// differs per preset (earthlike 0.38, polar_contrast 0.42) — a fraction of the whole grid would
+    /// hand the two presets different marker density on the land a player actually walks, for free.
+    ///
+    /// This replaced a three-number arrangement (`max_total_sites` 90, `land_tiles_per_site` 120,
+    /// `min_scaled_sites` 24) whose flat count acted as a **floor**, so the budget scaled *up* on maps
+    /// past ~10,800 land tiles and never *down*: a Tiny map got the same 90 markers as the Standard.
+    /// One fraction scales in both directions and reads as what it is.
+    pub fn site_land_fraction(&self) -> f32 {
+        self.site_land_fraction.max(0.0)
+    }
+
+    /// The floor under the site budget, so a very small map still carries somewhere to gather. A
+    /// floor only — unlike the `max_total_sites` it replaced, it does not bind at Standard size.
+    pub fn min_sites(&self) -> usize {
+        self.min_sites
+    }
+
+    /// **The site budget for a map with this much land.** One seam, so the curation and anything that
+    /// reports the budget cannot disagree about it. Clamped to `land_tiles` because a map cannot carry
+    /// more markers than it has ground.
+    pub fn site_budget(&self, land_tiles: usize) -> usize {
+        let scaled = (self.site_land_fraction() * land_tiles as f32).round() as usize;
+        scaled.max(self.min_sites()).min(land_tiles.max(1))
     }
 
     pub fn default_radius(&self) -> u32 {
@@ -301,20 +325,6 @@ impl FoodOverlayConfig {
         self.min_site_spacing.max(1)
     }
 
-    /// **How much land one curated marker is worth**, on a map big enough for the area scaling to
-    /// bind. The site budget is `max(land_tiles / land_tiles_per_site, min_scaled_sites)` floored in
-    /// turn by [`max_total_sites`](Self::max_total_sites) — so the flat number governs small maps and
-    /// this ratio takes over once the map is large enough to out-scale it (past ~10,800 land tiles at
-    /// the shipped values). Both halves were bare literals in `spawn_initial_world` until issue #466.
-    pub fn land_tiles_per_site(&self) -> usize {
-        self.land_tiles_per_site.max(1)
-    }
-
-    /// The floor under the area-scaled budget, so a tiny map still carries somewhere to gather.
-    pub fn min_scaled_sites(&self) -> usize {
-        self.min_scaled_sites
-    }
-
     /// **What fresh water is worth to a gathering site, in forage-capacity units** (issue #466).
     ///
     /// The curated marker list is the only ground a player can Forage — and therefore the only
@@ -335,7 +345,8 @@ impl FoodOverlayConfig {
 impl Default for FoodOverlayConfig {
     fn default() -> Self {
         Self {
-            max_total_sites: 40,
+            site_land_fraction: 0.08,
+            min_sites: 24,
             default_radius: 6,
             radius_padding: 2,
             min_site_spacing: 4,
@@ -346,8 +357,6 @@ impl Default for FoodOverlayConfig {
                 ("riverine_delta".to_string(), 15.0),
                 ("coastal_upwelling".to_string(), 30.0),
             ]),
-            land_tiles_per_site: 120,
-            min_scaled_sites: 24,
             fresh_water_site_weight: 60.0,
         }
     }

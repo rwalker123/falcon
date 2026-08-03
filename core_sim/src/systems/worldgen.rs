@@ -361,10 +361,9 @@ pub fn spawn_initial_world(
     let food_overlay_cfg = overlays_cfg.food();
     let preference = &config.start_profile_overrides.food_modules;
     let land_tiles = province_map.land_tiles().max(1);
-    let baseline_total = food_overlay_cfg.max_total_sites();
-    let scaled_total = (land_tiles / food_overlay_cfg.land_tiles_per_site())
-        .max(food_overlay_cfg.min_scaled_sites());
-    let target_total = scaled_total.max(baseline_total).min(land_tiles);
+    // The site budget is a share of the map's LAND, resolved through the config's one seam so
+    // curation and anything that reports the budget cannot disagree about it.
+    let target_total = food_overlay_cfg.site_budget(land_tiles);
     let mut module_candidates: std::collections::BTreeMap<FoodModule, Vec<FoodSiteCandidate>> =
         std::collections::BTreeMap::new();
 

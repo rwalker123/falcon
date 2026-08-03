@@ -171,6 +171,43 @@ fn the_water_bias_puts_more_gathering_markers_on_fresh_water() {
     );
 }
 
+/// **The site budget scales with the map in BOTH directions.**
+///
+/// It used to be `max(max_total_sites, max(land_tiles / 120, 24))`, in which the flat count was a
+/// **floor**: the budget grew on maps past ~10,800 land tiles and never shrank, so a Tiny map carried
+/// the same 90 markers as the Standard. `site_land_fraction` makes it one share of land, and this pins
+/// the direction the old shape got wrong — a regression to a flat count would still pass a
+/// scales-up-only test.
+#[test]
+fn the_site_budget_scales_with_the_map_in_both_directions() {
+    let food = SnapshotOverlaysConfig::builtin();
+    let food = food.food();
+
+    let standard = food.site_budget(1_580); // ~38% land on an 80x52 grid
+    let tiny = food.site_budget(760); // ~a 56x36 "Tiny" map
+    let huge = food.site_budget(18_000); // ~a 256x192 map
+
+    assert!(
+        tiny < standard,
+        "a SMALLER map must carry FEWER gathering markers ({tiny} vs {standard}) — this is exactly \
+         what the old flat-count floor got wrong"
+    );
+    assert!(
+        huge > standard,
+        "a LARGER map must carry MORE gathering markers ({huge} vs {standard})"
+    );
+
+    // The floor is a floor, not a second ceiling: it may only ever raise the budget.
+    assert!(
+        food.site_budget(1) >= 1,
+        "even a one-tile map must resolve to a legal budget"
+    );
+    assert!(
+        food.site_budget(10) <= 10,
+        "a map cannot carry more markers than it has land"
+    );
+}
+
 /// **RE-RANK ONLY — the pass relocates, it never adds or drops.** The marker budget, its per-bucket
 /// quota and its latitude spread are the curation's decision; this pass is only allowed to change
 /// *which* hex inside a bucket carries the marker. If the count could move, "gathering is exactly as
