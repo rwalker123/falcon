@@ -81,8 +81,11 @@ the casualty math lives in a first-class module, never as a bespoke hunt formula
   a later slice). A `CommandEventKind::HuntDanger` (`"hunt_danger"`) feed line fires when casualties
   occur — label names the **species** ("The Thunder Mammoths hunt cost 2 lives"), detail carries the
   **fractional** `killed=<k> wounded=<w> species=<s>`. **The hunting party answers the danger with its
-  OWN strength** — the hunters' bare-hands `person` profile today; their equipment (TOE, deferred) will
-  compose into that profile with no rework here.
+  OWN strength** — the hunters' bare-hands `person` profile today. The **minimal TOE has landed** and
+  publishes a band's resolved per-hunter `attack` (1 bare / 20 with the hunting kit) on the wire, but
+  the fight still fields the *intrinsic* profile: composing the kit in is the job of the slice that
+  moves the kill into `resolve_fight`, and `EquipmentConfig::hunter_profile` is the seam it calls. See
+  `equipment.md`.
 - **The expedition-hunt adapter is the SAME seam, but bloodier** (`advance_expeditions`, the
   `ExpeditionPhase::Hunting` arm — after `expedition_take_biomass`, inside the `in_reach` guard so it
   only fires on an engagement turn). A hunting **expedition** builds the identical fight — its party

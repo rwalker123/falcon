@@ -1188,6 +1188,87 @@ impl SourceYield {
     };
 }
 
+/// **A band's TOE, as WEAR** — how much of each consumable kit it has used up (the minimal TOE,
+/// `docs/plan_early_game_labor.md` → "Equipment / TOE", `docs/plan_hunt_through_combat.md` §4.8).
+/// The tiers, durabilities and wear rates are config
+/// ([`crate::equipment_config::EquipmentConfig`]); what a band owns is only *how worn* its kits are.
+///
+/// **Wear, not stock, and that is what makes the band START KITTED for free**: `Default` is zero
+/// wear, so every spawn site inserts a full kit without reading config, and "start-stocked, not
+/// craftable" needs no seeding pass. A kit is **equipped while its wear is strictly below its
+/// `starting_durability`**; past that the role steps down to its unequipped tier and **stays there**
+/// — nothing in this slice ever reduces wear.
+///
+/// **Wear is charged for USE, never for turns elapsed** (`docs/plan_denial_raid.md` §1.2) — a turn
+/// clock would charge an idle march the same as a slaughter and make denial free. The two kits use
+/// different quanta because they do different jobs: the hunting kit wears per **animal killed**, the
+/// carry kit per **biomass hauled home**.
+///
+/// **Persisted** (`SimState`'s `BandRecord::equipment`) — a checkpoint that forgot how worn your
+/// spears were would silently re-stock them on rollback.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct BandEquipment {
+    /// Condition spent on the **hunting kit** (spears), on the config's 0–100 scale. Charged
+    /// `wear_per_kill` per animal a wild hunt kills.
+    pub hunting_wear: f32,
+    /// Condition spent on the **carry kit** (baskets), on the config's 0–100 scale. Charged
+    /// `wear_per_biomass_carried` per unit of biomass carried home — by a wild hunt *and* by a pen
+    /// harvest, because both are hauling.
+    pub carry_wear: f32,
+}
+
+impl BandEquipment {
+    /// Is the hunting kit still serving? **Strictly below** `starting_durability`, so a kit worn
+    /// exactly to its limit is spent — the cliff lands on the turn the last charge is used, not one
+    /// turn later.
+    pub fn hunting_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+        self.hunting_wear < config.hunting_kit.starting_durability
+    }
+
+    /// Is the carry kit still serving? Same rule as [`Self::hunting_equipped`].
+    pub fn carry_equipped(&self, config: &crate::equipment_config::EquipmentConfig) -> bool {
+        self.carry_wear < config.carry_kit.starting_durability
+    }
+
+    /// Remaining condition on the hunting kit, clamped at `0` — the wire readout, and the number a
+    /// player watches run down.
+    pub fn hunting_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.hunting_kit.starting_durability - self.hunting_wear).max(0.0)
+    }
+
+    /// Remaining condition on the carry kit, clamped at `0`.
+    pub fn carry_remaining(&self, config: &crate::equipment_config::EquipmentConfig) -> f32 {
+        (config.carry_kit.starting_durability - self.carry_wear).max(0.0)
+    }
+
+    /// Charge the hunting kit for `kills` animals. **Only USE charges it** — a party that kills
+    /// nothing this turn calls this with `0` and loses nothing.
+    pub fn wear_hunting(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        kills: u32,
+    ) -> &mut Self {
+        self.hunting_wear += kills as f32 * config.hunting_kit.wear_per_kill;
+        self
+    }
+
+    /// Charge the carry kit for `biomass` hauled home. Negative/NaN inputs are floored at `0` so a
+    /// degenerate take can never *restore* a kit — there is no replenishment in this slice.
+    pub fn wear_carry(
+        &mut self,
+        config: &crate::equipment_config::EquipmentConfig,
+        biomass: f32,
+    ) -> &mut Self {
+        let hauled = if biomass.is_finite() {
+            biomass.max(0.0)
+        } else {
+            0.0
+        };
+        self.carry_wear += hauled * config.carry_kit.wear_per_biomass_carried;
+        self
+    }
+}
+
 /// A band's partition of its working-age pool across labor demands. Replaces the retired
 /// single-task model (`HarvestAssignment`/`ScoutAssignment`/`FaunaPursuit`): a band now draws from
 /// many sources at once, with the invariant `Σ assignments.workers ≤ available_workers(working)`.

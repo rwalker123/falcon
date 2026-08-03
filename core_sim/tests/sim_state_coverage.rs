@@ -244,7 +244,9 @@ const CONFIG_RESOURCES: [&str; 42] = [
 
 /// The remaining config handles, split out only because Rust array consts need a fixed length and
 /// one 50-entry literal reads worse than two.
-const CONFIG_RESOURCES_CONT: [&str; 13] = [
+const CONFIG_RESOURCES_CONT: [&str; 15] = [
+    "EquipmentConfigHandle",
+    "EquipmentConfigMetadata",
     "StartProfileKnowledgeTagsHandle",
     "StartProfileKnowledgeTagsMetadata",
     "StartProfilesHandle",
@@ -263,7 +265,7 @@ const CONFIG_RESOURCES_CONT: [&str; 13] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 16] = [
+const SIM_STATE_COMPONENTS: [&str; 17] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -278,6 +280,11 @@ const SIM_STATE_COMPONENTS: [&str; 16] = [
     // there, and dropping the remainder re-times every demographic event after a restore.
     "DemographicFlowAccumulator",
     "LaborAllocation",
+    // How worn each of a band's two consumable kits is (the minimal TOE). Carried for the same
+    // reason as `DemographicFlowAccumulator`: a checkpoint that forgot how worn your spears were
+    // would silently re-stock them on rollback, and there is no replenishment path that could
+    // legitimately do that.
+    "BandEquipment",
     "Expedition",
     "LogisticsLink",
     "TradeLink",

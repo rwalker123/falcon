@@ -36,7 +36,7 @@ use sim_runtime::{
 
 use crate::{
     components::{
-        available_workers, fragments_to_contract, BandId, BandTravel, Expedition,
+        available_workers, fragments_to_contract, BandEquipment, BandId, BandTravel, Expedition,
         ExpeditionMission, LaborAllocation, LaborAssignment, LaborTarget, LogisticsLink,
         PendingMigration, PopulationCohort, PowerNode, SourceYield, Tile, TradeLink, FODDER, FOOD,
         NO_FILL_TARGET, NO_RAID_FLOOR,
@@ -1137,7 +1137,16 @@ mod tests {
         let wellbeing = crate::wellbeing_config::WellbeingConfig::default();
         let membership = crate::supply::SupplyNetworkMembership::default();
         let stages = crate::settlement_stage_config::SettlementStageConfig::default();
-        // The expedition levers are irrelevant to the food-flow wiring under test.
+        // Neither the expedition levers nor the TOE tiers are relevant to the food-flow wiring
+        // under test.
+        let equipment_config = crate::equipment_config::EquipmentConfig::builtin();
+        let kit_levers = population::BandKitLevers {
+            config: &equipment_config,
+            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        };
         let levers = ExpeditionLevers {
             max_party_size: 0,
             hunt_per_worker_carry: 0.0,
@@ -1165,6 +1174,9 @@ mod tests {
             travel_target: None,
             hunt_reach: 0,
             expedition_delivery: None,
+            // This fixture asserts on the food ledger, not the TOE.
+            equipment: None,
+            kit_levers: &kit_levers,
         })
     }
 

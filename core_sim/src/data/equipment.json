@@ -1,0 +1,14 @@
+{
+  "_comment": "THE MINIMAL TOE (docs/plan_early_game_labor.md 'Equipment / TOE', docs/plan_hunt_through_combat.md 4.8). A TOE is the equipment set that lifts a ROLE from its UNEQUIPPED to its EQUIPPED tier. Two kits ship: the HUNTING kit (spears - what makes `attack` a real number, and the gate slice 4's combat::resolve_fight compares against a species' defense) and the CARRY kit (baskets - the haul side of every hunt take). Consumable, START-STOCKED and NOT CRAFTABLE: running it dry is the intended pressure and the pull into the Milestone-2 crafting economy. TWO TIERS, NEVER A TAPER: performance is FLAT until expiry and then the role STEPS DOWN to its unequipped tier - durability and performance are deliberately ORTHOGONAL axes so a future crafting system can tune them independently. THE TIER IS PER-BAND, PER-ROLE, not per-hunter inventory. WEAR IS CHARGED FOR USE, NEVER FOR TURNS ELAPSED (docs/plan_denial_raid.md 1.2): a turn clock would charge an idle march the same as a slaughter, which would make denial free. ONE HOME PER FACT - the two UNEQUIPPED tiers already had homes and stay there: a bare hand's attack is creatures.json's `person.combat.attack` (1.0) and a wild hunt's per-hunter haul rate is labor_config.json's `hunt.per_worker_biomass_capacity` (40.0, which IS the equipped tier - the shipped game has always run kitted). What lives here is only what the kit itself owns. PLAYTEST DIALS.",
+  "_comment_durability": "DURABILITY IS A 0-100 CONDITION SCALE ON BOTH KITS, and the per-use wear rate is what says how long each lasts - that is what keeps the two axes orthogonal (change how long a kit lasts without touching what it does). A band carries WEAR (BandEquipment, persisted); a kit is EQUIPPED while its wear is strictly below its starting_durability, and the drop at expiry is a cliff. Hunting: 100 / 0.4 per animal killed = 250 kills. Carry: 100 / 0.02 per biomass hauled home = 5000 biomass. BOTH ARE TUNED TO plan_early_game_labor's ~15-20 TURN KIT-DURATION TARGET against the same reference party - the shipped ~16-worker starting band hunting Red Deer (engage_rate 1, body_mass 15), which reaches 16 animals / 240 biomass a turn: 250/16 = ~15.6 turns of spears, 5000/240 = ~20.8 turns of baskets. KNOWN SKEW, a config problem not a model one: a per-KILL charge is species-blind, so a party on Wild Fowl (engage_rate 10, 160 kills a turn) shreds the same kit in under two turns. The quantum is deliberate (docs/plan_denial_raid.md 1.2 requires wear to track USE, and for a spear use IS a kill); if small game proves to wreck the pacing, the lever is a per-species use cost, not a turn clock.",
+  "hunting_kit": {
+    "equipped_attack": 20.0,
+    "starting_durability": 100.0,
+    "wear_per_kill": 0.4
+  },
+  "carry_kit": {
+    "unequipped_per_worker_biomass_capacity": 12.0,
+    "starting_durability": 100.0,
+    "wear_per_biomass_carried": 0.02
+  }
+}

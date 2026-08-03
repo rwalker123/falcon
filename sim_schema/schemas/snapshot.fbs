@@ -770,6 +770,29 @@ table PopulationCohortState {
   // "" = not raiding: a resident band, a scout, or a party already walking a load home. That is a
   // different statement from "horizon", which means the projection ran and found no stop.
   expeditionTripBound:string;
+  // --- THE MINIMAL TOE (appended, docs/plan_hunt_through_combat.md 4.8 / docs/plan_early_game_labor.md)
+  // The band's two consumable kits, and the two tiers they resolve to. START-STOCKED and NOT
+  // CRAFTABLE this slice: these only ever fall. A kit is EQUIPPED while its remaining condition is
+  // > 0; at 0 the role STEPS DOWN to its unequipped tier and STAYS there (there is no replenishment
+  // path yet - running dry is the intended pressure). Performance is FLAT until expiry: durability
+  // and performance are orthogonal axes, so do NOT scale any readout by remaining condition.
+  //
+  // Remaining condition on the equipment.json 0-100 scale. 0 = dry.
+  huntingKitDurability:float = 0;   // spears; wears per ANIMAL KILLED
+  carryKitDurability:float = 0;     // baskets; wears per BIOMASS HAULED HOME
+  // The two RESOLVED tiers, so the client renders the band's real numbers rather than re-deriving
+  // them from the durabilities and the config it does not have.
+  //   - hunterAttack: this band's per-hunter combat `attack` (creatures.json person = 1 unequipped,
+  //     equipment.json hunting_kit.equipped_attack = 20 equipped). It is what the combat gate
+  //     max(0, attack - defense) will be compared against a herd's HerdTelemetryState.defense:
+  //     BELOW a species' defense means that species CANNOT BE HUNTED AT ALL. Published now and
+  //     INERT in the fight itself - the resolver still fields the intrinsic person profile until
+  //     the slice that moves the kill into combat::resolve_fight.
+  //   - carryPerWorkerBiomass: this band's per-worker hunt haul rate, the term every hunt take,
+  //     crew-size and forecast is capped by. It is the BAND's rate; HerdTelemetryState's
+  //     perWorkerBiomass stays the EQUIPPED reference rate (a herd has no band to resolve against).
+  hunterAttack:float = 0;
+  carryPerWorkerBiomass:float = 0;
 }
 
 // One staffed labor demand in a band's allocation (Early-Game Labor, slice 3a).

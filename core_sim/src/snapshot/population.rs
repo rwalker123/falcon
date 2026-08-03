@@ -159,6 +159,18 @@ pub(crate) struct ExpeditionLevers {
     pub(crate) band_move_tiles_per_turn: u32,
 }
 
+/// **The TOE levers a cohort's kit readout is resolved against** — the config, plus the two
+/// *equipped* tiers that live outside `equipment.json` (one home per fact): the bare-handed `person`
+/// profile from `creatures.json` and the kitted haul rate from `labor_config.json`. Bundled so the
+/// resolution happens in exactly one place ([`population_state`]) rather than at the capture site.
+pub(crate) struct BandKitLevers<'a> {
+    pub(crate) config: &'a crate::equipment_config::EquipmentConfig,
+    /// The base human's intrinsic combat profile — the *unequipped* attack tier.
+    pub(crate) hunter_intrinsic: crate::combat::CombatStats,
+    /// `labor_config.hunt.per_worker_biomass_capacity` — the *equipped* haul tier.
+    pub(crate) equipped_haul_rate: f32,
+}
+
 pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) entity: Entity,
     /// The band's durable id, published so a client can address it in a command without sending
@@ -182,6 +194,10 @@ pub(crate) struct PopulationStateInputs<'a> {
     pub(crate) travel_target: Option<UVec2>,
     pub(crate) hunt_reach: u32,
     pub(crate) expedition_delivery: Option<crate::systems::ExpeditionDelivery>,
+    /// The band's kit **wear** (the minimal TOE). `None` = no wear has been recorded, which reads as
+    /// a **full kit** — the component is the wear ledger, not the kit's existence.
+    pub(crate) equipment: Option<&'a BandEquipment>,
+    pub(crate) kit_levers: &'a BandKitLevers<'a>,
 }
 
 pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationCohortState {
@@ -204,7 +220,25 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         travel_target,
         hunt_reach,
         expedition_delivery,
+        equipment,
+        kit_levers,
     } = inputs;
+    // **The minimal TOE, resolved for the wire.** The component records *wear*, so an absent one
+    // reads as no wear — a full kit — exactly as the labor pass reads it. Durability and performance
+    // stay ORTHOGONAL: the two tiers below are read off the equipped/dry *predicate*, never scaled by
+    // the remaining condition.
+    let kit = equipment.copied().unwrap_or_default();
+    let hunting_equipped = kit.hunting_equipped(kit_levers.config);
+    let carry_equipped = kit.carry_equipped(kit_levers.config);
+    let hunting_kit_durability = kit.hunting_remaining(kit_levers.config);
+    let carry_kit_durability = kit.carry_remaining(kit_levers.config);
+    let hunter_attack = kit_levers
+        .config
+        .hunter_profile(kit_levers.hunter_intrinsic, hunting_equipped)
+        .attack;
+    let carry_per_worker_biomass = kit_levers
+        .config
+        .per_worker_biomass_capacity(kit_levers.equipped_haul_rate, carry_equipped);
     let migration = cohort.migration.as_ref().map(pending_migration_to_state);
     let (travel_target_x, travel_target_y) = travel_target.map(|t| (t.x, t.y)).unwrap_or((0, 0));
     let demand = food_demand(
@@ -464,6 +498,12 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         // Predators Phase 3 — the raid legibility pair. `raid_radius` echoes the global lever
         // (like `work_range`); `raid_forfeit` is this band's past-turn raid debit (set above).
         raid_radius,
+        // The minimal TOE — the two kits' remaining condition and the two tiers they resolve to
+        // (resolved above, off the band's own wear).
+        hunting_kit_durability,
+        carry_kit_durability,
+        hunter_attack,
+        carry_per_worker_biomass,
     }
 }
 
@@ -543,6 +583,22 @@ mod tests {
     /// `f32` sums of `Scalar`-quantized values — a few ULPs of slack, no more.
     const EPSILON: f32 = 1e-4;
 
+    /// The TOE levers, resolved off the builtins. The `EquipmentConfig` is parked in a `OnceLock` so
+    /// the returned borrow is `'static` — the fixtures pass `&kit_levers()` as a temporary.
+    fn kit_levers() -> BandKitLevers<'static> {
+        static EQUIPMENT: std::sync::OnceLock<
+            std::sync::Arc<crate::equipment_config::EquipmentConfig>,
+        > = std::sync::OnceLock::new();
+        let config = EQUIPMENT.get_or_init(crate::equipment_config::EquipmentConfig::builtin);
+        BandKitLevers {
+            config,
+            hunter_intrinsic: crate::creatures_config::CreaturesConfig::builtin().person(),
+            equipped_haul_rate: crate::labor_config::LaborConfig::builtin()
+                .hunt
+                .per_worker_biomass_capacity,
+        }
+    }
+
     fn levers() -> ExpeditionLevers {
         let cfg = ExpeditionConfig::builtin();
         ExpeditionLevers {
@@ -620,6 +676,9 @@ mod tests {
             travel_target: None,
             hunt_reach: 0,
             expedition_delivery: None,
+            // These fixtures assert on the food ledger, not the TOE.
+            equipment: None,
+            kit_levers: &kit_levers(),
         })
     }
 

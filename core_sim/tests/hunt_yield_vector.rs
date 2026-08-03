@@ -119,6 +119,8 @@ fn spawn_world() -> App {
     app.world.insert_resource(WellbeingConfigHandle::default());
     app.world.insert_resource(CombatConfigHandle::default());
     app.world.insert_resource(CreaturesConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::EquipmentConfigHandle::default());
     app.world.insert_resource(CommandEventLog::default());
     app.world.run_system_once(spawn_initial_herds);
     app.world.run_system_once(spawn_initial_forage);

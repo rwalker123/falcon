@@ -391,6 +391,10 @@ client's compose-time "Expected yield" row promises. Shape:
   `hunt_haul_workers` off `SourceYieldForecast::ceiling_at` for a whole-animal source, so the seed
   matches the client's max-useful cap), and `wasted` = the understaffing mirror. No new formula, no new
   config lever.
+- **The Hunt seed resolves the band's CARRY-KIT tier**, through the same
+  `EquipmentConfig::per_worker_biomass_capacity` seam `advance_labor_allocation` reads (see
+  `equipment.md`). It has to: a band-agnostic equipped rate would promise a band whose baskets ran
+  dry a kitted haul, and forecast == actual is exactly what that breaks.
 - **Only the source the command touched** is seeded (other sources keep their real actuals), and only
   where the turn would actually pay: out of `band_work_range` / past the hunt leash, an unseeded patch
   or a vanished herd keeps its zero row, and a **genuinely barren source still seeds `0.0`** — `+0.00`

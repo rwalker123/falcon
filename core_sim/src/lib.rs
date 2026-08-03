@@ -28,6 +28,7 @@ mod crisis_config;
 mod culture;
 mod culture_corruption_config;
 mod demographics_config;
+mod equipment_config;
 mod espionage;
 mod expedition_config;
 mod fauna;
@@ -97,8 +98,8 @@ pub use combat_config::{
     BUILTIN_COMBAT_CONFIG,
 };
 pub use components::{
-    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandId, BandTravel,
-    DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
+    available_workers, floor_is_valid, floor_overdraws, raid_is_recurring, BandEquipment, BandId,
+    BandTravel, DeathCause, DemographicFlowAccumulator, ElementKind, Expedition, ExpeditionMission,
     ExpeditionPhase, Improvement, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget,
     LocalStore, LogisticsLink, MoraleCause, PendingMigration, PopulationCohort, PowerNode,
     ResidentBand, Settlement, SourceYield, StartingUnit, Tile, TownCenter, TradeLink,
@@ -142,6 +143,10 @@ pub use culture_corruption_config::{
 pub use demographics_config::{
     load_demographics_config_from_env, DemographicsConfig, DemographicsConfigHandle,
     DemographicsConfigMetadata,
+};
+pub use equipment_config::{
+    load_equipment_config_from_env, CarryKitConfig, EquipmentConfig, EquipmentConfigHandle,
+    EquipmentConfigMetadata, HuntingKitConfig, BUILTIN_EQUIPMENT_CONFIG,
 };
 pub use espionage::{
     AgentAssignment, CounterIntelBudgets, EspionageAgentHandle, EspionageCatalog,
@@ -479,6 +484,8 @@ pub fn build_headless_app() -> App {
     let combat_handle = combat_config::CombatConfigHandle::new(combat_config);
     let (creatures_config, creatures_metadata) = creatures_config::load_creatures_config_from_env();
     let creatures_handle = creatures_config::CreaturesConfigHandle::new(creatures_config);
+    let (equipment_config, equipment_metadata) = equipment_config::load_equipment_config_from_env();
+    let equipment_handle = equipment_config::EquipmentConfigHandle::new(equipment_config);
     let (demographics_config, demographics_metadata) =
         demographics_config::load_demographics_config_from_env();
     let demographics_handle =
@@ -574,6 +581,8 @@ pub fn build_headless_app() -> App {
         .insert_resource(combat_metadata)
         .insert_resource(creatures_handle)
         .insert_resource(creatures_metadata)
+        .insert_resource(equipment_handle)
+        .insert_resource(equipment_metadata)
         .insert_resource(demographics_handle)
         .insert_resource(demographics_metadata)
         .insert_resource(supply_network_handle)

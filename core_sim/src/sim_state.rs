@@ -49,9 +49,9 @@ use bevy::utils::HashMap;
 
 use crate::{
     components::{
-        BandId, BandTravel, DemographicFlowAccumulator, Expedition, LaborAllocation, LogisticsLink,
-        PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
-        TradeLink,
+        BandEquipment, BandId, BandTravel, DemographicFlowAccumulator, Expedition, LaborAllocation,
+        LogisticsLink, PopulationCohort, PowerNode, ResidentBand, Settlement, StartingUnit, Tile,
+        TownCenter, TradeLink,
     },
     crisis::{ActiveCrisisLedger, CrisisTelemetry},
     culture::{CultureManager, CultureManagerCheckpoint},
@@ -125,6 +125,11 @@ pub struct BandRecord {
     /// `None` when the band carries no [`LaborAllocation`]. Presence is state here too, for the
     /// same reason as [`LinkRecord::trade`].
     pub labor: Option<LaborAllocation>,
+    /// **How worn this band's TOE is** (the minimal TOE — see [`BandEquipment`]). Carried
+    /// unconditionally, like [`Self::flow_accumulator`]: a checkpoint that forgot how worn your
+    /// spears were would silently re-stock them on rollback, which is the one thing a consumable
+    /// kit must never do.
+    pub equipment: BandEquipment,
     pub resident: bool,
     pub starting_unit: Option<StartingUnit>,
     /// A pending `move_band` order. **Carried**, because a checkpoint is lossless: a band that was
@@ -307,6 +312,7 @@ pub fn capture_sim_state(world: &World) -> SimState {
                 home,
                 current,
                 labor: entity.get::<LaborAllocation>().cloned(),
+                equipment: entity.get::<BandEquipment>().copied().unwrap_or_default(),
                 resident: entity.contains::<ResidentBand>(),
                 starting_unit: entity.get::<StartingUnit>().cloned(),
                 travel: entity.get::<BandTravel>().copied(),
@@ -468,7 +474,8 @@ pub fn restore_sim_state(world: &mut World, state: &SimState) {
         cohort.home = home;
         cohort.current_tile = current;
 
-        let mut entity = world.spawn((cohort, record.id, record.flow_accumulator));
+        let mut entity =
+            world.spawn((cohort, record.id, record.flow_accumulator, record.equipment));
         if let Some(labor) = &record.labor {
             entity.insert(labor.clone());
         }

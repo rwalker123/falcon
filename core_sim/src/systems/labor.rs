@@ -90,6 +90,7 @@ pub struct LaborConfigs<'w> {
     pub wellbeing: Res<'w, WellbeingConfigHandle>,
     pub combat: Res<'w, CombatConfigHandle>,
     pub creatures: Res<'w, CreaturesConfigHandle>,
+    pub equipment: Res<'w, EquipmentConfigHandle>,
 }
 
 /// Resolve each band's per-worker labor yields (Early-Game Labor, slice 3a). Replaces the retired
@@ -132,7 +133,11 @@ pub fn advance_labor_allocation(
     configs: LaborConfigs,
     tiles: Query<&Tile>,
     food_modules: Query<&FoodModuleTag>,
-    mut cohorts: Query<(&mut PopulationCohort, &mut LaborAllocation)>,
+    mut cohorts: Query<(
+        &mut PopulationCohort,
+        &mut LaborAllocation,
+        Option<&mut BandEquipment>,
+    )>,
 ) {
     let fauna = configs.fauna.get();
     let labor = configs.labor.get();
@@ -145,6 +150,13 @@ pub fn advance_labor_allocation(
     // band-side casualties. Hoisted out of the per-cohort loop — neither changes within a turn.
     let combat_tuning = configs.combat.get().tuning();
     let person_profile = configs.creatures.get().person();
+    // **The minimal TOE** (`docs/plan_hunt_through_combat.md` §4.8) — the two-tier table and the
+    // durability dials, resolved once. What varies per band is only its `BandEquipment` *wear*.
+    let equipment_cfg = configs.equipment.get();
+    // The **equipped** per-hunter haul rate. `labor_config.json`'s shipped rate IS the kitted tier
+    // (the game has always run kitted); the carry kit's `unequipped_per_worker_biomass_capacity` is
+    // the step down a band takes when its baskets are gone.
+    let equipped_haul_rate = labor.hunt.per_worker_biomass_capacity;
     let map_seed = sim_config.map_seed;
     let husbandry = &fauna.husbandry;
     let work_range = labor.band_work_range;
@@ -206,7 +218,21 @@ pub fn advance_labor_allocation(
     let grid_height = tile_registry.height;
     let wrap_horizontal = sim_config.map_topology.wrap_horizontal;
 
-    for (mut cohort, mut allocation) in cohorts.iter_mut() {
+    for (mut cohort, mut allocation, mut band_equipment) in cohorts.iter_mut() {
+        // **This band's carry tier, resolved ONCE per band per turn.** The component records *wear*,
+        // so an absent one reads as **no wear — a full kit** (the same `unwrap_or_default()` reading
+        // `SimState` gives `DemographicFlowAccumulator`); every band starts stocked, and "dry" is
+        // expressed as wear reaching the kit's durability, never as an absent component. Resolved
+        // *before* the assignment loop so every source this band works is priced on one kit state: a
+        // kit that expires part-way through the loop must not pay two different rates to two herds in
+        // the same turn.
+        let carry_equipped = band_equipment
+            .as_deref()
+            .copied()
+            .unwrap_or_default()
+            .carry_equipped(&equipment_cfg);
+        let hunt_per_worker_biomass =
+            equipment_cfg.per_worker_biomass_capacity(equipped_haul_rate, carry_equipped);
         // Normalize each turn: if `working` shrank, trim assignments so Σ ≤ available.
         let available = available_workers(cohort.working);
         let faction = cohort.faction;
@@ -1026,7 +1052,7 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
                         mult_f,
                         workers,
                         *floor,
@@ -1216,7 +1242,7 @@ pub fn advance_labor_allocation(
                         // rung 3's actual payoffs are the faster `r`, no chasing, the self-feeding
                         // footprint and a `K` you control. On poor enough range a pen *will* pulse
                         // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
-                        let collection = workers as f32 * labor.hunt.per_worker_biomass_capacity;
+                        let collection = workers as f32 * hunt_per_worker_biomass;
                         let take =
                             // A penned animal is not stalked: no engagement bound.
                             fauna::quantise_animal_take(
@@ -1226,6 +1252,13 @@ pub fn advance_labor_allocation(
                                 f32::INFINITY,
                             );
                         herd.biomass -= take.killed_biomass();
+                        // **The carry kit wears on what it HAULS, and a pen hauls** (the minimal
+                        // TOE). The *hunting* kit is untouched here: a penned beast is slaughtered,
+                        // not stalked, so there is no fight and no spear to blunt — which is the
+                        // same reason this branch passes no engagement bound to the quantiser.
+                        if let Some(kit) = band_equipment.as_mut() {
+                            kit.wear_carry(&equipment_cfg, take.carried);
+                        }
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat
                         // exactly as a wild one does (`docs/plan_hunt_yield_model.md`).
@@ -1292,7 +1325,7 @@ pub fn advance_labor_allocation(
                             herd,
                             &fauna,
                             &ladder,
-                            labor.hunt.per_worker_biomass_capacity,
+                            hunt_per_worker_biomass,
                             mult_f,
                             workers,
                             *floor,
@@ -1326,7 +1359,7 @@ pub fn advance_labor_allocation(
                                 fauna::hunt_haul_workers(
                                     production,
                                     herd.body_mass,
-                                    labor.hunt.per_worker_biomass_capacity,
+                                    hunt_per_worker_biomass,
                                 ),
                             ),
                             overdraws: false,
@@ -1356,12 +1389,26 @@ pub fn advance_labor_allocation(
                         workers,
                         *floor,
                         improvement,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
                         &fauna,
                         &ladder,
                         f32::INFINITY,
                         fauna::retreat_seed(sim_config.map_seed, tick.0, &herd.id, workers),
                     );
+                    // **BOTH KITS ARE CHARGED FOR USE, AND ONLY FOR USE** (the minimal TOE,
+                    // `docs/plan_denial_raid.md` §1.2). The hunting kit pays per **animal killed**
+                    // and the carry kit per **biomass carried home**, so a party that waits out a
+                    // herd too thin to spare a body — or that marches all turn without engaging —
+                    // spends nothing. A turn-based clock would charge an idle march the same as a
+                    // slaughter, which is exactly what would make denial free.
+                    //
+                    // Charged AFTER the take, so this turn's take is paid at the tier the take was
+                    // priced with and the cliff lands on the *next* turn. That is the same
+                    // accrue-after-take ordering every rung's build meter uses.
+                    if let Some(kit) = band_equipment.as_mut() {
+                        kit.wear_hunting(&equipment_cfg, take.killed)
+                            .wear_carry(&equipment_cfg, take.carried);
+                    }
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
                     // **Penning** on a tamed one. The gate is the **escapement room**, never
@@ -1587,7 +1634,7 @@ pub fn advance_labor_allocation(
                     let take_workers = fauna::hunt_take_workers(
                         standing_above_floor,
                         herd.body_mass,
-                        labor.hunt.per_worker_biomass_capacity * ladder.build_dip(improvement),
+                        hunt_per_worker_biomass * ladder.build_dip(improvement),
                         fauna.engage_rate_for(&herd.species),
                         ladder.build_dip(improvement),
                     );
@@ -1601,7 +1648,7 @@ pub fn advance_labor_allocation(
                         herd,
                         &fauna,
                         &ladder,
-                        labor.hunt.per_worker_biomass_capacity,
+                        hunt_per_worker_biomass,
                         mult_f,
                         workers,
                         *floor,
@@ -2495,6 +2542,7 @@ mod labor_yield_tests {
         world.insert_resource(WellbeingConfigHandle::default());
         world.insert_resource(crate::combat_config::CombatConfigHandle::default());
         world.insert_resource(crate::creatures_config::CreaturesConfigHandle::default());
+        world.insert_resource(crate::equipment_config::EquipmentConfigHandle::default());
         world.insert_resource(FactionInventory::default());
         world.insert_resource(DiscoveryProgressLedger::default());
         world.insert_resource(CommandEventLog::default());

@@ -363,6 +363,12 @@ fn create_populations<'a>(
                     // Predators Phase 3 — the raid legibility pair, appended after fodderStore.
                     raidRadius: cohort.raid_radius,
                     raidForfeit: cohort.raid_forfeit,
+                    // The minimal TOE — the two kits' remaining condition and the two tiers they
+                    // resolve to, appended after the raid pair.
+                    huntingKitDurability: cohort.hunting_kit_durability,
+                    carryKitDurability: cohort.carry_kit_durability,
+                    hunterAttack: cohort.hunter_attack,
+                    carryPerWorkerBiomass: cohort.carry_per_worker_biomass,
                 },
             )
         })

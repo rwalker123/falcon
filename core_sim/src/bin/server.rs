@@ -29,11 +29,11 @@ use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
     hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
     resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
-    tile_is_fresh_watered, ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle,
-    BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
-    ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError, LaborAllocation,
-    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
-    SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
+    tile_is_fresh_watered, ActiveStartProfile, BandEquipment, BandTravel, BeatCatalogHandle,
+    BeatConfigHandle, BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle,
+    ExpeditionMission, ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError,
+    LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey,
+    SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
     DEFAULT_ESCAPEMENT_FLOOR, NO_FILL_TARGET, NO_FORAGE_SEASON,
 };
 use core_sim::{
@@ -43,17 +43,17 @@ use core_sim::{
     CrisisArchetypeCatalog, CrisisArchetypeCatalogHandle, CrisisArchetypeCatalogMetadata,
     CrisisModifierCatalog, CrisisModifierCatalogHandle, CrisisModifierCatalogMetadata,
     CrisisTelemetry, CrisisTelemetryConfig, CrisisTelemetryConfigHandle,
-    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EspionageAgentHandle, EspionageCatalog,
-    EspionageMissionId, EspionageMissionKind, EspionageMissionState, EspionageMissionTemplate,
-    EspionageRoster, FactionId, FactionOrders, FactionRegistry, FactionSecurityPolicies,
-    FaunaConfigHandle, FoodSiteRegistry, ForageRegistry, FrameSink, HerdRegistry, Improvement,
-    LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns, PopulationCohort, QueueMissionError,
-    QueueMissionParams, Scalar, SecurityPolicy, Settlement, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, SnapshotHistory, SnapshotOverlaysConfig,
-    SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata, StartLocation,
-    StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot, SubmitError,
-    SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig, TurnPipelineConfigHandle,
-    TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
+    CrisisTelemetryConfigMetadata, DiscoveryProgressLedger, EquipmentConfigHandle,
+    EspionageAgentHandle, EspionageCatalog, EspionageMissionId, EspionageMissionKind,
+    EspionageMissionState, EspionageMissionTemplate, EspionageRoster, FactionId, FactionOrders,
+    FactionRegistry, FactionSecurityPolicies, FaunaConfigHandle, FoodSiteRegistry, ForageRegistry,
+    FrameSink, HerdRegistry, Improvement, LaborConfigHandle, MapPresetsHandle, PendingCrisisSpawns,
+    PopulationCohort, QueueMissionError, QueueMissionParams, Scalar, SecurityPolicy, Settlement,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, SnapshotHistory,
+    SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle, SnapshotOverlaysConfigMetadata,
+    StartLocation, StartProfileLookup, StartProfilesHandle, StartingUnit, StoredSnapshot,
+    SubmitError, SubmitOutcome, Tile, TileRegistry, TownCenter, TurnPipelineConfig,
+    TurnPipelineConfigHandle, TurnPipelineConfigMetadata, TurnQueue, WorldEpoch, FOOD,
 };
 use sim_runtime::{
     commands::{
@@ -1663,11 +1663,26 @@ fn seed_source_yield(
             }
             let fauna = app.world.resource::<FaunaConfigHandle>().get();
             let ladder = app.world.resource::<LadderConfigHandle>().get();
+            // **The seed must be priced at THIS band's carry tier** (the minimal TOE), or the
+            // exact-forecast-equals-actual invariant breaks the moment a band's baskets run dry:
+            // `advance_labor_allocation` resolves the same tier through the same seam, so a
+            // band-agnostic equipped rate here would promise a dry band a kitted haul.
+            let equipment_cfg = app.world.resource::<EquipmentConfigHandle>().get();
+            let carry_equipped = app
+                .world
+                .get::<BandEquipment>(band)
+                .copied()
+                .unwrap_or_default()
+                .carry_equipped(&equipment_cfg);
+            let per_worker_biomass = equipment_cfg.per_worker_biomass_capacity(
+                labor.hunt.per_worker_biomass_capacity,
+                carry_equipped,
+            );
             hunt_source_yield_preview(
                 herd,
                 &fauna,
                 &ladder,
-                labor.hunt.per_worker_biomass_capacity,
+                per_worker_biomass,
                 output_mult,
                 workers,
                 *floor,
@@ -2603,6 +2618,12 @@ fn handle_send_expedition(
             expedition_cohort,
             expedition_band_id,
             LaborAllocation::default(),
+            // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
+            // carries the same full kit a band spawns with. This slice does not *wear* an
+            // expedition's kit (`advance_expeditions` still prices its haul at the equipped rate);
+            // without the component the party would publish a dry kit beside an equipped haul rate,
+            // which is a contradiction on the wire.
+            BandEquipment::default(),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -2898,6 +2919,12 @@ fn handle_send_hunt_expedition(
             expedition_cohort,
             expedition_band_id,
             LaborAllocation::default(),
+            // **The party leaves OUTFITTED** — a detached party is a band in its own right, so it
+            // carries the same full kit a band spawns with. This slice does not *wear* an
+            // expedition's kit (`advance_expeditions` still prices its haul at the equipped rate);
+            // without the component the party would publish a dry kit beside an equipped haul rate,
+            // which is a contradiction on the wire.
+            BandEquipment::default(),
             StartingUnit::new(unit_kind, unit_tags),
             Expedition {
                 home_band: band.entity,
@@ -6166,6 +6193,8 @@ mod tests {
                     }],
                     ..Default::default()
                 },
+                // A spawned band is KITTED, exactly as `spawn_profile_population` spawns one.
+                BandEquipment::default(),
             ))
             .id()
     }

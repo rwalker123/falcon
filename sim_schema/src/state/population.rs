@@ -489,6 +489,43 @@ pub struct PopulationCohortState {
     /// stop inside `hunt.forecast_horizon_turns`. Appended (append-only).
     #[serde(default)]
     pub expedition_trip_bound: String,
+    /// **Remaining condition on the band's HUNTING kit** (spears) — the minimal TOE
+    /// (`docs/plan_hunt_through_combat.md` §4.8, `docs/plan_early_game_labor.md`). On
+    /// `equipment.json`'s 0–100 scale; **`0` = dry**, at which point the role has stepped down to its
+    /// unequipped tier and **stays there** (nothing replenishes a kit in this slice — running dry is
+    /// the intended pressure).
+    ///
+    /// **Performance is FLAT until expiry**: durability and performance are deliberately orthogonal
+    /// axes, so no readout may be scaled by this. Wears per **animal killed**, never per turn
+    /// elapsed. Appended (append-only).
+    #[serde(default)]
+    pub hunting_kit_durability: f32,
+    /// **Remaining condition on the band's CARRY kit** (baskets), same scale and same cliff as
+    /// [`Self::hunting_kit_durability`]. Wears per **biomass hauled home**. Appended (append-only).
+    #[serde(default)]
+    pub carry_kit_durability: f32,
+    /// **This band's per-hunter combat `attack`**, kit resolved in — `1.0` bare-handed (the
+    /// `creatures.json` `person` row) and `20.0` with the hunting kit
+    /// (`equipment.json` `hunting_kit.equipped_attack`).
+    ///
+    /// It is the left-hand side of the fight's gate, `max(0, attack − defense)`, against a herd's
+    /// [`crate::state::HerdTelemetryState::defense`] — **below a species' `defense` that species
+    /// cannot be hunted at all**, which is why the TOE had to land before the hunt resolves through
+    /// combat. **Published and inert in the fight itself**: the resolver still fields the intrinsic
+    /// `person` profile until the slice that moves the kill into `combat::resolve_fight`. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub hunter_attack: f32,
+    /// **This band's per-worker hunt haul rate** (biomass/turn), kit resolved in — the term every
+    /// hunt take, crew-size figure and forecast is capped by. Equipped it is `labor_config.json`'s
+    /// `hunt.per_worker_biomass_capacity`; dry it is `equipment.json`'s
+    /// `carry_kit.unequipped_per_worker_biomass_capacity`.
+    ///
+    /// **Band-scoped, unlike [`crate::state::HerdTelemetryState::per_worker_biomass`]**, which stays
+    /// the *equipped reference* rate because a herd has no band to resolve a tier against. Appended
+    /// (append-only).
+    #[serde(default)]
+    pub carry_per_worker_biomass: f32,
 }
 
 /// Presentation view of a band's resolved settlement stage (mirror of the `SettlementStageView`

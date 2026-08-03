@@ -80,6 +80,12 @@ pub struct SnapshotContext<'w> {
     /// Scouting & Hunting Expeditions → Snapshot).
     pub fauna: Res<'w, crate::fauna_config::FaunaConfigHandle>,
     pub expedition: Res<'w, crate::expedition_config::ExpeditionConfigHandle>,
+    /// The base human's intrinsic combat profile — the **unequipped** attack tier the minimal TOE's
+    /// hunting kit lifts a band off (`docs/plan_hunt_through_combat.md` §4.8).
+    pub creatures: Res<'w, crate::creatures_config::CreaturesConfigHandle>,
+    /// The TOE kit table — the equipped attack tier, the unequipped haul tier, and the durability
+    /// dials each band's `BandEquipment` wear is measured against.
+    pub equipment: Res<'w, crate::equipment_config::EquipmentConfigHandle>,
     pub settlement_stage: Res<'w, crate::settlement_stage_config::SettlementStageConfigHandle>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     pub pipeline_config: Res<'w, TurnPipelineConfigHandle>,
@@ -1714,6 +1720,7 @@ pub(crate) type PopulationSnapshotQuery<'w, 's> = Query<
         Option<&'static BandTravel>,
         Option<&'static Expedition>,
         Option<&'static BandId>,
+        Option<&'static BandEquipment>,
     ),
 >;
 
@@ -1824,6 +1831,8 @@ pub fn capture_snapshot(
         mut flora_quotes,
         fauna,
         expedition,
+        creatures,
+        equipment,
         settlement_stage,
         supply_membership,
         pipeline_config,
@@ -1991,6 +2000,16 @@ pub fn capture_snapshot(
     // (the outfit UI lives on the resident-band panel, not on the expedition).
     let expedition_cfg = expedition.get();
     let fauna_config = fauna.get();
+    // **The minimal TOE levers**, resolved once for every cohort: the kit table plus the two
+    // *equipped* tiers that live outside `equipment.json` (one home per fact) — the bare-handed
+    // `person` profile and `labor_config`'s kitted haul rate. What varies per band is only its
+    // `BandEquipment` wear, which `population_state` resolves against these.
+    let equipment_config = equipment.get();
+    let kit_levers = crate::snapshot::population::BandKitLevers {
+        config: &equipment_config,
+        hunter_intrinsic: creatures.get().person(),
+        equipped_haul_rate: labor_config.hunt.per_worker_biomass_capacity,
+    };
     let expedition_levers = ExpeditionLevers {
         max_party_size: expedition_cfg.max_party_size,
         hunt_per_worker_carry: expedition_cfg.hunt.per_worker_carry,
@@ -2002,7 +2021,7 @@ pub fn capture_snapshot(
     // (bands are nomadic). The `populations` query is read-only, so iterating it twice is fine.
     let cohort_positions: std::collections::HashMap<Entity, UVec2> = populations
         .iter()
-        .filter_map(|(entity, cohort, _, _, _, _)| {
+        .filter_map(|(entity, cohort, _, _, _, _, _)| {
             tile_positions
                 .get(&cohort.current_tile.to_bits())
                 .copied()
@@ -2012,7 +2031,7 @@ pub fn capture_snapshot(
     let mut population_states: Vec<PopulationCohortState> = populations
         .iter()
         .map(
-            |(entity, cohort, allocation, travel, expedition, band_id)| {
+            |(entity, cohort, allocation, travel, expedition, band_id, equipment)| {
                 let current_pos = tile_positions.get(&cohort.current_tile.to_bits()).copied();
                 // A band is "traveling" while a `move_band` order is still en route to its target.
                 let is_traveling = travel
@@ -2066,6 +2085,8 @@ pub fn capture_snapshot(
                     travel_target,
                     hunt_reach,
                     expedition_delivery,
+                    equipment,
+                    kit_levers: &kit_levers,
                 })
             },
         )
