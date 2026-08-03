@@ -85,8 +85,13 @@ var _targeting: TargetingController = null
 var _panel: BandCityPanel = null
 # ---- Band/City zone state (persists across renders, so a filter/tab/page survives a snapshot) ----
 ## Which sources the work board shows, how it orders them, and which page is on screen.
+## **THE DEFAULT SORT IS ONE THE PLAYER'S OWN EDIT CANNOT MOVE** (issue #460). Yield scales with
+## workers, so a yield-sorted board re-ranked on every `+`/`−` press — `_repage_work_zone` re-sorts
+## immediately, the row jumped out from under the pointer, and the next press landed on a different
+## source. A name is a fact about the source, not about the edit in flight. `Sort by yield` is still
+## one pick away in the `⋯` menu, and `set_panel` adopts the player's persisted choice over this.
 var _work_filter: StringName = HudWorkVocab.WORK_FILTER_ALL
-var _work_sort: StringName = HudWorkVocab.WORK_SORT_YIELD
+var _work_sort: StringName = HudWorkVocab.WORK_SORT_NAME
 var _work_page: int = 0
 ## The source key open in the work inspector strip ("" = none), and whether its floor picker is out.
 ## One row at a time — the strip costs board rows, which `_work_board_capacity` subtracts.
@@ -586,9 +591,17 @@ func _build_work_board(band: Dictionary, page: Array, cols: int, rows_per_col: i
 
 ## The zone's head row: WORK · n sources · the band's total rate(s) · the `⋯` section menu.
 func _build_work_head(band: Dictionary, models: Array, income: float, trade_income: float) -> HBoxContainer:
+    # The two sorts are a mutually exclusive SET, so they carry the radio mark and `Unassign all` — an
+    # action, not a member — does not. Without it the menu offered two sorts and stated neither, which
+    # is what made the board's default order unreadable. `_repage_work_zone` rebuilds this head, so a
+    # pick refreshes the mark with no extra wiring.
     var menu := HudWidgets.build_section_menu([
-        {"label": HudWorkVocab.WORK_MENU_SORT_YIELD, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
-        {"label": HudWorkVocab.WORK_MENU_SORT_NAME, "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
+        {"label": HudWorkVocab.WORK_MENU_SORT_YIELD,
+            HudWidgets.MENU_ENTRY_CHECKED: _work_sort == HudWorkVocab.WORK_SORT_YIELD,
+            "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_YIELD)},
+        {"label": HudWorkVocab.WORK_MENU_SORT_NAME,
+            HudWidgets.MENU_ENTRY_CHECKED: _work_sort == HudWorkVocab.WORK_SORT_NAME,
+            "on_pick": func() -> void: _set_work_sort(HudWorkVocab.WORK_SORT_NAME)},
         {"label": HudWorkVocab.WORK_MENU_UNASSIGN_FORMAT % models.size(), "disabled": models.is_empty(),
             "on_pick": func() -> void: _on_work_unassign_all_pressed(band, models.size())},
     ], HudWorkVocab.WORK_MENU_TOOLTIP)
@@ -1143,9 +1156,39 @@ func _work_models_matching(filter: StringName, models: Array) -> Array:
 
 func _sort_work_models(models: Array) -> void:
     if _work_sort == HudWorkVocab.WORK_SORT_NAME:
-        models.sort_custom(func(a, b): return String(a["label"]).naturalnocasecmp_to(String(b["label"])) < 0)
+        models.sort_custom(_work_name_sorts_before)
     else:
         models.sort_custom(func(a, b): return _work_sorts_before(a as Dictionary, b as Dictionary))
+
+## "Sort by name" — KIND FIRST, then label, then `key`.
+##
+## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND, so alphabetical order alone SPLITS A KIND IN TWO.**
+## A forage row whose Cultivate improvement is done renders through `WORK_ROW_TEND_FORMAT`
+## ("Tend (%d, %d)"), which is display only — its `kind` is still `forage`. With three live prefixes
+## and "Forage" < "Hunt" < "Tend", a band working a wild patch, a herd and a Tended Patch would read
+## Forage → Hunt → Tend, i.e. the forage block interrupted by the hunt block. The `Forage`/`Hunt`
+## filter chips select on `kind` (`_work_models_matching`), so the unsorted-by-kind board would not
+## match the blocks those chips name. Leading with the kind makes the board agree with the chips
+## whatever a row's label says.
+##
+## The `key` tiebreak makes it a TOTAL ORDER. `sort_custom` is NOT stable in Godot and a label tie is
+## genuinely reachable — two herds of the same species render the identical `WORK_ROW_HUNT_FORMAT`
+## label — so without it two tied rows could swap on any unrelated re-render (a snapshot tick, a zone
+## resize), which is the same row-jumps-under-the-pointer failure the default sort exists to remove.
+## `key` is the source identity `_work_source_models` already assigns, i.e. the one available field no
+## game state moves.
+func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
+    # A BOOLEAN TIER, the same idiom `_work_sorts_before` uses, because there are exactly two labor
+    # kinds. A third kind cannot be expressed this way — it would need an explicit rank table, since
+    # a bool can only say "this one first".
+    var a_is_forage := String(a.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    var b_is_forage := String(b.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    if a_is_forage != b_is_forage:
+        return a_is_forage
+    var by_label := String(a.get("label", "")).naturalnocasecmp_to(String(b.get("label", "")))
+    if by_label != 0:
+        return by_label < 0
+    return String(a.get("key", "")) < String(b.get("key", ""))
 
 ## "Sort by yield", in TWO TIERS (issue #337): every FOOD-paying source first, ordered by its food
 ## figure descending, then the trade-only sources, ordered by their trade figure descending.
@@ -1165,14 +1208,27 @@ func _sort_work_models(models: Array) -> void:
 ## inedible quarry is worth nothing" reading the per-row work removed.)
 ##
 ## A source paying NEITHER component sorts into the trade tier at 0.0, i.e. last — unchanged.
+##
+## **THE `key` TIEBREAK MAKES IT A TOTAL ORDER, and that is a correctness fix**: `sort_custom` is NOT
+## stable in Godot and equal rates are common — two patches at the same food figure inside the food
+## tier, and every source paying neither component, all of which sit together at 0.0 in the trade
+## tier. Tied rows could otherwise swap on any unrelated re-render. The tiebreak rides BELOW the tier
+## + rate comparisons and changes neither.
 func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
     var a_pays_food := SourceForecast.has_component(float(a.get("rate", 0.0)))
     var b_pays_food := SourceForecast.has_component(float(b.get("rate", 0.0)))
     if a_pays_food != b_pays_food:
         return a_pays_food
+    # Exact `!=` rather than `is_equal_approx`: an epsilon tie test is NOT transitive (a≈b and b≈c
+    # without a≈c), which would break the strict weak ordering `sort_custom` requires — the very
+    # property this tiebreak exists to establish.
     if a_pays_food:
-        return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
-    return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+        if float(a.get("rate", 0.0)) != float(b.get("rate", 0.0)):
+            return float(a.get("rate", 0.0)) > float(b.get("rate", 0.0))
+        return String(a.get("key", "")) < String(b.get("key", ""))
+    if float(a.get("trade_rate", 0.0)) != float(b.get("trade_rate", 0.0)):
+        return float(a.get("trade_rate", 0.0)) > float(b.get("trade_rate", 0.0))
+    return String(a.get("key", "")) < String(b.get("key", ""))
 
 func _find_work_model(models: Array, key: String) -> Dictionary:
     if key == "":
@@ -1233,6 +1289,10 @@ func _set_work_sort(sort: StringName) -> void:
     if _work_sort == sort:
         return
     _work_sort = sort
+    # A sort is a standing preference, not a per-session mood — persist it through the panel, which
+    # owns the prefs file.
+    if _panel != null:
+        _panel.set_work_sort_pref(String(sort))
     _work_page = 0
     _repage_work_zone()
 
@@ -1791,6 +1851,16 @@ func _index_of_player_band(entity: int) -> int:
 ## in `render_band`, since main's section-block model rebuilds that label each render.)
 func set_panel(panel: BandCityPanel) -> void:
     _panel = panel
+    # THE PANEL OWNS THE FILE, THIS CONTROLLER OWNS THE VOCABULARY. The panel stores the work sort as
+    # an opaque string, so validating it is this side's job: an empty (never chosen) or unknown value
+    # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing.
+    # Without the guard it would not produce a broken board but a YIELD-sorted one: `_sort_work_models`
+    # branches on `== WORK_SORT_NAME`, so anything else falls through to yield, silently reinstating
+    # the re-ranking-under-your-own-edit behaviour issue #460 removed.
+    if panel != null:
+        var stored := StringName(panel.work_sort_pref())
+        if HudWorkVocab.WORK_SORTS.has(stored):
+            _work_sort = stored
     # The panel re-reports its zone box on a shell flip / dock change / collapse / window resize.
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):

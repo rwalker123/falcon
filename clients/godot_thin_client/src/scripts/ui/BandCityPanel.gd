@@ -178,6 +178,9 @@ const CONFIG_KEY_EDGE := "edge"
 const CONFIG_KEY_COLLAPSED := "collapsed"
 ## The narrow shell's selected tab, so a reopened session lands where the player left it.
 const CONFIG_KEY_TAB := "tab"
+## The WORK board's chosen sort, stored as an OPAQUE string: the sort vocabulary belongs to
+## `BandPanelController`, so this panel persists the word without ever knowing what it means.
+const CONFIG_KEY_WORK_SORT := "work_sort"
 ## Preview harnesses point this at a scratch file so a render can neither READ nor WRITE the
 ## player's real dock prefs — the same isolation `NarrativeForkPanel.config_path_override` gives the
 ## HUD-panel prefs, and for the same reason: without it a harness renders whatever tab the LAST run
@@ -280,6 +283,9 @@ var _empty_state: Label
 var _zones: Dictionary = {}
 ## Narrow-shell tab state: the selected zone key (persisted) and each tab's badge (`{text, hot}`).
 var _active_tab: StringName = DEFAULT_TAB
+## The WORK board's persisted sort, opaque to this panel. `""` = the player has never chosen one, so
+## the controller keeps its own default.
+var _work_sort_pref: String = ""
 var _tab_badges: Dictionary = {}
 var _tab_buttons: Dictionary = {}   # zone:StringName -> Control (the tab cell)
 ## The last `work_zone_size()` reported, so `zones_resized` fires on a real change only.
@@ -1341,6 +1347,9 @@ func _load_prefs() -> void:
 	var tab := StringName(str(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(DEFAULT_TAB))))
 	if TAB_LABELS.has(tab):
 		_active_tab = tab
+	# Deliberately UNVALIDATED — the work-sort vocabulary is `BandPanelController`'s, and it is what
+	# rejects an unknown value when it adopts this.
+	_work_sort_pref = str(cfg.get_value(CONFIG_SECTION, CONFIG_KEY_WORK_SORT, ""))
 
 func _save_prefs() -> void:
 	var cfg := ConfigFile.new()
@@ -1348,7 +1357,17 @@ func _save_prefs() -> void:
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_EDGE, _dock_edge)
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_COLLAPSED, _collapsed)
 	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_TAB, String(_active_tab))
+	cfg.set_value(CONFIG_SECTION, CONFIG_KEY_WORK_SORT, _work_sort_pref)
 	cfg.save(_config_path())
+
+## The WORK board's persisted sort, or `""` when the player has never chosen one.
+func work_sort_pref() -> String:
+	return _work_sort_pref
+
+## Remember the WORK board's sort. The value is opaque here — see `CONFIG_KEY_WORK_SORT`.
+func set_work_sort_pref(value: String) -> void:
+	_work_sort_pref = value
+	_save_prefs()
 
 ## The prefs file actually used — the scratch override when a harness set one, else the player's.
 static func _config_path() -> String:
