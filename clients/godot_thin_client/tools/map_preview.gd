@@ -1968,9 +1968,17 @@ func _snapshot_pens() -> Dictionary:
 ## each `FaunaSprites` marker can be judged at TRUE marker size. This is the roster frame: it is the
 ## only place the whole bundled-art set is visible at once, so a swapped/clipped/fringed sprite shows
 ## up here and nowhere else. One entry per group is enough — aliases resolve to the same PNG.
+## THE FOUR CERVIDS LEAD THE LIST, ADJACENT, AND THAT ORDERING IS THE POINT OF THE FRAME (issue
+## #439). Red Deer / Wild Elk / Wild Reindeer / Desert Gazelle are four distinct roster species that
+## all drew `deer.png` until they were given their own art, and the failure that hid it was that no
+## frame ever put them side by side — each looked fine alone. Standing them in a row makes "these two
+## are the same picture" the first thing the eye catches. Keep them adjacent.
 const FAUNA_SPRITE_ROSTER := [
-	["game_rabbit_01", "Rabbit Warren"],
 	["game_deer_01", "Red Deer"],
+	["game_elk_01", "Wild Elk"],
+	["game_reindeer_01", "Wild Reindeer"],
+	["game_gazelle_01", "Desert Gazelle"],
+	["game_rabbit_01", "Rabbit Warren"],
 	["game_boar_01", "Wild Boar"],
 	["game_mammoth_01", "Thunder Mammoth"],
 	["game_aurochs_01", "Aurochs"],
@@ -1980,13 +1988,23 @@ const FAUNA_SPRITE_ROSTER := [
 	["game_sheep_01", "Sheep"],
 	["game_fowl_01", "Jungle Fowl"],
 	["game_wolf_01", "Grey Wolf Pack"],
+	["game_seal_01", "Grey Seals"],
+	["game_catfish_01", "Silt Catfish"],
 ]
-## The roster is laid out as ONE row: MapView is cover-fit, so on this wide preview window only a
-## few middle rows are on screen and a second roster row is cropped away unseen.
-const FAUNA_ROSTER_COLUMNS := 11
-## A middle row (well inside the cover-fit crop) and a leading margin off the map border.
-const FAUNA_ROSTER_ORIGIN := Vector2i(3, 5)
-## Hexes between roster entries — one apart, so ten fit across GRID_W without markers colliding.
+## TWO rows of eight. It was one row of eleven until the roster outgrew `GRID_W` (16 columns, and a
+## single spaced row of 16 would run off the map), and `seal` + `catfish` were simply ABSENT from a
+## frame whose whole job is to prove coverage — so the row count is not cosmetic, it is what let two
+## PNGs go unjudged. MapView is COVER-fit, so the axis that gets cropped is whichever one the grid is
+## longer in relative to the window: on this state's `DEFAULT_CANVAS_SIZE` the 16×12 grid is wider
+## than the window's aspect, so all twelve ROWS are on screen and it is the outer COLUMNS that are
+## cut (roughly cols 2–14 survive). Cols 4–11 therefore sit well inside with margin to spare.
+const FAUNA_ROSTER_COLUMNS := 8
+## Rows 4 and 5 — NOT 5 and 6, and that is the whole reason this constant is not simply centred: the
+## band camp stands on (BAND_X, BAND_Y) = (8, 6), and with the roster's second row on 6 the Jungle
+## Fowl landed on that very hex and rendered STACKED under the camp marker instead of alone at true
+## marker size. A roster frame that judges sprites cannot let one share a hex with the band.
+const FAUNA_ROSTER_ORIGIN := Vector2i(4, 4)
+## Hexes between roster entries — one apart, so eight fit across GRID_W without markers colliding.
 const FAUNA_ROSTER_SPACING := 1
 
 func _snapshot_fauna_sprites() -> Dictionary:

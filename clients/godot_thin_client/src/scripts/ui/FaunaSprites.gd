@@ -18,19 +18,27 @@ class_name FaunaSprites
 ## Static-only by design (same reasoning as `ServerPortsFile.gd`): a pure lookup with no node
 ## state, called from the map draw loop.
 
-## Species KEY (a `FoodIcons.HERD_SPECIES` key) → bundled texture path. Species that share art
-## alias the same file, exactly as HERD_SPECIES already aliases emoji — reindeer/caribou/elk all
-## read as the deer silhouette.
+## Species KEY (a `FoodIcons.HERD_SPECIES` key) → bundled texture path. Keys that share art alias
+## the same file, exactly as HERD_SPECIES already aliases emoji — `bison`/`buffalo` both read as the
+## aurochs, `hare` as the rabbit, `caribou` as the reindeer.
+##
+## AN ALIAS IS ONLY LEGITIMATE WHEN NO ROSTER SPECIES STANDS BEHIND IT (issue #439). Four keys here
+## once pointed at `deer.png` — `deer`, `elk`, `reindeer` and `gazelle` — and `fauna_config.json`
+## ships a distinct species under each: Red Deer, Wild Elk, Wild Reindeer and Desert Gazelle. Four
+## species, one marker, so the map could not tell an elk herd from a deer herd; they now carry their
+## own art. `caribou` is still an alias, and correctly so: it is a second English word for the animal
+## `reindeer` already names, with no roster entry of its own. Before aliasing a NEW key, check
+## `fauna_config.json` for a species behind it — if there is one, it needs its own PNG.
 const SPRITE_DIR := "res://assets/icons/fauna/"
 const SPRITE_PATHS := {
 	"rabbit": SPRITE_DIR + "rabbit.png",
 	"hare": SPRITE_DIR + "rabbit.png",
 	"catfish": SPRITE_DIR + "catfish.png",
 	"deer": SPRITE_DIR + "deer.png",
-	"reindeer": SPRITE_DIR + "deer.png",
-	"caribou": SPRITE_DIR + "deer.png",
-	"elk": SPRITE_DIR + "deer.png",
-	"gazelle": SPRITE_DIR + "deer.png",
+	"elk": SPRITE_DIR + "elk.png",
+	"reindeer": SPRITE_DIR + "reindeer.png",
+	"caribou": SPRITE_DIR + "reindeer.png",
+	"gazelle": SPRITE_DIR + "gazelle.png",
 	"boar": SPRITE_DIR + "boar.png",
 	"wolf": SPRITE_DIR + "wolf.png",
 	"mammoth": SPRITE_DIR + "mammoth.png",
