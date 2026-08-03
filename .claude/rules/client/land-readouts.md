@@ -408,11 +408,13 @@ one would hide work already paid for.
 
 **When rung 4 (Farm) drops `requires_gathering_site`, the block returns on the ground it unlocks**, and
 that reappearance is the discovery the rung is made of. ui_preview: `tile_panel_ungathered` (the #464
-tile — the `tile_food_layers` fixture with `food_module` cleared and **nothing else changed**, so the
-pair is a controlled comparison) with four assertions: no `Foraging` row, no basket, `Grazing` still
-stated, and — the half without which the rest pass against a producer that stopped emitting food-web
-rows entirely — the SAME tile as a gathering site still stating both. Sabotage-verified: dropping the
-gate fails the first two and leaves the last two green.
+tile — the `tile_food_layers` fixture with its **site keys** cleared together, `food_module` and the
+two that describe the same site, on distinct coordinates so the frame is its own; **every patch,
+graze and composition key is identical**, which is what makes the pair a controlled comparison) with
+four assertions: no `Foraging` row, no basket, `Grazing` still stated, and — the half without which
+the rest pass against a producer that stopped emitting food-web rows entirely — the SAME tile as a
+gathering site still stating both. Sabotage-verified: dropping the gate fails the first two and leaves
+the last two green.
 
 ## Fog splits a stock from its CAPACITY, never one web from the other
 

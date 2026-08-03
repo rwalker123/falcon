@@ -453,13 +453,22 @@ herd has one appetite).
   and `ceilingSow`/`ceilingCultivate`
   are retired `(deprecated)` slots — two rungs still keep two numbers, so a retune of one cannot move
   the other); and **`sowSiteRefusal:string`** — `""` when the ground takes seed, else
-  `"too_poor"` / `"too_dry"` / `"too_poor_and_too_dry"` ([`SiteRefusal::as_str`], free-form per the
-  `species`/`ecologyPhase` convention). That last one ships **the answer, not a bool**: only ~1% of
-  tiles are sowable, so *"why can't I sow here?"* is the live question, and the client can re-derive
-  nothing (it holds neither the capacity table nor the hydrology). The capture resolves it through the
-  **same** `RungSiteRequirement::refusal` seam the command and the labor arm gate on — pinned by
+  **`"not_gathering_site"`** / `"too_dry"` / `"too_poor"` / `"too_poor_and_too_dry"`
+  ([`SiteRefusal::as_str`], free-form per the `species`/`ecologyPhase` convention). That last one
+  ships **the answer, not a bool**: sowable ground is scarce by design, so *"why can't I sow here?"*
+  is the live question, and the client can re-derive nothing (it holds neither the site list's
+  reasoning nor the hydrology). The capture resolves it through the **same**
+  `RungSiteRequirement::refusal` seam the command and the labor arm gate on — pinned by
   `the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on`, so the wire cannot disagree with
   the gate.
+  > **`not_gathering_site` is the newest key and became the COMMONEST answer** (issue #464): it is
+  > shipped for every patch tile that is not one of the ~24-60 curated sites, i.e. the large majority
+  > of them. **Two things follow.** `"too_poor"` is currently **unreachable** — every shipped rung's
+  > `min_forage_capacity` is `0` — but the key stays, because the floor is rung 4's dial and the
+  > variant is what will carry it. And a reader extending the client from this list must take **all
+  > four**: the client's `HudFloraVocab.SOW_REFUSAL_REASONS` is this table transcribed, and a missing
+  > key there does not fail loudly — `RungGates.sow_site_refusal_reason` renders
+  > `SOW_REFUSAL_FALLBACK`, copy written for an *unrecognized* verdict, in place of the real reason.
 - **On the client (slice 6):** the native reader — now
   `clients/godot_thin_client/native/src/dict/subsistence.rs::forage_patches_to_array`, not the old
   `lib.rs` home — surfaces all five as dict keys: `field_progress` / `is_field` /

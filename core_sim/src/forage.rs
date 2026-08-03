@@ -45,16 +45,21 @@
 //!
 //! **The Field** (rung 3, slice 5) is the same patch one rung up: `Sow` fills `field_progress`, and a
 //! completed Field pays its workers `biomass × field_provisions_per_biomass` — the tended patch's
-//! shape at twice the rate. Unlike every other rung, **it needs no source below it**: seed travels, so
-//! sowing a qualifying tile with no spawned patch *creates* one (`ForagePatch::sown`), at that tile's
-//! own biome capacity.
+//! shape at twice the rate. It needs no *patch* below it: sowing a qualifying tile that spawned none
+//! *creates* one (`ForagePatch::sown`), at that tile's own biome capacity.
 //!
-//! **Where it may be sown is SCARCE, and that is the mechanic** — rung 3 moves seed but cannot
-//! fertilize, so the land must already be **very fertile** *and* **near fresh water** (the
-//! `plant:field` rung's `site_requirement`; `rung_site_refusal` + `tile_is_fresh_watered` are the one
-//! seam the command, the labor arm and the wire all judge through). **46 of 4160 tiles** on the
-//! standard map — the river valleys. Thin or dry ground waits for rung 4 (Worked Land). Design:
-//! `docs/plan_intensification_ladder.md` §2.
+//! **Where it may be sown is SCARCE, and that is the mechanic** — the tile must be a **gathering
+//! site** (the curated `FoodSiteRegistry`) *and* **near fresh water**: rung 3 can move seed but not
+//! water, and does not yet work ground its people do not already gather. The `plant:field` rung's
+//! `site_requirement` states it; `rung_site_refusal` + `tile_is_fresh_watered` are the one seam the
+//! command, the labor arm and the wire all judge through.
+//!
+//! **This reversed the earlier rule that Sow "needs no source below it — seed travels", under which
+//! any sufficiently fertile, watered tile was a legal target (46 of 4160 on the standard map).** The
+//! problem was reach: gathering is itself site-bound, so the only tiles a band works are gathering
+//! sites, and ground that qualified on fertility alone could never be occupied to sow. "Seed travels"
+//! is now rung 4 (Farm)'s identity — the first rung to drop the gathering-site term, with a fertility
+//! floor back in its place. Design: `docs/plan_intensification_ladder.md` §2.
 
 use std::{borrow::Cow, collections::HashMap};
 

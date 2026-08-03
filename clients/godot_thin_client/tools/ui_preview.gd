@@ -10154,10 +10154,15 @@ func _pastoral_herd_fixture() -> Dictionary:
 ## patch at Thriving, a three-plant basket led by a staple, pasture beside it — and **no gathering
 ## site**, so the sim's plant rungs 1–3 all refuse it and no crew can ever be put on it.
 ##
-## It is the `_three_role_tile_fixture` with `food_module` cleared and NOTHING else changed, which is
-## what makes the pair a controlled comparison: every patch key the drawer reads is still present and
-## still identical, so a `Foraging` row that disappears here disappeared because of the site test and
-## not because the fixture went thin. **This is the state the card used to argue with itself in** —
+## It is the `_three_role_tile_fixture` with its SITE keys cleared together — `food_module` plus the
+## two that merely describe that same site (`food_module_label`, `food_kind`), which is one change and
+## not three — on its own coordinates, so the saved frame is identifiable and the two fixtures stay
+## distinguishable. (`x`/`y` are not inert: `_tile_terrain_lines` resolves the meters' `building_rung`
+## through `_band_labor.forage_effort_at`. Neither coordinate carries an assignment in this harness,
+## so both resolve to none.) **Every patch, graze and composition key is identical**, and THAT is what
+## makes the pair a controlled comparison: everything the food-web rows are built out of is still
+## present and still the same, so a `Foraging` row that disappears here disappeared because of the
+## site test and not because the fixture went thin. **This is the state the card used to argue with itself in** —
 ## `Foraging 205 / 205 · Thriving` over a Wild Tubers basket, with `No forage` in the land row two
 ## rows above and no way to work any of it.
 func _ungathered_tile_fixture() -> Dictionary:

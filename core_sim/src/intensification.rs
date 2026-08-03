@@ -647,18 +647,30 @@ pub struct RungDef {
     /// *this* source may start *this* rung is a coded gate the rung's own verb owns (`corral` refuses
     /// a herd that isn't pastoral; `cultivate` refuses a patch that is already tended), because the
     /// rule genuinely differs per branch: `Corral` needs a herd you already tamed, while **`Sow`
-    /// needs no prior patch at all** — seed travels, so rung 3 of the plant ladder can create a
-    /// source where none existed (`docs/plan_intensification_ladder.md` §2, "where the two webs
-    /// legitimately differ"). Both facts are true at once: `plant:field` still sits directly above
-    /// `plant:tended` on the ladder, and sowing bare ground still skips no *step of the ladder* — it
-    /// starts from a tile, not from a source.
+    /// needs no prior *patch*** — it places a source on a tile that grew none, so it starts from
+    /// ground rather than from a source. Both facts are true at once: `plant:field` still sits
+    /// directly above `plant:tended` on the ladder, and sowing an unpatched tile skips no *step of
+    /// the ladder*.
+    ///
+    /// **§2's "seed travels, so rung 3 can create a source where none existed" was reversed by the
+    /// gathering-site arc** and now belongs to rung 4 (Farm). Rung 3 may still sow a tile carrying no
+    /// patch, but only a tile its people already **gather** — see
+    /// [`RungSiteRequirement::requires_gathering_site`]. That is a `site_requirement` fact, not a
+    /// `requires_rung` one, which is exactly why the two fields stay separate.
     pub requires_rung: Option<String>,
     /// The per-species `husbandry_ceiling` a herd needs to reach this rung (Grazing 2d-δ). Animal
     /// branch only — a plant has no species ceiling.
     pub ceiling_required: Option<HusbandryCeiling>,
     /// **What the LAND must be** for this rung to be placed on a tile ([`RungSiteRequirement`]) — the
     /// plant twin of `ceiling_required`, keyed on the ground instead of the species. `None` = the rung
-    /// asks nothing of the site (every rung but `plant:field` today).
+    /// asks nothing of the site.
+    ///
+    /// **Today that is the animal rungs only: all three plant rungs state one**, each requiring a
+    /// gathering site (`every_plant_rung_is_bound_to_a_gathering_site` asserts it). It used to read
+    /// "every rung but `plant:field`" — the gathering-site arc pushed the requirement down the whole
+    /// plant branch, so a new plant rung without a `site_requirement` is now the anomaly rather than
+    /// the norm. **Rung 4 (Farm) differs from rungs 1–3, not from rung 3 alone**: it is the first to
+    /// set `requires_gathering_site: false`, and puts a fertility floor back in its place.
     pub site_requirement: Option<RungSiteRequirement>,
     /// The build meter's dials, or `None` for a rung with nothing to build.
     pub build: Option<RungBuild>,

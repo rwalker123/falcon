@@ -313,8 +313,8 @@ pub fn advance_labor_allocation(
                     // wild gather at all (`NO_FORAGE_SEASON` → zero per-worker throughput), which is
                     // exactly right — and, since slice 5, a real state rather than an impossible one:
                     // `Sow` places a Field on ground the `plant:field` rung's `site_requirement`
-                    // accepts (rich + watered), module or not, and a Field's harvest is biomass-based
-                    // and seasonless.
+                    // accepts (a watered gathering site), module or not, and a Field's harvest is
+                    // biomass-based and seasonless.
                     let seasonal = food_modules
                         .get(tile_entity)
                         .map_or(NO_FORAGE_SEASON, |module| module.seasonal_weight.max(0.0));
@@ -413,9 +413,12 @@ pub fn advance_labor_allocation(
                     // A Field may only be placed on ground that grows something sowable — the
                     // species half of "the land must take seed", beside the site half above.
                     let sow_permitted = sow_permitted && committing.is_some();
-                    // **`Sow` PLACES the source** (§2 — the one rung that needs no source below it:
-                    // seed travels, unlike a herd you never tamed). The first turn a crew works
-                    // sowable ground, the seed goes in and the patch exists from here on — at the
+                    // **`Sow` PLACES the source** — the one rung that needs no *patch* below it,
+                    // unlike a herd you never tamed. (§2 used to read "no source below it: seed
+                    // travels", meaning any qualifying tile; the gathering-site rule above reversed
+                    // that and handed "seed travels" to rung 4. What survives is narrower: a
+                    // gathering site the wild seeded no patch on is still a legal target.) The first
+                    // turn a crew works sowable ground, the seed goes in and the patch exists — at the
                     // tile's **own** biome capacity (`tile_forage_capacity`, the same source a wild
                     // patch is seeded from — there is no Field-specific table) and at the reseed
                     // floor's standing crop.

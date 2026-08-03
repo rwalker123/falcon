@@ -1798,17 +1798,23 @@ fn validate_improvement(
 ///
 /// `None` on a tile that is off the map: the caller's own "there is no tile there" error is the
 /// better message, and inventing a site refusal for a coordinate that does not exist would hide it.
+///
+/// **A world with no `TileRegistry` answers `None`, and that must stay a `get_resource`** — the idle
+/// boot and the command-unit harnesses run an `App` that has never generated a map, and
+/// `Command::AssignLabor` is dispatched with no `world_active` gate, so a `assign_labor … forage`
+/// arriving before `new_game` reaches this function. Panicking here unwinds out of the command loop
+/// and kills the server. The permissive answer is the same one [`validate_species_selection`] gives
+/// for exactly this case: with no tiles there is no ground to judge, and the labor arm — which
+/// always has the real tiles — remains the authority.
 fn plant_rung_site_refusal(
     app: &bevy::prelude::App,
     rung_key: RungKey,
     tile: UVec2,
 ) -> Option<SiteRefusal> {
-    let tile_entity = app.world.resource::<TileRegistry>().index(tile.x, tile.y)?;
+    let registry = app.world.get_resource::<TileRegistry>()?;
+    let tile_entity = registry.index(tile.x, tile.y)?;
     let ground = app.world.get::<Tile>(tile_entity)?;
-    let (grid_width, grid_height) = {
-        let registry = app.world.resource::<TileRegistry>();
-        (registry.width, registry.height)
-    };
+    let (grid_width, grid_height) = (registry.width, registry.height);
     let wrap_horizontal = app
         .world
         .resource::<SimulationConfig>()
@@ -1816,8 +1822,7 @@ fn plant_rung_site_refusal(
         .wrap_horizontal;
     let fresh_water =
         tile_is_fresh_watered(ground, grid_width, grid_height, wrap_horizontal, |coord| {
-            app.world
-                .resource::<TileRegistry>()
+            registry
                 .index(coord.x, coord.y)
                 .and_then(|entity| app.world.get::<Tile>(entity))
                 .map(|neighbor| neighbor.terrain_tags)
@@ -2016,13 +2021,14 @@ fn validate_sow(
     tile: UVec2,
     species: Option<&str>,
 ) -> Result<(), String> {
-    if app
-        .world
-        .resource::<TileRegistry>()
-        .index(tile.x, tile.y)
-        .is_none()
-    {
-        return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+    // `get_resource`, not `resource`: a world that has never been generated carries no
+    // `TileRegistry`, and this arm is reachable from an ungated `assign_labor` before `new_game`.
+    // A map-less world has no tile to name as missing either, so it falls through to the same
+    // permissive stance `plant_rung_site_refusal` and `validate_species_selection` take.
+    if let Some(registry) = app.world.get_resource::<TileRegistry>() {
+        if registry.index(tile.x, tile.y).is_none() {
+            return Err(format!("There is no tile at ({}, {}).", tile.x, tile.y));
+        }
     }
     let (knowledge_threshold, field_unlock) = {
         let ladder = app.world.resource::<LadderConfigHandle>().get();
@@ -3438,22 +3444,27 @@ fn handle_cultivate(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec
 /// **rung-3** verb, and the exact twin of `handle_cultivate` one rung up. It is the command form of
 /// what the client's improvement checkbox does; it **sows nothing outright**.
 ///
-/// What makes it the interesting verb: `Sow` **places** a food source — *including on ground that
-/// carries no forage site at all* — so a crew can put a Field on the floodplain they chose rather than
-/// the stand the wild chose for them. That is the one place the two food webs legitimately differ
-/// (`Corral` needs a herd you already tamed; seed travels). The seed itself goes into the ground in
-/// the labor arm, on the first turn a crew actually works the tile under this policy — so
-/// `assign_labor … sow` and this command place a Field on exactly the same terms.
+/// What makes it the interesting verb: `Sow` **places** a food source where the wild put none — a
+/// crew commits the ground they already gather to a single crop instead of taking what the stand
+/// offers. The seed itself goes into the ground in the labor arm, on the first turn a crew actually
+/// works the tile under this policy — so `assign_labor … sow` and this command place a Field on
+/// exactly the same terms.
 ///
-/// **And the ground is scarce, which is the point**: rung 3 carries seed but not water or fertilizer,
-/// so the `plant:field` rung's `site_requirement` demands land that is *already* very fertile and near
-/// fresh water — **46 of 4160 tiles** on the standard map. *Which* tile a band can farm is therefore a
-/// real decision, and a band may have to **move** to farm at all: that is the sedentarization pull.
+/// **`Sow` used to place a source on ground carrying no forage site at all, and this arc reversed
+/// that** — see [`validate_sow`] for the autopsy. Rung 3 is now bound to the ground its people
+/// already work: the `plant:field` rung's `site_requirement` demands a **gathering site** that is
+/// also **near fresh water**, because rung 3 knows how to move seed but not how to carry water, and
+/// does not yet work unfamiliar ground. "Seed travels" moved up to **rung 4 (Farm)**, the first rung
+/// to drop `requires_gathering_site`.
 ///
-/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the **land** must take seed —
-/// too thin and/or too dry ground waits for **rung 4, Worked Land** — the faction must know **Seed
-/// Selection**, and the tile must not already be a Field or another people's — plus the rejection when
-/// **no band is foraging** it.
+/// **And the ground is scarce, which is the point**: watered gathering sites are a small slice of the
+/// sites a people hold, so *which* tile a band can farm is a real decision, and a band may have to
+/// **move** to farm at all — that is the sedentarization pull.
+///
+/// Gates (via the shared `validate_labor_policy` → `validate_sow`): the tile must be ground the
+/// people already gather ("Nobody gathers at (x, y)…") and be fresh-watered, the faction must know
+/// **Seed Selection**, and the tile must not already be a Field or another people's — plus the
+/// rejection when **no band is foraging** it.
 fn handle_sow(app: &mut bevy::prelude::App, faction: FactionId, tile: UVec2) {
     // As in `handle_cultivate`: the command sets the *improvement* and leaves the crew's stance and
     // crop alone — which is exactly why the crop it must gate on is the crew's, judged at **this**
@@ -6507,6 +6518,52 @@ mod tests {
     fn loopback_snapshot_server() -> Arc<SnapshotServer> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         Arc::new(start_snapshot_server(listener))
+    }
+
+    /// **The plant site gates must survive a world that has no tiles.** `Command::AssignLabor` is
+    /// dispatched with no `world_active` gate, so an `assign_labor … forage` arriving before
+    /// `new_game` reaches `validate_labor_policy` on an `App` that carries no `TileRegistry`. A
+    /// panicking accessor there unwinds out of the command loop and takes the server down, so both
+    /// plant arms answer permissively instead and leave the labor arm as the authority.
+    #[test]
+    fn plant_site_gates_do_not_panic_before_a_world_exists() {
+        let app = build_headless_app();
+        assert!(
+            app.world.get_resource::<TileRegistry>().is_none(),
+            "idle boot carries no world"
+        );
+        let faction = FactionId(1);
+        let tile = UVec2::new(3, 4);
+
+        assert!(
+            plant_rung_site_refusal(&app, RungKey::PlantWild, tile).is_none(),
+            "no tiles means no ground to refuse"
+        );
+        assert!(
+            validate_labor_policy(
+                &app,
+                faction,
+                &LaborTarget::Forage {
+                    tile,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                },
+            )
+            .is_ok(),
+            "the Forage gate must not reject — or panic — on a map-less world"
+        );
+        // `Sow` still answers from its *knowledge* gate — that one needs no tiles — but it must
+        // reach that gate rather than panicking, and must not invent a verdict about ground that
+        // does not exist.
+        let sow = validate_sow(&app, faction, tile, None);
+        assert!(
+            sow.as_ref()
+                .err()
+                .is_none_or(|reason| !reason.contains("There is no tile at")
+                    && !reason.contains("Nobody gathers at")),
+            "a map-less world has no ground to judge, so Sow may only fail on knowledge: {:?}",
+            sow
+        );
     }
 
     /// Boot-idle + `new_game`: the server boots with no world (Startup never ran), `new_game` builds
