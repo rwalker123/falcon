@@ -264,6 +264,9 @@ pub struct FoodOverlayConfig {
     provisions_per_weight: f32,
     trade_goods_per_weight: f32,
     trade_bonus_modules: HashMap<String, f32>,
+    land_tiles_per_site: usize,
+    min_scaled_sites: usize,
+    fresh_water_site_weight: f32,
 }
 
 impl FoodOverlayConfig {
@@ -297,6 +300,36 @@ impl FoodOverlayConfig {
     pub fn min_site_spacing(&self) -> u32 {
         self.min_site_spacing.max(1)
     }
+
+    /// **How much land one curated marker is worth**, on a map big enough for the area scaling to
+    /// bind. The site budget is `max(land_tiles / land_tiles_per_site, min_scaled_sites)` floored in
+    /// turn by [`max_total_sites`](Self::max_total_sites) — so the flat number governs small maps and
+    /// this ratio takes over once the map is large enough to out-scale it (past ~10,800 land tiles at
+    /// the shipped values). Both halves were bare literals in `spawn_initial_world` until issue #466.
+    pub fn land_tiles_per_site(&self) -> usize {
+        self.land_tiles_per_site.max(1)
+    }
+
+    /// The floor under the area-scaled budget, so a tiny map still carries somewhere to gather.
+    pub fn min_scaled_sites(&self) -> usize {
+        self.min_scaled_sites
+    }
+
+    /// **What fresh water is worth to a gathering site, in forage-capacity units** (issue #466).
+    ///
+    /// The curated marker list is the only ground a player can Forage — and therefore the only
+    /// ground they can `Sow` — so a marker that lands away from water puts the whole plant ladder out
+    /// of reach on that hex. Site quality is scored as `tile_forage_capacity + this × (the tile is
+    /// fresh-watered)`, and `bias_food_sites_toward_fresh_water` moves each marker to the best-scoring
+    /// tile in its **own spatial bucket**. Expressed in capacity units so the two terms are directly
+    /// comparable: at the shipped value a watered tile outranks a dry one carrying up to this much
+    /// more forage, and richer watered ground still outranks poorer watered ground.
+    ///
+    /// **`0.0` reproduces the pre-#466 map exactly** — every marker's own tile is in its own
+    /// candidate set, so with no bonus nothing ever scores higher than where it already is.
+    pub fn fresh_water_site_weight(&self) -> f32 {
+        self.fresh_water_site_weight.max(0.0)
+    }
 }
 
 impl Default for FoodOverlayConfig {
@@ -313,6 +346,9 @@ impl Default for FoodOverlayConfig {
                 ("riverine_delta".to_string(), 15.0),
                 ("coastal_upwelling".to_string(), 30.0),
             ]),
+            land_tiles_per_site: 120,
+            min_scaled_sites: 24,
+            fresh_water_site_weight: 60.0,
         }
     }
 }

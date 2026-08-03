@@ -305,8 +305,8 @@ pub use systems::{
     TradeDiffusionEvent,
 };
 pub use systems::{
-    apply_biome_palette_clamp, apply_tag_budget_solver, reconcile_coastal_shelf,
-    reconcile_food_modules,
+    apply_biome_palette_clamp, apply_tag_budget_solver, bias_food_sites_toward_fresh_water,
+    reconcile_coastal_shelf, reconcile_food_modules,
 };
 pub use telling::{
     load_beat_catalog_from_env, load_beat_config_from_env, telling_tick, BeatCatalog,
@@ -696,6 +696,7 @@ pub fn build_headless_app() -> App {
                 systems::apply_biome_palette_clamp,
                 systems::reconcile_coastal_shelf,
                 systems::reconcile_food_modules,
+                systems::bias_food_sites_toward_fresh_water,
                 sites::place_wondrous_sites,
                 spawn_initial_herds,
                 spawn_initial_forage,

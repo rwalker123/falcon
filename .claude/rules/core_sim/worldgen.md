@@ -90,6 +90,69 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 >   `build_headless_app` — both directions of the tag invariant, plus the symptom test *every
 >   `RiverDelta` has a `ForagePatch`*.
 
+## Gathering markers follow the fresh water (issue #466)
+
+**The curated `FoodSiteRegistry` is not decoration — it is the only ground a player can act on.**
+`food_modules` on the wire is the sole source the client's `_forage_compose_available` gate reads
+(`DrawerComposeController.gd`), so a hex without a marker offers **no Forage button**; and `sow`
+requires a band *already foraging* the tile. So the **~90 markers**, not the ~2,000 food-bearing
+hexes, are the real denominator for "can I climb the plant ladder here" — and `plant:field`'s site
+rule demands fresh water.
+
+Curation could not see water. It runs inside `spawn_initial_world`, **before `generate_hydrology`**:
+at selection time the map has lakes but no rivers, no deltas, no floodplains and no `river_edges`.
+Its quality sort (`compare_food_site`) was inert anyway — every tile ships
+`INITIAL_SEASONAL_WEIGHT = 1.0` — so *which* hex inside a spatial bucket won a marker was arbitrary
+with respect to the one property rung 3 cares about. Measured before the fix: **33.8 of 90 markers
+sowable** (mean, 6 seeds).
+
+**`bias_food_sites_toward_fresh_water`** (`systems/worldgen.rs`) re-ranks the result over the final
+terrain. Registered in the Startup chain immediately after `reconcile_food_modules` — which is what
+guarantees every surviving entry still classifies to a real module — and before anything publishes
+the list.
+
+- **Site quality = `tile_forage_capacity(tile) + fresh_water_site_weight × (tile is fresh-watered)`**,
+  read through the *same* `tile_forage_capacity` / `tile_is_fresh_watered` seams the patch seeding and
+  the `plant:field` gate use, never a private table. Expressed in **capacity units** so the two terms
+  are directly comparable: a watered tile outranks a dry one carrying up to `weight` more forage, and
+  richer watered ground still outranks poorer watered ground.
+- **RE-RANK ONLY — it relocates, it never adds or drops.** Every move stays inside the marker's **own
+  spatial bucket** and re-checks `min_site_spacing` against every other marker, so the budget, the
+  per-bucket quota and the latitude spread are preserved by construction. Gathering stays exactly as
+  scarce as it was; it just sits on the river valleys. (Growing the budget is a separate decision, and
+  its dial is `max_total_sites`.)
+- **Why a separate pass rather than fixing curation in place.** Curation cannot simply move later:
+  `best_start_tile` consumes the curated list and the starting population is spawned around its answer,
+  all inside `spawn_initial_world`. Leaving selection where it is keeps start geography untouched and
+  confines the change to a re-rank.
+- **Deterministic**: candidates scored once, sorted score-DESC with an explicit `(y, x)` tie-break,
+  markers visited in list order; no `HashMap` iteration, no RNG.
+- **`fresh_water_site_weight = 0.0` is a provable no-op** — a marker's own tile is in its own candidate
+  set, so nothing can outscore staying put. That is the A/B control every measurement here is taken
+  against.
+- **Measured** (6 seeds, 80×52 earthlike, through `build_headless_app`): sowable markers
+  **33.8 → 58.7 (1.73×)**, marker count unchanged at 90 on every seed. Nearest sowable marker to the
+  start tile is 0–4 hexes both before and after — the bias is about *how much* farmable ground a player
+  meets, not about rescuing a start that had none. **One seed regressed** on that distance (777777777,
+  1 → 4 hexes): a re-rank optimises marker quality, not proximity to spawn, and nothing pins the latter.
+- Guarded by `core_sim/tests/food_site_water_bias.rs` — the A/B relation (never a literal count), the
+  count-is-unchanged invariant, legality + spacing of relocated markers, the zero-weight no-op, and
+  build-to-build determinism. Plus an `#[ignore]`d `gathering_marker_census`.
+
+**Config** (`snapshot_overlays_config.json` → `food`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `fresh_water_site_weight` | **60.0** | What fresh water is worth to a marker, in forage-capacity units. `0.0` disables the pass entirely. |
+| `land_tiles_per_site` | 120 | Land tiles per marker once the area scaling binds. Was a bare literal in `spawn_initial_world`. |
+| `min_scaled_sites` | 24 | Floor under the area-scaled budget. Was a bare literal. |
+
+> **The site budget is a hybrid, and on the standard map the area scaling is DEAD.**
+> `target_total = max(max_total_sites, max(land_tiles / land_tiles_per_site, min_scaled_sites))`. At
+> 80×52 there are ~1,580 land tiles → `max(13, 24) = 24`, so the flat **`max_total_sites` (90)** wins.
+> The ratio only takes over past ~10,800 land tiles (roughly a 192×148 grid). So "markers scale with
+> map size" is true only of large maps; below that it is a flat number.
+
 ## Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `game_density: u8` (the square-8 hex `flow_dir` / `flow_accum` rasters are **deleted** — hydrology routes on the corner graph, see "Rivers")
 - **Vectors**: `rivers: [RiverSegment]` — per-edge `RiverEdge { hex, dir, class, discharge: f32 }` chains + a navigable hex tail (see "Rivers")
@@ -439,7 +502,10 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   >
   > **Update (the divides arc).** The dome has been replaced by a warped / tilted / ridged envelope
   > (see `macro_land` below). At 80×52 navigable rivers now appear on **3 of 6 seeds** rather than 1,
-  > and the standard map carries **49 sowable tiles** — but the **coherence ratio is unchanged**, and
+  > and the standard map carries **49 sowable tiles** *(as counted by `relief_sweep`'s partial-chain
+  > harness — the real Startup chain reads **174**; see "the '49 sowable tiles' was wrong" in
+  > `cultivation.md`. The A/B here is still valid, since both arms use the same harness)* — but the
+  > **coherence ratio is unchanged**, and
   > the measured reason is geometric, not tuning: with a mean depth-to-coast of ~2.9 tiles the largest
   > landmass has roughly one ocean-touching (⇒ sink) corner per two interior corners, so a basin
   > cannot grow long enough to clear a discharge of 25 except by luck. **Landmass area remains the
