@@ -300,8 +300,13 @@ fowl: Flat vector game icon of a wild jungle fowl rooster with an upright arched
 # IF IT FRINGES ANYWAY, MOVE THE KEY RATHER THAN THE RAMP: regenerate on a saturated CYAN or GREEN
 # plate (same prompt, swap the background clause) — the same tan measures ~240 from cyan, roughly
 # double the margin — and let `icon_key.py` sample it from the corners as usual. That is the
-# sanctioned escape hatch for a subject whose required colour collides with the key, and this species
-# is the one the set was always going to hit it on.
+# sanctioned escape hatch for a subject whose required colour collides with the key.
+# WHAT ACTUALLY HAPPENED: the escape hatch was NOT needed. The shipped render measures min
+# distance-from-key **140** with a residual of **18** — mid-pack for the set and better than deer
+# (123) or cattle (122) — so it keyed at the plain default like everything else. The warning above is
+# still worth its space, because it is a property of the REQUESTED PALETTE rather than of this one
+# render, and the next rufous subject re-rolls the same dice. Keep it as a thing to MEASURE, not as a
+# known defect: the check is one number, and it came back fine.
 gazelle: Flat vector game icon of a desert gazelle, a small slender antelope with a short compact body, a long thin neck, long delicate legs and a pair of slim upright ringed HORNS curving gently backward in a shallow lyre shape, never branching antlers, standing in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in a warm mid rufous-tan that stays clearly lighter than the outline but distinctly DARKER than pale desert sand so the shape stands out over bright sand and salt flats, a bold dark chocolate-brown horizontal stripe running along the flank, a crisp white belly and a white stripe on the face, strong two-tone contrast between the tan back and the white underside, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background, the gazelle floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # goat.png — also serves ibex
