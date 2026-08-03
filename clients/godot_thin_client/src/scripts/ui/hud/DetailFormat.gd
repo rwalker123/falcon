@@ -773,8 +773,14 @@ static func field_value_hex(value: String) -> String:
 ## the row as inline BBCode, nested inside the neutral wrap `detail_bbcode` puts on every indented
 ## row — so it covers the NAME, SHARE AND BIOMASS only, leaving the indent and the role icon outside
 ## the tag, because that branch recognizes the row by `begins_with(MORALE_BREAKDOWN_INDENT)`.
+##
+## `icon_px` is the box the role mark's bundled art is drawn in, threaded from the HOST LABEL's font
+## size (`SubjectDrawerController._tile_terrain_lines`) rather than written here — a static layer
+## cannot ask a label how big its text is, and a literal would be exactly the hardcoded pixel size
+## the HUD's other sprite-in-text surface already refuses to write (`Hud.update_discoveries`). `0`
+## yields the emoji fallback, which is what every non-drawer caller gets.
 static func flora_composition_lines(
-    composition: Variant, committed_species: String = "", stock: float = 0.0
+    composition: Variant, committed_species: String = "", stock: float = 0.0, icon_px: int = 0
 ) -> Array[String]:
     var entries := SourceForecast.flora_basket_entries(composition)
     var lines: Array[String] = []
@@ -792,7 +798,12 @@ static func flora_composition_lines(
         if committed != "" and String(entry["species"]) == committed:
             face = "[color=#%s]%s[/color]" % [HudStyle.SIGNAL_HEX, face]
         # An UNSTATED role renders the blank slot, never a defaulted icon — see `FoodIcons.for_crop_role`.
-        var icon := FoodIcons.for_crop_role(String(entry.get("role", "")))
+        # THREE STEPS, EACH WITH ONE JOB, and the order is the fallback chain: the mark (bundled art
+        # at `icon_px`, else its emoji), else the transparent slot boxed to the SAME width as a mark,
+        # else the text spacer for when there is no art to match the width of at all.
+        var icon := FoodIcons.for_crop_role(String(entry.get("role", "")), icon_px)
+        if icon == "":
+            icon = FoodIcons.crop_role_spacer(icon_px)
         if icon == "":
             icon = HudFloraVocab.FLORA_ROLE_ICON_UNSTATED
         lines.append(FLORA_COMPOSITION_SUBLINE_FORMAT % [MORALE_BREAKDOWN_INDENT, icon, face])
