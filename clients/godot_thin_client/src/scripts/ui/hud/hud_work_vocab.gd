@@ -337,6 +337,10 @@ const WORK_SORT_YIELD := &"yield"
 
 const WORK_SORT_NAME := &"name"
 
+## Every legal work sort. The persisted preference is validated against this, so an unknown value
+## in the prefs file falls back to the default rather than producing an unsorted board.
+const WORK_SORTS: Array[StringName] = [WORK_SORT_NAME, WORK_SORT_YIELD]
+
 const WORK_CHIP_ALL_FORMAT := "All %d"
 
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"

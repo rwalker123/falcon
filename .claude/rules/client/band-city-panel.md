@@ -531,6 +531,80 @@ unassigned, so the sole hunt pays trade: `2 sources +0.15 /turn ⇄ +0.22`, chip
 aggregate suppression path the mixed board cannot reach). The rule and the axis contract live in
 `labor-ui.md`.
 
+**Yield is the OPT-IN sort, not the default** — see the next section for why.
+
+
+## The board's default order is one the player's own edit cannot change (issue #460)
+
+`_work_sort` defaults to **`WORK_SORT_NAME`**. Sorting by yield by default made the board re-order
+*mid-edit*: yield scales with workers, so every `+`/`−` press changed the very key the rows were
+ranked on, `_repage_work_zone` re-sorted immediately, and the row jumped out from under the pointer —
+so the next press landed on a **different source**. A default order must be a function of things the
+player is not currently changing. `Sort by yield` remains, one pick away in the `⋯` menu; a player who
+asks for a live ranking gets one, and live re-ranking under an edit is arguably what that pick means.
+
+**The name sort groups by kind for free, which is why there is no third "kind then name" mode.** The
+row labels are `WORK_ROW_FORAGE_FORMAT` (`"Forage (%d, %d)"`) and `WORK_ROW_HUNT_FORMAT` (`"Hunt %s"`),
+so a plain `naturalnocasecmp_to` on `label` already puts every forage row above every hunt row, in the
+two blocks the filter chips name. A separate kind-then-name comparator would render identically on
+every real board. **That grouping is a consequence of the label prefixes** — change either format
+string and it is gone, with nothing to catch it.
+
+**BOTH comparators tiebreak on the model's `key`, and that is a correctness fix, not tidiness.**
+`sort_custom` is **not stable** in Godot, and a tie is reachable in each mode: two herds can carry the
+same label (two "Wild Boar" herds produce identical `"Hunt %s"` strings), and two sources can carry
+the same rate — including *every* source paying no trade at all, which sits at `0.0` together in the
+trade tier. Without the tiebreak neither sort is a total order, so tied rows could swap on any
+unrelated re-render — a snapshot tick, a zone resize — which is the same jump this section exists to
+remove, just triggered by something other than the pointer. `key` is the source identity
+`_work_source_models` already assigns, so it is the one available key that no game state moves. The
+name sort is its own named function for it, **`_work_name_sorts_before`** (it was an inline lambda);
+`_work_sorts_before` takes the tiebreak *below* its tier + rate comparisons and changes neither.
+
+**The rate tie is tested with exact `!=`, deliberately NOT `is_equal_approx`.** An epsilon tie test is
+not transitive — `a ≈ b` and `b ≈ c` without `a ≈ c` — which breaks the strict weak ordering
+`sort_custom` requires, i.e. it would destroy the very property the tiebreak exists to establish.
+
+**The choice PERSISTS, and the vocabulary stays out of the panel.** `BandCityPanel` keeps
+`work_sort` in `user://band_city_dock.cfg` beside the dock edge, collapse flag and active tab
+(`CONFIG_KEY_WORK_SORT`), exposed as `work_sort_pref()` / `set_work_sort_pref()` — an **opaque
+string** it never validates. `BandPanelController` adopts it in `set_panel` only when it appears in
+`HudWorkVocab.WORK_SORTS`, so an unknown or hand-edited value falls back to the default rather than
+producing an unordered board, and `_set_work_sort` writes back through the panel. The panel owns the
+FILE; the controller owns the WORD — the same split that keeps `BandCityPanel` ignorant of every
+other zone vocabulary. The harnesses need no new isolation: `config_path_override` already points the
+whole file at a scratch path.
+
+**The `⋯` menu marks the active sort.** `HudWidgets.build_section_menu` grew an optional per-entry
+key, **`HudWidgets.MENU_ENTRY_CHECKED`**: an entry carrying it is built with `add_radio_check_item` +
+`set_item_checked`, everything else stays a plain `add_item`, so call sites that pass none are
+unchanged. **Its ABSENCE is not `false`** — the key is tested with `has`, not read with a `false`
+default, because a plain action like `Unassign all` is not a member of any mutually exclusive set and
+marking it would claim it belongs to one. The work head passes it on the two sort entries only.
+`_repage_work_zone` rebuilds the head, so a pick refreshes the mark with no extra wiring. Without it
+the default change would be invisible — the menu offered two sorts and stated neither.
+
+`band_panel_preview` holds both halves at `band_panel_work_page`. **`_assert_work_sort_stable`**
+drives the comparators directly (neither claim is visible in a PNG — a re-sorted board is a perfectly
+plausible board): under the default it mutates one model's `rate` (the worker step, in miniature) and
+asserts the key order is **identical**, then flips to `WORK_SORT_YIELD` and asserts the same mutation
+**does** reorder — the counter-check is half the assertion, since a comparator that ignored `rate`
+entirely would pass the first test alone. It also sorts one array from two different starting
+permutations and requires the identical key sequence, which is the only thing that can see a missing
+tiebreak. **It deliberately does not pin `_work_sort` for the first claim**: nothing in the harness
+picks a sort, so the live member is exactly what a fresh session boots with, and pinning it to
+`WORK_SORT_NAME` would assert that the name sort is stable while saying nothing about which sort the
+board actually uses — which is the whole of the issue. **`_assert_work_menu_marks_active_sort`** reads
+the popup rather than a frame (a popup is a Window and never lands in the capture) and requires
+*exactly one* checked item matching the live sort; it finds the work zone's menu **by its `Sort by
+name` entry**, since the parties zone builds a `⋯` `MenuButton` too and the node type cannot tell them
+apart.
+
+Both were verified to FAIL: with `WORK_SORT_YIELD` put back as the default the stability assertion
+trips (and the menu assertion follows the reverted default, so it is not hard-wired to NAME), and with
+the two `key` tiebreaks removed exactly the two total-order assertions fail while the other three stay
+green.
+
 
 ## The WORK board's rung-ready mark
 

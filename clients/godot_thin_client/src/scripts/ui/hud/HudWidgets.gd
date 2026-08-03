@@ -416,9 +416,16 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
         head.add_child(menu)
     return head
 
+## A `build_section_menu` entry's OPTIONAL radio-check flag. **ITS ABSENCE IS NOT `false`.** An entry
+## carrying the key is a member of a mutually exclusive SET and is built as a radio-check item — the
+## menu then states which member is active, which a menu of plain items structurally cannot. An entry
+## WITHOUT it is a plain action (`Unassign all …`), and marking one would claim it belongs to a set it
+## has no members of; hence the key is tested with `has` rather than read with a `false` default.
+const MENU_ENTRY_CHECKED := "checked"
+
 ## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
 ## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries.
+## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
     button.text = HudWorkVocab.SECTION_MENU_GLYPH
@@ -434,7 +441,11 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
             continue
         var entry: Dictionary = entry_variant
         var index := picks.size()
-        popup.add_item(String(entry.get("label", "")), index)
+        if entry.has(MENU_ENTRY_CHECKED):
+            popup.add_radio_check_item(String(entry.get("label", "")), index)
+            popup.set_item_checked(index, bool(entry[MENU_ENTRY_CHECKED]))
+        else:
+            popup.add_item(String(entry.get("label", "")), index)
         popup.set_item_disabled(index, bool(entry.get("disabled", false)))
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
