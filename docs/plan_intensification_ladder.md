@@ -258,9 +258,18 @@ is a record; the ladder is a list; adding a rung after farm/pen is appending a r
 ```
 
 **`site_requirement` is where the *scarcity* of a rung lives**, and it is why rung 4 is a config edit.
-`plant:field` declares `{ min_forage_capacity: 195, requires_fresh_water: true }` — rung 3 moves seed
-but cannot fertilize, so the land must do it. **Worked Land (rung 4) is that record, looser**: a lower
-floor and `requires_fresh_water: false`. Nothing else changes.
+**All three plant rungs declare one** (amended by issue #464 — see §5): rungs 1-2 carry
+`{ requires_gathering_site: true }`, and `plant:field` carries
+`{ requires_gathering_site: true, min_forage_capacity: 0, requires_fresh_water: true }` — gathering
+itself is site-bound, so rung 3 narrows an already-scarce set by water rather than starting a second
+scarcity. **Farm (rung 4) is that record, looser**: `requires_gathering_site: false` with a fertility
+floor put back, which is the whole of what it unlocks. Nothing else changes.
+
+> **This paragraph was reversed once, and the earlier form is what the retired text below describes.**
+> It read *"`plant:field` declares `{ min_forage_capacity: 195, requires_fresh_water: true }` — rung 3
+> moves seed but cannot fertilize, so the land must do it"*, with rung 4 as "a lower floor and
+> `requires_fresh_water: false`". See §5's amendment for why it did not survive contact with the
+> shipped client.
 
 - **Dials = pure config** — the numbers and the links (unlock/earns knowledge, prev rung, ceiling,
   build/decay/yield rates, effect multipliers). A rung that's "the pen but more so" is a one-record edit.
@@ -387,6 +396,30 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
     against a constructed bare tile. Still an open design call: make forage sites genuinely sparse, or
     accept that rung 3's freedom is "choose *which* qualifying tile" (which the tightened site rule now
     makes a real choice — 46 tiles, not 2317).
+  - **AMENDED BY ISSUE #464 — rung 3 is SITE-BOUND, and "seed travels" moved up to rung 4.** The two
+    bullets above describe the rule as it shipped in slice 5b; both of their headline claims are now
+    retired, and the measurements in them (46 sowable tiles, the 337/291 conjunction split) are
+    **historical figures for a rule the sim no longer runs**. What changed and why:
+    - **The gathering-site rule was never in the sim at all.** Whether a crew may work a tile lived in
+      one client-side predicate (`DrawerComposeController._forage_compose_available`, gated on the
+      curated `FoodSiteRegistry`), so the sim accepted `assign_labor forage` on any patch while the
+      only client refused it. Plant rungs 1-3 now each declare `requires_gathering_site`, enforced
+      through the one `rung_site_refusal` seam every gate resolves.
+    - **"It needs no prior patch (seed travels)" was true on paper and unreachable in play.** Gathering
+      is site-bound, so the only tiles a band ever works are gathering sites; ground a player could sow
+      but never gather was not a target they could reach. That freedom is **rung 4's identity** now —
+      Farm is the first rung to drop the site requirement, which is what gives it something to *be*.
+    - **`min_forage_capacity` 195 → 0.** With the site rule carrying the scarcity, the floor demanded a
+      curated site that *also* landed on one of three biomes *and* had water — scarcity three times
+      over on a set the marker list had already made small. The dial stays live because rung 4 is where it
+      earns its keep: Farm has no site rule, so fertility is the only thing between it and a glacier.
+    - **A consequence the 195 floor had been hiding:** a gathering site's basket may hold nothing that
+      climbs to `field` (an open-water fishery, an alpine shelf). The site and the crop are two
+      questions now. Both already answer — `SpeciesRefusal::NothingClimbsHere` server-side, and the
+      client withholds the rung rather than gating it — and both are pinned by tests.
+    - **The open design call above is closed**, in the second direction it offered: forage sites are
+      genuinely sparse, and always were — the curated list is what a band can work, and rung 3's
+      freedom is *which* site to commit.
   - **Slice 6a exported the plant ladder to the wire** (append-only, `ForagePatchState` slots 36–44):
     `fieldProgress` + `isField` (beside the already-shipped `cultivationProgress`/`isCultivated`, so
     the client has both meters for the §4.1 split), `ceilingSow` + `fieldYield` (Sow's preparing→payoff

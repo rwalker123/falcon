@@ -293,6 +293,12 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # a hex DISCOVERED, which is the state being described — seeing current contents needs SIGHT, a
     # band standing there now. The `— / K` rows carry "this number is unknown" on the datum itself,
     # which is the job that line was failing to do.
+    # **THE REMEMBERED BRANCH DOES NOT TAKE THE GATHERING-SITE GATE BELOW**, and cannot: `food_module`
+    # is in `FOW_DISCOVERED_HIDDEN_KEYS`, so a remembered tile has no reading to gate on, and inferring
+    # "not a site" from the redacted key would silently drop the `Foraging: — / K` row from every
+    # remembered hex — the exact card #462 built `_assert_fog_stock_parity` to prevent. A remembered
+    # card states each web's CAPACITY and withholds its stock; whether the ground can be worked is a
+    # question about the present, which is precisely what a remembered tile does not know.
     var stock_known := visibility_state != HudConst.VISIBILITY_DISCOVERED
     var graze_lines := _graze_stock_lines(tile_info, stock_known)
     if not stock_known:
@@ -305,13 +311,29 @@ func _tile_terrain_lines(tile_info: Dictionary) -> Array[String]:
     # named so much like the pasture's that the two inverted each other. The row's own
     # "no patch here → no row" test lives in `_forage_stock_lines`, beside the pasture's; this local
     # copy of the capacity is the BASKET's guard, which needs the same answer one level out.
+    # **AND ONLY WHERE ANYONE CAN GATHER** (issue #464). The plant web's stand is a stock a *person*
+    # can eat, and the sim's plant rungs 1–3 all require a gathering site — so on ground that is not
+    # one, `Foraging 195 / 195 · Thriving` over a basket led by Wild Emmer describes a larder nobody
+    # can open. Every signal in that block reads as an invitation (full, Thriving, the best food crop
+    # in the game) while the land row two rows up says `No forage` and the drawer offers no way to
+    # work it: the card was arguing with itself, and the stand was the half that was lying.
+    #
+    # **The row is an AFFORDANCE, not a property.** `Foraging` is a VERB, and a verb label on ground
+    # where the verb is impossible is the contradiction — so the block appears when the verb does.
+    # When rung 4 (Farm) drops `requires_gathering_site`, more ground qualifies and the block returns
+    # there, which is the discovery that rung is made of.
+    #
+    # **The animal web is untouched and that is the point**: `Grazing` still renders here, so the card
+    # never goes silent about ground that feeds herds — what disappears is only the claim that PEOPLE
+    # can eat it. Fodder needs no forage action, and it keeps its row.
+    var gathering_site := DetailFormat.tile_is_gathering_site(tile_info)
     var patch_capacity := float(tile_info.get("patch_carrying_capacity", 0.0))
     # Hoisted because BOTH halves read it: the stock row states it against the capacity, and the
     # basket below decomposes it. Reading it twice is how the row and its own decomposition would
     # start describing different stands.
     var patch_biomass := float(tile_info.get("patch_biomass", 0.0))
     var crop_species := String(tile_info.get("patch_committed_species", "")).strip_edges()
-    if patch_capacity > 0.0:
+    if gathering_site and patch_capacity > 0.0:
         lines.append_array(_forage_stock_lines(tile_info, true))
         # …AND WHAT THAT STOCK IS MADE OF — one indented row per realized plant, always visible and
         # never behind a disclosure, each led by an icon for what the plant is FOR (staple / cash /

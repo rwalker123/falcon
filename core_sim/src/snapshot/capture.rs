@@ -1885,9 +1885,13 @@ pub fn capture_snapshot(
         let fresh_water = tile_is_fresh_watered(tile, grid.x, grid.y, wrap_horizontal, |coord| {
             tile_tags.get(coord)
         });
-        if let Some(refusal) =
-            rung_site_refusal(field_rung, tile, &labor_config.forage, fresh_water)
-        {
+        if let Some(refusal) = rung_site_refusal(
+            field_rung,
+            tile,
+            &labor_config.forage,
+            food_sites.is_site(tile.position),
+            fresh_water,
+        ) {
             sow_site_refusals.insert(tile.position, refusal);
         }
         flora_sweep.quotes(tile);

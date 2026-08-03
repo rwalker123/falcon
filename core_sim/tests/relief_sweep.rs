@@ -40,11 +40,11 @@ use bevy::MinimalPlugins;
 use core_sim::{
     debug_drainage_census, generate_hydrology, grid_utils::hex_neighbors_wrapped,
     rung_site_refusal, spawn_initial_world, tile_is_fresh_watered, CultureManager,
-    DiscoveryProgressLedger, FactionInventory, GenerationRegistry, HydrologyState, LaborConfig,
-    LaborConfigHandle, LadderConfig, LadderConfigHandle, MapPresets, MapPresetsHandle, RungKey,
-    SimulationConfig, SimulationTick, SnapshotOverlaysConfig, SnapshotOverlaysConfigHandle,
-    StartLocation, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, Tile, TileRegistry,
-    BUILTIN_MAP_PRESETS,
+    DiscoveryProgressLedger, FactionInventory, FoodSiteRegistry, GenerationRegistry,
+    HydrologyState, LaborConfig, LaborConfigHandle, LadderConfig, LadderConfigHandle, MapPresets,
+    MapPresetsHandle, RungKey, SimulationConfig, SimulationTick, SnapshotOverlaysConfig,
+    SnapshotOverlaysConfigHandle, StartLocation, StartProfileKnowledgeTags,
+    StartProfileKnowledgeTagsHandle, Tile, TileRegistry, BUILTIN_MAP_PRESETS,
 };
 use sim_runtime::TerrainType;
 
@@ -443,6 +443,9 @@ fn sowable_and_deltas(world: &World) -> (usize, usize, usize) {
                 ladder.rung(RungKey::PlantField),
                 ground,
                 &labor.forage,
+                world
+                    .resource::<FoodSiteRegistry>()
+                    .is_site(UVec2::new(x, y)),
                 fresh,
             )
             .is_none()
