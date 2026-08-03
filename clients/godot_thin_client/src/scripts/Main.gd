@@ -636,6 +636,8 @@ func _reset_per_world_state() -> void:
     _hud_invoke("reset_world_state")
     if map_view != null and map_view.has_method("reset_world_state"):
         map_view.call("reset_world_state")
+    if workbench != null:
+        workbench.reset_pages()
     # Both analytics lines print once per DISTINCT value, so a new world whose campaign label or
     # victory winner happens to match the old one's would print nothing at all without this.
     _campaign_label_signature = ""
@@ -1100,11 +1102,19 @@ func _toggle_inspector_visibility() -> void:
         var current_visible: bool = bool(inspector.call("is_panel_visible"))
         inspector.call("set_panel_visible", not current_visible)
     # The inset update arrives via the inspector's reserved_width_changed signal.
+    if _inspector_visible() and workbench != null and workbench.is_panel_visible():
+        workbench.set_panel_visible(false)
+
+func _inspector_visible() -> bool:
+    if inspector == null or not inspector.has_method("is_panel_visible"):
+        return false
+    return bool(inspector.call("is_panel_visible"))
 
 ## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
 ## edge). The Inspector and the Workbench are screen-edge reservers; the Band panel stacks outboard
-## of either. The two dev surfaces share a priority because they are never usefully open together —
-## what matters is that the Band panel offsets past whichever one is showing.
+## of either. The two dev surfaces share a priority because only one of them is ever open — opening
+## either closes the other (`_toggle_workbench_visibility`) — so what matters is that the Band panel
+## offsets past whichever one is showing.
 const RESERVER_PRIORITY := {&"inspector": 0, &"workbench": 0, &"band_panel": 1}
 const BAND_PANEL_RESERVER := &"band_panel"
 
@@ -1210,11 +1220,18 @@ func _workbench_new_game() -> void:
 func _on_workbench_reserved_width_changed(width: float) -> void:
     _apply_reservation(WORKBENCH_RESERVER, SIDE_LEFT, width)
 
+## THE TWO DEV SURFACES ARE MUTUALLY EXCLUSIVE, and it is a correctness rule, not tidiness. Both
+## reserve SIDE_LEFT, so an open pair insets the map and HUD by the SUM of their widths (380 + 560)
+## while the Workbench — on the higher CanvasLayer — draws only its own 560, leaving a wide strip of
+## bare background and an Inspector that is invisible yet still reserving. Opening one closes the
+## other, which is also the behaviour the shared reserver priority already assumed.
 func _toggle_workbench_visibility() -> void:
     if workbench == null:
         return
     workbench.set_panel_visible(not workbench.is_panel_visible())
-    # The inset update arrives via the surface's reserved_width_changed signal.
+    # The inset update arrives via each surface's reserved_width_changed signal.
+    if workbench.is_panel_visible() and _inspector_visible():
+        inspector.call("set_panel_visible", false)
 
 ## Wire the dockable Band/City panel onto the slice-1 reservation fan-out and seed
 ## its initial reservation (mirrors the inspector: children _ready before us, so the

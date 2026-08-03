@@ -11,7 +11,7 @@ class_name WorkbenchPage
 ##   - is one script under `ui/workbench/pages/`, registered by one row in `WorkbenchPages.PAGES`
 ##   - builds its own body in `build()` (called once, after the shell parents it)
 ##   - reads only the snapshot keys it owns in `apply_update()`
-##   - drops all its state in `reset()`
+##   - drops the state the WORLD gave it in `reset()`
 ##   - reaches the outside world only through the SERVICES it is HANDED (`service()`), never by
 ##     reaching back into the shell
 ##
@@ -51,7 +51,15 @@ func apply_update(_data: Dictionary, _full_snapshot: bool) -> void:
 	pass
 
 
-## Drop all page state so the shell can re-seed from a clean slate.
+## WORLD BOUNDARY: drop the state this page derived from the world that just ended, so the shell can
+## re-seed it from the next one. Called by `WorkbenchShell.reset_pages()` at every world change, on
+## every built page — hidden ones included, since a page holding a dead world's numbers is just as
+## wrong when the rail switches back to it.
+##
+## **It means "drop what the WORLD gave you", not "return to your initial appearance".** A page whose
+## state is the designer's own intent rather than the world's data (the tuning page's staged
+## overrides are the standing example) correctly does nothing here: the server keeps holding those
+## overrides across the restart, so forgetting them would make the surface disagree with the sim.
 func reset() -> void:
 	pass
 
@@ -76,12 +84,18 @@ func set_command_connected(_connected: bool) -> void:
 
 ## Send one command line through the host's transport. Answers whether it went — false covers both
 ## "no transport" and "the socket refused it", because a page has the same job in either case.
+##
+## **A service that answers anything but `true` did NOT send.** This used to read a non-bool return
+## (a void Callable's `null`) as success, which fails in the one direction the design cannot afford:
+## the tuning page asks for a new game only once every override reports sent, so a false "sent"
+## restarts the world on overrides that never left the client. `Main._workbench_send_command` was
+## already strict; this end now matches it.
 func send_command(line: String) -> bool:
 	var send := service(WorkbenchVocab.SERVICE_SEND_COMMAND)
 	if not send.is_valid():
 		return false
 	var result: Variant = send.call(line)
-	return not (result is bool) or bool(result)
+	return result is bool and bool(result)
 
 
 ## Append one line to the surface's status log if a sink is attached.

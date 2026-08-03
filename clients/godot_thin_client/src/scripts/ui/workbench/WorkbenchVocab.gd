@@ -58,9 +58,17 @@ const TUNING_PAGE_SUBTITLE := "Edit sim tunables and start a run on them"
 const TUNING_BANNER := "Changes apply on the NEXT New Game — the running world is not retuned."
 const TUNING_APPLY_LABEL := "Apply & New Game"
 const TUNING_REVERT_LABEL := "Revert all"
+## THE ACTION BAR'S THREE STATES. Their job is that the surface never says one thing while the
+## SERVER holds another — "edited" and "applied" are different facts and are worded as such.
+##   CLEAN — nothing edited, nothing on the server.
+##   UNSENT — `%d` rows differ from what the server was last told. The only state Apply acts in.
+##   STAGED — nothing unsent; `%d` overrides are in force on the server for the next new game.
+##   STAGED_CLEARED — staged, but every row is back at its default, so the overrides in force are the
+##       defaults themselves. Its own line because "0 override(s) applied" reads as a bug.
 const TUNING_CLEAN_STATUS := "No overrides — every value is the shipped default."
-## `%d` is the count of edited parameters.
-const TUNING_DIRTY_STATUS := "%d overridden"
+const TUNING_UNSENT_STATUS := "%d edit(s) not applied yet"
+const TUNING_STAGED_STATUS := "%d override(s) applied — the next new game uses them"
+const TUNING_STAGED_CLEARED_STATUS := "Applied — every value is back to the shipped default"
 const TUNING_DEFAULT_PREFIX := "default "
 ## Marks a row whose value no longer matches the shipped config.
 const MODIFIED_GLYPH := "●"

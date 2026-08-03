@@ -19,25 +19,56 @@ class_name ConfigTuningPage
 ## for a new game — an apply that only staged them would leave the designer watching an unchanged
 ## world with no way to tell success from failure.
 
-## Emitted by `Apply`. `patches` maps a config KIND (the manifest's `kind`) to a SPARSE nested
-## dictionary holding only the parameters the designer actually moved — see `build_patches`.
+## Emitted by `Apply`. `patches` maps a config KIND (the manifest's `kind`) to a nested dictionary
+## holding the parameters this apply is taking ownership of — see `build_patches`.
 signal overrides_requested(patches: Dictionary)
 
 ## One entry per parameter row: its config kind, its JSON pointer, the typing needed to read the
-## control back, and the two nodes whose state IS the row (the field and its dot).
+## control back, the nodes whose state IS the row (the field and its dot), and `sent` — **the value
+## the SERVER was last told**, which is the second half of the page's state.
+##
+## **TWO FACTS PER ROW, NOT ONE.** Tracking only "is this edited?" made the surface lie: edit a row,
+## Apply (the server now holds an override file), then type the default back, and every row reads
+## clean — so the status line said "no overrides", both buttons went dead, and `Revert all` (the only
+## thing that clears the server) became unreachable while the next new game still booted on the
+## staged value. `sent` is what makes "the server holds something I no longer want" a state the page
+## can see. It starts at the manifest default: before the first apply, the server has been told
+## nothing, which is the same thing as having been told the defaults.
 var _rows: Array[Dictionary] = []
+## True while the server holds a `set_config_override` this page issued and has not since cleared.
+## Independent of any row's value, because that is exactly the case the row values cannot express.
+var _staged := false
 ## The pinned action bar's widgets, held here because they live in the SHELL's footer region rather
 ## than in this page's body — `_refresh_state` has to be able to reach them from outside the subtree.
 var _status: Label = null
 var _apply_button: Button = null
 var _revert_button: Button = null
+## An outcome to show in the status line INSTEAD of the computed state, until the designer moves a
+## control. It is how a failed Apply reaches the eye: the log service writes to the command feed,
+## which ships hidden, so without this a refused Apply changed nothing on screen at all.
+var _outcome := ""
+var _outcome_tint := HudStyle.INK_FAINT
 
 
-## Restore every row to its manifest default. Reached by `Revert all` and by the shell's page reset.
+## WORLD BOUNDARY — deliberately a NO-OP, and the exception the base contract names.
+##
+## This page holds no world-derived state: its rows come from the manifest and its `sent`/`_staged`
+## values describe what the SERVER is holding, which a new world does not change (the override file
+## survives the restart that Apply asked for). Clearing here would drop the record of the overrides
+## the world in front of the designer was just built from — the same lie the `sent` tracking exists
+## to prevent, arriving one frame later.
 func reset() -> void:
+	pass
+
+
+## Return every row to its manifest default and forget what the server was told. The REVERT path's
+## local half; `_on_revert_pressed` pairs it with the command that clears the server.
+func _reset_rows() -> void:
+	_outcome = ""
 	for row in _rows:
 		var spin: SpinBox = row["spin"]
 		spin.set_value_no_signal(row["default"])
+		row["sent"] = row["default"]
 	_refresh_state()
 
 
@@ -123,6 +154,8 @@ func _build_row(kind_id: String, param: Dictionary) -> Control:
 		"is_int": is_int,
 		"step": step,
 		"default": default_value,
+		# Nothing has been sent yet, which is indistinguishable from having sent the defaults.
+		"sent": default_value,
 		"spin": spin,
 		"dot": dot,
 	})
@@ -175,50 +208,110 @@ func build_actions() -> Control:
 
 # ---- state -----------------------------------------------------------------
 
+## Any control movement retires a reported outcome: the message described the press the designer has
+## just moved past, and leaving it up would let a stale failure sit over a fresh edit.
 func _on_value_changed(_value: float) -> void:
+	_outcome = ""
 	_refresh_state()
 
 
-## Re-read every row's control, repaint its dot, and settle the footer on the resulting dirty count.
-## One pass over the rows drives all three, so a dot and the status line cannot disagree.
+## Repaint every dot and settle the action bar on the page's THREE states, in the order they take
+## precedence:
+##
+##   1. UNSENT — some row differs from what the server was told. Apply and Revert both live; this is
+##      the only state in which Apply does anything.
+##   2. STAGED — nothing unsent, but the server is holding overrides from an earlier Apply. Apply is
+##      dead (there is nothing new to send) and **Revert stays live**, because it is the only way to
+##      clear the server, and the bug this replaces was exactly a page that disabled it here.
+##   3. CLEAN — nothing unsent, nothing staged. Both dead.
+##
+## The DOTS are unchanged and answer a different question: a dot marks a row that differs from the
+## shipped default, whether or not the server has been told. So a staged page shows its dots with a
+## dead Apply, which is what "already applied" looks like.
 func _refresh_state() -> void:
-	var dirty := 0
+	var overridden := 0
+	var unsent := 0
 	for row in _rows:
 		var modified := _is_modified(row)
 		WorkbenchWidgets.set_modified(row["dot"], modified)
 		if modified:
-			dirty += 1
-	if _status != null:
-		_status.text = WorkbenchVocab.TUNING_CLEAN_STATUS if dirty == 0 \
-			else WorkbenchVocab.TUNING_DIRTY_STATUS % dirty
-		_status.add_theme_color_override("font_color",
-			HudStyle.INK_FAINT if dirty == 0 else HudStyle.WARN)
+			overridden += 1
+		if _is_unsent(row):
+			unsent += 1
 	if _apply_button != null:
-		_apply_button.disabled = dirty == 0
+		_apply_button.disabled = unsent == 0
 	if _revert_button != null:
-		_revert_button.disabled = dirty == 0
+		_revert_button.disabled = unsent == 0 and not _staged
+	if _status == null:
+		return
+	if not _outcome.is_empty():
+		_status.text = _outcome
+		_status.add_theme_color_override("font_color", _outcome_tint)
+		return
+	var text := WorkbenchVocab.TUNING_CLEAN_STATUS
+	var tint := HudStyle.INK_FAINT
+	if unsent > 0:
+		text = WorkbenchVocab.TUNING_UNSENT_STATUS % unsent
+		tint = HudStyle.WARN
+	elif _staged:
+		text = WorkbenchVocab.TUNING_STAGED_CLEARED_STATUS if overridden == 0 \
+			else WorkbenchVocab.TUNING_STAGED_STATUS % overridden
+		tint = HudStyle.SIGNAL
+	_status.text = text
+	_status.add_theme_color_override("font_color", tint)
 
 
+## Does this row differ from the SHIPPED DEFAULT? Drives the dot.
 func _is_modified(row: Dictionary) -> bool:
+	return _differs(row, float(row["default"]))
+
+
+## Does this row differ from what the SERVER WAS LAST TOLD? Drives Apply — and it is the predicate
+## that survives a row being edited back to its default after an apply, which "modified" cannot.
+func _is_unsent(row: Dictionary) -> bool:
+	return _differs(row, float(row["sent"]))
+
+
+## A row's value has moved off `baseline` once it clears half a step. A `SpinBox` snaps to its step,
+## so any real edit clears that, and a float baseline off the step grid cannot read as a change.
+func _differs(row: Dictionary, baseline: float) -> bool:
 	var spin: SpinBox = row["spin"]
 	var step: float = row["step"]
-	return absf(spin.value - float(row["default"])) \
-		> step * WorkbenchVocab.TUNING_MODIFIED_STEP_FRACTION
+	return absf(spin.value - baseline) > step * WorkbenchVocab.TUNING_MODIFIED_STEP_FRACTION
+
+
+## Show `text` in the action bar in place of the computed state, until the next control movement.
+## The command feed gets the same line — but it ships hidden, so it cannot be the only place an
+## outcome lands.
+func _report(text: String, tint: Color) -> void:
+	_outcome = text
+	_outcome_tint = tint
+	log_line(text)
+	_refresh_state()
 
 
 # ---- patches ---------------------------------------------------------------
 
-## The overrides to hand the sim: config kind -> a nested dictionary carrying ONLY the parameters
-## whose value has moved.
+## The overrides to hand the sim: config kind -> a nested dictionary carrying every parameter this
+## page has TAKEN OWNERSHIP OF — the ones edited off their default, plus the ones it previously sent
+## and has since edited back.
 ##
-## **Sparse is the whole contract.** Each config kind is a file the sim merges over its shipped
-## defaults, so a parameter present in the patch is a parameter the designer has taken ownership of:
-## writing the untouched ones through at their current default would silently freeze them against
-## any later change to the shipped config, and the diff would stop being readable as "what I tuned".
+## **Sparse in the parameters it never touched.** Each config kind is a file the sim deep-merges over
+## its shipped defaults, so a parameter absent from the patch is one the designer has not claimed:
+## writing the untouched ones through at their current default would freeze them against any later
+## change to the shipped config, and the diff would stop being readable as "what I tuned".
+##
+## **But a returned-to-default row must be written EXPLICITLY, not omitted** — that is the half this
+## was missing. The server merges onto the file it already has, so omitting a row that an earlier
+## apply put there leaves the old value in force while the panel shows the default. Sending it back
+## at its default value overwrites it; nothing else the client can say does, because the command
+## channel has no "unset this key".
 func build_patches() -> Dictionary:
 	var patches: Dictionary = {}
 	for row in _rows:
-		if not _is_modified(row):
+		# `sent != default` is how a row that was applied and then edited back stays in the payload.
+		var was_sent := absf(float(row["sent"]) - float(row["default"])) > 0.0
+		if not _is_modified(row) and not was_sent:
 			continue
 		var kind: String = row["kind"]
 		if not patches.has(kind):
@@ -269,21 +362,31 @@ static func _pointer_tokens(pointer: String) -> PackedStringArray:
 ## leaving the rows dirty, because the edits are still there to re-apply once a server is attached
 ## and silently reverting them would look like the apply had worked.
 func _on_apply_pressed() -> void:
+	_outcome = ""
 	var patches := build_patches()
 	if patches.is_empty():
 		return
 	overrides_requested.emit(patches)
 
+	var landed: Array = []
 	for kind in patches:
 		var line := "%s %s %s" % [WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE, kind,
 			JSON.stringify(patches[kind])]
 		if not send_command(line):
-			log_line(WorkbenchVocab.TUNING_OFFLINE_LOG % WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE)
+			# Whatever went BEFORE this failed one did reach the server, so those kinds are recorded
+			# as sent and the page stays staged — a partial apply is still an apply.
+			_mark_sent(landed)
+			_report(WorkbenchVocab.TUNING_OFFLINE_LOG
+				% WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE, HudStyle.DANGER)
 			return
+		landed.append(kind)
+
+	# Every patch landed: the server is now holding exactly what the rows say.
+	_mark_sent(landed)
 
 	var new_game := service(WorkbenchVocab.SERVICE_NEW_GAME)
 	if not new_game.is_valid():
-		log_line(WorkbenchVocab.TUNING_NO_NEW_GAME_LOG)
+		_report(WorkbenchVocab.TUNING_NO_NEW_GAME_LOG, HudStyle.DANGER)
 		return
 	new_game.call()
 
@@ -292,14 +395,37 @@ func _on_apply_pressed() -> void:
 		if _is_modified(row):
 			overridden += 1
 	log_line(WorkbenchVocab.TUNING_APPLY_LOG_FORMAT % [overridden, ", ".join(patches.keys())])
+	_refresh_state()
+
+
+## Record that the server has been told the current value of every row in `kinds`, and that it is
+## therefore holding overrides. This is the write that turns "edited" into "applied" — without it a
+## row stays forever unsent and Apply never goes quiet.
+func _mark_sent(kinds: Array) -> void:
+	if kinds.is_empty():
+		return
+	_staged = true
+	for row in _rows:
+		if kinds.has(row["kind"]):
+			var spin: SpinBox = row["spin"]
+			row["sent"] = spin.value
 
 
 ## Return every row to its default AND drop the server's staged overrides, so the two cannot
 ## disagree: a cleared page over a server still holding the last patch would generate the next world
 ## on overrides the surface says are gone.
+##
+## **It stays reachable while anything is staged**, even with every row already reading its default —
+## that is the state in which it is the only control that can do anything.
 func _on_revert_pressed() -> void:
-	reset()
+	_outcome = ""
 	if send_command(WorkbenchVocab.COMMAND_CLEAR_CONFIG_OVERRIDES):
+		_staged = false
+		_reset_rows()
 		log_line(WorkbenchVocab.TUNING_REVERT_LOG)
+		_refresh_state()
 	else:
-		log_line(WorkbenchVocab.TUNING_OFFLINE_LOG % WorkbenchVocab.COMMAND_CLEAR_CONFIG_OVERRIDES)
+		# The rows are LEFT ALONE: the server still holds the overrides, so clearing the surface
+		# would be the same lie in the opposite direction.
+		_report(WorkbenchVocab.TUNING_OFFLINE_LOG
+			% WorkbenchVocab.COMMAND_CLEAR_CONFIG_OVERRIDES, HudStyle.DANGER)

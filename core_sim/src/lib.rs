@@ -289,13 +289,13 @@ pub use power::{
 };
 pub use provinces::{ProvinceId, ProvinceMap};
 pub use resources::{
-    apply_port_base, apply_port_base_override, port_base_override, BandIdAllocator,
-    CapabilityFlags, CommandEventEntry, CommandEventKind, CommandEventLog, CorruptionLedgers,
-    CorruptionTelemetry, DiplomacyLeverage, DiscoveryProgressLedger, FactionInventory,
-    FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides, MapTopology, MoistureRaster,
-    PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias, SimulationConfig,
-    SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry, TradeDiffusionRecord,
-    TradeTelemetry, WorldEpoch,
+    apply_port_base, apply_port_base_override, load_simulation_config_for_new_world,
+    port_base_override, BandIdAllocator, CapabilityFlags, CommandEventEntry, CommandEventKind,
+    CommandEventLog, CorruptionLedgers, CorruptionTelemetry, DiplomacyLeverage,
+    DiscoveryProgressLedger, FactionInventory, FoodSiteEntry, FoodSiteRegistry, HydrologyOverrides,
+    MapTopology, MoistureRaster, PendingCrisisSeeds, PendingCrisisSpawns, SentimentAxisBias,
+    SimulationConfig, SimulationConfigMetadata, SimulationTick, StartLocation, TileRegistry,
+    TradeDiffusionRecord, TradeTelemetry, WorldEpoch,
 };
 pub use scalar::{scalar_from_f32, scalar_one, scalar_zero, Scalar};
 pub use snapshot::{

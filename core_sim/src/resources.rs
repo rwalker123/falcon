@@ -663,6 +663,41 @@ pub fn load_simulation_config_from_env() -> (SimulationConfig, SimulationConfigM
     (config, SimulationConfigMetadata::new(source, random_seed))
 }
 
+/// The [`SimulationConfig`] a **freshly built world** starts from: whatever would load right now,
+/// with the fields the *running process* owns carried over from `outgoing` (the config of the world
+/// being replaced).
+///
+/// Loading afresh is the point. A staged tuning override lives in the load registry
+/// (`crate::config_override`), and the only mechanism by which it ever reaches a world is that a New
+/// Game re-reads every config — so a rebuild that clones the outgoing world's `SimulationConfig`
+/// instead makes every `simulation` lever the client's tuning panel exposes inert.
+///
+/// Carrying the fields below is the other half: rebuilding must not silently undo state the running
+/// server was told about after boot, none of which the file on disk knows anything about.
+///
+/// | Carried field | Who owns it at runtime |
+/// |---|---|
+/// | `fog_enabled` | the `set_fog` command |
+/// | `crisis_auto_seed` | the `set_crisis_auto_seed` command |
+/// | the four bind addresses | `crate::port_alloc::allocate` at boot — after an auto-bump these are *not* what the file says, and the in-world config must describe the ports the process actually holds |
+///
+/// `start_profile_id` / `start_profile_overrides` are runtime-owned too, but deliberately **not**
+/// carried: the new-game path re-applies the profile its command names (`apply_start_profile`) after
+/// this config is installed, so a carried value would be dead. The caller likewise supplies
+/// `grid_size` / `map_preset_id` / `map_seed`, which are arguments of the rebuild command.
+pub fn load_simulation_config_for_new_world(outgoing: &SimulationConfig) -> SimulationConfig {
+    let (mut config, _metadata) = load_simulation_config_from_env();
+
+    config.fog_enabled = outgoing.fog_enabled;
+    config.crisis_auto_seed = outgoing.crisis_auto_seed;
+    config.port_base_bind = outgoing.port_base_bind;
+    config.snapshot_flat_bind = outgoing.snapshot_flat_bind;
+    config.command_bind = outgoing.command_bind;
+    config.log_bind = outgoing.log_bind;
+
+    config
+}
+
 /// Tracks total simulation ticks elapsed.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SimulationTick(pub u64);
@@ -1273,7 +1308,90 @@ impl CommandEventLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_load::{clear_override_paths, lock_config_registry_for_test};
+    use crate::config_override::install_config_override;
+    use sim_runtime::commands::ConfigOverrideKind;
     use std::net::Ipv4Addr;
+
+    /// A climate value the shipped `simulation_config.json` does not carry, so "the staged override
+    /// decided this" cannot be confused with "the file did".
+    const STAGED_EQUATOR_TEMP: f32 = 33.5;
+    /// What the *outgoing* world was running on. Distinct from both the shipped and the staged
+    /// value, so a config cloned from the old world is unmistakable in the assertion.
+    const OUTGOING_EQUATOR_TEMP: f32 = 11.25;
+    /// Stands in for a port block that auto-bumped at boot: a base the file never named, which the
+    /// running process nonetheless holds.
+    const BUMPED_PORT_BASE: u16 = 41530;
+
+    /// **A staged `simulation` override must reach the world the next New Game builds, and the
+    /// fields the running server owns must survive that rebuild.**
+    ///
+    /// The rebuild used to clone the *outgoing* world's `SimulationConfig`, so every lever the
+    /// client's tuning panel exposes under the `simulation` kind installed, logged, and then did
+    /// nothing at all. Reloading afresh is only half the answer, though: `fog_enabled` and the bound
+    /// ports exist nowhere on disk, and a New Game that took the file's word for them would silently
+    /// undo a `set_fog` and start claiming ports the process never bound.
+    #[test]
+    fn a_new_world_config_takes_the_staged_override_and_keeps_the_runtime_owned_fields() {
+        // The override registry is process-global; this is the guard that serializes every test
+        // that stages into it.
+        let _guard = lock_config_registry_for_test();
+        clear_override_paths();
+
+        let dir = std::env::temp_dir().join(format!(
+            "shadow_scale_new_world_config_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        install_config_override(
+            ConfigOverrideKind::Simulation,
+            &format!(r#"{{"climate": {{"equator_temp": {STAGED_EQUATOR_TEMP}}}}}"#),
+            &dir,
+        )
+        .expect("an equator temperature inside its range is valid");
+
+        let shipped = SimulationConfig::builtin();
+        assert_ne!(
+            shipped.climate.equator_temp, STAGED_EQUATOR_TEMP,
+            "the staged value must differ from the shipped one or this test proves nothing"
+        );
+
+        let mut outgoing = shipped.clone();
+        outgoing.climate.equator_temp = OUTGOING_EQUATOR_TEMP;
+        outgoing.fog_enabled = !shipped.fog_enabled;
+        outgoing.crisis_auto_seed = !shipped.crisis_auto_seed;
+        assert!(apply_port_base(&mut outgoing, BUMPED_PORT_BASE));
+
+        let rebuilt = load_simulation_config_for_new_world(&outgoing);
+
+        // Whatever the assertions below find, nothing else in this process may keep loading the
+        // staged file.
+        clear_override_paths();
+
+        assert_eq!(
+            rebuilt.climate.equator_temp, STAGED_EQUATOR_TEMP,
+            "the new world must boot on the staged override, not on the outgoing world's config"
+        );
+        assert_eq!(
+            rebuilt.fog_enabled, outgoing.fog_enabled,
+            "a New Game must not undo `set_fog`"
+        );
+        assert_eq!(
+            rebuilt.crisis_auto_seed, outgoing.crisis_auto_seed,
+            "a New Game must not undo `set_crisis_auto_seed`"
+        );
+        for (rebuilt_bind, carried) in [
+            (rebuilt.port_base_bind, outgoing.port_base_bind),
+            (rebuilt.command_bind, outgoing.command_bind),
+            (rebuilt.snapshot_flat_bind, outgoing.snapshot_flat_bind),
+            (rebuilt.log_bind, outgoing.log_bind),
+        ] {
+            assert_eq!(
+                rebuilt_bind, carried,
+                "the rebuilt config must describe the ports the process actually holds"
+            );
+        }
+    }
 
     #[test]
     fn apply_port_base_overrides_ports_and_preserves_hosts() {

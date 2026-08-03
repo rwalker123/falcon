@@ -14,13 +14,18 @@ screen edge through the shared reservation registry (reserver id `&"workbench"`)
 on `I` until its tabs have somewhere to go (`.claude/rules/client/inspector-panels.md` carries the
 standing decision to retire it). Design spec: `docs/plan_config_tuning_panel.md`.
 
+**Opening either dev surface closes the other**, and that is enforced rather than assumed. Both
+reserve `SIDE_LEFT` at the same priority, so a pair left open reserves the sum (380 + 560) while only
+the higher CanvasLayer draws — a strip of empty background beside the map, and an Inspector that is
+invisible yet still holding its reservation. It goes away with the Inspector.
+
 ## Key scripts
 
 | Script | Purpose |
 |--------|---------|
 | `ui/workbench/WorkbenchShell.gd` | Coordinator ONLY: rail, content host, pinned footer region, page routing, edge reservation, snapshot fan-out with a hidden-surface gate. It never names or `preload`s a page |
 | `ui/workbench/WorkbenchPages.gd` | The page registry — rows of `{id, title, subtitle, section, glyph, script}`. An empty `script` is a declared-but-unbuilt page and renders the placeholder |
-| `ui/workbench/WorkbenchPage.gd` | The page contract: `build`, `build_actions`, `apply_update`, `reset`, and the service hooks |
+| `ui/workbench/WorkbenchPage.gd` | The page contract: `build`, `build_actions`, `apply_update`, `reset` (world-scoped — see below), and the service hooks |
 | `ui/workbench/WorkbenchWidgets.gd` | All-`static`, stateless shared drawing — surface/rail/group chrome, the banner, the parameter row, the number field, the modified dot |
 | `ui/workbench/WorkbenchVocab.gd` | ALL-`const` labels, glyphs, geometry, font sizes. Zero funcs, zero vars |
 | `ui/workbench/pages/ConfigTuningPage.gd` | Page one — the manifest-driven config tuning surface |
@@ -78,6 +83,45 @@ empty footer draws no chrome.
 
 It is a separate method rather than a region of `build()` because the two live in different parents:
 a page's body is scrolled content, its actions are chrome.
+
+**A page is PARENTED before it is built.** `show_page` adds the page to the host and only then calls
+`build()` / `build_actions()`, both once-only across reopens. The order is the contract because it is
+what a page author will assume: a page that reaches `get_tree()`, `get_window()`, or an
+ancestor-derived size or theme while orphaned gets null and engine defaults **with no error**, which
+is a failure that shows up as a mis-laid-out page rather than as a crash.
+
+## `reset()` means "drop what the WORLD gave you"
+
+The shell calls `reset_pages()` from `Main`'s per-world reset, so a page's state does not outlive the
+world it described. That is the whole scope of the hook: **snapshot-derived state**, not everything a
+page holds.
+
+`ConfigTuningPage.reset()` is therefore a **documented no-op**, and the exception is the load-bearing
+part. Its state is the designer's intent and the server's staged file — neither belongs to the world,
+and a New Game is precisely what `Apply` just asked for. Wiping the page there would blank the panel
+one frame after the restart it requested, which is the "clean rows, staged server" divergence below
+reached by a different road.
+
+## Edited is not the same as sent
+
+Each row tracks **two** values: what it reads now, and what the server was last told (`sent`, seeded
+to the manifest default). One flag cannot express the states that matter, and collapsing them
+produces a surface that contradicts the sim:
+
+- edited but unsent → `Apply` is live
+- sent and unchanged → `Apply` is dead, but `Revert all` must stay live, because the server is still
+  holding a file
+- **a row typed back to its default after being applied** — clean by every row-level test, while the
+  override is still staged. With one flag the page reads "no overrides", disables both buttons, and
+  `clear_config_overrides` — reachable only through `Revert all` — becomes unreachable while the next
+  New Game still boots on the old value.
+
+**The patch includes a row that is off its default OR whose `sent` value was** — the channel has no
+"unset", so a returned-to-default row has to be written back **explicitly** or the server's deep
+merge keeps the stale value. Rows never touched still stay out, which is what keeps the payload
+sparse and the client's carried defaults safe.
+
+`workbench_preview`'s `_assert_staged_survives_un_edit` pins both legs.
 
 ## A hidden Workbench ingests nothing
 

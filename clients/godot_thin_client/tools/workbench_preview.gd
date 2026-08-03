@@ -82,8 +82,19 @@ func _ready() -> void:
 	await _save("workbench_tuning_dirty")
 	_assert_patch_is_sparse()
 
-	# Collapsed rail — glyphs only, the content column taking the width back.
-	_tuning_page().reset()
+	# Staged — the same four edits, now APPLIED. Its own frame because it is its own state: the dots
+	# stay lit, Apply goes dead (there is nothing left to send) and `Revert all` stays live, because
+	# it is the only control that can clear what the server is now holding.
+	_install_fake_transport()
+	_tuning_page()._on_apply_pressed()
+	await _settle()
+	await _save("workbench_tuning_staged")
+
+	# Collapsed rail — glyphs only, the content column taking the width back. Reached through the
+	# REAL revert (the fake transport accepts the clear), so the page returns to its clean state the
+	# way a press returns it.
+	_tuning_page()._on_revert_pressed()
+	_tuning_page().set_services({})
 	_shell.set_rail_collapsed(true)
 	await _settle()
 	await _save("workbench_rail_collapsed")
@@ -94,6 +105,11 @@ func _ready() -> void:
 	await _settle()
 	await _save("workbench_placeholder")
 
+	# Back to the tuning page for the last assertion: `_tuning_page` finds the page in the TREE, and
+	# the shell detaches a page it is not showing.
+	_shell.show_page(TUNING_PAGE)
+	await _settle()
+	_assert_staged_survives_un_edit()
 	get_tree().quit()
 
 
@@ -176,6 +192,103 @@ func _assert_patch_is_sparse() -> void:
 		return
 	print("workbench_preview: assert OK — patch is sparse (%d kinds, %d pointers)"
 		% [patches.size(), DIRTY_EDITS.size()])
+
+
+## The row the staged-state assertion drives, and the two values it drives it between.
+const STAGED_PARAM := "Lethality"
+const STAGED_PARAM_KIND := "combat"
+const STAGED_PARAM_POINTER := "lethality"
+const STAGED_PARAM_EDITED := 2.0
+const STAGED_PARAM_DEFAULT := 1.0
+
+## **THE STATE A PICTURE CANNOT SHOW: the server holds an override the rows no longer admit to.**
+## Edit a row, Apply (the server writes a config-override file), then type the default back. Every
+## row now reads clean — and the first version of this page therefore said "no overrides", disabled
+## BOTH buttons, and left `Revert all` (the only thing that clears the server) unreachable while the
+## next new game still booted on the staged value. Every frame of that looked perfectly correct.
+##
+## So this drives the sequence through the real controls against a FAKE transport that reports
+## success, and asserts the three things the frames cannot: that `Revert all` stays reachable, that
+## the status line does not claim cleanliness, and that the next patch carries the returned-to-
+## default row EXPLICITLY — omitting it would leave the server deep-merging onto the value it
+## already has.
+func _assert_staged_survives_un_edit() -> void:
+	var page := _tuning_page()
+	if page == null:
+		return
+	var sent := _install_fake_transport()
+	var spin := _spin_for(page, STAGED_PARAM)
+	if spin == null:
+		push_error("workbench_preview: no '%s' row — the manifest moved" % STAGED_PARAM)
+		return
+	var failed := 0
+
+	spin.value = STAGED_PARAM_EDITED
+	page._on_apply_pressed()
+	if sent.size() != 1 or not sent[0].begins_with(WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE):
+		failed += 1
+		push_error("workbench_preview: Apply sent %s, expected one %s"
+			% [sent, WorkbenchVocab.COMMAND_SET_CONFIG_OVERRIDE])
+	if not page._apply_button.disabled:
+		failed += 1
+		push_error("workbench_preview: Apply is still live with nothing unsent")
+
+	# The un-edit: back to the shipped default, which used to read as "nothing to do".
+	spin.value = STAGED_PARAM_DEFAULT
+	if page._revert_button.disabled:
+		failed += 1
+		push_error("workbench_preview: 'Revert all' is DEAD while the server still holds an override — it is the only control that can clear it")
+	if page._status.text == WorkbenchVocab.TUNING_CLEAN_STATUS:
+		failed += 1
+		push_error("workbench_preview: the status line claims '%s' while the server holds a staged override"
+			% WorkbenchVocab.TUNING_CLEAN_STATUS)
+	var patch: Dictionary = page.build_patches()
+	if not patch.get(STAGED_PARAM_KIND, {}).has(STAGED_PARAM_POINTER):
+		failed += 1
+		push_error("workbench_preview: the returned-to-default row is OMITTED from the patch (%s) — the server would keep the staged value" % patch)
+
+	# SECOND LEG: apply that un-edit. Now every row matches both its default AND what the server was
+	# told, so the only fact left is that the server is holding a file — which nothing about the rows
+	# can express. `Revert all` must survive on THAT alone.
+	page._on_apply_pressed()
+	if not page._apply_button.disabled:
+		failed += 1
+		push_error("workbench_preview: Apply is live with every row applied and at its default")
+	if page._revert_button.disabled:
+		failed += 1
+		push_error("workbench_preview: 'Revert all' is DEAD with all rows clean but the server still holding a staged override file — clearing it is unreachable")
+	if page._status.text != WorkbenchVocab.TUNING_STAGED_CLEARED_STATUS:
+		failed += 1
+		push_error("workbench_preview: status reads '%s', expected the staged-but-defaulted line '%s'"
+			% [page._status.text, WorkbenchVocab.TUNING_STAGED_CLEARED_STATUS])
+	if failed == 0:
+		print("workbench_preview: assert OK — an un-edited row keeps Revert reachable, the status honest, and the patch explicit")
+
+
+## Lend the page a transport that ACCEPTS everything, so the states past a successful Apply can be
+## reached with no server. Answers the array the sent command lines land in.
+##
+## It returns `true` rather than nothing on purpose: `WorkbenchPage.send_command` treats anything but
+## `true` as "did not send", which is the contract `Main`'s real sender honours.
+func _install_fake_transport() -> Array:
+	var sent: Array = []
+	var page := _tuning_page()
+	if page != null:
+		page.set_services({
+			WorkbenchVocab.SERVICE_SEND_COMMAND: func(line: String) -> bool:
+				sent.append(line)
+				return true,
+			WorkbenchVocab.SERVICE_NEW_GAME: func() -> void: pass,
+		})
+	return sent
+
+
+## The `SpinBox` on the row labelled `label`.
+func _spin_for(page: ConfigTuningPage, label: String) -> SpinBox:
+	for spin in page.find_children("*", "SpinBox", true, false):
+		if _row_label_for(spin) == label:
+			return spin
+	return null
 
 
 ## Sub-pixel slack when comparing a laid-out rect against the box it has to fit in.
@@ -286,18 +399,42 @@ func _pin_window() -> void:
 	window.size = PREVIEW_SIZE
 
 
+## Pinned TWICE around a frame, because macOS applies `project.godot`'s MODE_MAXIMIZED
+## asynchronously: a single pin before the draw can be undone between the pin and the capture, and
+## the frame silently lands at monitor size (one state rendered at 3840x1050 among four at 1600x900,
+## which is only obvious if you happen to compare them).
 func _settle() -> void:
 	_pin_window()
 	await get_tree().process_frame
+	_pin_window()
 	RenderingServer.force_draw()
 	await get_tree().process_frame
 
+
+## How many times a capture is re-taken when the window has escaped its pin. The maximize lands once
+## and is undone once, so one retry is the expected cost; the rest is slack.
+const CAPTURE_RETRIES := 4
 
 func _save(name: String) -> void:
 	var image := get_viewport().get_texture().get_image()
 	if image == null:
 		push_warning("workbench_preview: null image (dummy renderer?) — skipping %s.png; run without --headless to capture" % name)
 		return
+	# **THE GEOMETRY GUARD, AND IT RE-CAPTURES RATHER THAN JUST COMPLAINING.** macOS applies (and
+	# re-applies) `project.godot`'s MODE_MAXIMIZED asynchronously, so a pin can be undone between
+	# `_settle` and the capture: measured, ONE of four frames came back at the monitor's 3840x1050
+	# while its siblings were 1600x900 — a frame judged at a width the surface never ships at, and
+	# nothing says so unless you compare the files. `blend_probe`/`map_preview` carry the same guard.
+	var attempts := 0
+	while image.get_size() != PREVIEW_SIZE and attempts < CAPTURE_RETRIES:
+		attempts += 1
+		await _settle()
+		image = get_viewport().get_texture().get_image()
+		if image == null:
+			return
+	if image.get_size() != PREVIEW_SIZE:
+		push_error("workbench_preview: %s captured at %s after %d retries, not %s — the frame is not comparable with the others"
+			% [name, image.get_size(), CAPTURE_RETRIES, PREVIEW_SIZE])
 	var err := image.save_png("%s/%s.png" % [OUT_DIR, name])
 	if err != OK:
 		push_error("workbench_preview: failed to save %s (err %d)" % [name, err])

@@ -95,6 +95,25 @@ server (`docs/plan_config_tuning_panel.md`). Two existing facts carry it:
   `build_headless_app`, a wall of `load_*_from_env` calls), so "restart the sim on new tuning" needs
   no process restart.
 
+**The `simulation` kind needs one extra step, and it is not optional.** The other four kinds are
+installed as their own resources inside `build_headless_app` and are simply whatever loaded. The
+`SimulationConfig` is not: the rebuild overwrites it with a config the *caller* supplies, and
+`handle_new_game` used to supply a clone of the outgoing world's — which discarded the fresh load
+and made every `simulation` lever on the tuning panel inert. It now starts from
+`load_simulation_config_for_new_world` (`resources.rs`), which loads afresh and then carries back
+the fields the **running process** owns and the file cannot know: `fog_enabled` (`set_fog`),
+`crisis_auto_seed` (`set_crisis_auto_seed`), and the four bind addresses (which after a port
+auto-bump are not what the file says). `start_profile_id`/`start_profile_overrides` are runtime-owned
+too but deliberately not carried — `apply_start_profile` re-applies the profile the command names
+right after. `ResetMap` keeps cloning the running config: it is a map reroll, not a retune.
+
+**The staged file is never the watched file.** The rebuild keeps the outgoing world's
+`SimulationConfigMetadata` path, so the config watcher still watches the shipped
+`simulation_config.json`. Pointing it at `config_overrides/simulation.json` would make each staged
+edit hot-reload into the *running* world, which is the opposite of the "applies at the next New
+Game" contract. The consequence to know: a `reload_config` after a New Game booted on an override
+reloads the shipped file, dropping the override from the live world until the next New Game.
+
 `resolve_config` stays **pure** — the registry lookup lives in `load_config_from_env` only, so the
 rule above is still unit-testable without touching any process-global state.
 

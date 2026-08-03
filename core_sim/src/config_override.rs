@@ -129,6 +129,12 @@ pub enum ConfigOverrideError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("the patched {kind} config could not be serialized: {source}")]
+    Serialize {
+        kind: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("the patched {kind} config is invalid and was NOT installed: {reason}")]
     Invalid { kind: &'static str, reason: String },
     #[error("could not write the patched {kind} config to {path}: {source}")]
@@ -183,11 +189,16 @@ pub fn install_config_override(
 
     // Pretty-printed because this file is meant to be opened and read while debugging a playtest —
     // it is the only record of what the sim actually booted on.
-    let merged_text = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&merged)
-            .expect("a Value that came from valid JSON always re-serializes",)
-    );
+    //
+    // A `Value` that came from valid JSON re-serializes in practice, but this runs in a live command
+    // handler, and the whole argument of this module is that a bad edit is refused *here* rather than
+    // crashing the server later. A panic would contradict that for the sake of one unreachable arm.
+    let merged_text = serde_json::to_string_pretty(&merged)
+        .map(|text| format!("{text}\n"))
+        .map_err(|source| ConfigOverrideError::Serialize {
+            kind: label,
+            source,
+        })?;
 
     (spec.validate)(&merged_text).map_err(|reason| ConfigOverrideError::Invalid {
         kind: label,

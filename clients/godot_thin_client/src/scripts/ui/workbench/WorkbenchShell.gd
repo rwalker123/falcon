@@ -38,6 +38,7 @@ var _footer_host: VBoxContainer
 
 var _active_id: StringName = &""
 var _pages: Dictionary = {}          # StringName -> WorkbenchPage
+var _page_built: Dictionary = {}     # StringName -> true once `build()` has run for that page
 var _page_actions: Dictionary = {}   # StringName -> Control (or null for a page with no actions)
 var _rail_entries: Dictionary = {}   # StringName -> Button
 var _rail_collapsed := false
@@ -187,8 +188,14 @@ func show_page(id: StringName) -> void:
 	_page_title.text = row.get("title", "")
 	_page_subtitle.text = row.get("subtitle", "")
 
+	# A PAGE is only DETACHED (it is cached and reopened); anything else in the host was made for
+	# this visit alone — the placeholder caption is rebuilt on every open of an unbuilt page — so
+	# detaching it without freeing leaks one Label per visit. The footer's children are never freed
+	# here: those are the cached `_page_actions` controls, re-parented on the next open.
 	for child in _page_host.get_children():
 		_page_host.remove_child(child)
+		if not (child is WorkbenchPage):
+			child.queue_free()
 	for child in _footer_host.get_children():
 		_footer_host.remove_child(child)
 
@@ -196,7 +203,16 @@ func show_page(id: StringName) -> void:
 	if page == null:
 		_page_host.add_child(WorkbenchWidgets.build_caption(WorkbenchVocab.PLACEHOLDER_BODY))
 	else:
+		# PARENT, THEN BUILD — a page's `build()` may reach its tree (a theme, a window size, an
+		# ancestor's width), and an orphaned node answers those with nulls and defaults rather than
+		# an error. Building here rather than in `_page_for` is what makes the contract in
+		# `WorkbenchPage`'s docstring true; `_page_built` keeps it once-only across reopens.
 		_page_host.add_child(page)
+		if not _page_built.has(id):
+			_page_built[id] = true
+			page.build()
+			_page_actions[id] = page.build_actions()
+			page.set_command_connected(_command_connected)
 	var actions: Control = _page_actions.get(id, null)
 	if actions != null:
 		_footer_host.add_child(actions)
@@ -205,6 +221,7 @@ func show_page(id: StringName) -> void:
 
 
 ## Instantiate (once) and return the page for `id`, or null when the registry row declares no script.
+## The instance is NOT built here — see `show_page`.
 func _page_for(id: StringName, row: Dictionary) -> WorkbenchPage:
 	if _pages.has(id):
 		return _pages[id]
@@ -220,9 +237,6 @@ func _page_for(id: StringName, row: Dictionary) -> WorkbenchPage:
 	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page.set_services(_services)
 	_pages[id] = page
-	page.build()
-	_page_actions[id] = page.build_actions()
-	page.set_command_connected(_command_connected)
 	return page
 
 
@@ -278,6 +292,19 @@ func update_snapshot(data: Dictionary, full_snapshot: bool) -> void:
 	var page: WorkbenchPage = _pages.get(_active_id, null)
 	if page != null:
 		page.apply_update(data, full_snapshot)
+
+
+## WORLD BOUNDARY (`Main._reset_per_world_state`): the world every built page has been describing is
+## gone, so each one drops the state it derived from it. The cached FRAME goes with them — replaying
+## a dead world's last frame into a freshly reset page is exactly the staleness this exists to stop.
+##
+## Fanned at EVERY built page, not just the active one: a hidden page holds its old world's numbers
+## just as wrongly, and would show them the moment the rail switched to it.
+func reset_pages() -> void:
+	_cached_frame = {}
+	_hidden_frame_pending = false
+	for id in _pages:
+		_pages[id].reset()
 
 
 func set_panel_visible(value: bool) -> void:

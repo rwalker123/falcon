@@ -105,6 +105,24 @@ the same process is the wrong tool for a decision that already has a home.
 overrides" needs no process restart — a New Game inside the live server picks up the new paths for
 free. This is what makes the loop cheap enough to be worth building.
 
+**…for four of the five kinds. `SimulationConfig` needs one more step, and "it re-reads every
+config" is exactly the half-truth that hides it.** `build_headless_app` does load it — and then
+`rebuild_world_from_config` overwrites the loaded resource wholesale with the config its caller
+passed in, which `handle_new_game` had cloned from the *outgoing* world. The load happens and the
+result is discarded. The other four kinds survive because they are installed as their own resources
+inside `build_headless_app` and nothing overwrites them afterwards.
+
+So the new world's `SimulationConfig` is loaded afresh and then has the **runtime-owned** fields
+carried back from the outgoing world: `fog_enabled` and `crisis_auto_seed` (set by client commands),
+and the four socket binds (resolved at boot by port allocation, which a fresh load cannot reproduce —
+it only knows an explicit `SIM_PORT_BASE`, never an auto-bump). `start_profile_id` is deliberately
+**not** carried: `handle_new_game` re-applies the profile its own command names, after the config is
+installed, so a carried value would be dead. Everything else — every numeric lever the panel exposes
+— comes from the fresh load, which is the whole point.
+
+The general lesson is worth more than the fix: **"the config is loaded" and "the loaded config is
+what runs" are different claims**, and only the second one matters here.
+
 The handler therefore: merges the sparse patch into the kind's current effective JSON, parses it
 through that kind's `from_json_str` — **which is where `validate()` already runs** — and only on
 success writes the file and registers the path. A rejected patch changes nothing and logs.

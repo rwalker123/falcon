@@ -27,13 +27,14 @@ use core_sim::sim_state::{restore_sim_state, Replaying};
 use core_sim::turn_profile;
 use core_sim::{
     apply_port_base, available_workers, floor_is_valid, forage_source_yield_preview,
-    hunt_source_yield_preview, knows, output_multiplier, resolve_active_profile,
-    resolve_committed_species, rung_site_refusal, tile_flora_composition, tile_is_fresh_watered,
-    ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle, BeatLedger, CampaignLabel,
-    Expedition, ExpeditionConfigHandle, ExpeditionMission, ExpeditionPhase, FloraConfigHandle,
-    FoodModuleTag, ForkAnswerError, LaborAllocation, LaborTarget, LadderConfigHandle, LocalStore,
-    ResidentBand, RungKey, SiteRefusal, SpeciesRefusal, StartProfile, StartProfileOverrides,
-    WellbeingConfigHandle, DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
+    hunt_source_yield_preview, knows, load_simulation_config_for_new_world, output_multiplier,
+    resolve_active_profile, resolve_committed_species, rung_site_refusal, tile_flora_composition,
+    tile_is_fresh_watered, ActiveStartProfile, BandTravel, BeatCatalogHandle, BeatConfigHandle,
+    BeatLedger, CampaignLabel, Expedition, ExpeditionConfigHandle, ExpeditionMission,
+    ExpeditionPhase, FloraConfigHandle, FoodModuleTag, ForkAnswerError, LaborAllocation,
+    LaborTarget, LadderConfigHandle, LocalStore, ResidentBand, RungKey, SiteRefusal,
+    SpeciesRefusal, StartProfile, StartProfileOverrides, WellbeingConfigHandle,
+    DEFAULT_ESCAPEMENT_FLOOR, NO_FORAGE_SEASON,
 };
 use core_sim::{
     build_headless_app, clear_config_overrides, hunt_trip_forecast, install_config_override,
@@ -1213,10 +1214,17 @@ fn rebuild_world_from_config(
     configure: impl FnOnce(&mut bevy::prelude::App),
 ) -> bevy::prelude::App {
     let mut new_app = build_headless_app();
+    // The base this process actually bound travels with the config — `new_game` carries the binds
+    // over from the outgoing world and `ResetMap` clones them — but the resource does not:
+    // `build_headless_app` never inserts it, so without this line the first rebuild dropped it and a
+    // later `reload_config` re-applied the *file's* base, leaving the in-world config naming sockets
+    // nothing is listening on (the exact thing `ResolvedPortBase` exists to prevent).
+    let resolved_port_base = ResolvedPortBase(config.port_base_bind.port());
     {
         let mut config_res = new_app.world.resource_mut::<SimulationConfig>();
         *config_res = config;
     }
+    new_app.insert_resource(resolved_port_base);
     new_app.insert_resource(SimulationMetrics::default());
     new_app.insert_resource(CommandSenderResource(command_sender.clone()));
     new_app.insert_resource(ConfigWatcherRegistry::default());
@@ -1341,7 +1349,15 @@ fn handle_new_game(
     };
     let watch_paths = collect_watch_paths(app);
 
-    let mut new_config = app.world.resource::<SimulationConfig>().clone();
+    // Start from the config that would load RIGHT NOW, not from a clone of the outgoing world's:
+    // a `simulation` override staged by the tuning panel reaches a world only because New Game
+    // re-reads every config, and cloning skipped that read (see
+    // `load_simulation_config_for_new_world`, which also carries the runtime-owned fields over).
+    // The *watched* path is deliberately left alone — `rebuild_world_from_config` keeps this
+    // server's `SimulationConfigMetadata` path, so a staged override never becomes the file the
+    // watcher hot-reloads into a running world.
+    let mut new_config =
+        load_simulation_config_for_new_world(app.world.resource::<SimulationConfig>());
     new_config.grid_size = UVec2::new(width, height);
     new_config.map_preset_id = preset_id.clone();
     // `seed == 0` randomizes: worldgen resolves a `map_seed` of 0 to a fresh entropy seed, exactly the
