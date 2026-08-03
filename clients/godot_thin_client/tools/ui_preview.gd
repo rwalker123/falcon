@@ -6187,8 +6187,11 @@ func _telling_command_receipts() -> Array:
 		{"tick": 23, "kind": "site_discovered", "label": "Salt Pillar Reach", "detail": "Wondrous site at (31, 22)"},
 	]
 
-## Settle the HUD for a capture. `finish_tweens = false` is for the ONE state that must capture a page
-## turn IN MOTION; it steps the tween itself so the phase is chosen rather than raced.
+## Settle the HUD for a capture. `finish_tweens = false` is for the two callers that must NOT have
+## every live tween driven to its end: the ONE state that must capture a page turn IN MOTION (it steps
+## the tween itself, so the phase is chosen rather than raced), and the assertion blocks that settle
+## layout WITHOUT capturing a frame — there is no screenshot to finish anything for, and flushing
+## would fire tween-finished callbacks mid-suite and move frames captured later in the run.
 func _settle(finish_tweens: bool = true) -> void:
 	await _ensure_canvas()
 	if finish_tweens:
@@ -10805,7 +10808,10 @@ const COMPOSE_FIT_SLACK := 1.0
 ## card contains it again. A card clamped short with the scroll still off is exactly the failure.
 func _assert_compose_sheet_card_holds_its_content(state: String) -> void:
 	var sheet: ComposeSheet = _hud._drawercompose._compose_sheet
+	# FAIL rather than skip: this is a regression guard, so a silent `return` is indistinguishable
+	# from a pass — and a sheet or panel that has gone missing IS the refactor it exists to catch.
 	if sheet == null or sheet._panel == null:
+		_assert_hud("%s has a compose panel to measure" % state, false)
 		return
 	var demanded: float = sheet._panel.get_combined_minimum_size().y
 	_assert_hud("%s: the compose card is as tall as the panel it draws (%.0f demanded, %.0f card, scroll %s)"

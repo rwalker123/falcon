@@ -641,8 +641,8 @@ constant, and full-width rows fill it, so it costs no visible asymmetry.
 **The assertion is a MEASUREMENT against the card's real width, never against `CARD_WIDTH`** —
 `ui_preview._assert_compose_sheet_fits` fails when any row (header included) demands more than the
 card's fitted width less its chrome and gutter. Pinning the constant would fail every sheet that
-legitimately grew. It runs on eight states spanning all three branches and both webs, and is
-sabotage-verified: dropping the `_fit_width` call fails exactly those eight and nothing else. A frame
+legitimately grew. It runs on nine states spanning all three branches and both webs, and is
+sabotage-verified: dropping the `_fit_width` call fails exactly those nine and nothing else. A frame
 alone cannot hold this claim in either direction — the overflowing `PanelContainer` renders a
 plausible-looking card at the wrong width, which is why the regression reached play.
 
