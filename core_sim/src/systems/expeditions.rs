@@ -257,6 +257,14 @@ pub fn advance_expeditions(
                     } else {
                         f32::INFINITY
                     };
+                    // Composed BEFORE the mutable borrow — the seed reads the herd's id, and the
+                    // take needs the herd mutably.
+                    let seed = fauna::retreat_seed(
+                        sim_config.map_seed,
+                        tick.0,
+                        &herds.herds[idx].id,
+                        workers,
+                    );
                     let take = hunt_take(
                         &mut herds.herds[idx],
                         workers,
@@ -269,6 +277,7 @@ pub fn advance_expeditions(
                         &fauna,
                         &ladder,
                         carry_room_biomass,
+                        seed,
                     );
                     // **One conversion, both products** — a roadside kill is skinned as well as
                     // butchered (#337). The food tops the pack up to `room`; the hides ride home on
@@ -956,6 +965,9 @@ pub fn hunt_take(
     fauna: &FaunaConfig,
     ladder: &LadderConfig,
     carry_room_biomass: f32,
+    // Per-event seed for the retreat draw (`fauna::retreat_seed`) — never a shared RNG stream, or
+    // hunt ordering would change outcomes and rollback would stop reproducing (§6.2).
+    retreat_seed: u64,
 ) -> AnimalTake {
     // **Constant escapement** (`docs/plan_harvest_floor.md` §1): the herd hands over the stock
     // standing above the assignment's floor, at its CURRENT biomass. Resolved against the herd's OWN
@@ -987,16 +999,16 @@ pub fn hunt_take(
     // is what stops a deep floor from building for free (§0.3).
     let collection = (workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement))
         .min(carry_room_biomass.max(0.0));
-    let take = fauna::quantise_animal_take(
-        ceiling,
-        collection,
-        herd.body_mass,
-        fauna::animals_engaged(
-            workers,
-            fauna.engage_rate_for(&herd.species),
-            ladder.build_dip(improvement),
-        ),
+    // **Engagement, then retreat, then the quantiser** — stages 1 and 2 of
+    // `docs/plan_hunt_through_combat.md` §1. Wariness `0` makes the retreat an exact identity that
+    // consumes no randomness, so this is byte-identical until values are authored.
+    let engaged = fauna::animals_engaged(
+        workers,
+        fauna.engage_rate_for(&herd.species),
+        ladder.build_dip(improvement),
     );
+    let stayed = fauna::animals_that_stay(engaged, fauna.wariness_for(&herd.species), retreat_seed);
+    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass, stayed);
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();

@@ -7,6 +7,7 @@ use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
 use tracing::info;
 
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::{
@@ -44,6 +45,15 @@ const IMMIGRATION_SEED_SALT: u64 = 0xFA1A_B0B0;
 /// stream. Combined with `map_seed ^ tick ^ hash(herd.id)` so each herd's wander is deterministic
 /// under rollback (mirrors `repopulate_fauna`'s seeding).
 const HERD_MOVEMENT_SEED_SALT: u64 = 0x4D0E_9A17_C0FF_EE21;
+
+/// XOR sub-seed salt for the **retreat** draw (`docs/plan_hunt_through_combat.md` §6.2), following
+/// the repo's domain-subseed convention (cf. [`HERD_MOVEMENT_SEED_SALT`], `PALETTE_SEED_SALT`).
+///
+/// **The draw is seeded per EVENT, never taken from a shared stream**, and that is a hard
+/// requirement rather than a style choice: a shared stream makes every draw order-dependent, so
+/// adding or reordering one hunt shifts every downstream result and rollback stops reproducing.
+/// Composed from `(map_seed, tick, herd, party)` by [`retreat_seed`], which is order-independent.
+const RETREAT_SEED_SALT: u64 = 0x5CA7_7E12_D00D_1E55;
 
 /// RNG salt for the per-turn neglect-escape shed jitter (`docs/plan_fauna_neglect_escape.md` §3.1),
 /// kept distinct from the movement/immigration streams so the shed's ±band doesn't correlate with a
@@ -4639,6 +4649,40 @@ pub fn animals_engaged(workers: u32, engage_rate: f32, build_dip: f32) -> f32 {
         .max(1.0)
 }
 
+/// **The per-event seed for a retreat draw** — `(map_seed, tick, herd, party)`, order-independent by
+/// construction (`docs/plan_hunt_through_combat.md` §6.2). Two runs that resolve the same hunts in a
+/// different order must produce identical outcomes, which a shared RNG stream cannot promise.
+pub fn retreat_seed(map_seed: u64, tick: u64, herd_id: &str, workers: u32) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    herd_id.hash(&mut hasher);
+    map_seed ^ tick ^ RETREAT_SEED_SALT ^ hasher.finish() ^ (workers as u64)
+}
+
+/// **How many of the engaged animals stay to be fought** — the retreat stage
+/// (`docs/plan_hunt_through_combat.md` §3), between engagement and the fight.
+///
+/// Each engaged animal independently breaks off with probability `wariness`. **Escaped animals are
+/// not dead**, so the herd loses nothing for them: a wary herd costs the party *hunter-turns*, never
+/// herd biomass, and that pressure falls out with no extra rule.
+///
+/// # `wariness == 0` is an EXACT identity, and that is load-bearing
+///
+/// No draw is made and no randomness is consumed — not a `gen_bool(0.0)` that returns `false` while
+/// advancing the stream. That is what lets the field ship inert across the whole roster and leaves
+/// every existing yield test pinning the numbers it pins today, and it is asserted directly rather
+/// than assumed.
+///
+/// A non-finite `engaged` (a pen, a plant — no engagement stage at all) is returned unchanged: there
+/// is nothing to retreat from, and iterating it would not terminate.
+pub fn animals_that_stay(engaged: f32, wariness: f32, seed: u64) -> f32 {
+    if wariness <= 0.0 || !engaged.is_finite() || engaged <= 0.0 {
+        return engaged;
+    }
+    let odds = f64::from(wariness.min(1.0));
+    let mut rng = SmallRng::seed_from_u64(seed);
+    (0..engaged as u32).filter(|_| !rng.gen_bool(odds)).count() as f32
+}
+
 /// **THE whole-animal quantiser** (intensification ladder slice 8) — the one place a take is rounded
 /// to animals, shared by **every rung**: `systems::hunt_take` (the resident band + the scout's
 /// replenish), `systems::expedition_take_biomass` (the hunting party + its forward-simulated
@@ -5808,6 +5852,82 @@ mod tests {
         herd.owner = None; // wild again
         assert_eq!(herd.stabilize_herders_needed(APH, APH * 0.25), 0);
         assert_eq!(herd.herders_needed, 0);
+    }
+
+    /// **`wariness 0` is an EXACT identity that consumes no randomness** — the property the whole
+    /// slice rests on, asserted rather than assumed. Observationally: the answer cannot depend on the
+    /// seed, because no draw is made. If someone "simplifies" the early return into a
+    /// `gen_bool(0.0)`, the values still match but the stream advances, and every downstream draw in
+    /// the turn shifts — a corruption no yield assertion would catch.
+    #[test]
+    fn zero_wariness_never_draws_and_never_changes_the_take() {
+        for engaged in [1.0, 2.0, 17.0, 300.0] {
+            for seed in [0, 1, u64::MAX, 0x5EED_1234_5678_9ABC] {
+                assert_eq!(
+                    animals_that_stay(engaged, 0.0, seed),
+                    engaged,
+                    "wariness 0 must return the engaged count untouched, for any seed"
+                );
+            }
+        }
+    }
+
+    /// **A pen and a plant have no engagement stage, so they have no retreat either.** An infinite
+    /// engagement passes through at any wariness — and must, since iterating it would not terminate.
+    #[test]
+    fn an_unbounded_engagement_has_nothing_to_retreat_from() {
+        for wariness in [0.0, 0.5, 1.0] {
+            assert_eq!(
+                animals_that_stay(f32::INFINITY, wariness, 7),
+                f32::INFINITY,
+                "a source with no engagement stage cannot retreat"
+            );
+        }
+    }
+
+    /// **The draw is deterministic in its seed and bounded by the engagement** — the two halves of
+    /// "unpredictable to the player, reproducible for the sim". Paired with a liveness assertion,
+    /// because a retreat stage that always returned `engaged` would also satisfy the bound.
+    #[test]
+    fn the_retreat_draw_is_seeded_bounded_and_actually_bites() {
+        const ENGAGED: f32 = 200.0;
+        for seed in [1_u64, 99, 4242] {
+            let once = animals_that_stay(ENGAGED, 0.5, seed);
+            assert_eq!(
+                once,
+                animals_that_stay(ENGAGED, 0.5, seed),
+                "the same seed must reproduce the same retreat"
+            );
+            assert!(
+                (0.0..=ENGAGED).contains(&once),
+                "the retreat cannot invent or destroy engaged animals: {once}"
+            );
+        }
+        // Liveness: at wariness 1 every engaged animal breaks off, so the stage is genuinely wired.
+        assert_eq!(animals_that_stay(ENGAGED, 1.0, 3), 0.0);
+        // ...and it is not merely all-or-nothing at the midpoint.
+        let half = animals_that_stay(ENGAGED, 0.5, 11);
+        assert!(
+            half > 0.0 && half < ENGAGED,
+            "a mid wariness must leave some and take some: {half}"
+        );
+    }
+
+    /// **The seed is composed per event, so it cannot depend on hunt ORDER.** Same
+    /// `(map_seed, tick, herd, party)` ⇒ same seed, and a different herd or party ⇒ a different one.
+    /// This is what makes rollback reproduce regardless of the order hunts resolve in; a shared RNG
+    /// stream could not promise it.
+    #[test]
+    fn the_retreat_seed_is_per_event_not_per_stream() {
+        let a = retreat_seed(7, 3, "game_deer_1", 5);
+        assert_eq!(
+            a,
+            retreat_seed(7, 3, "game_deer_1", 5),
+            "pure in its inputs"
+        );
+        assert_ne!(a, retreat_seed(7, 3, "game_deer_2", 5), "herd must matter");
+        assert_ne!(a, retreat_seed(7, 4, "game_deer_1", 5), "tick must matter");
+        assert_ne!(a, retreat_seed(7, 3, "game_deer_1", 6), "party must matter");
     }
 
     /// A zero deadband restores the raw stateless behaviour (the flicker) — the lever genuinely

@@ -1342,6 +1342,7 @@ pub fn advance_labor_allocation(
                         &fauna,
                         &ladder,
                         f32::INFINITY,
+                        fauna::retreat_seed(sim_config.map_seed, tick.0, &herd.id, workers),
                     );
                     // **THE earn path, rungs 1–2** — the drawn-down half of the split above, and the
                     // heart of the ladder: the same hunt teaches **Herding** on a wild herd and
@@ -2285,6 +2286,10 @@ pub fn advance_predator_raids(
                                     attack: 0.0,
                                     defense: person.defense,
                                     range: person.range,
+                                    // Hunters do not break off — the party chose this fight, and
+                                    // whether it holds is the resolver's business, not a per-hunter
+                                    // flight roll. Dynamic troop morale is a later arc (§3).
+                                    wariness: person.wariness,
                                 },
                             },
                         ],

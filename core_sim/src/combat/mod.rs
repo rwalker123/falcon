@@ -71,6 +71,20 @@ pub struct CombatStats {
     pub defense: f32,
     /// Which range band the unit fights in. Default [`RangeBand::Melee`].
     pub range: RangeBand,
+    /// **The probability this combatant breaks off when contact is made** — engaged, then gone before
+    /// the fight resolves (`docs/plan_hunt_through_combat.md` §3). `0.0..1.0`.
+    ///
+    /// **It is not a hunting concept**, which is why it lives here and not on
+    /// [`crate::fauna_config::SpeciesDef`]. Shocked troops break on contact by the same mechanism;
+    /// the only difference between an animal and a soldier is how the value is *maintained* —
+    /// authored and **static** per species, **dynamic** from morale for troops — never what it means.
+    /// Modelled as *"how many you can get near"* it would have been a hunt-only invention needing its
+    /// own justification; as *"who stays when it starts"* it is one field serving both.
+    ///
+    /// **Default `0.0` is an exact identity, not a roll with probability zero**: no draw is made and
+    /// no randomness is consumed, which is what lets this ship inert and keeps every existing yield
+    /// test pinning the numbers it pins today. See [`crate::fauna::animals_that_stay`].
+    pub wariness: f32,
 }
 
 impl Default for CombatStats {
@@ -79,6 +93,7 @@ impl Default for CombatStats {
             attack: 0.0,
             defense: 1.0,
             range: RangeBand::Melee,
+            wariness: 0.0,
         }
     }
 }
@@ -368,6 +383,7 @@ mod tests {
                 attack,
                 defense,
                 range: RangeBand::Melee,
+                wariness: 0.0,
             },
         }
     }
@@ -380,6 +396,7 @@ mod tests {
                 attack,
                 defense,
                 range: RangeBand::Melee,
+                wariness: 0.0,
             },
         }
     }

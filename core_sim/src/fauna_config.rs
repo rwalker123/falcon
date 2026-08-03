@@ -1905,6 +1905,15 @@ impl FaunaConfig {
     /// of "this herd is not in the roster" is *the engagement stage has nothing to say about it*,
     /// which leaves such a fixture's take exactly as it was before this arc. A finite default would
     /// silently cap fixtures at a number nobody chose.
+    /// **The probability an animal of this species breaks off at contact**
+    /// ([`crate::combat::CombatStats::wariness`]), resolved by display name — the
+    /// [`FaunaConfig::taming_rate_for`] path. An unresolvable species reads `0.0`: no retreat, which
+    /// is the identity, and the honest reading of a fixture the roster does not describe.
+    pub fn wariness_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(0.0, |def| def.combat.wariness)
+    }
+
     pub fn engage_rate_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(f32::INFINITY, |def| def.engage_rate)

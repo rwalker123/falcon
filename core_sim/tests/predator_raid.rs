@@ -343,6 +343,7 @@ fn aggression_scales_raid_lethality() {
                             attack: 3.0 * aggression, // the adapter's `attack × aggression`
                             defense: 3.0,
                             range: RangeBand::Melee,
+                            wariness: 0.0,
                         },
                     }],
                 },
@@ -357,6 +358,7 @@ fn aggression_scales_raid_lethality() {
                                 attack: 1.0,
                                 defense: 1.0,
                                 range: RangeBand::Melee,
+                                wariness: 0.0,
                             },
                         },
                         Contingent {
@@ -366,6 +368,7 @@ fn aggression_scales_raid_lethality() {
                                 attack: 0.0,
                                 defense: 1.0,
                                 range: RangeBand::Melee,
+                                wariness: 0.0,
                             },
                         },
                     ],

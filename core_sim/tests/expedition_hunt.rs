@@ -863,6 +863,9 @@ fn assert_band_preview_matches_hunt_take(app: &mut App, herd_ids: &[String], cas
                     &fauna,
                     &LadderConfig::builtin(),
                     f32::INFINITY,
+                    // The preview pins `forecast == actual`, so the retreat draw is held fixed —
+                    // every species here ships `wariness 0`, making it an identity anyway.
+                    0,
                 );
                 let sim_rate = herd_hunt_yield(&herd, &fauna)
                     .apply(take.carried, output_multiplier)
@@ -1032,6 +1035,7 @@ fn the_expedition_danger_multiplier_scales_losses() {
                         attack: 1.0,
                         defense: 1.0,
                         range: RangeBand::Melee,
+                        wariness: 0.0,
                     },
                 }],
             },
@@ -1045,6 +1049,7 @@ fn the_expedition_danger_multiplier_scales_losses() {
                         attack: 8.0,
                         defense: 12.0,
                         range: RangeBand::Melee,
+                        wariness: 0.0,
                     },
                 }],
             },

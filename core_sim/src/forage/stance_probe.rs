@@ -73,6 +73,11 @@ const FULLY_STAFFED_HUNTERS: u32 = 100_000;
 
 /// A resident band's Hunt take has no carry limit — it banks the whole take (`hunt_take`'s own
 /// contract).
+/// The probe measures the FLOOR, so it holds the retreat draw fixed. Every probe species ships
+/// `wariness 0`, which makes the draw an identity and the seed inert — pinning it anyway keeps the
+/// probe deterministic if a species it uses is ever given a value.
+const PROBE_RETREAT_SEED: u64 = 0;
+
 const NO_CARRY_LIMIT: f32 = f32::INFINITY;
 
 /// Neutral band productivity and a full growing season, so the numbers are the source's own.
@@ -403,6 +408,7 @@ fn run_herd_with_crew(
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
+            PROBE_RETREAT_SEED,
         );
         let provisions = hunt_yield
             .apply(take.carried, UNIT_OUTPUT_MULTIPLIER)
@@ -472,6 +478,7 @@ fn run_corral(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOu
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
+            PROBE_RETREAT_SEED,
         );
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield
@@ -536,6 +543,7 @@ fn run_tame(species_key: &str, floor: f32, start_fraction: f32) -> HerdBuildOutc
             &fauna,
             &ladder,
             NO_CARRY_LIMIT,
+            PROBE_RETREAT_SEED,
         );
         if turns_to_complete.is_none() {
             provisions_over_build += hunt_yield

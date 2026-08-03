@@ -268,6 +268,7 @@ fn ferocity_scales_the_danger_of_a_hunt() {
                             attack: 1.0,
                             defense: 1.0,
                             range: RangeBand::Melee,
+                            wariness: 0.0,
                         },
                     }],
                 },
@@ -281,6 +282,7 @@ fn ferocity_scales_the_danger_of_a_hunt() {
                             attack: 8.0 * ferocity, // the adapter's `attack × ferocity`
                             defense: 12.0,
                             range: RangeBand::Melee,
+                            wariness: 0.0,
                         },
                     }],
                 },
