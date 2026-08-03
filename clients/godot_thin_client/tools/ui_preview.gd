@@ -201,6 +201,11 @@ const FLOOR_CHART_CREW := 3
 # `_crew_target_count`'s answer when the target is not rendered at all. NOT 0, which is a real reading
 # ("nothing to clear"), and the distinction is the dead-season assertion's whole subject.
 const CREW_TARGET_ABSENT := -1
+## **A PLANT SOURCE HAS NO BODY TO COUNT.** The crew terms take a whole-animal quantum beside their
+## engagement pair, and a patch answers `0` for it — grain is gathered by the handful — so every
+## plant-side recomposition below spells this and `SourceForecast.NO_ENGAGEMENT_STAGE` rather than
+## passing two unexplained zeros. It is what makes those calls read as *this web has no reach arm*.
+const PLANT_NO_BODY := 0.0
 ## The two INVESTMENT-rung payoff terms the Wild Boar frame is judged on (issue #397), spelled out as
 ## literal strings rather than rebuilt from `SourceForecast.picker_products` — an assertion that
 ## re-derives the terms through the very formatter under test asserts nothing. Food leads, and each
@@ -1952,13 +1957,17 @@ func _ready() -> void:
 	# build must give. With the stale verb pricing the crew this reads 6 against 2.
 	_assert_hud("a finished rung's verb dips no crew — HOLD divides by the wire's own throughput (%d)"
 		% stale_hold,
-		stale_hold == SourceForecast.crew_to_hold(stale_samples, STALE_VERB_FLOOR, stale_carry, 0.0))
+		stale_hold == SourceForecast.crew_to_hold(stale_samples, STALE_VERB_FLOOR, stale_carry,
+			PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP))
 	_assert_hud("…and so does CLEAR, the other half of the same division",
 		_crew_target_count(stale_sheet, HudWidgets.CREW_TARGET_CLEAR)
 			== SourceForecast.crew_to_clear(SourceForecast.escapement_room(stale_tile,
 				HudComposeVocab.FORAGE_FORECAST_PREFIX, STALE_VERB_FLOOR), stale_carry,
 				SourceForecast.crew_that_reaches(stale_samples, STALE_VERB_STOCK,
-					STALE_VERB_CAPACITY, STALE_VERB_FLOOR, stale_carry)))
+					STALE_VERB_CAPACITY, STALE_VERB_FLOOR, stale_carry, PLANT_NO_BODY,
+					SourceForecast.NO_ENGAGEMENT_STAGE, SourceForecast.NO_BUILD_DIP),
+				PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE,
+				SourceForecast.NO_BUILD_DIP))
 	# (2) **THE INVARIANT THAT BROKE** — the sheet's crew target and the card's rate must imply the SAME
 	# biomass per forager. The card's is a LOWER bound (its take may be bound by the room rather than by
 	# the crew), so a crew target may never price a forager BELOW it: that is exactly the contradiction
@@ -2000,7 +2009,8 @@ func _ready() -> void:
 		HudComposeVocab.FORAGE_FORECAST_PREFIX) \
 		* SourceForecast.build_dip(building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, "cultivate")
 	var build_reaching := SourceForecast.crew_that_reaches(build_samples, BUILD_DIP_STOCK,
-		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, build_carry)
+		BUILD_DIP_CAPACITY, BUILD_DIP_FLOOR, build_carry, PLANT_NO_BODY,
+		SourceForecast.NO_ENGAGEMENT_STAGE, STALE_VERB_BUILD_FRACTION)
 	# THE CARD'S STANDING RATE, composed the way the sim composes it (`forage_take`'s `min(crew carry,
 	# ceiling)` through the patch's food rate) — derived from the tile's own wire terms rather than
 	# written down, so the card and the sheet cannot drift apart by fixture edit.
@@ -2025,11 +2035,11 @@ func _ready() -> void:
 	# (0) THE FRAME REALLY IS THE REGIME. Without this every assertion below is about an ordinary
 	# patch: the whole point is a crew that CANNOT out-take the regrowth, so the crew that can must be
 	# strictly larger than the one-turn quotient the target used to state.
+	var build_quotient := SourceForecast.crew_to_clear(SourceForecast.escapement_room(
+		building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0,
+		PLANT_NO_BODY, SourceForecast.NO_ENGAGEMENT_STAGE, STALE_VERB_BUILD_FRACTION)
 	_assert_hud("the fixture reaches the regime — the reaching crew (%d) exceeds the one-turn quotient (%d)"
-		% [build_reaching, SourceForecast.crew_to_clear(SourceForecast.escapement_room(
-			building_tile, HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0)],
-		build_reaching > SourceForecast.crew_to_clear(SourceForecast.escapement_room(building_tile,
-			HudComposeVocab.FORAGE_FORECAST_PREFIX, BUILD_DIP_FLOOR), build_carry, 0))
+		% [build_reaching, build_quotient], build_reaching > build_quotient)
 	# (1) **THE INVARIANT, stated as a RELATION between the two rendered numbers** rather than as the
 	# pair of literals it happens to produce: a target offering to *clear it now* may never name fewer
 	# hands than the verdict beside it names as merely REACHING the floor. Those five foragers cleared
@@ -3690,10 +3700,13 @@ func _ready() -> void:
 		HudComposeVocab.BARE_FORECAST_PREFIX) * dip_fraction
 	var dip_samples := SourceForecast.regrowth_samples(dip_herd,
 		HudComposeVocab.BARE_FORECAST_PREFIX)
+	# This herd publishes no `engageRate` — it predates the engagement stage — so both recompositions
+	# state `NO_ENGAGEMENT_STAGE` and the reach arm drops out, leaving the claim about the DIP alone.
 	var dip_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR, dip_carry,
-		HERD_DIP_BODY_MASS)
+		HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE, dip_fraction)
 	var bare_hold := SourceForecast.crew_to_hold(dip_samples, HERD_DIP_FLOOR,
-		dip_carry / dip_fraction, HERD_DIP_BODY_MASS)
+		dip_carry / dip_fraction, HERD_DIP_BODY_MASS, SourceForecast.NO_ENGAGEMENT_STAGE,
+		SourceForecast.NO_BUILD_DIP)
 	_assert_hud("the *hold it after* target divides by the DIPPED carry (%d, against %d undipped)"
 		% [dip_hold, bare_hold],
 		_crew_target_count(dip_sheet, HudWidgets.CREW_TARGET_HOLD) == dip_hold
@@ -4200,6 +4213,72 @@ func _ready() -> void:
 	_assert_hud("more hunters are wanted, not idle — the cap reads \"%s\"" % wanted_advice,
 		_has_label_containing(reaching_sheet, wanted_advice)
 			and not _has_label_containing(reaching_sheet, idle_advice))
+	# **THE THIRD SURFACE THE SAME BOUND HAS TO REACH — the CREW TARGETS and the verdict beneath them.**
+	# The take and the cap became engagement-aware while the chart's targets went on dividing the room
+	# by the CARRY alone, so this sheet offered `2 clear it now` for a herd two hunters would take ~47
+	# turns to clear, and the sentence under it promised the floor next turn. Reported from play on a
+	# Red Deer herd, where the same sheet read `6 clear it now` beside a take of six deer a turn.
+	#
+	# Both terms are composed from the FIXTURE's own wire numbers rather than asked of
+	# `SourceForecast` — a target checked against the layer that produces it agrees by construction.
+	var fowl_carry_biomass := FOWL_PER_WORKER_YIELD / FOWL_PROVISIONS_PER_BIOMASS
+	var fowl_clear_by_carry := int(ceilf(fowl_room / fowl_carry_biomass))
+	var fowl_clear_by_reach := int(ceilf(fowl_room / (FOWL_BODY_MASS * FOWL_ENGAGE_RATE)))
+	# (0) THE FRAME REALLY SEPARATES THE TWO BOUNDS. Without this the assertion below passes on any
+	# sheet whose two answers happen to coincide, and says nothing about which one it read.
+	_assert_hud("the fixture separates the bounds — reaching the room takes %d hands, carrying it %d"
+		% [fowl_clear_by_reach, fowl_clear_by_carry],
+		fowl_clear_by_reach > fowl_clear_by_carry)
+	var fowl_clear := _crew_target_count(reaching_sheet, HudWidgets.CREW_TARGET_CLEAR)
+	_assert_hud("*clear it now* names the crew that can REACH the room in a turn (%d), not carry it (%d)"
+		% [fowl_clear_by_reach, fowl_clear_by_carry], fowl_clear == fowl_clear_by_reach)
+	# (1) **THE TARGET AND THE READOUT BESIDE IT AGREE**, which is the class of defect this pins: at the
+	# crew the pill names, the SIM's own take empties the room, and one hand short of it does not. Both
+	# takes come from `_hunt_take_oracle` (`quantise_animal_take` restated in food), so the claim is a
+	# cross-check against the sim's arithmetic rather than a restatement of the client's.
+	var fowl_room_food := floorf(fowl_ceiling / fowl_fpa) * fowl_fpa
+	var clear_take := float(_hunt_take_oracle(float(fowl_clear) * FOWL_PER_WORKER_YIELD, fowl_ceiling,
+		fowl_fpa, floorf(float(fowl_clear) * FOWL_ENGAGE_RATE))["delivered"])
+	var short_take := float(_hunt_take_oracle(float(fowl_clear - 1) * FOWL_PER_WORKER_YIELD,
+		fowl_ceiling, fowl_fpa, floorf(float(fowl_clear - 1) * FOWL_ENGAGE_RATE))["delivered"])
+	_assert_hud("…and at that crew the take really does empty the room (%.4f of %.4f food), one hand short does not"
+		% [clear_take, fowl_room_food],
+		clear_take >= fowl_room_food and short_take < fowl_room_food)
+	# (2) **AND THE VERDICT READS THE SAME PROJECTION.** One hunter reaching ten birds a turn cannot
+	# out-take this herd's regrowth, so the crew binds and the sentence must say so; carry-bound, the
+	# same hunter moved 40 biomass a turn and the sheet promised the floor. The twin below is what
+	# makes this a claim about the ARM rather than about the fixture.
+	_assert_hud("the verdict is the crew's, not a promise of a floor one hunter cannot reach",
+		_verdict_severity(reaching_sheet) == SourceForecast.VERDICT_SLOW)
+	# (3) **THE ⚠ GATE AND THE VERDICT ARE TWO READINGS OF ONE PROJECTION**, which is the invariant
+	# `take_draws_down` was introduced to hold and the one an engagement-blind gate quietly breaks:
+	# here the party reaches 1.3 biomass of bird a turn against ~2.5 of regrowth, so the stock RISES —
+	# nothing is being overdrawn — while the carry alone (40 a turn) says it falls. Left carry-only the
+	# sheet could fly `⚠ OVERDRAWS THE HERD` directly above *it settles at 84% and holds there*.
+	#
+	# Asserted as the EQUALITY of the two answers, never as the literal `false`: the pairing is the
+	# claim, so a fixture that stops rising fails nothing while a gate that stops agreeing fails here.
+	var bound_model := SourceForecast.floor_chart_model(fowl_reaching,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE, "hunters",
+		LESSON_NOT_YET_LEARNED)
+	var verdict_falls: bool = float(bound_model["settled_fraction"]) \
+		< float(bound_model["stock_fraction"]) - SourceForecast.STOCK_FRACTION_EPSILON
+	var gate_falls := SourceForecast.take_draws_down(fowl_reaching,
+		SourceForecast.SOURCE_KIND_HERD, HudComposeVocab.BARE_FORECAST_PREFIX,
+		SourceForecast.FLOOR_FOOD_PEAK, FOWL_HUNTERS, SourceForecast.IMPROVEMENT_NONE)
+	# The precondition, without which the equality is satisfied by two blind answers agreeing: the
+	# CARRY-ONLY walk (`project_stock`'s unbounded default — the pre-fix reading) must say the opposite.
+	var carry_only_walk := SourceForecast.project_stock(
+		SourceForecast.regrowth_samples(fowl_reaching, HudComposeVocab.BARE_FORECAST_PREFIX),
+		FOWL_BIOMASS, FOWL_CAPACITY, SourceForecast.FLOOR_FOOD_PEAK,
+		float(FOWL_HUNTERS) * fowl_carry_biomass)
+	_assert_hud("precondition: carry alone would call this herd drawn down (%.3f → %.3f), so the pair is not vacuous"
+		% [FOWL_BIOMASS / FOWL_CAPACITY, float(carry_only_walk["settled_fraction"])],
+		float(carry_only_walk["settled_fraction"])
+			< FOWL_BIOMASS / FOWL_CAPACITY - SourceForecast.STOCK_FRACTION_EPSILON)
+	_assert_hud("the ⚠ gate and the verdict read ONE projection — both say the stock %s"
+		% ("falls" if verdict_falls else "rises"), gate_falls == verdict_falls)
 
 	# 3r-b — THE SAME BIRD WITH NO ENGAGEMENT STAGE. This is the pen's wire value and the plant web's
 	# silence, and it must read exactly as the sheet always did: carry-bound, and capped at the two
@@ -4220,6 +4299,16 @@ func _ready() -> void:
 		% idle_advice,
 		_has_label_containing(unreached_sheet, idle_advice)
 			and not _has_label_containing(unreached_sheet, wanted_advice))
+	# **THE CREW TARGETS AND THE VERDICT DROP THE ARM TOO, and this half is the regression that matters
+	# most**: a pen and the whole PLANT web publish exactly this value, so a target or a projection that
+	# read `NO_ENGAGEMENT_STAGE` as "reaches nothing" would move every forage sheet in the game. The
+	# same hunter carrying 40 biomass a turn clears this room in one, so the pill reads the carry
+	# quotient and the verdict promises the floor — precisely as it did before the arm existed.
+	_assert_hud("no engagement stage → *clear it now* is the carry quotient (%d) again"
+		% fowl_clear_by_carry,
+		_crew_target_count(unreached_sheet, HudWidgets.CREW_TARGET_CLEAR) == fowl_clear_by_carry)
+	_assert_hud("…and the verdict reaches the floor again, so the arm DROPS rather than merely shrinking",
+		_verdict_severity(unreached_sheet) == SourceForecast.VERDICT_OK)
 
 	# States 3s–3v — the CARRY-AWARE ANIMALS-FIRST local-hunt preview (spec oracle: deer fpa 1.23, band
 	# per-worker 0.8, output 1.0, Sustain ceiling 2.33). The preview line reads the crew's HONEST

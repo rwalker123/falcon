@@ -241,8 +241,20 @@ stated and clickable:
 
 | target | expression |
 |---|---|
-| ***clear it now*** | `max(max(0, B − f·K) ÷ (perWorkerBiomass × dip), crew_that_reaches)` — closed form, deliberately not rounded to whole animals: this is a count of hands, and a crew that over-carries simply finishes the draw. **The floor on the reaching crew is not a rounding**, see below |
-| ***hold it after*** | the interpolated regrowth AT the floor ÷ the same carry, **rounded up to one body on a whole-animal source** — `SourceForecast.haul_workers`, the ONE mirror of the sim's `fauna::hunt_haul_workers`, which `max_useful_workers` now also calls instead of open-coding the same arithmetic |
+| ***clear it now*** | `max(max(0, B − f·K) ÷ min(perWorkerBiomass × dip, bodyMass × engageRate × dip), crew_that_reaches)` — closed form, deliberately not rounded to whole animals: this is a count of hands, and a crew that over-carries simply finishes the draw. **The floor on the reaching crew is not a rounding**, see below |
+| ***hold it after*** | the interpolated regrowth AT the floor ÷ the same carry, **rounded up to one body on a whole-animal source** and then `max`ed with the crew that can REACH that drop — `SourceForecast.take_workers`, the ONE mirror of the sim's `fauna::hunt_take_workers`, which `max_useful_workers` also calls instead of open-coding the same `max(haul, engage)` |
+
+**A TAKE IS BOUNDED BY REACH AS WELL AS BY CARRY, SO BOTH TARGETS DIVIDE BY THE SMALLER OF THE TWO**
+(`docs/plan_hunt_through_combat.md` §2). `SourceForecast.engagement_carry` states the engagement stage
+in the room's own units — `bodyMass × engageRate × dip`, the biomass one hunter brings into CONTACT per
+turn — so the *clear* target stays one quotient and the `min` inside it is the sim's own
+`min(carryable, engaged)` read backwards. Reported from play on a Red Deer herd (`bodyMass 15`,
+`engageRate 1`, carry 40) with ~16 deer standing: six hunters CARRY sixteen and REACH six, so
+`6 clear it now` named a crew that needs three turns — beside a per-turn readout and a worker cap that
+had been engagement-aware since the take's own arm landed. **`engageRate <= 0` answers
+`ENGAGEMENT_UNBOUNDED`**, and so does a source with no body, so the `min` collapses to the carry and
+every forage patch and every pen is byte-identical to before the arm existed (measured: of the 249
+`ui_preview` frames, exactly ONE moves — the herd that publishes the field).
 
 **NEITHER TARGET CAN NAME A CREW THE STEPPER REFUSES TO REACH.** Both are clickable, and a click is
 clamped to the same cap the `+` obeys — so the cap floors on the *hold* number **and on the reaching
@@ -364,7 +376,10 @@ short of were the ones being called idle.
 
 The two halves land in `SourceForecast` and are the client mirror of three `core_sim/src/fauna.rs`
 functions, named for them so the pairing is legible: `animals_engaged` (the sim's own), `engage_workers`
-(`hunt_engage_workers`), and `max_useful_workers`' `max(haul, engage)` (`hunt_take_workers`).
+(`hunt_engage_workers`) and `take_workers` (`hunt_take_workers`, the `max(haul, engage)` the worker cap
+and the *hold* target both size themselves with). Two units adapters sit beside them and hold the ONE
+composition of the `engageRate × dip` pair: `engagement_per_worker` (animals a worker reaches) and
+`engagement_carry` (that same reach in BIOMASS, which is what a crew target divides by).
 
 ```text
 reach(workers)  = floor(workers × engageRate × dip) × <account>PerAnimal
@@ -399,11 +414,16 @@ engageCrew      = ceil((floor(ceiling / bodyMass) + 1) / (engageRate × dip))
   own `_hunt_take_oracle` (the sim's `quantise_animal_take` restated in food, now taking `engaged`),
   never by asking the sheet what it thinks.
 
-> **The CHART's crew targets are still carry-only.** `crew_to_clear` / `crew_to_hold` /
-> `crew_that_reaches` divide biomass by carry and know nothing about reach, so the bound frame offers
-> *"2 clear it now"* for a herd two hunters would take 47 turns to clear. §7.6's rule still holds (the
-> cap is the `max`, so no target names a crew the stepper refuses to reach) — what is wrong is the
-> target, and the verdict written off the same projection with it.
+> **THE CHART'S CREW TARGETS AND ITS PROJECTION CARRY THE ARM TOO.** `crew_to_clear` /
+> `crew_to_hold` / `crew_that_reaches` and the `project_stock` walk the verdict is written off all
+> bound their per-turn take by engagement (see "THE TWO CREW TARGETS" above and `project_stock`'s
+> `engage_total`), so the bound frame reads **`47 clear it now`** under a verdict naming the crew that
+> could draw the herd down at all — where it used to offer *"2 clear it now"* for a herd two hunters
+> would take 47 turns to clear, over a sentence promising the floor next turn. The pair of frames is
+> what pins BOTH halves: the bound one asserts the reach quotient and a `slow` verdict, the unbounded
+> one that the same herd answers the carry quotient and an `ok` verdict again, so the arm is seen to
+> DROP rather than merely shrink. Each half is sabotage-verified against a different mutation —
+> carry-only targets fail the two target assertions, a carry-only projection fails the verdict one.
 
 ### THE ASIDE'S TEACHING LINE — what the top half of the dial is FOR
 
@@ -906,6 +926,13 @@ stock further down every turn instead of settling above the floor, which is stri
 quotient's crew achieves. Frame + assertion: `forage_build_dip` (`7 clear it now` under `max 7 workers
 useful here`, the press asserted to land the stepper on 7).
 
+**BOTH PROJECTION-DERIVED FLOORS CARRY THE ENGAGEMENT PAIR, and that is what keeps this promise true
+on the animal web.** `hold_crew` / `reach_crew` read `engageRate` off the SOURCE and hand it to
+`crew_to_hold` / `crew_that_reaches` with the dip, so the numbers the cap floors on are the same ones
+the two pills render — a cap floored on a carry-only reading beside an engagement-aware target is the
+same "clickable target the stepper refuses" defect one layer down. A patch publishes no such field and
+a pen publishes `NO_ENGAGEMENT_STAGE`, so both floors answer exactly what they answered before.
+
 Workers above the *hold* number contribute nothing once the source is holding at its floor, and they
 are **still never released**: at-the-floor is the most **reversible** condition in the model — drop
 the floor, or let the season move the hold number, and they are wanted again — and this repo only
@@ -1012,13 +1039,22 @@ breath. Both sentences now read the ONE projection: the flag survives only if
 - **The gate is subtractive, and answers `true` where there is nothing to consult** — no capacity, no
   published curve, a rung-3 managed source — so a flag is never suppressed on the strength of a walk
   that was never taken.
-- **The hunt web asks it at `IMPROVEMENT_NONE`**, matching the takes that model quotes: every hunt
-  preview number is priced undipped (`herd_axis_rates` composes at the default improvement), and
-  gating a dipped drawdown against an undipped take would compare two different sheets. An undipped
-  projection falls faster, which leaves the flag standing — the safe direction for a gate.
+- **THE GATE WALKS THE VERDICT'S OWN PROJECTION, TERM FOR TERM — the live build verb AND the
+  engagement bound.** Both were once left out on the grounds that the gate is subtractive and a
+  faster-falling walk only leaves the flag standing, and both readings were wrong for the same
+  reason: a flag kept by a projection the panel does not believe is exactly the contradiction the
+  gate was introduced to remove. The dip went in when the takes stopped being priced undipped (see
+  "THE ANIMAL TAKE IS QUANTISED **AFTER** THE DIP"); the reach arm went in with the crew targets,
+  because a party that reaches 1.3 biomass of bird a turn against 2.5 of regrowth is not drawing the
+  herd down however much its carry says otherwise — carry-only, `herd_hunt_engagement_bound` would
+  fly `⚠ OVERDRAWS THE HERD` above *it settles at 84% and holds there*.
 - Frames + sabotage-verified assertions: `forage_build_dip` (rises → no flag) and
   `forage_build_dip_decline` (one more hand, falls → the flag returns). **Both halves, or the first
-  passes vacuously on a gate that silenced everything.**
+  passes vacuously on a gate that silenced everything.** The animal web's is
+  `herd_hunt_engagement_bound`, asserted as the **EQUALITY** of the gate's answer and the verdict's —
+  the pairing IS the claim, so a fixture that stops rising fails nothing while a gate that stops
+  agreeing fails at once — over a precondition that the carry-only walk says the opposite (it lands
+  on the floor, 0.805 → 0.500, where the bound walk climbs to 0.84).
 
 ### CLOSED — the patch's per-worker vector, and the derivation that stood in for it
 

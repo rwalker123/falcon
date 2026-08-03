@@ -1253,10 +1253,52 @@ static func peak_animal_drop(ceiling: float, body: float) -> int:
 static func engage_workers(ceiling: float, body: float, engage_rate: float, dip: float) -> int:
     if body <= 0.0:
         return 0
-    var reach := maxf(engage_rate, 0.0) * maxf(dip, 0.0)
-    if reach <= NO_ENGAGEMENT_STAGE or is_inf(reach):
+    var reach := engagement_per_worker(engage_rate, dip)
+    if is_inf(reach):
         return 0
     return ceili(float(peak_animal_drop(ceiling, body)) / reach)
+
+## **THE ANIMALS ONE WORKER BRINGS INTO CONTACT PER TURN** — `engageRate × dip`, and the ONE
+## composition of that pair every engagement quotient in this file divides by. It exists so the three
+## of them (the engagement crew above, the engagement carry below, and through it every crew target)
+## cannot be written against three spellings of one product.
+##
+## `ENGAGEMENT_UNBOUNDED` where there is no engagement stage at all — a pen, the whole plant web, a dip
+## of zero — so a caller drops the term with a `min()` or an `is_inf` rather than a per-site branch on
+## `NO_ENGAGEMENT_STAGE`. **The dip rides it** (`docs/plan_harvest_floor.md` §3.1): hands gentling a
+## herd are hands not stalking it.
+static func engagement_per_worker(engage_rate: float, dip: float) -> float:
+    var reach := maxf(engage_rate, 0.0) * maxf(dip, 0.0)
+    if reach <= NO_ENGAGEMENT_STAGE or is_inf(reach):
+        return ENGAGEMENT_UNBOUNDED
+    return reach
+
+## **THE BIOMASS ONE WORKER BRINGS INTO CONTACT PER TURN** — `bodyMass × engageRate × dip`, the
+## engagement stage's exact twin of the haul side's `perWorkerBiomass × dip`. Stating the reach in the
+## room's OWN units is what lets a crew target stay one quotient: the hands that move a room in a turn
+## are `room ÷ min(carry, this)`, because a take is bounded by both and the smaller one binds — which
+## is the sim's `min(carryable, engaged)` read backwards.
+##
+## `ENGAGEMENT_UNBOUNDED` for a source with no engagement stage AND for one with no body to count
+## (every forage patch), so `min(carry, …)` collapses to the carry alone and the plant web and the pens
+## are byte-identical to before this arm existed. That is the regression that matters most here.
+static func engagement_carry(body_mass: float, engage_rate: float, dip: float) -> float:
+    if body_mass <= 0.0:
+        return ENGAGEMENT_UNBOUNDED
+    var reach := engagement_per_worker(engage_rate, dip)
+    return ENGAGEMENT_UNBOUNDED if is_inf(reach) else body_mass * reach
+
+## **THE TAKE-SIDE CREW FOR A WHOLE-ANIMAL SOURCE** — `max(haul, engage)`, the client mirror of the
+## sim's `fauna::hunt_take_workers`, and the one place that `max` is written down. Two jobs, one crew,
+## two units: reach the animals, then carry them home. `max()`, never `+` — one crew covering its
+## busiest job.
+##
+## Units on `ceiling`/`body` are free (an animal count is a ratio), so this answers in biomass for the
+## crew targets and in the paid account for the worker cap, exactly as its two halves do.
+static func take_workers(ceiling: float, body: float, per_worker: float,
+        engage_rate: float, dip: float) -> int:
+    return maxi(haul_workers(ceiling, body, per_worker),
+        engage_workers(ceiling, body, engage_rate, dip))
 
 ## **HOW MANY ANIMALS THIS PARTY BRINGS INTO CONTACT THIS TURN** — the client mirror of the sim's
 ## `fauna::animals_engaged`, and the one definition of it, so no two readings of a herd can disagree
@@ -1286,12 +1328,22 @@ static func animals_engaged(workers: int, engage_rate: float, dip: float) -> flo
 ## is FLOORED on the reaching crew. The one-turn drain still wins wherever the room is large, which is
 ## the case the label was written for; a `reaching` of `NO_CREW_ANSWER` (no priceable crew, nothing
 ## standing above the floor) floors on nothing.
-static func crew_to_clear(room: float, carry: float, reaching: int) -> int:
+##
+## **THE ROOM IS DIVIDED BY WHAT A WORKER CAN MOVE, WHICH ON A HUNT IS NOT WHAT THEY CAN CARRY.**
+## `min(carry, engagement_carry)` is the sim's `min(carryable, engaged)` read backwards: a take is
+## bounded by both, so the crew that clears a room in one turn is set by the SMALLER of the two.
+## Reported from play on a Red Deer herd — six hunters carry sixteen deer (`6 × 40 ÷ 15`) and REACH
+## six (`6 × engageRate 1`), so `6 clear it now` named a crew that needed three turns, beside a worker
+## cap that had already become engagement-aware. A source with no engagement stage answers
+## `ENGAGEMENT_UNBOUNDED`, so the `min` collapses to the carry and forage and pens are unmoved.
+static func crew_to_clear(room: float, carry: float, reaching: int,
+        body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     if room <= 0.0:
         return 0
-    return maxi(maxi(1, ceili(room / carry)), maxi(reaching, 0))
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    return maxi(maxi(1, ceili(room / per_worker)), maxi(reaching, 0))
 
 ## ***HOLD IT AFTER*** — the crew that takes exactly what grows back at the floor, so the stock sits
 ## there: the interpolated regrowth at the floor over the same carry, **rounded up to one whole body
@@ -1301,15 +1353,21 @@ static func crew_to_clear(room: float, carry: float, reaching: int) -> int:
 ## `0` is a real answer with two causes, and both are worth stating: at floor `1.0` nothing is ever
 ## taken, and below a herd's Allee point the regrowth is NEGATIVE — there is no take that holds a
 ## stock which is falling on its own.
+##
+## **ON A WHOLE-ANIMAL SOURCE IT IS `take_workers`, NOT `haul_workers`** — the hands that hold a herd
+## have to REACH the regrowth as well as carry it, and on a light-bodied quarry reaching is by far the
+## larger of the two (the sim's `hunt_take_workers` `max`, one crew covering its busiest job). The
+## engagement half answers 0 for a pen and for a species with no engagement stage, so the `max`
+## collapses back to the haul crew and neither web moves.
 static func crew_to_hold(samples: PackedFloat32Array, floor: float, carry: float,
-        body_mass: float) -> int:
+        body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry):
         return NO_CREW_ANSWER
     var growth := regrowth_at(samples, clamp_floor(floor))
     if growth <= 0.0:
         return 0
     if body_mass > 0.0:
-        return haul_workers(growth, body_mass, carry)
+        return take_workers(growth, body_mass, carry, engage_rate, dip)
     return maxi(1, ceili(growth / carry))
 
 ## The same *hold it after* crew, resolved straight from a SOURCE — the form `forecast_inputs` carries
@@ -1325,9 +1383,11 @@ static func hold_crew(src: Dictionary, kind: String, prefix: String, floor: floa
         improvement: String) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
+    var dip := build_dip(src, prefix, improvement)
     var crew := crew_to_hold(regrowth_samples(src, prefix), floor,
-        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement),
-        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
+        per_worker_biomass(src, prefix) * dip,
+        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
     return maxi(crew, 0)
 
 ## The *reaching* crew — `crew_that_reaches` resolved straight from a SOURCE, in the form
@@ -1348,10 +1408,13 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
         improvement: String) -> int:
     if source_is_managed(src, kind, prefix):
         return 0
+    var dip := build_dip(src, prefix, improvement)
     var crew := crew_that_reaches(regrowth_samples(src, prefix),
         float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0)),
         float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0)), floor,
-        per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement))
+        per_worker_biomass(src, prefix) * dip,
+        float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+        float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip)
     return maxi(crew, 0)
 
 ## **THE PROJECTION** — the stock's trajectory under this crew at this floor, one turn at a time:
@@ -1363,8 +1426,17 @@ static func reach_crew(src: Dictionary, kind: String, prefix: String, floor: flo
 ## is `floor(ceiling / bodyMass)` — not linear, so no client may re-derive it, and `SourceYield.actual`
 ## on a committed assignment is the sim's answer. What is drawn here is the crew's smoothed carry
 ## against the source's own growth: a projection, never a promise.
+##
+## **IT DOES BOUND THE TAKE BY WHAT THE PARTY CAN REACH** (`docs/plan_hunt_through_combat.md` §2), and
+## that is not a quantisation — it is the third arm of the sim's own `min`. `engage_total` is the
+## BIOMASS the crew brings into contact in a turn (`engaged_quantum(workers, bodyMass, …)`, i.e. the
+## floored whole-animal count times the body), so the walk descends at the rate the sim would actually
+## pay rather than at the rate the crew could carry. `ENGAGEMENT_UNBOUNDED` — the default, and what a
+## pen and the whole plant web resolve to — drops the arm and leaves every existing caller's walk
+## byte-identical.
 static func project_stock(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry_total: float) -> Dictionary:
+        floor: float, carry_total: float,
+        engage_total: float = ENGAGEMENT_UNBOUNDED) -> Dictionary:
     var series := PackedFloat32Array()
     var reached := PROJECTION_REACHED_NONE
     if capacity <= 0.0:
@@ -1372,13 +1444,15 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
     var stock := clampf(biomass, 0.0, capacity)
     var start_fraction := stock / capacity
     var floor_fraction := clamp_floor(floor)
+    # What this crew can move in one turn: the smaller of what it CARRIES and what it REACHES.
+    var crew_take := minf(maxf(carry_total, 0.0), maxf(engage_total, 0.0))
     series.push_back(start_fraction)
     for turn in range(PROJECTION_HORIZON_TURNS):
         # REGROW — the curve's own answer at this stock, sign and all. A negative sample is a decline
         # the crew did not cause and cannot stop.
         stock = clampf(stock + regrowth_at(samples, stock / capacity), 0.0, capacity)
-        # TAKE — the escapement room, capped by what the crew can carry.
-        stock = maxf(0.0, stock - minf(maxf(carry_total, 0.0),
+        # TAKE — the escapement room, capped by what the crew can carry and reach.
+        stock = maxf(0.0, stock - minf(crew_take,
             maxf(0.0, stock - floor_fraction * capacity)))
         var fraction := stock / capacity
         series.push_back(fraction)
@@ -1397,8 +1471,13 @@ static func project_stock(samples: PackedFloat32Array, biomass: float, capacity:
 ## must out-carry the largest regrowth in the band it has to cross); the probe steps past it only
 ## cover reaching that equilibrium within the drawn horizon. `NO_CREW_ANSWER` when the throughput
 ## cannot be priced or no crew inside the probe reaches it.
+##
+## **THE CREW HAS TO OUT-TAKE THAT REGROWTH, AND ON A HUNT ITS TAKE IS BOUNDED BY REACH** — so the
+## closed form divides by `min(carry, engagement_carry)` and each probe walks a projection carrying
+## the same bound. Dividing by the carry alone named a crew that cannot draw the herd down at all,
+## which is the number the verdict offers as the remedy and the number the *clear* target floors on.
 static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capacity: float,
-        floor: float, carry: float) -> int:
+        floor: float, carry: float, body_mass: float, engage_rate: float, dip: float) -> int:
     if not can_price_crew(carry) or capacity <= 0.0:
         return NO_CREW_ANSWER
     var start_fraction := clampf(biomass / capacity, 0.0, 1.0)
@@ -1406,9 +1485,11 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
     if start_fraction <= floor_fraction:
         return 0
     var peak := peak_regrowth_between(samples, floor_fraction, start_fraction)
-    var need := maxi(1, floori(maxf(peak, 0.0) / carry) + 1)
+    var per_worker := minf(carry, engagement_carry(body_mass, engage_rate, dip))
+    var need := maxi(1, floori(maxf(peak, 0.0) / per_worker) + 1)
     for _step in range(CREW_PROBE_STEPS):
-        var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry)
+        var walk := project_stock(samples, biomass, capacity, floor, float(need) * carry,
+            engaged_quantum(need, body_mass, engage_rate, dip))
         if int(walk["reached_turn"]) != PROJECTION_REACHED_NONE:
             return need
         need += 1
@@ -1428,6 +1509,15 @@ static func crew_that_reaches(samples: PackedFloat32Array, biomass: float, capac
 ## capacity, no published curve, or a rung-3 managed one has no drawdown projection at all, so the
 ## flag is left exactly as it was rather than suppressed on the strength of a walk that was never
 ## taken.
+##
+## **IT WALKS THE ENGAGEMENT-BOUND PROJECTION, THE SAME ONE THE VERDICT IS WRITTEN OFF.** The gate and
+## the sentence beneath it are two readings of ONE walk — that is the whole point of the gate — so a
+## carry-only walk here would fall where the verdict's rises and put `⚠ overdraws the herd` back above
+## *it settles at 84% and holds there*, in the one case the arm exists for: a party that cannot reach
+## what it could carry. It is not the safe direction either, however subtractive the gate is; a flag
+## kept by a projection the panel does not believe is the same contradiction the flag was gated to
+## remove. A source with no engagement stage resolves to `ENGAGEMENT_UNBOUNDED` and walks exactly the
+## carry-bound projection it always did.
 static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor: float,
         workers: int, improvement: String) -> bool:
     var capacity := float(src.get(prefix + FORECAST_CAPACITY_KEY, 0.0))
@@ -1436,9 +1526,13 @@ static func take_draws_down(src: Dictionary, kind: String, prefix: String, floor
             or source_is_managed(src, kind, prefix):
         return true
     var biomass := float(src.get(prefix + FORECAST_BIOMASS_KEY, 0.0))
-    var carry := per_worker_biomass(src, prefix) * build_dip(src, prefix, improvement)
+    var dip := build_dip(src, prefix, improvement)
+    var carry := per_worker_biomass(src, prefix) * dip
+    var crew := maxi(workers, 0)
     var walk := project_stock(samples, biomass, capacity, clamp_floor(floor),
-        float(maxi(workers, 0)) * carry)
+        float(crew) * carry,
+        engaged_quantum(crew, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)),
+            float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE)), dip))
     return float(walk["settled_fraction"]) \
         < clampf(biomass / capacity, 0.0, 1.0) - STOCK_FRACTION_EPSILON
 
@@ -1697,13 +1791,21 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
     # come from two different reads.
     var dip := build_dip(src, prefix, improvement)
     var carry := per_worker_biomass(src, prefix) * dip
-    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry)
-    var hold := crew_to_hold(samples, floor_value, carry, float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0)))
-    var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry)
-    # Bound once and passed BOTH to the verdict and out on the model: the flag draws from the model
-    # and the verdict is composed here, so a second read of the same two keys is how the sheet ends up
-    # naming one threshold in two units. See `stock_face`.
+    # Bound once and passed to EVERYTHING below — the walk, all three crew targets, the verdict and
+    # out on the model. The flag draws from the model and the verdict is composed here, so a second
+    # read of the same keys is how the sheet ends up naming one threshold in two units
+    # (see `stock_face`) — and, since `9f716262`, how the targets end up carry-only beside a worker
+    # cap and a per-turn take that are not.
     var body_mass := float(src.get(prefix + FORECAST_BODY_MASS_KEY, 0.0))
+    # **THE THIRD BOUND ON A HUNT TAKE** (`docs/plan_hunt_through_combat.md` §2). A patch publishes no
+    # such field and a pen publishes `NO_ENGAGEMENT_STAGE`, so both read as unbounded and every number
+    # composed below is exactly what it was before the arm existed.
+    var engage_rate := float(src.get(prefix + FORECAST_ENGAGE_RATE_KEY, NO_ENGAGEMENT_STAGE))
+    var walk := project_stock(samples, biomass, capacity, floor_value, float(workers) * carry,
+        engaged_quantum(workers, body_mass, engage_rate, dip))
+    var hold := crew_to_hold(samples, floor_value, carry, body_mass, engage_rate, dip)
+    var reaching := crew_that_reaches(samples, biomass, capacity, floor_value, carry, body_mass,
+        engage_rate, dip)
     var quarry := herd_display_name(src) if kind == SOURCE_KIND_HERD else ""
     return {
         "known": true,
@@ -1729,7 +1831,8 @@ static func floor_chart_model(src: Dictionary, kind: String, prefix: String, flo
         "body_mass": body_mass,
         "quarry": quarry,
         "learn_multiplier": learn_multiplier(floor_value),
-        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching),
+        "crew_to_clear": crew_to_clear(escapement_room(src, prefix, floor_value), carry, reaching,
+            body_mass, engage_rate, dip),
         "crew_to_hold": hold,
         # **THE DIP THE TWO TARGETS ABOVE WERE DIVIDED BY** (§3.1), carried so the crew row can SAY
         # it. Every impossible-looking number on a building sheet follows from it — six foragers move
@@ -2180,12 +2283,12 @@ static func max_useful_workers(forecast: Dictionary) -> int:
         # busiest job. Sizing it on carry alone told a Wild Fowl player "max 2 workers useful here"
         # while ~470 birds stood above the floor and each hunter reached ten of them — the advice was
         # backwards, and it was backwards for the whole life of the engagement field's absence.
-        # `engage_workers` answers 0 for a pen and for a species with no engagement stage, so the
-        # `max()` collapses to the haul crew exactly as it always did.
-        return maxi(maxi(haul_workers(ceiling, per_animal, per_worker),
-            engage_workers(ceiling, per_animal,
-                float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-                float(forecast.get("dip", NO_BUILD_DIP)))), hold)
+        # `take_workers` answers the haul crew alone for a pen and for a species with no engagement
+        # stage, exactly as this line did before that `max` had a name of its own — and it now has
+        # one because `crew_to_hold` asks the same question about the regrowth.
+        return maxi(take_workers(ceiling, per_animal, per_worker,
+            float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+            float(forecast.get("dip", NO_BUILD_DIP))), hold)
     return maxi(int(ceilf(ceiling / per_worker)), hold)
 
 ## The herding crew this herd demands, as a FLOOR on a local-hunt worker cap — the one definition,
@@ -2280,11 +2383,24 @@ static func expected_yield(forecast: Dictionary, workers: int, band: Dictionary)
 ## with **no whole-animal quantum** at all (fodder, which no animal pays). Neither is "reaches
 ## nothing", and treating either as zero would collapse a take the sim pays in full.
 static func engagement_reach(forecast: Dictionary, workers: int, per_animal_key: String) -> float:
-    var per_animal := float(forecast.get(per_animal_key, 0.0))
+    return engaged_quantum(workers, float(forecast.get(per_animal_key, 0.0)),
+        float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
+        float(forecast.get("dip", NO_BUILD_DIP)))
+
+## The same arm with its quantum handed in rather than looked up — the form the CHART's projection
+## needs, whose quantum is `bodyMass` (the curve, the room and the throughput are all biomass there)
+## rather than an account's `*_per_animal`. `engagement_reach` is this function reading a forecast, so
+## the sheet's take and the chart's projection bound themselves on ONE definition.
+##
+## **IT BOUNDS THE WHOLE-ANIMAL COUNT AND THEN CONVERTS**, never the other way about: `animals_engaged`
+## floors `workers × engageRate × dip` to whole animals exactly as the sim does, and the quantum is
+## applied to that count. Multiplying first and flooring after can land a whole engagement one animal
+## short on a rounding.
+static func engaged_quantum(workers: int, per_animal: float, engage_rate: float,
+        dip: float) -> float:
     if per_animal <= 0.0:
         return ENGAGEMENT_UNBOUNDED
-    return animals_engaged(workers, float(forecast.get("engage_rate", NO_ENGAGEMENT_STAGE)),
-        float(forecast.get("dip", NO_BUILD_DIP))) * per_animal
+    return animals_engaged(workers, engage_rate, dip) * per_animal
 
 ## The same take on ANY ONE account (#426). `min(workers × per_worker, ceiling)` is applied PER
 ## COMPONENT, never to a total: the sim caps each account against its own ceiling, and a patch whose
