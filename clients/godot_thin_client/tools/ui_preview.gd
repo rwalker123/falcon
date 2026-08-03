@@ -54,8 +54,10 @@ const PREVIEW_EVENT_PREFS_PATH := "user://ui_preview_event_prefs.cfg"
 # check for it (autoloads are registered when the harness runs as a scene, which
 # --check-only cannot do).
 const MAP_VIEW_SCRIPT := preload("res://src/scripts/MapView.gd")
-## Preloaded for its STATIC `escape_claimant` alone (the ESC precedence chain, extracted so the order
-## can be asserted without standing up the whole app scene) — Main is never instanced here.
+## Preloaded for its STATICS alone — Main is never instanced here. Each was extracted so an ORDER or a
+## wording `Main` owns can be asserted without standing up the whole app scene: `escape_claimant` (the
+## ESC precedence chain), `format_abandon_improvement`, and `apply_event_dock_frame` (the event dock's
+## reset → current turn → retention → ingest sequence).
 const MAIN_SCRIPT := preload("res://src/scripts/Main.gd")
 ## Injected for ONE state (`tile_panel_band`) and released again: a selected player band's detail
 ## renders into this panel, so it is the only way to render the drawer's "it went over there"
@@ -6095,6 +6097,41 @@ func _ready() -> void:
 	_assert_hud("rollback: …and the pre-rollback row it replaced is gone, not stacked beside it",
 		_preview_event_label_count(event_dock, EVENT_DOCK_ROLLBACK_BEFORE_LABEL) == 0)
 
+	# THE FULL FRAME'S TURN IS THE DOCK'S CURRENT TURN — the ordering twin of the clear above.
+	# `reset()` sets `_current_turn = -1` and `set_current_turn` only ever RAISES it, so stamping the
+	# turn BEFORE the clear is simply erased: the dock's idea of "now" then decays to the newest
+	# RETAINED event's tick — or `-1` on an empty ring, where `_prune()` no-ops entirely — and a
+	# client-side `note_system` posted before the next frame is stamped, and grouped in the expanded
+	# log, under a turn it did not happen on.
+	#
+	# **Driven through `Main.apply_event_dock_frame`, the shipped sequence itself.** An assertion that
+	# re-typed reset → turn → retention → ingest here would pass on whatever order `Main` chose, which
+	# is the only thing under test. Read off `_current_turn` and the stored row's `tick`, never off the
+	# rendered rows: the stamp is applied at ingest, and a render-scoped read narrows to whichever turn
+	# groups the log happens to be showing.
+	MAIN_SCRIPT.apply_event_dock_frame(event_dock, _event_dock_resync_frame(), false)
+	# The premise first. If the frame's own event were pruned away, "the newest retained event's tick"
+	# would be a claim about an empty ring and the turn assertion below would prove nothing.
+	_assert_hud("resync: the full frame's own event is retained",
+		_preview_event_label_count(event_dock, EVENT_DOCK_RESYNC_LABEL) == 1)
+	_assert_hud("full snapshot: the dock's current turn is the FRAME's turn, not the newest event's tick",
+		event_dock._current_turn == EVENT_DOCK_RESYNC_TURN)
+	event_dock.note_system(EVENT_DOCK_RESYNC_NOTE_LABEL)
+	_assert_hud("…so a client note posted after that frame is stamped with the frame's turn",
+		_preview_event_tick(event_dock, EVENT_DOCK_RESYNC_NOTE_LABEL) == EVENT_DOCK_RESYNC_TURN)
+	# THE EMPTY-RING CASE, which no ingested event can rescue: nothing is appended, so the current turn
+	# is whatever the sequence left behind — the frame's turn, or the `-1` that renders as `T—`.
+	MAIN_SCRIPT.apply_event_dock_frame(event_dock, _event_dock_empty_ring_frame(), false)
+	_assert_hud("full snapshot with an EMPTY ring: the current turn is still the frame's turn",
+		event_dock._current_turn == EVENT_DOCK_EMPTY_RING_TURN)
+	event_dock.note_system(EVENT_DOCK_EMPTY_RING_NOTE_LABEL)
+	_assert_hud("…and a note on an empty ring is stamped with it, not left unstamped",
+		_preview_event_tick(event_dock, EVENT_DOCK_EMPTY_RING_NOTE_LABEL) == EVENT_DOCK_EMPTY_RING_TURN)
+	# Hand the retention window back to the shipped default: the frames below print it in the expanded
+	# log's footer, and this block's fixture deliberately states a different one to keep the sequence's
+	# retention step live rather than early-outing on an unchanged value.
+	event_dock.set_retention_turns(EventDockPanel.DEFAULT_RETENTION_TURNS)
+
 	# A `seq` of ZERO is a SENTINEL, not a key: it is the FlatBuffers default and means the row never
 	# went through `CommandEventLog::push`. Keyed on, every such row would collide onto one. Two rows
 	# that differ only in label must therefore both survive.
@@ -7971,6 +8008,52 @@ func _preview_visible_label_count(dock: EventDockPanel, label: String) -> int:
 		if String(event["label"]) == label:
 			count += 1
 	return count
+
+## The tick one RETAINED row carries — the stamp `note_system` took off the dock's current turn.
+## Read off the accumulator like its label twin, because the claim is about the stamp applied at
+## ingest and not about which turn group the log happens to be drawing.
+func _preview_event_tick(dock: EventDockPanel, label: String) -> int:
+	for event in dock._events:
+		if String(event["label"]) == label:
+			return int(event["tick"])
+	return EVENT_DOCK_TICK_ABSENT
+
+## The two FULL-FRAME fixtures for the current-turn ordering, as `Main._apply_snapshot` sees a frame.
+##
+## The resync one is the reported failure made concrete: a resync at turn 500 whose newest retained
+## event is five turns old. The gap is what makes the two orders answer differently — with the stamp
+## taken before the clear, the dock's current turn decays to 495.
+##
+## The retention window is stated, and it is deliberately NOT `DEFAULT_RETENTION_TURNS`: an unchanged
+## value early-outs of `set_retention_turns`, which would leave that step of the sequence inert here.
+## It is wide enough that the turn-495 row survives the prune at turn 500 — the premise the first
+## assertion checks rather than assumes.
+const EVENT_DOCK_TICK_ABSENT := -9999
+const EVENT_DOCK_RESYNC_TURN := 500
+const EVENT_DOCK_RESYNC_EVENT_TICK := 495
+const EVENT_DOCK_RESYNC_RETENTION := 30
+const EVENT_DOCK_RESYNC_SEQ := 901
+const EVENT_DOCK_RESYNC_LABEL := "The herd moved north"
+const EVENT_DOCK_RESYNC_NOTE_LABEL := "Command socket restored"
+## The empty-ring frame: a later turn, a ring the retention window has emptied. Nothing is ingested,
+## so only the sequence itself can leave the dock knowing what turn it is.
+const EVENT_DOCK_EMPTY_RING_TURN := 512
+const EVENT_DOCK_EMPTY_RING_NOTE_LABEL := "Resync requested (unapplicable delta)"
+
+func _event_dock_resync_frame() -> Dictionary:
+	return {
+		"turn": EVENT_DOCK_RESYNC_TURN,
+		"command_events_retention_turns": EVENT_DOCK_RESYNC_RETENTION,
+		"command_events": [{"tick": EVENT_DOCK_RESYNC_EVENT_TICK, "kind": "migrated", "faction": 0,
+			"label": EVENT_DOCK_RESYNC_LABEL, "detail": "", "seq": EVENT_DOCK_RESYNC_SEQ}],
+	}
+
+func _event_dock_empty_ring_frame() -> Dictionary:
+	return {
+		"turn": EVENT_DOCK_EMPTY_RING_TURN,
+		"command_events_retention_turns": EVENT_DOCK_RESYNC_RETENTION,
+		"command_events": [],
+	}
 
 ## The rollback fixture pair: two batches REUSING the same `seq` values with different labels, which
 ## is exactly what a restored `CommandEventLog` replays (its `next_seq` counter is checkpoint state).

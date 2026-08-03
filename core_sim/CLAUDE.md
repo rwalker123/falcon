@@ -83,7 +83,7 @@ the top of this file for the test.
 
 | File | Purpose |
 |------|---------|
-| `src/data/simulation_config.json` | Grid size, environmental tuning, trade/power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting), `command_events_retention_turns` (see `event-feed.md`) |
+| `src/data/simulation_config.json` | Grid size, environmental tuning, trade/power/corruption multipliers, TCP bind addresses (see `SIM_PORT_BASE` under Environment Overrides for per-checkout port shifting) |
 | `src/data/map_presets.json` | World generation tuning parameters |
 | `src/data/start_profiles.json` | Campaign initialization (units, inventory, knowledge tags) |
 | `src/data/victory_config.json` | Victory mode thresholds and `continue_after_win` flag |

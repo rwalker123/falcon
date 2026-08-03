@@ -193,7 +193,6 @@ var _telling: TellingPanel = null
 # Victory's counterpart to the legend's `legend_suppressed` — the player-hidden state of a dock
 # card, distinct from "no victory data to show".
 var _victory_suppressed: bool = PANEL_SUPPRESSED_BY_DEFAULT
-var localization_store = null
 var victory_state: Dictionary = {}
 # "What the player is looking at" — the selection triplet, lit-row kind, roster, sticky-selection
 # guard. Every former `_selected_*` / `_roster_*` / `_selection.choice_tile()` member lives here now.
@@ -521,9 +520,6 @@ func _refresh_build_overlay() -> void:
 func update_build_info(server_build: String) -> void:
     _server_build = server_build if server_build != "" else "?"
     _refresh_build_overlay()
-
-func set_localization_store(store) -> void:
-    localization_store = store
 
 func update_victory_state(state: Dictionary) -> void:
     print("[HUD] update_victory_state: ", state.keys())

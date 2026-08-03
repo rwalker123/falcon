@@ -3,7 +3,6 @@ extends Node2D
 const SnapshotLoader = preload("res://src/scripts/SnapshotLoader.gd")
 const CommandClient = preload("res://src/scripts/CommandClient.gd")
 const ScriptHostManager = preload("res://src/scripts/scripting/ScriptHostManager.gd")
-const LocalizationStore = preload("res://src/scripts/LocalizationStore.gd")
 const ServerPortsFile = preload("res://src/scripts/ServerPortsFile.gd")
 const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 
@@ -33,7 +32,6 @@ var _reveal_baseline_epoch: int = 0
 var _world_epoch_applied: int = 0
 var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
-var localization_store: LocalizationStore = null
 # Per-HUD-method time accumulated during one `_apply_snapshot` fan-out, in microseconds. Filled by
 # `_hud_invoke` only while `_hud_profiling` is up (i.e. inside the fan-out block), drained by
 # `_record_hud_calls`.
@@ -154,8 +152,6 @@ func _ready() -> void:
     if ext == null:
         push_warning("ShadowScale Godot extension not found; streaming disabled.")
     snapshot_loader = SnapshotLoader.new()
-    localization_store = LocalizationStore.new()
-    localization_store.load_default()
     # Loading gate: capture the last-revealed world epoch (persisted across Main.tscn reloads by the
     # GameLaunch autoload) as the reveal baseline, show the loading overlay, and hold the blank
     # map/HUD behind it until a FULL snapshot with a higher epoch (the freshly generated world)
@@ -202,7 +198,6 @@ func _ready() -> void:
     script_host_manager.setup(command_client)
     if inspector != null and inspector.has_method("attach_script_host"):
         inspector.call("attach_script_host", script_host_manager)
-    _hud_invoke("set_localization_store", [localization_store])
 
     # Wire HUD reference to MapView for embedded minimap (must happen before first snapshot)
     if map_view != null and map_view.has_method("set_hud_reference") and hud != null:
@@ -496,9 +491,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # is not expected to skip; the wins are the quiet sections — `intensification_knowledge`,
     # `discovered_sites`, `faction_inventory`, `food_modules`, `sedentarization`.
     _hud_invoke("update_overlay", [snapshot.get("turn", 0), metrics])
-    # The turn a client-side System event is stamped with, so it groups with the sim events of the
-    # turn it actually happened on.
-    _event_dock_invoke("set_current_turn", [int(snapshot.get("turn", 0))])
     if snapshot.has("server_build"):
         _hud_invoke("update_build_info", [String(snapshot["server_build"])])
     if snapshot.has("sedentarization") and SnapshotSections.changed(snapshot, "sedentarization"):
@@ -540,25 +532,13 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
     # `command_events` is PER-FRAME HISTORY, never reconstructible: a delta carries only the rows
     # appended since the baseline, a full snapshot carries the whole retained ring. Both consumers
     # (the Telling, and the event dock) accumulate and de-duplicate, so re-ingesting a full
-    # snapshot's ring is harmless.
-    #
-    # **THE DOCK IS CLEARED ON EVERY FULL SNAPSHOT, BEFORE THAT SNAPSHOT'S EVENTS ARE APPLIED**, and
-    # the order is the contract — the same frame carries the backfill, so clearing after the dispatch
-    # would wipe what just landed. It is a correctness requirement, not hygiene: `CommandEventLog` is
-    # checkpoint state, so a ROLLBACK restores it including its `next_seq` counter and the replayed
-    # events reuse sequence numbers the client has already seen. A rollback publishes a full frame, so
-    # without this clear the dock would suppress every replayed row as a duplicate `seq` and go on
-    # showing a plausible but stale log, silently. (The Telling is deliberately NOT reset here — it
-    # keeps its own scrolled-off history and de-dupes on a signature, not on `seq`.)
-    if not is_delta:
-        _event_dock_invoke("reset")
-    # Retention BEFORE the ingest: the sim's window is hot-reloadable, so a frame can both narrow it
-    # and carry the events that must be trimmed against the NEW value.
-    if snapshot.has("command_events_retention_turns"):
-        _event_dock_invoke("set_retention_turns", [int(snapshot["command_events_retention_turns"])])
+    # snapshot's ring is harmless. (The Telling is deliberately NOT reset on a full frame — it keeps
+    # its own scrolled-off history and de-dupes on a signature, not on `seq`.)
     if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
         _hud_invoke("ingest_command_events", [snapshot["command_events"]])
-        _event_dock_invoke("ingest_events", [snapshot["command_events"]])
+    # The dock's four per-frame steps are one seam, because their ORDER is the contract and stating
+    # it in one place is what keeps it stated at all — see `apply_event_dock_frame`.
+    apply_event_dock_frame(event_dock, snapshot, is_delta)
     if snapshot.has("victory") and SnapshotSections.changed(snapshot, "victory"):
         var victory_variant: Variant = snapshot["victory"]
         if victory_variant is Dictionary:
@@ -1171,8 +1151,8 @@ func _update_band_panel_edge_offset() -> void:
 ## `custom_minimum_size.x` off the scene), so the bar's edges are a function of constants and cannot
 ## move when the player selects a tile or a metric gains a digit.
 ##
-## **This is not `RESERVER_PRIORITY`.** That orders reservers stacked ALONG one shared edge (the dock
-## is 0 there, so it still hugs its own edge); this is the cross axis, where there is no stacking
+## **This is not `RESERVER_PRIORITY`.** That orders reservers stacked ALONG one shared edge, and the
+## dock is not in it at all — it reserves nothing. This is the cross axis, where there is no stacking
 ## question — a vertical column simply takes room the horizontal bar may not use. Conflating the two
 ## is the easy mistake: priority would never have fixed this, because TOP and LEFT are not co-edge and
 ## `_update_band_panel_edge_offset` correctly ignores each other's edges.
@@ -1229,14 +1209,17 @@ func _connect_band_city_panel() -> void:
 func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
     _apply_reservation(&"band_panel", edge, size)
 
-## Wire the event dock onto the reservation fan-out and seed its initial reservation (the panel's
-## own startup emit happens before we are ready, exactly as with the Band/City panel, so query it).
-## Its priority is 0, so it always hugs its edge and never needs an edge offset of its own.
+## Wire the event dock's CONTENT inlets — the HUD's own System notes, the HUD's band roster, the
+## Inspector's console chatter — and seed the one geometry it does take, its perpendicular insets.
+##
+## **THERE IS NO RESERVATION TO FAN OUT.** Unlike the Band/City panel, the dock overlays the map and
+## reserves nothing: it has no entry in `_reservations`, no row in `RESERVER_PRIORITY` (whose `0` is
+## the Inspector's), and publishes neither `reservation_changed` nor `current_reservation_size()`, so
+## nothing here touches `_apply_reservation`. It is bounded on the OTHER axis instead — see
+## `_update_event_dock_insets`.
 func _connect_event_dock() -> void:
     if event_dock == null:
         return
-    # **The dock is wired for CONTENT ONLY — there is no reservation to fan out.** It overlays the
-    # map rather than reserving an edge, so nothing here touches `_apply_reservation`.
     # The HUD's own client-side notes (a quick-hunt refusal, a knowledge unlock, an unanswered fork)
     # used to land in the command feed. They are System-channel events now, and the HUD relays them
     # rather than reaching for a panel it does not own.
@@ -1498,11 +1481,50 @@ func _snapshot_is_delta(snapshot: Dictionary) -> bool:
             return true
     return false
 
+## Everything one snapshot frame owes the event dock, in the ONE order that is correct:
+## **RESET → CURRENT TURN → RETENTION → INGEST**. Each arrow is load-bearing.
+##
+## - **`reset()` first, and on a FULL frame only.** It is a correctness requirement rather than
+##   hygiene: `CommandEventLog` is checkpoint state, so a ROLLBACK restores it including its
+##   `next_seq` counter and the replayed events reuse sequence numbers the client has already seen.
+##   A rollback publishes a full frame, so without the clear the dock suppresses every replayed row
+##   as a duplicate `seq` and goes on showing a plausible but stale log, silently. It must still be
+##   the FIRST step, because the same frame carries the backfill and clearing after the dispatch
+##   would wipe what just landed.
+## - **The current turn AFTER the reset.** `reset()` sets `_current_turn = -1` and `set_current_turn`
+##   only ever RAISES it, so stamping the turn ahead of the clear is simply erased — after which the
+##   dock's "current turn" is whatever the newest INGESTED event's tick happened to be (or `-1` on an
+##   empty ring, where `_prune()` then no-ops entirely). A client-side `note_system` posted before the
+##   next frame would then be stamped and grouped under a turn that is not the one it happened on.
+## - **Retention BEFORE the ingest**: the sim's window is hot-reloadable, so a frame can both narrow
+##   it and carry the events that must be trimmed against the NEW value.
+## - **The ingest last**, since it is what the other three configure.
+##
+## `static`, taking the dock, so `tools/ui_preview.gd` can drive this exact sequence against a real
+## `EventDockPanel` with no `Main` in the tree — the same named-seam pattern
+## `tools/snapshot_alias_guard.gd` uses on `MapView`'s ingests. An assertion that re-typed the order
+## in the harness would pass on any order this function chose.
+static func apply_event_dock_frame(dock: Node, snapshot: Dictionary, is_delta: bool) -> void:
+    if dock == null:
+        return
+    if not is_delta:
+        _dock_invoke(dock, "reset")
+    # The turn a client-side System event is stamped with, so it groups with the sim events of the
+    # turn it actually happened on.
+    _dock_invoke(dock, "set_current_turn", [int(snapshot.get("turn", 0))])
+    if snapshot.has("command_events_retention_turns"):
+        _dock_invoke(dock, "set_retention_turns", [int(snapshot["command_events_retention_turns"])])
+    if snapshot.has("command_events") and SnapshotSections.changed(snapshot, "command_events"):
+        _dock_invoke(dock, "ingest_events", [snapshot["command_events"]])
+
 ## The event dock's twin of `_hud_invoke` — a silent `has_method` probe, so a client running
 ## without the panel (a harness, a partial scene) simply does nothing rather than erroring.
 func _event_dock_invoke(method: String, args: Array = []) -> void:
-    if event_dock != null and event_dock.has_method(method):
-        event_dock.callv(method, args)
+    _dock_invoke(event_dock, method, args)
+
+static func _dock_invoke(dock: Node, method: String, args: Array = []) -> void:
+    if dock != null and dock.has_method(method):
+        dock.callv(method, args)
 
 func _hud_invoke(method: String, args: Array = []) -> Variant:
     var result: Variant = null

@@ -16,7 +16,7 @@ to keep closed.
 
 | Script | Purpose |
 |--------|---------|
-| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM`, reserving its edge through the registry (`reservation_changed(edge, size)` → `Main._apply_reservation(&"event_dock", …)`) exactly as `BandCityPanel` does. Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
+| `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM` that **overlays the map and reserves nothing** (see "THE BAR RESERVES NOTHING" — it is not a reserver, and it publishes neither `reservation_changed` nor `current_reservation_size()`). It is bounded horizontally by the OTHER reservers plus the HUD's own columns via `set_perpendicular_insets`. Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
 | `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
 
 ## Three questions, kept apart
@@ -222,8 +222,14 @@ carrying `seq: 0` do not collide.
 
 ## THE DOCK IS CLEARED ON EVERY FULL SNAPSHOT, AND THAT IS CORRECTNESS
 
-`Main._apply_snapshot`: `if not is_delta: _event_dock_invoke("reset")`, **before** that snapshot's
-events are ingested.
+The whole per-frame sequence is `Main.apply_event_dock_frame(dock, snapshot, is_delta)` — **RESET →
+CURRENT TURN → RETENTION → INGEST**, in one function because every arrow in it is load-bearing and a
+sequence spread across a fan-out is one where nobody can see the order. It is `static` and takes the
+dock so `ui_preview` can drive the shipped sequence itself; an assertion that re-typed the order in
+the harness would pass on whatever order `Main` chose, which is the only thing under test.
+
+The clear comes first, and on a full frame only: `if not is_delta: reset()`, **before** that
+snapshot's events are ingested.
 
 `CommandEventLog` is checkpoint state, so a **rollback** restores it *including* its `next_seq`
 counter — the replayed events therefore reuse sequence numbers the client has already seen. A
@@ -244,6 +250,26 @@ full snapshot.
 `ui_preview` drives the regression directly: a batch, a `reset()` (what the full frame does), then
 rows REUSING those `seq` values with different labels, asserting the new rows are what the dock holds
 and the replaced ones are gone. Sabotage-verified by making `reset()` keep `_seen_seq`.
+
+### …so THE CURRENT TURN IS SET AFTER THE CLEAR, NOT BEFORE IT
+
+`reset()` sets `_current_turn = -1` and `set_current_turn` only ever **raises** it, so a stamp taken
+ahead of the clear is simply erased. What the dock then calls "now" is whatever the newest INGESTED
+event's tick happened to be — or `-1` on an empty ring, where `_prune()` no-ops entirely until the
+next snapshot. A resync at turn 500 whose newest retained event is turn 495 leaves a client-side
+`note_system` posted before the next frame stamped `T495` and grouped under Turn 495 in the expanded
+log; on an empty ring it is stamped with nothing at all.
+
+The two orderings are not in tension — the clear stays first for the rollback reason above, and the
+turn follows it — which is exactly why they live in one function rather than at two points of a
+fan-out, where this ordering was wrong for the life of the feature.
+
+`ui_preview` asserts it through `apply_event_dock_frame` on both ring states, reading `_current_turn`
+and the stored row's `tick` rather than the rendered rows (the stamp is applied at ingest; a
+render-scoped read narrows to whichever turn groups the log is drawing). Sabotage-verified by putting
+`set_current_turn` back ahead of the clear: four assertions fail, and the fixture's
+"the frame's own event is retained" premise correctly stays green, since it is a claim about the
+retention window and not about the order.
 
 ## The dock names a band the way the rest of the HUD does
 
@@ -357,9 +383,12 @@ of two feet of screen and its detail at the other and the pair read as two unrel
 made the reservation untenable — see "THE BAR RESERVES NOTHING" above.)
 
 **The number is chosen against two measurements and the larger wins.** The widest row the shipped
-fixtures produce at the current font sizes is **594px** — a predator raid, `A Grey Wolf raid cost 2
-lives` beside `Killed 2.000 · Wounded 1.000 · Warriors 3 · Grey Wolf` — which with the expander (86)
-and the card chrome (31) needs **711**. But the band between the two HUD columns at the project's own
+fixtures produce at the current font sizes is **537px** — a predator raid, `Grey wolves took two from
+Ashfoot` beside `Wounded 1 · Warriors 3 · Grey Wolf` — which with the expander (86) and the card
+chrome (31) needs **654**. (It measured 594/711 when this was first written, against a row that still
+read `Killed 2.000 · …`; hiding the label's own `killed` and trimming the wire's `{:.3}` shortened it.
+The **code comment on `MAX_STRIP_WIDTH` is the current figure** — re-measure there, not here, if the
+font sizes move again.) But the band between the two HUD columns at the project's own
 1920 base canvas is **1216**, and the ordinary case must render *unchanged*: a cap below that would
 shrink the bar on every desktop to fix a complaint about ultrawides. So the cap sits just above the
 base-canvas band at **1280** — no content is ever squeezed, nothing moves at 1920 or below, and past
@@ -379,21 +408,23 @@ Two separate rules, both learned elsewhere in this HUD:
   second finding. `ui_preview` asserts BOTH ways the dock can grow (the widest bar with the log
   closed, and the log open, which collapses the bar to one title line) against the cap, as a pair —
   they are alternatives rather than addends, so neither is the worst case by inspection.
-- **The reserved size reads only the preference, the expanded flag and the viewport** — never the
-  event list. The bar reserves `recent_count` rows whether or not it has that many events. This is
-  `BandCityPanel`'s rule, learned there as a map flicker on every `+` press; here an arriving event
-  every turn would be a far worse offender.
+- **The strip's cross-axis size reads only the preference, the expanded flag and the viewport** —
+  never the event list. It is `recent_count` rows tall whether or not it has that many events. This
+  is `BandCityPanel`'s rule, learned there as a map flicker on every `+` press; here an arriving
+  event every turn would be a far worse offender. It outlived the reservation it was written for:
+  a strip that resizes per event still shifts the rows the player is reading.
 
-## On a shared edge the bar hugs the screen edge
+## On a shared edge the bar sits at the rim
 
-`Main.RESERVER_PRIORITY` is `{event_dock: 0, inspector: 1, band_panel: 2}`. A thin strip on the rim
-reads as chrome, and putting it outermost means the band panel's position relative to the map never
-changes when the bar grows a row. Nothing else was needed: `_update_band_panel_edge_offset()` already
-sums the lower-priority co-edge reservers, so the offset falls out of the existing mechanism, and the
-dock itself needs no `set_edge_offset` because priority 0 always hugs.
+**There is no priority row for this dock** — it is not a reserver, so `RESERVER_PRIORITY`
+(`{inspector: 0, band_panel: 1}`) does not name it. The bar simply draws against its chosen edge,
+which puts it outboard of anything docked there, and the band panel's position relative to the map
+never changes when the bar grows a row because the bar takes no room from it.
 
-(The Inspector is always `SIDE_LEFT`, so it never actually shares an edge with a top/bottom-only
-dock; its number is there to keep the order total.)
+> An earlier design DID reserve, at priority 0 so it would hug the edge, with the band panel offset
+> inboard by `_update_band_panel_edge_offset()`. That is history — see "THE BAR RESERVES NOTHING" —
+> and re-adding a row for `event_dock` would reintroduce the full-width reservation that shipped
+> black bars.
 
 ## …and it lives BETWEEN the vertical docks, which is a different axis entirely
 
@@ -413,8 +444,9 @@ horizontal strip lives in the band between them.
   edge, collapsing or hiding has to move the bar — and seeded once at connect time so a session that
   boots already docked is right on frame one (including one that boots with the bar suppressed, which
   reserves nothing and would otherwise leave a full-width strip waiting behind `R`).
-- **It moves where the strip is DRAWN, never what it RESERVES.** `current_reservation_size()` is
-  untouched, so the content-independence rule above still holds.
+- **It moves where the strip is DRAWN.** The dock reserves nothing to move, and the
+  content-independence rule above still holds: the insets read reservations and authored column
+  widths, never the event list.
 
 Also note it is not a stacking-order problem: raising or lowering `LAYER_INDEX` would only decide
 *which* panel is hidden by the other. The band panel is a legitimate occupant of that column and the
@@ -433,13 +465,16 @@ and, above it, the readout block — so `right_column_width()` is the wider auth
 pair; the readout block had no minimum of its own and was pure text width, which is precisely the
 measurement that must not decide a panel's edge.
 
-### The bar also stops pushing the HUD down
+### The bar never pushes the HUD down
 
-`&"event_dock"` is in `Main.MAP_ONLY_RESERVERS`, so its reservation reaches `MapView` and **not**
-`Hud`. Reported live: the bar reserved `SIDE_TOP` against the HUD, `LayoutRoot` absorbed it, and the
-readouts and the right dock all sat lower than they had before the dock existed. The map half stays —
-map content genuinely does hide behind the strip — and the HUD keeps its full height because the bar
-now lives beside its furniture rather than above it.
+The HUD keeps its full height: the readouts and the right dock sit exactly where they did before the
+dock existed, because the bar lives BESIDE the HUD's furniture rather than above it.
+
+Reported live in between: the bar reserved `SIDE_TOP` against the HUD, `LayoutRoot` absorbed it, and
+everything shifted down. The fix at the time was `Main.MAP_ONLY_RESERVERS`, a list of reservers whose
+strip reached `MapView` and not `Hud`. **That constant is gone** — the dock stopped reserving from
+either surface a step later, and a one-member list for a member that no longer reserves is a
+mechanism with nothing to do.
 
 **The layout Ray picked**, and what the two halves together produce:
 

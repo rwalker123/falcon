@@ -24,7 +24,7 @@ grouped log — is `.claude/rules/client/`.
 
 | File | Key | Purpose |
 |---|---|---|
-| `src/data/simulation_config.json` | `command_events_retention_turns` (**20**) | How many turns of world events the log keeps. Long enough to answer *"what happened while I was away"*, short enough to bound a full snapshot. Read into `SimulationConfig`, applied to the log at `build_headless_app` and re-applied on a `reload_config` (`set_retention_turns` prunes immediately, so the published window and the published rows cannot disagree). Published as `CampaignSection.commandEventsRetentionTurns` |
+| `src/data/simulation_config.json` | `command_events_retention_turns` (**20**) | How many turns of world events the log keeps — **N means N distinct turns**, the newest included. Long enough to answer *"what happened while I was away"*, short enough to bound a full snapshot. Read into `SimulationConfig`, applied to the log at `build_headless_app` and re-applied on a `reload_config` (`set_retention_turns` prunes immediately, so the published window and the published rows cannot disagree). Published as `CampaignSection.commandEventsRetentionTurns`. **`0` is rejected at parse time** (`SimulationConfigError::ZeroCommandEventsRetentionTurns`) |
 
 ## The bound is a TURN WINDOW, not a count
 
@@ -33,12 +33,23 @@ Once births, deaths and coming-of-age report per band per turn, a count-bounded 
 raid inside two turns — the cap eats exactly what it exists to preserve.
 
 So `push` drops whole turns off the back: everything older than
-`newest_tick − retention_turns` goes. A turn is the unit the player thinks in, the unit the client
-groups by, and the unit *"earlier turns"* walks backwards through.
+`newest_tick − (retention_turns − 1)` goes. A turn is the unit the player thinks in, the unit the
+client groups by, and the unit *"earlier turns"* walks backwards through.
 
 - **The newest entry's tick is the window's anchor.** Pushes are monotonic in tick (a turn resolves
   before the next begins; a rollback replaces the log whole), so the row just pushed is the latest
   turn the log knows about.
+- **The anchor turn counts toward the window** — ticks `anchor − (N − 1) ..= anchor`, exactly **N**
+  distinct turns. The `− 1` is the whole content of the rule: the key is named for a *count of
+  turns*, and the client's dock prunes to exactly that count, so reaching back N turns *past* the
+  anchor (as `evict` originally did) ships an N+1st turn the dock discards on ingest and makes the
+  expanded log's *"showing N of M retained turns"* foot describe a frame that carried M+1.
+- **A zero-turn window cannot be configured**, which is what lets `evict` subtract 1 without a
+  second underflow guard. `0` is also the FlatBuffers default for
+  `CampaignSection.commandEventsRetentionTurns`, and both client decoders read it as *"the sim did
+  not state a window"* and fall back to their own default — so a configured `0` would be a silent
+  divergence rather than a narrow window. `SimulationConfigData::into_config` rejects it for both
+  the boot and hot-reload paths (see `config-loading.md`).
 - **`MAX_RETAINED_EVENTS` (512) is a backstop, not the bound.** It exists so one pathological turn
   cannot grow the log — and therefore the resync snapshot — without limit. Reaching it drops events
   from *inside* the window, which is why it sits well above a normal turn's traffic rather than at

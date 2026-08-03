@@ -241,6 +241,13 @@ pub enum SimulationConfigError {
         #[source]
         source: io::Error,
     },
+    #[error(
+        "`command_events_retention_turns` must be at least 1: it is published as \
+         `CampaignSection.commandEventsRetentionTurns`, where 0 is the FlatBuffers default and the \
+         client reads it as \"the sim did not state a window\" — so a configured 0 would leave the \
+         sim and the event dock silently running different windows"
+    )]
+    ZeroCommandEventsRetentionTurns,
 }
 
 impl ConfigLoadError for SimulationConfigError {
@@ -466,6 +473,12 @@ impl HydrologyOverridesData {
 
 impl SimulationConfigData {
     fn into_config(self) -> Result<SimulationConfig, SimulationConfigError> {
+        // A parsed-but-incoherent config counts as broken (see `config-loading.md`): boot panics
+        // through the `config_load.rs` seam, hot reload warns and keeps the live config. Both
+        // enter here, which is why the check lives at this seam and not at either call site.
+        if self.command_events_retention_turns == 0 {
+            return Err(SimulationConfigError::ZeroCommandEventsRetentionTurns);
+        }
         Ok(SimulationConfig {
             grid_size: UVec2::new(self.grid_size.x, self.grid_size.y),
             map_topology: MapTopology {
@@ -1354,7 +1367,7 @@ impl CommandEventLog {
         self.entries.iter()
     }
 
-    /// How many turns back the window reaches.
+    /// How many **distinct turns** the window keeps, counting the newest one — see [`Self::evict`].
     pub fn retention_turns(&self) -> u64 {
         self.retention_turns
     }
@@ -1380,8 +1393,21 @@ impl CommandEventLog {
     }
 
     /// Drop everything older than the window anchored at `anchor_tick`, then apply the backstop.
+    ///
+    /// The window is **inclusive of the anchor turn**, so `retention_turns` of N keeps ticks
+    /// `anchor − (N − 1) ..= anchor` — exactly N distinct turns, which is what the config key's
+    /// name promises and what the client's own prune keeps. (It used to reach back N turns *past*
+    /// the anchor and so kept N+1, shipping one turn the dock immediately discarded.)
+    ///
+    /// The `N − 1` leans on `retention_turns` never being zero:
+    /// [`SimulationConfigError::ZeroCommandEventsRetentionTurns`] rejects a configured `0` at parse
+    /// time, which is also what makes the number representable on the wire. `saturating_sub` keeps
+    /// a hand-built zero-turn log (only reachable through [`Self::with_retention_turns`]) at the
+    /// anchor turn alone rather than underflowing into "keep everything" — but the config guard is
+    /// the invariant, so restore it before removing it.
     fn evict(&mut self, anchor_tick: u64) {
-        let oldest_kept = anchor_tick.saturating_sub(self.retention_turns);
+        let turns_before_anchor = self.retention_turns.saturating_sub(1);
+        let oldest_kept = anchor_tick.saturating_sub(turns_before_anchor);
         let stale = self
             .entries
             .iter()
@@ -1494,14 +1520,14 @@ mod tests {
     #[test]
     fn the_turn_window_evicts_by_tick_not_by_count() {
         let mut log = CommandEventLog::with_retention_turns(2);
-        for tick in 0..=2u64 {
+        for tick in 0..=1u64 {
             for _ in 0..20 {
                 log.push(event(tick));
             }
         }
-        assert_eq!(log.iter().count(), 60, "three turns inside a 2-turn window");
+        assert_eq!(log.iter().count(), 40, "two turns inside a 2-turn window");
 
-        log.push(event(3));
+        log.push(event(2));
         assert!(
             log.iter().all(|entry| entry.tick >= 1),
             "tick 0 fell out of the window whole: {:?}",
@@ -1514,11 +1540,33 @@ mod tests {
         );
     }
 
+    /// **`retention_turns` of N keeps N turns, not N+1.** The key is named for a count of turns and
+    /// the client prunes to exactly that many, so an off-by-one here ships a turn the dock discards
+    /// on ingest — and makes the expanded log's "showing N of M retained turns" foot describe a
+    /// frame that carried M+1.
+    #[test]
+    fn the_window_keeps_exactly_retention_turns_distinct_turns() {
+        for retention_turns in 1..=5u64 {
+            let mut log = CommandEventLog::with_retention_turns(retention_turns);
+            for tick in 0..20u64 {
+                log.push(event(tick));
+            }
+            let ticks: Vec<u64> = log.iter().map(|entry| entry.tick).collect();
+            let expected: Vec<u64> = (20 - retention_turns..20).collect();
+            assert_eq!(
+                ticks, expected,
+                "a {retention_turns}-turn window anchored at tick 19"
+            );
+        }
+    }
+
     /// Eviction never rewinds the sequence: a client's cursor is a statement about what it has
     /// SEEN, so a reissued number would silently suppress a real event.
     #[test]
     fn the_sequence_is_monotonic_across_eviction() {
-        let mut log = CommandEventLog::with_retention_turns(1);
+        // Two turns, so more than one row survives and the contiguity assertion below has
+        // something to measure.
+        let mut log = CommandEventLog::with_retention_turns(2);
         for tick in 0..10u64 {
             log.push(event(tick));
         }
@@ -1582,7 +1630,7 @@ mod tests {
             "a caught-up cursor is owed nothing"
         );
 
-        // Two more turns: the window drops ticks 0 and 1 while two new rows arrive.
+        // Two more turns: the window drops ticks 1 and 2 while two new rows arrive.
         log.push(event(3));
         log.push(event(4));
         let owed: Vec<u64> = log.appended_since(cursor).map(|entry| entry.tick).collect();
@@ -1593,8 +1641,8 @@ mod tests {
         );
         assert_eq!(
             log.iter().count(),
-            3,
-            "the window kept ticks 2..=4 and dropped 0..=1"
+            2,
+            "the window kept ticks 3..=4 and dropped everything before them"
         );
     }
 
@@ -1606,13 +1654,46 @@ mod tests {
         for tick in 0..=20u64 {
             log.push(event(tick));
         }
-        assert_eq!(log.iter().count(), 21);
+        assert_eq!(
+            log.iter().count(),
+            20,
+            "ticks 1..=20 — twenty turns, not 21"
+        );
 
         log.set_retention_turns(2);
         assert_eq!(log.retention_turns(), 2);
         assert_eq!(
             log.iter().map(|entry| entry.tick).collect::<Vec<_>>(),
-            vec![18, 19, 20]
+            vec![19, 20]
+        );
+    }
+
+    /// **A zero-turn window is rejected at parse time.** Server-side `0` is coherent (the log would
+    /// keep the current turn alone), but it is unrepresentable on the wire: it is the FlatBuffers
+    /// default for `CampaignSection.commandEventsRetentionTurns` and both client decoders read a
+    /// `0` as "the sim did not state a window", falling back to their own default. That divergence
+    /// is silent, so the config never gets to express it.
+    #[test]
+    fn a_zero_retention_window_is_refused_by_the_config() {
+        let json = BUILTIN_SIMULATION_CONFIG.replace(
+            "\"command_events_retention_turns\": 20",
+            "\"command_events_retention_turns\": 0",
+        );
+        assert!(
+            json != BUILTIN_SIMULATION_CONFIG,
+            "the builtin config still carries the key this test rewrites"
+        );
+
+        let err = SimulationConfig::from_json_str(&json)
+            .expect_err("a zero-turn window must not parse into a config");
+        assert!(
+            matches!(err, SimulationConfigError::ZeroCommandEventsRetentionTurns),
+            "rejected for the right reason: {err}"
+        );
+        assert!(
+            !err.is_not_found(),
+            "an incoherent value is a file that is there and wrong, so boot must panic rather \
+             than fall back to the builtin"
         );
     }
 }
