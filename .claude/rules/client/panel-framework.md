@@ -51,6 +51,14 @@ the next height fit.
 content's width, so the card *looks* right while its own rect, and every placement decision
 made from it, is the nominal number.
 
+**And the same is true of a card fitted too SHORT, with one extra consequence:** the panel grows out
+of the bottom instead, and `fit_to_content`'s scroll test — which compares the caller's own
+`content_height + extra_height` against the room below the card — under-reports by the same amount, so
+a sheet that genuinely does not fit is left with its scroll DISABLED and runs off the screen. Whatever
+a caller passes as `extra_height` must therefore be the chrome that is really there. `ComposeSheet`
+measured its title label where its header ROW carries a taller ✕ button; the autopsy and the two
+assertions that pin it are in `labor-ui.md` → "THE HEIGHT CHROME IS THE HEADER **ROW**".
+
 ## Key scripts
 
 | Script | Purpose |

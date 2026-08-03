@@ -4063,6 +4063,7 @@ func _ready() -> void:
 	await _settle()
 	await _save("herd_hunt_local_sustain")
 	_assert_compose_sheet_fits("herd_hunt_local_sustain")
+	await _assert_compose_sheet_scrolls_when_clamped("herd_hunt_local_sustain")
 	# THE HUNT HALF, and the parity check itself: both sheets must ask WHICH STANCE before HOW MANY
 	# PEOPLE, and in the same order throughout. The hunt sheet staffed first until the consistency pass;
 	# a frame cannot hold that claim, which is why it is asserted rather than eyeballed.
@@ -10737,7 +10738,7 @@ func _terrain_legend_fixture() -> Dictionary:
 		"stats": {},
 	}
 
-# ---- the compose sheet's WIDTH invariant ------------------------------------
+# ---- the compose sheet's FIT invariants -------------------------------------
 
 ## **NO ROW OF AN OPEN COMPOSE SHEET MAY DEMAND MORE THAN THE CARD'S USABLE WIDTH.** The card is an
 ## `AutoSizingPanel`, i.e. a plain `Control`: a child's minimum width never reaches it, so a row wider
@@ -10776,10 +10777,89 @@ func _assert_compose_sheet_fits(state: String) -> void:
 	_assert_hud("%s: the widest compose row fits the card (%.0f demanded, %.0f usable of a %.0f card) — %s"
 		% [state, worst, usable, sheet._card.size.x, worst_row],
 		worst <= usable + COMPOSE_FIT_SLACK)
+	_assert_compose_sheet_card_holds_its_content(state)
 
 ## A pixel of slack, so a row that lands exactly on the card's inner edge is not a failure. Anything
 ## that actually clips overruns by whole glyphs, never by a rounding remainder.
 const COMPOSE_FIT_SLACK := 1.0
+
+## **THE CARD MUST BE AT LEAST AS TALL AS THE PANEL IT DRAWS — the height twin of the rule above, and
+## it failed the same way.** `refit` composed the card's chrome from `_header`, the title label, where
+## the header ROW is a title beside a taller ✕ button (41 against 20 at the shipped faces). So the card
+## was fitted 21px short of what its content demands, and — because an `AutoSizingPanel` is a plain
+## `Control` while the `PanelContainer` inside it is a real `Container` — the panel silently grew 9px
+## out the bottom of the card (the 12px `CARD_EXTRA_PADDING` absorbing the rest). Nothing clipped in a
+## roomy window; what broke was the card's own rect, which is what `_place_card` clamps against the
+## viewport and what `fit_to_content` compares to decide whether the sheet must scroll. On a short
+## window the sheet therefore ran past the bottom of the screen with the scroll still DISABLED, and the
+## commit button was sliced — reported from play on `Hunt Here`.
+##
+## **THE PANEL'S OWN MINIMUM IS THE HONEST THING TO MEASURE, and re-deriving the chrome would not be.**
+## Godot aggregates it from the real children, so it is an independent answer; an assertion written out
+## of the same header + separation + margin expression `refit` computes would agree with `refit` by
+## construction and pass with the bug fully restored.
+##
+## It holds in BOTH regimes rather than needing a viewport-clamped branch: where the sheet is genuinely
+## taller than the room beneath it, `fit_to_content` turns the internal scroll on, and a scrolling
+## `ScrollContainer` stops propagating its child's height — so the panel's minimum collapses and the
+## card contains it again. A card clamped short with the scroll still off is exactly the failure.
+func _assert_compose_sheet_card_holds_its_content(state: String) -> void:
+	var sheet: ComposeSheet = _hud._drawercompose._compose_sheet
+	if sheet == null or sheet._panel == null:
+		return
+	var demanded: float = sheet._panel.get_combined_minimum_size().y
+	_assert_hud("%s: the compose card is as tall as the panel it draws (%.0f demanded, %.0f card, scroll %s)"
+		% [state, demanded, sheet._card.size.y,
+			"on" if sheet._scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED else "off"],
+		sheet._card.size.y >= demanded - COMPOSE_FIT_SLACK)
+
+## **THE CLAMPED REGIME, WHICH IS THE ONE THAT WAS REPORTED FROM PLAY — and no PNG in this harness
+## renders it.** Every state above runs in a viewport far taller than its sheet, so all nine assert the
+## roomy case, where the under-measured chrome cost the card's rect 9px and nothing visible. The defect
+## bit on a SHORT window: `fit_to_content` decides "must this scroll?" by comparing the same
+## chrome-derived desired height against the room below the card, so a chrome 21px short understated
+## the content, left the scroll DISABLED on a sheet that genuinely did not fit, and the
+## `PanelContainer` ran out of the card and off the bottom of the screen with `Hunt Here` sliced.
+##
+## The squeeze is `bottom_margin`, deliberately: it is the one term of `max_available` that `refit`
+## does not re-declare per fit (it re-reads `max_height` from the live viewport every pass), so it can
+## force the clamp while the REAL `refit` runs with the REAL chrome. Shrinking the canvas instead would
+## re-render every frame after it and cost this harness its bit-identity reference.
+##
+## **THE ROOM LEFT IS THE PANEL'S OWN MINIMUM, and that is the whole discrimination.** A generous
+## squeeze proves nothing — clamp a sheet to 200px and it scrolls whether the chrome is right or not,
+## which is measured: an aggressive first cut of this check PASSED with the bug fully restored. The
+## window in which the two answers differ is exactly the size of the error, so the room has to be
+## pinned to an independent measure of what the sheet truly needs. At `panel_min` the correct chrome
+## asks for `panel_min + CARD_EXTRA_PADDING` and must clamp; the short one asks for `panel_min − 9` and
+## sails under, leaving the scroll off and the card smaller than what it draws.
+##
+## Three assertions, in order: the squeeze actually clamped (without it the other two are vacuous), the
+## scroll came ON, and the card still contains the panel it draws.
+func _assert_compose_sheet_scrolls_when_clamped(state: String) -> void:
+	var sheet: ComposeSheet = _hud._drawercompose._compose_sheet
+	if sheet == null or not sheet.visible or sheet._panel == null:
+		_assert_hud("%s has an open compose sheet to squeeze" % state, false)
+		return
+	var roomy: float = sheet._card.size.y
+	var room: float = sheet._panel.get_combined_minimum_size().y
+	var restore: float = sheet._card.bottom_margin
+	sheet._card.bottom_margin = maxf(
+		sheet.size.y - sheet._card.global_position.y - room, restore)
+	sheet.refit()
+	await _settle(false)
+	var clamped: float = sheet._card.size.y
+	var demanded: float = sheet._panel.get_combined_minimum_size().y
+	var scrolling := sheet._scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED
+	_assert_hud("%s squeezed to %.0f: the card really is clamped short of its roomy height (%.0f, was %.0f)"
+		% [state, room, clamped, roomy], clamped < roomy)
+	_assert_hud("%s squeezed to %.0f: a sheet that no longer fits turns its internal scroll ON"
+		% [state, room], scrolling)
+	_assert_hud("%s squeezed to %.0f: …and the card still holds the panel it draws (%.0f demanded, %.0f card)"
+		% [state, room, demanded, clamped], clamped >= demanded - COMPOSE_FIT_SLACK)
+	sheet._card.bottom_margin = restore
+	sheet.refit()
+	await _settle(false)
 
 ## The deepest descendant setting a row's minimum width, named by its face — so a failure says WHICH
 ## control is too wide rather than only that the row is.

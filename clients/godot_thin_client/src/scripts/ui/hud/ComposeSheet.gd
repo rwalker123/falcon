@@ -66,6 +66,12 @@ const HEADER_FORMAT := "[color=#%s][font_size=%d]%s[/font_size][/color]  %s"
 const DISMISS_BUTTONS: Array[int] = [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]
 
 var _card: AutoSizingPanel = null
+## The `PanelContainer` that DRAWS the card. It is a real `Container` inside a plain `Control`, so it
+## reports a true minimum and grows out of the card whenever the card is fitted too short — silently,
+## since a Control does not clip. That is what makes it the honest thing to measure a fit against
+## (`ui_preview._assert_compose_sheet_card_holds_its_content`), rather than re-deriving the same
+## chrome expression `refit` already computes.
+var _panel: PanelContainer = null
 var _header: RichTextLabel = null
 ## The header ROW (title + ✕), kept because it sits OUTSIDE the scrolled body and therefore has to be
 ## measured beside it: a long subject name is content the card must be wide enough for too.
@@ -98,14 +104,14 @@ func _ready() -> void:
 	_card.bottom_margin = VIEWPORT_MARGIN
 	add_child(_card)
 
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-	panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
-	_card.add_child(panel)
+	_panel = PanelContainer.new()
+	_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_panel.add_theme_stylebox_override("panel", HudStyle.card_stylebox())
+	_card.add_child(_panel)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", HEADER_SEPARATION)
-	panel.add_child(column)
+	_panel.add_child(column)
 
 	_header_row = _build_header_row()
 	column.add_child(_header_row)
@@ -197,8 +203,12 @@ func refit() -> void:
 	if not visible or _card == null or _body == null:
 		return
 	var card_style := HudStyle.card_stylebox()
+	# THE HEADER'S HEIGHT IS THE ROW'S, NEVER THE LABEL'S. The row is a title `RichTextLabel` beside
+	# a ✕ `Button`, and the button is the taller of the two (41 against the label's 20 at the shipped
+	# faces), so measuring the label alone understated the chrome by 21px — see `_fit_width`, which
+	# has always measured `_header_row` for the same reason on the other axis.
 	var chrome := card_style.content_margin_top + card_style.content_margin_bottom \
-		+ _header.get_combined_minimum_size().y + HEADER_SEPARATION + CARD_EXTRA_PADDING
+		+ _header_row.get_combined_minimum_size().y + HEADER_SEPARATION + CARD_EXTRA_PADDING
 	_sync_to_viewport()
 	_fit_width(card_style)
 	_place_card()
