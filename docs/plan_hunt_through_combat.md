@@ -236,6 +236,38 @@ to *"everything that stayed dies, nobody is hurt"* without ceremony, cost or a b
 second code path for small game would recreate exactly the parallel-model problem §0 exists to
 delete.
 
+### 4.4 Better weapons pay off on big game and nowhere else
+
+Every species has a **hard ceiling** on what a hunter can take from it per turn:
+
+```text
+ceiling = engage_rate × body_mass       // biomass per hunter per turn
+```
+
+No weapon exceeds it — there are only so many rabbits you can lay hands on. Weapons decide how close
+to the ceiling you get, and that is where megafauna wins:
+
+| | ceiling | at spear `attack 20` | at 2× | at 4× |
+|---|---|---|---|---|
+| mammoth | **40** | 12.8 — 32% of it | capped **40** | **40** |
+| deer | 15 | 11.4 — 76% | **15** | **15** |
+| rabbit | 2.7 | 2.7 — **100%** | 2.7 | 2.7 |
+
+**Small game is already maxed out at the first spear.** Extra damage falls on the floor, because
+engagement binds and nothing else does. Megafauna sits at a third of its ceiling with all the
+headroom in the roster.
+
+**Two effects compound here, and only one is obvious.** The engagement cap is the visible half. The
+other is that `max(0, attack − defense)` makes high-defense quarry gain **super-linearly**: doubling
+attack from `20` to `40` raises a mammoth's effective attack from `8` to `28` — 3.5× — while a
+rabbit's merely doubles. The animal furthest from its ceiling is also the one that closes the gap
+fastest.
+
+So *"twenty weak spears and then follow it for days"* is the correct low-tech experience, and better
+points turn the same herd into the richest food on the map without a single number being re-authored.
+**This is a property to pin, not a happy accident** (§10): it falls out of defense subtraction and
+the engagement cap together, and a change to either could silently flatten it.
+
 ### 4.5 Randomness lives in the attack, and never in the gate
 
 A pure attrition formula is a spreadsheet. Variance belongs **in the resolver**, so hunts, raids and
@@ -394,6 +426,11 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
   stream crept in.
 - **The gate.** A party whose attack is below the quarry's defense kills **zero** at any headcount,
   and takes casualties proportional to `ferocity`. This is §0.2, pinned.
+- **Better weapons pay off on big game and not on small.** Raising `attack` must raise biomass per
+  hunter-turn for a high-defense quarry and leave an engagement-bound one flat (§4.4). The assertion
+  that neither the defense subtraction nor the engagement cap has been quietly linearised.
+- **No species exceeds `engage_rate × body_mass` per hunter**, at any weapon tier — the ceiling is
+  real, so arbitrarily good kit cannot turn small game into a food engine.
 - **Turns-to-kill responds to all three of its inputs.** Doubling the party, upgrading the weapon,
   or facing a tougher quarry each move it in the right direction — the assertion that no per-species
   turn count was baked in anywhere.
