@@ -122,6 +122,10 @@ off the scene's own regions rather than measuring content:
 | `RightDock` | 344 | its card minimum (320) plus its authored margins (8 + 16), authored as the outer minimum so the published number is the one it renders at |
 | `TurnBlock` | 344 | authored to match the dock beneath it — it had **no** minimum of its own and was pure text width, which is exactly the measurement that must not decide a panel's edge |
 
+`TurnBlock` is the **only** content in `TopBar` besides the expanding spacer that pushes it right —
+the campaign title block that used to sit at its left end is gone, so the bar's authored 96px height
+is now carrying one right-aligned readout column and nothing else.
+
 **A bar whose edge tracked a MEASURED width is the flicker rule again**: it would
 jump when the player selects a tile and the selection card appears, or when a
 metric gains a digit — and worse than on the band panel, since an event arrives

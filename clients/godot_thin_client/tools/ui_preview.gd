@@ -69,6 +69,17 @@ const OUT_DIR := "res://ui_preview_out"
 # The canvas EVERY frame renders at. Pinned rather than set once, because `project.godot` opens the
 # window MAXIMIZED and the WM applies — and RE-applies — that asynchronously; see `_ensure_canvas`.
 const PREVIEW_CANVAS_SIZE := Vector2i(1500, 900)
+## The CANVAS every frame is composed in, which is NOT the window: `project.godot` stretches
+## `canvas_items` from a 1920-wide base with an `expand` aspect, so a control's own geometry is in
+## these units while the PNG is in `PREVIEW_CANVAS_SIZE`. The event dock's width cap is a canvas
+## number, so the narrow-case assertion has to compare against this one.
+const PREVIEW_CANVAS_SIZE_BASE := Vector2i(1920, 1152)
+## A deliberately ULTRAWIDE window for the one state that exercises the event dock's width cap — the
+## configuration the "way too wide for its content" report came from, and one no other frame reaches.
+## Rendered outside `_ensure_canvas`'s pinned-canvas guard (which exists to keep every OTHER frame
+## comparable), then the canvas is re-pinned.
+const ULTRAWIDE_WINDOW_SIZE := Vector2i(2560, 900)
+
 # How many frames `_ensure_canvas` / `_capture` keep re-asserting the pinned canvas while waiting for
 # the WM to honour it. Bounded so a WM that refuses to shrink the window fails loudly, never hangs.
 const CANVAS_PIN_MAX_FRAMES := 60
@@ -6293,6 +6304,142 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await _settle()
 
+	# ---- NO RAW WIRE TOKEN EVER REACHES A ROW -------------------------------------------------
+	# The defect: rows printed the sim's detail verbatim, so one read `category=settle_site at
+	# (64,36)`. Stated as the GENERAL property rather than spot-checking three strings — every Label
+	# the dock renders, bar and log, must be free of `=`. The two guards under it are what stop that
+	# being vacuous: the walk must have seen labels at all, and the pool must actually CONTAIN a raw
+	# `=` for one to have been able to leak.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_detail_level(HudEventVocab.RUNG_ROUTINE)
+	event_dock.set_expanded(true)
+	await _settle()
+	var raw_tokens := 0
+	for event in event_dock._events:
+		if String(event["detail"]).contains("="):
+			raw_tokens += 1
+	_assert_hud("precondition: the pool really does hold raw `key=value` details (%d of them)" % raw_tokens,
+		raw_tokens > 0)
+	var scanned := 0
+	var leaked := ""
+	for label in _preview_dock_labels(event_dock):
+		scanned += 1
+		if label.contains("=") and leaked == "":
+			leaked = label
+	_assert_hud("precondition: the scan actually walked the rendered rows (%d labels)" % scanned,
+		scanned > 0)
+	_assert_hud("no rendered row carries a raw wire token — %d labels scanned, worst offender %s"
+			% [scanned, "none" if leaked == "" else "\"%s\"" % leaked],
+		leaked == "")
+
+	# **NO RENDERED DETAIL CARRIES A TRAILING-ZERO DECIMAL.** The sim writes casualties with `{:.3}`,
+	# which is honest on the wire (a `Scalar` really can be fractional) and DEBUG OUTPUT on a
+	# notification bar — `Killed 2.000` is a float where the player is owed a count. Stated as the
+	# general property, like the `=` one, and guarded the same way: the pool must actually hold a
+	# `.000` for one to have reached the screen.
+	# Re-seeded so the casualty rows are on the NEWEST turns and therefore inside the log's window.
+	# THIS MATTERS: the pin fixture that ran before this put its raid seven turns back, outside the
+	# five the log shows, so the scan walked rows that never had a padded number in them and passed
+	# with the trim reverted. The precondition below counts the POOL, so it cannot catch that on its
+	# own — the scan has to cover the whole pool too.
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_fixture())
+	await _settle()
+	var padded_wire := 0
+	for event in event_dock._events:
+		if String(event["detail"]).contains(".000"):
+			padded_wire += 1
+	_assert_hud("precondition: the pool really does hold `{:.3}` wire numbers (%d of them)" % padded_wire,
+		padded_wire > 0)
+	# TWO scans, and the second is what makes the first honest. The rendered labels are what the
+	# player actually sees; `detail_phrase` over EVERY retained event is the complete property, and it
+	# cannot go vacuous by an event drifting out of the log's five-turn window.
+	var padded := ""
+	for label in _preview_dock_labels(event_dock):
+		if _has_padded_decimal(label) and padded == "":
+			padded = label
+	for event in event_dock._events:
+		var phrase := EventDockPanel.detail_phrase(String(event["detail"]))
+		if _has_padded_decimal(phrase) and padded == "":
+			padded = phrase
+	_assert_hud("no detail renders with a trailing-zero decimal, on screen or in the pool — worst offender %s"
+			% ("none" if padded == "" else "\"%s\"" % padded),
+		padded == "")
+	# **THE TRIM IS NOT A ROUND**, and this is the assertion that stops someone "simplifying" it into
+	# an `int()`. A casualty count reading `2` when the sim said `1.5` is a lie the player cannot
+	# detect, so a genuinely fractional value has to survive intact.
+	_assert_hud("a fractional wire number survives UN-ROUNDED (`wounded=1.750` -> `%s`)"
+			% EventDockPanel.detail_phrase("wounded=1.750"),
+		EventDockPanel.detail_phrase("wounded=1.750") == "Wounded 1.75")
+	_assert_hud("…while a whole one loses its padding (`wounded=2.000` -> `%s`)"
+			% EventDockPanel.detail_phrase("wounded=2.000"),
+		EventDockPanel.detail_phrase("wounded=2.000") == "Wounded 2")
+	# A bare integer must not be touched — `rstrip("0")` on `100` would answer `1`, which the trim
+	# avoids only by returning early when there is no decimal point at all.
+	_assert_hud("…and a whole number with trailing zeros is left ALONE (`warriors=100` -> `%s`)"
+			% EventDockPanel.detail_phrase("warriors=100"),
+		EventDockPanel.detail_phrase("warriors=100") == "Warriors 100")
+	_assert_hud("the LABEL's own casualty count is not repeated beside it (`killed=3.000 wounded=1.000` -> `%s`)"
+			% EventDockPanel.detail_phrase("killed=3.000 wounded=1.000"),
+		EventDockPanel.detail_phrase("killed=3.000 wounded=1.000") == "Wounded 1")
+
+	# AN UNKNOWN KEY AND AN UNKNOWN VALUE STILL RENDER AS ENGLISH. The sim adds kinds and tokens with
+	# no schema change, so a token with no table row is the COMMON case over time — the generic
+	# fallback is what makes a raw identifier on screen impossible by construction rather than by
+	# anyone remembering to add a row. Asserted on `detail_phrase` directly: a rendered row would also
+	# pass while silently dropping the fragment, which is the other way to get this wrong.
+	_assert_hud("unknown VALUE renders as English (`quarry_state=half_eaten` -> `%s`)"
+			% EventDockPanel.detail_phrase("quarry_state=half_eaten"),
+		EventDockPanel.detail_phrase("quarry_state=half_eaten") == "Half eaten")
+	_assert_hud("unknown NUMERIC key keeps its key (`spoiled_units=7` -> `%s`)"
+			% EventDockPanel.detail_phrase("spoiled_units=7"),
+		EventDockPanel.detail_phrase("spoiled_units=7") == "Spoiled units 7")
+	_assert_hud("the reported row renders as prose (`category=settle_site at (64,36)` -> `%s`)"
+			% EventDockPanel.detail_phrase("category=settle_site at (64,36)"),
+		EventDockPanel.detail_phrase("category=settle_site at (64,36)") == "Settle site · (64, 36)")
+	_assert_hud("a value containing a SPACE survives the token walk (`species=Grey Wolf`)",
+		EventDockPanel.detail_phrase("killed=2.000 species=Grey Wolf").ends_with("Grey Wolf"))
+	_assert_hud("keys the LABEL already carries are dropped (`band=3 count=4 direction=out` -> `%s`)"
+			% EventDockPanel.detail_phrase("band=3 count=4 direction=out"),
+		EventDockPanel.detail_phrase("band=3 count=4 direction=out") == "departed")
+	event_dock.set_expanded(false)
+	event_dock.set_detail_level(HudEventVocab.RUNG_NOTABLE)
+	await _settle()
+
+	# ---- THE ULTRAWIDE CAP --------------------------------------------------------------------
+	# The configuration the complaint came from, and one nothing else in this set reaches: the bar
+	# spanned the whole band, so a row's label sat at one end of two feet of screen and its detail at
+	# the other. BOTH halves are asserted, because a cap hard-wired on would fail the narrow case and
+	# one hard-wired off would fail the wide one.
+	var band_now: float = float(PREVIEW_CANVAS_SIZE_BASE.x) - event_dock._inset_left - event_dock._inset_right
+	_assert_hud("below the cap the strip fills the band exactly as before (%.0f of %.0f available)"
+			% [event_dock._root.size.x, band_now],
+		is_equal_approx(event_dock._root.size.x, band_now) and band_now < EventDockPanel.MAX_STRIP_WIDTH)
+
+	get_window().size = ULTRAWIDE_WINDOW_SIZE
+	await get_tree().process_frame
+	await get_tree().process_frame
+	RenderingServer.force_draw()
+	await get_tree().process_frame
+	var wide_band: float = event_dock._viewport_size().x - event_dock._inset_left - event_dock._inset_right
+	_assert_hud("precondition: the ultrawide band (%.0f) is genuinely wider than the cap (%.0f)"
+			% [wide_band, EventDockPanel.MAX_STRIP_WIDTH],
+		wide_band > EventDockPanel.MAX_STRIP_WIDTH)
+	_assert_hud("at ultrawide the strip stops at the cap (%.0f) instead of spanning the band (%.0f)"
+			% [event_dock._root.size.x, wide_band],
+		is_equal_approx(event_dock._root.size.x, EventDockPanel.MAX_STRIP_WIDTH))
+	var lead_gap: float = event_dock._root.offset_left - event_dock._inset_left
+	var trail_gap: float = event_dock._viewport_size().x - event_dock._inset_right - event_dock._root.offset_right
+	_assert_hud("…and it is CENTRED in the band, not pinned to an edge (%.0f leading / %.0f trailing)"
+			% [lead_gap, trail_gap],
+		is_equal_approx(lead_gap, trail_gap))
+	var wide_image := get_viewport().get_texture().get_image()
+	if wide_image != null:
+		wide_image.save_png("%s/event_dock_ultrawide.png" % OUT_DIR)
+		print("ui_preview: saved event_dock_ultrawide.png")
+	_pin_canvas(get_window())
+	await _settle()
+
 	# THE STRIP YIELDS TO THE MAP. Both ways the dock can grow — the widest BAR (`RECENT_COUNT_MAX`
 	# rows, log closed) and the LOG open (which collapses the bar to one title line) — must leave the
 	# reserved strip inside `MAX_STRIP_HEIGHT_FRACTION` of the canvas, which is what leaves a usable
@@ -7746,6 +7893,11 @@ func _event_dock_band_label_fixture() -> Array:
 ## `status=` detail token PROMOTING a routine kind to Alert (`cultivate status=feral`), and the
 ## plain rung defaults.
 ##
+## The casualty rows carry the sim's REAL wire shape — `killed=` / `wounded=` written with `{:.3}`,
+## never a `losses=` key the sim does not have. That fidelity is what gives the trailing-zero scan
+## something to catch; a tidier invented fixture made the claim vacuous, and the precondition beside
+## it said so out loud.
+##
 ## `seq` is monotonic across the whole array, oldest first, exactly as the sim appends it.
 func _event_dock_fixture() -> Array:
 	return [
@@ -7763,14 +7915,14 @@ func _event_dock_fixture() -> Array:
 		{"tick": 46, "kind": "hunt", "faction": 0, "label": "Hunters brought back red deer", "detail": "", "seq": 12},
 		{"tick": 46, "kind": "born", "faction": 0, "label": "A child was born in Ashfoot", "detail": "count=1", "seq": 13},
 		{"tick": 46, "kind": "site_discovered", "faction": 0, "label": "The Weeping Arch", "detail": "category=landmark at=18,31", "seq": 14},
-		{"tick": 46, "kind": "hunt_danger", "faction": 0, "label": "The aurochs hunt cost the party three lives", "detail": "losses=3", "seq": 15},
+		{"tick": 46, "kind": "hunt_danger", "faction": 0, "label": "The aurochs hunt cost the party three lives", "detail": "killed=3.000 wounded=1.000 species=Aurochs", "seq": 15},
 		{"tick": 47, "kind": "sow", "faction": 0, "label": "Barley sown on the river terrace", "detail": "", "seq": 16},
 		{"tick": 47, "kind": "forage", "faction": 0, "label": "Foragers returned with 12 provisions", "detail": "", "seq": 17},
 		{"tick": 47, "kind": "migrated", "faction": 0, "label": "Four left Ashfoot for Windhollow", "detail": "count=4 direction=out", "seq": 18},
 		{"tick": 47, "kind": "came_of_age", "faction": 0, "label": "Two children came of age in Ashfoot", "detail": "count=2", "seq": 19},
 		# THE DE-DUPLICATION PAIR — byte-identical apart from `seq`. Two packs, one turn, one band.
-		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 20},
-		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 21},
+		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "killed=2.000 wounded=1.000 warriors=3 species=Grey Wolf", "seq": 20},
+		{"tick": 47, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "killed=2.000 wounded=1.000 warriors=3 species=Grey Wolf", "seq": 21},
 	]
 
 ## The PIN fixture: one Alert, deliberately OLD, under enough newer Notable rows that a 4-row bar
@@ -7778,7 +7930,7 @@ func _event_dock_fixture() -> Array:
 ## rather than being pushed off by the receipts that followed it.
 func _event_dock_pin_fixture() -> Array:
 	return [
-		{"tick": 40, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "losses=2", "seq": 101},
+		{"tick": 40, "kind": "predator_raid", "faction": 0, "label": "Grey wolves took two from Ashfoot", "detail": "killed=2.000 wounded=1.000 warriors=3 species=Grey Wolf", "seq": 101},
 		{"tick": 41, "kind": "came_of_age", "faction": 0, "label": "A child came of age in Ashfoot", "detail": "count=1", "seq": 102},
 		{"tick": 42, "kind": "site_discovered", "faction": 0, "label": "The Weeping Arch", "detail": "at=18,31", "seq": 103},
 		{"tick": 43, "kind": "died", "faction": 0, "label": "An elder died of cold in Windhollow", "detail": "cause=cold", "seq": 104},
@@ -7794,6 +7946,33 @@ func _event_dock_pin_fixture() -> Array:
 ## top-bar readouts however wrong its horizontal bound is. A block of such claims passes with the fix
 ## reverted, which is the failure this guard exists to prevent — so the overlap on the PERPENDICULAR
 ## axis is required first, and a pair that does not share one fails as VACUOUS rather than passing.
+## Every string the dock currently RENDERS — bar rows, log rows, chips, the foot — as flat text.
+## The raw-token guard walks this rather than the event records, because the records are supposed to
+## hold `key=value`: the claim is about what reaches the screen.
+## Does this rendered string carry a trailing-zero decimal — `2.000`, `1.50`? The wire's `{:.3}`
+## casualty format produces them and a rendered row must not. Stated as a PROPERTY of any numeric
+## word rather than a list of known strings, so a new `{:.N}` field on a future kind is covered
+## without an edit here. `is_valid_float` is the precision that matters: without it an endpoint like
+## `127.0.0.1:41000` in a system note would read as a padded decimal and fail for nothing.
+func _has_padded_decimal(text: String) -> bool:
+	for word in text.split(" ", false):
+		if word.contains(".") and word.ends_with("0") and word.is_valid_float():
+			return true
+	return false
+
+func _preview_dock_labels(dock: EventDockPanel) -> Array[String]:
+	var found: Array[String] = []
+	var stack: Array[Node] = [dock._rows, dock._log_body]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node == null:
+			continue
+		for child in node.get_children():
+			stack.append(child)
+		if node is Label:
+			found.append((node as Label).text)
+	return found
+
 func _assert_bar_clears(dock: EventDockPanel, region: Control, what: String) -> void:
 	var bar := dock._root.get_global_rect()
 	var box := region.get_global_rect()

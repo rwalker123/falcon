@@ -938,7 +938,7 @@
     <div class="tbl-scroll">
       <table>
         <thead>
-          <tr><th>Kind</th><th>Rung</th><th>Fires when</th><th>Detail tokens</th></tr>
+          <tr><th>Kind</th><th>Rung</th><th>Fires when</th><th>Detail tokens <span class="pill routine">wire</span></th></tr>
         </thead>
         <tbody>
           <tr>
@@ -1001,6 +1001,30 @@
         </tbody>
       </table>
     </div>
+
+    <h3>The tokens are a contract, not a caption</h3>
+    <p>
+      The <code>Detail tokens</code> column above is what the sim <em>sends</em>: space-delimited
+      <code>key=value</code> fragments, sized for a parser. They exist so the client can do work with
+      them — join <code>band=</code> to whatever it calls that band, promote a <code>status=feral</code>
+      row to the Alert rung — and they are <b>never</b> a string to display. The first build printed
+      them verbatim and a row read <code>category=settle_site at (64,36)</code>.
+    </p>
+    <p>
+      So the client renders them (<code>EventDockPanel.detail_phrase</code>): keys the label already
+      carries are dropped (<code>band</code>, <code>count</code>, <code>expedition</code>), enumerated
+      values get English (<code>settle_site</code> → <b>Settle site</b>, <code>out</code> →
+      <b>departed</b>), coordinates keep their numbers and gain a space, and a numeric value keeps its
+      key because <code>Warriors 3</code> needs one where <code>Category Settle site</code> does not.
+      <b>Numbers are trimmed, never rounded</b>: the sim writes casualties with <code>{:.3}</code>, so
+      <code>2.000</code> renders as <code>2</code> while a genuinely fractional <code>1.750</code>
+      stays <code>1.75</code> — rounding would state a precision the sim did not, and a casualty count
+      reading <code>2</code> when the sim said <code>1.5</code> is a lie the player cannot detect.
+      <b>Anything with no table entry still comes out as English</b> — underscores to spaces, first
+      letter capitalised — which is the load-bearing part: new kinds and tokens arrive server-side with
+      no schema change, so an unrecognised token is the common case over time and a raw identifier on
+      screen has to be impossible by construction rather than by anyone remembering to add a row.
+    </p>
 
     <h3>Births are a rate, not an event — so an accumulator turns one into the other</h3>
     <p>
@@ -1128,36 +1152,45 @@
   // ── the fixture ─────────────────────────────────────────────────────────
   // Real kinds, real vocabulary. `rung` drives accent + filter floor;
   // `channel` drives the World/System chips in the expanded log.
+  //
+  // `detail` here is what the client RENDERS, not what the sim sends. The sim publishes
+  // space-delimited `key=value` TOKENS — a machine contract, so the client can join a `band=` id to
+  // its roster name and promote a `status=` row to Alert — and the client renders them as prose
+  // (`EventDockPanel.detail_phrase`). Printing the tokens was a real defect: a row read
+  // `category=settle_site at (64,36)` on a player-facing bar. §05's table below lists the tokens
+  // each kind sends; this fixture shows what they come out as. Note several are EMPTY here: a
+  // `count=` is already in the label ("Two children came of age"), so it is dropped rather than
+  // said twice.
   var EVENTS = [
-    { turn: 47, kind: "predator_raid",     rung: "alert",   channel: "world",  glyph: "⚔", label: "Grey wolves took two from Ashfoot",              detail: "losses=2" },
-    { turn: 47, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "Two children came of age in Ashfoot",            detail: "count=2" },
+    { turn: 47, kind: "predator_raid",     rung: "alert",   channel: "world",  glyph: "⚔", label: "Grey wolves took two from Ashfoot",              detail: "Wounded 1 · Warriors 3 · Grey Wolf" },
+    { turn: 47, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "Two children came of age in Ashfoot",            detail: "" },
     { turn: 47, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 12 provisions",           detail: "" },
     { turn: 47, kind: "sow",               rung: "routine", channel: "world",  glyph: "◦", label: "Barley sown on the river terrace",               detail: "" },
 
-    { turn: 46, kind: "hunt_danger",       rung: "warnish", channel: "world",  glyph: "⚠", label: "The aurochs hunt cost the party three lives",    detail: "losses=3" },
-    { turn: 46, kind: "site_discovered",   rung: "notable", channel: "world",  glyph: "✦", label: "The Weeping Arch",                               detail: "at 18,31" },
-    { turn: 46, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Ashfoot",                    detail: "count=1" },
+    { turn: 46, kind: "hunt_danger",       rung: "warnish", channel: "world",  glyph: "⚠", label: "The aurochs hunt cost the party three lives",    detail: "Wounded 1 · Aurochs" },
+    { turn: 46, kind: "site_discovered",   rung: "notable", channel: "world",  glyph: "✦", label: "The Weeping Arch",                               detail: "Landmark · (18, 31)" },
+    { turn: 46, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Ashfoot",                    detail: "" },
     { turn: 46, kind: "hunt",              rung: "routine", channel: "world",  glyph: "◦", label: "Hunters brought back red deer",                  detail: "" },
 
-    { turn: 45, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "An elder died of cold in Windhollow",            detail: "cause=cold" },
+    { turn: 45, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "An elder died of cold in Windhollow",            detail: "elder · cold" },
     { turn: 45, kind: "expedition_arrived",rung: "notable", channel: "world",  glyph: "✦", label: "Expedition reached 24,9 — awaiting orders",      detail: "" },
-    { turn: 45, kind: "cultivate",         rung: "warnish", channel: "world",  glyph: "⚠", label: "The upper patch has gone feral",                 detail: "status=feral" },
+    { turn: 45, kind: "cultivate",         rung: "warnish", channel: "world",  glyph: "⚠", label: "The upper patch has gone feral",                 detail: "feral" },
     { turn: 45, kind: "corral",            rung: "routine", channel: "world",  glyph: "◦", label: "Corral raised at Ashfoot",                       detail: "" },
 
-    { turn: 44, kind: "system",            rung: "alert",   channel: "system", glyph: "⚠", label: "Command socket lost — reconnecting",             detail: "reason=eof" },
+    { turn: 44, kind: "system",            rung: "alert",   channel: "system", glyph: "⚠", label: "Command socket lost — reconnecting",             detail: "Eof" },
     { turn: 44, kind: "campaign_milestone",rung: "notable", channel: "world",  glyph: "✦", label: "Ashfoot has become a hamlet",                    detail: "" },
-    { turn: 44, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "A child came of age in Windhollow",              detail: "count=1" },
+    { turn: 44, kind: "came_of_age",       rung: "notable", channel: "world",  glyph: "✦", label: "A child came of age in Windhollow",              detail: "" },
     { turn: 44, kind: "scout",             rung: "routine", channel: "world",  glyph: "◦", label: "Two workers sent to scout the northern ridge",   detail: "" },
 
     { turn: 43, kind: "system",            rung: "routine", channel: "system", glyph: "◦", label: "Connected to simulation on 127.0.0.1:41002",     detail: "" },
     { turn: 43, kind: "found_settlement",  rung: "notable", channel: "world",  glyph: "✦", label: "Windhollow was settled",                         detail: "" },
-    { turn: 43, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Windhollow",                 detail: "count=1" },
+    { turn: 43, kind: "born",              rung: "notable", channel: "world",  glyph: "✦", label: "A child was born in Windhollow",                 detail: "" },
 
     { turn: 42, kind: "tame",              rung: "notable", channel: "world",  glyph: "✦", label: "The aurochs herd has grown tame",                detail: "" },
     { turn: 42, kind: "forage",            rung: "routine", channel: "world",  glyph: "◦", label: "Foragers returned with 9 provisions",            detail: "" },
 
     { turn: 41, kind: "expedition_sent",   rung: "routine", channel: "world",  glyph: "◦", label: "Party of four sent east",                        detail: "" },
-    { turn: 41, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "Two died of hunger in Ashfoot",                  detail: "cause=hunger" }
+    { turn: 41, kind: "died",              rung: "alert",   channel: "world",  glyph: "⚠", label: "Two died of hunger in Ashfoot",                  detail: "hunger" }
   ];
 
   var RETENTION_TURNS = 20;

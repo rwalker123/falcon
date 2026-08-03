@@ -92,8 +92,6 @@ var _server_build: String = "?"
 @onready var left_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/LeftDock
 @onready var right_dock_region: MarginContainer = $LayoutRoot/RootColumn/ContentRow/RightDock
 @onready var turn_block: VBoxContainer = $LayoutRoot/RootColumn/TopBar/TurnBlock
-@onready var campaign_title_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignTitleLabel
-@onready var campaign_subtitle_label: Label = $LayoutRoot/RootColumn/TopBar/CampaignBlock/CampaignSubtitleLabel
 @onready var turn_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/TurnLabel
 @onready var metrics_label: Label = $LayoutRoot/RootColumn/TopBar/TurnBlock/MetricsLabel
 @onready var sedentarization_label: Label = %SedentarizationLabel
@@ -196,7 +194,6 @@ var _telling: TellingPanel = null
 # card, distinct from "no victory data to show".
 var _victory_suppressed: bool = PANEL_SUPPRESSED_BY_DEFAULT
 var localization_store = null
-var campaign_label: Dictionary = {}
 var victory_state: Dictionary = {}
 # "What the player is looking at" — the selection triplet, lit-row kind, roster, sticky-selection
 # guard. Every former `_selected_*` / `_roster_*` / `_selection.choice_tile()` member lives here now.
@@ -436,7 +433,6 @@ func _ready() -> void:
     _dockrow = DockRowController.new(bottom_bar, nav_backing, turn_orb)
     _setup_tooltip()
     _legend.refresh_rows()
-    _refresh_campaign_label()
     _refresh_victory_status()
     _telling.render()
     _connect_selection_buttons()
@@ -528,11 +524,6 @@ func update_build_info(server_build: String) -> void:
 
 func set_localization_store(store) -> void:
     localization_store = store
-    _refresh_campaign_label()
-
-func update_campaign_label(label: Dictionary) -> void:
-    campaign_label = label.duplicate(true) if label is Dictionary else {}
-    _refresh_campaign_label()
 
 func update_victory_state(state: Dictionary) -> void:
     print("[HUD] update_victory_state: ", state.keys())
@@ -829,7 +820,7 @@ func update_overlay_legend(legend: Dictionary) -> void:
     _legend.update(legend)
 func get_upper_stack_height() -> float:
     var max_bottom := 0.0
-    for label in [campaign_title_label, campaign_subtitle_label, turn_label, metrics_label, victory_status_label]:
+    for label in [turn_label, metrics_label, victory_status_label]:
         if label == null:
             continue
         var top: float = label.position.y
@@ -876,23 +867,6 @@ func _recompute_insets() -> void:
                 _inset_right += size
             SIDE_BOTTOM:
                 _inset_bottom += size
-func _refresh_campaign_label() -> void:
-    if campaign_title_label == null or campaign_subtitle_label == null:
-        return
-    var title_text := _resolve_localized_field("title")
-    var subtitle_text := _resolve_localized_field("subtitle")
-    var has_title := title_text.strip_edges() != ""
-    var has_subtitle := subtitle_text.strip_edges() != ""
-    campaign_title_label.visible = has_title
-    campaign_subtitle_label.visible = has_subtitle
-    campaign_title_label.text = title_text if has_title else ""
-    campaign_subtitle_label.text = subtitle_text if has_subtitle else ""
-
-## Clear the command FEED only — a full snapshot re-seeds it from the server's ring, so keeping
-## stale receipts would double them up. The Telling panel is deliberately NOT reset here: its
-## signature de-dup makes re-ingesting the ring harmless, and clearing would throw away every
-## telling that has already scrolled past the server's 32-entry ring.
-
 ## WORLD BOUNDARY (`Main._reset_per_world_state`): the snapshot about to be applied describes a
 ## DIFFERENT world, so every HUD cache keyed to the old one is dropped. Coordinator ONLY — each
 ## module resets ITSELF; nothing but delegation belongs here.
@@ -1302,16 +1276,6 @@ func _format_victory_label(raw: String) -> String:
     for i in range(parts.size()):
         parts[i] = String(parts[i]).capitalize()
     return String(" ".join(parts)).strip_edges()
-
-func _resolve_localized_field(field: String) -> String:
-    var text := String(campaign_label.get(field, ""))
-    var loc_key_field := "%s_loc_key" % field
-    var loc_key := String(campaign_label.get(loc_key_field, ""))
-    if localization_store != null and loc_key != "":
-        var localized: String = localization_store.resolve(loc_key, text)
-        if localized.strip_edges() != "":
-            return localized
-    return text
 
 func _on_legend_sort_pressed(field: String) -> void:
     _legend.on_sort_pressed(field)

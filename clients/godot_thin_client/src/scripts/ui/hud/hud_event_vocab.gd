@@ -167,6 +167,63 @@ const DETAIL_BAND_KEY := "band"
 ## a digit boundary, or `Band 3` would also rewrite the `Band 3` inside `Band 30`.
 const SIM_BAND_LABEL_FORMAT := "Band %d"
 
+# ---- rendering a detail as PROSE -------------------------------------------
+## **THE `key=value` TOKENS ARE A MACHINE CONTRACT, NEVER A STRING TO SHOW.** The dock used to print
+## the sim's wire detail verbatim, so a row read `category=settle_site at (64,36)` — an internal
+## identifier on a player-facing surface. The tokens exist for the client to PARSE (the `band=` join,
+## the `status=` alert promotion); what the player sees is rendered from them.
+##
+## `EventDockPanel.detail_phrase` walks these three tables in order; the tables live here because
+## they are vocabulary, the walk lives there beside the other detail parsing.
+
+## Keys the LABEL already carries, dropped rather than said twice: `band` is substituted INTO the
+## label, `count` is why the label reads "Two children…" / "Four left…", and an `expedition` entity
+## id was never for reading.
+const DETAIL_KEY_HIDDEN := {
+	"band": true,
+	"count": true,
+	"expedition": true,
+	# `killed` is the LABEL's own number — the sim writes "The aurochs hunt cost the party three
+	# lives" and then `killed=3.000` beside it, so showing both says one thing twice in two
+	# different notations. `wounded` deliberately stays: it is the half the label never carries.
+	"killed": true,
+}
+
+## Bare words that are grammar, not content. The ` · ` join supplies the separation `at` was doing.
+const DETAIL_FILLER_WORDS := {
+	"at": true,
+}
+
+## The ENUMERATED values, in English. Entries are used VERBATIM — several are deliberately lowercase
+## (`cold`, `elder`, `feral`), because they read as a phrase continuing the label rather than as a
+## heading, and only the generic fallback capitalises.
+const DETAIL_VALUE_LABELS := {
+	"settle_site": "Settle site",
+	"wondrous": "Wondrous site",
+	"landmark": "Landmark",
+	"out": "departed",
+	"in": "arrived",
+	"hunger": "hunger",
+	"cold": "cold",
+	"child": "child",
+	"working": "worker",
+	"elder": "elder",
+	"feral": "feral",
+	"lapsed": "lapsed",
+	"untended": "untended",
+}
+
+## Fragment separator. A middot rather than a comma: the fragments are peers, not a list.
+const DETAIL_PHRASE_SEPARATOR := " · "
+## A coordinate arrives from the sim as `(64,36)` and is re-spaced to `(64, 36)`. Ray asked for the
+## hex coordinates to stay; only their typography changes.
+const DETAIL_COORDINATE_FORMAT := "(%d, %d)"
+## `Warriors 3` — a NUMERIC value is meaningless without its key, where an enumerated one is
+## meaningless with it (`Category Settle site`). That split is what makes the generic fallback
+## readable for tokens no table names. The number itself goes through
+## `EventDockPanel._trimmed_number` first, so the wire's `{:.3}` never reaches the row as `3.000`.
+const DETAIL_NUMERIC_FORMAT := "%s %s"
+
 # ---- row chrome ------------------------------------------------------------
 ## The `T47` stamp on every row. `INK_DIM` rather than a bespoke blue: the turn is METADATA beside
 ## the label, and a colour of its own would be a fourth accent competing with the three rungs.

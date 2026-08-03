@@ -34,7 +34,6 @@ var _world_epoch_applied: int = 0
 var loading_overlay: CanvasLayer = null
 var script_host_manager: ScriptHostManager = null
 var localization_store: LocalizationStore = null
-var _campaign_label_signature: String = ""
 # Per-HUD-method time accumulated during one `_apply_snapshot` fan-out, in microseconds. Filled by
 # `_hud_invoke` only while `_hud_profiling` is up (i.e. inside the fan-out block), drained by
 # `_record_hud_calls`.
@@ -469,7 +468,6 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
             _reset_per_world_state()
             _world_epoch_applied = snapshot_epoch
     _sync_fog_of_war(snapshot, is_delta)
-    _update_campaign_label(snapshot.get("campaign_label", {}))
     var metrics: Dictionary = {}
     var t_display: int = profile.begin(PROFILE_DISPLAY)
     if map_view != null and map_view.has_method("display_snapshot"):
@@ -637,9 +635,8 @@ func _reset_per_world_state() -> void:
     # rollback reuses `seq`, so the full-frame clear is a correctness requirement in its own right).
     if map_view != null and map_view.has_method("reset_world_state"):
         map_view.call("reset_world_state")
-    # Both analytics lines print once per DISTINCT value, so a new world whose campaign label or
-    # victory winner happens to match the old one's would print nothing at all without this.
-    _campaign_label_signature = ""
+    # The victory analytics line prints once per DISTINCT value, so a new world whose winner happens
+    # to match the old one's would print nothing at all without this.
     _victory_analytics_signature = ""
 
 func _emit_victory_analytics(data: Dictionary) -> void:
@@ -1372,45 +1369,6 @@ func _sync_fog_of_war(snapshot: Dictionary, is_delta: bool) -> void:
     if map_view != null and map_view.has_method("set_fow_enabled"):
         map_view.call("set_fow_enabled", enabled)
     _push_fog_preference()
-
-func _update_campaign_label(raw_value: Variant) -> void:
-    var label_dict: Dictionary = {}
-    if raw_value is Dictionary:
-        label_dict = raw_value.duplicate(true)
-    if hud != null and hud.has_method("update_campaign_label"):
-        _hud_invoke("update_campaign_label", [label_dict])
-    var title_text: String = _resolve_campaign_field(label_dict, "title")
-    var subtitle_text: String = _resolve_campaign_field(label_dict, "subtitle")
-    var title_key := String(label_dict.get("title_loc_key", ""))
-    var subtitle_key := String(label_dict.get("subtitle_loc_key", ""))
-    var profile_id := String(label_dict.get("profile_id", ""))
-    var signature := "%s|%s|%s|%s|%s" % [
-        profile_id,
-        title_text,
-        subtitle_text,
-        title_key,
-        subtitle_key
-    ]
-    if signature == _campaign_label_signature:
-        return
-    _campaign_label_signature = signature
-    if title_text != "" or subtitle_text != "" or title_key != "" or subtitle_key != "":
-        print("[analytics] campaign_label title=\"%s\" subtitle=\"%s\" loc_title=\"%s\" loc_subtitle=\"%s\"" % [
-            title_text,
-            subtitle_text,
-            title_key,
-            subtitle_key
-        ])
-
-func _resolve_campaign_field(label_dict: Dictionary, field: String) -> String:
-    var raw_text := String(label_dict.get(field, ""))
-    var loc_key_field := "%s_loc_key" % field
-    var loc_key := String(label_dict.get(loc_key_field, ""))
-    if localization_store != null and loc_key != "":
-        var localized: String = localization_store.resolve(loc_key, raw_text)
-        if localized.strip_edges() != "":
-            return localized
-    return raw_text
 
 func _process(delta: float) -> void:
     if Input.is_action_just_pressed("toggle_inspector"):

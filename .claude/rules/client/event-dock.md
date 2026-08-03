@@ -75,6 +75,57 @@ Only an Alert's LABEL carries its accent; a Routine one recedes to `INK_DIM` and
 on the shared ink. The rung reads off the rail and the glyph — tinting every label would turn the bar
 into a colour chart and cost the alerts the contrast that makes them alerts.
 
+## The wire tokens are a CONTRACT; what the player sees is rendered from them
+
+A `detail` arrives as space-delimited `key=value` fragments — `category=settle_site at (64,36)`,
+`band=3 count=4 direction=out`. **They are sized for a parser, not for a reader**, and they exist so
+the client can do work with them: join `band=` to the roster name, promote a `status=` row to the
+Alert rung. The dock printed them verbatim at first, so a row read `category=settle_site at (64,36)`
+on a player-facing bar — an internal identifier where prose belongs.
+
+`EventDockPanel.detail_phrase` renders them, over three tables in `HudEventVocab`:
+
+| Layer | Does | Example |
+|---|---|---|
+| `DETAIL_KEY_HIDDEN` | drops keys the LABEL already carries — `band`, `count`, `expedition`, `killed` | `band=3 count=4 direction=out` → `departed` |
+| `DETAIL_VALUE_LABELS` | the enumerated values in English, used VERBATIM (several are deliberately lowercase, reading as a phrase continuing the label) | `settle_site` → `Settle site`, `out` → `departed` |
+| the generic fallback | underscores → spaces, first letter capitalised | `herd_gone` → `Herd gone` |
+
+**The fallback is the load-bearing layer, not the safety net.** Kinds and tokens are added
+server-side with no schema change, so a value with no table row is the *common* case over time — a
+raw identifier reaching the screen has to be impossible by construction rather than by anyone
+remembering to add a row. `ui_preview` states both guarantees as general properties — no Label the dock renders may contain a
+`=`, and no rendered detail may carry a trailing-zero decimal — each with preconditions so it cannot
+pass vacuously. **The second one caught the harness twice**: first the fixture had no `{:.3}` number
+in it at all, and then, once it did, the row carrying it sat outside the log's five-turn window, so
+the on-screen scan walked rows that never could have failed. It now scans `detail_phrase` over the
+whole retained pool as well as the rendered labels, which is the complete property and cannot drift
+out of view.
+
+Three details in the walk are not obvious:
+
+- **A NUMERIC value keeps its key, an enumerated one does not.** `Killed 2.000` is meaningless
+  without the key; `Category Settle site` is worse for having it.
+- **A bare word continues the previous value.** The sim writes `species=Grey Wolf`, so a naive
+  space-split drops the `Wolf`. The one exception is `DETAIL_FILLER_WORDS` (`at`), which is grammar
+  the ` · ` join already supplies.
+- **Coordinates stay** — re-spaced to `(64, 36)`. They were the one part of the raw detail worth
+  keeping.
+- **A number is TRIMMED, never rounded** (`_trimmed_number`). The sim writes casualties with
+  `{:.3}` — honest on the wire, where a `Scalar` really can be fractional, and debug output on a
+  notification bar: `Killed 2.000` is a float where the player is owed a count. Trailing zeros and a
+  bare decimal point come off, so `2.000` → `2` while `1.750` → `1.75`. Rounding would state a
+  precision the sim did not, and a casualty count reading `2` when the sim said `1.5` is a lie the
+  player cannot detect. The early return on "no decimal point at all" is load-bearing: `rstrip("0")`
+  on a bare `100` answers `1`.
+- **`killed` is hidden and `wounded` is not.** The label already says "cost the party three lives",
+  so `Killed 3.000` beside it says one thing twice in two notations; `wounded` is the half the label
+  never carries.
+
+**The RAW string stays the input to `DETAIL_STATUS_STYLE`.** That rule matches whole `key=value`
+fragments against the wire text and must never start matching prose, which is why the phrase is
+built at RENDER time and never stored back onto the event.
+
 ## De-duplication is on `seq`, and that fixed a real bug
 
 Every consumer used to key on the synthesized signature `"%d|%s|%s|%s" % [tick, kind, label, detail]`
@@ -186,6 +237,26 @@ has actually had a chance to look.
 The pin is tracked as an **`order`** (the ingest counter), never as the record itself: two events can
 carry equal field values — that is the very bug `seq` de-duplication fixes — so identity here has to
 be an id, not a `==` on a Dictionary.
+
+## The strip is CAPPED and CENTRED, not stretched
+
+On an ultrawide the bar spanned the whole band between the columns, so a row's label sat at one end
+of two feet of screen and its detail at the other and the pair read as two unrelated things.
+`MAX_STRIP_WIDTH` bounds it and the strip centres in whatever band is left.
+
+**The number is chosen against two measurements and the larger wins.** The widest row the shipped
+fixtures produce at the current font sizes is **594px** — a predator raid, `A Grey Wolf raid cost 2
+lives` beside `Killed 2.000 · Wounded 1.000 · Warriors 3 · Grey Wolf` — which with the expander (86)
+and the card chrome (31) needs **711**. But the band between the two HUD columns at the project's own
+1920 base canvas is **1216**, and the ordinary case must render *unchanged*: a cap below that would
+shrink the bar on every desktop to fix a complaint about ultrawides. So the cap sits just above the
+base-canvas band at **1280** — no content is ever squeezed, nothing moves at 1920 or below, and past
+it the strip stops growing.
+
+It is **cross-axis only**, the same rule as the perpendicular insets: it moves where the strip is
+drawn, never what it reserves. `ui_preview` asserts BOTH halves — at the normal canvas the strip
+equals the band (1216) and at an ultrawide it equals the cap and is centred — because a cap
+hard-wired on fails the first and one hard-wired off fails the second.
 
 ## The strip yields to the map, and the reservation never depends on content
 

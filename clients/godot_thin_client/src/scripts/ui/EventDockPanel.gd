@@ -41,7 +41,7 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 const LAYER_INDEX := 104
 ## One event row. Sized for `ROW_FONT_SIZE` text plus `ROW_PADDING_V` either side, with headroom, so
 ## the reserved strip is never a pixel short of what the rows actually draw at.
-const ROW_HEIGHT := 24.0
+const ROW_HEIGHT := 28.0
 const ROW_PADDING_H := 8
 const ROW_PADDING_V := 3
 ## The rung accent rail down a row's leading edge (the prototype's `border-left`). A Routine row
@@ -65,6 +65,23 @@ const SEAM_THICKNESS := 2.0
 ## `MAX_STRIP_HEIGHT_FRACTION`, and the log's scroll takes whatever is left after its head and foot,
 ## so this is a target rather than a floor.
 const LOG_HEIGHT := 260.0
+## **THE WIDEST THE STRIP MAY BE, CENTRED IN THE BAND BETWEEN THE VERTICAL DOCKS.** On an ultrawide
+## the bar spanned the whole band, so a row's label sat at one end of two feet of screen and its
+## detail at the other, and the pair read as two unrelated things rather than one line. Bounded, they
+## read as a column.
+##
+## **CHOSEN AGAINST TWO MEASUREMENTS, and the larger one wins.** The widest row the shipped fixtures
+## produce at the current font sizes is **537px** (a predator raid: `Grey wolves took two from
+## Ashfoot` + `Wounded 1 · Warriors 3 · Grey Wolf`), which with the expander (86) and the card chrome
+## (31) needs **654**. But the band between the two HUD columns at the project's own 1920 base
+## canvas is **1216**, and the ordinary case must render UNCHANGED — a cap below that would shrink the
+## bar on every desktop to fix a complaint about ultrawides. So the cap sits just above the base-canvas
+## band: no content is ever squeezed (654 ≪ 1280), nothing moves at 1920 or below, and past it — which
+## is exactly the ultrawide the report came from — the strip stops growing and centres instead.
+##
+## Cross-axis only, the same rule as the perpendicular insets: it moves where the strip is DRAWN,
+## never what it reserves.
+const MAX_STRIP_WIDTH := 1280.0
 ## The strip may never own more than this share of the window. The map is the game; a notification
 ## bar that starves it has stopped being a notification.
 const MAX_STRIP_HEIGHT_FRACTION := 0.5
@@ -75,13 +92,18 @@ const LOG_TURN_HEAD_PADDING_H := 8
 const LOG_TURN_HEAD_PADDING_V := 2
 
 # ---- typography ------------------------------------------------------------
-const ROW_FONT_SIZE := 12
-const GLYPH_FONT_SIZE := 12
-const TURN_FONT_SIZE := 10
-const DETAIL_FONT_SIZE := 10
-const CONTROL_FONT_SIZE := 11
-const TURN_HEAD_FONT_SIZE := 10
-const CHIP_FONT_SIZE := 10
+## Bumped as a set (the bar and the log share every one of these), with `DETAIL_FONT_SIZE` bumped
+## the MOST — it was both the smallest and the one singled out as unreadable, and it sits at the far
+## end of the row where it gets the least attention. `ROW_HEIGHT` rose with them: it is what the
+## reserved strip is computed from, so leaving it behind would end the strip a few pixels short of
+## what the rows actually draw.
+const ROW_FONT_SIZE := 14
+const GLYPH_FONT_SIZE := 14
+const TURN_FONT_SIZE := 12
+const DETAIL_FONT_SIZE := 13
+const CONTROL_FONT_SIZE := 12
+const TURN_HEAD_FONT_SIZE := 11
+const CHIP_FONT_SIZE := 11
 
 # ---- the bar's row budget --------------------------------------------------
 ## How many rows the bar may show. Two rows is ~50px of reserved edge; three is defensible; four
@@ -362,6 +384,108 @@ func _resolve_style(kind: String, detail: String, rung: String) -> Dictionary:
 	if token != "":
 		return HudEventVocab.DETAIL_STATUS_STYLE[token]
 	return HudEventVocab.RUNG_STYLE.get(rung, HudEventVocab.RUNG_STYLE[HudEventVocab.DEFAULT_RUNG])
+
+## **THE SIM'S DETAIL, RENDERED AS PROSE.** `category=settle_site at (64,36)` becomes
+## `Settle site · (64, 36)`; `band=3 count=4 direction=out` becomes `departed`.
+##
+## The wire tokens are a MACHINE CONTRACT — they exist so the client can join a `band=` id to its
+## roster name and promote a `status=` row to Alert — and printing them was the defect: an internal
+## identifier reached a player-facing bar. **The RAW string stays the input to `_detail_status_key`**,
+## which matches whole `key=value` fragments and must never start matching prose.
+##
+## The walk, and why each branch exists:
+##   • A token with `=` opens a fragment. Its KEY is dropped when `DETAIL_KEY_HIDDEN` names it (the
+##     label already said it), otherwise the VALUE is rendered and the key kept only when the value
+##     is NUMERIC — `Warriors 3` needs its key, `Category Settle site` is worse for having one.
+##   • A `(x,y)` token is a coordinate, re-spaced. Ray asked for the hex coordinates to stay.
+##   • A bare word is either grammar (`at`, dropped — the ` · ` join does that work) or the
+##     CONTINUATION of the previous value. That second case is load-bearing and not hypothetical:
+##     the sim writes `species=Grey Wolf`, so a naive space-split loses the `Wolf`.
+##
+## **THE GENERIC FALLBACK IS THE POINT.** A kind or a token can be added server-side with no schema
+## change, so a value with no table row is the COMMON case over time — underscores become spaces and
+## the first letter is capitalised, which makes a raw identifier on screen impossible by
+## construction rather than by anyone remembering to add a row.
+##
+## It takes no `kind`: no rule that survived the spec keys on one. The single candidate — hiding
+## `bracket`/`cause` on `died`, whose label already says "An elder died of cold in Band 1" — is
+## contradicted by `DETAIL_VALUE_LABELS`, which names exactly those values, so the trailing column
+## restates them compactly on purpose. Add the parameter when a rule needs it, not before.
+static func detail_phrase(detail: String) -> String:
+	if detail == "":
+		return ""
+	var fragments: Array[String] = []
+	# Parallel to `fragments`: the raw value of the `key=value` each entry came from, or `""` for a
+	# coordinate / bare word. A continuation appends to the last entry that HAS one.
+	var open_key: String = ""
+	var open_value: String = ""
+	var open_index := -1
+	for token in detail.split(" ", false):
+		var coordinate := _coordinate_phrase(token)
+		if coordinate != "":
+			fragments.append(coordinate)
+			open_index = -1
+			continue
+		var split := token.find("=")
+		if split > 0:
+			open_key = token.substr(0, split)
+			open_value = token.substr(split + 1)
+			if HudEventVocab.DETAIL_KEY_HIDDEN.has(open_key):
+				open_index = -1
+				continue
+			fragments.append(_key_value_phrase(open_key, open_value))
+			open_index = fragments.size() - 1
+			continue
+		if HudEventVocab.DETAIL_FILLER_WORDS.has(token):
+			continue
+		if open_index >= 0:
+			# A continuation of the previous value — `species=Grey` then `Wolf`.
+			open_value += " " + token
+			fragments[open_index] = _key_value_phrase(open_key, open_value)
+			continue
+		fragments.append(_english(token))
+	return HudEventVocab.DETAIL_PHRASE_SEPARATOR.join(fragments)
+
+## One `key=value` as prose. A numeric value keeps its key (`Warriors 3`); an enumerated one is the
+## whole phrase (`Settle site`), because the key restates what the value already says.
+static func _key_value_phrase(key: String, value: String) -> String:
+	if value.is_valid_float():
+		return HudEventVocab.DETAIL_NUMERIC_FORMAT % [_english(key), _trimmed_number(value)]
+	if HudEventVocab.DETAIL_VALUE_LABELS.has(value):
+		return String(HudEventVocab.DETAIL_VALUE_LABELS[value])
+	return _english(value)
+
+## `(64,36)` → `(64, 36)`, or `""` when the token is not a coordinate.
+static func _coordinate_phrase(token: String) -> String:
+	if not token.begins_with("(") or not token.ends_with(")"):
+		return ""
+	var inner := token.substr(1, token.length() - 2)
+	var parts := inner.split(",", false)
+	if parts.size() != 2 or not parts[0].is_valid_int() or not parts[1].is_valid_int():
+		return ""
+	return HudEventVocab.DETAIL_COORDINATE_FORMAT % [int(parts[0]), int(parts[1])]
+
+## A wire number as a READ number. The sim writes casualties with `{:.3}` — that precision is honest
+## on the wire, where a `Scalar` really can be fractional, and it is DEBUG OUTPUT on a notification
+## bar: `Killed 2.000` is a float where the player is owed a count. Trailing zeros and a bare decimal
+## point come off, so `2.000` → `2` while a genuinely fractional `1.750` → `1.75`.
+##
+## It TRIMS rather than rounds, deliberately — rounding here would state a precision the sim did not,
+## and a casualty count that reads `2` when the sim said `1.5` is a lie the player cannot detect.
+static func _trimmed_number(value: String) -> String:
+	# THE EARLY RETURN IS LOAD-BEARING, not a fast path: `rstrip("0")` on a bare `100` would strip
+	# the value's own trailing zeros and yield `1`. Only a number carrying a decimal point has
+	# trailing zeros that mean nothing.
+	if not value.contains("."):
+		return value
+	return value.rstrip("0").rstrip(".")
+
+## The generic fallback: an identifier as English. `herd_gone` → `Herd gone`.
+static func _english(raw: String) -> String:
+	var words := raw.replace("_", " ").strip_edges()
+	if words == "":
+		return ""
+	return words.substr(0, 1).to_upper() + words.substr(1)
 
 ## The `status=` fragment this detail carries, or `""`. Matched on the WHOLE space-delimited
 ## `key=value` fragment against the detail the sim writes (`"status=feral reason=untended …"`), so a
@@ -824,7 +948,10 @@ func _make_event_row(event: Dictionary, pinned: bool) -> Control:
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	line.add_child(label)
 
-	var detail := String(event["detail"])
+	# THE PHRASE, never the raw tokens — see `detail_phrase`. Rendered here rather than stamped at
+	# ingest for the same reason the band label is: the raw detail stays the input to
+	# `_detail_status_key`, and a stored phrase would start matching prose.
+	var detail := detail_phrase(String(event["detail"]))
 	if detail != "":
 		line.add_child(_make_label(detail, DETAIL_FONT_SIZE, HudStyle.INK_FAINT))
 	return row
@@ -882,7 +1009,7 @@ func _detail_token(detail: String, key: String) -> String:
 
 func _row_tooltip(event: Dictionary) -> String:
 	var parts: Array[String] = [_row_label(event)]
-	var detail := String(event["detail"])
+	var detail := detail_phrase(String(event["detail"]))
 	if detail != "":
 		parts.append(detail)
 	parts.append("%s · %s" % [String(event["kind"]), String(event["rung"])])
@@ -987,11 +1114,16 @@ func _apply_dock_layout() -> void:
 	if _root == null:
 		return
 	var cross := _cross_axis_size()
+	# The strip stops short of whatever is docked left/right (`set_perpendicular_insets`) and is then
+	# CAPPED and CENTRED inside the band that leaves (`MAX_STRIP_WIDTH`). Both anchors sit at 0 so the
+	# offsets are absolute from the left edge — the width is computed, not derived from the window.
+	var band := maxf(_viewport_size().x - _inset_left - _inset_right, 0.0)
+	var width := minf(band, MAX_STRIP_WIDTH)
+	var leading := _inset_left + (band - width) * 0.5
 	_root.anchor_left = 0.0
-	_root.anchor_right = 1.0
-	# The strip stops short of whatever is docked left/right — see `set_perpendicular_insets`.
-	_root.offset_left = _inset_left
-	_root.offset_right = -_inset_right
+	_root.anchor_right = 0.0
+	_root.offset_left = leading
+	_root.offset_right = leading + width
 	if _dock_edge == SIDE_TOP:
 		_root.anchor_top = 0.0
 		_root.anchor_bottom = 0.0

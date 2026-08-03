@@ -11,8 +11,9 @@
 
 ### Brand & Campaign Labels
 - Working marketing label: "Trail Sovereigns" for the late-forager nomadic campaign described in the manual (§2a). Engineering keeps `ShadowScale` identifiers in code/assets until a rename decision lands.
-- UI copy: surface "Trail Sovereigns" in client shells, campaign selection, and marketing strings loaded from localization tables; treat as data so alternating labels are possible without rebuilds.
-- Implementation status: `core_sim` now loads `core_sim/src/data/start_profiles.json`, stores campaign label text/keys in a `CampaignLabel` resource, and serializes them via the new `SnapshotHeader.campaignLabel` FlatBuffer field consumed by `clients/godot_thin_client`.
+- UI copy: campaign and marketing strings are loaded from localization tables and treated as data, so alternating labels are possible without rebuilds.
+- Implementation status: `core_sim` loads `core_sim/src/data/start_profiles.json`, stores campaign label text/keys in a `CampaignLabel` resource, and serializes them via the `SnapshotHeader.campaignLabel` FlatBuffer field.
+- **The HUD does not display the campaign label.** Its one client-side reader is the Inspector's Map tab (`ui/inspector/MapPanel.gd`), beside the start-profile controls the label belongs to. The top-left title block the game shell used to carry was retired: it restated a fixed string on every frame of play and earned none of the screen it took.
 
 ---
 
