@@ -14,6 +14,12 @@ extends Node
 ##   3. EVERY REGISTERED PAGE RESOLVES — each non-empty `script` is a file that exists and whose
 ##      script extends `WorkbenchPage`. A typo'd path degrades SILENTLY to the placeholder today:
 ##      the rail entry renders, the click works, and the page is simply never built.
+##   4. THE SHELL NEVER WRITES ITS OWN `size` — the surface's width is `offset_right`. The shell is
+##      anchored `PRESET_LEFT_WIDE`: left and right anchors are equal, top and bottom are NOT, and
+##      `Control` warns on a `size` write under unequal opposite anchors ("will have their size
+##      overridden after `_ready()`"). The warning points at a real asymmetry — `size` is a
+##      `Vector2`, so `size.x = w` writes the current, minimum-size-clamped `size.y` back as an
+##      explicit bottom offset, pinning a height the anchors are supposed to stretch.
 ##
 ## Run as a scene (not `--script`: the registry and the page scripts reach `class_name` globals that
 ## register only with the project loaded). No GPU needed — this reads source, it renders nothing:
@@ -39,6 +45,14 @@ const PAGES_DIRECTORY_MARKER := "pages/"
 ## The base class every registered page must descend from, by global name.
 const PAGE_BASE_CLASS := &"WorkbenchPage"
 
+## A write to the shell's own `size`, anchored at the START of a statement — which is what keeps it
+## precise. `_rail_panel.custom_minimum_size.x = …` and every other `custom_minimum_size` write in
+## the file begin with a node or property name, so the anchor alone excludes them; a `size` write on
+## some OTHER node (`child.size = v`) is likewise not this file's business. Compound assignment is
+## covered (`size.x += 4` is the same mistake spelled differently), and `==` is excluded, since a
+## comparison writes nothing.
+const SIZE_WRITE_PATTERN := "^\\s*(?:self\\.)?size(?:\\.[xy])?\\s*[+\\-*/]?=(?!=)"
+
 var _failures: Array[String] = []
 
 
@@ -52,6 +66,7 @@ func _ready() -> void:
 	_check_line_budget(source)
 	_check_shell_names_no_page(source)
 	_check_registry_resolves()
+	_check_no_size_write(source)
 	_finish()
 
 
@@ -153,6 +168,32 @@ static func _extends_page_base(script: GDScript) -> bool:
 	return false
 
 
+# ---- 4. the shell never writes its own size --------------------------------
+
+## Scanned line by line rather than over `_strip_comments`' output, because the line NUMBER is the
+## whole value of the report — "the shell writes `size` somewhere" is not actionable.
+##
+## Comment lines are skipped, and that is load-bearing rather than tidy: `_emit_reserved_width`'s
+## docstring explains this very rule and spells `size.x = w` while doing so, so a guard that trips on
+## its own explanation would be reverted rather than obeyed.
+func _check_no_size_write(source: String) -> void:
+	var pattern := RegEx.create_from_string(SIZE_WRITE_PATTERN)
+	var lines := source.split("\n")
+	for index in lines.size():
+		var line: String = lines[index]
+		if line.strip_edges().begins_with("#"):
+			continue
+		if pattern.search(line) == null:
+			continue
+		_fail(("%s writes its own `size` at line %d: `%s`. Set the surface's width through "
+			+ "`offset_right` instead (`offset_right = offset_left + _surface_width`). The shell is "
+			+ "anchored PRESET_LEFT_WIDE — left/right anchors equal, top/bottom NOT — so Control "
+			+ "warns on a `size` write, and because `size` is a Vector2 the write also pins the "
+			+ "current minimum-size-clamped `size.y` as an explicit bottom offset, freezing a height "
+			+ "the anchors are supposed to stretch.")
+			% [SHELL_PATH, index + 1, line.strip_edges()])
+
+
 # ---- reporting -------------------------------------------------------------
 
 func _fail(msg: String) -> void:
@@ -162,8 +203,8 @@ func _fail(msg: String) -> void:
 func _finish() -> void:
 	if _failures.is_empty():
 		var lines := FileAccess.get_file_as_string(SHELL_PATH).split("\n").size()
-		print(("workbench_shell_budget: PASS — the shell is %d/%d lines, names no page, and every "
-			+ "registered page resolves") % [lines, SHELL_LINE_BUDGET])
+		print(("workbench_shell_budget: PASS — the shell is %d/%d lines, names no page, never writes "
+			+ "its own `size`, and every registered page resolves") % [lines, SHELL_LINE_BUDGET])
 		get_tree().quit(0)
 	else:
 		printerr("workbench_shell_budget: FAIL — %d problem(s):" % _failures.size())

@@ -132,14 +132,20 @@ sparse and the client's carried defaults safe.
 
 The shell is anchored `PRESET_LEFT_WIDE` — left and right anchors equal, top and bottom **not** — so
 its height comes from the anchors and only its width is the surface's to set. `_emit_reserved_width`
-sets `offset_right`; a `size` write is wrong on both axes. `Control` warns on one under unequal
-opposite anchors ("will have their size overridden after `_ready()`"), which `Main` trips because it
-hides the surface from its own `_ready`, before the deferred callback that clears the warning runs.
-And `size` is a `Vector2`: `size.x = w` writes the current — minimum-size-clamped — `size.y` back as
-an explicit bottom offset, pinning a height the anchors are supposed to stretch.
+sets `offset_right`, and the damage a `size` write does is **vertical**: `size` is a `Vector2`, so
+`size.x = w` also writes the current — minimum-size-clamped — `size.y` back as an explicit bottom
+offset, pinning a height the anchors are supposed to stretch. Horizontally the two agree, which is
+what makes this easy to miss — `set_size` recomputes `offset_right` to the same number the offset
+write sets, so the width looks right while the height quietly stops stretching.
+
+`Control` warns on any `size` write under unequal opposite anchors ("will have their size overridden
+after `_ready()`"), which `Main` trips because it hides the surface from its own `_ready`, before the
+deferred callback that clears the warning runs. That warning was the only symptom.
 
 `Main` and `workbench_preview` seed the surface through the same offset, so drag-resize, the
-show/hide toggle and construction all move one number.
+show/hide toggle and construction all move one number. `workbench_shell_budget` asserts the shell's
+source carries no bare `size` write, because the failure is otherwise invisible: a revert leaves the
+rendered width correct and every existing assertion green.
 
 ## A hidden Workbench ingests nothing
 
