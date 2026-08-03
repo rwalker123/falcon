@@ -129,7 +129,7 @@ func _tame_worker_cap_herd_fixture() -> Dictionary:
 	return fixture
 
 ## A nearly-tamed herd, FULLY STAFFED — the calm control for the staffing readout, AND the fix for the
-## stale-count bug (fauna neglect-escape arc). `_band_fixture` has 4 herders (a Hunt assignment) on
+## stale-count bug (fauna neglect-escape arc). `BandFx.band_fixture` has 4 herders (a Hunt assignment) on
 ## game_deer_07, and this herd needs 4, so the drawer reads a neutral "Herders: 4 / 4" — from the
 ## ACTUAL assigned count, not `herded_fraction`. `herded_fraction` is deliberately left STALE at 0.4
 ## (last turn's resolved value): the OLD code reconstructed `round(0.4 · 4) = 2` and wrongly read a
@@ -142,7 +142,7 @@ func _fully_herded_herd_fixture() -> Dictionary:
 	return fixture
 
 ## The SAME herd, UNDER-HERDED — animals are drifting off (fauna neglect-escape arc; neglect no longer
-## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `_band_fixture`
+## decays tameness, it sheds whole animals to the wild). The herd now needs 6 herders but `BandFx.band_fixture`
 ## only staffs 4, so the drawer reads the amber "Herders: 4 / 6 — under-herded" (the ACTUAL staffed
 ## count) plus the muted "Under-herded — animals are drifting off. Staff all 6 herders to hold the herd."
 ## line — NEVER the retired "tameness slipping" copy. `herded_fraction` is left STALE at 1.0: the OLD
@@ -511,7 +511,7 @@ func run(harness) -> void:
 	await h._save("herd_corral_starving")
 
 	# Staffing readout (fauna neglect-escape arc) — the fix for the stale "N of M working" count. The
-	# reference band (`_band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
+	# reference band (`BandFx.band_fixture`) staffs 4 herders on game_deer_07, and the count now comes from
 	# that ACTUAL assignment, never from last turn's resolved `herded_fraction`.
 	# FULLY STAFFED: the herd needs 4 and 4 are on it → a calm "Herders: 4 / 4" (neutral ink), no
 	# consequence line. `herded_fraction` is a stale 0.4, so the OLD reconstruction would have read a
@@ -734,7 +734,7 @@ func run(harness) -> void:
 	# ACTUAL hunt assignment on this herd (`assigned_herders_for`), and the reference band staffs 4 — which
 	# renders a FULLY-herded corral and hides the very shortfall the cap floor exists to fix. The row and
 	# the cap floor have to DISAGREE for the deficit to be visible, so this band staffs 1 against the herd's
-	# requirement of 2; `_band_fixture()` is restored immediately after the save, since `herd_corral_depleted`
+	# requirement of 2; `BandFx.band_fixture()` is restored immediately after the save, since `herd_corral_depleted`
 	# and every state downstream document the reference band's 4.
 	var under_herded_band := BandFx.band_fixture().duplicate(true)
 	for entry in under_herded_band["labor_assignments"]:

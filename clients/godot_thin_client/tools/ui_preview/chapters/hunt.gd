@@ -178,7 +178,7 @@ func _assert_compose_order_parity(forage_key: String, hunt_key: String) -> void:
 func _two_player_bands() -> Array:
 	# hunt_reach 6 keeps both bands WITHIN local reach of the (66,10) herd (distances 0 and 3), so the
 	# band-picker states test the LOCAL-hunt re-cap (the distance-aware expedition path is exercised by
-	# _hunt_distance_bands below).
+	# BandFx.hunt_distance_bands, in `fixtures_band.gd`).
 	return [
 		{"entity": 801, "faction": 0, "size": 120, "current_x": 66, "current_y": 10,
 			"working_age": 14, "idle_workers": 12, "hunt_reach": 6, "activity": "forage", "labor_assignments": []},
@@ -544,7 +544,8 @@ func run(harness) -> void:
 	h = harness
 
 	# ---- THE TWO ZERO-CREW SUBMITS, HUNT SIDE ----------------------------------------------------
-	# The forage pair above (`forage_unstaffed` / `forage_unassign`) is one half of a rule that belongs
+	# The forage pair `forage_unstaffed` / `forage_unassign` (`chapters/forage_crop.gd`) is one half of
+	# a rule that belongs
 	# to BOTH sheets: `workers == 0` means two different things depending on whether this band already
 	# works the source, and the sim skips validation entirely at 0 — so the unassign is always legal.
 	# The hunt sheet had ONE state for both, a live button that sent a command changing nothing, and no

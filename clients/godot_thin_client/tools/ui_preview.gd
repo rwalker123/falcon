@@ -112,7 +112,7 @@ var _compose_spines := {}
 var _floor_chart_drawn_patch := {}
 
 
-## The harness's ONE gate into the HUD for a source fixture: everything goes through `_floorify`
+## The harness's ONE gate into the HUD for a source fixture: everything goes through `ForageFx.floorify`
 ## first, so no state can accidentally hand the panel a retired per-stance table (which would render
 ## as a silent zero rather than as a failure).
 func _show_herd(herd: Dictionary) -> void:
@@ -438,7 +438,7 @@ func _turn_orb_advance_button() -> Button:
 ## These two calls replace the direct `_hud._build_*_assign_controls(...)` the states used before;
 ## the builders still run, just against the sheet's content container.
 ##
-## **IT GOES THROUGH `_floorify`, LIKE ITS HERD TWIN.** Most states pass a FRESH fixture here rather
+## **IT GOES THROUGH `ForageFx.floorify`, LIKE ITS HERD TWIN.** Most states pass a FRESH fixture here rather
 ## than the object `_show_tile` already converted, so the sheet was being built from a dict the
 ## adapter had never seen. That was invisible while the adapter only rewrote ceilings — the fixture
 ## builders seed those themselves — and stopped being invisible the moment the adapter also had to
@@ -479,26 +479,9 @@ func _compose_herd(herd: Dictionary, count: int = Spine.COMPOSE_COUNT_UNSET,
 	_hud._drawercompose.open_herd_compose(herd)
 
 
-func _label_text_containing(root: Node, needle: String) -> String:
-	if root == null:
-		return ""
-	if root is Label and (root as Label).text.contains(needle):
-		return (root as Label).text
-	# RichTextLabels carry the BBCode SOURCE in `text`, which is what a needle spanning a `[color]`
-	# span (the improvement deal's WARN-amber middle term) has to be matched against — the improvement
-	# deal and the local yield previews are all `HudWidgets.forecast_label`s.
-	if root is RichTextLabel and (root as RichTextLabel).text.contains(needle):
-		return (root as RichTextLabel).text
-	for child in root.get_children():
-		var found := _label_text_containing(child, needle)
-		if found != "":
-			return found
-	return ""
-
-
 ## The LAND drawer's `Assign … ▸` button. Found STRUCTURALLY — `%ForageAssignControls` holds at most a
 ## standing-summary `HFlowContainer` and this one Button (`build_forage_drawer_actions`) — for the same
-## reason as above: its face carries the crew noun under test.
+## reason the identity finders in `node_query.gd` exist: its face carries the crew noun under test.
 func _forage_open_button() -> Button:
 	for child in _hud.forage_assign_controls.get_children():
 		if child is Button:
@@ -554,10 +537,7 @@ func _record_compose_spine(key: String) -> void:
 		spine.slice(0, Spine.COMPOSE_SPINE_HEAD.size()) == Spine.COMPOSE_SPINE_HEAD)
 
 
-## Same shape as `_assert_turn_orb`, for dock-card visibility. A PNG shows what a frame looks like;
-## these say what it MUST be, so a default regression fails loudly in the run log instead of waiting
-## for someone to notice a card that should not be there.
-# ---- the event dock's fixtures + probes ---------------------------------------------------------
+# ---- the run's assertion sink + the input-chain stand-in ----------------------------------------
 
 
 ## Set by `_unhandled_input` below; read only by `_preview_press_reaches_map`.
@@ -637,7 +617,7 @@ func _guard_herd_fields(subject: Variant, where: String, depth: int = 0) -> void
 			push_error(("ui_preview: FAIL herd fields — %s herd \"%s\" declares %s %d and %s %d. Once "
 				+ "%s is above zero the herd IS managed, and the would-be crew is the SAME crew — the "
 				+ "sim's two functions differ only by the ownership gate this herd has already passed, "
-				+ "so they must be EQUAL here. Set both through _set_managed_herders; only a still-WILD "
+				+ "so they must be EQUAL here. Set both through HerdFx.set_managed_herders; only a still-WILD "
 				+ "tameable herd may carry a larger would-be crew, and its gated count is 0.")
 				% [where, String(dict.get("id", "?")), HerdFx.HERDERS_NEEDED_KEY, needed,
 				HerdFx.HERDERS_NEEDED_IF_MANAGED_KEY, if_managed, HerdFx.HERDERS_NEEDED_KEY])

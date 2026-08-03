@@ -25,7 +25,7 @@ const BOAR_FOOD_PER_ANIMAL := 4.0
 # percentage the readout prints, and two spellings of one quantum would drift.
 
 const RAID_TRADE_PER_ANIMAL := 0.5
-# The DISTANCE frames' raid (`_hunt_distance_herd`, the reference Red Deer at 2.0 food/animal): a party
+# The DISTANCE frames' raid (`hunt_distance_herd`, the reference Red Deer at 2.0 food/animal): a party
 # of `i+1` lands `DISTANCE_RAID_ANIMALS[i]` animals in `DISTANCE_RAID_TURNS[i]` HUNTING turns. Those
 # frames open at the seeded party of 1, so the first cell is the one they render; the plateau at 3
 # animals-taken keeps the party stepper's max-useful cap meaningful rather than unbounded. The turns sit
@@ -67,11 +67,11 @@ const HERD_SCAN_MAX_DEPTH := 8
 ## Tile card drops its "Assign foragers" block and the hunt button + distance hint sit in-frame.
 ##
 ## **IT CARRIES A RAID TABLE, and without one the expedition frames judge nothing about the trip.**
-## `_herd_fixture` publishes the BAND's flow ceilings and no `hunt_trip_estimates`, so every expedition
+## `herd_fixture` publishes the BAND's flow ceilings and no `hunt_trip_estimates`, so every expedition
 ## sheet opened on it answered `available: false` and rendered no forecast at all — a state a live herd
 ## cannot be in (the sim exports an estimate row for every huntable herd) and the one state in which
 ## every claim about the trip readout would pass vacuously. The counts are the reference deer's own
-## `food_per_animal` 2.0 through `_raid_estimate_table`, so the payload is `animals × 2` food beside
+## `food_per_animal` 2.0 through `raid_estimate_table`, so the payload is `animals × 2` food beside
 ## `animals × RAID_TRADE_PER_ANIMAL` trade — both accounts positive, which is what makes the
 ## zero-account frame beside it (`_partial_waste_mammoth`, no trade at all) a real contrast.
 static func hunt_distance_herd() -> Dictionary:
@@ -276,7 +276,7 @@ static func investment_pair_boar_herd() -> Dictionary:
 ## A herd whose TAMING IS FINISHED — `domestication` at the sim's completion threshold, which RETIRES
 ## ◎ Tame (its per-source meter is full, so the improvement control shows it as the DONE state) and
 ## makes 🐄 Corral the rung on offer. It is managed at that point, so it carries a real herder crew
-## through `_set_managed_herders` — the field pair every herd fixture owes the frame guard.
+## through `set_managed_herders` — the field pair every herd fixture owes the frame guard.
 ##
 ## **It is also the only shape on which a Corral GATE can render**, which is why `two_meter_split`
 ## stages it: a gate reason needs the rung to be the one on offer, and Corral only ever is once Tame
@@ -288,7 +288,8 @@ static func fully_tamed_herd_fixture() -> Dictionary:
 	return fixture
 
 ## Set BOTH herder counts on a MANAGED herd fixture. The sim exports them EQUAL there (see the
-## field-pair guard above `_guard_herd_fields`), and setting them one at a time is precisely the
+## field-pair guard `_guard_herd_fields` in `ui_preview.gd`), and setting them one at a time is
+## precisely the
 ## mistake the guard exists to catch — so managed fixtures set them together, through this.
 ## A still-WILD but tameable herd is the one case where they differ and writes them by hand
 ## (`_tame_worker_cap_herd_fixture`: gated 0, would-be 10).

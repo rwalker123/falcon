@@ -135,7 +135,7 @@ const BUILD_DIP_IDLE_WORKERS := 9
 ## The METRIC line of a policy rung's two-line face — `→ 1.48 food · 0.37 trade`, the products line
 ## the payoff/cap assertions read. The rung is found by `HudWidgets.POLICY_RUNG_META`, its identity,
 ## and NEVER by button text: the face lives on a two-Label stack beside an empty-`text` Button, so
-## `_find_button_by_text` finds nothing at all here. "" when the rung is absent from the picker or
+## `Q.find_button_by_text` finds nothing at all here. "" when the rung is absent from the picker or
 ## wears its name alone (no metric).
 ## A preset button's TOOLTIP — where the floor's metric lives now that the face carries only the
 ## intent. Reached by the rung's meta like everything else here, never by its face.
@@ -254,11 +254,11 @@ func _yield_now_after(yields_text: String, account: String) -> Array:
 ## · Wild Rice 15%, of which only the two staples pay food — 0.35 × 0.065 + 0.15 × 0.070 — so the patch
 ## converts at `STALE_VERB_FOOD_PER_BIOMASS` and the two cash crops carry the trade rate beside it.
 ##
-## **It states its own stock and capacity, so it deliberately does NOT go through `_seed_forage_rows`**,
+## **It states its own stock and capacity, so it deliberately does NOT go through `BaseFx.seed_forage_rows`**,
 ## which pins every fixture it touches to one `FIXTURE_CAPACITY`/`FIXTURE_STOCK_FRACTION` pair. This
 ## frame is about a particular `B / K` — a patch standing just above the floor it is worked at, where
 ## the crew is bound by the REGROWTH rather than by the room — and the per-biomass vector states the
-## ceiling directly anyway. `_floorify` still seeds the growth curve and the phase cuts from it.
+## ceiling directly anyway. `ForageFx.floorify` still seeds the growth curve and the phase cuts from it.
 func _stale_verb_tile_fixture() -> Dictionary:
 	return {
 		"x": 68, "y": 12,
@@ -355,7 +355,7 @@ func _stale_verb_band_fixture(rate: float) -> Dictionary:
 ## live 25% carry, and no knowledge gate anywhere near it (the running branch is chosen before the
 ## offer is looked up).
 ##
-## Its stock and capacity are its own (no `_seed_forage_rows`), for the reason the stale-verb fixture
+## Its stock and capacity are its own (no `BaseFx.seed_forage_rows`), for the reason the stale-verb fixture
 ## gives: this frame is about a particular `B / K` — a hair under the food peak — and a shared
 ## capacity/stock pair would round the whole regime away.
 func _building_patch_tile_fixture() -> Dictionary:
@@ -443,8 +443,8 @@ func _building_patch_band_fixture(rate: float) -> Dictionary:
 
 ## A COMPLETED Field — the top of the plant ladder. The row must read "▦ Field" (SIGNAL), a visibly
 ## DIFFERENT THING from "🌾 Tended Patch", not a bigger percentage.
-## **A FIELD SOWN STRAIGHT FROM WILD GROUND — the state `_field_tile_fixture` cannot reach.** That one
-## climbs the ladder rung by rung (`_sowing_tile_fixture` sets `patch_is_cultivated`), so on it a
+## **A FIELD SOWN STRAIGHT FROM WILD GROUND — the state `ForageFx.field_tile_fixture` cannot reach.** That one
+## climbs the ladder rung by rung (`ForageFx.sowing_tile_fixture` sets `patch_is_cultivated`), so on it a
 ## Field is also cultivated and the retire test passes for the wrong reason. `Sow` needs no prior
 ## patch, so this is the shipped shape too: rung 3 built, rung 2's meter at ZERO and staying there.
 ## It is the frame the "a completed Field offers Cultivate" defect lived in.
@@ -459,7 +459,7 @@ func _wild_sown_field_tile_fixture() -> Dictionary:
 ## web grew a third column for. Every other forage fixture pays provisions alone, so until this one
 ## existed the picker's three-account face and the column ceiling it triggers had NO frame at all.
 ##
-## **The rows are written out rather than derived.** `_seed_forage_rows` seeds trade and fodder to 0
+## **The rows are written out rather than derived.** `BaseFx.seed_forage_rows` seeds trade and fodder to 0
 ## by design (so a reseeding pass leaves every existing frame byte-identical), which is exactly the
 ## thing under test here — so this fixture overwrites the three account dicts afterwards, the
 ## "genuinely non-derivable row" case that helper's docstring names.
@@ -496,7 +496,7 @@ func _hay_meadow_tile_fixture() -> Dictionary:
 	tile["patch_field_yield"] = 0.60
 	tile["patch_field_trade"] = 0.04
 	tile["patch_field_fodder"] = 1.80
-	# **THE NON-FOOD ACCOUNTS ARE THE PATCH'S OWN RATES, stated directly.** `_seed_forage_rows` derives
+	# **THE NON-FOOD ACCOUNTS ARE THE PATCH'S OWN RATES, stated directly.** `BaseFx.seed_forage_rows` derives
 	# each account's per-biomass rate from the food-peak ceiling the fixture names, which is the right
 	# reversal for a food account; the two non-food ones are independent facts about what GROWS here,
 	# so they are authored as the rates the wire actually carries and the seeder is told the peak
@@ -535,7 +535,7 @@ func _dead_season_tile_fixture() -> Dictionary:
 	# **THE CREW THROUGHPUT IS HONESTLY ZERO, AND IT IS STATED RATHER THAN SEEDED.** The wire's
 	# `perWorkerBiomass` folds in the tile's seasonal weight, so a dead season really does move no
 	# biomass per gatherer — and this is the one fixture that must say so, because it is the case the
-	# panel's crew arithmetic must not divide by. `_seed_growth_terms` would otherwise fall back to the
+	# panel's crew arithmetic must not divide by. `ForageFx.seed_growth_terms` would otherwise fall back to the
 	# config's throughput here, since a zero food rate makes its exact recovery unavailable.
 	tile["patch_per_worker_biomass"] = 0.0
 	for policy in ["sustain", "surplus", "deplete", "eradicate", "cultivate", "sow"]:
@@ -1016,7 +1016,8 @@ func run(harness) -> void:
 	# State floor_chart_drawn_down — THE SAME PATCH ALREADY DRAWN DOWN, worked below the food peak.
 	# The stock band is amber (the patch reports Stressed), the floor sits under it, and the projection
 	# must fall to the line and then run FLAT along it: a plant curve never goes negative, so a patch
-	# held at a low floor is held, not lost. That is the frame the herd pair below is read against.
+	# held at a low floor is held, not lost. That is the frame the herd pair `floor_chart_herd_allee`
+	# (`chapters/hunt.gd`) is read against.
 	h._floor_chart_drawn_patch = ForageFx.floorify(_hay_meadow_tile_fixture(), HudComposeVocab.FORAGE_FORECAST_PREFIX)
 	h._floor_chart_drawn_patch["x"] = 67
 	h._floor_chart_drawn_patch["patch_ecology_phase"] = "stressed"
@@ -1026,7 +1027,8 @@ func run(harness) -> void:
 	h._compose_forage(h._floor_chart_drawn_patch)
 	# **A FLOOR BELOW THE STOCK BUT ABOVE THE BASELINE**, deliberately not `strip`: at floor 0 the
 	# projection lands on the plot's own bottom edge and the "descends, then RUNS FLAT along the line"
-	# reading — the whole contrast with the herd frame below — is indistinguishable from the axis.
+	# reading — the whole contrast with the herd frame `floor_chart_herd_allee` (`chapters/hunt.gd`) —
+	# is indistinguishable from the axis.
 	h._hud._compose.set_forage_floor(FLOOR_CHART_HELD_FLOOR)
 	h._hud._compose.set_forage_count(ForageFx.FLOOR_CHART_CREW)
 	h._compose_forage(h._floor_chart_drawn_patch)

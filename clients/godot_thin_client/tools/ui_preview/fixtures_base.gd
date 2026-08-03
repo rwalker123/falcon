@@ -69,8 +69,8 @@ const LEGACY_STANCE_FLOORS := {
 static func seed_forage_rows(tile: Dictionary) -> Dictionary:
 	var per_worker := float(tile.get("patch_per_worker_yield", 0.0))
 	# **A RE-SEED FALLS BACK TO WHAT IS ALREADY THERE**, and that is what makes the layered fixtures
-	# work: most of them are `_food_tile_fixture()` (already seeded) plus a few overrides plus a second
-	# `_seed_forage_rows`. Reading only the scalars would silently zero every account the second caller
+	# work: most of them are `food_tile_fixture()` (already seeded) plus a few overrides plus a second
+	# `seed_forage_rows`. Reading only the scalars would silently zero every account the second caller
 	# did NOT restate.
 	var peak_food := float(tile.get("patch_ceiling_sustain", 0.0))
 	var peak_trade := 0.0
@@ -177,7 +177,7 @@ static func food_tile_fixture() -> Dictionary:
 		# rich enough to forage, but it will NOT take seed (rung 3 moves seed, it cannot fertilize or
 		# irrigate), so the sim's `sow_site_refusal` verdict rides here and the Sow option is gated
 		# with the reason. Only ~1% of a real map is sowable, so REFUSED is the common case and is
-		# deliberately the default fixture; `_sowable_tile_fixture` is the exception.
+		# deliberately the default fixture; `ForageFx.sowable_tile_fixture` is the exception.
 		"patch_field_progress": 0.0,
 		"patch_is_field": false,
 		"patch_ceiling_sow": 0.0,

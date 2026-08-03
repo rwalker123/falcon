@@ -19,7 +19,7 @@ var h
 # collide with the reference band's.
 const PEN_KEEPER_BAND_ENTITY := 906
 
-# The reference band (`_band_fixture()`, entity 904) disclosure keys — the `[url]` meta its Food /
+# The reference band (`BandFx.band_fixture()`, entity 904) disclosure keys — the `[url]` meta its Food /
 # Morale rows carry, i.e. what `DetailFormat.breakdown_key` builds for it.
 const BAND_DISCLOSURE_FOOD := "food:904"
 

@@ -51,7 +51,7 @@ static func yields_text(root: Node) -> String:
 
 ## The readout's HEADER — the caption over the yields row, carrying the unit and (when the readings
 ## state one) the key to their arrow. It is the row's SIBLING, not a Label inside it, which is what
-## keeps `_yields_text` reading only the numbers: asserting "the unit is not repeated per account"
+## keeps `yields_text` reading only the numbers: asserting "the unit is not repeated per account"
 ## against a string that included the header would pass on a row that repeated nothing and a header
 ## that said everything. "" when no readout rendered.
 static func yields_header(root: Node) -> String:

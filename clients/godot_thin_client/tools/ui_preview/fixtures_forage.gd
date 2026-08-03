@@ -21,7 +21,7 @@ const COMPOSE_FLOOR_UNSET := -1.0
 # the patch's stock is pinned AT the food peak, so every ceiling is 0 whatever this is.
 
 const FLOOR_CHART_CREW := 3
-# `_crew_target_count`'s answer when the target is not rendered at all. NOT 0, which is a real reading
+# `Readout.crew_target_count`'s answer when the target is not rendered at all. NOT 0, which is a real reading
 # ("nothing to clear"), and the distinction is the dead-season assertion's whole subject.
 
 const FIXTURE_REGROWTH_SAMPLES := 11
@@ -87,7 +87,7 @@ const STALE_VERB_BUILD_FRACTION := 0.25
 # Two throughputs are "the same" when they agree to within the resolution the panel states a rate at.
 
 ## Rewrite one source dict IN PLACE. `prefix` is "" for a raw herd / wire patch, `patch_` for the
-## tile_info cross-ref. Returns the same dict, so call sites read `_floorify(fixture)`.
+## tile_info cross-ref. Returns the same dict, so call sites read `floorify(fixture)`.
 static func floorify(src: Dictionary, prefix: String = "") -> Dictionary:
 	if src.is_empty():
 		return src
@@ -208,7 +208,7 @@ static func legacy_peak(src: Dictionary, prefix: String, key: String) -> float:
 ##
 ## **IT MUST BE IDEMPOTENT, AND IT WAS NOT.** A converted row's key is `"0.5:4"`, whose leading token
 ## is not a stance, so a SECOND pass over the same dict skipped every row and left an EMPTY table
-## behind — and `_floorify_ceilings` reaches here even on its early return, so any state that calls
+## behind — and `floorify_ceilings` reaches here even on its early return, so any state that calls
 ## `_show_herd(h)` and then `_compose_herd(h)` with the SAME dict silently lost its whole raid table.
 ## Every expedition frame in the `_hunt_assign_forecast_states` block and the boar-raid set did exactly
 ## that: `hunt_trip_forecast` answered `available: false`, the sheet rendered no forecast at all, and
@@ -285,7 +285,7 @@ const IMPROVEMENT_DEAL_MIDDLE_NEEDLE := "while building"
 ## payoff onto the face is that the two states of one control read alike, so one needle serves both.
 const IMPROVEMENT_PAYOFF_NEEDLE := "· then "
 
-## A crop `_food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
+## A crop `BaseFx.food_tile_fixture`'s basket really carries, used to prove the crop list is ABSENT under a
 ## gated offer. Naming a real crop matters: a needle no basket contains would make the assertion pass
 ## whether the list rendered or not.
 const GATED_CROP_NEEDLE := "Wild Grain"
@@ -308,7 +308,7 @@ const ZERO_CREW := 0
 const IMPROVEMENT_STANCE_FRAME_FORAGERS := 8
 
 ## **THE SIM'S OWN `workers_needed` FOR A CULTIVATING CREW ON THE REFERENCE PATCH.** Its derivation from
-## the ladder's and the fixture's numbers is on `_cultivating_forage_band_fixture`, which ships it on the
+## the ladder's and the fixture's numbers is on `BandFx.cultivating_forage_band_fixture`, which ships it on the
 ## wire; `improvement_build_crew` asserts the compose cap equals what the sheet READS BACK off that
 ## assignment, so the control is the sim's published answer rather than a number the harness chose twice.
 const CULTIVATE_SIM_WORKERS_NEEDED := 12
@@ -415,7 +415,7 @@ static func cash_basket_tile_fixture() -> Dictionary:
 	return tile
 
 ## PER-TILE FLORA REALIZATION (Flora roster F4) — the SECOND Alluvial Plain tile. Same biome as
-## `_cash_basket_tile_fixture` (both "Alluvial Plain"), but a DIFFERENT realized basket: two tiles of
+## `cash_basket_tile_fixture` (both "Alluvial Plain"), but a DIFFERENT realized basket: two tiles of
 ## one biome no longer carry the uniform per-biome roster, they carry a seeded per-tile SUBSET. This
 ## one is cash-DOMINANT — Cotton 55% + Flax 45%, both cash crops paying trade — where its twin was
 ## grain-dominant (Wild Emmer 70% + Flax 30%). Rendered beside it, the pair is the visible proof that
@@ -446,12 +446,12 @@ static func cash_variant_basket_tile_fixture() -> Dictionary:
 ## against 62% cash + fodder. Every other basket fixture is staple-dominant, so until this one existed
 ## the role icons had no frame that could tell them apart.
 ##
-## **IT STATES ITS OWN STOCK AND CAPACITY, so it deliberately does NOT go through `_seed_forage_rows`**
+## **IT STATES ITS OWN STOCK AND CAPACITY, so it deliberately does NOT go through `BaseFx.seed_forage_rows`**
 ## (the `_stale_verb_tile_fixture` precedent), which pins every fixture it touches to one
 ## `FIXTURE_CAPACITY`. The capacity is what each basket row's absolute biomass is a share OF, so it has
 ## to be a number the three rows can be checked against by eye — and 205 is chosen so the naive
 ## rounding of `38 / 31 / 31` percent MISSES it by one (78 + 64 + 64 = 206), making this frame the
-## biomass-remainder test exactly as `_food_tile_fixture`'s 46/30/25 is the percentage one.
+## biomass-remainder test exactly as `BaseFx.food_tile_fixture`'s 46/30/25 is the percentage one.
 ##
 ## Standing at full capacity, so `Foraging 205 / 205` and the three rows sum to both numbers at once —
 ## the clearest possible reading of "these decompose the row above".

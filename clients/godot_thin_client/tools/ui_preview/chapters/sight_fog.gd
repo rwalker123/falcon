@@ -46,7 +46,8 @@ func run(harness) -> void:
 	# States 2-fog-a/b/c — the three SIGHT states. The player must always be able to tell "there is
 	# nothing here" apart from "I can't see what's here", so the Tile card leads with a `Sight:` row and
 	# an unseen hex REPLACES its Occupants roster with a statement instead of rendering an empty one.
-	#   2-fog-a  Active      — `Sight: In sight` (cyan), full live card (the food_tile above).
+	#   2-fog-a  Active      — `Sight: In sight` (cyan), full live card (the `food_tile` state,
+	#                          `chapters/land_readouts.gd`).
 	#   2-fog-b  Discovered  — a remembered hex that DOES carry a herd: the herd must NOT be listed and
 	#                          the Occupants card must read "out of sight · …bands and herds move".
 	#                          (MapView fog-gates herds out of tile_info at source; the HUD re-reads the
@@ -152,7 +153,8 @@ func run(harness) -> void:
 	h._hud._compose.reset_forage_source()
 	h._hud._compose.set_forage_band(-1)
 
-	# band_alerts (above) overwrote _player_band with alert-fixture bands (which carry no hunt_reach);
+	# `band_alerts` (`chapters/band_expedition.gd`) overwrote _player_band with alert-fixture bands
+	# (which carry no hunt_reach);
 	# re-seed the reference band so the herd assign controls resolve a proper band with a hunt reach.
 	h._hud._band_labor._player_band = BandFx.band_fixture()
 	h._hud._band_labor._player_bands = []

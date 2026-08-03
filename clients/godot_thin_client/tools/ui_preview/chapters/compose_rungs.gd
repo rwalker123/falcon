@@ -38,7 +38,7 @@ const REOPEN_WORKING_AGE := 24
 
 # The CREW-NOUN guard's pen-ready herd (`herd_compose_crew_noun_after_pen`) — the one the player ticks
 # Corral on FIRST, so it is the source of the improvement the NEXT herd's header must not inherit. Its
-# id is deliberately distinct from `_herd_fixture`'s, since a same-id re-open is not a source change and
+# id is deliberately distinct from `HerdFx.herd_fixture`'s, since a same-id re-open is not a source change and
 # would not stage the bug.
 const CREW_NOUN_PEN_HERD_ID := "game_aurochs_crewnoun"
 
@@ -189,7 +189,7 @@ func run(harness) -> void:
 	stale_herd_b["label"] = "Roe Deer (game_deer_stale_99)"
 	# Drive the REAL drawer-actions path (`refresh_drawer_actions` calls these), settling a frame between
 	# each so the diff-cache's deferred `queue_free` completes: without the settles, stale buttons linger
-	# in-tree, the child-count patch test misreads, and `_find_button_by_text` grabs the wrong node.
+	# in-tree, the child-count patch test misreads, and `Q.find_button_by_text` grabs the wrong node.
 	h._hud._drawercompose._clear_herd_drawer()   # drop any prior-state button so A gets a FRESH closure
 	await h._settle()
 	h._hud._drawercompose.build_herd_drawer_actions(stale_herd_a)   # full rebuild → button opens A
@@ -352,7 +352,7 @@ func run(harness) -> void:
 	# That is the disagreement `_herd_crew_noun` was written to remove, with the sides swapped.
 	#
 	# The two herds must differ in ID (a same-id re-open is not a source change and stages nothing) and
-	# the second must be genuinely UNMANAGED — `_herd_fixture` is 40% tamed, unpenned, owing no keepers,
+	# the second must be genuinely UNMANAGED — `HerdFx.herd_fixture` is 40% tamed, unpenned, owing no keepers,
 	# so `is_managed_hunt_source` is false on its own axis and can only read true off the leftover.
 	# A PNG carries the header; the assertions carry the stepper AGREEING with it, since a header alone
 	# cannot show a disagreement.

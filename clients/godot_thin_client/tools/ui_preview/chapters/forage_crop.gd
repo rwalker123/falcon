@@ -29,13 +29,13 @@ const CLIP_TOLERANCE_PX := 1.0
 ## `forage_sow_locked`'s two gate inputs, named for the same reason: the frame asserts the rendered
 ## SOURCE reason against `SOW_REFUSAL_REASONS[…]` and the ABSENCE of the knowledge reason at this
 ## exact percent, so the fixture and the expected strings are one value each rather than two that can
-## drift apart. The refusal key is `_food_tile_fixture`'s own (`_tended_tile_fixture` inherits it).
+## drift apart. The refusal key is `BaseFx.food_tile_fixture`'s own (`TileFx.tended_tile_fixture` inherits it).
 const SOW_LOCKED_REFUSAL_KEY := "too_dry"
 
 const SOW_LOCKED_SEED_SELECTION := 0.12
 
 ## The Label NODE carrying `needle`, for the assertions that measure WHERE a row sits rather than
-## what it says. `_label_text_containing` answers the text; a clipping check needs the rect.
+## what it says. A text lookup answers the TEXT; a clipping check needs the NODE, for its rect.
 func _label_node_containing(root: Node, needle: String) -> Label:
 	if root == null:
 		return null
@@ -222,12 +222,12 @@ func _sowable_long_basket_tile_fixture() -> Dictionary:
 	tile["patch_composition"] = _long_basket_tile_fixture()["patch_composition"]
 	return tile
 
-## The OTHER refusal. `_food_tile_fixture` is "too_dry" (rich prairie away from water); this is thin
+## The OTHER refusal. `BaseFx.food_tile_fixture` is "too_dry" (rich prairie away from water); this is thin
 ## upland ground — watered, but too poor to take a crop without fertilizing. The two messages must
 ## differ, name different faults, and each point at the rung that lifts it.
 func _sow_too_poor_tile_fixture() -> Dictionary:
 	var tile := BaseFx.food_tile_fixture()
-	# In range of the reference band, like `_sowable_tile_fixture` — the refusal must be the ONLY
+	# In range of the reference band, like `ForageFx.sowable_tile_fixture` — the refusal must be the ONLY
 	# reason Sow is unavailable in this frame.
 	tile["x"] = 65
 	tile["y"] = 11
@@ -261,7 +261,7 @@ func run(harness) -> void:
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_cultivate_locked")
-	# **ASKED OF THE WHOLE CONTROL FAMILY, not of the Cultivate rung.** `_find_improvement_control`
+	# **ASKED OF THE WHOLE CONTROL FAMILY, not of the Cultivate rung.** `ForageFx.find_improvement_control`
 	# answers null for a rung merely spelled differently, so a per-rung form of this passes on a sheet
 	# that renders some OTHER rung's control; `IMPROVEMENT_CONTROL_META` rides all four states the
 	# widget can be in, so this says "no improvement control, of any rung, in any state".
@@ -294,7 +294,7 @@ func run(harness) -> void:
 	h._compose_forage(BaseFx.food_tile_fixture())
 	await h._settle()
 	await h._save("forage_cultivate")
-	# THE FORAGE HALF of the compose-order invariant (see `_compose_spine`): capture this sheet's control
+	# THE FORAGE HALF of the compose-order invariant (see `Spine.compose_spine`): capture this sheet's control
 	# spine, to be compared against the local-hunt sheet's when that renders further down.
 	#
 	# **CAPTURED HERE AND NOT ON `food_tile`, WHERE IT USED TO BE — the spine must be taken where the
@@ -534,7 +534,7 @@ func run(harness) -> void:
 	for row in committed_rows:
 		committed_all_locked = committed_all_locked and row != null and row.disabled
 	h._assert_hud("…with every row locked (the commitment is one-way until it lapses)", committed_all_locked)
-	# `_rung_is_selected` reads the `normal` stylebox's fill, which `apply_button` writes from the
+	# `Readout.rung_is_selected` reads the `normal` stylebox's fill, which `apply_button` writes from the
 	# VARIANT — the one mark of selection that survives the disabled treatment, which is the whole
 	# reason `selected_when_disabled` is passed here. Written for policy rungs, true of any
 	# `apply_button`-styled button, and the only reading that can tell marked-and-locked from locked.

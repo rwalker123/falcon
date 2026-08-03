@@ -141,7 +141,7 @@ func _assert_fog_stock_parity() -> void:
 	# branch is exactly this loop plus a visibility-raster lookup this harness has no grid to seed;
 	# reading `FOW_DISCOVERED_HIDDEN_KEYS` off MapView itself is what keeps the two from drifting.
 	#
-	# **`_floorify` RUNS FIRST, THEN THE ERASURE** — the order is the whole claim. `_seed_growth_terms`
+	# **`ForageFx.floorify` RUNS FIRST, THEN THE ERASURE** — the order is the whole claim. `ForageFx.seed_growth_terms`
 	# fills in whatever growth terms a fixture lacks, and four of the keys it seeds
 	# (`patch_regrowth_samples` — its `capacity > 0` branch fires precisely because the capacity
 	# survives redaction — plus `patch_per_worker_biomass` and the two phase fractions) are keys the
@@ -162,7 +162,7 @@ func _assert_fog_stock_parity() -> void:
 	h._assert_hud("…reading identically to the unredacted remembered tile, decision not accident",
 		redacted_lines == remembered)
 
-## The two webs' capacities on `_sight_tile_fixture`, read back OFF the fixture so the assertion above
+## The two webs' capacities on `TileFx.sight_tile_fixture`, read back OFF the fixture so the assertion above
 ## cannot drift from the numbers it is asserting about.
 func _sight_forage_capacity() -> float:
 	return float(TileFx.sight_tile_fixture(TileFx.VIS_DISCOVERED).get("patch_carrying_capacity", 0.0))
@@ -189,7 +189,7 @@ func _flora_row_has_role_icon(row: String) -> bool:
 ## `Pasture ecology` row reads a WARN-amber "⚠ Stressed" — the SAME label + tint a stressed herd or a
 ## stressed forage patch gets (one ecology vocabulary, one styling path). Nothing eats graze until
 ## Phase 2b, so this state cannot occur in a live 2a map; it renders the path the tint will take.
-## A tile whose Climate row is under test: same card as `_food_tile_fixture`, only the
+## A tile whose Climate row is under test: same card as `BaseFx.food_tile_fixture`, only the
 ## `temperature` (and a label) vary, so the ONLY thing moving between the four climate_* frames
 ## is the band the sim's cut points classify that temperature into.
 func _climate_tile_fixture(temperature: float, terrain_label: String) -> Dictionary:
@@ -199,7 +199,7 @@ func _climate_tile_fixture(temperature: float, terrain_label: String) -> Diction
 	return tile
 
 ## STAGE 2 of the commitment — a band has COMMITTED this patch to Wild Grain and the build is STILL
-## RUNNING (`_food_tile_fixture` carries `cultivation_progress` 0.6, `is_cultivated` false). The
+## RUNNING (`BaseFx.food_tile_fixture` carries `cultivation_progress` 0.6, `is_cultivated` false). The
 ## commitment is recorded on the FIRST worked turn, so the basket underneath it is the wild one,
 ## UNCHANGED — 45 / 30 / 25, byte-for-byte what `food_tile` shows. The card must therefore render the
 ## `Crop: Wild Grain` row AND the whole basket, with Wild Grain marked in SIGNAL; collapsing to the
@@ -230,7 +230,7 @@ func _weeded_crop_tile_fixture() -> Dictionary:
 			"oak_mast": entry["share"] = 0.0225
 		basket.append(entry)
 	tile["patch_composition"] = basket
-	# A tended patch reports every policy ceiling == per_worker_yield (see `_tended_tile_fixture`), so
+	# A tended patch reports every policy ceiling == per_worker_yield (see `TileFx.tended_tile_fixture`), so
 	# the stepper caps at 1 worker and the frame does not also change the forecast under test.
 	tile["patch_ceiling_sustain"] = tile["patch_per_worker_yield"]
 	tile["patch_ceiling_surplus"] = tile["patch_per_worker_yield"]

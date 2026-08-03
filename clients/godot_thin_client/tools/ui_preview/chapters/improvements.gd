@@ -75,8 +75,8 @@ func _detail_excerpt(bbcode: String, key: String) -> String:
 		return DETAIL_EXCERPT_ABSENT
 	return bbcode.substr(at, DETAIL_EXCERPT_CHARS)
 
-## The staple tile as the COMPOSE SHEET sees it — `_food_tile_fixture` already runs through
-## `_seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
+## The staple tile as the COMPOSE SHEET sees it — `BaseFx.food_tile_fixture` already runs through
+## `BaseFx.seed_forage_rows`, so this is simply the named handle the dip-comparison assertion reads its
 ## forecast from. Naming it keeps that assertion from re-stating which fixture it is judging.
 func _seeded_food_tile() -> Dictionary:
 	return BaseFx.food_tile_fixture()
@@ -281,7 +281,7 @@ func run(harness) -> void:
 	# to uncheck, nothing to clear), and the NEXT rung's checkbox renders beneath it. This is the state
 	# that retired #420 outright: a label cannot be selected-and-gated.
 	# SOWABLE ground, not the reference patch. The claim below is that the ladder CONTINUES beneath a
-	# done label — which needs a next rung that is genuinely on offer. `_tended_tile_fixture` is built
+	# done label — which needs a next rung that is genuinely on offer. `TileFx.tended_tile_fixture` is built
 	# on the reference tile, whose `sow_site_refusal` is "too_dry", so Sow there can only ever be
 	# gated: the assertion would be testing the gated shape while claiming to test the offered one.
 	var tended_tile := ForageFx.sowable_tile_fixture()

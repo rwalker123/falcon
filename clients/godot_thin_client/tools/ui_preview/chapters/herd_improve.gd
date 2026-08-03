@@ -82,7 +82,7 @@ const HUNT_WASTE_NEEDLE := "wasted"
 ## haul home.
 ##
 ## It states its terms in the MODERN wire vocabulary (stock, capacity, the per-biomass vector) rather
-## than as a legacy per-stance table, so `_floorify_ceilings` leaves every number exactly as authored —
+## than as a legacy per-stance table, so `ForageFx.floorify_ceilings` leaves every number exactly as authored —
 ## which is what lets the assertions recompose the sim's own take from them.
 func _building_herd_fixture() -> Dictionary:
 	return {
@@ -149,8 +149,8 @@ func _hunt_take_oracle(collection: float, ceiling: float, food_per_animal: float
 	return {"delivered": carried, "wasted": killed_food - carried}
 
 ## The band STANDING on Tame on that herd — the fixture the re-admission frame turns on. Everything
-## else about `_band_fixture` is kept; only the assignment list is replaced, by the single hunt
-## assignment whose `fauna_id` matches `_fully_tamed_herd_fixture`'s and whose policy is the rung the
+## else about `BandFx.band_fixture` is kept; only the assignment list is replaced, by the single hunt
+## assignment whose `fauna_id` matches `HerdFx.fully_tamed_herd_fixture`'s and whose policy is the rung the
 ## ceiling pass has since hidden.
 func _tame_standing_band_fixture() -> Dictionary:
 	var band := BandFx.band_fixture()

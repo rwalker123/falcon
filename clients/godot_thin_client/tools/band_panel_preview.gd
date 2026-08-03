@@ -2809,7 +2809,7 @@ func _cap_demo_herd_fixtures() -> Array:
 ## are a patch's only ceiling representation (#426). Every rung gets the same ceiling and per-worker
 ## term, which is all these cap fixtures need; the two non-food accounts stay absent, so the
 ## render-only-when-non-zero rule leaves every frame unchanged. The ui_preview twin is
-## `_seed_forage_rows`, which derives its numbers from `patch_`-prefixed tile_info keys instead.
+## `BaseFx.seed_forage_rows`, which derives its numbers from `patch_`-prefixed tile_info keys instead.
 func _wire_patch_rows(patch: Dictionary, ceiling: float) -> Dictionary:
 	var ceilings := {}
 	var per_worker := {}

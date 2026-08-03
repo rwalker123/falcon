@@ -55,7 +55,7 @@ static func band_fixture() -> Dictionary:
 		# Hunt reach (work_range + hunt leash) — large enough here that BOTH the reference herd_fixture
 		# (9 tiles from this band's pos) and the occupied-hex herd (16 tiles) stay WITHIN reach, so those
 		# herd states render the LOCAL "Hunt Here" controls (the far-herd expedition path has its
-		# own dedicated fixtures, _hunt_distance_bands).
+		# own dedicated fixtures, hunt_distance_bands).
 		"hunt_reach": 16,
 		"scout_reveal_radius": 2,
 		"activity": "forage",
@@ -146,12 +146,12 @@ static func forage_range_bands() -> Array:
 			"working_age": 10, "idle_workers": 6, "work_range": 2, "activity": "forage", "labor_assignments": []},
 	]
 
-## The near band of `_forage_range_bands`, ALREADY WORKING the (66,10) food tile — the fixture behind
+## The near band of `forage_range_bands`, ALREADY WORKING the (66,10) food tile — the fixture behind
 ## the drawer's standing-assignment summary (§14). The assignment deliberately crosses the two
 ## INDEPENDENT flags the summary shares with a Band-panel Current-actions row: `overdraws` true (a
 ## Deplete patch drawing past regrowth — the ecological ⚠) AND 4 workers where 2 are needed (the labor
 ## "· only 2 of 4 working" note). `realized_yield` is the steady average the summary headlines.
-## The near band of `_forage_range_bands`, ALREADY WORKING the (66,10) food tile at a MODEST staffing —
+## The near band of `forage_range_bands`, ALREADY WORKING the (66,10) food tile at a MODEST staffing —
 ## the fixture behind the compose sheet's UNASSIGN state. Deliberately separate from
 ## `_standing_forage_band_fixture`, whose assignment is tuned to trip the drawer summary's overdraw and
 ## overstaff flags; this one is a plain, healthy Cultivate crew, so the unassign frame is judged on the
@@ -165,7 +165,7 @@ static func forage_range_bands() -> Array:
 ## **`workers_needed` IS THE SIM'S OWN ANSWER, AND IT IS WHAT THE COMPOSE CAP IS JUDGED AGAINST.**
 ## Derived here by the sim's rule rather than picked, so the assertion on `improvement_build_crew` has a
 ## control it did not write itself. For this patch under Sustain + Cultivate
-## (`_food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96, cultivate fraction 0.25, crew 2):
+## (`BaseFx.food_tile_fixture`: per-worker 0.32, Sustain ceiling 0.96, cultivate fraction 0.25, crew 2):
 ##   take        = min(w × 0.32 × 0.25, 0.96)       (`forage::forage_take` — **THE DIP RIDES THE CREW**)
 ##   take crew   = ceil(0.96 / (0.32 × 0.25)) = 12  (`systems::labor::workers_needed_for_take`)
 ##   workers_needed = max(build crew 2, take crew 12) = 12  (`systems::labor::source_crew_needed`)

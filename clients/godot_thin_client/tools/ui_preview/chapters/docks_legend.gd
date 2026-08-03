@@ -80,7 +80,8 @@ func run(harness) -> void:
 	# Terrain-legend sort control (base terrain legend, key == "terrain"). Several
 	# biomes of varying tile counts so the default count-desc order + the Name/Count
 	# sort toggles + sort persistence across a regen push are all visible. Rendered
-	# before the full-screen icon probe below so the right-dock legend isn't covered.
+	# before the full-screen `food_icons` probe (the harness's epilogue in `ui_preview.gd`, which runs
+	# after every chapter) so the right-dock legend isn't covered.
 	# Opened here and closed at the end of THIS block (not hundreds of lines later).
 	h._open_legend()
 	h._hud.update_overlay_legend(TileFx.terrain_legend_fixture())
@@ -157,7 +158,8 @@ func run(harness) -> void:
 
 	# (The old State F4 `narrative_feed` — narrative prose styled INSIDE the command feed — was
 	# retired with PR-C. The feed no longer renders narrative kinds at all, so the state could only
-	# ever have shown their absence; `telling_and_feed` below is its replacement and tests the
+	# ever have shown their absence; `telling_and_feed` (`chapters/telling.gd`) is its replacement and
+	# tests the
 	# thing that now matters: that the receipts survive alongside real narrative volume.)
 
 	# ---- The Telling panel (PR-C) ------------------------------------------------------------
