@@ -134,9 +134,19 @@ updated yet.
 state, a command sent, a command refused, a rollback. All of it still goes to the Commands tab and
 the log buffer exactly as before: that widget is the **debug console** and it stays one.
 
-What changed is that each line ALSO goes out on **`system_event(label, detail, alert)`**, which
+What changed is that each line ALSO goes out on **`system_event(label, detail, alert, kind)`**, which
 `Main` relays to the event dock's System channel. A dropped command socket is something the player
 must be told, and a console that ships hidden is not where they will see it.
+
+**`kind` is what keeps the console's completeness from becoming the bar's noise.** `_send_command`'s
+ACCEPTED-send line — the only place in the client where a command is known to have gone — logs
+`HudEventVocab.KIND_COMMAND_ECHO`, which the dock ignores outright; every other site here takes the
+`KIND_SYSTEM` default and reaches the player. That is the boundary: a command accepted for sending is
+an echo, everything else (including both failure exits of `_send_command`) is a fault. `_send_command`
+and `send_runtime_command` take an `ack_kind` defaulting to the echo, for the one caller whose success
+message reports a fault rather than a receipt (`Main`'s `resync`). **Nothing about this thins the
+console** — the Commands tab and the log buffer print every line regardless of kind, because that
+widget is the debug console. The rest of the rule is in `event-dock.md` → "A kind the dock IGNORES".
 
 Two details are load-bearing:
 

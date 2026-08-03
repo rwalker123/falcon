@@ -17,7 +17,7 @@ to keep closed.
 | Script | Purpose |
 |--------|---------|
 | `ui/EventDockPanel.gd` / `src/ui/EventDockPanel.tscn` | The dockable **event dock** CanvasLayer: a horizontal notification strip on `SIDE_TOP` or `SIDE_BOTTOM`, reserving its edge through the registry (`reservation_changed(edge, size)` → `Main._apply_reservation(&"event_dock", …)`) exactly as `BandCityPanel` does. Two states — the COLLAPSED bar (`recent_count` rows, newest first, with the pinned-alert exception) and the EXPANDED turn-grouped log (World/System chips, the detail floor, the row count, the dock edge, "Earlier turns"). It accumulates `command_events` and de-duplicates on **`seq`**, prunes by TURN window against the sim's `command_events_retention_turns`, and takes client-side System notes through `note_system(label, detail, alert)`. Prefs live in a new `[events]` section of `user://narrative.cfg`, with a `config_path_override` static for the harnesses. Toggled by `R` (`Main._toggle_event_dock_visibility`) |
-| `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) plus the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
+| `ui/hud/hud_event_vocab.gd` (`HudEventVocab`) | The importance model, as an ALL-`const` vocabulary leaf (`hud-modules.md`): `RUNG_BY_KIND` · `CHANNEL_BY_KIND` · `RUNG_STYLE` (glyph + `HudStyle` accent per rung) · `KIND_STYLE` (the threat/casualty kinds, absorbed from the retired `CommandFeedController`) · `DETAIL_STATUS_STYLE` (the `status=` token rule) · `DETAIL_FLOOR` (the three player settings as a floor on the rung ladder) · **`IGNORED_KINDS`** (the kinds the dock drops at ingest — see "A kind the dock IGNORES") plus the two client-minted kinds `KIND_SYSTEM` / `KIND_COMMAND_ECHO` and the dock's word tables and glyphs. Reads only `HudStyle`, which reads nothing, so it cannot enter a class-load cycle |
 
 ## Three questions, kept apart
 
@@ -52,6 +52,67 @@ LABOUR changed** — it is whether the world changed in a way worth knowing. `bo
 `died` are one family by that test: the settlement visibly changing size is the plainest such change
 there is, and the most legible sign it is alive at all. Routine keeps what it is actually for —
 receipts for verbs the player asked for.
+
+## A kind the dock IGNORES is dropped at INGEST, in both inlets
+
+`HudEventVocab.IGNORED_KINDS` is a set of KINDS the dock never stores. It is deliberately none of the
+three questions above: not a rung, not a channel toggle, not a floor, and **not a render-time skip**.
+An ignored kind cannot appear at any detail level — `Everything` included, the setting where every
+other filter has given up — on either channel, in the bar or in the expanded log, and it occupies
+neither a `seq` de-duplication slot nor a retention row.
+
+**Both inlets filter, and a mechanism covering only one is a trap.** `ingest_events` (the sim's
+`command_events`) and `note_system` (every client-side line) are independent doors into `_events`;
+today's ignored kind arrives through the second, and a filter on the first alone would have looked
+right and done nothing. In `ingest_events` the test sits **before** the de-duplication, so an ignored
+row burns no `seq` — otherwise the day a kind stopped being ignored, the dock would swallow the first
+re-ingest of every row it had previously dropped.
+
+**AN IGNORED KIND IS NOT A RETIRED KIND**, and that is the obvious misreading to keep closed. The
+event still exists and is still emitted: the sim goes on writing it, the Inspector's debug console
+goes on printing it in full, and a mod may want to read it. This is a display filter on ONE surface.
+
+### The System channel carries two kinds, because it carried two things
+
+`system` used to carry both an acknowledgement and a fault under one name, so no kind-level rule
+could separate them and `Advance 1 turn.` sat on the bar on turns 1 and 2 of a new game — a receipt
+for a button pressed a second earlier, printed as news.
+
+| Kind | What it is | Where it goes |
+|---|---|---|
+| `command_echo` | a receipt for a command this client accepted for sending — `Advance 1 turn.`, `Answered the question.`, `Stop improving (12, 8).`, every `_send_formatted_command` message | the Inspector's console only; **the dock ignores it** |
+| `system` | a FAULT or a state change — command refused, socket lost/restored, `resync requested (unapplicable delta)`, and the HUD's own feedback (`Quick-hunt · No idle workers to assign`) | the console AND the dock's System channel |
+
+**The boundary is: a command accepted for sending is an echo; everything else is a fault.** A
+rejected or failed send stays `system` — that is exactly when the player needs to hear it — and so do
+both `resync` sends, which state `KIND_SYSTEM` explicitly rather than taking the echo default: the
+client sent them because a frame could not be applied, so they are not a receipt for anything the
+player did.
+
+The kind is threaded as a **defaulted parameter** down `Inspector.system_event` → `Main.
+_on_inspector_system_event` → `_note_system_event` → `EventDockPanel.note_system`, so every existing
+caller keeps its meaning and only the acknowledgement path opts in — one line, `_send_command`'s
+accepted-send log, which is the single place in the client where a command is known to have gone.
+`Main._send_runtime_command` and `Inspector.send_runtime_command` carry an `ack_kind` for the same
+reason in reverse: their default IS the echo, and the resync caller overrides it.
+
+**The HUD's own `system_note_requested` chain carries no kind.** Every note on it — the quarry
+refusals, the knowledge unlock, the unanswered fork, the quick-hunt refusals — is a fault or a state
+change by construction; the HUD has no acknowledgement path, so `Main` states nothing and the
+`system` default stands.
+
+`command_echo` has a `CHANNEL_BY_KIND` row even though the dock never reaches that lookup for it: the
+channel a kind belongs to is a fact about the kind, independent of one surface hiding it, and without
+the row, dropping it from `IGNORED_KINDS` would file command receipts on the WORLD channel.
+
+`ui_preview` states the claim as ABSENCE FROM THE STORED POOL rather than from the rendered rows —
+"ignored" is stronger than "not shown", and a rendered-scope assertion narrows silently to whatever
+is on screen. Eight assertions: both inlets, the `seq` slot, the `Everything` floor with both
+channels on, and — in the same batch — a genuine `system` fault and a world event that MUST survive,
+without which every one of them would pass on a dock that ignored everything. Sabotage-verified by
+moving the filter to `_visible_events()`, which fails the four pool-scoped assertions while the two
+visible-scoped ones stay green, and by moving the ingest test after the de-duplication, which fails
+the `seq`-slot one alone.
 
 ## A row's accent is resolved most-specific-first
 

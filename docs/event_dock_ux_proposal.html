@@ -664,9 +664,28 @@
     <p>
       <b>World</b> events come from the sim: a birth, a raid, a discovery, an expedition home.
       <b>System</b> events come from the client's own plumbing: the command socket dropped, a
-      command was rejected, the server rolled back. Today those live in an Inspector console the
+      command was rejected, the server rolled back. Those live in an Inspector console the
       player never opens — but a lost connection is exactly the kind of thing a player must be told
       about, so it becomes a channel here rather than being deleted.
+    </p>
+    <p>
+      The client mints <em>two</em> kinds of its own, and the split is what makes the System channel
+      worth reading. <b><code>system</code></b> is a fault or a state change: a refused command, a
+      lost or restored socket, a resync forced by a frame that could not be applied, and the HUD's
+      own refusals (<code>Quick-hunt · No idle workers to assign</code>).
+      <b><code>command_echo</code></b> is an acknowledgement — <code>Advance 1 turn.</code>,
+      <code>Answered the question.</code>, <code>Stop improving (12, 8).</code> — which restates an
+      action the player took through the UI a second ago. The boundary is exact: <b>a command
+      accepted for sending is an echo; everything else is a fault.</b>
+    </p>
+    <p>
+      <b>The bar ignores <code>command_echo</code> entirely</b>, through
+      <code>HudEventVocab.IGNORED_KINDS</code>, and it does so at <em>ingest</em> — such an event is
+      never stored, so it cannot appear at any detail level (<em>Everything</em> included), on
+      either channel, in the bar or in the expanded log. It is not a rung and not a floor: a receipt
+      for a button pressed a moment ago is not news, and it was crowding the very first turns of a
+      new game. Ignoring is a <em>display filter on this one surface</em> — the event still exists,
+      the Inspector's debug console still prints every one of them, and a mod may still read them.
     </p>
 
     <h3>How loudly — the importance rung</h3>

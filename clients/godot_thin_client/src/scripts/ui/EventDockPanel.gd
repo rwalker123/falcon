@@ -260,6 +260,9 @@ func _on_viewport_resized() -> void:
 ## NARRATIVE KINDS ARE SKIPPED — they belong to `TellingPanel` (a receipt and a telling want opposite
 ## retention and density). That test lives THERE, in `handles_kind()`, so a kind can never be claimed
 ## by both surfaces or dropped by both.
+##
+## IGNORED KINDS ARE DROPPED HERE TOO, and the position in the loop is the contract — see
+## `HudEventVocab.IGNORED_KINDS`.
 func ingest_events(events_variant: Variant) -> void:
 	if not (events_variant is Array):
 		return
@@ -271,6 +274,11 @@ func ingest_events(events_variant: Variant) -> void:
 		var entry: Dictionary = entry_variant
 		var kind: String = String(entry.get("kind", "")).strip_edges()
 		if TellingPanel.handles_kind(kind):
+			continue
+		# BEFORE the de-duplication below, deliberately: an ignored kind must occupy neither a `seq`
+		# slot nor a signature. Filtering after would leave the dock suppressing the first re-ingest
+		# of every row it had already dropped, the moment a kind stopped being ignored.
+		if HudEventVocab.IGNORED_KINDS.has(kind):
 			continue
 		var tick: int = int(entry.get("tick", -1))
 		var label: String = String(entry.get("label", "")).strip_edges()
@@ -303,9 +311,18 @@ func ingest_events(events_variant: Variant) -> void:
 ## `alert` is the CALLER's severity: a lost socket is an Alert, "connected" is a receipt. Passed
 ## rather than derived, because the client knows which of its own lines is bad news and a string
 ## match on its own log text would only pretend to.
-func note_system(label: String, detail: String = "", alert: bool = false) -> void:
+##
+## `kind` defaults to `KIND_SYSTEM`, so every caller that says nothing keeps saying "this is a fault
+## or a state change". The one path that opts out is the command ACKNOWLEDGEMENT, which passes
+## `KIND_COMMAND_ECHO` and is dropped here — **the second of the dock's two inlets, and a filter that
+## covered only `ingest_events` would be a trap**, since every client-side line arrives through this
+## one instead.
+func note_system(label: String, detail: String = "", alert: bool = false,
+		kind: String = HudEventVocab.KIND_SYSTEM) -> void:
+	if HudEventVocab.IGNORED_KINDS.has(kind):
+		return
 	var rung: String = HudEventVocab.RUNG_ALERT if alert else HudEventVocab.RUNG_ROUTINE
-	_append(_current_turn, HudEventVocab.KIND_SYSTEM, -1, label, detail, -1, rung)
+	_append(_current_turn, kind, -1, label, detail, -1, rung)
 	_prune()
 	_render()
 

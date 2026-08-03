@@ -45,10 +45,38 @@ const CHANNEL_LABELS := {
 }
 const DEFAULT_CHANNEL := CHANNEL_WORLD
 
-## The client's OWN kind — socket state, a rejected command, a rollback. It is the one kind no
-## snapshot ever carries; the Inspector's console chatter is routed in under it, because a dropped
-## command socket is something a player must be told rather than something to bury in a debug log.
+## The client's OWN kind — socket state, a rejected command, a rollback, and the HUD's own refusals
+## ("Quick-hunt · No idle workers to assign"). It is one of two kinds no snapshot ever carries; the
+## Inspector's console chatter is routed in under it, because a dropped command socket is something a
+## player must be told rather than something to bury in a debug log.
 const KIND_SYSTEM := "system"
+
+## The client's SECOND own kind: a receipt for a command the player just issued through the UI —
+## "Advance 1 turn.", "Answered the question.", "Stop improving (12, 8).". It restates an action the
+## player has this instant taken, so on a notification bar it is pure plumbing, and it is in
+## `IGNORED_KINDS` for that reason.
+##
+## **THE SPLIT FROM `KIND_SYSTEM` IS WHAT MAKES THAT FILTERABLE AT ALL.** Both used to ride
+## `system`, so the channel carried an acknowledgement and a FAULT under one name and no kind-level
+## rule could separate them. **The boundary is: a command accepted for sending is an echo;
+## everything else is a fault.** A rejected or failed send, a lost socket, a resync forced by an
+## unapplicable delta and every HUD-side refusal stay `system` — those are exactly when the player
+## needs to hear from this channel.
+const KIND_COMMAND_ECHO := "command_echo"
+
+# ---- kinds the DOCK ignores ------------------------------------------------
+## Kinds the dock drops at INGEST, in both inlets (`ingest_events` and `note_system`), never storing
+## them. **Not a detail floor, not a channel toggle and not a render-time skip**: an ignored kind
+## cannot appear at any detail level — `Everything` included — on either channel, in the bar or in
+## the expanded log, and it occupies neither a `seq` de-duplication slot nor a retention row.
+##
+## **AN IGNORED KIND IS NOT A RETIRED KIND.** The event still exists and is still emitted: the sim
+## goes on writing it, `Inspector`'s debug console goes on printing every command echo in full, and a
+## mod may well want to read it. This table is a DISPLAY FILTER ON ONE SURFACE — the player's
+## notification bar — and nothing here removes an event from the client.
+const IGNORED_KINDS := {
+	KIND_COMMAND_ECHO: true,
+}
 
 # ---- kind → rung -----------------------------------------------------------
 ## Straight from §02 of the proposal. Two entries are worth reading twice:
@@ -94,11 +122,17 @@ const RUNG_BY_KIND := {
 }
 
 # ---- kind → channel --------------------------------------------------------
-## Only the client's own kind is not a world event, so this table names the exception and every
+## Only the client's own kinds are not world events, so this table names the exceptions and every
 ## other kind takes `DEFAULT_CHANNEL`. Listing all twenty world kinds here would be a second place
 ## to forget a row.
+##
+## `KIND_COMMAND_ECHO` is listed even though `IGNORED_KINDS` means the dock never reaches this lookup
+## for it: the channel a kind belongs to is a fact about the kind, independent of one surface's
+## decision to hide it. Left out, dropping it from `IGNORED_KINDS` would silently file command
+## receipts on the WORLD channel beside the births and the raids.
 const CHANNEL_BY_KIND := {
 	KIND_SYSTEM: CHANNEL_SYSTEM,
+	KIND_COMMAND_ECHO: CHANNEL_SYSTEM,
 }
 
 # ---- rung → glyph + accent -------------------------------------------------

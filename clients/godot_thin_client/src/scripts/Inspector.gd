@@ -13,7 +13,12 @@ signal reserved_width_changed(width: float)
 ## they will see it. `alert` is stated by the emitting site rather than derived from the text: this
 ## file knows which of its own lines is bad news, and a string match on its own log strings would
 ## only pretend to.
-signal system_event(label: String, detail: String, alert: bool)
+##
+## `kind` is the dock's own vocabulary (`HudEventVocab`): `KIND_SYSTEM` for a fault or a state
+## change, `KIND_COMMAND_ECHO` for the receipt of a command this client just accepted for sending.
+## The dock ignores the latter — it restates an action the player took a moment ago through the UI —
+## while this file's log widget goes on printing every one of them, because it is the debug console.
+signal system_event(label: String, detail: String, alert: bool, kind: String)
 
 const ScriptManagerPanel := preload("res://src/scripts/scripting/ScriptManagerPanel.gd")
 const ScriptHostManager := preload("res://src/scripts/scripting/ScriptHostManager.gd")
@@ -543,7 +548,13 @@ func _update_command_status() -> void:
 ## `alert` defaults to `false`, which is what keeps the six panel-injected `Callable`s (Map /
 ## Terrain / Crisis / Knowledge / Victory / Commands) working unchanged: a panel's own command
 ## receipt is a Routine note. The FAILURE sites in this file pass `true` explicitly.
-func _append_command_log(entry: String, alert: bool = false) -> void:
+##
+## `kind` defaults to `KIND_SYSTEM` for the same reason: every existing site keeps meaning "the
+## player should hear this", and only `_send_command`'s ACCEPTED-send line opts into
+## `KIND_COMMAND_ECHO`, which the dock ignores. The Commands tab and the log buffer are unaffected by
+## the kind — this console shows everything, as a debug console should.
+func _append_command_log(entry: String, alert: bool = false,
+		kind: String = HudEventVocab.KIND_SYSTEM) -> void:
 	if commands_panel != null:
 		commands_panel.append_log(entry)
 	_append_log_entry("[CMD] %s" % entry, "COMMAND", "inspector.command")
@@ -551,7 +562,7 @@ func _append_command_log(entry: String, alert: bool = false) -> void:
 	# the leading edge and its detail as small faint text on the TRAILING one — so passing a fixed
 	# "Command" label and the message as detail strands the only words that matter at the far end
 	# of a screen-wide bar. The channel chip already says where the line came from.
-	system_event.emit(entry, "", alert)
+	system_event.emit(entry, "", alert, kind)
 
 func _update_command_controls_enabled() -> void:
 	var connected = command_connected
@@ -596,7 +607,17 @@ func _ensure_command_connection() -> bool:
 			_update_command_status()
 			return false
 
-func _send_command(line: String, success_message: String) -> bool:
+## **THE ACCEPTED-SEND LINE IS THE ONE ACKNOWLEDGEMENT PATH IN THE CLIENT**, so it is the one place
+## `KIND_COMMAND_ECHO` is stated. That is the boundary in code: `success_message` restates an action
+## the player just took and rides the echo kind the dock ignores, while both failure exits — no
+## connection, and a refused write — stay `KIND_SYSTEM` (the second as an Alert), because a command
+## that did NOT go is exactly what the System channel is for.
+##
+## `ack_kind` exists for the caller whose "success message" is not a receipt at all: `Main`'s
+## `resync` is sent by the CLIENT after it drops an unapplicable delta, so its line reports a fault
+## the player never asked for and it passes `KIND_SYSTEM` back in.
+func _send_command(line: String, success_message: String,
+		ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:
 	if not _ensure_command_connection():
 		return false
 	var err: Error = command_client.call("send_line", line)
@@ -607,12 +628,13 @@ func _send_command(line: String, success_message: String) -> bool:
 		_append_command_log("Command failed (%s): %s" % [line, error_string(err)], true)
 		_update_command_status()
 		return false
-	_append_command_log(success_message)
+	_append_command_log(success_message, false, ack_kind)
 	_update_command_status()
 	return true
 
-func send_runtime_command(line: String, success_message: String) -> bool:
-	return _send_command(line, success_message)
+func send_runtime_command(line: String, success_message: String,
+		ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> bool:
+	return _send_command(line, success_message, ack_kind)
 
 ## Optional observer invoked after a turn is advanced through THIS coordinator — i.e. the dev
 ## toolbar and autoplay, which are DELIBERATELY NOT gated by the client-side end-turn gate the

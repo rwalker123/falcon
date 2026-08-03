@@ -1039,9 +1039,16 @@ func _on_hud_answer_fork(payload: Dictionary) -> void:
         "Answered the question."
     )
 
-func _send_runtime_command(line: String, message: String) -> void:
+## `message` is the line the player may see on the event dock's System channel, and `ack_kind` says
+## what it IS. The default — `KIND_COMMAND_ECHO` — is right for every command the player issued
+## through the UI: "Advance 1 turn.", "Answered the question.", "Stop improving (12, 8)" restate an
+## action just taken, so the dock ignores them (`HudEventVocab.IGNORED_KINDS`) and only the
+## Inspector's debug console keeps them. A caller whose message reports a FAULT the client acted on
+## by itself passes `HudEventVocab.KIND_SYSTEM` instead — see `_tick_resync`.
+func _send_runtime_command(line: String, message: String,
+        ack_kind: String = HudEventVocab.KIND_COMMAND_ECHO) -> void:
     if inspector != null and inspector.has_method("send_runtime_command"):
-        var result: Variant = inspector.call("send_runtime_command", line, message)
+        var result: Variant = inspector.call("send_runtime_command", line, message, ack_kind)
         if result is bool and result:
             return
         push_warning("Command pending or rejected: %s" % line)
@@ -1258,15 +1265,19 @@ func _connect_event_dock() -> void:
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])
 
+## The HUD's own client-side notes — a quick-hunt refusal, a knowledge unlock, an unanswered fork.
+## Every one of them is a fault or a state change the player is owed, so this path states no kind and
+## takes the `system` default; the HUD has no acknowledgement path to distinguish.
 func _on_system_note_requested(label: String, detail: String) -> void:
     _note_system_event(label, detail, false)
 
-func _on_inspector_system_event(label: String, detail: String, alert: bool) -> void:
-    _note_system_event(label, detail, alert)
+func _on_inspector_system_event(label: String, detail: String, alert: bool, kind: String) -> void:
+    _note_system_event(label, detail, alert, kind)
 
-func _note_system_event(label: String, detail: String, alert: bool) -> void:
+func _note_system_event(label: String, detail: String, alert: bool,
+        kind: String = HudEventVocab.KIND_SYSTEM) -> void:
     if event_dock != null and event_dock.has_method("note_system"):
-        event_dock.call("note_system", label, detail, alert)
+        event_dock.call("note_system", label, detail, alert, kind)
 
 ## `R` toggles the event dock — the hotkey the retired left-dock command feed used to own, and the
 ## persisted `command_feed_suppressed` preference migrates onto the dock's own `suppressed` key.
@@ -1381,13 +1392,18 @@ func _process(delta: float) -> void:
 ## The drop itself is correct and deliberate — merging a delta onto the wrong baseline produces a
 ## world that is silently wrong rather than visibly broken (`docs/plan_delta_streaming.md` §3.3).
 ## But dropping alone leaves the client frozen, so the request is the other half of that contract.
+##
+## **BOTH SENDS STATE `KIND_SYSTEM` RATHER THAN TAKING THE ECHO DEFAULT.** A resync is not a receipt
+## for anything the player did — the client sent it because a frame could not be applied — so it is a
+## fault report, and the System channel is where a fault report belongs.
 func _tick_resync(delta: float) -> void:
     if snapshot_loader == null:
         return
     if snapshot_loader.resync_needed:
         snapshot_loader.resync_needed = false
         if _resync_pending_accum < 0.0:
-            _send_runtime_command("resync", "resync requested (unapplicable delta)")
+            _send_runtime_command("resync", "resync requested (unapplicable delta)",
+                HudEventVocab.KIND_SYSTEM)
             _resync_pending_accum = 0.0
         return
     if _resync_pending_accum < 0.0:
@@ -1395,7 +1411,8 @@ func _tick_resync(delta: float) -> void:
     _resync_pending_accum += delta
     if _resync_pending_accum >= RESYNC_ANSWER_TIMEOUT:
         _resync_pending_accum = 0.0
-        _send_runtime_command("resync", "resync retry (still no baseline)")
+        _send_runtime_command("resync", "resync retry (still no baseline)",
+            HudEventVocab.KIND_SYSTEM)
 
 ## Loading gate: while the world is not yet revealed, decide whether a streamed snapshot is the
 ## freshly generated world (reveal + apply) or a pre-rebuild frame of the OLD one (ignore).

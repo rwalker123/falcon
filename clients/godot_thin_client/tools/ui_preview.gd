@@ -6135,6 +6135,46 @@ func _ready() -> void:
 	_write_event_prefs_without_section()
 	event_dock._load_prefs()
 
+	# AN IGNORED KIND IS DROPPED AT INGEST, IN BOTH INLETS. `Advance 1 turn.` is the line that
+	# produced this rule: a receipt for a button the player pressed a second ago, restated on the
+	# notification bar as if it were news. It rides `command_echo` now, which
+	# `HudEventVocab.IGNORED_KINDS` names, and the claim is the strong one — never STORED, not merely
+	# never shown — so every assertion below reads the dock's own accumulator rather than its rows.
+	#
+	# THE COMPANIONS ARE THE POINT. A genuine System fault and a world event share the batch, so a
+	# dock that simply ignored everything would fail here instead of passing.
+	var prior_detail: String = event_dock._detail_level
+	event_dock.reset()
+	event_dock.ingest_events(_event_dock_ignored_kind_fixture())
+	event_dock.note_system(EVENT_DOCK_ECHO_NOTE_LABEL, "", false, HudEventVocab.KIND_COMMAND_ECHO)
+	event_dock.note_system(EVENT_DOCK_SYSTEM_FAULT_LABEL, "", true)
+	_assert_hud("ignored kind: the positive companion — a genuine System FAULT is held",
+		_preview_event_label_count(event_dock, EVENT_DOCK_SYSTEM_FAULT_LABEL) == 1)
+	_assert_hud("ignored kind: …and so is the world event that shared the batch",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ECHO_COMPANION_LABEL) == 1)
+	_assert_hud("ignored kind: nothing of the kind is in the STORED pool at all",
+		_preview_event_kind_count(event_dock, HudEventVocab.KIND_COMMAND_ECHO) == 0)
+	_assert_hud("ignored kind: dropped through the `ingest_events` inlet",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ECHO_INGEST_LABEL) == 0)
+	_assert_hud("ignored kind: dropped through the `note_system` inlet too — a filter on one is a trap",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ECHO_NOTE_LABEL) == 0)
+	# …and it consumed no de-duplication slot on the way out: a LATER row reusing the ignored row's
+	# `seq` must still land. Filtering after the de-dup would swallow this one.
+	event_dock.ingest_events(_event_dock_ignored_seq_reuse_fixture())
+	_assert_hud("ignored kind: it burned no `seq` slot — a later row reusing that seq still lands",
+		_preview_event_label_count(event_dock, EVENT_DOCK_ECHO_SEQ_REUSE_LABEL) == 1)
+	# THE CONFIGURATION WHERE EVERY OTHER FILTER HAS GIVEN UP: the `Everything` floor with both
+	# channels on. A detail-floor or channel-toggle mechanism leaks here; ignoring at ingest cannot.
+	event_dock.set_detail_level(HudEventVocab.RUNG_ROUTINE)
+	for channel_variant in HudEventVocab.CHANNEL_ORDER:
+		event_dock.set_channel_enabled(String(channel_variant), true)
+	_assert_hud("ignored kind: still absent at the `Everything` floor with both channels on",
+		_preview_visible_label_count(event_dock, EVENT_DOCK_ECHO_INGEST_LABEL) == 0
+			and _preview_visible_label_count(event_dock, EVENT_DOCK_ECHO_NOTE_LABEL) == 0)
+	_assert_hud("ignored kind: …a floor at which the System fault beside it IS visible",
+		_preview_visible_label_count(event_dock, EVENT_DOCK_SYSTEM_FAULT_LABEL) == 1)
+	event_dock.set_detail_level(prior_detail)
+
 	event_dock.reset()
 	event_dock.ingest_events(_event_dock_fixture())
 	_assert_hud("seq de-dup: two identical same-turn raids are TWO events, not one",
@@ -7911,6 +7951,17 @@ func _preview_event_label_count(dock: EventDockPanel, label: String, rendered: b
 			count += 1
 	return count
 
+## The same count over the FILTERED pool — everything the current detail floor and channel toggles
+## admit. It is the strongest surface an ignored kind could still leak onto without being drawn, and
+## it is asked ONLY beside a positive companion, so "nothing is visible" cannot pass for "the ignored
+## row is not visible".
+func _preview_visible_label_count(dock: EventDockPanel, label: String) -> int:
+	var count := 0
+	for event in dock._visible_events():
+		if String(event["label"]) == label:
+			count += 1
+	return count
+
 ## The rollback fixture pair: two batches REUSING the same `seq` values with different labels, which
 ## is exactly what a restored `CommandEventLog` replays (its `next_seq` counter is checkpoint state).
 const EVENT_DOCK_ROLLBACK_SEQ := 501
@@ -7924,6 +7975,36 @@ func _event_dock_rollback_before() -> Array:
 func _event_dock_rollback_after() -> Array:
 	return [{"tick": 60, "kind": "hunt", "faction": 0,
 		"label": EVENT_DOCK_ROLLBACK_AFTER_LABEL, "detail": "", "seq": EVENT_DOCK_ROLLBACK_SEQ}]
+
+## The IGNORED-KIND fixture (`HudEventVocab.IGNORED_KINDS`). Each inlet gets its own label, so a leak
+## names the inlet that leaked rather than merely the kind.
+##
+## **The `ingest_events` row is CONSTRUCTED, not quoted**, the way the digit-boundary trap is: today's
+## sim emits no `command_echo` — every one of them is minted client-side and arrives through
+## `note_system` — but a filter that covered one inlet and not the other would be a trap the moment a
+## mod or a later sim wrote the kind onto the wire, so the harness reaches the case the code claims.
+const EVENT_DOCK_ECHO_INGEST_LABEL := "Advance 1 turn."
+const EVENT_DOCK_ECHO_NOTE_LABEL := "Answered the question."
+## The POSITIVE COMPANIONS, in the same batch: a genuine System-channel fault and an ordinary world
+## event. Without them every assertion below passes on a dock that ignores everything.
+const EVENT_DOCK_SYSTEM_FAULT_LABEL := "Command endpoint unavailable."
+const EVENT_DOCK_ECHO_COMPANION_LABEL := "A wolf pack raided the camp"
+## The seq the ignored row carries, re-used afterwards by a row that must land — proving the drop
+## happened BEFORE the de-duplication rather than after it.
+const EVENT_DOCK_ECHO_SEQ := 701
+const EVENT_DOCK_ECHO_SEQ_REUSE_LABEL := "A child came of age"
+
+func _event_dock_ignored_kind_fixture() -> Array:
+	return [
+		{"tick": 63, "kind": HudEventVocab.KIND_COMMAND_ECHO, "faction": 0,
+			"label": EVENT_DOCK_ECHO_INGEST_LABEL, "detail": "", "seq": EVENT_DOCK_ECHO_SEQ},
+		{"tick": 63, "kind": "predator_raid", "faction": 0,
+			"label": EVENT_DOCK_ECHO_COMPANION_LABEL, "detail": "", "seq": 702},
+	]
+
+func _event_dock_ignored_seq_reuse_fixture() -> Array:
+	return [{"tick": 63, "kind": "came_of_age", "faction": 0,
+		"label": EVENT_DOCK_ECHO_SEQ_REUSE_LABEL, "detail": "", "seq": EVENT_DOCK_ECHO_SEQ}]
 
 ## Two rows carrying the SENTINEL `seq` of 0 and differing only in label. Keyed on `seq` they would
 ## collide onto one; routed to the signature fallback they are two.
