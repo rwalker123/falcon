@@ -238,11 +238,47 @@ The pin is tracked as an **`order`** (the ingest counter), never as the record i
 carry equal field values — that is the very bug `seq` de-duplication fixes — so identity here has to
 be an id, not a `==` on a Dictionary.
 
+## THE BAR RESERVES NOTHING — IT OVERLAYS THE MAP
+
+It reserved `SIDE_TOP`/`SIDE_BOTTOM` at first, like `BandCityPanel`. **A reservation is FULL WIDTH,
+and this strip is not**: it is bounded to the centre band and capped at `MAX_STRIP_WIDTH`, so the map
+was pushed down across the whole window to make room for something that filled only the middle of it,
+and the ends came back as bare background — black bars either side of the bar, reported from live
+play. A notification strip is not furniture the game area has to make room for.
+
+So the dock is **not a reserver at all**: no `MapView` inset, no `Hud` inset, no entry in
+`_reservations`, no row in `RESERVER_PRIORITY`, and **no `reservation_changed` signal or
+`current_reservation_size()` method** — the API is gone rather than publishing a zero, because a
+zero-sized reservation and no reservation look identical from outside and the next reader would wire
+one back by reflex. `MAP_ONLY_RESERVERS`, which existed only to keep this dock's strip off the HUD,
+went with it.
+
+**What did NOT change**: `_update_event_dock_insets` reads the OTHER reservers, so the horizontal
+bound is untouched — the bar still starts past whatever is docked left and stops short of what is
+docked right, plus the HUD's own columns.
+
+### Overlaying costs two things a reserved strip never had to pay
+
+- **It must eat its own clicks.** With no reservation, `MapView`'s hit-testing covers the whole
+  viewport again, so a press on the bar would otherwise ALSO select the hex beneath it. `MapView`
+  picks out of `_unhandled_input`, so a `MOUSE_FILTER_STOP` control over the pointer consumes the
+  press first. Both `_root` and the card set it **explicitly**: `STOP` is the `Control` default, but
+  this is the first element where that default is load-bearing rather than incidental, and an
+  `IGNORE` added later for some hover effect would silently reintroduce click-through.
+  `ui_preview` drives real presses through `Viewport.push_input` against its own `_unhandled_input`
+  — **sampled across the whole rect, not just the centre**, because the centre lands on a row
+  (a `PanelContainer`, `STOP` by default) and passes even with the root and card set to `IGNORE`.
+- **It must be opaque.** Reserved chrome sits on the HUD's own background; an overlay sits on
+  terrain, which can be snow or desert. The card fills with `HudStyle.PANEL_SOLID` (alpha 1.0), not
+  the translucent `PANEL` every docked card uses. `event_dock_over_bright_terrain` is the frame that
+  holds that to account.
+
 ## The strip is CAPPED and CENTRED, not stretched
 
 On an ultrawide the bar spanned the whole band between the columns, so a row's label sat at one end
 of two feet of screen and its detail at the other and the pair read as two unrelated things.
-`MAX_STRIP_WIDTH` bounds it and the strip centres in whatever band is left.
+`MAX_STRIP_WIDTH` bounds it and the strip centres in whatever band is left. (That bound is also what
+made the reservation untenable — see "THE BAR RESERVES NOTHING" above.)
 
 **The number is chosen against two measurements and the larger wins.** The widest row the shipped
 fixtures produce at the current font sizes is **594px** — a predator raid, `A Grey Wolf raid cost 2
@@ -253,8 +289,7 @@ shrink the bar on every desktop to fix a complaint about ultrawides. So the cap 
 base-canvas band at **1280** — no content is ever squeezed, nothing moves at 1920 or below, and past
 it the strip stops growing.
 
-It is **cross-axis only**, the same rule as the perpendicular insets: it moves where the strip is
-drawn, never what it reserves. `ui_preview` asserts BOTH halves — at the normal canvas the strip
+`ui_preview` asserts BOTH halves — at the normal canvas the strip
 equals the band (1216) and at an ultrawide it equals the cap and is centred — because a cap
 hard-wired on fails the first and one hard-wired off fails the second.
 

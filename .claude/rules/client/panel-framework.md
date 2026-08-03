@@ -98,15 +98,14 @@ by reserver id, so multiple panels can reserve (possibly different) edges at onc
   never what it reserves. Conflating the two axes is the easy mistake, and it is
   the one that shipped: a `SIDE_TOP` bar spanning the raw window drew straight
   over the `SIDE_LEFT` band panel's tab bar.
-- **`Main.MAP_ONLY_RESERVERS` says WHICH SURFACES a reserver's strip insets.**
-  Every reserver used to inset both — the map so its content cannot hide under
-  the strip, the HUD so its bars and docks reflow beside it — and
-  `_apply_reservation` assumed the pair. The event dock breaks that: it lives
-  *beside* the HUD's own furniture rather than above it, so insetting the HUD as
-  well pushed `LayoutRoot` down and dragged `Turn N` / `Units` /
-  `Sedentarization` / `Pop` and the whole right dock with it. It still insets the
-  MAP. Named as a per-reserver property, not an `if` inside the fan-out: "which
-  surfaces does this reserver move?" is a fact about the reserver.
+- **A reservation is FULL WIDTH, and that is why not every panel wants one.**
+  Every reserver insets both surfaces — the map so its content cannot hide under
+  the strip, the HUD so its bars and docks reflow beside it — across the whole
+  edge. The event dock briefly reserved and then stopped: its strip is bounded to
+  the centre band, so the full-width reservation pushed the map down for a bar
+  that filled only the middle of it and left bare background at the ends. It
+  **overlays** instead (`event-dock.md`), and is not in this registry at all. A
+  panel that does not span its edge should ask whether it should be reserving.
 
 ### The HUD's own side columns are AUTHORED, and a horizontal panel must respect them
 

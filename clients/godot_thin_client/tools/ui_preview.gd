@@ -79,6 +79,11 @@ const PREVIEW_CANVAS_SIZE_BASE := Vector2i(1920, 1152)
 ## Rendered outside `_ensure_canvas`'s pinned-canvas guard (which exists to keep every OTHER frame
 ## comparable), then the canvas is re-pinned.
 const ULTRAWIDE_WINDOW_SIZE := Vector2i(2560, 900)
+## A pale sand/snow tone for the ONE state that renders the event bar over bright ground. The strip
+## overlays live map now, and every other frame in this set puts it on a near-black backdrop, so its
+## opacity has never been tested against anything. Not a real terrain sample — the point is a
+## worst-case bright field behind the rows, and a screenshot of actual desert would be less extreme.
+const BRIGHT_TERRAIN_COLOR := Color(0.90, 0.86, 0.76)
 
 # How many frames `_ensure_canvas` / `_capture` keep re-asserting the pinned canvas while waiting for
 # the WM to honour it. Bounded so a WM that refuses to shrink the window fails loudly, never hangs.
@@ -770,6 +775,13 @@ func _ready() -> void:
 	var bg := ColorRect.new()
 	bg.color = Color(0.10, 0.15, 0.16)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# **IGNORE, because this rect STANDS IN FOR THE MAP.** A `ColorRect` defaults to
+	# `MOUSE_FILTER_STOP`, so as a full-rect backdrop it silently swallowed every press the HUD did
+	# not take — which the real client has nothing equivalent to (`MapView` is a `Node2D` and picks
+	# hexes out of `_unhandled_input`). It made the event dock's click-through test unrunnable: the
+	# control press on open canvas never reached `_unhandled_input` either, so "the bar consumed it"
+	# was true of everywhere.
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg_layer.add_child(bg)
 
 	# ---- prefs isolation — FIRST, before anything can read OR write a preference ----------------
@@ -6051,10 +6063,19 @@ func _ready() -> void:
 	await _settle()
 	var event_dock: EventDockPanel = EVENT_DOCK_SCENE.instantiate()
 	add_child(event_dock)
-	event_dock.reservation_changed.connect(_on_preview_event_dock_reservation)
 	await get_tree().process_frame
-	_on_preview_event_dock_reservation(event_dock.get_dock(), event_dock.current_reservation_size())
 	_preview_push_event_dock_insets(event_dock, 0.0, 0.0)
+
+	# **THE DOCK RESERVES NOTHING FROM EITHER SURFACE.** Asserted as the absence of the API rather
+	# than as a zero it might publish: a reservation of 0 and no reservation at all look identical
+	# from the outside, and the bug this replaces (a full-width `SIDE_TOP` reservation behind a
+	# centre-bounded strip, so the map dropped and the ends came back as black bars) was a live
+	# reservation, not a zero one. If either member returns, `Main` can be wired back to it by
+	# reflex and nothing else here would notice.
+	_assert_hud("the dock publishes no `reservation_changed` — it overlays the map, it does not reserve",
+		not event_dock.has_signal("reservation_changed"))
+	_assert_hud("…and no `current_reservation_size` for anything to fan out",
+		not event_dock.has_method("current_reservation_size"))
 
 	# THE ROLLBACK REGRESSION. `CommandEventLog` is checkpoint state, so a rollback restores it
 	# INCLUDING its `next_seq` counter and the replayed events REUSE sequence numbers the client has
@@ -6178,20 +6199,24 @@ func _ready() -> void:
 	await _settle()
 	_assert_bar_clears(event_dock, _hud.turn_block, "the top-bar readout block (Turn / Units / Pop)")
 
-	# **NOTHING MOVES DOWN**, and this is asserted HERE — with the dock actually on `SIDE_TOP` —
-	# because `offset_top` is the offset a TOP strip would move and the dock spends most of this
-	# block on the bottom edge. Made against the wrong edge the claim is true for free, which is the
-	# same vacuity `_assert_bar_clears` guards against. A picture cannot carry it either: a frame
-	# with the readouts 60px lower still looks like a HUD. `Main` keeps the dock out of the HUD's
-	# registry entirely (`MAP_ONLY_RESERVERS`), so `LayoutRoot` keeps its full height on every edge.
-	_assert_hud("the dock's SIDE_TOP reservation does NOT push the HUD down (LayoutRoot offsets stay 0)",
+	# **NOTHING MOVES DOWN**, asserted HERE with the dock actually on `SIDE_TOP` — `offset_top` is
+	# the offset a TOP strip would move, and made on the bottom edge the claim is true for free.
+	#
+	# **THIS CLAIM WEAKENED when the dock stopped reserving, and the comment says so rather than
+	# pretending otherwise.** It used to pin an EXEMPTION — the dock reserved, and `MAP_ONLY_RESERVERS`
+	# kept that reservation off the HUD. There is no reservation now, so what is left is the absence
+	# of one, and the two assertions at the top of this block (no signal, no size method) are the
+	# stronger statement of it. This survives as the BEHAVIOURAL half: whatever the dock is doing, the
+	# HUD's own rect must not move. It can still fail — someone wiring the dock into
+	# `set_reserved_inset` breaks it — it simply no longer describes a mechanism.
+	_assert_hud("the dock does not move the HUD, on the edge where a TOP strip would (LayoutRoot offsets stay 0)",
 		is_zero_approx(_hud.layout_root.offset_top) and is_zero_approx(_hud.layout_root.offset_bottom))
-	# THE NEGATIVE CONTROL: the mechanism works, it is the event dock that is exempt from it. The same
-	# size pushed under a DIFFERENT id does move the HUD — so the claim above is about the exemption
-	# and not about a reserved-inset path that quietly does nothing.
-	_hud.set_reserved_inset(&"preview_probe", SIDE_TOP, event_dock.current_reservation_size())
+	# THE NEGATIVE CONTROL, and it is what stops the line above being a statement about a
+	# reserved-inset path that quietly does nothing: the same strip height pushed under a DIFFERENT id
+	# DOES move the HUD.
+	_hud.set_reserved_inset(&"preview_probe", SIDE_TOP, event_dock._root.size.y)
 	await _settle()
-	_assert_hud("…and that is an EXEMPTION, not a broken path: another reserver's SIDE_TOP strip does move it",
+	_assert_hud("…and the reserved-inset path is live: another reserver's SIDE_TOP strip does move it",
 		_hud.layout_root.offset_top > 0.0)
 	_hud.set_reserved_inset(&"preview_probe", SIDE_TOP, 0.0)
 	await _settle()
@@ -6286,8 +6311,6 @@ func _ready() -> void:
 			and not event_dock._root.get_global_rect().intersects(_hud.left_dock_region.get_global_rect()))
 	_assert_hud("inset: …and it still clears the readout block on the far side",
 		not event_dock._root.get_global_rect().intersects(_hud.turn_block.get_global_rect()))
-	_assert_hud("inset: the reservation the bar PUBLISHES is unchanged — this moves where it is drawn, not what it claims",
-		is_equal_approx(event_dock.current_reservation_size(), event_dock._bar_height()))
 
 	# The BOTTOM edge takes the same inset — the bug was about the horizontal axis, so both edges
 	# must be fixed and a fix that only reached `SIDE_TOP` has to fail here.
@@ -6406,6 +6429,68 @@ func _ready() -> void:
 	event_dock.set_detail_level(HudEventVocab.RUNG_NOTABLE)
 	await _settle()
 
+	# ---- THE OVERLAY'S TWO OBLIGATIONS --------------------------------------------------------
+	# The strip floats over live map now, which makes two things its problem that were the
+	# reservation's before.
+	#
+	# **1. IT MUST EAT ITS OWN CLICKS.** `MapView` picks hexes out of `_unhandled_input`, so a control
+	# over the pointer that does not CONSUME the press lets the same click select the hex behind the
+	# bar.
+	#
+	# **Driven through the REAL dispatch** (`Viewport.push_input`) against this harness's own
+	# `_unhandled_input`, which stands in for MapView's: the GUI pass runs first, and a press it
+	# consumes never becomes unhandled. That is the exact mechanism, end to end.
+	#
+	# The first version of this asked `gui_get_hovered_control()` after an `Input.warp_mouse`, and it
+	# answered "nothing" — over the bar AND over the Telling panel, a `PanelContainer` that certainly
+	# consumes. Hover state does not update in this harness. It reported a failure that was the
+	# probe's, not the dock's, and its "negative control" passed either way because it was written as
+	# `null or not-a-descendant`. The control below is the other way round: open canvas MUST reach
+	# `_unhandled_input`, so a probe that never fires fails there instead of passing everywhere.
+	event_dock.set_dock(SIDE_BOTTOM)
+	event_dock.set_expanded(false)
+	await _settle()
+	var bar_rect := event_dock._root.get_global_rect()
+	_assert_hud("precondition: open canvas DOES reach _unhandled_input, so this probe can see a miss",
+		await _preview_press_reaches_map(MOUSE_PARK_POSITION))
+	# **SAMPLED ACROSS THE WHOLE RECT, not just the centre.** A press in the middle lands on a row —
+	# a `PanelContainer`, `STOP` by default — so it is consumed whatever the root and the card do,
+	# and the first version of this passed with BOTH of their filters set to `IGNORE`. What the rows
+	# do not cover is the card's own margins and the strip either side of the expander, and a click
+	# there is exactly the one that would fall through to the hex behind the bar.
+	var leaked_at := Vector2(-1.0, -1.0)
+	for point in _preview_rect_probe_points(bar_rect):
+		if await _preview_press_reaches_map(_canvas_to_window(point)):
+			leaked_at = point
+			break
+	_assert_hud("no press anywhere inside the bar reaches the map's input path (%s)"
+			% ("all %d sample points consumed" % _preview_rect_probe_points(bar_rect).size()
+				if leaked_at.x < 0.0 else "leaked at %s" % leaked_at),
+		leaked_at.x < 0.0)
+	# The filters that make that true, read back beside the behaviour — the behavioural test says the
+	# rect is covered, these say by WHAT, so a future `IGNORE` added for a hover effect is legible as
+	# the cause rather than as a mystery regression.
+	_assert_hud("…because the root and its card both STOP the pointer (root %d, card %d)"
+			% [event_dock._root.mouse_filter, event_dock._panel.mouse_filter],
+		event_dock._root.mouse_filter == Control.MOUSE_FILTER_STOP
+			and event_dock._panel.mouse_filter == Control.MOUSE_FILTER_STOP)
+
+	# **2. IT MUST BE OPAQUE.** Reserved chrome sat on the HUD's own background; an overlay sits on
+	# terrain, which can be snow or desert. Every other frame in this set renders it over a near-black
+	# backdrop, so opacity has never been under any pressure at all.
+	_assert_hud("the strip's fill is fully opaque, so bright terrain cannot reach the row text (alpha %.2f)"
+			% HudStyle.PANEL_SOLID.a,
+		is_equal_approx(HudStyle.PANEL_SOLID.a, 1.0))
+	var backdrop := _preview_backdrop()
+	var dark_backdrop := backdrop.color if backdrop != null else Color.BLACK
+	if backdrop != null:
+		backdrop.color = BRIGHT_TERRAIN_COLOR
+	await _settle()
+	await _save("event_dock_over_bright_terrain")
+	if backdrop != null:
+		backdrop.color = dark_backdrop
+	await _settle()
+
 	# ---- THE ULTRAWIDE CAP --------------------------------------------------------------------
 	# The configuration the complaint came from, and one nothing else in this set reaches: the bar
 	# spanned the whole band, so a row's label sat at one end of two feet of screen and its detail at
@@ -6440,23 +6525,23 @@ func _ready() -> void:
 	_pin_canvas(get_window())
 	await _settle()
 
-	# THE STRIP YIELDS TO THE MAP. Both ways the dock can grow — the widest BAR (`RECENT_COUNT_MAX`
-	# rows, log closed) and the LOG open (which collapses the bar to one title line) — must leave the
-	# reserved strip inside `MAX_STRIP_HEIGHT_FRACTION` of the canvas, which is what leaves a usable
-	# viewport. Measured as a PAIR because the bar and the log are alternatives, not addends, so
-	# neither one alone is the worst case by inspection. A picture cannot carry this claim at all: a
-	# strip that had eaten 90% of the screen would still render as a plausible bar.
-	var widest_bar := event_dock.current_reservation_size()
+	# THE STRIP DOES NOT BURY THE MAP. It reserves nothing now, so this is no longer about leaving the
+	# map room to lay out in — it is about how much LIVE MAP the overlay hides, which is the same
+	# `MAX_STRIP_HEIGHT_FRACTION` bound and a claim worth keeping. **Measured on the DRAWN rect**
+	# (`_root.size.y`), since the published size it used to read no longer exists. Both ways the dock
+	# can grow — the widest BAR (`RECENT_COUNT_MAX` rows, log closed) and the LOG open (which
+	# collapses the bar to one title line) — because they are alternatives, not addends, so neither
+	# is the worst case by inspection. A picture cannot carry this at all: a strip that had eaten 90%
+	# of the screen would still render as a plausible bar.
+	var widest_bar := event_dock._root.size.y
 	event_dock.set_expanded(true)
 	await _settle()
-	var open_log := event_dock.current_reservation_size()
+	var open_log := event_dock._root.size.y
 	var strip_cap := float(PREVIEW_CANVAS_SIZE.y) * EventDockPanel.MAX_STRIP_HEIGHT_FRACTION
-	_assert_hud("the strip yields to the map: %d rows = %.0f px, log open = %.0f px, cap %.0f of a %d px canvas"
+	_assert_hud("the strip does not bury the map: %d rows = %.0f px drawn, log open = %.0f px, cap %.0f of a %d px canvas"
 			% [EVENT_DOCK_MAX_ROWS, widest_bar, open_log, strip_cap, PREVIEW_CANVAS_SIZE.y],
 		maxf(widest_bar, open_log) <= strip_cap)
 
-	event_dock.reservation_changed.disconnect(_on_preview_event_dock_reservation)
-	_hud.set_reserved_inset(&"event_dock", SIDE_BOTTOM, 0.0)
 	event_dock.queue_free()
 	await get_tree().process_frame
 	await _settle()
@@ -7778,16 +7863,6 @@ const EVENT_DOCK_MAX_ROWS := EventDockPanel.RECENT_COUNT_MAX
 ## from `seq`. This is the number the old signature de-duplication answered 1 to.
 const EVENT_DOCK_DUPLICATE_RAIDS := 2
 
-## Mirror what `Main` does with the dock's reservation — **by asking `Main`'s own table**, not by
-## restating its answer. `MAP_ONLY_RESERVERS` is a `const` on the Main script (preloaded here
-## already, for `escape_claimant`), so dropping `&"event_dock"` from it makes this harness fan the
-## reservation out to the HUD exactly as the live client would, and the "nothing moves down"
-## assertion below fails. A hard-coded `pass` here would have pinned the harness, not the client.
-func _on_preview_event_dock_reservation(edge: int, size: float) -> void:
-	if MAIN_SCRIPT.MAP_ONLY_RESERVERS.has(&"event_dock"):
-		return
-	_hud.set_reserved_inset(&"event_dock", edge, size)
-
 ## The harness's stand-in for `Main._update_event_dock_insets`: the vertical reservation total on each
 ## side PLUS the HUD's own authored side column. `Main` is never instanced here, so the sum is
 ## restated — but every term is read live off the same nodes `Main` reads, so a change to either
@@ -7959,6 +8034,73 @@ func _has_padded_decimal(text: String) -> bool:
 		if word.contains(".") and word.ends_with("0") and word.is_valid_float():
 			return true
 	return false
+
+## The harness's own backdrop `ColorRect` (the mid-tone ground every frame renders against), found
+## by walking rather than held, so the bright-terrain state cannot go stale against a `_ready` edit.
+func _preview_backdrop() -> ColorRect:
+	for child in get_children():
+		if not (child is CanvasLayer):
+			continue
+		for grandchild in child.get_children():
+			if grandchild is ColorRect:
+				return grandchild as ColorRect
+	return null
+
+## Nine points across a rect — the four corners, the four edge midpoints and the centre, each pulled
+## `RECT_PROBE_INSET` inside so a sample sits within the rect rather than on its boundary.
+##
+## The centre alone is not enough for the click-through test: it lands on an event row, which is a
+## `PanelContainer` and consumes by default, so the claim passes even with the root and the card set
+## to `IGNORE`. The margins and the strip beside the expander are where a press would actually fall
+## through, and those are corners and edges.
+func _preview_rect_probe_points(rect: Rect2) -> Array[Vector2]:
+	var lo := rect.position + Vector2(RECT_PROBE_INSET, RECT_PROBE_INSET)
+	var hi := rect.end - Vector2(RECT_PROBE_INSET, RECT_PROBE_INSET)
+	var mid := rect.get_center()
+	return [
+		Vector2(lo.x, lo.y), Vector2(mid.x, lo.y), Vector2(hi.x, lo.y),
+		Vector2(lo.x, mid.y), mid, Vector2(hi.x, mid.y),
+		Vector2(lo.x, hi.y), Vector2(mid.x, hi.y), Vector2(hi.x, hi.y),
+	]
+
+## How far inside a rect a probe point sits. Two canvas px — enough to be unambiguously within the
+## rect after the canvas→window scale, small enough to still land in a 4px content margin.
+const RECT_PROBE_INSET := 2.0
+
+## Did a left-press at this WINDOW point survive the GUI pass and reach `_unhandled_input`?
+##
+## `MapView` picks hexes there, so "reaches it" is exactly "would have selected the hex underneath".
+## Driven with `Viewport.push_input`, which runs the real dispatch — GUI picking first, unhandled
+## after — rather than inspecting hover state, which this harness does not maintain.
+func _preview_press_reaches_map(window_point: Vector2) -> bool:
+	_unhandled_press_seen = false
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = window_point
+	get_viewport().push_input(press)
+	await get_tree().process_frame
+	return _unhandled_press_seen
+
+## Set by `_unhandled_input` below; read only by `_preview_press_reaches_map`.
+var _unhandled_press_seen: bool = false
+
+## THE STAND-IN FOR MAPVIEW'S HIT-TESTING. This harness instances no MapView, so the click-through
+## test needs something at the end of the input chain to notice a press the GUI did not consume —
+## and `_unhandled_input` is the exact callback MapView uses for it.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		_unhandled_press_seen = true
+
+## Canvas coordinates → WINDOW coordinates, which is what `Input.warp_mouse` takes. `project.godot`
+## stretches `canvas_items` from a 1920 base with an `expand` aspect, so a control's own rect and the
+## cursor live in different units and a warp using the raw rect lands somewhere else entirely.
+func _canvas_to_window(canvas_point: Vector2) -> Vector2:
+	var canvas := get_viewport().get_visible_rect().size
+	if canvas.x <= 0.0 or canvas.y <= 0.0:
+		return canvas_point
+	var window := Vector2(get_window().size)
+	return Vector2(canvas_point.x / canvas.x * window.x, canvas_point.y / canvas.y * window.y)
 
 func _preview_dock_labels(dock: EventDockPanel) -> Array[String]:
 	var found: Array[String] = []

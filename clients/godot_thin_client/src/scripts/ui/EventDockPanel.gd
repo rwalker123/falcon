@@ -4,10 +4,25 @@ class_name EventDockPanel
 ## THE EVENT DOCK (issue #272, `docs/event_dock_ux_proposal.html`) — the horizontal notification bar
 ## that replaces the hidden left-dock command feed and the Inspector's `[SIM]` command stream.
 ##
-## A CanvasLayer that renders a thin strip against the TOP or BOTTOM screen edge and *reserves* it
-## through the same registry `BandCityPanel` uses (`reservation_changed(edge, size)` →
-## `Main._apply_reservation(&"event_dock", …)`), so the map + HUD reflow off the edge instead of
-## being overlaid. **Top/bottom only**: a row of events needs width, and a vertical strip has none.
+## A CanvasLayer that renders a thin strip against the TOP or BOTTOM screen edge and **OVERLAYS the
+## map** — it reserves nothing from either surface. **Top/bottom only**: a row of events needs width,
+## and a vertical strip has none.
+##
+## **IT IS THE ONE HUD ELEMENT THAT FLOATS OVER LIVE MAP, and that is deliberate.** It reserved its
+## edge at first, like `BandCityPanel` — but a reservation is FULL WIDTH while this strip is bounded
+## to the centre band and capped at `MAX_STRIP_WIDTH`, so the map was pushed down across the whole
+## window to make room for something that only filled the middle of it. The ends came back as bare
+## background: black bars either side of the bar, reported from live play. A notification strip is
+## not furniture the game area has to make room for; it floats.
+##
+## Two consequences of overlaying, both handled and neither obvious:
+##   • **It must consume its own clicks.** With no reservation, `MapView`'s hit-testing covers the
+##     whole viewport again, so a click on the bar would otherwise ALSO select the hex beneath it.
+##     `MapView` reads `_unhandled_input`, so a `MOUSE_FILTER_STOP` control over the pointer consumes
+##     the press before it gets there — see `_build`.
+##   • **It must be opaque.** Reserved chrome sits on background; an overlay sits on terrain, which
+##     can be snow or desert. The card fills with `HudStyle.PANEL_SOLID` (alpha 1.0), so brightness
+##     underneath cannot reach the text.
 ##
 ## TWO STATES, and only two:
 ##   • COLLAPSED — the bar. The `recent_count` most recent events that pass the detail floor,
@@ -82,8 +97,10 @@ const LOG_HEIGHT := 260.0
 ## Cross-axis only, the same rule as the perpendicular insets: it moves where the strip is DRAWN,
 ## never what it reserves.
 const MAX_STRIP_WIDTH := 1280.0
-## The strip may never own more than this share of the window. The map is the game; a notification
-## bar that starves it has stopped being a notification.
+## The strip may never cover more than this share of the window. It no longer RESERVES anything, so
+## this is not about leaving the map room to lay out in — it is about how much live map the overlay
+## is allowed to hide. The map is the game; a notification bar that buries it has stopped being a
+## notification.
 const MAX_STRIP_HEIGHT_FRACTION := 0.5
 const LOG_SECTION_SEPARATION := 6
 const LOG_HEAD_SEPARATION := 8
@@ -148,8 +165,6 @@ static var config_path_override: String = ""
 
 ## Top and bottom only.
 const DOCK_EDGES: Array[int] = [SIDE_TOP, SIDE_BOTTOM]
-
-signal reservation_changed(edge: int, size: float)
 
 # ---- state -----------------------------------------------------------------
 var _dock_edge: int = DEFAULT_EDGE
@@ -232,7 +247,6 @@ func _ready() -> void:
 
 func _on_viewport_resized() -> void:
 	_apply_dock_layout()
-	_emit_reservation()
 
 # ---- ingest ----------------------------------------------------------------
 
@@ -602,7 +616,6 @@ func set_dock(edge: int) -> void:
 	_apply_dock_layout()
 	_render()
 	_save_prefs()
-	_emit_reservation()
 
 func get_dock() -> int:
 	return _dock_edge
@@ -620,8 +633,9 @@ func get_dock() -> int:
 ## is the cross axis, where no stacking question arises: every vertical reserver simply takes room
 ## the horizontal bar may not use. The two are easy to conflate and neither substitutes for the other.
 ##
-## **It moves where the strip is DRAWN, never what it RESERVES.** `current_reservation_size()` is
-## untouched, so the content-independence rule that keeps the map from flickering still holds.
+## **It bounds where the strip is DRAWN.** The strip reserves nothing from either surface, so there
+## is no second effect to reason about — the columns it stops short of are simply the ones it must
+## not cover.
 func set_perpendicular_insets(left: float, right: float) -> void:
 	var new_left := maxf(left, 0.0)
 	var new_right := maxf(right, 0.0)
@@ -641,7 +655,6 @@ func set_suppressed(suppressed: bool) -> void:
 		_root.visible = not _suppressed
 	_apply_dock_layout()
 	_save_prefs()
-	_emit_reservation()
 
 func toggle_suppressed() -> void:
 	set_suppressed(not _suppressed)
@@ -660,7 +673,6 @@ func set_expanded(expanded: bool) -> void:
 		_log_window_turns = LOG_WINDOW_TURNS
 	_apply_dock_layout()
 	_render()
-	_emit_reservation()
 
 func is_expanded() -> bool:
 	return _expanded
@@ -673,7 +685,6 @@ func set_recent_count(count: int) -> void:
 	_apply_dock_layout()
 	_render()
 	_save_prefs()
-	_emit_reservation()
 
 func set_detail_level(level: String) -> void:
 	if not HudEventVocab.DETAIL_FLOOR.has(level) or level == _detail_level:
@@ -691,24 +702,26 @@ func set_channel_enabled(channel: String, enabled: bool) -> void:
 	_render()
 	_save_prefs()
 
-## The strip this panel currently reserves (0 when hidden). `Main` queries it to seed the initial
-## reservation, exactly as it seeds the Band/City panel's.
-func current_reservation_size() -> float:
-	if _suppressed:
-		return 0.0
-	return _cross_axis_size()
-
 # ---- construction ----------------------------------------------------------
 
 func _build() -> void:
 	_root = Control.new()
 	_root.name = "EventDockRoot"
 	_root.visible = not _suppressed
+	# **THE STRIP EATS ITS OWN CLICKS.** It overlays live map, and `MapView` picks hexes out of
+	# `_unhandled_input` — so a control under the pointer that does NOT consume the press lets the
+	# same click select the hex behind the bar. `MOUSE_FILTER_STOP` is the Control default, but it is
+	# set here EXPLICITLY: this is the first HUD element where the default is load-bearing rather than
+	# incidental, and a future `IGNORE` added for some hover effect would silently reintroduce the
+	# click-through. The card below it is the surface that actually covers the rect; the root is the
+	# backstop for anything the card's layout leaves bare.
+	_root.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_root)
 
 	_panel = PanelContainer.new()
 	_panel.name = "EventDockCard"
 	_panel.add_theme_stylebox_override("panel", _panel_stylebox())
+	_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_root.add_child(_panel)
 
@@ -1164,9 +1177,11 @@ func _position_seam() -> void:
 		_seam.offset_top = 0.0
 		_seam.offset_bottom = SEAM_THICKNESS
 
-## The reserved cross-axis height. **Content-independent by construction** — it reads only the
-## preference (`_recent_count`), the expanded flag and the viewport — which is what stops an arriving
-## event re-emitting `reservation_changed` and flickering the map every turn.
+## The strip's own drawn height. **Content-independent by construction** — it reads only the
+## preference (`_recent_count`), the expanded flag and the viewport. That mattered acutely while the
+## strip reserved its edge (a content-driven size re-emitted the reservation and flickered the map
+## every turn); it still matters now that it overlays, because a bar that changed height as events
+## arrived would make the map jump underneath it.
 func _cross_axis_size() -> float:
 	var height := _bar_height()
 	if _expanded:
@@ -1187,6 +1202,9 @@ func _viewport_size() -> Vector2:
 
 func _panel_stylebox() -> StyleBoxFlat:
 	# Square-edged strip: it meets the screen edge, so no rounding and no shadow.
+	# **`PANEL_SOLID`, NOT `PANEL`** — the translucent one every docked card uses. Those sit on the
+	# HUD's own background; this floats over live terrain, which can be snow or desert, and a
+	# translucent strip would put a bright map straight through the row text.
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = HudStyle.PANEL_SOLID
 	sb.set_border_width_all(PANEL_BORDER_WIDTH)
@@ -1196,9 +1214,6 @@ func _panel_stylebox() -> StyleBoxFlat:
 	sb.content_margin_top = PANEL_CONTENT_MARGIN_V
 	sb.content_margin_bottom = PANEL_CONTENT_MARGIN_V
 	return sb
-
-func _emit_reservation() -> void:
-	reservation_changed.emit(_dock_edge, current_reservation_size())
 
 # ---- persistence -----------------------------------------------------------
 

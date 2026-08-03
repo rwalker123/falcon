@@ -1100,27 +1100,14 @@ func _toggle_inspector_visibility() -> void:
     # The inset update arrives via the inspector's reserved_width_changed signal.
 
 ## Stable stacking order for co-edge reservers: lower priority sits INBOARD (against the screen
-## edge). **The event dock hugs the edge, the Band panel is offset inboard of it** — a thin strip on
-## the rim reads as chrome, and it means the band panel's position relative to the map never changes
-## when the bar grows a row. The Inspector sits between them (it is always `SIDE_LEFT`, so it never
-## actually shares an edge with the top/bottom-only dock; the number keeps the order total).
-const RESERVER_PRIORITY := {&"event_dock": 0, &"inspector": 1, &"band_panel": 2}
-const BAND_PANEL_RESERVER := &"band_panel"
-const EVENT_DOCK_RESERVER := &"event_dock"
-
-## **WHICH SURFACES A RESERVER'S STRIP ACTUALLY INSETS.** Until the event dock every reserver insets
-## BOTH — the map so its content cannot hide under the strip, and the HUD so its bars and docks
-## reflow beside it — and `_apply_reservation` simply assumed the pair. The event dock breaks that:
-## it is a thin bar that lives BESIDE the HUD's own furniture (it stops short of the side columns —
-## see `_update_event_dock_insets`), so insetting the HUD as well would push `LayoutRoot` down and
-## drag `Turn N` / `Units` / `Sedentarization` / `Pop` and the whole right dock with it, which is
-## exactly what was reported: the readouts sat lower the moment the bar existed. It still insets the
-## MAP, because map content genuinely does hide behind the strip.
+## edge). The Inspector is always the screen-edge reserver; the Band panel stacks outboard of it.
 ##
-## Named as a per-reserver property rather than an `if id == …` inside the fan-out: the question
-## "which surfaces does this reserver move?" is a fact about the reserver, and the next one that
-## answers it differently should be a row here, not a second branch.
-const MAP_ONLY_RESERVERS: Array[StringName] = [EVENT_DOCK_RESERVER]
+## **The event dock is deliberately absent.** It reserves nothing from either surface — it OVERLAYS
+## the map (see `EventDockPanel`'s header) — so it has no place in a stacking order and no entry in
+## `_reservations`. Its horizontal bound comes from `_update_event_dock_insets`, which reads the
+## OTHER reservers; that is the perpendicular axis and a different question from this one.
+const RESERVER_PRIORITY := {&"inspector": 0, &"band_panel": 1}
+const BAND_PANEL_RESERVER := &"band_panel"
 
 ## Reserve space for a docked panel by insetting the game area (map + HUD) from
 ## the given edge, so the panel shrinks the play space instead of overlapping it.
@@ -1133,9 +1120,7 @@ func _apply_reservation(id: StringName, edge: int, size: float) -> void:
         _reservations[id] = {"edge": edge, "size": size}
     if map_view != null and map_view.has_method("set_reserved_inset"):
         map_view.call("set_reserved_inset", id, edge, size)
-    # The HUD half is CONDITIONAL — see `MAP_ONLY_RESERVERS`. A map-only reserver never enters the
-    # HUD's registry at all, so there is nothing stale to release either.
-    if hud != null and hud.has_method("set_reserved_inset") and not MAP_ONLY_RESERVERS.has(id):
+    if hud != null and hud.has_method("set_reserved_inset"):
         hud.call("set_reserved_inset", id, edge, size)
     # Co-edge stacking: push the Band panel's leading offset so it sits just past any inboard
     # reserver on its edge (e.g. the Inspector when both are left) instead of overlapping it.
@@ -1168,8 +1153,8 @@ func _update_band_panel_edge_offset() -> void:
 ##
 ## The bar is top/bottom only, so every `SIDE_LEFT` / `SIDE_RIGHT` reserver is a full-height column
 ## the bar must live BESIDE rather than across: it starts to the right of whatever is docked left and
-## finishes to the left of whatever is docked right. Sums the per-edge totals — every reserver except
-## the dock itself — and hands the pair over.
+## finishes to the left of whatever is docked right. Sums the per-edge totals and hands the pair
+## over. Every reserver counts — the dock is not one of them, so there is nothing to exclude.
 ##
 ## **A RESERVATION IS ONLY HALF THE BOUND.** The HUD's own side columns — the left dock, and on the
 ## right the dock plus the top-bar readout block — are not reservers, so bounding against
@@ -1190,8 +1175,6 @@ func _update_event_dock_insets() -> void:
     var left: float = 0.0
     var right: float = 0.0
     for other_id in _reservations:
-        if other_id == EVENT_DOCK_RESERVER:
-            continue
         var r: Dictionary = _reservations[other_id]
         match int(r.get("edge", -1)):
             SIDE_LEFT:
@@ -1245,9 +1228,8 @@ func _on_band_panel_reservation_changed(edge: int, size: float) -> void:
 func _connect_event_dock() -> void:
     if event_dock == null:
         return
-    if event_dock.has_signal("reservation_changed") and not event_dock.is_connected(
-            "reservation_changed", Callable(self, "_on_event_dock_reservation_changed")):
-        event_dock.connect("reservation_changed", Callable(self, "_on_event_dock_reservation_changed"))
+    # **The dock is wired for CONTENT ONLY — there is no reservation to fan out.** It overlays the
+    # map rather than reserving an edge, so nothing here touches `_apply_reservation`.
     # The HUD's own client-side notes (a quick-hunt refusal, a knowledge unlock, an unanswered fork)
     # used to land in the command feed. They are System-channel events now, and the HUD relays them
     # rather than reaching for a panel it does not own.
@@ -1268,17 +1250,10 @@ func _connect_event_dock() -> void:
     if inspector != null and inspector.has_signal("system_event") and not inspector.is_connected(
             "system_event", Callable(self, "_on_inspector_system_event")):
         inspector.connect("system_event", Callable(self, "_on_inspector_system_event"))
-    if event_dock.has_method("get_dock") and event_dock.has_method("current_reservation_size"):
-        _apply_reservation(EVENT_DOCK_RESERVER, int(event_dock.call("get_dock")),
-            float(event_dock.call("current_reservation_size")))
-    # Seed the perpendicular insets too. `_apply_reservation` above already does it, but only if the
-    # dock reserves something — a session that boots with the bar suppressed would otherwise have a
-    # full-width strip waiting behind the `R` toggle. Wiring runs after `_connect_band_city_panel`,
-    # so the vertical reservers are already in `_reservations` by now.
+    # Seed the perpendicular insets: nothing else will, since the dock never enters
+    # `_apply_reservation`'s fan-out. Wiring runs after `_connect_band_city_panel`, so the vertical
+    # reservers are already in `_reservations` by now.
     _update_event_dock_insets()
-
-func _on_event_dock_reservation_changed(edge: int, size: float) -> void:
-    _apply_reservation(EVENT_DOCK_RESERVER, edge, size)
 
 func _on_band_labels_changed(labels: Dictionary) -> void:
     _event_dock_invoke("set_band_labels", [labels])
