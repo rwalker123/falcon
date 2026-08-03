@@ -31,6 +31,13 @@ shows them with **no client-side special case at all** (`FaunaPanel` renders wha
 `data["herds"]` holds and was deliberately left untouched). A client-only flag could never have
 fixed that — it can hide things the server sent, never conjure things it withheld.
 
+**A client that renders a revealed map while the panels redact is a SERVER-side symptom, not one of
+the four scripts below.** The two halves reach the client by different routes — `fogEnabled` rides
+every delta undiffed, the visibility raster is diffed — so the flag can arrive without the raster
+that gives it meaning, and every fog gate here then passes an all-`Active` raster perfectly
+correctly. See `../core_sim/turn-profiling.md` → "A HELD section must be restated when it comes
+back"; do not go looking for a stale texture in `MapView` first.
+
 **Three things share the word "enabled"; keep them apart.**
 
 | | What it is | Written by | Read by |
