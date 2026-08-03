@@ -543,22 +543,34 @@ so the next press landed on a **different source**. A default order must be a fu
 player is not currently changing. `Sort by yield` remains, one pick away in the `⋯` menu; a player who
 asks for a live ranking gets one, and live re-ranking under an edit is arguably what that pick means.
 
-**The name sort groups by kind for free, which is why there is no third "kind then name" mode.** The
-row labels are `WORK_ROW_FORAGE_FORMAT` (`"Forage (%d, %d)"`) and `WORK_ROW_HUNT_FORMAT` (`"Hunt %s"`),
-so a plain `naturalnocasecmp_to` on `label` already puts every forage row above every hunt row, in the
-two blocks the filter chips name. A separate kind-then-name comparator would render identically on
-every real board. **That grouping is a consequence of the label prefixes** — change either format
-string and it is gone, with nothing to catch it.
+**It sorts KIND first, then label, then `key` — and the kind term is load-bearing, not tidiness.**
+`Sort by name` is still one sort with one name; what it orders on is kind-major. The tempting
+simplification is that the label prefixes already group by kind, so alphabetical order would do:
+`"Forage (%d, %d)"` sorts above `"Hunt %s"`. **That is false, and it is the trap this term exists to
+close.** A plant row's label is resolved through `WORK_ROW_PLANT_FORMATS`, keyed on the crew noun
+`HudFormat.plant_crew_label` returns — so a source whose Cultivate improvement is done renders
+**`WORK_ROW_TEND_FORMAT`, `"Tend (%d, %d)"`**, while its `kind` stays `forage` (the format is DISPLAY
+ONLY). Alphabetically `Forage < Hunt < Tend`, so a label-only sort renders a band working a wild
+patch, a herd and a Tended Patch as **Forage → Hunt → Tend**: the forage kind split in two with the
+hunt block wedged between. `WORK_FILTER_FORAGE` selects on `kind == "forage"` — *both* labels — so
+that board contradicts the very chips above it. `band_panel_rung_ready` already stages this mix.
+
+Sorting on `kind` means no third label prefix can break it. The kind test is the same **boolean-tier
+idiom** `_work_sorts_before` uses, which is exact for the two kinds that exist; a third would need an
+explicit rank, since a boolean cannot express one.
 
 **BOTH comparators tiebreak on the model's `key`, and that is a correctness fix, not tidiness.**
 `sort_custom` is **not stable** in Godot, and a tie is reachable in each mode: two herds can carry the
 same label (two "Wild Boar" herds produce identical `"Hunt %s"` strings), and two sources can carry
-the same rate — including *every* source paying no trade at all, which sits at `0.0` together in the
-trade tier. Without the tiebreak neither sort is a total order, so tied rows could swap on any
-unrelated re-render — a snapshot tick, a zone resize — which is the same jump this section exists to
-remove, just triggered by something other than the pointer. `key` is the source identity
+the same rate — two patches at one food figure in the food tier, and every source paying **neither**
+component sitting at `0.0` together in the trade tier. (Not "every source paying no trade": the tier
+test is `has_component(rate)`, the FOOD figure, so a patch paying food and no trade is in the food
+tier and never reaches the trade comparison.) Without the tiebreak neither sort is a total order, so
+tied rows could swap on any unrelated re-render — a snapshot tick, a zone resize — which is the same
+jump this section exists to remove, just triggered by something other than the pointer. `key` is the
+source identity
 `_work_source_models` already assigns, so it is the one available key that no game state moves. The
-name sort is its own named function for it, **`_work_name_sorts_before`** (it was an inline lambda);
+default sort is its own named function for it, **`_work_name_sorts_before`** (it was an inline lambda);
 `_work_sorts_before` takes the tiebreak *below* its tier + rate comparisons and changes neither.
 
 **The rate tie is tested with exact `!=`, deliberately NOT `is_equal_approx`.** An epsilon tie test is
@@ -569,11 +581,14 @@ not transitive — `a ≈ b` and `b ≈ c` without `a ≈ c` — which breaks th
 `work_sort` in `user://band_city_dock.cfg` beside the dock edge, collapse flag and active tab
 (`CONFIG_KEY_WORK_SORT`), exposed as `work_sort_pref()` / `set_work_sort_pref()` — an **opaque
 string** it never validates. `BandPanelController` adopts it in `set_panel` only when it appears in
-`HudWorkVocab.WORK_SORTS`, so an unknown or hand-edited value falls back to the default rather than
-producing an unordered board, and `_set_work_sort` writes back through the panel. The panel owns the
+`HudWorkVocab.WORK_SORTS`, and `_set_work_sort` writes back through the panel. The panel owns the
 FILE; the controller owns the WORD — the same split that keeps `BandCityPanel` ignorant of every
-other zone vocabulary. The harnesses need no new isolation: `config_path_override` already points the
-whole file at a scratch path.
+other zone vocabulary. **What that validation prevents is not an unsorted board — it is the YIELD
+board.** `_sort_work_models` is a two-way branch (`WORK_SORT_NAME`, else yield), so an unknown or
+retired persisted value — a hand-edited file, a sort name dropped since it was written — would fall
+into the else and silently reinstate the very default this section exists to remove. Deleting the
+guard as decorative is the one way the old behaviour comes back. The harnesses need no new isolation:
+`config_path_override` already points the whole file at a scratch path.
 
 **The `⋯` menu marks the active sort.** `HudWidgets.build_section_menu` grew an optional per-entry
 key, **`HudWidgets.MENU_ENTRY_CHECKED`**: an entry carrying it is built with `add_radio_check_item` +

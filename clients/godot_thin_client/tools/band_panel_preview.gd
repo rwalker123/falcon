@@ -1792,12 +1792,16 @@ func _assert_band_panel(label: String, ok: bool) -> void:
 ## TOTAL ORDERS. Neither claim is visible in a PNG — a re-sorted board is a perfectly plausible board —
 ## so the sorts are driven directly, over models shaped like `_work_source_models`' output.
 ##
-## Three claims, and the second is what stops the first being satisfied by a comparator that ignores
+## Four claims, and the second is what stops the first being satisfied by a comparator that ignores
 ## `rate` altogether:
 ##   1. under the DEFAULT sort a worker step (a `rate` change) leaves the key order identical;
 ##   2. under `WORK_SORT_YIELD` the SAME step DOES reorder — the opt-in sort still ranks live;
 ##   3. both sorts answer the same key sequence from two different starting permutations, which is the
-##      only thing that can see a missing `key` tiebreak (`sort_custom` is not stable in Godot).
+##      only thing that can see a missing `key` tiebreak (`sort_custom` is not stable in Godot);
+##   4. the DEFAULT sort groups by KIND — every `forage` row above every `hunt` row — which the label
+##      order alone does NOT give, since a managed plant row reads "Tend (…)" and sorts after "Hunt".
+##      Asserted on `kind`, never on the label: testing the label would re-enact the assumption that
+##      the prefix identifies the kind, which is exactly what is false.
 func _assert_work_sort_stable() -> void:
 	var controller = _hud._bandpanel
 	# THE FIRST CLAIM IS ABOUT THE LIVE DEFAULT, so it does NOT set the sort — nothing in this harness
@@ -1811,6 +1815,12 @@ func _assert_work_sort_stable() -> void:
 	var name_after := _sorted_work_keys(controller, models)
 	_assert_band_panel("work sort — a worker step leaves the DEFAULT (`%s`) order untouched (%s)"
 		% [String(restore_sort), ", ".join(name_after)], name_after == name_before)
+	# 4 — still on the live default: the kind blocks the filter chips name must be the board's blocks.
+	var kinds := _sorted_work_kinds(controller, _work_sort_fixture_models())
+	var last_forage := kinds.rfind(SourceForecast.LABOR_KIND_FORAGE)
+	var first_hunt := kinds.find(SourceForecast.LABOR_KIND_HUNT)
+	_assert_band_panel("work sort — the DEFAULT (`%s`) puts every forage row above every hunt row (%s)"
+		% [String(restore_sort), ", ".join(kinds)], last_forage < first_hunt)
 	# 2 — the counter-check: the opt-in yield sort must genuinely track the same edit.
 	controller._work_sort = HudWorkVocab.WORK_SORT_YIELD
 	var yield_models := _work_sort_fixture_models()
@@ -1833,6 +1843,11 @@ func _assert_work_sort_stable() -> void:
 ## The sort fixture, carrying BOTH reachable ties: two herds sharing a label (`WORK_ROW_HUNT_FORMAT`
 ## renders one string per species, so two Wild Boar herds collide) and two sources sharing a rate.
 ## Only the keys the two comparators read are populated — this exercises the sort, not the board.
+##
+## The TEND row is what makes claim 4 bite: its label is built from `WORK_ROW_TEND_FORMAT`, so it
+## sorts alphabetically AFTER every "Hunt …" row while its `kind` is still `forage`. Composing the
+## label from the format const rather than a literal means renaming the format cannot silently leave
+## this case uncovered.
 func _work_sort_fixture_models() -> Array:
 	return [
 		{"key": "hunt:boar_b", "label": "Hunt Wild Boar", "kind": "hunt",
@@ -1843,9 +1858,15 @@ func _work_sort_fixture_models() -> Array:
 			"rate": WORK_SORT_TIED_RATE, "trade_rate": 0.0},
 		{"key": "forage:3,9", "label": "Forage (3, 9)", "kind": "forage",
 			"rate": 0.60, "trade_rate": 0.0},
+		{"key": "forage:8,4", "kind": "forage",
+			"label": HudWorkVocab.WORK_ROW_TEND_FORMAT % [WORK_SORT_TEND_TILE.x, WORK_SORT_TEND_TILE.y],
+			"rate": 0.30, "trade_rate": 0.0},
 		{"key": "hunt:wolf", "label": "Hunt Grey Wolf", "kind": "hunt",
 			"rate": 0.0, "trade_rate": 0.22},
 	]
+
+## The tile the fixture's managed plant row sits on — only its label is read, so any coordinate does.
+const WORK_SORT_TEND_TILE := Vector2i(8, 4)
 
 ## The source whose crew the assertion "steps", and the rate two sources start tied on. The stepped
 ## source is one of the tied pair, so the step both breaks a tie and moves the row to the TOP of the
@@ -1868,6 +1889,15 @@ func _sorted_work_keys(controller, models: Array) -> Array:
 	for m in copy:
 		keys.append(String((m as Dictionary).get("key", "")))
 	return keys
+
+## The same, reporting each row's `kind` instead of its key — the field the filter chips select on.
+func _sorted_work_kinds(controller, models: Array) -> Array:
+	var copy := models.duplicate()
+	controller._sort_work_models(copy)
+	var kinds: Array = []
+	for m in copy:
+		kinds.append(String((m as Dictionary).get("kind", "")))
+	return kinds
 
 ## The `⋯` menu must SAY which sort is active — without the mark the board's order is unexplained, the
 ## menu offering two sorts and stating neither. Asserted on the popup rather than in a frame: the popup

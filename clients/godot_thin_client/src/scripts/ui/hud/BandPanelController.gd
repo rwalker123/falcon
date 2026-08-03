@@ -1160,13 +1160,31 @@ func _sort_work_models(models: Array) -> void:
     else:
         models.sort_custom(func(a, b): return _work_sorts_before(a as Dictionary, b as Dictionary))
 
-## "Sort by name", made a TOTAL ORDER by the `key` tiebreak. `sort_custom` is NOT stable in Godot and
-## a label tie is genuinely reachable — two herds of the same species render the identical
-## `WORK_ROW_HUNT_FORMAT` label — so without it two tied rows could swap on any unrelated re-render (a
-## snapshot tick, a zone resize), which is the same row-jumps-under-the-pointer failure the default
-## sort exists to remove. `key` is the source identity `_work_source_models` already assigns, i.e. the
-## one available field no game state moves.
+## "Sort by name" — KIND FIRST, then label, then `key`.
+##
+## **THE LABEL PREFIX IS NOT A PROXY FOR THE KIND, so alphabetical order alone SPLITS A KIND IN TWO.**
+## A forage row whose Cultivate improvement is done renders through `WORK_ROW_TEND_FORMAT`
+## ("Tend (%d, %d)"), which is display only — its `kind` is still `forage`. With three live prefixes
+## and "Forage" < "Hunt" < "Tend", a band working a wild patch, a herd and a Tended Patch would read
+## Forage → Hunt → Tend, i.e. the forage block interrupted by the hunt block. The `Forage`/`Hunt`
+## filter chips select on `kind` (`_work_models_matching`), so the unsorted-by-kind board would not
+## match the blocks those chips name. Leading with the kind makes the board agree with the chips
+## whatever a row's label says.
+##
+## The `key` tiebreak makes it a TOTAL ORDER. `sort_custom` is NOT stable in Godot and a label tie is
+## genuinely reachable — two herds of the same species render the identical `WORK_ROW_HUNT_FORMAT`
+## label — so without it two tied rows could swap on any unrelated re-render (a snapshot tick, a zone
+## resize), which is the same row-jumps-under-the-pointer failure the default sort exists to remove.
+## `key` is the source identity `_work_source_models` already assigns, i.e. the one available field no
+## game state moves.
 func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
+    # A BOOLEAN TIER, the same idiom `_work_sorts_before` uses, because there are exactly two labor
+    # kinds. A third kind cannot be expressed this way — it would need an explicit rank table, since
+    # a bool can only say "this one first".
+    var a_is_forage := String(a.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    var b_is_forage := String(b.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE
+    if a_is_forage != b_is_forage:
+        return a_is_forage
     var by_label := String(a.get("label", "")).naturalnocasecmp_to(String(b.get("label", "")))
     if by_label != 0:
         return by_label < 0
@@ -1192,9 +1210,10 @@ func _work_name_sorts_before(a: Dictionary, b: Dictionary) -> bool:
 ## A source paying NEITHER component sorts into the trade tier at 0.0, i.e. last — unchanged.
 ##
 ## **THE `key` TIEBREAK MAKES IT A TOTAL ORDER, and that is a correctness fix**: `sort_custom` is NOT
-## stable in Godot and equal rates are common (two patches at the same yield, and every source paying
-## no trade at all sits at 0.0 in the trade tier), so tied rows could otherwise swap on any unrelated
-## re-render. It rides BELOW the tier + rate comparisons and changes neither.
+## stable in Godot and equal rates are common — two patches at the same food figure inside the food
+## tier, and every source paying neither component, all of which sit together at 0.0 in the trade
+## tier. Tied rows could otherwise swap on any unrelated re-render. The tiebreak rides BELOW the tier
+## + rate comparisons and changes neither.
 func _work_sorts_before(a: Dictionary, b: Dictionary) -> bool:
     var a_pays_food := SourceForecast.has_component(float(a.get("rate", 0.0)))
     var b_pays_food := SourceForecast.has_component(float(b.get("rate", 0.0)))
@@ -1834,8 +1853,10 @@ func set_panel(panel: BandCityPanel) -> void:
     _panel = panel
     # THE PANEL OWNS THE FILE, THIS CONTROLLER OWNS THE VOCABULARY. The panel stores the work sort as
     # an opaque string, so validating it is this side's job: an empty (never chosen) or unknown value
-    # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing
-    # rather than producing a board sorted by nothing.
+    # — a hand-edited prefs file, a sort retired since it was written — leaves the default standing.
+    # Without the guard it would not produce a broken board but a YIELD-sorted one: `_sort_work_models`
+    # branches on `== WORK_SORT_NAME`, so anything else falls through to yield, silently reinstating
+    # the re-ranking-under-your-own-edit behaviour issue #460 removed.
     if panel != null:
         var stored := StringName(panel.work_sort_pref())
         if HudWorkVocab.WORK_SORTS.has(stored):
