@@ -3878,6 +3878,16 @@ pub struct SourceYieldForecast {
     /// differ* — the same reason seed travels and a herd doesn't. Do not "fix" this into a plant body
     /// mass.
     pub body_mass_yield: YieldAccounts,
+    /// **The species' engagement throughput** ([`SpeciesDef::engage_rate`]) — how many animals one
+    /// hunter can bring into contact per turn, so the forecast bounds the take the same way
+    /// `hunt_take` does (`docs/plan_hunt_through_combat.md` §2). Without it a preview would promise a
+    /// take the party could never reach, which is exactly the forecast-vs-actual split
+    /// `.claude/rules/core_sim/yield-forecast.md` forbids.
+    ///
+    /// **[`f32::INFINITY`] on a continuous source and on a pen** — a plant is not stalked and a penned
+    /// animal is not either, so there is no engagement stage for either. Same shape as
+    /// `body_mass_yield`, which is likewise inert on the plant web.
+    pub engage_rate: f32,
 }
 
 /// [`SourceYieldForecast::pastoral_yield`] for a source that never offers the `Tame` verb — a forage
@@ -3933,6 +3943,8 @@ impl SourceYieldForecast {
             // same multiplier and *different facts*, and the wire has to be able to say the second
             // one. See `intensification::NO_BUILD_REMAINING_FRACTION`.
             build_dips: BuildDips::NOTHING_LEFT_TO_BUILD,
+            // A penned animal is not stalked — no engagement stage.
+            engage_rate: f32::INFINITY,
             managed_yield: production,
             // A rung-3 managed source (a Pen or a Field) is past taming — a penned herd never offers
             // the Tame verb — so it advertises no pastoral payoff.
@@ -4185,6 +4197,13 @@ pub fn project_arrivals_hunt(
     let capacity = herd_capacity(&quarry, fauna);
     // The species' yield vector — resolved once; the quarry is never re-speciated mid-projection.
     let hunt_yield = herd_hunt_yield(&quarry, fauna);
+    // How many the party can bring into contact each projected turn — constant for the run, since
+    // the crew does not change size mid-projection and the quarry is never re-speciated.
+    let engaged = animals_engaged(
+        workers,
+        fauna.engage_rate_for(&quarry.species),
+        ladder.build_dip(improvement),
+    );
     let corralled = quarry.is_corralled();
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
@@ -4207,14 +4226,16 @@ pub fn project_arrivals_hunt(
             // out of the pen's own escapement MSY, exactly as the corral-tend branch of
             // `advance_labor_allocation` does.
             let production = pen_yield_biomass(&quarry, fauna);
-            let take = quantise_animal_take(production, collection, quarry.body_mass);
+            // A penned animal is not stalked: no engagement bound.
+            let take =
+                quantise_animal_take(production, collection, quarry.body_mass, f32::INFINITY);
             quarry.biomass -= take.killed_biomass();
             take.carried
         } else {
             // A wild/pastoral herd hands over the stock standing above its stance's floor, rounded to
             // whole animals — the `systems::hunt_take` sequence, helper for helper.
             let ceiling = hunt_escapement_ceiling(floor, quarry.biomass, capacity);
-            let take = quantise_animal_take(ceiling, collection, quarry.body_mass);
+            let take = quantise_animal_take(ceiling, collection, quarry.body_mass, engaged);
             quarry.biomass -= take.killed_biomass();
             take.carried
         };
@@ -4272,6 +4293,11 @@ fn forecast_production_and_take(
                 ceiling.component(axis),
                 collection.component(axis),
                 quantum.component(axis),
+                animals_engaged(
+                    workers,
+                    forecast.engage_rate,
+                    forecast.build_dips.of(improvement),
+                ),
             );
             (
                 quantum.rescaled_to(axis, take.killed_biomass()),
@@ -4581,6 +4607,38 @@ impl AnimalTake {
     }
 }
 
+/// **How many animals a party can bring into contact this turn** — the engagement stage of
+/// `docs/plan_hunt_through_combat.md` §2, and the single definition of it, so no two hunters of a
+/// herd can disagree about how many they could reach.
+///
+/// `workers × engage_rate`, floored to whole animals — **but never below one for a party that
+/// exists**. A fractional engagement means a small band cannot corner the quarry *efficiently*, not
+/// that it cannot walk up to it: three hunters do reach a mammoth, and then fail at the *fight*,
+/// which is where the gate lives. Flooring to zero would put a headcount threshold in front of the
+/// attack-vs-defense one and hide the reason.
+///
+/// A party of no workers engages nothing, which is not the same statement.
+///
+/// # The build dip multiplies THIS too, and leaving it out re-opens a closed defect
+///
+/// `build_dip` is the rung's `yield_fraction_while_building` — hands spent gentling a herd are hands
+/// not hunting it, and engagement is *crew throughput* exactly as carry is
+/// (`docs/plan_harvest_floor.md` §3.1). Applying the dip only to carry looks harmless until the
+/// engagement bound is the binding one, at which point a building crew and a harvesting crew take
+/// **the same number of animals** and the build is free — which is §0.3 of that same doc
+/// ("the harshest stance builds free") returning through a new door.
+///
+/// Pass [`crate::intensification::NO_BUILD_REMAINING_FRACTION`]-equivalent `1.0` where nothing is
+/// being built.
+pub fn animals_engaged(workers: u32, engage_rate: f32, build_dip: f32) -> f32 {
+    if workers == 0 {
+        return 0.0;
+    }
+    (workers as f32 * engage_rate.max(0.0) * build_dip.max(0.0))
+        .floor()
+        .max(1.0)
+}
+
 /// **THE whole-animal quantiser** (intensification ladder slice 8) — the one place a take is rounded
 /// to animals, shared by **every rung**: `systems::hunt_take` (the resident band + the scout's
 /// replenish), `systems::expedition_take_biomass` (the hunting party + its forward-simulated
@@ -4645,7 +4703,12 @@ fn whole_animals(available: f32, body_mass: f32) -> f32 {
     (ratio * (1.0 + ANIMAL_COUNT_EPSILON)).floor()
 }
 
-pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32) -> AnimalTake {
+pub fn quantise_animal_take(
+    policy_ceiling: f32,
+    collection: f32,
+    body_mass: f32,
+    engaged: f32,
+) -> AnimalTake {
     if !body_mass.is_finite() || body_mass <= 0.0 {
         debug_assert!(
             false,
@@ -4662,7 +4725,11 @@ pub fn quantise_animal_take(policy_ceiling: f32, collection: f32, body_mass: f32
     }
     let carryable = whole_animals(collection, body_mass);
     // `max(1.0)`: a party that can't carry one still takes one — and wastes the rest.
-    let killed = affordable.min(carryable.max(1.0));
+    //
+    // **`engaged` is the THIRD bound, and it is spatial** (`docs/plan_hunt_through_combat.md` §2):
+    // you cannot take an animal you could not get near, however much you can carry and however much
+    // the herd could spare. A pen passes [`f32::INFINITY`] — a penned animal is not stalked.
+    let killed = affordable.min(carryable.max(1.0)).min(engaged.max(0.0));
     let killed_biomass = killed * body_mass;
     let carried = killed_biomass.min(collection);
     AnimalTake {
@@ -4834,6 +4901,9 @@ pub(crate) fn hunt_forecast(
         per_worker_yield: hunt_yield.apply(per_worker_biomass_capacity.max(0.0), output_multiplier),
         // The quantum that makes this preview pulse exactly as the take does (slice 8).
         body_mass_yield: hunt_yield.apply(herd.body_mass, output_multiplier),
+        // The engagement throughput the take is bounded by, so preview and take agree on how many
+        // animals the party can even reach.
+        engage_rate: fauna.engage_rate_for(&herd.species),
         // **The TERMS of the take, not a set of answers.** `ceiling_at(floor, improvement)` composes
         // them into exactly what `hunt_take` computes — the herd's own `K` (`herd_capacity`, never
         // the raw field) and its CURRENT biomass, so the forecast and the take read the same stock.
@@ -5758,12 +5828,18 @@ mod tests {
     /// The food peak, which these forecast-shape tests use wherever the floor is not what varies.
     const PEAK_FLOOR: f32 = MSY_BIOMASS_FRACTION;
 
-    /// **A crew whose CARRY is the binding term.** Since `docs/plan_harvest_floor.md` §3.1 the build
-    /// dip multiplies `workers × per_worker_carry` rather than the ceiling, so it is invisible at a
-    /// staffing the source's standing stock binds — a build only ever costs yield while hands are
-    /// the scarce thing. These fixtures stand a full herd against a handful of hunters, which is the
-    /// regime a real build lives in.
-    const DIP_VISIBLE_CREW: u32 = 5;
+    /// **A crew whose own THROUGHPUT is the binding term** — carry or engagement, not the herd's
+    /// standing stock. Since `docs/plan_harvest_floor.md` §3.1 the build dip multiplies crew
+    /// throughput rather than the ceiling, so it is invisible at a staffing the source's stock binds:
+    /// a build only ever costs yield while hands are the scarce thing.
+    ///
+    /// **It must clear the ENGAGEMENT bound too, which is why it is no longer 5**
+    /// (`docs/plan_hunt_through_combat.md` §2). Engagement is the third bound and it rounds up to one
+    /// animal, so at five hunters on the aurochs fixture a dipped and an undipped crew both engage
+    /// exactly **1** — the dip is real but unobservable, because a whole-animal floor swallows it.
+    /// Twelve puts engagement at 2 against 1, where the dip has room to show. A crew that cannot see
+    /// the dip proves nothing about whether the dip is applied.
+    const DIP_VISIBLE_CREW: u32 = 12;
 
     /// **Every legal floor's ceiling is the take path's own arithmetic**, on both webs — the
     /// property that replaced four stored rows with one function

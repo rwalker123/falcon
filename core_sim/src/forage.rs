@@ -2217,6 +2217,8 @@ pub(crate) fn forage_forecast(
     // the forecast composes is the number the sim will hand over.
     let rate = patch_provisions_per_biomass(patch, tile_composition, flora, forage);
     SourceYieldForecast {
+        // A plant is not stalked — the engagement stage is an animal-web concept.
+        engage_rate: f32::INFINITY,
         per_worker_yield: plant_food_only(forage_provisions(
             forage_per_worker_biomass(forage, seasonal),
             rate,

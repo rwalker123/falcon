@@ -223,6 +223,28 @@ pub struct SpeciesDef {
     /// **Playtest dials.** Validated finite & `> 0` — at `0` a herd would hold infinitely many
     /// animals and `floor(x / 0)` would take the whole stock in one turn.
     pub body_mass: f32,
+    /// **How many of these one hunter can bring into contact per turn** — the engagement stage of
+    /// `docs/plan_hunt_through_combat.md` §2, and a purely **spatial** constraint. Twenty hunters can
+    /// surround one mammoth (`0.05`); one hunter can work a line of snares (`10`).
+    ///
+    /// **It says nothing about how fast they die.** That is the fight's business — durability against
+    /// `hunters × max(0, attack − defense)`. Folding lethality in here would be a kill model living
+    /// outside the resolver, which is the duplication that arc exists to delete, and it is what let a
+    /// hand-authored "turns per kill" table look plausible during design.
+    ///
+    /// **It scales linearly with party size and is throughput, not a threshold.** Forty hunters
+    /// engage two mammoths a turn; five still engage one (contact rounds up — a small band can walk
+    /// up to a mammoth, it just cannot hurt it quickly) and grind it down over many turns. The gate
+    /// is attack-vs-defense, never headcount.
+    ///
+    /// **Authored against `engage_rate × body_mass`** — the most biomass one hunter can ever take
+    /// from this species per turn, at any weapon tier. That ceiling is what orders the roster: a
+    /// mammoth's `40` is an outlier rather than the top of a smooth curve, the tameable species sit
+    /// at 20–26.5 (you hunt them until you can tame them), pen small game is at the bottom, and
+    /// dangerous-for-their-size (boar `4`, wolf `1.75`) are the worst deals in the game.
+    ///
+    /// **Playtest dials.** Validated finite & `> 0`.
+    pub engage_rate: f32,
     /// Food-module keys (see `FoodModule::as_str`) this species hosts in.
     #[serde(default)]
     pub host_biomes: Vec<String>,
@@ -1646,6 +1668,11 @@ impl FaunaConfig {
             // many animals and `floor(escapement / 0) = inf` would strip the whole stock in one
             // turn; negative would invert the floor and hand back a negative kill count.
             require_positive_finite(species_field("body_mass"), def.body_mass)?;
+            // **The engagement throughput** (`plan_hunt_through_combat.md` §2). Positive is the whole
+            // bound: at `0` no party of any size could ever reach the species, which is not a
+            // balance choice but an unhuntable animal expressed as a typo; negative would hand back a
+            // negative engagement and invert the take.
+            require_positive_finite(species_field("engage_rate"), def.engage_rate)?;
             // **The husbandry density gains** — the per-rung K multiplier (`>= 1.0`). A gain **below 1**
             // would mean domestication *reduces* the land's carrying capacity, inverting the whole point
             // of the dial; `1.0` is neutral (a wild/untagged species). Both `#[serde(default)]` to 1.0,
@@ -1867,6 +1894,20 @@ impl FaunaConfig {
     pub fn animals_per_herder_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
+    }
+
+    /// **The animals one hunter of this species can bring into contact per turn**
+    /// ([`SpeciesDef::engage_rate`]), resolved by the display name a `Herd` carries — the
+    /// [`FaunaConfig::taming_rate_for`] path, so retuning the dial reaches herds already on the map.
+    ///
+    /// **A species the table cannot resolve reads [`f32::INFINITY`] — no engagement bound at all**,
+    /// not a small number. The unresolvable case is an isolated test fixture, and the honest reading
+    /// of "this herd is not in the roster" is *the engagement stage has nothing to say about it*,
+    /// which leaves such a fixture's take exactly as it was before this arc. A finite default would
+    /// silently cap fixtures at a number nobody chose.
+    pub fn engage_rate_for(&self, display: &str) -> f32 {
+        self.species_by_display(display)
+            .map_or(f32::INFINITY, |def| def.engage_rate)
     }
 
     /// **The species' resolved hunt-yield vector** ([`SpeciesDef::hunt_yield`]) — *what* a take of this
@@ -2386,7 +2427,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.husbandry_ceiling, HusbandryCeiling::Pen);
@@ -2436,7 +2477,7 @@ mod tests {
         // `body_mass` is REQUIRED (slice 8) — a species with no quantum is not a species, so it must
         // fail to parse rather than default to something.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.taming_rate, DEFAULT_TAMING_RATE);
@@ -2483,7 +2524,7 @@ mod tests {
         let config = FaunaConfig::builtin();
         // A row that omits both dials reads the neutral gain.
         let def: SpeciesDef = serde_json::from_str(
-            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1}"#,
+            r#"{"display_name":"X","route_len":[1,1],"biomass":[1,1],"body_mass":1,"engage_rate":1}"#,
         )
         .unwrap();
         assert_eq!(def.pastoral_density, DEFAULT_HUSBANDRY_DENSITY);

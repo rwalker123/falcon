@@ -1205,7 +1205,13 @@ pub fn advance_labor_allocation(
                         // (the aurochs is closest), and that is honest. See `managed_yield_biomass`.
                         let collection = workers as f32 * labor.hunt.per_worker_biomass_capacity;
                         let take =
-                            fauna::quantise_animal_take(production, collection, herd.body_mass);
+                            // A penned animal is not stalked: no engagement bound.
+                            fauna::quantise_animal_take(
+                                production,
+                                collection,
+                                herd.body_mass,
+                                f32::INFINITY,
+                            );
                         herd.biomass -= take.killed_biomass();
                         // **A pen changes the INTENSITY, never the PRODUCT** — the keeper is paid
                         // this herd's own species vector, so a penned wolf yields pelts and no meat

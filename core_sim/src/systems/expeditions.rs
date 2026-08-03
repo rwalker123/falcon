@@ -987,7 +987,16 @@ pub fn hunt_take(
     // is what stops a deep floor from building for free (§0.3).
     let collection = (workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement))
         .min(carry_room_biomass.max(0.0));
-    let take = fauna::quantise_animal_take(ceiling, collection, herd.body_mass);
+    let take = fauna::quantise_animal_take(
+        ceiling,
+        collection,
+        herd.body_mass,
+        fauna::animals_engaged(
+            workers,
+            fauna.engage_rate_for(&herd.species),
+            ladder.build_dip(improvement),
+        ),
+    );
     // **The herd loses every animal KILLED, not merely what was carried** — you cannot un-kill the
     // mammoth you could not haul. That is the waste, and it is `take.wasted`.
     herd.biomass -= take.killed_biomass();

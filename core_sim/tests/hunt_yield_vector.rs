@@ -45,11 +45,17 @@ const TEST_CAPACITY: f32 = 4000.0;
 /// second variable into the pinned number.)
 const UNBOUNDED_CREW: u32 = 60;
 
-/// A crew big enough to **carry the whole herd home in one turn** (`workers ×
-/// per_worker_biomass_capacity 40 >= TEST_CAPACITY`). `quantise_animal_take` caps the kill by what
-/// the crew can collect, so proving Eradicate empties a herd needs a crew that could haul it —
-/// otherwise the test would be measuring the carry cap, not the policy.
-const HAUL_THE_WHOLE_HERD_CREW: u32 = 100;
+/// A crew big enough to **take the whole herd in one turn** — which now means clearing **two** crew
+/// bounds, not one. `quantise_animal_take` caps the kill by what the crew can collect *and*, since
+/// `docs/plan_hunt_through_combat.md` §2, by how many animals it can bring into contact
+/// (`workers × engage_rate`). Proving Eradicate empties a herd needs a crew that clears both, or the
+/// test measures a crew bound instead of the policy.
+///
+/// `TEST_CAPACITY / body_mass` is ~267 animals at the shipped Red Deer mass, and Red Deer engage at
+/// `1.0`, so the engagement bound is the tighter of the two and sets this number. It was `100`, sized
+/// against carry alone — at which Sustain and Eradicate both engage 100 and pay **identically**,
+/// which is a true statement about a small crew and says nothing about the floor.
+const HAUL_THE_WHOLE_HERD_CREW: u32 = 300;
 
 /// **A crew far too small to clear the herd's escapement room** — the *labor-bound* half of the
 /// forecast==actual sweep. One hunter carries `per_worker_biomass_capacity`, which is a rounding
@@ -59,7 +65,14 @@ const HAUL_THE_WHOLE_HERD_CREW: u32 = 100;
 /// the whole standing surplus (`B − floor·K`), which on a full herd is enormous, so a realistic crew
 /// is labor-bound at *every* stance and a forecast that only agreed with the take at the ceiling
 /// would look correct on a fully-staffed harness and lie in play.
-const LABOR_BOUND_CREW: u32 = 1;
+const LABOR_BOUND_CREW: u32 = 2;
+
+/// **Two, not one, because the build dip has to have somewhere to land.** Engagement rounds up to a
+/// whole animal (`fauna::animals_engaged`), so a single hunter engages `1` whether gentling or
+/// hunting and the dip — correctly applied — is unobservable. At two the dipped crew engages `1`
+/// against `2`, which is the smallest staffing where a dip can be *seen* rather than merely applied.
+/// A crew that cannot see the dip proves nothing about whether the dip is there.
+const _: () = assert!(LABOR_BOUND_CREW >= 2);
 
 /// Float slop for a take reconstructed from a biomass delta through an `f32` rate.
 const YIELD_EPSILON: f32 = 1e-3;

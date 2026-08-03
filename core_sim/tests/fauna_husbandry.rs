@@ -1000,7 +1000,7 @@ fn a_worker_hunting_a_pastoral_herd_takes_its_pastoral_msy_and_draws_the_herd_do
         // species instead of accidentally-tight for the one the current seed happens to place.
         // `HUNT_WORKERS` is sized so the carry cap never binds, so the crew hauls everything it kills:
         // the MSY is both the policy ceiling and the collection.
-        let take = quantise_animal_take(msy, msy, herd.body_mass).carried;
+        let take = quantise_animal_take(msy, msy, herd.body_mass, f32::INFINITY).carried;
         (take, take * fauna.hunt.provisions_per_biomass)
     };
     // **Seated at the OPERATING POINT, not at capacity** (slice 8). A Sustain hunt is constant
