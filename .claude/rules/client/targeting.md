@@ -209,7 +209,7 @@ picking a destination tile — replacing the old easy-to-miss "select a band…"
   emitted them was removed or repointed so nothing is silently dead: the map double-click
   `scout` shortcut was dropped and `follow` repointed to quick-assign hunters; Main's
   `_issue_*`/`_on_hud_follow_herd`/`_on_hud_unit_scout` builders are gone; the Fauna tab's
-  follow button, the Terrain tab's Scout Tile button, and the Commands tab's scenario
+  follow button, the Terrain tab's Scout Tile button, and the since-deleted Commands tab's scenario
   Scout/Follow rows were removed (script + `InspectorLayer.tscn` nodes). No code path in
   `Main.gd`/`Hud.gd`/`MapView.gd`/`Inspector.gd` builds any of those five lines.
 

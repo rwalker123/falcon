@@ -84,7 +84,7 @@ row burns no `seq` — otherwise the day a kind stopped being ignored, the dock 
 re-ingest of every row it had previously dropped.
 
 **AN IGNORED KIND IS NOT A RETIRED KIND**, and that is the obvious misreading to keep closed. The
-event still exists and is still emitted: the sim goes on writing it, the Inspector's debug console
+event still exists and is still emitted: the sim goes on writing it, the Inspector's Logs tab
 goes on printing it in full, and a mod may want to read it. This is a display filter on ONE surface.
 
 ### The System channel carries two kinds, because it carried two things
@@ -95,8 +95,8 @@ for a button pressed a second earlier, printed as news.
 
 | Kind | What it is | Where it goes |
 |---|---|---|
-| `command_echo` | a receipt for a command this client accepted for sending — `Advance 1 turn.`, `Answered the question.`, `Stop improving (12, 8).`, every `_send_formatted_command` message | the Inspector's console only; **the dock ignores it** |
-| `system` | a FAULT or a state change — command refused, socket lost/restored, `resync requested (unapplicable delta)`, and the HUD's own feedback (`Quick-hunt · No idle workers to assign`) | the console AND the dock's System channel |
+| `command_echo` | a receipt for a command this client accepted for sending — `Advance 1 turn.`, `Answered the question.`, `Stop improving (12, 8).`, every `_send_formatted_command` message | the Inspector's Logs buffer only; **the dock ignores it** |
+| `system` | a FAULT or a state change — command refused, socket lost/restored, `resync requested (unapplicable delta)`, and the HUD's own feedback (`Quick-hunt · No idle workers to assign`) | the Logs buffer AND the dock's System channel |
 
 **The boundary is: a command accepted for sending is an echo; everything else is a fault.** A
 rejected or failed send stays `system` — that is exactly when the player needs to hear it — and so do
@@ -495,7 +495,9 @@ because a notification the player has to go and find is the thing this arc exist
   `HudLayer.tscn`, and `ui/hud/CommandFeedController.gd`. Its `KIND_STYLE` alert table and its
   `status=` token rule moved into `HudEventVocab`; the left dock is the selection card's again.
 - **The Inspector's `[SIM]` command stream is gone** — see `inspector-panels.md`. Its *console
-  chatter* is not: it still fills the debug console AND now rides out to the dock's System channel.
+  chatter* is not: it fills the Logs tab's buffer AND rides out to the dock's System channel. The
+  Commands tab that used to mirror it has since been deleted, so the dock is the only surface a
+  player sees it on.
 - **The three controllers that posted a client-side note take a `Callable` note sink** rather than a
   `CommandFeedController` reference (`TopBarReadouts`' knowledge unlock, `TurnOrbController`'s
   unanswered fork, `TargetingController`'s two quarry refusals). It resolves to
