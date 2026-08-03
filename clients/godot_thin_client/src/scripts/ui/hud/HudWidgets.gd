@@ -858,8 +858,13 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         var selected := workers == count
         HudStyle.apply_pill_button(btn, selected)
         btn.pressed.connect(func() -> void: on_pick.call(count))
+        # The tint is the SHARED TABLE's answer for this button's own state — `btn.disabled` included,
+        # exactly as `build_floor_picker` asks it. `apply_pill_button` already writes a `disabled`
+        # stylebox, so the box can fade; a face built from child Labels cannot follow it through the
+        # theme (see `_crew_target_pill`), so the state has to reach the tint here or the box would
+        # fade under two lines still at full brightness.
         row.add_child(_crew_target_pill(btn, count, String(spec[2]),
-            HudStyle.button_font_color("primary" if selected else "ghost")))
+            HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
 ## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line
