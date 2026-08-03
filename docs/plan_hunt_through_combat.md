@@ -240,6 +240,38 @@ That makes four independent ways a species survives being hunted, and a species 
 `defense` and `durability` blur easily and must not: **defense is whether a hit counts at all,
 durability is how many counting hits it takes.**
 
+#### Values — SETTLED
+
+Effort shown at the settled spear `attack 20` (§4.6), so `hunter-turns = durability / (20 − defense)`.
+`defense` is the existing field, unchanged.
+
+| species | defense | **durability** | hunter-turns | survives by |
+|---|---|---|---|---|
+| mammoth | 12 | **500** | 62 | fortress + fights back |
+| aurochs | 6 | **150** | 11 | soak + aggression |
+| steppe runner | 3 | **60** | 3.5 | bulk |
+| marsh grazer | 3 | **60** | 3.5 | bulk |
+| wild elk | 3 | **60** | 3.5 | bulk |
+| wild horse | 2 | **35** | 1.9 | speed |
+| reindeer | 1 | **25** | 1.3 | nothing much |
+| deer | 1 | **25** | 1.3 | wariness |
+| boar | 2 | **20** | 1.1 | **ferocity alone** — frail, still costs you people |
+| wolf | 3 | **20** | 1.2 | **evasion + ferocity, no toughness** |
+| alpine ibex | 1 | **15** | 0.8 | terrain |
+| seal | 2 | **12** | 0.7 | **nothing** — easy prey |
+| crag goat | 1 | **12** | 0.6 | terrain |
+| wild sheep | 1 | **12** | 0.6 | wariness |
+| gazelle | 1 | **8** | 0.4 | **wariness alone** — frail and fast |
+| forest grouse | 0 | **3** | 0.15 | wariness |
+| snow hare | 0 | **3** | 0.15 | wariness |
+| river fish | 0 | **2** | 0.1 | numbers |
+| rabbit | 0 | **2** | 0.1 | wariness + breeding |
+| fowl | 0 | **2** | 0.1 | nothing |
+
+**The decoupling from mass is real where it matters**, and it is what deriving would have destroyed:
+boar and seal are the same body mass and boar is nearly twice as durable; wolf is lighter than a wild
+sheep and tougher than one; ibex outlasts a seal at less than half the weight.
+
 **Excess damage spills to the next animal in the engagement.** This is what makes "many small animals
 per turn" fall out instead of being authored: a hunter doing 20 damage against 5-durability rabbits
 kills four, because that is what 20 damage does — and the number rises on its own when the party gets
@@ -362,13 +394,23 @@ Without equipment a hunter's `attack` is `1`, which is below every megafauna's `
 band can hunt a mammoth until spears exist**, and the progression stops being a note and starts being
 load-bearing. That makes a minimal TOE part of this arc rather than a dependency beside it:
 
-- **the hunting kit** — spears, raising `attack` above `1`, which is what opens the gate;
+- **the hunting kit** — spears, `attack 20` against an unequipped `1`. **SETTLED**, and the number
+  that opens the gate;
 - **the carry kit** — baskets, raising the carry side (§5), the other half of `plan_early_game_labor`'s
   role table;
 - consumable with the durability cliff, start-stocked, **not craftable**.
 
 The crafting economy that replenishes kit stays deferred. What ships is enough to make `attack` a
 real number and the equipped/unequipped distinction visible.
+
+**At `attack 1` a band can hunt only what has no `defense` at all** — rabbit, fowl, grouse, hare,
+fish — at one damage a turn, so two turns per rabbit. Everything from a gazelle upward is untouchable.
+Without kit you are a trapper, not a hunter, and running your spears dry does not reduce hunting so
+much as end it.
+
+**The `1 → 20` jump is the largest single multiplier in the design**, and it is deliberate rather
+than overlooked: the first spear should feel like a different game. It is also pure configuration, so
+it is the cheapest number here to revisit once the loop is playable.
 
 ---
 
@@ -538,9 +580,13 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 
 | # | Question | Notes |
 |---|---|---|
-| 1 | **`engage_rate` values.** | The roster needs a pass. The readable form (`1 / engage_rate` = hunters per animal) is what to author against — "twenty hunters to take a mammoth" is a judgement anyone can make; "0.05" is not. |
-| 2 | **Do the `engage_rate` values hold up in play?** | §2.1 settles them against the ceiling ordering. The risk they carry is that for most species the escapement floor binds long before engagement does, so a rate set too low silently becomes a *second* floor. |
-| 3 | **How much does a spear do?** | The only unset number in the model. Every effort figure in this doc is quoted against a provisional `attack 20`, and the unequipped-to-equipped jump (`1 → 20`) is the largest single multiplier in the design. Settled with the TOE kit values (§4.6). |
+Every value is settled (§2.1, §4.2, §4.3, §4.6). What remains is what only play can answer.
+
+| # | Question | Notes |
+|---|---|---|
+| 1 | **Do the roster values hold up in play?** | The risk they carry is specific: for most species the escapement floor binds long before engagement does, so an `engage_rate` set too low silently becomes a *second* floor. §6.6's hunt report is what makes that visible rather than mysterious. |
+| 2 | **Is a coastal start too strong?** | Seal's ceiling of 24 is second only to megafauna, because seals are helpless on a haul-out. Historically right; possibly a start-position imbalance. Known, not discovered. |
+| 3 | **Does the food economy settle after the body-mass correction?** | §4.3 cuts mid-game hunting yield to roughly a third and is deliberately uncompensated, on the reasoning that tuning around still-moving numbers bakes in a fix for a problem that may not survive them. |
 
 ---
 
