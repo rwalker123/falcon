@@ -74,9 +74,22 @@ Each stage answers one question, and no stage answers another's:
 | the fight | who dies — theirs and ours | `combat::resolve_fight` |
 | carry | how much of the kill gets home | `hunt.per_worker_biomass_capacity` |
 
-The escapement floor (`docs/plan_harvest_floor.md`) sits above all four unchanged: it decides whether
-the party *chooses* to engage at all this turn, by bounding `engaged` to the stock standing above the
-floor. It is a decision about restraint, not about capability, and it stays exactly where it is.
+The escapement floor (`docs/plan_harvest_floor.md`) sits above all four unchanged, and it bounds
+**`engaged`** — not `killed`.
+
+**It is not the same thing as wariness, and the two blur easily.** Both reduce how many animals end
+up in the fight, from opposite directions:
+
+| | who decides | shape |
+|---|---|---|
+| `wariness` | **the animal** — it bolts at contact | stochastic, from the herd |
+| escapement floor | **the player** — orders say stop at half the herd | deterministic, from the mission |
+
+Bounding `killed` instead would have a party at the floor engage normally, take casualties, wear its
+kit, and then decline to kill what it had already fought — and killing without taking is denial, not
+restraint. So **restraint is free**: a party at the floor does not go, and the only cost is the food
+it chose to leave standing. The ordering follows — the floor decides how many you go after, then
+wariness takes some of those away.
 
 ---
 
@@ -178,6 +191,10 @@ term needs no defending.
 **Escaped animals are not dead, so the herd loses nothing for them.** A wary herd therefore costs the
 party **hunter-turns**, not herd biomass — you spent the turn and got fewer animals. That is the right
 pressure and it falls out with no extra rule.
+
+**Animal wariness is static — SETTLED.** A herd that has been hunted hard does not learn to flee.
+Only humans grow warier, through the morale half of this field; the animal half is authored once and
+never moves. That keeps species values reproducible and the field's two halves cleanly split.
 
 **Wariness `0` is an exact identity**, not a roll with probability zero: no draw is made, nothing is
 consumed, and the outcome is the deterministic one. That is what keeps every existing yield test
@@ -372,7 +389,7 @@ waste from the game everywhere except a denial raid.
 
 ---
 
-## 6. Determinism, and what the forecast promises
+## 6. Determinism, and what the player is told
 
 ### 6.1 Existing tests are unaffected
 
@@ -404,9 +421,27 @@ in what the forecast *means*, and it touches every yield readout in the client, 
 here rather than a surprise later. It is also an improvement — communicating risk is what makes the
 mammoth decision a decision rather than arithmetic.
 
----
+### 6.5 A fight the party cannot win must say so before it is launched
 
-## 7. What this replaces in `plan_denial_raid.md`
+The gate (§4.2) produces a real outcome that reads as a bug if unexplained: hunters die, nothing is
+killed. The hunt panel therefore checks it **at launch** and says so in words, and the forecast
+independently estimates **zero food** — two signals from different paths, so a failure in either
+still leaves the player warned.
+
+### 6.6 The hunt emits events, even before anything consumes them
+
+**Which bound actually stopped the party is an output of the resolution, not a diagnostic field
+computed beside it.** It belongs in a hunt report, which is an event — the consumer is the event
+notification system (issue #272), and this arc's job is to make sure the facts exist for it to pick
+up.
+
+A hunt report carries: animals **engaged**, how many **fled** before contact, animals **killed**,
+hunters **lost or wounded**, what **ran out first** (engagement, the floor, carry, or the fight
+itself), and what came home — **carried** and **wasted**.
+
+**Facts, never a composed string.** #272 owns importance and phrasing; the hunt owns what happened.
+Emitting presentation-ready text here would bake this arc's guesses about an importance ladder into
+the sim, and the sim already treats the client this way everywhere else.
 
 That doc's §1–§2 specified a kill model **outside** the combat system: `per_worker_kill_capacity`, a
 biomass-denominated kill budget, `stalk_overhead`, `toughness(defense)`, and a partial-kill bank. All
@@ -505,9 +540,7 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 |---|---|---|
 | 1 | **`engage_rate` values.** | The roster needs a pass. The readable form (`1 / engage_rate` = hunters per animal) is what to author against — "twenty hunters to take a mammoth" is a judgement anyone can make; "0.05" is not. |
 | 2 | **Do the `engage_rate` values hold up in play?** | §2.1 settles them against the ceiling ordering. The risk they carry is that for most species the escapement floor binds long before engagement does, so a rate set too low silently becomes a *second* floor. |
-| 3 | **Does the escapement floor bound `engaged` or `killed`?** | Specified as `engaged`, so restraint means not starting the fight. Bounding `killed` instead would mean killing animals and letting them lie, which is denial's job, not a hunt's. |
-| 4 | **Do escaped animals become warier?** | The dynamic half of §3 exists for troops. A herd that has been hunted hard learning to flee is the same mechanic, and would give hunting pressure a memory — but it makes species values non-static and is deliberately out of this arc. |
-| 5 | **What does the client show for a fight it cannot win?** | The gate produces "you will lose people and kill nothing." That must be legible *before* committing a party, which is a stronger demand on the pre-launch readout than a yield number. |
+| 3 | **How much does a spear do?** | The only unset number in the model. Every effort figure in this doc is quoted against a provisional `attack 20`, and the unequipped-to-equipped jump (`1 → 20`) is the largest single multiplier in the design. Settled with the TOE kit values (§4.6). |
 
 ---
 
