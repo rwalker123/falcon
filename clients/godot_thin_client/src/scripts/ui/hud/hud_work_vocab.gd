@@ -337,6 +337,12 @@ const WORK_SORT_YIELD := &"yield"
 
 const WORK_SORT_NAME := &"name"
 
+## Every legal work sort. The persisted preference is validated against this, so an unknown or retired
+## value in the prefs file falls back to the default. The failure this prevents is NOT a broken board:
+## `_sort_work_models` branches on `== WORK_SORT_NAME` and treats everything else as yield, so an
+## unvalidated value would silently reinstate the yield sort — the behaviour issue #460 removed.
+const WORK_SORTS: Array[StringName] = [WORK_SORT_NAME, WORK_SORT_YIELD]
+
 const WORK_CHIP_ALL_FORMAT := "All %d"
 
 const WORK_CHIP_KIND_FORMAT := "%s %d · %s"

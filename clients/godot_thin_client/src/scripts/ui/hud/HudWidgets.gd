@@ -416,9 +416,16 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
         head.add_child(menu)
     return head
 
+## A `build_section_menu` entry's OPTIONAL radio-check flag. **ITS ABSENCE IS NOT `false`.** An entry
+## carrying the key is a member of a mutually exclusive SET and is built as a radio-check item — the
+## menu then states which member is active, which a menu of plain items structurally cannot. An entry
+## WITHOUT it is a plain action (`Unassign all …`), and marking one would claim it belongs to a set it
+## has no members of; hence the key is tested with `has` rather than read with a `false` default.
+const MENU_ENTRY_CHECKED := "checked"
+
 ## The `⋯` section menu: a `MenuButton`, so its popup is a WINDOW and opening it cannot change any
 ## zone's layout height (the whole zone model depends on heights not moving). `entries` is an ordered
-## array of `{label, disabled, on_pick}` dictionaries.
+## array of `{label, disabled, on_pick}` dictionaries, each optionally carrying `MENU_ENTRY_CHECKED`.
 static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
     var button := MenuButton.new()
     button.text = HudWorkVocab.SECTION_MENU_GLYPH
@@ -434,7 +441,11 @@ static func build_section_menu(entries: Array, tooltip: String) -> MenuButton:
             continue
         var entry: Dictionary = entry_variant
         var index := picks.size()
-        popup.add_item(String(entry.get("label", "")), index)
+        if entry.has(MENU_ENTRY_CHECKED):
+            popup.add_radio_check_item(String(entry.get("label", "")), index)
+            popup.set_item_checked(index, bool(entry[MENU_ENTRY_CHECKED]))
+        else:
+            popup.add_item(String(entry.get("label", "")), index)
         popup.set_item_disabled(index, bool(entry.get("disabled", false)))
         var pick: Variant = entry.get("on_pick", null)
         picks.append(pick if pick is Callable else Callable())
@@ -847,8 +858,13 @@ static func build_crew_targets(model: Dictionary, workers: int, on_pick: Callabl
         var selected := workers == count
         HudStyle.apply_pill_button(btn, selected)
         btn.pressed.connect(func() -> void: on_pick.call(count))
+        # The tint is the SHARED TABLE's answer for this button's own state — `btn.disabled` included,
+        # exactly as `build_floor_picker` asks it. `apply_pill_button` already writes a `disabled`
+        # stylebox, so the box can fade; a face built from child Labels cannot follow it through the
+        # theme (see `_crew_target_pill`), so the state has to reach the tint here or the box would
+        # fade under two lines still at full brightness.
         row.add_child(_crew_target_pill(btn, count, String(spec[2]),
-            HudStyle.button_font_color("primary" if selected else "ghost")))
+            HudStyle.button_font_color("primary" if selected else "ghost", btn.disabled)))
     return row
 
 ## **THE CREW ROW'S BUILD-DIP NOTE** — *"— while building, each carries 25% as much"*, the one line

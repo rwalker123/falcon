@@ -32,6 +32,7 @@ const CHAPTERS := [
 	preload("res://tools/ui_preview/chapters/compose_rungs.gd"),
 	preload("res://tools/ui_preview/chapters/world_reset.gd"),
 	preload("res://tools/ui_preview/chapters/event_dock.gd"),
+	preload("res://tools/ui_preview/chapters/button_faces.gd"),
 ]
 
 const Spine := preload("res://tools/ui_preview/compose_vocab.gd")
