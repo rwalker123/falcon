@@ -178,6 +178,36 @@ Whether a hunter can hurt the animal *at all* is settled per hunter, before head
 The gate is not a new rule to write. It is what a combat resolver comparing attack to defense already
 does; §0.2's failure only arises when the comparison is *outside* the resolver.
 
+### 4.3 The body masses durability derives from were wrong — SETTLED
+
+Deriving `durability` from `body_mass` makes the roster's masses load-bearing, and several were off
+by multiples. The clearest: **a reindeer is heavier than a typical deer** (reindeer 120–300 kg,
+white-tailed deer 45–135 kg, red deer 82–240 kg), while the config had reindeer `18` against deer
+`60` — inverted, by more than 3×. Boar and wolf were inflated the same way.
+
+Anchored on the mammoth (~6,000 kg = `800`, so ~7.5 kg per unit), leaving the top of the scale
+unchanged:
+
+| species | real adult (kg) | was | **is** | | species | real adult (kg) | was | **is** |
+|---|---|---|---|---|---|---|---|---|
+| mammoth | ~6,000 | 800 | **800** | | wild sheep | 35–50 | 12 | **5.6** |
+| aurochs | 900–1,500 | 80 | **120** | | wolf | 18–80 | 30 | **5.3** |
+| steppe runner | *fictional* | 120 | **53** | | gazelle | 15–35 | 4 | **3.3** |
+| marsh grazer | *fictional* | 100 | **47** | | river fish | ~5 | 2 | **0.67** |
+| wild elk | 300–450 | 40 | **47** | | snow hare | 4–5 | 0.4 | **0.6** |
+| wild horse | 250–360 | 45 | **40** | | forest grouse | 3–5 | 0.3 | **0.47** |
+| reindeer | 120–300 | 18 | **20** | | rabbit | 1.5–2.5 | 0.3 | **0.27** |
+| deer | 45–240 | 60 | **15** | | fowl | ~1 | 0.25 | **0.13** |
+| boar | 50–200 | 50 | **12** | | | | | |
+| seal | 82–129 | 30 | **12** | | | | | |
+| alpine ibex | 50–100 | 15 | **10** | | | | | |
+| crag goat | ~45 | 10 | **6** | | | | | |
+
+**This is a balance change, not a free correction.** The real mammoth-to-deer mass ratio is ~40:1;
+the old config compressed it to 13:1. Restoring it cuts mid-game hunting yield to roughly a third
+while leaving megafauna untouched — the direction the design wants (a mammoth should be a windfall),
+but it moves the food economy and the change belongs in the same slice as the values.
+
 ### 4.3 Ferocity is already the right hinge
 
 `SpeciesDef::ferocity` means *"does it fight back or flee"* — in resolver terms, **whether the animal
