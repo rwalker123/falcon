@@ -3,8 +3,6 @@ use std::convert::TryFrom;
 use prost::Message;
 use thiserror::Error;
 
-use crate::{CorruptionSubsystem, InfluenceScopeKind};
-
 mod proto {
     include!(concat!(env!("OUT_DIR"), "/shadow_scale.commands.rs"));
 }
@@ -29,43 +27,12 @@ pub enum CommandPayload {
         width: u32,
         height: u32,
     },
-    Heat {
-        target_x: u32,
-        target_y: u32,
-        delta: i64,
-    },
     Orders {
         faction_id: u32,
         directive: OrdersDirective,
     },
     Rollback {
         tick: u64,
-    },
-    AxisBias {
-        axis: u32,
-        value: f32,
-    },
-    SupportInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SuppressInfluencer {
-        id: u32,
-        magnitude: f32,
-    },
-    SupportInfluencerChannel {
-        id: u32,
-        channel: SupportChannel,
-        magnitude: f32,
-    },
-    SpawnInfluencer {
-        scope: Option<InfluenceScopeKind>,
-        generation: Option<u16>,
-    },
-    InjectCorruption {
-        subsystem: CorruptionSubsystem,
-        intensity: f32,
-        exposure_timer: u32,
     },
     UpdateEspionageGenerators {
         updates: Vec<EspionageGeneratorUpdate>,
@@ -326,15 +293,6 @@ pub enum ReloadConfigKind {
     CrisisTelemetry,
 }
 
-/// Influencer support channels exposed to the command surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SupportChannel {
-    Popular,
-    Peer,
-    Institutional,
-    Humanitarian,
-}
-
 /// Counter-intelligence security posture controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityPolicyKind {
@@ -364,8 +322,6 @@ pub enum CommandDecodeError {
     MissingPayload,
     #[error("invalid enum value {value} for {field}")]
     InvalidEnum { field: &'static str, value: i32 },
-    #[error("generation id {value} exceeds u16 range")]
-    GenerationOverflow { value: u32 },
 }
 
 impl CommandEnvelope {
@@ -395,15 +351,6 @@ impl CommandEnvelope {
                     height: *height,
                 })
             }
-            CommandPayload::Heat {
-                target_x,
-                target_y,
-                delta,
-            } => pb::command_envelope::Command::Heat(pb::HeatCommand {
-                target_x: *target_x,
-                target_y: *target_y,
-                delta: *delta,
-            }),
             CommandPayload::Orders {
                 faction_id,
                 directive,
@@ -414,50 +361,6 @@ impl CommandEnvelope {
             CommandPayload::Rollback { tick } => {
                 pb::command_envelope::Command::Rollback(pb::RollbackCommand { tick: *tick })
             }
-            CommandPayload::AxisBias { axis, value } => {
-                pb::command_envelope::Command::AxisBias(pb::AxisBiasCommand {
-                    axis: *axis,
-                    value: *value,
-                })
-            }
-            CommandPayload::SupportInfluencer { id, magnitude } => {
-                pb::command_envelope::Command::SupportInfluencer(pb::SupportInfluencerCommand {
-                    id: *id,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SuppressInfluencer { id, magnitude } => {
-                pb::command_envelope::Command::SuppressInfluencer(pb::SuppressInfluencerCommand {
-                    id: *id,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SupportInfluencerChannel {
-                id,
-                channel,
-                magnitude,
-            } => {
-                pb::command_envelope::Command::SupportChannel(pb::SupportInfluencerChannelCommand {
-                    id: *id,
-                    channel: support_channel_to_proto(*channel) as i32,
-                    magnitude: *magnitude,
-                })
-            }
-            CommandPayload::SpawnInfluencer { scope, generation } => {
-                pb::command_envelope::Command::SpawnInfluencer(pb::SpawnInfluencerCommand {
-                    scope: scope.map(influence_scope_to_proto).map(|v| v as i32),
-                    generation: generation.map(|value| value as u32),
-                })
-            }
-            CommandPayload::InjectCorruption {
-                subsystem,
-                intensity,
-                exposure_timer,
-            } => pb::command_envelope::Command::InjectCorruption(pb::InjectCorruptionCommand {
-                subsystem: corruption_subsystem_to_proto(*subsystem) as i32,
-                intensity: *intensity,
-                exposure_timer: *exposure_timer,
-            }),
             CommandPayload::UpdateEspionageGenerators { updates } => {
                 pb::command_envelope::Command::UpdateEspionageGenerators(
                     pb::UpdateEspionageGeneratorsCommand {
@@ -789,65 +692,12 @@ impl CommandEnvelope {
                 width: cmd.width,
                 height: cmd.height,
             },
-            pb::command_envelope::Command::Heat(cmd) => CommandPayload::Heat {
-                target_x: cmd.target_x,
-                target_y: cmd.target_y,
-                delta: cmd.delta,
-            },
             pb::command_envelope::Command::Orders(cmd) => CommandPayload::Orders {
                 faction_id: cmd.faction_id,
                 directive: OrdersDirective::try_from(cmd.directive)?,
             },
             pb::command_envelope::Command::Rollback(cmd) => {
                 CommandPayload::Rollback { tick: cmd.tick }
-            }
-            pb::command_envelope::Command::AxisBias(cmd) => CommandPayload::AxisBias {
-                axis: cmd.axis,
-                value: cmd.value,
-            },
-            pb::command_envelope::Command::SupportInfluencer(cmd) => {
-                CommandPayload::SupportInfluencer {
-                    id: cmd.id,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SuppressInfluencer(cmd) => {
-                CommandPayload::SuppressInfluencer {
-                    id: cmd.id,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SupportChannel(cmd) => {
-                let channel = SupportChannel::try_from(cmd.channel)?;
-                CommandPayload::SupportInfluencerChannel {
-                    id: cmd.id,
-                    channel,
-                    magnitude: cmd.magnitude,
-                }
-            }
-            pb::command_envelope::Command::SpawnInfluencer(cmd) => {
-                let scope = match cmd.scope {
-                    Some(value) => Some(influence_scope_from_proto(value)?),
-                    None => None,
-                };
-                let generation = match cmd.generation {
-                    Some(value) => {
-                        if value > u16::MAX as u32 {
-                            return Err(CommandDecodeError::GenerationOverflow { value });
-                        }
-                        Some(value as u16)
-                    }
-                    None => None,
-                };
-                CommandPayload::SpawnInfluencer { scope, generation }
-            }
-            pb::command_envelope::Command::InjectCorruption(cmd) => {
-                let subsystem = corruption_subsystem_from_proto(cmd.subsystem)?;
-                CommandPayload::InjectCorruption {
-                    subsystem,
-                    intensity: cmd.intensity,
-                    exposure_timer: cmd.exposure_timer,
-                }
             }
             pb::command_envelope::Command::UpdateEspionageGenerators(cmd) => {
                 let mut updates = Vec::with_capacity(cmd.updates.len());
@@ -1105,23 +955,6 @@ impl TryFrom<i32> for OrdersDirective {
     }
 }
 
-impl TryFrom<i32> for SupportChannel {
-    type Error = CommandDecodeError;
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match pb::SupportChannel::try_from(value) {
-            Ok(pb::SupportChannel::Popular) => Ok(SupportChannel::Popular),
-            Ok(pb::SupportChannel::Peer) => Ok(SupportChannel::Peer),
-            Ok(pb::SupportChannel::Institutional) => Ok(SupportChannel::Institutional),
-            Ok(pb::SupportChannel::Humanitarian) => Ok(SupportChannel::Humanitarian),
-            _ => Err(CommandDecodeError::InvalidEnum {
-                field: "SupportChannel",
-                value,
-            }),
-        }
-    }
-}
-
 impl From<OrdersDirective> for pb::OrdersDirective {
     fn from(value: OrdersDirective) -> Self {
         match value {
@@ -1132,15 +965,6 @@ impl From<OrdersDirective> for pb::OrdersDirective {
 
 fn orders_directive_to_proto(value: OrdersDirective) -> pb::OrdersDirective {
     value.into()
-}
-
-fn support_channel_to_proto(value: SupportChannel) -> pb::SupportChannel {
-    match value {
-        SupportChannel::Popular => pb::SupportChannel::Popular,
-        SupportChannel::Peer => pb::SupportChannel::Peer,
-        SupportChannel::Institutional => pb::SupportChannel::Institutional,
-        SupportChannel::Humanitarian => pb::SupportChannel::Humanitarian,
-    }
 }
 
 fn security_policy_kind_to_proto(value: SecurityPolicyKind) -> pb::SecurityPolicyKind {
@@ -1163,28 +987,6 @@ fn reload_config_kind_to_proto(kind: ReloadConfigKind) -> pb::ReloadConfigKind {
     }
 }
 
-fn influence_scope_to_proto(value: InfluenceScopeKind) -> pb::InfluenceScopeKind {
-    match value {
-        InfluenceScopeKind::Local => pb::InfluenceScopeKind::Local,
-        InfluenceScopeKind::Regional => pb::InfluenceScopeKind::Regional,
-        InfluenceScopeKind::Global => pb::InfluenceScopeKind::Global,
-        InfluenceScopeKind::Generation => pb::InfluenceScopeKind::Generation,
-    }
-}
-
-fn influence_scope_from_proto(value: i32) -> Result<InfluenceScopeKind, CommandDecodeError> {
-    match pb::InfluenceScopeKind::try_from(value) {
-        Ok(pb::InfluenceScopeKind::Local) => Ok(InfluenceScopeKind::Local),
-        Ok(pb::InfluenceScopeKind::Regional) => Ok(InfluenceScopeKind::Regional),
-        Ok(pb::InfluenceScopeKind::Global) => Ok(InfluenceScopeKind::Global),
-        Ok(pb::InfluenceScopeKind::Generation) => Ok(InfluenceScopeKind::Generation),
-        _ => Err(CommandDecodeError::InvalidEnum {
-            field: "InfluenceScopeKind",
-            value,
-        }),
-    }
-}
-
 fn security_policy_kind_from_proto(value: i32) -> Result<SecurityPolicyKind, CommandDecodeError> {
     match pb::SecurityPolicyKind::try_from(value) {
         Ok(pb::SecurityPolicyKind::Lenient) => Ok(SecurityPolicyKind::Lenient),
@@ -1193,28 +995,6 @@ fn security_policy_kind_from_proto(value: i32) -> Result<SecurityPolicyKind, Com
         Ok(pb::SecurityPolicyKind::Crisis) => Ok(SecurityPolicyKind::Crisis),
         _ => Err(CommandDecodeError::InvalidEnum {
             field: "SecurityPolicyKind",
-            value,
-        }),
-    }
-}
-
-fn corruption_subsystem_to_proto(value: CorruptionSubsystem) -> pb::CorruptionSubsystem {
-    match value {
-        CorruptionSubsystem::Logistics => pb::CorruptionSubsystem::Logistics,
-        CorruptionSubsystem::Trade => pb::CorruptionSubsystem::Trade,
-        CorruptionSubsystem::Military => pb::CorruptionSubsystem::Military,
-        CorruptionSubsystem::Governance => pb::CorruptionSubsystem::Governance,
-    }
-}
-
-fn corruption_subsystem_from_proto(value: i32) -> Result<CorruptionSubsystem, CommandDecodeError> {
-    match pb::CorruptionSubsystem::try_from(value) {
-        Ok(pb::CorruptionSubsystem::Logistics) => Ok(CorruptionSubsystem::Logistics),
-        Ok(pb::CorruptionSubsystem::Trade) => Ok(CorruptionSubsystem::Trade),
-        Ok(pb::CorruptionSubsystem::Military) => Ok(CorruptionSubsystem::Military),
-        Ok(pb::CorruptionSubsystem::Governance) => Ok(CorruptionSubsystem::Governance),
-        _ => Err(CommandDecodeError::InvalidEnum {
-            field: "CorruptionSubsystem",
             value,
         }),
     }

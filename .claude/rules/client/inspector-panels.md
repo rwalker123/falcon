@@ -176,9 +176,14 @@ See `docs/godot_inspector_plan.md` for full roadmap.
 | Logs | Streaming tracing feed, level/target/text filters, duration sparkline |
 
 **There is no Commands tab.** Turn stepping, rollback and autoplay are the `CommandToolbar` buttons
-above the `TabContainer`, not a tab; the designer/debug verbs it carried (axis bias, influencer
-support/suppress/channel/spawn, corruption inject, tile heat, config reload) have **no client
-control at all** — they are reachable only by sending the command line another way. The command
+above the `TabContainer`, not a tab. Six of the designer/debug verbs it carried — `bias`, `support`,
+`suppress`, `support_channel`, `spawn_influencer`, `corruption` and `heat` — **no longer exist in
+the command surface at all**: the tab was their only caller, so they were removed end to end
+(parser, payload, proto field numbers now `reserved`). The systems they poked are untouched — axis
+bias, the influencer roster, the corruption ledger and tile temperature are still simulated and
+still stream to the client, which is why `SentimentPanel` still renders `axis_bias`. `reload_config`
+(and its `reload_sim_config` alias) **survives**, reachable via `cargo xtask command` with no client
+control. The command
 *hub* (`_send_command` / `send_runtime_command` / `_ensure_command_connection` / `command_client` /
 `autoplay_timer`) is Inspector-level and carries every command the game sends, so it long outlives
 the tab.
