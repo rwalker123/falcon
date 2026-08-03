@@ -120,6 +120,19 @@ func _assert_ungathered_stand_is_silent() -> void:
 		Readout.detail_row_index(gathered, HudFloraVocab.FORAGING_KEY) >= 0
 			and ForageFx.flora_basket_rows(gathered).size() == 3)
 
+## The CLASS of the land row's leading mark. It is the one thing that can say whether the in-place
+## patch path SWAPPED the mark's node or merely wrote to the old one — the two renderings are both
+## perfectly plausible rows, so no frame can hold this claim.
+func _land_row_icon_class() -> String:
+	if h._hud.subject_list == null or h._hud.subject_list.get_child_count() == 0:
+		return ""
+	# The LAND is always the roster's first row (docs/plan_tile_panel_layout.md).
+	var row := h._hud.subject_list.get_child(0) as Button
+	if row == null or not row.has_meta("row_icon"):
+		return ""
+	var icon := row.get_meta("row_icon") as Control
+	return "" if icon == null else icon.get_class()
+
 ## The instance ids of a container's direct children, so an assertion can prove a restate REUSED the
 ## same nodes (in-place patch) rather than freeing + recreating them (teardown).
 func _child_instance_ids(node: Node) -> Array:
@@ -554,6 +567,32 @@ func run(harness) -> void:
 	await h._settle()
 	h._assert_hud("a band entering the hex REBUILDS the roster (membership changed)",
 		_child_instance_ids(h._hud.subject_list) != flash_row_ids)
+	# THE PATCH PATH'S ART⇄EMOJI FLIP (issue #439). A roster row's leading mark is a `TextureRect`
+	# when its subject has bundled art and a glyph `Label` when it does not, and a row can cross that
+	# line between restates — this land row does it by losing its food module, the way a tile does
+	# when the module it offered stops being known. Writing `.text` to a `TextureRect` is a SILENT
+	# no-op, so a patch that did not SWAP THE NODE would leave the site's grain sprite standing
+	# beside a freshly-patched name. **No frame can hold this** — both renderings are an ordinary
+	# row, and the stale one is stale only against a tile that is not in the same picture.
+	var icon_flip_tile := _no_flash_tile_fixture(0.06, 61.0)
+	icon_flip_tile["units"] = [_no_flash_band_fixture(5, 1.40)]
+	h._hud.reapply_selection("tile", icon_flip_tile)
+	await h._settle()
+	var land_icon_before := _land_row_icon_class()
+	var icon_flip_row_ids := _child_instance_ids(h._hud.subject_list)
+	# The SAME membership, one key different — so the roster patches rather than rebuilding, which
+	# is the only path on which a stale mark can survive at all.
+	var icon_flip_bare := _no_flash_tile_fixture(0.06, 61.0)
+	icon_flip_bare["units"] = [_no_flash_band_fixture(5, 1.40)]
+	icon_flip_bare.erase("food_module")
+	h._hud.reapply_selection("tile", icon_flip_bare)
+	await h._settle()
+	h._assert_hud("precondition: the module-less restate PATCHED the roster rows, not rebuilt them",
+		_child_instance_ids(h._hud.subject_list) == icon_flip_row_ids and not icon_flip_row_ids.is_empty())
+	h._assert_hud("a land row carrying a food module leads with the site's bundled ART",
+		land_icon_before == "TextureRect")
+	h._assert_hud("…and losing the module SWAPS that node for the glyph Label, never just its texture",
+		_land_row_icon_class() == "Label")
 	h._hud.clear_selection()
 	h._hud._band_labor._player_band = {}
 

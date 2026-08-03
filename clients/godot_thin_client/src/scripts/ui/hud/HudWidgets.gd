@@ -198,6 +198,52 @@ static func build_status_part(text: String, color: Color) -> Label:
     label.add_theme_font_size_override("font_size", HudWorkVocab.ALLOC_SECTION_FONT_SIZE)
     return label
 
+## THE SPECIES / SITE MARK ON A TEXT ROW — bundled art where the client has it, the emoji where it
+## does not. One builder, so the HUD's text surfaces cannot drift apart from each other or from the
+## map.
+##
+## WHY IT EXISTS (issue #439). The map has drawn `FaunaSprites` / `SiteSprites` art for a while; the
+## HUD's text rows kept rendering `FoodIcons`' emoji, and **Unicode ships ONE deer for the four
+## cervids the roster carries** — Red Deer, Wild Elk, Wild Reindeer and Desert Gazelle all resolve to
+## 🦌 — so a work row, a roster row and the quarry picker could not tell them apart. Splitting the
+## MARKER art fixed the map and left every text surface collided.
+##
+## WHY A `TextureRect` AND NOT `[img]` BBCODE. `CropRoleSprites` renders through `[img]` because its
+## host genuinely IS a `RichTextLabel`; every host here is a `Label` in an `HBoxContainer`. The
+## precedent for THIS situation is `StageSprites` + `BandCityPanel.set_header`, which swaps a
+## `TextureRect` in for a glyph `Label`. Choose by host widget — do not convert a row to RichTextLabel
+## to get an icon into it.
+##
+## **THE `null` BRANCH IS LOAD-BEARING even at full art coverage**, exactly as it is in the sprite
+## tables themselves: it catches a herd label naming a species the client does not know
+## (`FoodIcons.species_key_for` → `""`) and the `HERD_DEFAULT` case, neither of which has a key to
+## look art up by — and the land row's module-less `◈`, which is not a species at all.
+##
+## **THE SPRITE IS DRAWN UNTINTED — never set `modulate` on what this returns.** That is the map
+## markers' own rule (`.claude/rules/client/sprites-widgets.md`): a full-colour animal carries no
+## state, so state rides GEOMETRY beside it — the work row's severity stripe, the roster row's
+## ecology dot, the marks column. Tinting a marker was tried on the map, rendered as a slightly
+## darker brown animal, and was reverted.
+static func build_marker_icon(texture: Texture2D, glyph: String, box_px: float, font_size: int) -> Control:
+    if texture != null:
+        var art := TextureRect.new()
+        art.texture = texture
+        # EXPAND_IGNORE_SIZE so the 256px source cannot set the row's minimum width, and
+        # KEEP_ASPECT_CENTERED so the box stays a BOX: the art sits inside it at its own aspect
+        # instead of being stretched square (these sources are not square — see `icon_prompts.txt`).
+        art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+        art.custom_minimum_size = Vector2(box_px, box_px)
+        art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        return art
+    var label := Label.new()
+    label.text = glyph
+    label.add_theme_font_size_override("font_size", font_size)
+    # Width only: the emoji sets its own height off the font, and pinning it would fight the row.
+    label.custom_minimum_size = Vector2(box_px, 0.0)
+    label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    return label
+
 ## The shared −/+ stepper controls (minus, centered count, plus) appended to a row's HBox, so the
 ## one-line and two-line forms compose the same stepper. `on_change` fires with the new count.
 static func add_stepper_controls(row: HBoxContainer, count: int, plus_enabled: bool, on_change: Callable, compact_chrome: bool = false) -> void:

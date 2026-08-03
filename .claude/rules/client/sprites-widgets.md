@@ -99,6 +99,31 @@ deliberately not contrast: the stock tick chip is light and would clear a contra
 
 ---
 
+## The HUD's TEXT surfaces render bundled art too, through one builder
+
+Splitting `deer.png` fixed the MAP marker and left every text surface collided, because `HERD_SPECIES`
+still maps `deer`/`elk`/`reindeer`/`caribou`/`gazelle` to one 🦌 and Unicode has no second cervid to
+offer. Four surfaces rendered that emoji — the Band panel's work row and its inspector strip, the
+compose sheet's quarry picker, and the selection card's land + herd roster rows — so a Wild Elk and a
+Red Deer read identically wherever they were LISTED rather than drawn on the map.
+
+They now render the same `FaunaSprites` / `SiteSprites` art the map does, through
+**`HudWidgets.build_marker_icon`**, which is where that rule and its rationale live
+(`hud-modules.md`). Two facts worth carrying back here, because they are decisions about ART:
+
+- **The host widget decides the mechanism.** `CropRoleSprites` returns a PATH for `[img]` BBCode
+  because its host really is a `RichTextLabel`; these hosts are `Label`s in `HBoxContainer`s, so they
+  take a `TextureRect` — the `StageSprites` + `BandCityPanel.set_header` precedent. Neither is the
+  "right" way; pick by host.
+- **The UNTINTED rule reaches the HUD.** A row's sprite is drawn untinted exactly as a marker's is, and
+  the row's state rides geometry beside it (severity stripe, ecology dot, the marks column) rather than
+  a `modulate` — the treatment the map tried, rendered as a slightly darker brown animal, and reverted.
+
+**No `*Sprites` table changed for any of this**, and that is the point: `for_herd` / `for_site` already
+answered these questions, so a fifth consumer was a call, not a new resolver.
+
+---
+
 ## The trade-goods glyph (`FoodIcons.TRADE_GOODS_GLYPH`, issue #337)
 
 `⇄` marks every non-food component of a yield **on the TIGHT surfaces**, so a rate can never be

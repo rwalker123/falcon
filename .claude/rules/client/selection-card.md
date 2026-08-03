@@ -220,3 +220,33 @@ paths:
   exact `HudStyle` HEALTHY/WARN/DANGER constants. Non-player bands list with a neutral
   dot and no allocation panel (their larder/orders aren't ours to see). (The Tile card
   has no camp action — the `found_camp` command was removed end-to-end.)
+
+
+## The roster row's leading MARK is a node, and the patch path must SWAP it (issue #439)
+
+A land / herd row used to fuse its glyph into the name (`_roster_name_label("%s %s" % [glyph, name])`).
+It cannot, now that the mark is bundled art: a texture does not live inside a `Label.text`. The mark is
+therefore its own child ahead of the name, built by **`HudWidgets.build_marker_icon`** (the one builder
+every HUD text surface shares — see `hud-modules.md` for what it is and why it is a `TextureRect`), and
+the name label carries the name ALONE so the meta beside it goes on absorbing the row's slack.
+
+**THE TRAP IS THE IN-PLACE PATCH PATH.** These rows are patched rather than rebuilt (`_set_row_name` /
+`_store_row_refs` / `button.get_meta`), and the mark is a **`TextureRect` when the subject has bundled
+art and a glyph `Label` when it does not** — a distinction a row can cross between restates: a tile
+gains or loses a food module, a herd's label resolves to a species the client has no art for. Writing
+`.text` to a `TextureRect` is a **silent no-op**, so a patch that only wrote to the existing node would
+leave a stale mark beside a freshly-patched name, which is the exact staleness the patch path exists to
+avoid. `_set_row_icon` therefore patches the one property when the kind is unchanged and **swaps the
+node at its own child index** when it flips, re-stashing it on the button — so the common case stays
+rebuild-free and the flip is still correct.
+
+`row_icon` is deliberately **not** the `glyph_label` meta slot: that is the band row's TRAILING activity
+glyph, a different question in a different place, and folding them would make one meta key mean two
+things.
+
+**No frame can hold this claim** — both renderings are a perfectly ordinary row, and the stale one is
+stale only against a tile that is not in the same picture. `ui_preview`'s `tile_panel` chapter asserts it
+instead, on the same-tile restate block: one land row loses its `food_module` between two
+`reapply_selection`s, with a precondition that the roster really PATCHED (identical child instance ids —
+otherwise a rebuild would launder the bug) and the before/after classes read off `row_icon`.
+Sabotage-verified: dropping the swap fails exactly that one assertion.
