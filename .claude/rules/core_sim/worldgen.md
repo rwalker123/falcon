@@ -6,6 +6,9 @@ paths:
   - "core_sim/tests/{elevation_authority,climate_authority,hydrology_earthlike}.rs"
   - "core_sim/tests/{navigable_mouth_delta,alpine_headwaters,relief_sweep,lake_abundance}.rs"
   - "core_sim/tests/food_module_reconcile.rs"
+  - "core_sim/src/snapshot_overlays_config.rs"
+  - "core_sim/src/data/snapshot_overlays_config.json"
+  - "core_sim/tests/food_site_water_bias.rs"
 ---
 
 <!-- Extracted verbatim from lines 112-1063 of core_sim/CLAUDE.md at blob dcc757587f8c9308590997ee600abc64a34e6712
@@ -89,6 +92,129 @@ Implements the procedural map pipeline producing terrain, coasts, rivers/lakes, 
 >   `core_sim/tests/food_module_reconcile.rs`, which drives the real Startup chain via
 >   `build_headless_app` — both directions of the tag invariant, plus the symptom test *every
 >   `RiverDelta` has a `ForagePatch`*.
+
+## Gathering markers follow the fresh water (issue #466)
+
+**The curated `FoodSiteRegistry` is not decoration — it is the only ground a player can act on.**
+`food_modules` on the wire is the sole source the client's `_forage_compose_available` gate reads
+(`DrawerComposeController.gd`), so a hex without a marker offers **no Forage button**; and `sow`
+requires a band *already foraging* the tile. So the **markers** (130–134 on a Standard map since this
+arc; a flat 90 before it), not the ~2,000 food-bearing hexes, are the real denominator for "can I
+climb the plant ladder here" — and `plant:field`'s site rule demands fresh water.
+
+Curation could not see water. It runs inside `spawn_initial_world`, **before `generate_hydrology`**:
+at selection time the map has lakes but no rivers, no deltas, no floodplains and no `river_edges`.
+**Half of its quality sort was inert and half was not**, and the difference matters.
+`compare_food_site` is `seasonal_weight` DESC then `preferred` DESC. Every tile ships
+`INITIAL_SEASONAL_WEIGHT = 1.0`, so the **weight** term is always `Equal` and decides nothing — but
+the **`preferred`** tie-break is live: it is `preference.matches(module)` against
+`start_profile_overrides.food_modules`, and shipped `start_profiles.json` names
+`primary: savanna_grassland` / `secondary: riverine_delta`, so curation front-loads each bucket with
+those two modules on purpose. What was arbitrary, then, is *which hex of a preferred module* won —
+and nothing at all considered fresh water. Measured before the fix: **33.8 of 90 markers sowable**
+(mean, 6 seeds).
+
+**`bias_food_sites_toward_fresh_water`** (`systems/worldgen.rs`) re-ranks the result over the final
+terrain. Registered in the Startup chain immediately after `reconcile_food_modules` — which is what
+guarantees every surviving entry still classifies to a real module — and before anything publishes
+the list.
+
+- **Site quality = `tile_forage_capacity(tile) + fresh_water_site_weight × (tile is fresh-watered)`**,
+  read through the *same* `tile_forage_capacity` / `tile_is_fresh_watered` seams the patch seeding and
+  the `plant:field` gate use, never a private table. Expressed in **capacity units** so the two terms
+  are directly comparable: a watered tile outranks a dry one carrying up to `weight` more forage, and
+  richer watered ground still outranks poorer watered ground.
+- **A candidate must BOTH classify to a module AND bear food — the two gates are not redundant.**
+  `classify_food_module` says *which kind* of gathering a hex offers; `tile_forage_capacity >
+  NO_FORAGE_CAPACITY` says whether there is *any*. **Four** biomes classify to a real module at capacity
+  **0.0** — `SaltFlat` → SemiAridScrub, `HydrothermalVentField` → WetlandSwamp, `Glacier` → BorealArctic
+  (POLAR tag), `ActiveVolcanoSlope` → MontaneHighland (HIGHLAND tag) — and `spawn_initial_forage` seeds
+  them **no `ForagePatch`**. The other zero-capacity biomes (`AshPlain`, `BasalticLavaField`,
+  `FumaroleBasin`, `DeepOcean`) carry no tag the classifier's fallback matches, so the first gate
+  already excludes them. With
+  `fresh_water_site_weight = 60`, a salt flat beside an oasis scores `0 + 60` and outranks a marker on
+  `SemiAridScrub` (40) in the same bucket, so a classify-only filter published a Forage affordance
+  (`food_modules` is the only thing the client's gate reads) over ground the sim deliberately left
+  patchless — the issue-#330 symptom class. Same constant `spawn_initial_forage` uses, so the two
+  cannot drift.
+- **RE-RANK ONLY — it relocates, it never adds or drops.** Every move stays inside the marker's **own
+  spatial bucket** and re-checks `min_site_spacing` against every other marker, so the budget, the
+  per-bucket quota and the latitude spread are preserved by construction — *this pass* cannot change
+  how much gathering a map carries, only where it sits. **How much is a separate decision with its own
+  dial, `site_land_fraction`, and this arc did move it** (a flat 90 → 8% of land); do not read the
+  invariant above as "the shipped change left scarcity alone".
+- **It deliberately overrides the start profile's module preference.** The pass scores capacity + water
+  and never reads `preferred`, so a marker may move off `savanna_grassland` onto wetter ground. Accepted
+  rather than overlooked: `riverine_delta` **is** the fresh-water module, so the bias largely reinforces
+  the preference instead of fighting it, and a second term in the score would make *"why did this marker
+  move"* materially harder to reason about. If the preference ever needs protecting, it belongs in the
+  score here — not in a second pass.
+- **Why a separate pass rather than fixing curation in place.** Curation cannot simply move later:
+  `best_start_tile` consumes the curated list and the starting population is spawned around its answer,
+  all inside `spawn_initial_world`. Leaving selection where it is keeps start geography untouched and
+  confines the change to a re-rank.
+- **Deterministic**: candidates scored once, sorted score-DESC with an explicit `(y, x)` tie-break,
+  markers visited in list order; no `HashMap` iteration, no RNG.
+- **`fresh_water_site_weight = 0.0` is a no-op because the pass EARLY-RETURNS on it — not because of
+  the score.** With the bonus off, quality is bare forage capacity, and curation did not pick the
+  richest hex in each bucket, so a pass that ran at weight 0 would still relocate (measured: **82 of
+  ~130 markers** on seed 119304647). The zero-weight branch is load-bearing. It is also the A/B control
+  every measurement here is taken against, so the pass publishes **`FoodSiteWaterBiasReport`**
+  (`moved` / `relabelled` / `watered` / `total`, written on *every* path including the early return) and
+  the test asserts `moved == 0` at weight 0 and `moved > 0` at the shipped weight. There is no
+  "build the world without the pass" arm to diff against — the report *is* the no-op proof.
+- **A marker only ever moves to STRICTLY better ground.** The candidate scan breaks on
+  `score <= current`, so an equal-scoring hex is never taken: relocating onto one would discard
+  curation's bucket/quota/spacing decision for nothing, invisibly (count, spacing, legality and
+  watered share all survive it). Pinned by `a_marker_only_ever_moves_to_strictly_better_ground` —
+  weakening that comparison to `<` walks every marker onto the lowest-`(y, x)` equal-scoring hex in
+  its bucket and passes every other test in the file.
+- **Measured** (6 seeds, 80×52 earthlike, through `build_headless_app`): at the shipped budget of
+  **130–134 markers**, sowable markers **43.2 → 73.8 (1.71×)** across the re-rank, and **33.8 → 73.8
+  (2.18×)** against pre-#466 main, which combines the re-rank with the budget going from a flat 90 to
+  8% of land. Marker count is identical between the bias-off and bias-on arms of every seed — the pass
+  relocates only. Nearest sowable marker to the start tile is 0–4 hexes before and after: the bias is
+  about *how much* farmable ground a player meets, not about rescuing a start that had none, and
+  nothing pins that distance.
+- Guarded by `core_sim/tests/food_site_water_bias.rs` — the A/B relation (never a literal count), the
+  count-is-unchanged invariant, legality + spacing of relocated markers, the report-backed kill switch,
+  strict score improvement, the budget clamp, and build-to-build determinism. Plus an `#[ignore]`d
+  `gathering_marker_census`. Both arms of every A/B install the overlays config from
+  `BUILTIN_SNAPSHOT_OVERLAYS_CONFIG` rather than letting the bias-ON arm keep whatever
+  `SNAPSHOT_OVERLAYS_CONFIG_PATH` resolved, or the arms could differ in `site_land_fraction` /
+  `min_sites` / `min_site_spacing` as well as the lever under test.
+
+**Config** (`snapshot_overlays_config.json` → `food`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `site_land_fraction` | **0.08** | **The whole site budget**: what share of the map's LAND carries a gathering marker. |
+| `min_sites` | 24 | Floor under that budget, so a very small map still carries somewhere to gather. A floor only — it does not bind at Standard size. |
+
+> **The budget is clamped to at least 1 marker.** `site_land_fraction` explicitly permits `0.0` and
+> `min_sites` is taken raw, so `{"site_land_fraction": 0.0, "min_sites": 0}` would otherwise budget
+> **zero** markers on any map — no band could Forage anywhere, therefore never Sow, with nothing at
+> boot to say why. The `max_total_sites` this replaced carried the same `.max(1)`; it was lost in the
+> refactor and is back.
+| `fresh_water_site_weight` | **60.0** | What fresh water is worth to a marker, in forage-capacity units. `0.0` disables the re-rank pass entirely. |
+
+> **The budget is a share of LAND, and it scales in BOTH directions.**
+> `sites = clamp(site_land_fraction × land_tiles, min_sites, land_tiles)`, resolved through the one
+> seam `FoodOverlayConfig::site_budget`.
+>
+> **Of land, not of the grid**, because a marker can only sit on ground and `target_land_pct` differs
+> per preset (earthlike 0.38, polar_contrast 0.42) — a fraction of the whole grid would hand the two
+> presets different marker density on the land a player actually walks, for free.
+>
+> **What this replaced, and the bug in it.** The budget was
+> `max(max_total_sites, max(land_tiles / 120, 24))` with `max_total_sites = 90`. The flat count was a
+> **floor**, so the budget grew on maps past ~10,800 land tiles and **never shrank**: a 56×36 "Tiny"
+> map carried the same 90 markers as the 80×52 Standard. Three numbers, scaling one way. Pinned now
+> by `the_site_budget_scales_with_the_map_in_both_directions`, which a flat-count regression fails.
+>
+> **A consequence, intended:** the marker count is no longer a constant. Realized land is 37.7–38.0%
+> depending on seed, so the Standard map lands at **130–134** rather than exactly 90 — the count
+> follows the map, which is what a fraction means.
 
 ## Data Shapes
 - **Rasters**: `elevation_m: i16`, `climate_band: u8`, `game_density: u8` (the square-8 hex `flow_dir` / `flow_accum` rasters are **deleted** — hydrology routes on the corner graph, see "Rivers")
@@ -439,7 +565,10 @@ precipitation-weighted elevation surface, decomposed into main stems and tributa
   >
   > **Update (the divides arc).** The dome has been replaced by a warped / tilted / ridged envelope
   > (see `macro_land` below). At 80×52 navigable rivers now appear on **3 of 6 seeds** rather than 1,
-  > and the standard map carries **49 sowable tiles** — but the **coherence ratio is unchanged**, and
+  > and the standard map carries **49 sowable tiles** *(as counted by `relief_sweep`'s partial-chain
+  > harness — the real Startup chain reads **174**; see "the '49 sowable tiles' was wrong" in
+  > `cultivation.md`. The A/B here is still valid, since both arms use the same harness)* — but the
+  > **coherence ratio is unchanged**, and
   > the measured reason is geometric, not tuning: with a mean depth-to-coast of ~2.9 tiles the largest
   > landmass has roughly one ocean-touching (⇒ sink) corner per two interior corners, so a basin
   > cannot grow long enough to clear a discharge of 25 except by luck. **Landmass area remains the

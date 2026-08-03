@@ -305,7 +305,8 @@ seam `validate_cultivate`, `validate_sow`, the labor arm's `Sow` placement gate 
 biome and `spawn_initial_forage` seeds a patch on every tagged tile with capacity, so a module test
 admits ~2,300 of 4,160 tiles and the rule would be vacuous. The **gathering sites** are the curated
 `FoodSiteRegistry` — a latitude-band + spatial-bucket quota with minimum spacing,
-`max(land_tiles / 120, 24)` of them, fixed for the life of a world. That scarcity is what makes *which
+sized as a **share of land** (~8%, 130–134 per standard map) and biased toward fresh water since #466,
+fixed for the life of a world. That scarcity is what makes *which
 site a band can reach* the early game's real decision, and it is the pillar the whole design rests on.
 
 **It was a CLIENT-SIDE rule.** The tile card simply declined to offer the compose sheet off-site
@@ -351,8 +352,36 @@ herd has one appetite).
   - **`min_forage_capacity: 0`** — parked. It was **195** (admitting exactly the river-deposit class:
     RiverDelta 210, Floodplain 205, AlluvialPlain 195) while this rung had no site rule, and stacking
     the two demanded a curated site that ALSO landed on one of three biomes AND had water — scarcity
-    three times over on a set already ~1% of the map. **The dial stays live because rung 4 needs it**:
-    Farm has no site rule, so fertility is the only thing between it and planting a glacier.
+    three times over on a set the marker list had already made small. **The dial stays live because
+    rung 4 needs it**: Farm has no site rule, so fertility is the only thing between it and planting a
+    glacier.
+  - **Measured on the standard map** (earthlike 80×52, seed 119304647, through the **real Startup
+    chain**): **174 tiles clear the fertility+water rule of 4160 (4.2%)**, against **2113** that merely
+    bear food; over six seeds the mean is **197**. **The measurement only means anything with
+    `generate_hydrology` run**: the rule wants fresh water, and rivers/deltas are hydrology's, so a
+    fixture that skips it measures 0 at every grid size and every seed. Of the tiles clearing the
+    fertility floor, the water rule cuts about **40%**.
+    > **The "49 sowable tiles (1.2%)" this line carried until #466 was wrong, and the way it was wrong
+    > is the lesson.** Both counters that produced it — `relief_sweep::sowable_and_deltas` and
+    > `forage_field`'s own `spawn_world_on` — stop after `spawn_initial_world` + `generate_hydrology`,
+    > skipping `apply_tag_budget_solver`, `apply_biome_palette_clamp`, `reconcile_coastal_shelf` and
+    > `reconcile_food_modules`. That is an **intermediate** map: four later stages repaint terrain, and
+    > they add sowable ground. Measured on the same seed the short harness reads 136 and the real chain
+    > 174. **Count worldgen outcomes through `build_headless_app`**, never through a partial chain — the
+    > figure was quoted in two rule files and used to argue that sowable ground was desperately scarce,
+    > which it is not.
+  - **THE SCARCITY LIVES IN THE MARKER LIST, NOT THE TILE COUNT — and since #464 the sim says so.**
+    A band may only work a curated `FoodSiteRegistry` marker, so the ground rung 3 can be built on is
+    `markers ∩ watered`: **130–134 markers** per map (8% of land since #466; a flat 90 before), of which
+    **73.8** clear the water rule once curation is biased toward fresh water, against **33.8** on
+    pre-#466 main. See "Gathering markers follow the fresh water" in `worldgen.md`.
+    > **That rule used to exist only in the client.** This bullet read *"a player can only Forage where
+    > there is a marker (the client's `_forage_compose_available` reads `food_module`)"* — an accurate
+    > description of a scarcity the **sim did not implement**: `assign_labor forage` was accepted on any
+    > patch, so the single client refused commands the server would have honoured. #464 made it
+    > `requires_gathering_site` on plant rungs 1–3, enforced through `rung_site_refusal`. The player-facing
+    > arithmetic above is unchanged; what changed is that the sim now owns it. See "Gathering is
+    > SITE-BOUND" above.
   - **A GATHERING SITE ADMITS BASKETS RUNG 3 CANNOT COMMIT TO — the site and the CROP are now two
     questions, and both already answer.** The 195 floor used to imply a rich basket (the river-deposit
     class is full of `field`-ceiling staples), so "the ground takes seed" implied "something here can be
@@ -462,7 +491,7 @@ herd has one appetite).
   `the_exported_sow_site_refusal_is_the_verdict_the_command_acts_on`, so the wire cannot disagree with
   the gate.
   > **`not_gathering_site` is the newest key and became the COMMONEST answer** (issue #464): it is
-  > shipped for every patch tile that is not one of the ~24-60 curated sites, i.e. the large majority
+  > shipped for every patch tile that is not one of the 130–134 curated sites, i.e. the large majority
   > of them. **Two things follow.** `"too_poor"` is currently **unreachable** — every shipped rung's
   > `min_forage_capacity` is `0` — but the key stays, because the floor is rung 4's dial and the
   > variant is what will carry it. And a reader extending the client from this list must take **all

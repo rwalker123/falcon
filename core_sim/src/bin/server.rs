@@ -7764,10 +7764,16 @@ mod tests {
         );
     }
 
-    /// The first **gathering site** whose realized basket holds nothing that can climb to `field`,
-    /// scanned in a totally-ordered `(y, x)` sweep. Resolved through the same
-    /// `tile_flora_composition` + `default_species_for_rung` seams the command judges with, so the
-    /// fixture cannot select a tile the rule would actually accept.
+    /// The first tile that clears the **whole site rule** — a curated gathering site, on fresh water
+    /// — and whose realized basket still holds nothing that can climb to `field`. Scanned in a
+    /// totally-ordered `(y, x)` sweep, and resolved through the same `plant_rung_site_refusal` /
+    /// `tile_flora_composition` / `default_species_for_rung` seams the command judges with, so the
+    /// fixture cannot select a tile the rule would accept for a different reason.
+    ///
+    /// **The site rule has to pass, or the test asserts the wrong refusal.** `validate_sow` answers
+    /// the LAND before the CROP, so a site that merely failed the water rule would be refused with
+    /// "too dry" and the crop check would never be reached — which is exactly how this fixture broke
+    /// when #466's water-biased curation moved the marker list under it.
     fn find_unsowable_basket_site(app: &bevy::prelude::App) -> Option<UVec2> {
         let (width, height) = {
             let registry = app.world.resource::<TileRegistry>();
@@ -7779,7 +7785,7 @@ mod tests {
         for y in 0..height {
             for x in 0..width {
                 let coord = UVec2::new(x, y);
-                if !app.world.resource::<FoodSiteRegistry>().is_site(coord) {
+                if plant_rung_site_refusal(app, RungKey::PlantField, coord).is_some() {
                     continue;
                 }
                 let Some(ground) = app

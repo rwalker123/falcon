@@ -411,7 +411,7 @@ interesting future rungs (selective breeding, irrigation, traction, crop rotatio
       Farm is the first rung to drop the site requirement, which is what gives it something to *be*.
     - **`min_forage_capacity` 195 → 0.** With the site rule carrying the scarcity, the floor demanded a
       curated site that *also* landed on one of three biomes *and* had water — scarcity three times
-      over on a set already ~1% of the map. The dial stays live and unpaid because rung 4 is where it
+      over on a set the marker list had already made small. The dial stays live because rung 4 is where it
       earns its keep: Farm has no site rule, so fertility is the only thing between it and a glacier.
     - **A consequence the 195 floor had been hiding:** a gathering site's basket may hold nothing that
       climbs to `field` (an open-water fishery, an alpine shelf). The site and the crop are two

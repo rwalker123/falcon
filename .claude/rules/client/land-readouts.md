@@ -385,7 +385,8 @@ asked the question at all.
 
 **It is the module KEY, never its label** — a tile with no site still ships the label `"None"`, which
 would render as a site called "None". And **the wire only ever carries the curated sites**
-(`foodModules` ← the sim's `FoodSiteRegistry`, a latitude/bucket-quota'd ~24–60 entries per map), so
+(`foodModules` ← the sim's `FoodSiteRegistry`, a spatially-quota'd 130–134 entries per map — 8% of
+land, biased toward fresh water since #466), so
 presence *is* the answer; there is no "carries a food module but is not a site" case to distinguish
 client-side, even though that describes most land tiles in the sim.
 
