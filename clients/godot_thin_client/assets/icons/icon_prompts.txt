@@ -391,6 +391,33 @@ village: Flat vector game icon of a small cluster of three simple houses with pi
 # PRODUCT, not the account it pays into.
 
 
+# AS SHIPPED — measured at 13px over #111A1E, which is the only size that decides
+# anything here. All three keyed at `--lo 85 --hi 240`:
+#
+#   mark     silhouette (w x h)   ink    luma   residual bg
+#   staple   3 x 8                16.7%  191    1
+#   fodder   11 x 5               29.9%  158    12
+#   cash     10 x 11              55.5%  134    0
+#
+# The SILHOUETTE column is the whole design: a thin vertical, a wide horizontal and
+# a solid block are three different shapes before they are three different colours,
+# which is what makes the set survive at a size where interior detail does not.
+# Every luma is 5-8x the panel's 24, so contrast never came under pressure — the
+# "contrast is nearly free on this panel" claim above is now measured, not assumed.
+#
+# TWO THINGS THAT DISSOLVE, both expected and both fine: fodder's binding band and
+# cash's cord are gone below ~26px, so those two read as a plain bar and a plain
+# block in play. They were asked for as the ONE permitted interior division and
+# they earn their keep at 26px+; do not "fix" this by thickening them, which would
+# split each mark into two shapes at row size. It is the `reeds` trade again.
+#
+# The cash render came back on a NAVY background rather than magenta and keyed
+# cleanly anyway (0 residual) — `icon_key.py` samples the corners, so any flat
+# uniform field works. Its fold notches are that background showing THROUGH, so
+# they key to transparent and the panel shows through them, which is why they cost
+# nothing. Worth knowing before "correcting" the background of a future render.
+
+
 # staple.png — role `staple` (food for people; retires the wheat-ear emoji)
 # TALL + NARROW, warm gold. Deliberately NOT `sites/grain.png`, which is a TIED
 # SHEAF of several stalks shown from the side and dissolves into a mass at this
