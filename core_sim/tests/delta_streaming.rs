@@ -5,11 +5,11 @@
 //! field that simply did not change. Nothing in normal play surfaces any of them, which is why they
 //! are pinned rather than left to review.
 
-use core_sim::SnapshotHistory;
+use core_sim::{Scalar, SnapshotHistory};
 use shadow_scale_flatbuffers::generated::shadow_scale::sim as fb;
 use sim_runtime::{
     CampaignProfileState, CommandEventState, CultureLayerScope, CultureTensionKind,
-    CultureTensionState, WorldDelta, WorldSnapshot,
+    CultureTensionState, ScalarRasterState, WorldDelta, WorldSnapshot,
 };
 
 /// One retained feed row, at the sequence the log would have stamped on it (**one-based** — a
@@ -648,4 +648,170 @@ fn a_turn_that_changes_nothing_publishes_a_delta_that_carries_nothing() {
     assert_eq!(delta.terrain, None, "unchanged section: terrain overlay");
     assert_eq!(delta.victory, None, "unchanged section: victory");
     assert_eq!(delta.herds, None, "unchanged section: herds");
+}
+
+/// A map small enough to write out, and big enough that "every cell" is a claim rather than a
+/// single value.
+const GUARD_RASTER_WIDTH: u32 = 2;
+const GUARD_RASTER_HEIGHT: u32 = 2;
+
+/// The two visibility samples `visibility_raster_from_ledger` publishes at the extremes: fog off
+/// fills the whole raster with `Scalar::SCALE` (Active), an unseen cell is `0` (Unexplored).
+const ACTIVE: i64 = Scalar::SCALE;
+const UNEXPLORED: i64 = 0;
+
+fn visibility_raster(sample: i64) -> ScalarRasterState {
+    ScalarRasterState {
+        width: GUARD_RASTER_WIDTH,
+        height: GUARD_RASTER_HEIGHT,
+        samples: vec![sample; (GUARD_RASTER_WIDTH * GUARD_RASTER_HEIGHT) as usize],
+    }
+}
+
+/// **A section a command moved and a later command in the SAME TICK moved back is restated.**
+///
+/// The reported instance is `set_fog off` then `set_fog on` with no turn between. The fog-off
+/// recapture publishes the all-Active raster; the fog-on recapture finds the fogged raster equal to
+/// the *turn* baseline and — before the `held` flag — published nothing, leaving the client
+/// rendering a fully-revealed map while `fogEnabled` on the very same delta said fog was on.
+///
+/// It does not self-heal: the visibility raster is byte-identical turn over turn whenever nothing
+/// moves, so no later turn ever finds it changed. That is the property that makes this class of bug
+/// permanent rather than one-turn, and it is why the guard is on this section.
+#[test]
+fn a_visibility_raster_toggled_off_and_back_within_a_tick_is_restated() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        visibility_raster: visibility_raster(UNEXPLORED),
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    // `set_fog off`: a mid-tick recapture reveals the whole map.
+    world.fog_enabled = false;
+    world.visibility_raster = visibility_raster(ACTIVE);
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .visibility_raster,
+        Some(visibility_raster(ACTIVE)),
+        "the fog-off recapture must carry the revealed raster — this half always worked"
+    );
+
+    // `set_fog on`, still with no turn between: back to exactly the turn baseline.
+    world.fog_enabled = true;
+    world.visibility_raster = visibility_raster(UNEXPLORED);
+    history.refresh_latest(world.clone());
+    let delta = history.last_delta().expect("a delta per recapture");
+    assert_eq!(
+        delta.visibility_raster,
+        Some(visibility_raster(UNEXPLORED)),
+        "the fog-on recapture must RESTATE the fogged raster: it equals the turn baseline, but the \
+         client is holding the revealed one the previous recapture published"
+    );
+    assert!(
+        delta.fog_enabled,
+        "…and the flag that rides every delta must agree with the raster beside it"
+    );
+}
+
+/// The same property on a section that has nothing to do with fog, so the guard reads as the
+/// general rule it is: any whole section published on a held frame is restated when it comes back.
+#[test]
+fn a_tension_roster_changed_and_reverted_within_a_tick_is_restated() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        culture_tensions: vec![guard_tension()],
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    world.culture_tensions.clear();
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .culture_tensions,
+        Some(Vec::new()),
+        "the first recapture carries the emptied roster"
+    );
+
+    world.culture_tensions = vec![guard_tension()];
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .culture_tensions,
+        Some(vec![guard_tension()]),
+        "the second must restate the roster the client was told to clear, even though it now equals \
+         the turn baseline again"
+    );
+}
+
+/// **A revert that straddles a turn boundary is restated by the TURN.**
+///
+/// The flag outlives the held frames, so the `Baseline::Advance` arm has to consult it too:
+/// otherwise a command that changes a section and a turn that puts it back leaves the client on the
+/// command's intermediate value with the baseline agreeing it is correct.
+#[test]
+fn a_turn_restates_a_section_a_recapture_moved_and_gave_back() {
+    let mut history = SnapshotHistory::with_capacity(64);
+    let mut world = WorldSnapshot {
+        fog_enabled: true,
+        campaign_profiles: vec![CampaignProfileState {
+            id: Some("straddle".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    world.header.tick = 1;
+    history.update(world.clone());
+
+    let baseline_profiles = world.campaign_profiles.clone();
+    world.campaign_profiles = vec![CampaignProfileState {
+        id: Some("mid-tick".to_string()),
+        ..Default::default()
+    }];
+    history.refresh_latest(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per recapture")
+            .campaign_profiles,
+        Some(world.campaign_profiles.clone()),
+        "the recapture carries the command's change"
+    );
+
+    // The turn resolves with the roster back where the last turn left it.
+    world.header.tick = 2;
+    world.campaign_profiles = baseline_profiles.clone();
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per turn")
+            .campaign_profiles,
+        Some(baseline_profiles),
+        "the turn must restate the roster — the client is holding the recapture's value"
+    );
+
+    // …and the turn after that is quiet again, because the restatement cleared the flag.
+    world.header.tick = 3;
+    history.update(world.clone());
+    assert_eq!(
+        history
+            .last_delta()
+            .expect("a delta per turn")
+            .campaign_profiles,
+        None,
+        "a restatement clears the flag, so the steady turn after it carries nothing"
+    );
 }

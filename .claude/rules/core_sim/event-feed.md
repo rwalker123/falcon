@@ -97,6 +97,18 @@ recaptures, and here it is the difference between a lost frame being free and be
 A rollback rewinds the cursor to the highest `seq` in the restored entry (`0` when empty), for the
 mirror reason: a cursor left ahead of a rewound world suppresses the re-send.
 
+**And it carries no `Whole::held` flag, which is not an omission.** Every other whole section now
+does (`turn-profiling.md` → "A HELD section must be restated when it comes back"), because a command
+can change a section and a later command in the same tick change it *back*, leaving the client on an
+intermediate value no diff reports. **An append-only log has no "back".** The cursor stays at the
+turn's value across every held frame, so each one re-ships *every* row since that turn — the second
+recapture restates the first's rows by construction, which is exactly what the flag buys elsewhere.
+The cost is a double-send, and the client de-duplicates on `seq`;
+`delta_streaming::a_recapture_delta_carries_every_event_since_the_turn_baseline` pins it. The window
+scalar beside it (`command_events_retention_turns`) is an ordinary `Whole<u32>` and *does* take the
+flag — a `reload_config` issued and reverted within one tick is precisely the reverting section that
+guard exists for.
+
 ## The demographic flows: a rate becomes an event
 
 `advance_demographics` resolved `births`, `maturation` and its death terms as locals and dropped
