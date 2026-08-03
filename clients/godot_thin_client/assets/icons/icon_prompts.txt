@@ -362,7 +362,26 @@ mammoth: Flat vector game icon of a woolly mammoth standing in a calm neutral po
 # KEYING: pale-and-cool is FAR from magenta (a cream measures ~230), so unlike the gazelle this one
 # has real headroom — a wider ramp is available if JPEG ringing leaves a fringe. Measure the min
 # distance-from-key first, as always, rather than assuming either direction.
-marsh_grazer: Flat vector game icon of a marsh grazer, a large pale wading antelope with a high arched rump, a deep chest, long slender legs with wide splayed hooves, and a pair of long gently spiralling horns sweeping back from its head, standing calmly ankle-deep as if in shallow water, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale cream and light silver-grey that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out sharply against dark swamp water, black peat and wet river mud, with distinctly darker charcoal lower legs below the knee suggesting a waterline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
+#
+# ⚠ DO NOT PUT THE ANIMAL IN WATER, and this prompt used to. It read "standing calmly ankle-deep as
+# if in shallow water", which CONTRADICTED its own "floating with no ground shadow" clause eleven
+# words later — and the generator obeyed the first one, drawing water RIPPLE RINGS around the hooves
+# in both renders. That is a ground element, which is precisely what the house style's no-shadow
+# rule exists to exclude, and it failed exactly the way that rule predicts: at 24px the rings
+# collapsed into a dirty horizontal bar under the feet, carrying a visible PINK CAST on
+# alluvial_plain and navigable_river because thin pale strokes against magenta are almost all edge.
+# Measured, the rings held most of the icon's key fringe — residual **73 with them, 45 without**.
+# The waterline is carried by the DARK LOWER LEGS alone, which is enough and costs nothing.
+#
+# THE SHIPPED PNG IS POST-PROCESSED, so it is not a pure `icon_key.py` output and re-running the
+# prompt will not reproduce it byte-for-byte: the ripple band was cut (every row below the hooves
+# dropped) and the result re-trimmed and re-framed the way `icon_key.py`'s `_fit` does. Connected-
+# component stripping was tried FIRST and does not work — the rings are drawn TOUCHING the hooves,
+# so only 158 px of 4 detached arcs separate out and the bar survives. Cutting also made the icon
+# BETTER, not merely cleaner: the bbox shrank, so the reframe scaled the animal up ~8% (14050 →
+# 15234 opaque px) and it reads larger at marker size. **With the clause above removed, a fresh
+# render should need none of this** — check for rings before assuming it does.
+marsh_grazer: Flat vector game icon of a marsh grazer, a large pale wading antelope with a high arched rump, a deep chest, long slender legs with wide splayed hooves, and a pair of long gently spiralling horns sweeping back from its head, standing calmly in a neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale cream and light silver-grey that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out sharply against dark swamp water, black peat and wet river mud, with distinctly darker charcoal lower legs below the knee suggesting a waterline, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 rabbit: Flat vector game icon of a wild brown rabbit with long upright ears, a compact crouched body and a short round tail, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in warm earth tones with simple two-tone shading, crisp clean edges, centered with even padding on a plain solid magenta background, the rabbit floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
@@ -410,6 +429,18 @@ sheep: Flat vector game icon of a sheep with a thick rounded woolly fleece, a sm
 # real saiga looks like anyway.
 # KEYING: same headroom note as `marsh_grazer` — pale-and-cool sits far from magenta, so a wider
 # ramp is available if needed. Measure the min distance-from-key rather than assuming.
+# NEAREST LOOKALIKE IS `gazelle`, AND THIS PAIR SEPARATES ON COLOUR RATHER THAN SHAPE — the one
+# place in the set where that is true, so it is worth knowing before regenerating either. Measured
+# on the shipped art their proportions are nearly the same (aspect 0.93 vs 0.78, leg fraction 29%
+# vs 30%), and what carries the read is saturation 0.27 vs 0.46 and luma 174 vs 129 — a flat sand
+# runner against a saturated orange-rufous gazelle with a bold white flank stripe — plus head
+# carriage, this one's muzzle drooping where the gazelle's head is high and level.
+# **The practical risk is low and the reason is worth recording**: their host modules are DISJOINT
+# (`savanna_grassland` → prairie_steppe / semi_arid_scrub / oasis_basin; the gazelle's
+# `semi_arid_scrub` → hot_desert_erg / rocky_reg / salt_flat), so no hex can hold both and they
+# only ever meet across a biome boundary. They look adjacent in `map_fauna_sprites` because that
+# frame deliberately stands every species in one row, which is a property of the FRAME and not of
+# the map. If either is ever regenerated, keep the saturation gap — it is doing the work here.
 steppe_runner: Flat vector game icon of a steppe runner, a lean fast-running antelope of the open grassland with a deep chest, a narrow waist and long slender legs built for speed, a distinctive bulging down-turned nose, and a pair of short ringed horns rising almost straight up from its forehead, a short tufted tail, standing alert in a calm neutral pose, shown in side profile facing right, drawn as a bold simplified silhouette with a thick dark charcoal outline around the entire body, flat limited color palette in pale sandy cream and soft white that stays clearly lighter than the outline and reads clearly LIGHT overall so it stands out against mid-toned dry grassland and scrub, with a slightly warmer tan along the back, simple two-tone shading, calm neutral facial expression, crisp clean edges, centered with even padding on a plain solid magenta background with the flat magenta touching the subject on every side, no rounded square, no tile, no card, no badge, no frame, no border and no background panel of any kind, the animal floating with no ground shadow and no shadow beneath the feet, minimal graphic style that stays clearly readable when scaled down to 24 pixels, strategy game map marker icon
 
 # wolf.png — Grey Wolf Pack (Predators Phase 1a — the first PREDATOR, a carnivore herd)
