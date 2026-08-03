@@ -26,6 +26,21 @@
 #    background. Any uniform background works — icon_key.py samples the four
 #    corners — but magenta keys cleanest against earth-tone subjects.
 #
+#    ASK FOR NO TILE, AND CHECK THE COVERAGE NUMBER BEFORE ANYTHING ELSE. Current
+#    image models read "flat vector game icon … on a magenta background" as a
+#    request for an APP ICON and draw a dark rounded-square tile with the magenta
+#    only as a surround. The key then does exactly what it is told — the corners
+#    are magenta, so it keeps the TILE as the subject — and you get a dark chip
+#    with a shrunken icon centred in it, which composites over the panel as a
+#    visible box. Measured on the first `staple` pair: `icon_key.py` reported
+#    **"subject covers 73.2% of the canvas"** where a bare wheat ear is ~15-20%.
+#    That printed line is the cheapest detector there is, so read it every time —
+#    a coverage figure far above the subject's honest share means something behind
+#    the subject survived. The counter-clause is in every `crops/` prompt below
+#    ("no rounded square, no tile, no card, no badge, no frame, no border … the
+#    flat magenta touching the subject on every side") — carry it into any new
+#    prompt rather than assuming "plain solid magenta background" is enough.
+#
 # 2. KEY OUT the background to transparency and normalize the framing:
 #
 #      python3 scripts/texture/icon_key.py in.jpg out.png --size 256
@@ -380,14 +395,14 @@ village: Flat vector game icon of a small cluster of three simple houses with pi
 # TALL + NARROW, warm gold. Deliberately NOT `sites/grain.png`, which is a TIED
 # SHEAF of several stalks shown from the side and dissolves into a mass at this
 # size — this is ONE ear, which is what leaves enough width per grain to read.
-staple: Flat vector game icon of a single upright ear of ripe wheat, one fat seed head of plump overlapping grains on a very short stubby stalk with no leaves, tall and narrow in overall shape, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright warm golden amber tone with at most one slightly darker gold division separating the grains, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+staple: Flat vector game icon of a single upright ear of ripe wheat, one fat seed head of plump overlapping grains on a very short stubby stalk with no leaves, tall and narrow in overall shape, drawn as one bold flat silhouette with NO outline of any kind, filled in a single bright warm golden amber tone with at most one slightly darker gold division separating the grains, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fine texture, no small details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
 
 # fodder.png — role `fodder` (feed for penned animals; retires the cow emoji)
 # LOW + WIDE, fresh green. NO ANIMAL — the retired cow is `POLICY_CORRAL`'s penned-
 # livestock mark and still means that on the work board and the map. A bound bale of
 # cut green forage says "feed" by the product instead, and its squat horizontal
 # block is the strongest silhouette of the three at 13px.
-fodder: Flat vector game icon of a bound bale of cut green forage, a squat low wide rectangular block of stacked hay with slightly ragged ends and one simple horizontal binding band across its middle, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green tone with at most one slightly darker green band for the binding, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no individual straws, no fine texture, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+fodder: Flat vector game icon of a bound bale of cut green forage, a squat low wide rectangular block of stacked hay with slightly ragged ends and one simple horizontal binding band across its middle, clearly wider than it is tall, drawn as one bold flat silhouette with NO outline of any kind, filled in a single fresh medium green tone with at most one slightly darker green band for the binding, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no individual straws, no fine texture, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
 
 # cash.png — role `cash` (goods to trade; retires the exchange arrow)
 # SQUARE + COMPACT, dusty rose. NO ARROW, COIN OR SCALE — the exchange arrow is
@@ -396,4 +411,4 @@ fodder: Flat vector game icon of a bound bale of cut green forage, a squat low w
 # cash crops here are fibre (cotton, flax), so a wrapped bolt of dyed cloth names
 # the PRODUCT rather than the account. The rose hue is the far side of the wheel
 # from both siblings.
-cash: Flat vector game icon of a compact upright bolt of folded dyed cloth, a roughly square blocky bundle of neatly folded fabric with one simple diagonal binding cord across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm dusty rose terracotta tone with at most one slightly darker rose line for the cord, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fabric texture, no fine details, crisp clean edges, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
+cash: Flat vector game icon of a compact upright bolt of folded dyed cloth, a roughly square blocky bundle of neatly folded fabric with one simple diagonal binding cord across its face, drawn as one bold flat silhouette with NO outline of any kind, filled in a single warm dusty rose terracotta tone with at most one slightly darker rose line for the cord, the shape reading clearly LIGHT and high-contrast so it stands out sharply against a near-black dark blue-grey panel, no gradients, no fabric texture, no fine details, crisp clean edges, the subject drawn DIRECTLY on the magenta with nothing behind it — no rounded square, no tile, no card, no badge, no button, no frame, no border and no background shape of any kind, the flat magenta touching the subject on every side, centered with even padding on a plain solid magenta background, floating with no ground shadow, extremely minimal graphic style that stays clearly readable when scaled down to 13 pixels, user interface row icon
