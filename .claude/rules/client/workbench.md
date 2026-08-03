@@ -128,6 +128,19 @@ sparse and the client's carried defaults safe.
 
 `workbench_preview`'s `_assert_staged_survives_un_edit` pins both legs.
 
+## The surface's width is an OFFSET, never a `size`
+
+The shell is anchored `PRESET_LEFT_WIDE` — left and right anchors equal, top and bottom **not** — so
+its height comes from the anchors and only its width is the surface's to set. `_emit_reserved_width`
+sets `offset_right`; a `size` write is wrong on both axes. `Control` warns on one under unequal
+opposite anchors ("will have their size overridden after `_ready()`"), which `Main` trips because it
+hides the surface from its own `_ready`, before the deferred callback that clears the warning runs.
+And `size` is a `Vector2`: `size.x = w` writes the current — minimum-size-clamped — `size.y` back as
+an explicit bottom offset, pinning a height the anchors are supposed to stretch.
+
+`Main` and `workbench_preview` seed the surface through the same offset, so drag-resize, the
+show/hide toggle and construction all move one number.
+
 ## A hidden Workbench ingests nothing
 
 `update_snapshot` caches the newest frame **by reference** and skips the fan-out while the surface is
