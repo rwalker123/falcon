@@ -1690,6 +1690,13 @@ impl FaunaConfig {
             // `ferocity` is a probability (fights back vs flees), so the same `[0, 1]` bound as
             // `aggression`. It scales the animal's effective attack in the hunt-casualty adapters.
             require_in_unit_range(species_field("ferocity"), def.ferocity)?;
+            // `combat.wariness` is a probability too (breaks off at contact vs stays to be fought),
+            // and `CombatStats` is `#[serde(default)]`, so the JSON can author anything here.
+            // `fauna::animals_that_stay` clamps an out-of-range value with `.min(1.0)`, which hides an
+            // authoring slip — and a **NaN** is worse than hidden: `NaN <= 0.0` is false so the
+            // wariness-`0` early return is skipped, and `NaN.min(1.0)` is `1.0` in Rust, so every
+            // engaged animal retreats and the species' take is **silently zero** on every hunt.
+            require_in_unit_range(species_field("combat.wariness"), def.combat.wariness)?;
             // **Carnivore coherence** (Predators Phase 1a, `docs/plan_predators.md`). A carnivore's
             // carrying capacity is `Σ prey_flow / prey_per_biomass`, so `prey_per_biomass` is a
             // denominator and must be `> 0` (a `0` yields infinite `K`). And a carnivore whose `attack`
@@ -1896,15 +1903,6 @@ impl FaunaConfig {
             .map_or(DEFAULT_ANIMALS_PER_HERDER, |def| def.animals_per_herder)
     }
 
-    /// **The animals one hunter of this species can bring into contact per turn**
-    /// ([`SpeciesDef::engage_rate`]), resolved by the display name a `Herd` carries — the
-    /// [`FaunaConfig::taming_rate_for`] path, so retuning the dial reaches herds already on the map.
-    ///
-    /// **A species the table cannot resolve reads [`f32::INFINITY`] — no engagement bound at all**,
-    /// not a small number. The unresolvable case is an isolated test fixture, and the honest reading
-    /// of "this herd is not in the roster" is *the engagement stage has nothing to say about it*,
-    /// which leaves such a fixture's take exactly as it was before this arc. A finite default would
-    /// silently cap fixtures at a number nobody chose.
     /// **The probability an animal of this species breaks off at contact**
     /// ([`crate::combat::CombatStats::wariness`]), resolved by display name — the
     /// [`FaunaConfig::taming_rate_for`] path. An unresolvable species reads `0.0`: no retreat, which
@@ -1914,6 +1912,15 @@ impl FaunaConfig {
             .map_or(0.0, |def| def.combat.wariness)
     }
 
+    /// **The animals one hunter of this species can bring into contact per turn**
+    /// ([`SpeciesDef::engage_rate`]), resolved by the display name a `Herd` carries — the
+    /// [`FaunaConfig::taming_rate_for`] path, so retuning the dial reaches herds already on the map.
+    ///
+    /// **A species the table cannot resolve reads [`f32::INFINITY`] — no engagement bound at all**,
+    /// not a small number. The unresolvable case is an isolated test fixture, and the honest reading
+    /// of "this herd is not in the roster" is *the engagement stage has nothing to say about it*,
+    /// which leaves such a fixture's take exactly as it was before this arc. A finite default would
+    /// silently cap fixtures at a number nobody chose.
     pub fn engage_rate_for(&self, display: &str) -> f32 {
         self.species_by_display(display)
             .map_or(f32::INFINITY, |def| def.engage_rate)

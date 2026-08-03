@@ -285,9 +285,15 @@ const BOAR_R: f32 = 0.10;
 /// fixed `carrying_capacity` we set (the live-arm harness recomputes `K` from graze; these tests pin
 /// the raid math against a known ecology, not the ecology itself).
 fn wild_herd(biomass: f32, cap: f32, body: f32, r: f32) -> Herd {
+    wild_herd_of("Wild Boar", biomass, cap, body, r)
+}
+
+/// [`wild_herd`] for a named species — the engagement bound is resolved off the species' display
+/// name (`FaunaConfig::engage_rate_for`), so a test about *reach* has to say which animal it means.
+fn wild_herd_of(species: &str, biomass: f32, cap: f32, body: f32, r: f32) -> Herd {
     Herd::new(
         "game_raid".to_string(),
-        "Wild Boar".to_string(),
+        species.to_string(),
         SizeClass::Big,
         vec![UVec2::new(1, 1)],
         biomass,
@@ -296,6 +302,78 @@ fn wild_herd(biomass: f32, cap: f32, body: f32, r: f32) -> Herd {
         r,
         body,
     )
+}
+
+/// Red Deer's shipped shape: a **15**-unit body a hunter engages **one** of per turn — so a party's
+/// *reach* is strictly tighter than its *carry* (`40 / 15` ≈ 2.6 animals per hunter), which is what
+/// makes the deer the fixture for the engagement bound.
+const DEER_BODY: f32 = 15.0;
+/// A deer herd standing at a capacity far above what any party here can clear, so the herd's own
+/// escapement room never binds and the comparison is purely between the party's two bounds.
+const DEER_K: f32 = 4000.0;
+/// The food peak (`MSY_BIOMASS_FRACTION`) — the default floor a fresh assignment or launch gets.
+const PEAK_FLOOR: f32 = 0.5;
+/// The party both halves of the parity test field. Small enough to be a plausible band *and* a legal
+/// expedition, large enough that carry (13 deer) and reach (5 deer) give visibly different answers.
+const PARITY_PARTY: u32 = 5;
+
+/// **A raid and a resident band reach the SAME animals** — the same party on the same herd must not
+/// take a different number of animals purely by choosing the expedition verb.
+///
+/// `docs/plan_hunt_through_combat.md` §1 states the hunt's stages for *the hunt*; §10 exempts only the
+/// pen. The engagement bound reached `systems::hunt_take` first, and for one commit the raid path
+/// skipped it: five hunters killed 5 Red Deer a turn from camp and `floor(5 × 40 / 15) = 13` a turn as
+/// a raid, off the same herd. This pins the two paths to one answer, and the liveness half pins that
+/// the answer is the *engagement* bound rather than the carry bound they would share anyway.
+#[test]
+fn a_raid_and_a_resident_band_reach_the_same_animals() {
+    let fauna = FaunaConfig::builtin();
+    let labor = LaborConfig::builtin();
+    let cfg = unbounded_carry_config();
+    let per_worker = labor.hunt.per_worker_biomass_capacity;
+    // A full herd: at `B == K` regrowth is zero, so the raid's first simulated turn sees exactly the
+    // herd the band does and the two are comparable turn-for-turn.
+    let herd = wild_herd_of("Red Deer", DEER_K, DEER_K, DEER_BODY, BOAR_R);
+
+    let band_killed = {
+        let mut quarry = herd.clone();
+        hunt_take(
+            &mut quarry,
+            PARITY_PARTY,
+            PEAK_FLOOR,
+            NO_IMPROVEMENT_UNDERWAY,
+            per_worker,
+            &fauna,
+            &LadderConfig::builtin(),
+            f32::INFINITY,
+            // Every shipped species has `wariness 0`, which makes the retreat draw an exact
+            // identity — so the seed is unobservable and held fixed on both paths.
+            0,
+        )
+        .killed
+    };
+
+    let raid = hunt_trip_forecast(PARITY_PARTY, &herd, PEAK_FLOOR, &fauna, &labor, &cfg);
+    let food_per_animal = herd_hunt_yield(&herd, &fauna)
+        .apply(DEER_BODY, 1.0)
+        .provisions;
+    let raid_killed_first_turn = (raid.first_turn_provisions / food_per_animal).round() as u32;
+
+    assert_eq!(
+        raid_killed_first_turn, band_killed,
+        "a raid and a resident band of {PARITY_PARTY} must take the same deer off the same herd \
+         (raid {raid_killed_first_turn}, band {band_killed})"
+    );
+    // Liveness, two ways. The take is real…
+    assert!(band_killed > 0, "the fixture must produce an actual take");
+    // …and it is the ENGAGEMENT bound that produced it: the party's packs would have seated far more,
+    // so deleting the bound on either path breaks the equality above rather than passing quietly.
+    let carry_allows = (PARITY_PARTY as f32 * per_worker / DEER_BODY).floor() as u32;
+    assert!(
+        carry_allows > band_killed,
+        "the fixture must be reach-bound, not carry-bound: carry seats {carry_allows}, reach took \
+         {band_killed}"
+    );
 }
 
 /// An expedition config whose carry cap is effectively unbounded, so a raid is limited ONLY by the
@@ -431,10 +509,12 @@ fn a_sustain_raid_leaves_about_half_k() {
     let f = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
     let taken_biomass = f.animals_taken as f32 * BOAR_BODY;
     let floor = BOAR_K * 0.5;
+    let turns = f
+        .turns_to_fill
+        .expect("a Sustain raid on a full herd completes");
     println!(
-        "[leaves K/2] full boar Sustain raid: {} animals ({taken_biomass} biomass), leftover ≈ {}",
-        f.animals_taken,
-        BOAR_K - taken_biomass
+        "[leaves K/2] full boar Sustain raid: {} animals ({taken_biomass} biomass) over {turns} turns",
+        f.animals_taken
     );
     // It grabs the surplus above K/2 (716.5), plus the regrowth earned over the raid — so a touch more
     // than the standing surplus, never less.
@@ -442,8 +522,15 @@ fn a_sustain_raid_leaves_about_half_k() {
         taken_biomass >= (BOAR_K - floor) - BOAR_BODY,
         "a Sustain raid must clear ~all the surplus above K/2"
     );
+    // **The regrowth allowance is per TURN OF THE RAID, not a fixed four.** By conservation the take
+    // is `ΔB + Σ regrowth`, and one turn's regrowth can never exceed MSY, so this bound says exactly
+    // "the herd's own biomass never fell below the floor" — the property the test is named for. A
+    // constant allowance instead assumed a raid was ~4 turns long, which the engagement bound
+    // (`docs/plan_hunt_through_combat.md` §2) is free to change: a party that can only bring a couple
+    // of boar into contact per turn works the same surplus over many more turns, and earns every one
+    // of those turns' regrowth honestly.
     assert!(
-        taken_biomass <= (BOAR_K - floor) + 4.0 * fauna_msy(&fauna, BOAR_K, BOAR_R),
+        taken_biomass <= (BOAR_K - floor) + turns as f32 * fauna_msy(&fauna, BOAR_K, BOAR_R),
         "…but never eat into K/2 (the leftover stays ≈ half the herd)"
     );
 }
@@ -477,6 +564,14 @@ fn deeper_policies_raid_deeper() {
 
 /// **The standing surplus caps the raid.** Beyond the party size whose pack matches the surplus, extra
 /// hunters cannot deliver more animals — the herd simply has no more to spare above the floor.
+///
+/// **The cap is one-directional, and deliberately asserted as such.** It used to read as a two-sided
+/// "materially the same take" (`abs_diff <= 1`), which was always in tension with
+/// `more_hunters_raid_the_surplus_faster`'s own note: a bigger party spends the surplus in fewer turns
+/// and therefore harvests *less* of the herd's regrowth on the way down. The engagement bound
+/// (`docs/plan_hunt_through_combat.md` §2) widened that gap from a rounding to a real one — 8 boar
+/// hunters reach twice as many animals a turn as 4 and finish in a fraction of the turns — so the
+/// honest claim is the cap itself: **more hunters can never take MORE than the herd can spare.**
 #[test]
 fn the_standing_surplus_caps_the_raid() {
     let fauna = FaunaConfig::builtin();
@@ -486,9 +581,16 @@ fn the_standing_surplus_caps_the_raid() {
 
     let four = hunt_trip_forecast(4, &herd, 0.5, &fauna, &labor, &cfg);
     let eight = hunt_trip_forecast(8, &herd, 0.5, &fauna, &labor, &cfg);
+    // Liveness: both parties genuinely raid, so the ordering below is not two zeroes agreeing.
     assert!(
-        four.animals_taken.abs_diff(eight.animals_taken) <= 1,
-        "the take is surplus-capped: 8 hunters cannot raid materially more than 4 ({} vs {})",
+        four.animals_taken > 0 && eight.animals_taken > 0,
+        "both parties must actually raid the surplus ({} / {})",
+        four.animals_taken,
+        eight.animals_taken
+    );
+    assert!(
+        eight.animals_taken <= four.animals_taken,
+        "the take is surplus-capped: 8 hunters cannot raid more than 4 ({} vs {})",
         eight.animals_taken,
         four.animals_taken
     );

@@ -154,6 +154,20 @@ hard error rather than a default. `advance_expeditions` branches on mission:
 >   left to look it up in (`hunt_expedition_floor` is deleted; it existed only to map a stance onto a
 >   number). A deeper floor leaves a leaner herd, and **extinction is the floor-`0` case**: any floor
 >   above `0` strips the herd to it and stops, on this path and the resident band's alike.
+> - **A raid is ENGAGEMENT-BOUNDED exactly as a resident band is** (`docs/plan_hunt_through_combat.md`
+>   §1; §10 exempts only the pen). `expedition_take_biomass` resolves the party's reach
+>   (`fauna::animals_engaged`, at the identity build dip — a detached party builds nothing) and the
+>   quarry's retreat (`fauna::animals_that_stay`, per-event seed) and hands the count to **the**
+>   quantiser, which also retired its hand-rolled copy of the `max(1, carryable)` arithmetic. The bound
+>   is what stops the *same* party on the *same* herd taking a different number of animals purely by
+>   choosing the expedition verb (five hunters took 5 Red Deer a turn from camp and 13 as a raid);
+>   pinned by `expedition_hunt::a_raid_and_a_resident_band_reach_the_same_animals`.
+>   **The raid's economics turn on it**: where the herd's regrowth outpaces what a legal party can
+>   reach, the surplus is never spent and the raid does not complete inside
+>   `hunt.forecast_horizon_turns` — an honest "this party cannot clear this herd", not a stall.
+>   **The forecast holds ONE retreat seed for the whole forward simulation**
+>   (`systems::expeditions::forecast_retreat_seed`): a projection has no tick to name, and re-drawing
+>   per projected turn would make an unchanged world project a different raid on every render.
 > - **The take brings home a PARTIAL when it must, and wastes the rest — reconciled with the band.**
 >   The party's processing throughput (`workers × per_worker_biomass_capacity`) is banked onto the herd's
 >   `hunt_credit` — **the field's one remaining writer**, since the resident band stopped banking — and

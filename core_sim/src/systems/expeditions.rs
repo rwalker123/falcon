@@ -1,5 +1,6 @@
 use super::*;
 use crate::fauna::AnimalTake;
+use crate::intensification::NO_BUILD_UNDERWAY_DIP;
 
 /// The config handles [`advance_expeditions`] reads, bundled into one `SystemParam` so the system
 /// stays under Bevy's 16-parameter ceiling once the combat + creatures handles join it (Predators
@@ -421,6 +422,16 @@ pub fn advance_expeditions(
                             (cap - cohort.stores.get(FOOD)).max(scalar_zero()).to_f32()
                                 / quarry_yield.provisions_per_biomass
                         };
+                        // The quarry's engagement/retreat dials, and the per-event retreat seed —
+                        // composed BEFORE the mutable borrow, exactly as the scout replenish does.
+                        let engage_rate = fauna.engage_rate_for(&herds.herds[idx].species);
+                        let wariness = fauna.wariness_for(&herds.herds[idx].species);
+                        let seed = fauna::retreat_seed(
+                            map_seed,
+                            current_turn,
+                            &herds.herds[idx].id,
+                            workers,
+                        );
                         let herd = &mut herds.herds[idx];
                         let body_mass = herd.body_mass;
                         let take = expedition_take_biomass(
@@ -431,6 +442,9 @@ pub fn advance_expeditions(
                             carrying_capacity,
                             body_mass,
                             carry_room_biomass,
+                            engage_rate,
+                            wariness,
+                            seed,
                             &mut herd.hunt_credit,
                         );
                         // The herd loses every animal killed, carried home or not (slice 8).
@@ -837,6 +851,18 @@ pub(crate) fn workers_needed_for_take(take: f32, per_worker_capacity: f32, assig
 /// (`seatable == 0`) the forced partial carries `min(body, room) = room` — a full pack — so the
 /// `hunt_trip_forecast` / `Hunting`-arm pack-full stop fires and the trip ends after that ONE forced
 /// partial kill. The party kills 1 and comes home, never many.
+///
+/// **The engagement bound applies to a raid exactly as it does to a resident band**
+/// (`docs/plan_hunt_through_combat.md` §1 — the stages are the hunt's, not the band's; §10 exempts
+/// only the pen). Without it the *same* party on the *same* herd took a different number of animals
+/// purely by choosing the expedition verb — five hunters on a Red Deer herd killed 5 a turn from camp
+/// and 13 a turn as a raid. So the party's reach (`fauna::animals_engaged`) and the quarry's retreat
+/// (`fauna::animals_that_stay`) are resolved here and handed to the one quantiser, which is also what
+/// retired this function's hand-rolled copy of the `max(1, carryable)` arithmetic.
+///
+/// **A detached party builds nothing**, so the engagement carries the identity build dip
+/// ([`NO_BUILD_UNDERWAY_DIP`]) — a rung transition is place-bound work, and since issue #442 an
+/// `ExpeditionMission::Hunt` cannot even name an improvement.
 #[allow(clippy::too_many_arguments)] // the herd's state and the party's caps are all inputs
 fn expedition_take_biomass(
     workers: u32,
@@ -846,6 +872,13 @@ fn expedition_take_biomass(
     carrying_capacity: f32,
     body_mass: f32,
     carry_room_biomass: f32,
+    // The quarry's engagement/retreat dials, resolved by the caller off the species — this function
+    // takes resolved scalars, never a config handle (as it already does for `body_mass`).
+    engage_rate: f32,
+    wariness: f32,
+    // Per-event seed for the retreat draw (`fauna::retreat_seed`) — never a shared RNG stream, or
+    // raid ordering would change outcomes and rollback would stop reproducing (§6.2).
+    retreat_seed: u64,
     credit: &mut f32,
 ) -> AnimalTake {
     if !body_mass.is_finite() || body_mass <= 0.0 {
@@ -863,32 +896,25 @@ fn expedition_take_biomass(
     let throughput = (workers as f32 * per_worker_biomass_capacity).max(0.0);
     let rate = throughput.min(standing_surplus);
     let ceiling = (*credit + rate).clamp(0.0, standing_surplus);
-    // Whole animals: as many as the bank has readied (`affordable`). If the pack cannot seat one
-    // (`seatable == 0`) but the herd has banked one (`affordable >= 1`), the party still kills ONE and
-    // wastes what it cannot haul — the band's `max(1, carryable)` rule ([`fauna::quantise_animal_take`]).
-    // With no banked animal (`affordable == 0`) it kills nothing and waits (the true no-surplus case).
     let room = carry_room_biomass.max(0.0);
-    let affordable = (ceiling / body_mass).floor().max(0.0);
-    let seatable = (room / body_mass).floor().max(0.0);
-    let killed = if affordable >= 1.0 {
-        affordable.min(seatable.max(1.0))
-    } else {
-        0.0
-    };
-    let killed_biomass = killed * body_mass;
-    let carried = killed_biomass.min(room); // carry what the pack holds; a forced partial fills it
-    let wasted = (killed_biomass - carried).max(0.0);
+    // **Engagement, then retreat, then the quantiser** — stages 1 and 2 of
+    // `docs/plan_hunt_through_combat.md` §1, in the same order `systems::hunt_take` runs them.
+    // Wariness `0` makes the retreat an exact identity that consumes no randomness, so a raid is
+    // byte-identical until values are authored.
+    let engaged = fauna::animals_engaged(workers, engage_rate, NO_BUILD_UNDERWAY_DIP);
+    let stayed = fauna::animals_that_stay(engaged, wariness, retreat_seed);
+    // Whole animals through **the** quantiser: as many as the bank has readied, bounded by what the
+    // party can reach and by what the pack can seat but never below one — so if the pack cannot seat
+    // one (`carryable == 0`) while the herd has banked one, the party still kills ONE and wastes what
+    // it cannot haul, and with no banked animal it kills nothing and waits (the true no-surplus case).
+    let take = fauna::quantise_animal_take(ceiling, room, body_mass, stayed);
     // Drain the bank by what was KILLED (carried + wasted), not merely carried — you cannot un-kill the
     // animal you could not haul. Cap at the surplus so it can't grow unbounded at the floor (surplus <
     // body ⇒ no kill ⇒ the bank would otherwise climb every turn). `0 ≤ credit ≤ surplus`.
-    *credit = (*credit + rate - killed_biomass)
+    *credit = (*credit + rate - take.killed_biomass())
         .max(0.0)
         .min(standing_surplus);
-    AnimalTake {
-        killed: killed as u32,
-        carried,
-        wasted,
-    }
+    take
 }
 
 /// The **provisions a hunting party actually lands in its larder per turn** at a herd's current state
@@ -898,6 +924,9 @@ fn expedition_take_biomass(
 /// is a fact about the *species*, never about the policy: **Eradicate pays the windfall** like every
 /// other rung. This is what the client's pre-launch readout is pinned to
 /// (`core_sim/tests/expedition_hunt.rs`).
+/// The quarry's engagement/retreat dials come in resolved (`FaunaConfig::engage_rate_for` /
+/// `wariness_for`) alongside its [`HuntYield`], and the caller composes the retreat seed the way the
+/// take path does (`fauna::retreat_seed`) — this function reads no config handle, only numbers.
 #[allow(clippy::too_many_arguments)] // the herd's state, the labor tier and the species vector are all inputs
 pub fn expedition_take_provisions(
     workers: u32,
@@ -907,6 +936,9 @@ pub fn expedition_take_provisions(
     body_mass: f32,
     labor: &LaborConfig,
     hunt_yield: HuntYield,
+    engage_rate: f32,
+    wariness: f32,
+    retreat_seed: u64,
 ) -> f32 {
     // A single-turn preview starting from an empty bank (this readout is the client's per-turn rate,
     // not a specific banked turn) — the forward-sim `hunt_trip_forecast` is the one pinned to actual.
@@ -920,6 +952,9 @@ pub fn expedition_take_provisions(
         body_mass,
         // Carry room bites only on the final partial turn, and `ceil()` already accounts for it.
         f32::INFINITY,
+        engage_rate,
+        wariness,
+        retreat_seed,
         &mut credit,
     );
     // Quantized onto the larder's `Scalar` grid, exactly as the real take lands there.
@@ -1103,6 +1138,35 @@ pub fn hunt_per_worker_provisions(labor: &LaborConfig, fauna: &FaunaConfig) -> f
 /// the party makes its first take). Travel is not counted — see [`hunt_trip_forecast`].
 const FIRST_HUNTING_TURN: u32 = 1;
 
+/// **The world half of a retreat seed a FORWARD PROJECTION cannot know.** `fauna::retreat_seed` is
+/// composed from `(map_seed, tick, herd, party)`; a forecast holds the party and the herd but is
+/// projecting into ticks that have not happened, on a trip whose travel it deliberately does not
+/// model — so there is no tick for it to name. It holds both world terms at this value and derives
+/// **one** seed for the whole simulation.
+const FORECAST_RETREAT_WORLD_TERM: u64 = 0;
+
+/// **The retreat seed a forward projection uses — held FIXED for every projected turn.**
+///
+/// `forecast == actual` is the invariant this whole readout exists to keep
+/// (`.claude/rules/core_sim/yield-forecast.md`), so the projection must not re-draw the retreat turn
+/// by turn: a per-turn seed would make the same herd, party and floor project a different raid on
+/// every re-render while nothing about the world had changed. One seed, composed from the terms a
+/// projection genuinely holds ([`FORECAST_RETREAT_WORLD_TERM`] for the two it does not), so the
+/// stage's *shape* is projected honestly and the draw is stable and reproducible.
+///
+/// It is therefore **not** the seed the live take will draw with, and cannot be — a projection of a
+/// future turn cannot know that turn's tick. Today that is unobservable: the shipped roster's
+/// `wariness` is `0` everywhere, which `fauna::animals_that_stay` treats as an exact identity that
+/// consumes no randomness, so every seed gives the same answer.
+fn forecast_retreat_seed(herd_id: &str, workers: u32) -> u64 {
+    fauna::retreat_seed(
+        FORECAST_RETREAT_WORLD_TERM,
+        FORECAST_RETREAT_WORLD_TERM,
+        herd_id,
+        workers,
+    )
+}
+
 /// Forecast a hunting **raid** by simulating it forward turn by turn against the herd's own ecology,
 /// on the sim's arithmetic, until the party comes home — the pack fills, the **standing surplus is
 /// spent** (the herd sits at the mission's floor), or the herd is lost — or `hunt.forecast_horizon_turns`
@@ -1205,6 +1269,12 @@ fn hunt_trip_forecast_seeded(
     let ecology = herd_ecology(&quarry, fauna);
     let capacity = herd_capacity(&quarry, fauna);
     let floor_biomass = floor * capacity.max(0.0);
+    // The quarry's engagement/retreat dials, resolved ONCE: the crew does not change size
+    // mid-projection and the quarry is never re-speciated. The retreat seed is held fixed for the
+    // whole run — see [`forecast_retreat_seed`] for why a projection cannot vary it per turn.
+    let engage_rate = fauna.engage_rate_for(&quarry.species);
+    let wariness = fauna.wariness_for(&quarry.species);
+    let retreat_seed = forecast_retreat_seed(&quarry.id, workers);
     let mut larder = initial_larder;
     let mut first_turn_provisions = 0.0_f32;
     let mut animals_taken = 0u32;
@@ -1240,6 +1310,9 @@ fn hunt_trip_forecast_seeded(
             capacity,
             quarry.body_mass,
             carry_room_biomass,
+            engage_rate,
+            wariness,
+            retreat_seed,
             &mut quarry.hunt_credit,
         );
         quarry.biomass -= take.killed_biomass();

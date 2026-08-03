@@ -1,8 +1,15 @@
 # The hunt is a fight — resolving the take through the combat system
 
-**Status:** DESIGN. Nothing here is implemented. Issue #456, repurposed: the denial raid that issue
-asks for turns out to need this first, and becomes small once it exists
+**Status:** §9 slices **1 and 2 have landed**; slices 3–5 are design. Issue #456, repurposed: the
+denial raid that issue asks for turns out to need this first, and becomes small once it exists
 (`docs/plan_denial_raid.md`).
+
+Landed: the §4.3 body-mass correction, `SpeciesDef::engage_rate` with the engagement bound in
+`fauna::quantise_animal_take`, and `CombatStats::wariness` with the seeded retreat stage
+(`fauna::animals_that_stay` / `retreat_seed`), inert at `0` until slice 4 authors values. **Not**
+landed: the take resolving through `resolve_fight`, durability, the attack/defense gate, TOE, and
+the range forecast — so §4.2's `turns_to_kill` and §4.8's `attack 20` describe a model the sim does
+not yet run.
 
 **This is not a new subsystem.** `core_sim/src/combat/mod.rs` opens by saying it: *"A predator
 encounter, a dangerous hunt, and (one day) a TOE-vs-TOE battle are all just a fight."* The hunt
@@ -122,7 +129,7 @@ hunters engage two mammoths a turn; five still engage one and grind it down over
 ### 2.1 Values — SETTLED
 
 `ceiling = engage_rate × body_mass` is the most biomass one hunter can ever take from a species per
-turn, at any weapon tier (§4.4), so it is the number these are authored against.
+turn, at any weapon tier (§4.6), so it is the number these are authored against.
 
 | species | body | engage_rate | reads as | **ceiling** |
 |---|---|---|---|---|
@@ -242,7 +249,7 @@ durability is how many counting hits it takes.**
 
 #### Values — SETTLED
 
-Effort shown at the settled spear `attack 20` (§4.6), so `hunter-turns = durability / (20 − defense)`.
+Effort shown at the settled spear `attack 20` (§4.8), so `hunter-turns = durability / (20 − defense)`.
 `defense` is the existing field, unchanged.
 
 | species | defense | **durability** | hunter-turns | survives by |
@@ -318,14 +325,14 @@ untouched. Deliberately **not** compensated for elsewhere: the food economy is e
 once the underlying data is right, and pre-emptively tuning around numbers that are still moving
 would bake in a correction for a problem that may not survive them.
 
-### 4.3 Ferocity is already the right hinge
+### 4.4 Ferocity is already the right hinge
 
 `SpeciesDef::ferocity` means *"does it fight back or flee"* — in resolver terms, **whether the animal
 side contributes attack at all.** A ferocity-`0` gazelle is a one-sided engagement; a ferocity-`0.9`
 mammoth is a real fight with real casualties. No separate "is this dangerous" flag is needed, and the
 casualty path that exists today keeps working through the same field.
 
-### 4.4 Most hunts must not feel like battles
+### 4.5 Most hunts must not feel like battles
 
 Snaring rabbits is not a war. The answer is **one model with a degenerate fast path**, never two
 models: when the animal side contributes no attack and its defense is at floor, the fight resolves
@@ -333,7 +340,7 @@ to *"everything that stayed dies, nobody is hurt"* without ceremony, cost or a b
 second code path for small game would recreate exactly the parallel-model problem §0 exists to
 delete.
 
-### 4.4 Better weapons pay off on big game and nowhere else
+### 4.6 Better weapons pay off on big game and nowhere else
 
 Every species has a **hard ceiling** on what a hunter can take from it per turn:
 
@@ -365,7 +372,7 @@ points turn the same herd into the richest food on the map without a single numb
 **This is a property to pin, not a happy accident** (§10): it falls out of defense subtraction and
 the engagement cap together, and a change to either could silently flatten it.
 
-### 4.5 Randomness lives in the attack, and never in the gate
+### 4.7 Randomness lives in the attack, and never in the gate
 
 A pure attrition formula is a spreadsheet. Variance belongs **in the resolver**, so hunts, raids and
 battles share one source of it rather than growing three.
@@ -388,7 +395,7 @@ roll. Three requirements on the resolver, which owns the choice of model:
 2. Below the gate, probability is **exactly zero** — asymptotic is not good enough.
 3. Seeded per event (§6.2), the same seeding the retreat roll needs.
 
-### 4.6 A minimal TOE is in scope
+### 4.8 A minimal TOE is in scope
 
 Without equipment a hunter's `attack` is `1`, which is below every megafauna's `defense` — so **no
 band can hunt a mammoth until spears exist**, and the progression stops being a note and starts being
@@ -485,6 +492,10 @@ itself), and what came home — **carried** and **wasted**.
 Emitting presentation-ready text here would bake this arc's guesses about an importance ladder into
 the sim, and the sim already treats the client this way everywhere else.
 
+---
+
+## 7. What `plan_denial_raid.md` loses to this doc
+
 That doc's §1–§2 specified a kill model **outside** the combat system: `per_worker_kill_capacity`, a
 biomass-denominated kill budget, `stalk_overhead`, `toughness(defense)`, and a partial-kill bank. All
 of it existed to answer questions the resolver answers, and all of it is deleted:
@@ -509,7 +520,7 @@ hard and does not clamp to carry.**
 - **The resolver's own model.** `plan_predators.md` shipped the seam with a placeholder — *"the seam
   is the deliverable"* — and this arc rides that same bet. Improving the resolver is its own work,
   and it improves hunting for free when it lands.
-- **The crafting economy.** A *minimal* TOE is in scope (§4.6); replenishing or upgrading kit is not
+- **The crafting economy.** A *minimal* TOE is in scope (§4.8); replenishing or upgrading kit is not
   (`docs/plan_early_game_labor.md`, deferred M2+).
 - **Dynamic morale for troops.** §3 says wariness is static for animals and dynamic for troops; only
   the static half ships here. The field is shaped for both.
@@ -525,8 +536,14 @@ hard and does not clamp to carry.**
 Each lands on its own PR.
 
 1. **`engage_rate`** on `SpeciesDef`, authored across the roster; the take path bounds the engagement
-   and nothing else changes yet. Kill still resolves as today, so this slice is a no-op on outcomes
-   for every species whose engagement exceeds today's take.
+   and nothing else changes yet. Kill still resolves as today.
+
+   **This is NOT a no-op, and an earlier draft of this line claimed it was.** Per-hunter carry is
+   `40` biomass, and §2.1's ceiling column (`engage_rate × body_mass`) is below `40` for **19 of the
+   20 species** — so engagement is the binding term across essentially the whole roster from the
+   moment it ships. Ten hunters on a rabbit warren at floor `0.5` took `370` animals (100 biomass)
+   and now take `27` biomass, a 73% cut. Slice 1 is the arc's first real balance change; only slice
+   2 is an identity.
 2. **`CombatProfile::wariness`** + the retreat stage, seeded per event; wariness `0` everywhere, so
    this slice is a provable identity.
 3. **The take resolves through `resolve_fight`.** `quantise_animal_take`'s kill arm is replaced by
@@ -536,14 +553,20 @@ Each lands on its own PR.
 5. **Forecast + client**: the range readout, and the hunters-per-animal figure on the pre-launch
    panel.
 
-Slices 1–2 are deliberately identities so slice 3 is the only one that can move a number.
+Slice 2 is deliberately an identity (wariness `0` makes the retreat stage a provable no-op), so its
+review can be about the seam rather than about balance. Slices 1 and 3 both move numbers.
 
 ---
 
 ## 10. Validation
 
-- **`forecast == actual` still holds at wariness `0`**, per component, on the exported snapshot —
-  the existing suite, unmodified, is the assertion.
+- **`forecast == actual` still holds at wariness `0`**, per component, on the exported snapshot.
+  The existing suite is the assertion, but **not unmodified** — slice 1's engagement bound is a real
+  balance change (§9), and three crew constants in `core_sim/tests/hunt_yield_vector.rs` had to grow
+  because they were sized against the carry bound alone and began measuring a crew limit instead of
+  the property they name: `HAUL_THE_WHOLE_HERD_CREW` 100→300, `DIP_VISIBLE_CREW` 5→12,
+  `LABOR_BOUND_CREW` 1→2. A test that asserts a difference between two takes must staff a crew where
+  engagement is **not** the binding term, or it silently asserts nothing.
 - **Wariness `0` consumes no randomness.** Pinned directly: a turn with hunts at wariness `0` leaves
   the RNG state identical to a turn with none.
 - **Replay determinism across hunt ordering.** Two runs that resolve the same hunts in different
@@ -552,7 +575,7 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 - **The gate.** A party whose attack is below the quarry's defense kills **zero** at any headcount,
   and takes casualties proportional to `ferocity`. This is §0.2, pinned.
 - **Better weapons pay off on big game and not on small.** Raising `attack` must raise biomass per
-  hunter-turn for a high-defense quarry and leave an engagement-bound one flat (§4.4). The assertion
+  hunter-turn for a high-defense quarry and leave an engagement-bound one flat (§4.6). The assertion
   that neither the defense subtraction nor the engagement cap has been quietly linearised.
 - **No species exceeds `engage_rate × body_mass` per hunter**, at any weapon tier — the ceiling is
   real, so arbitrarily good kit cannot turn small game into a food engine.
@@ -563,7 +586,7 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
   durability)` of them, not an authored count, and the number rises when the weapon improves.
 - **No quantity of attackers rolls through the gate.** A large bare-handed party against megafauna
   kills zero over any horizon — pinned, because it is the one property a probabilistic gate would
-  silently break (see §4.5).
+  silently break (see §4.7).
 - **A fractional engagement reaches one animal**, not zero — contact is not the gate, and a
   three-hunter mammoth party fails at the *fight*, with casualties, rather than failing to find it.
 - **The fast path is free.** A one-sided engagement produces no casualties, no battle report, and
@@ -578,9 +601,7 @@ Slices 1–2 are deliberately identities so slice 3 is the only one that can mov
 
 ## 11. Open questions
 
-| # | Question | Notes |
-|---|---|---|
-Every value is settled (§2.1, §4.2, §4.3, §4.6). What remains is what only play can answer.
+Every value is settled (§2.1, §4.2, §4.3, §4.8). What remains is what only play can answer.
 
 | # | Question | Notes |
 |---|---|---|

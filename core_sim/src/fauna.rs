@@ -7,7 +7,6 @@ use rand::{rngs::SmallRng, seq::SliceRandom, Rng, SeedableRng};
 use sim_runtime::TerrainTags;
 use tracing::info;
 
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::{
@@ -4088,6 +4087,17 @@ const REALIZED_PROJECTION_TAKE_EPSILON: f32 = 1e-4;
 /// projects its managed pen yield (already smooth). Reuses the shared model helpers
 /// ([`regrow_biomass`], [`hunt_escapement_ceiling`], [`pen_yield_biomass`], [`HuntYield::apply`],
 /// [`herd_ecology`]/[`herd_capacity`]) — no second copy of the ecology or take math.
+///
+/// # Unquantised is NOT unbounded — the engagement cap still binds here
+///
+/// Dropping the *quantiser* is sound because rounding is a timing effect. Dropping the **engagement
+/// bound** ([`animals_engaged`]) would not be: it is a hard per-turn cap on how many animals a party
+/// can reach at all, so it genuinely lowers the N-turn total. Two hunters on a rabbit warren can
+/// never take more than `2 × engage_rate × body_mass` biomass in a turn however much room stands
+/// above the floor, and a `realized` that ignored that would over-quote the steady food rate several
+/// times over. So the per-turn take here is capped by `engaged × body_mass` alongside the crew's
+/// carry and the standing stock — in biomass, unrounded, which is exactly the smooth reading of the
+/// same cap the quantised path applies to whole animals.
 // The projection needs the full take context (source, both configs, throughput, multiplier, crew,
 // policy, horizon) — the same shape `hunt_source_yield_preview` already carries.
 #[allow(clippy::too_many_arguments)]
@@ -4118,6 +4128,20 @@ pub fn project_realized_hunt(
     // **The build dip rides the CREW** (`docs/plan_harvest_floor.md` §3.1) — the same term
     // `systems::hunt_take` applies, so the projection and the take stay one model.
     let collection = workers as f32 * per_worker_biomass_capacity * ladder.build_dip(improvement);
+    // **The engagement bound, in biomass** — how much the party can bring into contact each projected
+    // turn (`docs/plan_hunt_through_combat.md` §2). Constant for the run: the crew does not change
+    // size mid-projection and the quarry is never re-speciated. A **pen** has no engagement stage at
+    // all (a penned animal is not stalked), so it is unbounded there — the same exemption
+    // `project_arrivals_hunt` states by passing `f32::INFINITY` to the quantiser on its corral branch.
+    let engagement_biomass = if corralled {
+        f32::INFINITY
+    } else {
+        animals_engaged(
+            workers,
+            fauna.engage_rate_for(&quarry.species),
+            ladder.build_dip(improvement),
+        ) * quarry.body_mass
+    };
     let mut total = YieldAccounts::ZERO;
     // The number of turns actually simulated. A self-terminating policy (Eradicate strips the herd in
     // ~1 turn, Deplete drives it extinct) breaks early, and the average divides by THIS — not the full
@@ -4130,15 +4154,21 @@ pub fn project_realized_hunt(
         if quarry.biomass <= ecology.extinction_floor * capacity {
             break; // `advance_herds` would despawn it here — the herd is gone.
         }
-        // Population: the SMOOTH per-turn take (unquantised), capped by the crew's throughput and the
-        // standing stock. A pen pays its managed escapement MSY; a wild/pastoral herd pays the stock
-        // standing above its stance's floor, at the CURRENT biomass — what `hunt_take` reads.
+        // Population: the SMOOTH per-turn take (unquantised), capped by the crew's throughput, by
+        // what the party can reach, and by the standing stock. A pen pays its managed escapement MSY;
+        // a wild/pastoral herd pays the stock standing above its stance's floor, at the CURRENT
+        // biomass — what `hunt_take` reads. Unquantised, but **not** unbounded: see the doc above for
+        // why the engagement cap belongs here and the rounding does not.
         let rate = if corralled {
             pen_yield_biomass(&quarry, fauna)
         } else {
             hunt_escapement_ceiling(floor, quarry.biomass, capacity)
         };
-        let take = rate.min(collection).min(quarry.biomass).max(0.0);
+        let take = rate
+            .min(collection)
+            .min(engagement_biomass)
+            .min(quarry.biomass)
+            .max(0.0);
         if take <= REALIZED_PROJECTION_TAKE_EPSILON {
             break; // the source is spent — stop before diluting the average with empty turns.
         }
@@ -4638,8 +4668,11 @@ impl AnimalTake {
 /// **the same number of animals** and the build is free — which is §0.3 of that same doc
 /// ("the harshest stance builds free") returning through a new door.
 ///
-/// Pass [`crate::intensification::NO_BUILD_REMAINING_FRACTION`]-equivalent `1.0` where nothing is
-/// being built.
+/// Pass [`crate::intensification::NO_BUILD_UNDERWAY_DIP`] where nothing is being built — the
+/// identity multiplier, and exactly what [`crate::intensification::BuildDips::of`] answers for
+/// `None`. **Not `NO_BUILD_REMAINING_FRACTION`**, which is `0.0` and a *wire* value: passing it here
+/// would floor the engagement to `0` and the `max(1.0)` would silently cap the whole party at one
+/// animal per turn.
 pub fn animals_engaged(workers: u32, engage_rate: f32, build_dip: f32) -> f32 {
     if workers == 0 {
         return 0.0;
@@ -4652,8 +4685,14 @@ pub fn animals_engaged(workers: u32, engage_rate: f32, build_dip: f32) -> f32 {
 /// **The per-event seed for a retreat draw** — `(map_seed, tick, herd, party)`, order-independent by
 /// construction (`docs/plan_hunt_through_combat.md` §6.2). Two runs that resolve the same hunts in a
 /// different order must produce identical outcomes, which a shared RNG stream cannot promise.
+///
+/// **The herd id is folded in with [`crate::hashing::FnvHasher`], never `DefaultHasher`** — the same
+/// rule every other seed site in the sim follows. `std`'s hasher is SipHash-1-3 with an output the
+/// library documents as *unspecified across releases*, so a checkpoint replayed on a different
+/// toolchain would derive a different seed for the same `(map_seed, tick, herd, party)` and stop
+/// reproducing the retreat — the exact property this function exists to guarantee.
 pub fn retreat_seed(map_seed: u64, tick: u64, herd_id: &str, workers: u32) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FnvHasher::new();
     herd_id.hash(&mut hasher);
     map_seed ^ tick ^ RETREAT_SEED_SALT ^ hasher.finish() ^ (workers as u64)
 }
@@ -5538,7 +5577,7 @@ mod tests {
     use super::*;
     use crate::components::NO_IMPROVEMENT_UNDERWAY;
     use crate::fauna_config::ShoreRequirement;
-    use crate::intensification::RUNG_COMPLETE;
+    use crate::intensification::{NO_BUILD_UNDERWAY_DIP, RUNG_COMPLETE};
     use crate::scalar::{scalar_from_f32, scalar_one, scalar_zero};
     use crate::terrain::terrain_definition;
     use sim_runtime::TerrainType;
@@ -5928,6 +5967,132 @@ mod tests {
         assert_ne!(a, retreat_seed(7, 3, "game_deer_2", 5), "herd must matter");
         assert_ne!(a, retreat_seed(7, 4, "game_deer_1", 5), "tick must matter");
         assert_ne!(a, retreat_seed(7, 3, "game_deer_1", 6), "party must matter");
+    }
+
+    // ---- The engagement bound ------------------------------------------------------------------
+
+    /// A quarry a whole hunter can only partly corner in a turn — `workers × rate < 1` for any small
+    /// party, which is the case the `max(1.0)` floor exists for.
+    const HARD_TO_CORNER_ENGAGE_RATE: f32 = 0.25;
+    /// A quarry a hunter reaches two of per turn — the linear-scaling fixture.
+    const EASY_ENGAGE_RATE: f32 = 2.0;
+    /// The `animal:pastoral` rung's shipped `yield_fraction_while_building`: half the crew's
+    /// throughput goes into gentling the herd instead of hunting it.
+    const HALF_CREW_BUILD_DIP: f32 = 0.5;
+
+    /// **A fractional engagement reaches one animal, not zero**
+    /// (`docs/plan_hunt_through_combat.md` §10). A small band cannot corner the quarry *efficiently*;
+    /// it can still walk up to it, and the gate on whether it survives the meeting is the fight, not
+    /// a headcount threshold in front of it.
+    #[test]
+    fn a_party_too_small_to_corner_one_animal_still_engages_one() {
+        for workers in 1..=3u32 {
+            let engaged =
+                animals_engaged(workers, HARD_TO_CORNER_ENGAGE_RATE, NO_BUILD_UNDERWAY_DIP);
+            assert!(
+                (workers as f32 * HARD_TO_CORNER_ENGAGE_RATE) < 1.0,
+                "fixture must actually be fractional for {workers} hunters"
+            );
+            assert_eq!(
+                engaged, 1.0,
+                "{workers} hunters must reach one animal, never zero"
+            );
+        }
+        // The floor is the *fraction's* floor, not a blanket one: a party whose reach clears whole
+        // animals is not pinned at 1.
+        assert_eq!(
+            animals_engaged(8, HARD_TO_CORNER_ENGAGE_RATE, NO_BUILD_UNDERWAY_DIP),
+            2.0
+        );
+    }
+
+    /// **No workers engage NOTHING** — a different statement from the fractional floor above, and
+    /// pinned separately: the `max(1.0)` must not manufacture a hunter out of an unstaffed row.
+    #[test]
+    fn a_party_of_no_workers_engages_nothing() {
+        for rate in [HARD_TO_CORNER_ENGAGE_RATE, EASY_ENGAGE_RATE, f32::INFINITY] {
+            for dip in [NO_BUILD_UNDERWAY_DIP, HALF_CREW_BUILD_DIP] {
+                assert_eq!(
+                    animals_engaged(0, rate, dip),
+                    0.0,
+                    "an unstaffed row reaches no animals (rate {rate}, dip {dip})"
+                );
+            }
+        }
+    }
+
+    /// **The build dip multiplies ENGAGEMENT, not just carry** — hands gentling a herd are hands not
+    /// hunting it. Leaving it out is what this function's own doc calls re-opening a closed defect:
+    /// a building crew and a harvesting crew would reach the same animals and the build would be free
+    /// wherever engagement is the binding term. Asserted where the count is `>= 2`, so the `max(1.0)`
+    /// floor cannot mask the difference.
+    #[test]
+    fn the_build_dip_multiplies_engagement() {
+        const CREW: u32 = 8;
+        let harvesting = animals_engaged(CREW, EASY_ENGAGE_RATE, NO_BUILD_UNDERWAY_DIP);
+        let building = animals_engaged(CREW, EASY_ENGAGE_RATE, HALF_CREW_BUILD_DIP);
+        // Liveness: both crews genuinely reach several animals, so neither reading is the floor.
+        assert_eq!(harvesting, CREW as f32 * EASY_ENGAGE_RATE);
+        assert_eq!(
+            building,
+            CREW as f32 * EASY_ENGAGE_RATE * HALF_CREW_BUILD_DIP
+        );
+        assert!(
+            building >= 2.0 && building < harvesting,
+            "a dipped crew must reach strictly fewer: {building} vs {harvesting}"
+        );
+    }
+
+    /// **Engagement is linear in party size** — twice the hunters reach twice the animals, which is
+    /// what makes party size the lever the take responds to.
+    #[test]
+    fn engagement_scales_linearly_with_the_party() {
+        for workers in 1..=6u32 {
+            assert_eq!(
+                animals_engaged(workers, EASY_ENGAGE_RATE, NO_BUILD_UNDERWAY_DIP),
+                workers as f32 * EASY_ENGAGE_RATE,
+                "engagement must scale with the party at {workers} hunters"
+            );
+        }
+    }
+
+    /// **The bound actually reaches a take.** The other four tests pin the helper; this one pins that
+    /// [`quantise_animal_take`] is genuinely bounded by it — an engagement-bound party kills strictly
+    /// fewer than the same party's carry would allow, so deleting the third bound fails here rather
+    /// than passing quietly. Paired with the unbounded reading as the liveness half: a take that
+    /// collapsed to zero would also satisfy "fewer".
+    #[test]
+    fn the_engagement_bound_reaches_the_take() {
+        // A Red Deer-shaped fixture: a light body, a herd with plenty standing above the floor, and a
+        // party whose packs could haul far more animals than it can get near.
+        const BODY_MASS: f32 = 15.0;
+        const HUNTERS: u32 = 5;
+        const PER_WORKER_CARRY: f32 = 40.0;
+        const ONE_ANIMAL_PER_HUNTER: f32 = 1.0;
+        // Room for far more animals than either bound allows, so the herd is never what binds.
+        const AMPLE_CEILING: f32 = BODY_MASS * 100.0;
+        let collection = HUNTERS as f32 * PER_WORKER_CARRY;
+
+        let engaged = animals_engaged(HUNTERS, ONE_ANIMAL_PER_HUNTER, NO_BUILD_UNDERWAY_DIP);
+        let bounded = quantise_animal_take(AMPLE_CEILING, collection, BODY_MASS, engaged);
+        // `f32::INFINITY` is what a pen passes — no engagement stage — so this is the take as it was
+        // before the bound existed.
+        let carry_bound = quantise_animal_take(AMPLE_CEILING, collection, BODY_MASS, f32::INFINITY);
+
+        assert_eq!(bounded.killed, HUNTERS, "the party kills what it can reach");
+        assert_eq!(
+            carry_bound.killed,
+            (collection / BODY_MASS) as u32,
+            "unbounded, the party kills what it can carry"
+        );
+        assert!(
+            bounded.killed < carry_bound.killed,
+            "the engagement bound must bite: {} vs {}",
+            bounded.killed,
+            carry_bound.killed
+        );
+        // Liveness: the bound reduces the take, it does not switch it off.
+        assert!(bounded.killed > 0 && bounded.carried > 0.0);
     }
 
     /// A zero deadband restores the raw stateless behaviour (the flicker) — the lever genuinely

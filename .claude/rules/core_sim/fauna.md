@@ -510,7 +510,7 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   deer/mammoth are `wild`-ceiling and omit it). A shepherd minds ~300 sheep, a cowherd ~80 cattle —
 >   you watch individuals, and a heavier beast is not proportionally more work. A per-*biomass* dial
 >   says "one herder per 100 fowl but one per 2 boar" and invents a 45-herder steppe megaherd that is a
->   pure artifact of the unit (4,560 biomass of Steppe Runner is **38 animals** ⇒ ~3 herders).
+>   pure artifact of the unit (4,560 biomass of Steppe Runner is **86 animals** ⇒ ~6 herders).
 > - **ONE need, not two — but "one need" means one CREW, not one formula.** The herders mind the herd
 >   *and* butcher it, so a managed rung reports **one** number and staffs **one** team
 >   (`intensification::source_crew_needed`, shared with the plant web, where the standing half is the
@@ -519,9 +519,17 @@ deleted along with the Fog-of-Knowledge `fogRaster` overlay it existed to feed (
 >   **biomass** (one hauler carries 40). A shepherd minds ~300 sheep and could not carry three. So
 >   `workersNeeded = max(herders_needed, hunt_haul_workers)` — `+` would be two teams; `max` is
 >   one crew covering its busiest job. **Neither term dominates across the roster** (measured, settled
->   radius-1 pens): small-bodied species are **herder-bound** (Wild Fowl 9 herders vs 5 haulers; Rabbit
->   5 vs 4), big-bodied ones are **haul-bound** (Crag Goats 2 vs 7; Boar 1 vs 3; Aurochs 2 vs 3). Do not
->   "simplify" the `max()` away.
+>   radius-1 pens): small-bodied species are **herder-bound**, big-bodied ones are **haul-bound**. Do
+>   not "simplify" the `max()` away.
+>
+>   **The per-species figures that used to sit here were measured against the PRE-CORRECTION body
+>   masses and are deleted rather than restated** (`docs/plan_hunt_through_combat.md` §4.3). Nineteen
+>   of the twenty masses moved, and `herders_needed` divides by `body_mass`, so every one of them
+>   changed — Boar 50→12 quadruples a 750-biomass herd's head count and takes it from **1** herder to
+>   **5**, inverting the "haul-bound" example the old text used. `animals_per_herder` was deliberately
+>   **not** retuned to compensate: it is a per-**head** dial ("a heavier beast is not proportionally
+>   more work"), so a species that is genuinely lighter genuinely needs more hands per tonne, and the
+>   new counts are the correct ones. Re-measure before quoting a number here again.
 >
 > - **An INVESTMENT policy (Tame/Corral) sizes the herder term ownership-INDEPENDENTLY**
 >   (`fauna::would_be_herders_needed`, the taming-startup-lag fix). `herd_herders_needed` is

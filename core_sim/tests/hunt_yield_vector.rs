@@ -1070,6 +1070,14 @@ fn party_cohort(tile: bevy::prelude::Entity, workers: u32) -> PopulationCohort {
 ///   **graze** branch; a carnivore's `K` is recomputed every turn from the live prey base, which
 ///   both drifts under the forecast's fixed-`K` clone and (at `TEST_CAPACITY`) puts the herd under
 ///   the extinction floor of its own prey-derived `K`, despawning the quarry on turn one.
+/// - **`engage_rate` → [`RAID_UNBOUNDED_ENGAGE_RATE`]** — the engagement bound
+///   (`docs/plan_hunt_through_combat.md` §2) decides *how long a raid lasts*, which is a third
+///   confound of exactly the same shape. An **inedible** quarry never fills its pack, so its raid can
+///   only end when the standing surplus is spent; at the shipped wolf rate a legal party
+///   (`≤ max_party_size`) reaches 2 wolves a turn against a herd regrowing ~100 biomass a turn, so the
+///   raid never completes inside the forecast horizon and the row this test compares against
+///   disappears. Neutralising reach leaves the take bounded by carry and the herd, which is the
+///   regime the yield vector is measured in.
 fn steady_quarry(app: &mut App, display_name: &str) {
     let mut config = (*app.world.resource::<FaunaConfigHandle>().get()).clone();
     let key = config
@@ -1081,6 +1089,7 @@ fn steady_quarry(app: &mut App, display_name: &str) {
     let def = config.species.get_mut(&key).expect("just resolved");
     def.combat.attack = 0.0;
     def.diet = Diet::Herbivore;
+    def.engage_rate = RAID_UNBOUNDED_ENGAGE_RATE;
     app.world
         .resource_mut::<FaunaConfigHandle>()
         .replace(std::sync::Arc::new(config));
@@ -1089,6 +1098,12 @@ fn steady_quarry(app: &mut App, display_name: &str) {
 /// The wild-game reference growth rate the raid harness pins its quarry to — the same `r` the
 /// sibling `expedition_hunt` raid tests use for their worked boar example.
 const WILD_REGROWTH_RATE: f32 = 0.10;
+
+/// **An engagement rate at which reach never binds** ([`steady_quarry`]). One hunter reaches this
+/// many animals a turn; the lightest body in the roster puts fewer than a thousand animals in a
+/// [`TEST_CAPACITY`] herd, so even a single-hunter party can bring the whole herd into contact and the
+/// take falls back to the carry-and-herd bounds these yield-vector pins are written against.
+const RAID_UNBOUNDED_ENGAGE_RATE: f32 = 1000.0;
 
 /// Pin the two things about a quarry that decide **when a raid ends**, so the pin measures the yield
 /// vector rather than whichever herd the map handed the fixture.
